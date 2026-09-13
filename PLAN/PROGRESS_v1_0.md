@@ -3,6 +3,18 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-13
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Wave 14 first account identity locally accepted 2026-09-13:** anchored
+> `ChannelRef`, V39 aliases, narrow admitted legacy claim, scoped state/media,
+> rate limits, lease subjects and receipts are implemented. Final selected tests
+> pass 327/0/0; ten affected integration targets pass 81/0/0. Strict Clippy,
+> Core and formatting pass; exact evidence: `docs/gold-wave14-verification.md`.
+> P1-16 remains OPEN for configuration, credentials, outbound routing and other
+> surfaces. Counts remain 1324/1010/312/2 (314 raw; 313 pre-tag blockers).
+> Wave 13 CI `34762817827` is final: Windows passed; macOS has 17 failures;
+> Linux's unused import is fixed in Wave 14. macOS repair proposals await the
+> next batch, so there is no cross-platform-green claim. Builds stay one job,
+> Idle, four logical CPUs and a 32 GiB free-memory floor.
+>
 > **Wave 13 P1-11 accepted 2026-09-13:** session-start local recall starts
 > after RAW delivery through an existing-only read-only `views.db` reader and
 > is consumed by the first provider request under the unchanged fresh policy.

@@ -14,9 +14,10 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
+use crate::channels::registry::{ChannelAccountId, ChannelRef, resolve_channel_id};
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::permissions::lease::{CapabilityLease, LeaseScope, LeaseStore};
+use crate::permissions::lease::{CapabilityLease, LeaseScope, LeaseStore, channel_lease_subject};
 use crate::wal::events::{
     EVENT_TYPE_LEASE_EXPIRED, EVENT_TYPE_LEASE_GRANTED, EVENT_TYPE_LEASE_REVOKED,
 };
@@ -33,9 +34,9 @@ pub struct LeaseArgs {
 #[derive(Subcommand, Debug, Clone)]
 pub enum LeaseAction {
     /// Grant a subject a TTL-bounded scoped capability.
-    /// `neoth lease grant <peer-or-plugin> <scope> --ttl 1h`.
+    /// `neoth lease grant <peer-or-plugin-or-channel-subject> <scope> --ttl 1h`.
     Grant {
-        /// Subject: a paired peer pub-key-hex or a plugin id.
+        /// Subject: a paired peer pub-key-hex, plugin id, or `neoth lease channel-subject` output.
         granted_to: String,
         /// Capability scope: `read` / `write_neoth_home` / `channel_send` /
         /// `cluster_task_accept` / `mcp_tool:<id>`.
@@ -51,19 +52,43 @@ pub enum LeaseAction {
     },
     /// List active leases (expired ones are pruned + audited first).
     List,
+    /// Print the canonical account-scoped subject for a channel sender. This is pure: it does not read leases, credentials, or config.
+    /// `neoth lease channel-subject <channel> <account> <sender>`.
+    ChannelSubject {
+        /// Channel canonical ID or accepted alias, canonicalized through the channel registry.
+        channel: String,
+        /// Validated channel account ID.
+        account: String,
+        /// Exact sender identifier to encode into the subject.
+        sender: String,
+    },
 }
 
 pub async fn run_lease(args: LeaseArgs) -> Result<()> {
-    let home = FreedomConfig::default_neoth_home();
-    let path = LeaseStore::default_path(&home);
-    let now = now_unix();
-
     match &args.action {
+        LeaseAction::ChannelSubject {
+            channel,
+            account,
+            sender,
+        } => {
+            let channel_ref = parse_channel_ref(channel, account)?;
+            let subject = channel_lease_subject(&channel_ref, sender);
+            match args.output {
+                OutputFormat::Json | OutputFormat::Jsonl => println!(
+                    "{}",
+                    serde_json::json!({ "subject": subject, "channel_ref": channel_ref })
+                ),
+                OutputFormat::Table => println!("{subject}"),
+            }
+        }
         LeaseAction::Grant {
             granted_to,
             scope,
             ttl,
         } => {
+            let home = FreedomConfig::default_neoth_home();
+            let path = LeaseStore::default_path(&home);
+            let now = now_unix();
             if granted_to.trim().is_empty() {
                 anyhow::bail!(
                     "subject (granted_to) must not be empty — a lease needs a real \
@@ -99,6 +124,8 @@ pub async fn run_lease(args: LeaseArgs) -> Result<()> {
             }
         }
         LeaseAction::Revoke { id } => {
+            let home = FreedomConfig::default_neoth_home();
+            let path = LeaseStore::default_path(&home);
             let mut store = LeaseStore::load(&path)?;
             let revoked = store.revoke(id).ok_or_else(|| {
                 anyhow::anyhow!("no lease matching `{id}` — see `neoth lease list`")
@@ -116,6 +143,9 @@ pub async fn run_lease(args: LeaseArgs) -> Result<()> {
             }
         }
         LeaseAction::List => {
+            let home = FreedomConfig::default_neoth_home();
+            let path = LeaseStore::default_path(&home);
+            let now = now_unix();
             let mut store = LeaseStore::load(&path)?;
             // Prune + audit any newly-expired leases so the list is honest
             // AND the audit chain records the exact expiry.
@@ -154,6 +184,17 @@ pub async fn run_lease(args: LeaseArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn parse_channel_ref(channel: &str, account: &str) -> Result<ChannelRef> {
+    let channel_id = resolve_channel_id(channel).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown channel `{}` — use a canonical channel from `neoth channel list`",
+            channel.trim()
+        )
+    })?;
+    let account_id = ChannelAccountId::new(account.to_owned())?;
+    Ok(ChannelRef::new(channel_id, account_id))
 }
 
 fn short_id(id: &str) -> String {
@@ -267,6 +308,28 @@ mod tests {
         assert_eq!(short_id("0123456789abcdef"), "0123456789ab");
         assert_eq!(truncate("short", 28), "short");
         assert_eq!(truncate("0123456789", 5), "0123…");
+    }
+
+    #[test]
+    fn channel_subject_parser_canonicalizes_channel_and_validates_account() {
+        let channel_ref = parse_channel_ref("bluebubbles", "work_2").unwrap();
+        assert_eq!(channel_ref.channel_id.as_str(), "imessage_bluebubbles");
+        assert_eq!(channel_ref.account_id.as_str(), "work_2");
+        assert!(parse_channel_ref("not-a-channel", "work_2").is_err());
+        assert!(parse_channel_ref("telegram", "../escape").is_err());
+    }
+
+    #[test]
+    fn channel_subject_json_projection_has_exact_canonical_fields() {
+        let channel_ref = parse_channel_ref("telegram", "default").unwrap();
+        let subject = channel_lease_subject(&channel_ref, "alice");
+        let projected = serde_json::json!({ "subject": subject, "channel_ref": channel_ref });
+        assert_eq!(
+            projected["subject"],
+            "channel-ref/telegram/default/sender-hex/616c696365"
+        );
+        assert_eq!(projected["channel_ref"]["channel_id"], "telegram");
+        assert_eq!(projected["channel_ref"]["account_id"], "default");
     }
 
     #[tokio::test]

@@ -291,7 +291,34 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "GOLD-LF-P1-08 Stage 3b: transcript mining delivery lease",
         run: migration_v37_to_v38,
     },
+    Migration {
+        from: 38,
+        to: 39,
+        description: "P1-16: account-qualified human aliases and exact legacy operator claims",
+        run: migration_v38_to_v39,
+    },
 ];
+
+/// Add account-qualified aliases without attributing legacy rows to an account.
+pub(crate) fn migration_v38_to_v39(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS idx_human_identity_aliases_v2 (
+            uuid TEXT NOT NULL, channel TEXT NOT NULL, account_id TEXT NOT NULL,
+            sender_id TEXT NOT NULL, chat_id TEXT NOT NULL,
+            UNIQUE(channel, account_id, sender_id, chat_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_human_identity_aliases_v2_uuid
+            ON idx_human_identity_aliases_v2 (uuid);
+        CREATE TABLE IF NOT EXISTS idx_human_identity_legacy_claims (
+            channel TEXT NOT NULL, account_id TEXT NOT NULL, sender_id TEXT NOT NULL,
+            chat_id TEXT NOT NULL, uuid TEXT NOT NULL, claimed_at_unix INTEGER NOT NULL,
+            UNIQUE(channel, account_id, sender_id, chat_id)
+        );
+    "#,
+    )
+    .context("v39 create account-qualified aliases without modifying v1 history")
+}
 
 /// v35 → v36: establish only modern transcript-mining provenance. This must
 /// create no row from historical raw turns or WAL frames: legacy remains
@@ -4738,5 +4765,142 @@ mod tests {
             "UPDATE transcript_mining_provenance SET lifecycle='active' WHERE provenance_id='v37-provenance'",
             [],
         ).is_err());
+    }
+
+    fn v38_identity_fixture() -> Connection {
+        let conn = open_with_meta(38);
+        conn.execute_batch(
+            "CREATE TABLE idx_human_identity (
+                uuid TEXT NOT NULL PRIMARY KEY,
+                created_at_unix INTEGER NOT NULL,
+                merged_into TEXT
+              );
+              CREATE TABLE idx_human_identity_aliases (
+                uuid TEXT NOT NULL, channel TEXT NOT NULL,
+                sender_id TEXT NOT NULL, chat_id TEXT NOT NULL,
+                UNIQUE(channel, sender_id, chat_id)
+              );
+              INSERT INTO idx_human_identity (uuid, created_at_unix)
+                VALUES ('operator-pin', 1700000000);
+              INSERT INTO idx_human_identity_aliases
+                (uuid, channel, sender_id, chat_id)
+                VALUES ('operator-pin', 'telegram', '100', 'chat-1');",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn sqlite_object_exists(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name=?1)",
+            [name],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn v38_to_v39_migrate_preserves_v1_identity_history_and_is_idempotent() {
+        let mut conn = v38_identity_fixture();
+        let legacy_before: (String, String, String, String, i64) = conn
+            .query_row(
+                "SELECT a.uuid, a.channel, a.sender_id, a.chat_id, i.created_at_unix
+             FROM idx_human_identity_aliases a
+             JOIN idx_human_identity i ON i.uuid=a.uuid",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+
+        assert_eq!(migrate(&mut conn, 38, 39).unwrap(), 39);
+        assert_eq!(current_version(&conn).unwrap(), 39);
+        assert_eq!(
+            conn.query_row(
+                "SELECT count(*) FROM idx_human_identity_aliases_v2",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT count(*) FROM idx_human_identity_legacy_claims",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        let legacy_after: (String, String, String, String, i64) = conn
+            .query_row(
+                "SELECT a.uuid, a.channel, a.sender_id, a.chat_id, i.created_at_unix
+             FROM idx_human_identity_aliases a
+             JOIN idx_human_identity i ON i.uuid=a.uuid",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            legacy_after, legacy_before,
+            "v39 must not bind or rewrite v1 history"
+        );
+
+        assert_eq!(migrate(&mut conn, 39, 39).unwrap(), 39);
+        assert_eq!(current_version(&conn).unwrap(), 39);
+        assert!(sqlite_object_exists(&conn, "idx_human_identity_aliases_v2"));
+        assert!(sqlite_object_exists(
+            &conn,
+            "idx_human_identity_legacy_claims"
+        ));
+    }
+
+    #[test]
+    fn v38_to_v39_second_table_failure_rolls_back_schema_version_first_table_and_v1() {
+        let mut conn = v38_identity_fixture();
+        let legacy_before: (String, String, String) = conn
+            .query_row(
+                "SELECT uuid, sender_id, chat_id FROM idx_human_identity_aliases",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        // A table cannot replace an existing same-named index. The
+        // dispatcher transaction must roll back the first new table as well.
+        conn.execute_batch(
+            "CREATE INDEX idx_human_identity_legacy_claims ON idx_human_identity(uuid);",
+        )
+        .unwrap();
+
+        assert!(migrate(&mut conn, 38, 39).is_err());
+        assert_eq!(current_version(&conn).unwrap(), 38);
+        assert!(!sqlite_object_exists(
+            &conn,
+            "idx_human_identity_aliases_v2"
+        ));
+        let legacy_after: (String, String, String) = conn
+            .query_row(
+                "SELECT uuid, sender_id, chat_id FROM idx_human_identity_aliases",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(legacy_after, legacy_before);
     }
 }

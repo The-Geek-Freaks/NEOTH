@@ -44,6 +44,38 @@ Every channel should pass through:
 - outbound send policy
 - WAL event trail
 
+## Account identity and channel leases
+
+The daemon binds each inbound handler to a canonical channel and account at
+adapter startup. Current singleton configurations use the `default` account;
+configuring multiple accounts is still pending. A message cannot choose a
+different binding. Identity aliases, inbound session keys, media references,
+rate-limit buckets and channel-originated lease subjects include that binding.
+
+Existing identity aliases remain visible as `legacy-unbound` in
+`neoth identity list`. They are not automatically assigned to `default`.
+The admitted legacy Telegram singleton can retain a configured operator UUID
+only when its exact sender/chat alias already matches the operator pin. Other
+aliases require an explicit identity merge to unify their account-qualified
+identities. Merge keeps the original migration claim receipt unchanged.
+
+Use the exact account-qualified subject when granting a channel send or MCP
+lease. For example, in PowerShell:
+
+```powershell
+$subject = neoth lease channel-subject telegram default 123456789
+neoth lease grant $subject channel_send --ttl 1h
+neoth permissions check channel_send --subject $subject
+```
+
+`channel-subject` validates the channel and account and prints the subject; it
+does not create a lease or access credentials. With `--output json` it returns
+`subject` and `channel_ref`. Channel-originated MCP requests use the same
+subject with a tool-specific lease such as `mcp_tool:server:tool`.
+Existing bare-sender leases do not cover these account-qualified requests;
+regrant any needed lease using the helper. A grant for one account cannot
+authorize the same sender on another account.
+
 ## Managing channels from the CLI
 
 The `neoth channel` family manages the canonical messaging registry (Telegram,

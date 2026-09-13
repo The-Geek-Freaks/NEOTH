@@ -16,8 +16,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use sha2::{Digest as _, Sha256};
 use tracing::{info, warn};
 
+use crate::channels::registry::{ChannelId, ChannelRef};
 use crate::channels::{InboundMessage, OutboundMessage, PipelineHandler};
 use crate::cli::serve::emit_required_audit;
 use crate::config::{FreedomConfig, InstancePaths};
@@ -36,6 +38,9 @@ use crate::wal::writer::WalWriterHandle;
 /// (Slack, WhatsApp, Discord) can build the same closure without
 /// re-listing every captured value.
 pub(crate) struct PipelineHandlerDeps {
+    /// Authenticated adapter construction boundary.  This is captured outside
+    /// untrusted payload handling; an `InboundMessage` cannot select an account.
+    pub(crate) inbound_binding: AuthenticatedInboundBinding,
     pub(crate) provider: Arc<dyn Provider>,
     /// Concrete outbound adapter for progressive send-then-edit delivery.
     /// Only adapters that advertise native edit support are supplied here;
@@ -97,6 +102,113 @@ pub(crate) struct PipelineHandlerDeps {
     /// a clone of the `Arc<ConfirmBus>`). `None` preserves the pre-GOOSE-03
     /// fail-closed behaviour for headless / test call sites.
     pub(crate) confirm_bus: Option<Arc<crate::permissions::confirm_bus::ConfirmBus>>,
+}
+
+/// Account identity authenticated by adapter startup, never by an inbound
+/// envelope.  The optional capability is intentionally private: only the
+/// admitted Telegram singleton constructor can carry it into identity-v2.
+#[derive(Clone)]
+pub(crate) struct AuthenticatedInboundBinding {
+    pub(crate) channel_ref: ChannelRef,
+    legacy_singleton_alias_claim:
+        Option<Arc<crate::channels::identity::LegacySingletonAliasClaimAuthority>>,
+}
+
+impl AuthenticatedInboundBinding {
+    /// Bind a regular adapter to the account selected by its startup path.
+    pub(crate) fn for_account(channel_ref: ChannelRef) -> Self {
+        Self {
+            channel_ref,
+            legacy_singleton_alias_claim: None,
+        }
+    }
+
+    /// Constructed only by the already-admitted Telegram singleton startup
+    /// branch. The opaque admission proof is only constructed there; inbound
+    /// data and other production modules cannot supply an arbitrary sender.
+    pub(super) fn for_legacy_telegram_singleton(
+        admission: crate::cli::serve_tasks::AdmittedLegacyTelegramSingleton,
+    ) -> Self {
+        Self {
+            channel_ref: ChannelRef::default_account(ChannelId::Telegram),
+            legacy_singleton_alias_claim: Some(Arc::new(
+                crate::channels::identity::LegacySingletonAliasClaimAuthority::from_admitted_telegram_singleton(&admission),
+            )),
+        }
+    }
+
+    fn legacy_singleton_alias_claim(
+        &self,
+    ) -> Option<&crate::channels::identity::LegacySingletonAliasClaimAuthority> {
+        self.legacy_singleton_alias_claim.as_deref()
+    }
+}
+
+/// Stable canonical account key for durable non-operator communication scope.
+/// Both components are validated by `ChannelRef`; neither permits `/`.
+pub(crate) fn channel_ref_key(channel_ref: &ChannelRef) -> String {
+    format!(
+        "{}/{}",
+        channel_ref.channel_id.as_str(),
+        channel_ref.account_id.as_str()
+    )
+}
+
+fn length_delimited_scoped_sender_bytes(channel_ref: &ChannelRef, sender: &str) -> Vec<u8> {
+    let mut bytes = b"neoth/channel-sender/v2\0".to_vec();
+    for field in [
+        channel_ref.channel_id.as_str().as_bytes(),
+        channel_ref.account_id.as_str().as_bytes(),
+        sender.as_bytes(),
+    ] {
+        bytes.extend_from_slice(&(u64::try_from(field.len()).unwrap_or(u64::MAX)).to_be_bytes());
+        bytes.extend_from_slice(field);
+    }
+    bytes
+}
+
+/// PII-safe sender hash with the legacy 16-hex presentation but SHA-256
+/// domain separation and unambiguous `(channel, account, sender)` encoding.
+pub(crate) fn scoped_sender_hash_of(binding: &AuthenticatedInboundBinding, sender: &str) -> String {
+    let digest = Sha256::digest(length_delimited_scoped_sender_bytes(
+        &binding.channel_ref,
+        sender,
+    ));
+    hex::encode(&digest[..8])
+}
+
+/// The sole raw-envelope admission step.  Keeping it as a small synchronous
+/// helper makes the ordering auditable: `build_pipeline_handler` invokes it as
+/// its first future operation, so rejection cannot precede any IO, hook,
+/// checkpoint, identity, limiter, WAL, or provider action.
+fn admit_bound_inbound(
+    binding: &AuthenticatedInboundBinding,
+    mut inbound: InboundMessage,
+) -> Option<InboundMessage> {
+    if inbound.channel != binding.channel_ref.channel_id {
+        return None;
+    }
+    inbound.human_uuid = None;
+    Some(inbound)
+}
+
+fn channel_media_source_ref(
+    binding: &AuthenticatedInboundBinding,
+    inbound: &InboundMessage,
+) -> String {
+    let mut bytes = b"neoth/channel-media/v2\0".to_vec();
+    let timestamp = inbound.channel_ts_unix.to_be_bytes();
+    for field in [
+        binding.channel_ref.channel_id.as_str().as_bytes(),
+        binding.channel_ref.account_id.as_str().as_bytes(),
+        inbound.chat_id.as_bytes(),
+        inbound.sender_id.as_bytes(),
+        &timestamp,
+    ] {
+        bytes.extend_from_slice(&(u64::try_from(field.len()).unwrap_or(u64::MAX)).to_be_bytes());
+        bytes.extend_from_slice(field);
+    }
+    format!("channel-media/{}", hex::encode(Sha256::digest(bytes)))
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -186,9 +298,8 @@ pub(crate) async fn emit_channel_privilege_blocked(
     .await;
 }
 
-/// GOLD-ARCH-01 phase 2: PII-hash a channel sender id ONCE. The plaintext id
-/// (a phone number for WhatsApp) stays in-process; only this xxh3-64 hash
-/// reaches the WAL + tracing lines.
+/// Legacy fixture hash. Production keys use the account-bound SHA-256 helper.
+#[cfg(test)]
 pub(crate) fn sender_hash_of(sender_id: &str) -> String {
     format!("{:016x}", xxhash_rust::xxh3::xxh3_64(sender_id.as_bytes()))
 }
@@ -288,6 +399,7 @@ struct ReleasedResearchChannelRoute<'a, P> {
     hooks: &'a [crate::hooks::schema::HookDef],
     autonomy_policy: P,
     inbound: &'a InboundMessage,
+    binding: &'a AuthenticatedInboundBinding,
     channel: &'a str,
     sender_hash: &'a str,
     channel_asker: Option<Arc<dyn crate::permissions::gate::ChannelAsker>>,
@@ -314,6 +426,7 @@ where
                 route.hooks,
                 route.autonomy_policy,
                 route.inbound,
+                route.binding,
                 route.channel,
                 route.sender_hash,
                 guidance,
@@ -331,6 +444,7 @@ where
         route.hooks,
         route.autonomy_policy,
         route.inbound,
+        route.binding,
         route.channel,
         route.sender_hash,
         &reply,
@@ -386,7 +500,7 @@ fn operator_released_external_research_topic(
 fn communication_subject_id(
     inbound: &InboundMessage,
     operator_human_uuid: Option<&str>,
-    channel: &str,
+    channel_ref: &ChannelRef,
     sender_hash: &str,
 ) -> String {
     if matches!(
@@ -398,18 +512,18 @@ fn communication_subject_id(
         inbound
             .human_uuid
             .clone()
-            .unwrap_or_else(|| format!("native:{channel}:{sender_hash}"))
+            .unwrap_or_else(|| format!("native:{}:{sender_hash}", channel_ref_key(channel_ref)))
     }
 }
 
 fn communication_scope_for_subject(
     subject_id: &str,
-    channel: &str,
+    channel_ref: &ChannelRef,
 ) -> crate::profile::communication::CommunicationScope {
     if subject_id == "operator" {
         crate::profile::communication::CommunicationScope::Global
     } else {
-        crate::profile::communication::CommunicationScope::Channel(channel.to_owned())
+        crate::profile::communication::CommunicationScope::Channel(channel_ref_key(channel_ref))
     }
 }
 
@@ -426,6 +540,8 @@ fn communication_scope_for_subject(
 /// serialising mutex) when the executor is `None`.
 pub(crate) async fn resolve_inbound_identity(
     inbound: &mut InboundMessage,
+    binding: &AuthenticatedInboundBinding,
+    pinned_operator_uuid: Option<&str>,
     views_conn: &Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>>,
     views_executor: &Option<std::sync::Arc<crate::memory::store::ViewsExecutor>>,
 ) {
@@ -440,9 +556,9 @@ pub(crate) async fn resolve_inbound_identity(
         // first-sight creation takes the single writer.
         let fast = exec
             .with_reader(|conn| {
-                crate::channels::identity::lookup_human_uuid(
+                crate::channels::identity::lookup_human_uuid_v2(
                     conn,
-                    inbound.channel.as_str(),
+                    &binding.channel_ref,
                     &inbound.sender_id,
                     &inbound.chat_id,
                 )
@@ -454,16 +570,20 @@ pub(crate) async fn resolve_inbound_identity(
                 // First sight — create under the SINGLE writer.
                 match exec
                     .with_writer(|conn| {
-                        crate::channels::identity::resolve_or_create_human_uuid(
+                        crate::channels::identity::resolve_or_create_human_uuid_v2(
                             conn,
-                            inbound.channel.as_str(),
-                            &inbound.sender_id,
-                            &inbound.chat_id,
+                            crate::channels::identity::ResolveInboundIdentity {
+                                channel_ref: &binding.channel_ref,
+                                sender_id: &inbound.sender_id,
+                                chat_id: &inbound.chat_id,
+                                pinned_operator_uuid,
+                                legacy_singleton_claim: binding.legacy_singleton_alias_claim(),
+                            },
                         )
                     })
                     .await
                 {
-                    Ok(uuid) => inbound.human_uuid = Some(uuid),
+                    Ok(resolved) => inbound.human_uuid = Some(resolved.human_uuid),
                     Err(e) => tracing::debug!(
                         error = %e,
                         "identity: human_uuid create failed via executor writer (best-effort)"
@@ -477,13 +597,17 @@ pub(crate) async fn resolve_inbound_identity(
         }
     } else if let Some(vc) = views_conn {
         let conn = vc.lock().await;
-        match crate::channels::identity::resolve_or_create_human_uuid(
+        match crate::channels::identity::resolve_or_create_human_uuid_v2(
             &conn,
-            inbound.channel.as_str(),
-            &inbound.sender_id,
-            &inbound.chat_id,
+            crate::channels::identity::ResolveInboundIdentity {
+                channel_ref: &binding.channel_ref,
+                sender_id: &inbound.sender_id,
+                chat_id: &inbound.chat_id,
+                pinned_operator_uuid,
+                legacy_singleton_claim: binding.legacy_singleton_alias_claim(),
+            },
         ) {
-            Ok(uuid) => inbound.human_uuid = Some(uuid),
+            Ok(resolved) => inbound.human_uuid = Some(resolved.human_uuid),
             Err(e) => {
                 tracing::debug!(error = %e, "identity: human_uuid resolve failed (best-effort)")
             }
@@ -499,6 +623,7 @@ pub(crate) async fn resolve_inbound_identity(
 /// the payload (PII) — mirrors the CHANNEL_INGRESS xxh3-64 hash contract.
 pub(crate) async fn audit_inbound_edit(
     inbound: &InboundMessage,
+    binding: &AuthenticatedInboundBinding,
     sender_hash: &str,
     writer: &WalWriterHandle,
 ) -> bool {
@@ -508,6 +633,7 @@ pub(crate) async fn audit_inbound_edit(
     let new_text = inbound.text.as_deref().unwrap_or("");
     match serde_json::to_vec(&serde_json::json!({
         "channel": inbound.channel,
+        "channel_ref": binding.channel_ref,
         "chat_id": inbound.chat_id,
         "message_id": inbound.message_id,
         "sender_id_hash": sender_hash,
@@ -573,16 +699,16 @@ fn channel_learning_signal(sanitized_caption: &str) -> (u64, u32) {
 /// — and `false` to continue.
 pub(crate) async fn enforce_inbound_rate_limit(
     rate_limiter: &crate::channels::rate_limit::RateLimiter,
-    channel_str: &str,
+    binding: &AuthenticatedInboundBinding,
     sender_id: &str,
     sender_hash: &str,
     writer: &WalWriterHandle,
 ) -> bool {
-    match rate_limiter.try_consume(channel_str, sender_id) {
+    match rate_limiter.try_consume(&binding.channel_ref, sender_id) {
         crate::channels::rate_limit::Decision::Allowed => false,
         crate::channels::rate_limit::Decision::RateLimited { retry_after_ms } => {
             info!(
-                channel = channel_str,
+                channel = binding.channel_ref.channel_id.as_str(),
                 sender_hash = %sender_hash,
                 retry_after_ms,
                 "inbound rate-limited; dropping",
@@ -591,7 +717,8 @@ pub(crate) async fn enforce_inbound_rate_limit(
             // the rest of the segment. Serialisation cannot fail here (all
             // primitives) but the defensive pattern stays.
             let payload = match serde_json::to_vec(&serde_json::json!({
-                "channel": channel_str,
+                "channel": binding.channel_ref.channel_id,
+                "channel_ref": binding.channel_ref,
                 "sender_id_hash": sender_hash,
                 "reason": "rate_limited",
                 "retry_after_ms": retry_after_ms,
@@ -678,13 +805,20 @@ pub(crate) async fn sanitize_inbound(
 /// call this function and therefore leave no transcript row.
 async fn persist_sanitized_channel_caption(
     views_conn: &Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>>,
+    binding: &AuthenticatedInboundBinding,
     sender_hash: &str,
     sanitized_caption: &str,
     ts_unix: i64,
 ) -> String {
     let session_id = format!(
         "{:016x}-{ts_unix}",
-        xxhash_rust::xxh3::xxh3_64(format!("{sender_hash}-{ts_unix}").as_bytes())
+        xxhash_rust::xxh3::xxh3_64(
+            format!(
+                "{}-{sender_hash}-{ts_unix}",
+                channel_ref_key(&binding.channel_ref)
+            )
+            .as_bytes()
+        )
     );
     if !sanitized_caption.is_empty()
         && let Some(connection) = views_conn
@@ -714,6 +848,7 @@ pub(crate) async fn emit_inbound_ingress(
     neoth_home: &std::path::Path,
     report: &crate::security::ingress_sanitizer::SanitizeReport,
     inbound: &InboundMessage,
+    binding: &AuthenticatedInboundBinding,
     sender_hash: &str,
     operator_id: &Option<String>,
 ) -> Result<i64> {
@@ -739,6 +874,7 @@ pub(crate) async fn emit_inbound_ingress(
     // CHANNEL_INGRESS (hashed metadata).
     let ingress_payload = serde_json::to_vec(&serde_json::json!({
         "channel": inbound.channel,
+        "channel_ref": binding.channel_ref,
         "sender_id_hash": sender_hash,
         "text_hash_xxh3": xxhash_rust::xxh3::xxh3_64(report.text.as_bytes()),
         "text_bytes": report.text.len(),
@@ -780,6 +916,7 @@ async fn authorize_channel_send<P: crate::permissions::PolicyArgument>(
     neoth_home: &std::path::Path,
     autonomy_policy: P,
     inbound: &InboundMessage,
+    binding: &AuthenticatedInboundBinding,
     channel_str: &str,
     channel_asker: Option<&Arc<dyn crate::permissions::gate::ChannelAsker>>,
 ) -> Result<bool> {
@@ -798,7 +935,10 @@ async fn authorize_channel_send<P: crate::permissions::PolicyArgument>(
     let gate = {
         let base = Gate::for_policy(autonomy_policy.policy_snapshot()).with_lease_snapshot(
             &lease_store,
-            &inbound.sender_id,
+            crate::permissions::lease::channel_lease_subject(
+                &binding.channel_ref,
+                &inbound.sender_id,
+            ),
             now,
         );
         if let Some(asker) = channel_asker {
@@ -849,6 +989,7 @@ pub(crate) async fn release_channel_reply<P: crate::permissions::PolicyArgument 
     hooks: &[crate::hooks::schema::HookDef],
     autonomy_policy: P,
     inbound: &InboundMessage,
+    binding: &AuthenticatedInboundBinding,
     channel_str: &str,
     sender_hash: &str,
     body: &str,
@@ -927,6 +1068,7 @@ pub(crate) async fn release_channel_reply<P: crate::permissions::PolicyArgument 
                     "name": name,
                     "stage": "pre_egress",
                     "channel": channel_str,
+                    "channel_ref": binding.channel_ref,
                     "recipient_hash": sender_hash,
                     "ts_unix": ts_unix,
                 })) {
@@ -954,6 +1096,7 @@ pub(crate) async fn release_channel_reply<P: crate::permissions::PolicyArgument 
                 "name": name,
                 "stage": "pre_egress",
                 "channel": channel_str,
+                "channel_ref": binding.channel_ref,
                 "recipient_hash": sender_hash,
                 "reason": reason,
                 "ts_unix": crate::time::now_unix_secs(),
@@ -986,6 +1129,7 @@ pub(crate) async fn release_channel_reply<P: crate::permissions::PolicyArgument 
             neoth_home,
             autonomy_policy,
             inbound,
+            binding,
             channel_str,
             channel_asker.as_ref(),
         )
@@ -1010,6 +1154,7 @@ pub(crate) async fn release_channel_reply<P: crate::permissions::PolicyArgument 
     // stored in the clear — and we attest the hash of the *post-hook* text.
     let egress_payload = serde_json::to_vec(&serde_json::json!({
         "channel": inbound.channel,
+        "channel_ref": binding.channel_ref,
         "to_hash": sender_hash,
         "reply_hash_xxh3": xxhash_rust::xxh3::xxh3_64(reply_text.as_bytes()),
         "reply_bytes": reply_text.len(),
@@ -1041,6 +1186,7 @@ async fn release_local_channel_notice<P: crate::permissions::PolicyArgument + Co
     hooks: &[crate::hooks::schema::HookDef],
     autonomy_policy: P,
     inbound: &InboundMessage,
+    binding: &AuthenticatedInboundBinding,
     channel_str: &str,
     sender_hash: &str,
     body: &str,
@@ -1061,6 +1207,7 @@ async fn release_local_channel_notice<P: crate::permissions::PolicyArgument + Co
         hooks,
         autonomy_policy,
         inbound,
+        binding,
         channel_str,
         sender_hash,
         body,
@@ -1242,6 +1389,7 @@ async fn resolve_channel_turn_route(
 /// reply.
 pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
     let PipelineHandlerDeps {
+        inbound_binding,
         provider,
         live_channel,
         writer,
@@ -1257,6 +1405,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
         views_executor,
         confirm_bus,
     } = deps;
+    let inbound_binding = Arc::new(inbound_binding);
     // GOLD-ADAPT-GOOSE-03: build the ChannelAsker from the bus once (outside the
     // per-message closure) so the Arc is cloned once per inbound, not per gate call.
     let channel_asker_arc: Option<Arc<dyn crate::permissions::gate::ChannelAsker>> =
@@ -1281,6 +1430,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
 
     Box::new(move |inbound: InboundMessage| {
         let provider = Arc::clone(&provider);
+        let inbound_binding = Arc::clone(&inbound_binding);
         let live_channel = live_channel.as_ref().map(Arc::clone);
         let writer = writer.clone();
         let operator_id = operator_id.clone();
@@ -1311,12 +1461,14 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
         // GOLD-CCPARITY-ONCE: clone the session Arc so the async future owns it.
         let session_fired_once = Arc::clone(&session_fired_once_arc);
         Box::pin(async move {
-            let mut inbound = inbound;
+            let Some(mut inbound) = admit_bound_inbound(&inbound_binding, inbound) else {
+                return Ok(None);
+            };
             // PII guard: the sender id is a phone number for WhatsApp. Hash it
             // ONCE and use the hash in every WAL frame + tracing line on the
             // inbound path — the plaintext id stays in-process only (rate
             // limiter, permission gate, identity resolve), never on disk.
-            let sender_hash = sender_hash_of(&inbound.sender_id);
+            let sender_hash = scoped_sender_hash_of(&inbound_binding, &inbound.sender_id);
             let channel_name = inbound.channel;
             let channel_str = channel_name.as_str();
 
@@ -1359,6 +1511,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         &hooks,
                         &autonomy_policy,
                         &inbound,
+        &inbound_binding,
                         channel_str,
                         &sender_hash,
                         "[NEOTH] Instance configuration is invalid. Fix mcp_servers.yaml, tweaks.toml, or profile_extensions.toml on the host before retrying.",
@@ -1388,7 +1541,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 // Stable per-turn id: xxh3-64 of sender_hash + ts_unix.
                 let turn_id = format!(
                     "{:016x}-{ts_unix}",
-                    xxhash_rust::xxh3::xxh3_64(format!("{sender_hash}-{ts_unix}").as_bytes())
+                    xxhash_rust::xxh3::xxh3_64(
+                        format!(
+                            "{}-{sender_hash}-{ts_unix}",
+                            channel_ref_key(&inbound_binding.channel_ref)
+                        )
+                        .as_bytes()
+                    )
                 );
                 // GOLD-ADAPT-G-01: three-way label: single > off > enabled.
                 let council_mode_str = if config_for_handler.council.mode.is_single() {
@@ -1418,10 +1577,20 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
 
             // GOLD-ARCH-01 phase 2: SPEC-11 identity resolve (stamps human_uuid).
             // TRAIL-04: passes executor so identity lookup uses a pool reader.
-            resolve_inbound_identity(&mut inbound, &views_conn, &views_executor).await;
+            resolve_inbound_identity(
+                &mut inbound,
+                &inbound_binding,
+                config_for_handler
+                    .channel_weights
+                    .operator_human_uuid
+                    .as_deref(),
+                &views_conn,
+                &views_executor,
+            )
+            .await;
             // GOLD-ARCH-01 phase 2: SD-03 edited-message audit. An edit is
             // observed-only — audit it + return without re-running the pipeline.
-            if audit_inbound_edit(&inbound, &sender_hash, &writer).await {
+            if audit_inbound_edit(&inbound, &inbound_binding, &sender_hash, &writer).await {
                 return Ok(::std::option::Option::None);
             }
 
@@ -1555,7 +1724,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // GOLD-ARCH-01 phase 2: BS-11 per-sender rate limit (silent drop).
             if enforce_inbound_rate_limit(
                 &rate_limiter,
-                channel_str,
+                &inbound_binding,
                 &inbound.sender_id,
                 &sender_hash,
                 &writer,
@@ -1609,6 +1778,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 &neoth_home,
                 &report,
                 &inbound,
+                &inbound_binding,
                 &sender_hash,
                 &operator_id,
             )
@@ -1620,6 +1790,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // it from a later wall-clock second.
             let ody26_session = persist_sanitized_channel_caption(
                 &views_conn,
+                &inbound_binding,
                 &sender_hash,
                 &sanitized_text,
                 ingress_ts_unix as i64,
@@ -1638,14 +1809,16 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     .channel_weights
                     .operator_human_uuid
                     .as_deref(),
-                channel_str,
+                &inbound_binding.channel_ref,
                 &sender_hash,
             );
             // The pinned operator intentionally shares one global profile
             // with CLI/GUI. Other humans remain channel-scoped even when a
             // cross-channel UUID identifies the same person.
-            let channel_communication_scope =
-                communication_scope_for_subject(&channel_communication_subject, channel_str);
+            let channel_communication_scope = communication_scope_for_subject(
+                &channel_communication_subject,
+                &inbound_binding.channel_ref,
+            );
             let communication_session = format!(
                 "channel:{channel_str}:{sender_hash}:{}",
                 (ingress_ts_unix as i64).div_euclid(86_400)
@@ -1713,6 +1886,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     &hooks,
                     &autonomy_policy,
                     &inbound,
+                    &inbound_binding,
                     channel_str,
                     &sender_hash,
                     &notice,
@@ -1819,6 +1993,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             &hooks,
                             &autonomy_policy,
                             &inbound,
+                            &inbound_binding,
                             channel_str,
                             &sender_hash,
                             &recall_reply,
@@ -1978,6 +2153,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                     &hooks,
                                     &autonomy_policy,
                                     &inbound,
+                                    &inbound_binding,
                                     channel_str,
                                     &sender_hash,
                                     &ack,
@@ -2329,6 +2505,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             &hooks,
                             &autonomy_policy,
                             &inbound,
+                            &inbound_binding,
                             channel_str,
                             &sender_hash,
                             &notice,
@@ -2449,6 +2626,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 Some(payload) => {
                     match handle_media_attachment(
                         &inbound,
+                        &inbound_binding,
                         payload,
                         Some(&writer),
                         config_for_handler.as_ref(),
@@ -2472,6 +2650,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 &hooks,
                                 &autonomy_policy,
                                 &inbound,
+                                &inbound_binding,
                                 channel_str,
                                 &sender_hash,
                                 &notice,
@@ -2597,6 +2776,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             &hooks,
                             &autonomy_policy,
                             &inbound,
+                            &inbound_binding,
                             channel_str,
                             &sender_hash,
                             &notice,
@@ -2627,6 +2807,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 hooks: &hooks,
                                 autonomy_policy: &autonomy_policy,
                                 inbound: &inbound,
+                                binding: &inbound_binding,
                                 channel: channel_str,
                                 sender_hash: &sender_hash,
                                 channel_asker: channel_asker.as_ref().map(Arc::clone),
@@ -2703,6 +2884,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             &hooks,
                             &autonomy_policy,
                             &inbound,
+                            &inbound_binding,
                             channel_str,
                             &sender_hash,
                             &reply_text,
@@ -2732,6 +2914,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 &hooks,
                                 &autonomy_policy,
                                 &inbound,
+                                &inbound_binding,
                                 channel_str,
                                 &sender_hash,
                                 &notice,
@@ -2804,6 +2987,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 &hooks,
                                 &autonomy_policy,
                                 &inbound,
+                                &inbound_binding,
                                 channel_str,
                                 &sender_hash,
                                 &reply_text,
@@ -3118,6 +3302,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         &hooks,
                         &autonomy_policy,
                         &inbound,
+                        &inbound_binding,
                         channel_str,
                         &sender_hash,
                         &notice,
@@ -3156,6 +3341,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     &hooks,
                     &autonomy_policy,
                     &inbound,
+        &inbound_binding,
                     channel_str,
                     &sender_hash,
                     "[NEOTH] The request could not be assembled safely. Please retry after checking the active prompt configuration.",
@@ -3205,6 +3391,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     &hooks,
                     &autonomy_policy,
                     &inbound,
+                    &inbound_binding,
                     channel_str,
                     &sender_hash,
                     &notice,
@@ -3247,6 +3434,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         &hooks,
                         &autonomy_policy,
                         &inbound,
+        &inbound_binding,
                         channel_str,
                         &sender_hash,
                         "[NEOTH] The MCP request could not be assembled safely. Please retry after checking the active prompt configuration.",
@@ -3271,6 +3459,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             &hooks,
                             &autonomy_policy,
                             &inbound,
+        &inbound_binding,
                             channel_str,
                             &sender_hash,
                             "[NEOTH] The MCP request could not be assembled safely. Please retry after checking the active prompt configuration.",
@@ -3289,6 +3478,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         &hooks,
                         &autonomy_policy,
                         &inbound,
+        &inbound_binding,
                         channel_str,
                         &sender_hash,
                         "[NEOTH] The MCP request could not be assembled safely. Please retry after checking the active prompt configuration.",
@@ -3330,6 +3520,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         &hooks,
                         &autonomy_policy,
                         &inbound,
+                        &inbound_binding,
                         channel_str,
                         &sender_hash,
                         &notice,
@@ -3370,6 +3561,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     &hooks,
                     &autonomy_policy,
                     &inbound,
+                    &inbound_binding,
                     channel_str,
                     &sender_hash,
                     &notice,
@@ -3685,7 +3877,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         // caller. The sender_id is already HMAC/platform-verified
                         // by the channel adapter before this closure runs (L620
                         // ChannelSend gate also uses it as the lease subject).
-                        Some(inbound.sender_id.clone()),
+                        Some(crate::permissions::lease::channel_lease_subject(
+                            &inbound_binding.channel_ref,
+                            &inbound.sender_id,
+                        )),
                         // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
                         &config_for_handler.tools.harness,
                         &mut compaction_budget,
@@ -3766,6 +3961,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         &neoth_home,
                         &autonomy_policy,
                         &inbound,
+                        &inbound_binding,
                         channel_str,
                         channel_asker.as_ref(),
                     )
@@ -4335,7 +4531,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // file per UTC day. Failure logs but never blocks egress —
             // the WAL is the source of truth.
             {
-                let session_id = format!("{}-{}", channel_str, inbound.sender_id);
+                let session_id = format!(
+                    "channel-{}-{sender_hash}",
+                    channel_ref_key(&inbound_binding.channel_ref)
+                );
                 let now = crate::time::utc_now();
                 let archive = crate::memory::archive::SessionArchive::new(
                     instance_paths.archive.clone(),
@@ -4405,10 +4604,12 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     // weight apply: trusted senders contribute 1.0, while
                     // `all_tiny` strangers contribute 0.1. Same `home`/`now`;
                     // best-effort, so a write error is non-fatal.
-                    let person_key = inbound
-                        .human_uuid
-                        .clone()
-                        .unwrap_or_else(|| format!("native:{channel_str}:{}", inbound.sender_id));
+                    let person_key = inbound.human_uuid.clone().unwrap_or_else(|| {
+                        format!(
+                            "native:{}:{sender_hash}",
+                            channel_ref_key(&inbound_binding.channel_ref)
+                        )
+                    });
                     let is_reply_to_bot = matches!(
                         inbound.mention_kind,
                         Some(
@@ -4664,6 +4865,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 &hooks,
                 &autonomy_policy,
                 &inbound,
+                &inbound_binding,
                 channel_str,
                 &sender_hash,
                 &reply_for_egress,
@@ -4700,6 +4902,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
 /// `Asset` clones into cheap path clones rather than 64–256 MiB byte clones.
 pub(crate) async fn handle_media_attachment(
     inbound: &InboundMessage,
+    binding: &AuthenticatedInboundBinding,
     media: crate::channels::MediaPayload,
     writer: Option<&WalWriterHandle>,
     config: &FreedomConfig,
@@ -4778,20 +4981,7 @@ pub(crate) async fn handle_media_attachment(
         AssetKind::Document => "document",
         AssetKind::Other => "asset",
     };
-    let source_ref_hash = xxhash_rust::xxh3::xxh3_64(
-        format!(
-            "{}:{}:{}:{}",
-            inbound.channel.as_str(),
-            inbound.chat_id,
-            inbound.sender_id,
-            inbound.channel_ts_unix,
-        )
-        .as_bytes(),
-    );
-    let source_ref = format!(
-        "channel:{}:{source_ref_hash:016x}",
-        inbound.channel.as_str()
-    );
+    let source_ref = channel_media_source_ref(binding, inbound);
 
     // Always emit INGEST_EXTRACTED — mirrors `neoth ingest`'s audit
     // shape so a `neoth wal show` operator sees the same frames for
@@ -4807,6 +4997,7 @@ pub(crate) async fn handle_media_attachment(
             "text_bytes": extraction.text.len(),
             "model": model_name,
             "channel": inbound.channel.as_str(),
+            "channel_ref": binding.channel_ref,
             "ts_unix": crate::time::now_unix_secs(),
         })) {
             Ok(payload) => {
@@ -4834,13 +5025,14 @@ pub(crate) async fn handle_media_attachment(
                 .context("persist channel-side embedding")?;
             if let Some(w) = writer {
                 match serde_json::to_vec(&serde_json::json!({
-                    "source_kind": source_kind,
-                    "source_ref": source_ref,
-                    "model": model,
-                    "dim": dim,
-                    "channel": inbound.channel.as_str(),
-                    "ts_unix": crate::time::now_unix_secs(),
-                })) {
+                        "source_kind": source_kind,
+                        "source_ref": source_ref,
+                        "model": model,
+                        "dim": dim,
+                        "channel": inbound.channel.as_str(),
+                "channel_ref": binding.channel_ref,
+                        "ts_unix": crate::time::now_unix_secs(),
+                    })) {
                     Ok(payload) => {
                         emit_required_audit(
                             w,
@@ -5409,6 +5601,60 @@ mod tests {
             })
         }
     }
+
+    #[tokio::test]
+    async fn pipeline_handler_rejects_mismatched_channel_before_writer_or_provider_io() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_path = home.path().join("mismatched-channel.wal");
+        let (writer, writer_join) = crate::wal::spawn(wal_path.clone()).unwrap();
+        let provider = Arc::new(ChannelRequestCapturingProvider {
+            request: std::sync::Mutex::new(None),
+        });
+        let handler = build_pipeline_handler(PipelineHandlerDeps {
+            inbound_binding: AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                ChannelId::Telegram,
+            )),
+            provider: provider.clone(),
+            live_channel: None,
+            writer: writer.clone(),
+            operator_id: None,
+            goal_max_turns: 1,
+            meter: crate::providers::meter::Meter::with_default_window(),
+            rate_limiter: Arc::new(crate::channels::rate_limit::RateLimiter::with_defaults()),
+            segment_path: home.path().join("unused-segment.wal"),
+            neoth_home: home.path().to_path_buf(),
+            profile_config: crate::config::ProfileConfig::default(),
+            reload_controller: Arc::new(crate::config::reload::ReloadController::new(
+                FreedomConfig::default(),
+                home.path().join("missing-freedom.yaml"),
+            )),
+            views_conn: None,
+            views_executor: None,
+            confirm_bus: None,
+        });
+        let mut wrong = inbound(Some("this must not be evaluated"), None);
+        wrong.channel = ChannelId::Slack;
+        wrong.human_uuid = Some("payload-supplied".to_owned());
+
+        assert!(handler(wrong).await.unwrap().is_none());
+        assert!(
+            provider.request.lock().unwrap().is_none(),
+            "provider was not touched"
+        );
+        drop(handler);
+        drop(writer);
+        writer_join.await.unwrap();
+        let mut frames = 0usize;
+        crate::wal::scan::for_each_frame(&std::fs::read(wal_path).unwrap_or_default(), |_, _| {
+            frames += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            frames, 0,
+            "the WAL segment header is allowed, but no checkpoint or audit frame was written"
+        );
+    }
     #[tokio::test]
     async fn channel_token_budget_degrades_the_actual_post_hook_request() {
         use crate::tokens::budget::{Block, BlockItem};
@@ -5695,19 +5941,20 @@ mod tests {
     #[test]
     fn communication_subject_shares_only_the_proven_pinned_operator_profile() {
         let mut msg = inbound(Some("hi"), None);
+        let channel_ref = ChannelRef::default_account(ChannelId::Telegram);
         msg.human_uuid = Some("human-operator".into());
         assert_eq!(
-            communication_subject_id(&msg, Some("human-operator"), "telegram", "hash"),
+            communication_subject_id(&msg, Some("human-operator"), &channel_ref, "hash"),
             "operator"
         );
 
         assert_eq!(
-            communication_subject_id(&msg, Some("different-human"), "telegram", "hash"),
+            communication_subject_id(&msg, Some("different-human"), &channel_ref, "hash"),
             "human-operator",
             "a non-operator keeps a separate cross-channel subject"
         );
         assert_eq!(
-            communication_subject_id(&msg, None, "telegram", "hash"),
+            communication_subject_id(&msg, None, &channel_ref, "hash"),
             "human-operator",
             "missing operator pin must never promote a sender"
         );
@@ -5846,20 +6093,22 @@ mod tests {
     fn communication_subject_fallback_never_persists_the_raw_sender_id() {
         let msg = inbound(Some("hi"), None);
         let sender_hash = sender_hash_of(&msg.sender_id);
-        let subject = communication_subject_id(&msg, None, "telegram", &sender_hash);
-        assert_eq!(subject, format!("native:telegram:{sender_hash}"));
+        let channel_ref = ChannelRef::default_account(ChannelId::Telegram);
+        let subject = communication_subject_id(&msg, None, &channel_ref, &sender_hash);
+        assert_eq!(subject, format!("native:telegram/default:{sender_hash}"));
         assert!(!subject.contains(&msg.sender_id));
     }
 
     #[test]
     fn communication_scope_is_global_only_for_the_pinned_operator() {
+        let channel_ref = ChannelRef::default_account(ChannelId::Telegram);
         assert_eq!(
-            communication_scope_for_subject("operator", "telegram"),
+            communication_scope_for_subject("operator", &channel_ref),
             crate::profile::communication::CommunicationScope::Global
         );
         assert_eq!(
-            communication_scope_for_subject("human-123", "telegram"),
-            crate::profile::communication::CommunicationScope::Channel("telegram".into())
+            communication_scope_for_subject("human-123", &channel_ref),
+            crate::profile::communication::CommunicationScope::Channel("telegram/default".into())
         );
     }
 
@@ -5919,10 +6168,149 @@ mod tests {
         );
     }
 
+    #[test]
+    fn bound_ingress_rejects_wrong_channel_before_any_effect_boundary() {
+        let binding = AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+            ChannelId::Telegram,
+        ));
+        let mut hostile = inbound(Some("must never reach a hook or WAL"), None);
+        hostile.channel = ChannelId::Slack;
+        hostile.human_uuid = Some("untrusted-payload-uuid".to_owned());
+
+        // This is the first statement in the handler future, before all
+        // captured effectful dependencies are touched.  The counter represents
+        // a writer/provider/identity hook and must remain zero on rejection.
+        let effects = AtomicUsize::new(0);
+        let accepted = admit_bound_inbound(&binding, hostile);
+        if accepted.is_some() {
+            effects.fetch_add(1, Ordering::SeqCst);
+        }
+        assert!(accepted.is_none());
+        assert_eq!(effects.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn binding_scopes_hash_media_profile_archive_and_lease_subjects_per_account() {
+        let account_a = AuthenticatedInboundBinding::for_account(ChannelRef::new(
+            ChannelId::Telegram,
+            crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
+        ));
+        let account_b = AuthenticatedInboundBinding::for_account(ChannelRef::new(
+            ChannelId::Telegram,
+            crate::channels::registry::ChannelAccountId::new("account_b").unwrap(),
+        ));
+        let msg = inbound(Some("same transport message"), None);
+        let a_hash = scoped_sender_hash_of(&account_a, &msg.sender_id);
+        let b_hash = scoped_sender_hash_of(&account_b, &msg.sender_id);
+        assert_ne!(a_hash, b_hash);
+        assert_ne!(
+            channel_ref_key(&account_a.channel_ref),
+            channel_ref_key(&account_b.channel_ref)
+        );
+        assert_ne!(
+            format!(
+                "channel-{}-{a_hash}",
+                channel_ref_key(&account_a.channel_ref)
+            ),
+            format!(
+                "channel-{}-{b_hash}",
+                channel_ref_key(&account_b.channel_ref)
+            ),
+            "archive key follows the same binding rather than raw sender"
+        );
+        assert_ne!(
+            communication_scope_for_subject("non-operator", &account_a.channel_ref),
+            communication_scope_for_subject("non-operator", &account_b.channel_ref),
+        );
+        assert_ne!(
+            crate::permissions::lease::channel_lease_subject(
+                &account_a.channel_ref,
+                &msg.sender_id
+            ),
+            crate::permissions::lease::channel_lease_subject(
+                &account_b.channel_ref,
+                &msg.sender_id
+            ),
+        );
+        let a_media = channel_media_source_ref(&account_a, &msg);
+        let b_media = channel_media_source_ref(&account_b, &msg);
+        assert_ne!(a_media, b_media);
+        assert!(!a_media.contains(&msg.sender_id));
+        assert!(!b_media.contains(&msg.sender_id));
+    }
+
+    #[tokio::test]
+    async fn transcript_session_key_isolated_for_same_sender_on_two_accounts() {
+        let account_a = AuthenticatedInboundBinding::for_account(ChannelRef::new(
+            ChannelId::Telegram,
+            crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
+        ));
+        let account_b = AuthenticatedInboundBinding::for_account(ChannelRef::new(
+            ChannelId::Telegram,
+            crate::channels::registry::ChannelAccountId::new("account_b").unwrap(),
+        ));
+        let a =
+            persist_sanitized_channel_caption(&None, &account_a, "same-sender", "safe", 7).await;
+        let b =
+            persist_sanitized_channel_caption(&None, &account_b, "same-sender", "safe", 7).await;
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn admitted_telegram_legacy_claim_preserves_only_the_matching_pinned_v1_alias() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        let pinned = "pinned-operator";
+        conn.execute(
+            "INSERT INTO idx_human_identity (uuid, created_at_unix) VALUES (?1, 1)",
+            [pinned],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_human_identity_aliases (uuid, channel, sender_id, chat_id) VALUES (?1, 'telegram', '42', 'chat')",
+            [pinned],
+        ).unwrap();
+        let binding = AuthenticatedInboundBinding::for_legacy_telegram_singleton(
+            crate::cli::serve_tasks::AdmittedLegacyTelegramSingleton::for_test(42),
+        );
+        let resolved = crate::channels::identity::resolve_or_create_human_uuid_v2(
+            &conn,
+            crate::channels::identity::ResolveInboundIdentity {
+                channel_ref: &binding.channel_ref,
+                sender_id: "42",
+                chat_id: "chat",
+                pinned_operator_uuid: Some(pinned),
+                legacy_singleton_claim: binding.legacy_singleton_alias_claim(),
+            },
+        )
+        .unwrap();
+        assert_eq!(resolved.human_uuid, pinned);
+
+        let account_b = AuthenticatedInboundBinding::for_account(ChannelRef::new(
+            ChannelId::Telegram,
+            crate::channels::registry::ChannelAccountId::new("account_b").unwrap(),
+        ));
+        let isolated = crate::channels::identity::resolve_or_create_human_uuid_v2(
+            &conn,
+            crate::channels::identity::ResolveInboundIdentity {
+                channel_ref: &account_b.channel_ref,
+                sender_id: "42",
+                chat_id: "chat",
+                pinned_operator_uuid: Some(pinned),
+                legacy_singleton_claim: account_b.legacy_singleton_alias_claim(),
+            },
+        )
+        .unwrap();
+        assert_ne!(isolated.human_uuid, pinned);
+    }
+
     #[tokio::test]
     async fn resolve_identity_with_no_views_conn_is_a_noop() {
         let mut msg = inbound(Some("hi"), None);
-        resolve_inbound_identity(&mut msg, &None, &None).await;
+        let binding = AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+            ChannelId::Telegram,
+        ));
+        resolve_inbound_identity(&mut msg, &binding, None, &None, &None).await;
         assert!(msg.human_uuid.is_none(), "no conn → no uuid, no panic");
     }
 
@@ -5932,7 +6320,10 @@ mod tests {
         let seg = dir.path().join("000001.wal");
         let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
         let msg = inbound(Some("hello"), None);
-        assert!(!audit_inbound_edit(&msg, "deadbeefdeadbeef", &writer).await);
+        let binding = AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+            ChannelId::Telegram,
+        ));
+        assert!(!audit_inbound_edit(&msg, &binding, "deadbeefdeadbeef", &writer).await);
         drop(writer);
         let _ = join.await;
         let bytes = std::fs::read(&seg).unwrap_or_default();
@@ -6030,7 +6421,10 @@ mod tests {
         let seg = dir.path().join("000001.wal");
         let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
         let msg = inbound(Some("edited text"), Some(1_700_000_000));
-        assert!(audit_inbound_edit(&msg, "deadbeefdeadbeef", &writer).await);
+        let binding = AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+            ChannelId::Telegram,
+        ));
+        assert!(audit_inbound_edit(&msg, &binding, "deadbeefdeadbeef", &writer).await);
         drop(writer);
         let _ = join.await;
         let bytes = std::fs::read(&seg).unwrap();
@@ -6048,10 +6442,13 @@ mod tests {
         let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
         // 1 token/min, burst 1 → the bucket starts with a single token.
         let rl = crate::channels::rate_limit::RateLimiter::new(1.0, 1);
+        let binding = AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+            ChannelId::Telegram,
+        ));
         // First message from this sender: allowed (no drop, no frame).
-        assert!(!enforce_inbound_rate_limit(&rl, "telegram", "s1", "hash1", &writer).await);
+        assert!(!enforce_inbound_rate_limit(&rl, &binding, "s1", "hash1", &writer).await);
         // Second, immediately: bucket empty → rate-limited (drop + audit frame).
-        assert!(enforce_inbound_rate_limit(&rl, "telegram", "s1", "hash1", &writer).await);
+        assert!(enforce_inbound_rate_limit(&rl, &binding, "s1", "hash1", &writer).await);
         drop(writer);
         let _ = join.await;
         let bytes = std::fs::read(&seg).unwrap();
@@ -6129,11 +6526,15 @@ mod tests {
         let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
         let report = crate::security::ingress_sanitizer::sanitize("hello world", "telegram", false);
         let msg = inbound(Some("hello world"), None);
+        let binding = AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+            ChannelId::Telegram,
+        ));
         let eid = emit_inbound_ingress(
             &writer,
             dir.path(),
             &report,
             &msg,
+            &binding,
             "h1",
             &Some("op1".to_string()),
         )
@@ -6208,6 +6609,9 @@ mod tests {
             &[], // no hooks → Continue verbatim
             crate::permissions::AutonomyLevel::Standard,
             &msg,
+            &AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                ChannelId::Telegram,
+            )),
             "telegram",
             "deadbeefdeadbeef",
             "here is what I recall about rust",
@@ -6224,7 +6628,10 @@ mod tests {
         assert_eq!(out.text, "here is what I recall about rust");
         let trust = crate::permissions::trust_ledger::TrustLedger::replay_subject_at_home(
             dir.path(),
-            &msg.sender_id,
+            &crate::permissions::lease::channel_lease_subject(
+                &ChannelRef::default_account(ChannelId::Telegram),
+                &msg.sender_id,
+            ),
         )
         .expect("ChannelSend allow must be authenticated before the returned outbound");
         assert_eq!(
@@ -6279,6 +6686,9 @@ mod tests {
                 hooks: &[],
                 autonomy_policy: crate::permissions::AutonomyLevel::Standard,
                 inbound: &msg,
+                binding: &AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                    ChannelId::Telegram,
+                )),
                 channel: "telegram",
                 sender_hash: &sender_hash,
                 channel_asker: None,
@@ -6319,8 +6729,12 @@ mod tests {
         assert_eq!(receipts.len(), 1);
         let receipt = &receipts[0];
         let object = receipt.as_object().expect("CHANNEL_EGRESS receipt object");
-        assert_eq!(object.len(), 9);
+        assert_eq!(object.len(), 10);
         assert_eq!(receipt["channel"], "telegram");
+        assert_eq!(
+            receipt["channel_ref"],
+            serde_json::json!({"channel_id": "telegram", "account_id": "default"})
+        );
         assert_eq!(receipt["to_hash"], sender_hash);
         assert_eq!(sender_hash.len(), 16);
         assert!(
@@ -6411,6 +6825,9 @@ mod tests {
                     hooks: &[],
                     autonomy_policy: crate::permissions::AutonomyLevel::Standard,
                     inbound: &message_inbound,
+                    binding: &AuthenticatedInboundBinding::for_account(
+                        ChannelRef::default_account(ChannelId::Telegram),
+                    ),
                     channel: "telegram",
                     sender_hash: &sender_hash,
                     channel_asker: None,
@@ -6450,8 +6867,12 @@ mod tests {
             let object = receipt
                 .as_object()
                 .expect("research usage CHANNEL_EGRESS receipt object");
-            assert_eq!(object.len(), 9);
+            assert_eq!(object.len(), 10);
             assert_eq!(receipt["channel"], "telegram");
+            assert_eq!(
+                receipt["channel_ref"],
+                serde_json::json!({"channel_id": "telegram", "account_id": "default"})
+            );
             assert_eq!(receipt["to_hash"], sender_hash);
             assert_eq!(sender_hash.len(), 16);
             assert!(
@@ -6522,6 +6943,9 @@ mod tests {
             &[],
             crate::permissions::AutonomyLevel::Strict,
             &msg,
+            &AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                ChannelId::Telegram,
+            )),
             "telegram",
             "deadbeefdeadbeef",
             "secret operator memory",
@@ -6539,7 +6963,10 @@ mod tests {
         );
         let trust = crate::permissions::trust_ledger::TrustLedger::replay_subject_at_home(
             dir.path(),
-            &msg.sender_id,
+            &crate::permissions::lease::channel_lease_subject(
+                &ChannelRef::default_account(ChannelId::Telegram),
+                &msg.sender_id,
+            ),
         )
         .expect("ChannelSend denial must be authenticated before suppressing outbound");
         assert_eq!(
@@ -6591,6 +7018,9 @@ mod tests {
             &[],
             crate::permissions::AutonomyLevel::Standard,
             &msg,
+            &AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                ChannelId::Telegram,
+            )),
             "telegram",
             "deadbeefdeadbeef",
             "must never become an outbound message",
@@ -6651,6 +7081,9 @@ mod tests {
             &[],
             crate::permissions::AutonomyLevel::Strict,
             &msg,
+            &AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                ChannelId::Telegram,
+            )),
             "telegram",
             "deadbeefdeadbeef",
             "clean final",

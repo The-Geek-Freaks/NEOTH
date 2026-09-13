@@ -39,6 +39,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
 
+use crate::channels::registry::ChannelRef;
+
 /// Default rate: 30 tokens per minute (= 0.5 tokens/sec).
 pub const DEFAULT_TOKENS_PER_MINUTE: f64 = 30.0;
 /// Default burst size = bucket capacity.
@@ -88,7 +90,7 @@ impl Bucket {
 /// under the hood) so the daemon can hand it to every channel adapter
 /// without re-syncing.
 pub struct RateLimiter {
-    buckets: Mutex<HashMap<String, Bucket>>,
+    buckets: Mutex<HashMap<(ChannelRef, String), Bucket>>,
     tokens_per_sec: f64,
     capacity: f64,
 }
@@ -112,7 +114,7 @@ impl RateLimiter {
     /// Try to consume one token for the `(channel, sender)` pair. Refills
     /// the bucket first based on elapsed time, then checks if ≥ 1 token
     /// is available. Lock-held duration is O(1) per call.
-    pub fn try_consume(&self, channel: &str, sender: &str) -> Decision {
+    pub fn try_consume(&self, channel: &ChannelRef, sender: &str) -> Decision {
         self.try_consume_at(channel, sender, Instant::now())
     }
 
@@ -125,8 +127,8 @@ impl RateLimiter {
     /// fetch-or-create the per-key bucket, write the result back. All token
     /// math lives in the pure free function, exhaustively testable without a
     /// lock or a map.
-    pub fn try_consume_at(&self, channel: &str, sender: &str, now: Instant) -> Decision {
-        let key = format!("{channel}/{sender}");
+    pub fn try_consume_at(&self, channel: &ChannelRef, sender: &str, now: Instant) -> Decision {
+        let key = (channel.clone(), sender.to_owned());
         let mut guard = match self.buckets.lock() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
@@ -159,8 +161,8 @@ impl RateLimiter {
     /// Drop everything we know about `(channel, sender)` — useful when the
     /// operator manually whitelists a sender or wants to reset the limiter
     /// state for tests.
-    pub fn reset(&self, channel: &str, sender: &str) {
-        let key = format!("{channel}/{sender}");
+    pub fn reset(&self, channel: &ChannelRef, sender: &str) {
+        let key = (channel.clone(), sender.to_owned());
         let mut guard = match self.buckets.lock() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
@@ -213,7 +215,7 @@ fn refill_and_consume(
 /// recreating is identical state) and, if an active flood of unique senders is
 /// still over the cap, keep the most-recently-active `LOW_WATER` and drop the
 /// rest. Memory is hard-capped regardless of attacker behaviour.
-fn evict_if_needed(buckets: &mut HashMap<String, Bucket>, now: Instant) {
+fn evict_if_needed(buckets: &mut HashMap<(ChannelRef, String), Bucket>, now: Instant) {
     // Fast-path: the common case is a small map (a personal agent sees a few
     // hundred senders) — return until we cross the high-watermark.
     if buckets.len() <= MAX_BUCKETS {
@@ -221,13 +223,13 @@ fn evict_if_needed(buckets: &mut HashMap<String, Bucket>, now: Instant) {
     }
     buckets.retain(|_, b| now.saturating_duration_since(b.last_refill) < IDLE_TTL);
     if buckets.len() > LOW_WATER {
-        let mut by_recency: Vec<(String, Instant)> = buckets
+        let mut by_recency: Vec<((ChannelRef, String), Instant)> = buckets
             .iter()
             .map(|(k, b)| (k.clone(), b.last_refill))
             .collect();
         // Most-recently-active first.
         by_recency.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
-        let keep: std::collections::HashSet<String> = by_recency
+        let keep: std::collections::HashSet<(ChannelRef, String)> = by_recency
             .into_iter()
             .take(LOW_WATER)
             .map(|(k, _)| k)
@@ -239,7 +241,19 @@ fn evict_if_needed(buckets: &mut HashMap<String, Bucket>, now: Instant) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channels::{
+        ChannelKind,
+        registry::{ChannelAccountId, ChannelRef},
+    };
     use std::time::Duration;
+
+    fn default_channel(channel_id: ChannelKind) -> ChannelRef {
+        ChannelRef::default_account(channel_id)
+    }
+
+    fn channel_account(channel_id: ChannelKind, account_id: &str) -> ChannelRef {
+        ChannelRef::new(channel_id, ChannelAccountId::new(account_id).unwrap())
+    }
 
     #[test]
     fn bucket_map_is_bounded_under_unique_sender_flood() {
@@ -248,8 +262,9 @@ mod tests {
         // channel pipeline calls this limiter (NOT the dead daemon::rate_limit).
         let rl = RateLimiter::new(60.0, 1);
         let t = Instant::now();
+        let channel = default_channel(ChannelKind::Telegram);
         for i in 0..(MAX_BUCKETS + 2_500) {
-            rl.try_consume_at("tg", &format!("attacker-{i}"), t);
+            rl.try_consume_at(&channel, &format!("attacker-{i}"), t);
         }
         let n = rl.bucket_count();
         assert!(
@@ -261,11 +276,12 @@ mod tests {
     #[test]
     fn fresh_sender_can_burst_up_to_capacity() {
         let rl = RateLimiter::new(60.0, 5);
+        let channel = default_channel(ChannelKind::Telegram);
         for _ in 0..5 {
-            assert_eq!(rl.try_consume("tg", "alice"), Decision::Allowed);
+            assert_eq!(rl.try_consume(&channel, "alice"), Decision::Allowed);
         }
         assert!(matches!(
-            rl.try_consume("tg", "alice"),
+            rl.try_consume(&channel, "alice"),
             Decision::RateLimited { .. }
         ));
     }
@@ -274,14 +290,15 @@ mod tests {
     fn refills_between_calls() {
         let rl = RateLimiter::new(60.0, 1); // 1 token/sec
         let t0 = Instant::now();
-        assert_eq!(rl.try_consume_at("tg", "bob", t0), Decision::Allowed);
+        let channel = default_channel(ChannelKind::Telegram);
+        assert_eq!(rl.try_consume_at(&channel, "bob", t0), Decision::Allowed);
         assert!(matches!(
-            rl.try_consume_at("tg", "bob", t0),
+            rl.try_consume_at(&channel, "bob", t0),
             Decision::RateLimited { .. }
         ));
         // 1 second later → token refilled.
         assert_eq!(
-            rl.try_consume_at("tg", "bob", t0 + Duration::from_secs(1)),
+            rl.try_consume_at(&channel, "bob", t0 + Duration::from_secs(1)),
             Decision::Allowed,
         );
     }
@@ -290,30 +307,81 @@ mod tests {
     fn senders_are_isolated() {
         let rl = RateLimiter::new(60.0, 1);
         let t = Instant::now();
-        assert_eq!(rl.try_consume_at("tg", "alice", t), Decision::Allowed);
+        let channel = default_channel(ChannelKind::Telegram);
+        assert_eq!(rl.try_consume_at(&channel, "alice", t), Decision::Allowed);
         // alice is throttled, bob has a full bucket.
         assert!(matches!(
-            rl.try_consume_at("tg", "alice", t),
+            rl.try_consume_at(&channel, "alice", t),
             Decision::RateLimited { .. }
         ));
-        assert_eq!(rl.try_consume_at("tg", "bob", t), Decision::Allowed);
+        assert_eq!(rl.try_consume_at(&channel, "bob", t), Decision::Allowed);
     }
 
     #[test]
     fn channels_are_isolated() {
         let rl = RateLimiter::new(60.0, 1);
         let t = Instant::now();
-        assert_eq!(rl.try_consume_at("tg", "alice", t), Decision::Allowed);
+        let telegram = default_channel(ChannelKind::Telegram);
+        let keet = default_channel(ChannelKind::Keet);
+        assert_eq!(rl.try_consume_at(&telegram, "alice", t), Decision::Allowed);
         // Same sender, different channel → different bucket.
-        assert_eq!(rl.try_consume_at("keet", "alice", t), Decision::Allowed);
+        assert_eq!(rl.try_consume_at(&keet, "alice", t), Decision::Allowed);
+    }
+
+    #[test]
+    fn separately_constructed_default_account_refs_share_one_bucket() {
+        let rl = RateLimiter::new(60.0, 1);
+        let t = Instant::now();
+        let first = default_channel(ChannelKind::Telegram);
+        let same_default_account = default_channel(ChannelKind::Telegram);
+        assert_eq!(rl.try_consume_at(&first, "alice", t), Decision::Allowed);
+        assert!(matches!(
+            rl.try_consume_at(&same_default_account, "alice", t),
+            Decision::RateLimited { .. }
+        ));
+    }
+
+    #[test]
+    fn accounts_are_isolated_within_one_channel() {
+        let rl = RateLimiter::new(60.0, 1);
+        let t = Instant::now();
+        let account_a = channel_account(ChannelKind::Telegram, "account-a");
+        let account_b = channel_account(ChannelKind::Telegram, "account-b");
+        assert_eq!(rl.try_consume_at(&account_a, "alice", t), Decision::Allowed);
+        assert_eq!(rl.try_consume_at(&account_b, "alice", t), Decision::Allowed);
+        assert!(matches!(
+            rl.try_consume_at(&account_a, "alice", t),
+            Decision::RateLimited { .. }
+        ));
+        assert!(matches!(
+            rl.try_consume_at(&account_b, "alice", t),
+            Decision::RateLimited { .. }
+        ));
+    }
+
+    #[test]
+    fn sender_delimiters_are_not_interpreted_as_key_structure() {
+        let rl = RateLimiter::new(60.0, 1);
+        let t = Instant::now();
+        let channel = default_channel(ChannelKind::Telegram);
+        assert_eq!(
+            rl.try_consume_at(&channel, "alice/bob", t),
+            Decision::Allowed
+        );
+        assert_eq!(rl.try_consume_at(&channel, "alice", t), Decision::Allowed);
+        assert!(matches!(
+            rl.try_consume_at(&channel, "alice/bob", t),
+            Decision::RateLimited { .. }
+        ));
     }
 
     #[test]
     fn rate_limited_includes_retry_after() {
         let rl = RateLimiter::new(60.0, 1); // 1 token/sec
         let t = Instant::now();
-        rl.try_consume_at("tg", "alice", t);
-        match rl.try_consume_at("tg", "alice", t) {
+        let channel = default_channel(ChannelKind::Telegram);
+        rl.try_consume_at(&channel, "alice", t);
+        match rl.try_consume_at(&channel, "alice", t) {
             Decision::RateLimited { retry_after_ms } => {
                 // Need ~1 full token at 1/sec → retry ~1000ms.
                 assert!(
@@ -329,17 +397,18 @@ mod tests {
     fn refill_caps_at_capacity() {
         let rl = RateLimiter::new(60.0, 3); // 1 token/sec, capacity 3
         let t0 = Instant::now();
+        let channel = default_channel(ChannelKind::Telegram);
         // Drain to 0.
         for _ in 0..3 {
-            assert_eq!(rl.try_consume_at("tg", "alice", t0), Decision::Allowed);
+            assert_eq!(rl.try_consume_at(&channel, "alice", t0), Decision::Allowed);
         }
         // 100 seconds later — bucket capped at 3, not 100.
         let t1 = t0 + Duration::from_secs(100);
         for _ in 0..3 {
-            assert_eq!(rl.try_consume_at("tg", "alice", t1), Decision::Allowed);
+            assert_eq!(rl.try_consume_at(&channel, "alice", t1), Decision::Allowed);
         }
         assert!(matches!(
-            rl.try_consume_at("tg", "alice", t1),
+            rl.try_consume_at(&channel, "alice", t1),
             Decision::RateLimited { .. }
         ));
     }
@@ -348,15 +417,16 @@ mod tests {
     fn reset_clears_sender_state() {
         let rl = RateLimiter::new(60.0, 1);
         let t = Instant::now();
-        rl.try_consume_at("tg", "alice", t);
+        let channel = default_channel(ChannelKind::Telegram);
+        rl.try_consume_at(&channel, "alice", t);
         // Throttled.
         assert!(matches!(
-            rl.try_consume_at("tg", "alice", t),
+            rl.try_consume_at(&channel, "alice", t),
             Decision::RateLimited { .. }
         ));
-        rl.reset("tg", "alice");
+        rl.reset(&channel, "alice");
         // Fresh bucket — first call passes.
-        assert_eq!(rl.try_consume_at("tg", "alice", t), Decision::Allowed);
+        assert_eq!(rl.try_consume_at(&channel, "alice", t), Decision::Allowed);
     }
 
     // ── F4-02: pure operation tested in isolation (no lock, no map) ─────────
@@ -420,11 +490,12 @@ mod tests {
         let rl = RateLimiter::with_defaults();
         // 30 burst, then throttled. Drain 30 then check.
         let t = Instant::now();
+        let channel = default_channel(ChannelKind::Telegram);
         for _ in 0..30 {
-            assert_eq!(rl.try_consume_at("tg", "alice", t), Decision::Allowed);
+            assert_eq!(rl.try_consume_at(&channel, "alice", t), Decision::Allowed);
         }
         assert!(matches!(
-            rl.try_consume_at("tg", "alice", t),
+            rl.try_consume_at(&channel, "alice", t),
             Decision::RateLimited { .. }
         ));
     }

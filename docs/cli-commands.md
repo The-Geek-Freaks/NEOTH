@@ -1914,11 +1914,19 @@ Show HMAC key path, byte length, mode. Does NOT print the key bytes
 
 SL-01a — capability leases. Grant a paired peer or a plugin a TTL-bounded scoped capability (`grant <to> <scope> --ttl 1h`), `list` active grants, or `revoke <id>`. Each mutation is audited (`neoth wal show --type lease_granted`). Foundation for cluster task delegation (SL-01) + proactive bounded writes (G-01)
 
+### `neoth lease channel-subject`
+
+Print the canonical account-scoped subject for a channel sender. This is pure: it does not read leases, credentials, or config. `neoth lease channel-subject <channel> <account> <sender>`
+
+- `<CHANNEL>` — Channel canonical ID or accepted alias, canonicalized through the channel registry
+- `<ACCOUNT>` — Validated channel account ID
+- `<SENDER>` — Exact sender identifier to encode into the subject
+
 ### `neoth lease grant`
 
-Grant a subject a TTL-bounded scoped capability. `neoth lease grant <peer-or-plugin> <scope> --ttl 1h`
+Grant a subject a TTL-bounded scoped capability. `neoth lease grant <peer-or-plugin-or-channel-subject> <scope> --ttl 1h`
 
-- `<GRANTED_TO>` — Subject: a paired peer pub-key-hex or a plugin id
+- `<GRANTED_TO>` — Subject: a paired peer pub-key-hex, plugin id, or `neoth lease channel-subject` output
 - `<SCOPE>` — Capability scope: `read` / `write_neoth_home` / `channel_send` / `cluster_task_accept` / `mcp_tool:<id>`
 - `--ttl <TTL>` — Lease lifetime, e.g. `1h`, `30m`, `7d`, `3600` (bare = seconds)
 

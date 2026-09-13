@@ -1580,6 +1580,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn channel_account_lease_subject_isolated_across_accounts_and_legacy_sender() {
+        use crate::channels::ChannelKind;
+        use crate::channels::registry::{ChannelAccountId, ChannelRef};
+        use crate::permissions::lease::channel_lease_subject;
+
+        let account_a = ChannelRef::new(
+            ChannelKind::Telegram,
+            ChannelAccountId::new("account-a").unwrap(),
+        );
+        let account_b = ChannelRef::new(
+            ChannelKind::Telegram,
+            ChannelAccountId::new("account-b").unwrap(),
+        );
+        let alice_a = channel_lease_subject(&account_a, "alice");
+        let alice_b = channel_lease_subject(&account_b, "alice");
+        let channel_send = Action::ChannelSend;
+        let mcp_tool = Action::McpToolInvocation {
+            server_id: "server".into(),
+            tool: "tool".into(),
+        };
+
+        let mut scoped_store = LeaseStore::default();
+        scoped_store.grant(CapabilityLease::new(
+            alice_a.clone(),
+            LeaseScope::ChannelSend,
+            3600,
+            LT0,
+        ));
+        scoped_store.grant(CapabilityLease::new(
+            alice_a.clone(),
+            LeaseScope::McpTool("server:tool".into()),
+            3600,
+            LT0,
+        ));
+        let gate_for_a = Gate::for_level(AutonomyLevel::Strict)
+            .with_confirm(ConfirmStrategy::FailClosed)
+            .with_lease_snapshot(&scoped_store, alice_a, LT0 + 10);
+        assert!(
+            gate_for_a
+                .check_at(&channel_send, None, LT0 + 10)
+                .await
+                .is_ok()
+        );
+        assert!(gate_for_a.check_at(&mcp_tool, None, LT0 + 10).await.is_ok());
+
+        let gate_for_b = Gate::for_level(AutonomyLevel::Strict)
+            .with_confirm(ConfirmStrategy::FailClosed)
+            .with_lease_snapshot(&scoped_store, alice_b.clone(), LT0 + 10);
+        assert!(matches!(
+            gate_for_b.check_at(&channel_send, None, LT0 + 10).await,
+            Err(GateError::Denied(_))
+        ));
+        assert!(matches!(
+            gate_for_b.check_at(&mcp_tool, None, LT0 + 10).await,
+            Err(GateError::Denied(_))
+        ));
+
+        let mut legacy_store = LeaseStore::default();
+        legacy_store.grant(CapabilityLease::new(
+            "alice",
+            LeaseScope::ChannelSend,
+            3600,
+            LT0,
+        ));
+        legacy_store.grant(CapabilityLease::new(
+            "alice",
+            LeaseScope::McpTool("server:tool".into()),
+            3600,
+            LT0,
+        ));
+        for subject in [channel_lease_subject(&account_a, "alice"), alice_b] {
+            let gate = Gate::for_level(AutonomyLevel::Strict)
+                .with_confirm(ConfirmStrategy::FailClosed)
+                .with_lease_snapshot(&legacy_store, subject, LT0 + 10);
+            assert!(matches!(
+                gate.check_at(&channel_send, None, LT0 + 10).await,
+                Err(GateError::Denied(_))
+            ));
+            assert!(matches!(
+                gate.check_at(&mcp_tool, None, LT0 + 10).await,
+                Err(GateError::Denied(_))
+            ));
+        }
+    }
+
+    #[tokio::test]
     async fn expired_lease_fails_closed() {
         // Lease granted at LT0-7200 with 3600s TTL ⇒ expired at LT0-3600.
         // Snapshot taken at LT0 must exclude it (active() filters expired).

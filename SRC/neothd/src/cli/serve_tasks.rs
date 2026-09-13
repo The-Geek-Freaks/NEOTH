@@ -14,8 +14,28 @@ use anyhow::Context;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
+use crate::channels::registry::ChannelRef;
 use crate::channels::{Channel, ChannelKind, PipelineHandler};
-use crate::cli::serve_pipeline::{PipelineHandlerDeps, build_pipeline_handler};
+use crate::cli::serve_pipeline::{
+    AuthenticatedInboundBinding, PipelineHandlerDeps, build_pipeline_handler,
+};
+
+/// Proof owned by the authenticated legacy Telegram startup branch. Private
+/// fields prevent other production modules from inventing admitted senders.
+pub(crate) struct AdmittedLegacyTelegramSingleton {
+    sender_id: u64,
+}
+
+impl AdmittedLegacyTelegramSingleton {
+    pub(crate) fn sender_id(&self) -> u64 {
+        self.sender_id
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(sender_id: u64) -> Self {
+        Self { sender_id }
+    }
+}
 use crate::config::FreedomConfig;
 use crate::config::reload::{AcceptedConfigSnapshot, ReloadController};
 use crate::permissions::{Action, ConfirmStrategy, Gate};
@@ -5290,6 +5310,9 @@ pub(crate) fn spawn_channel_adapters(
         );
         let live_channel: Arc<dyn Channel> = channel.clone();
         let handler: PipelineHandler = build_live_channel_handler(
+            AuthenticatedInboundBinding::for_legacy_telegram_singleton(
+                AdmittedLegacyTelegramSingleton { sender_id: user_id },
+            ),
             provider.clone(),
             live_channel,
             config,
@@ -5367,6 +5390,9 @@ pub(crate) fn spawn_channel_adapters(
                     let channel = Arc::new(channel);
                     let live_channel: Arc<dyn Channel> = channel.clone();
                     let handler: PipelineHandler = build_live_channel_handler(
+                        AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                            ChannelKind::Slack,
+                        )),
                         provider.clone(),
                         live_channel,
                         config,
@@ -5436,6 +5462,9 @@ pub(crate) fn spawn_channel_adapters(
             ) {
                 Ok(channel) => {
                     let handler: PipelineHandler = build_channel_handler(
+                        AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                            ChannelKind::Discord,
+                        )),
                         provider.clone(),
                         config,
                         writer,
@@ -5512,6 +5541,9 @@ pub(crate) fn spawn_channel_adapters(
             ) {
                 Ok(channel) => {
                     let handler: PipelineHandler = build_channel_handler(
+                        AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                            ChannelKind::Signal,
+                        )),
                         provider.clone(),
                         config,
                         writer,
@@ -5588,6 +5620,9 @@ pub(crate) fn spawn_channel_adapters(
                 Ok(channel) => {
                     let channel = channel.with_gate_writer(writer.clone());
                     let handler: PipelineHandler = build_channel_handler(
+                        AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                            ChannelKind::IMessageBlueBubbles,
+                        )),
                         provider.clone(),
                         config,
                         writer,
@@ -5655,6 +5690,9 @@ pub(crate) fn spawn_channel_adapters(
             let channel = crate::channels::mattermost::MattermostChannel::new(url, token)
                 .with_allowlist(Some(allowed_user), writer.clone());
             let handler: PipelineHandler = build_channel_handler(
+                AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                    ChannelKind::Mattermost,
+                )),
                 provider.clone(),
                 config,
                 writer,
@@ -5763,6 +5801,9 @@ pub(crate) fn spawn_channel_adapters(
                     writer.clone(),
                 );
                 let handler: PipelineHandler = build_channel_handler(
+                    AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                        ChannelKind::Matrix,
+                    )),
                     provider.clone(),
                     config,
                     writer,
@@ -5869,6 +5910,9 @@ pub(crate) fn spawn_channel_adapters(
                 .with_allowlist(creds.irc_allowed_nick.clone(), writer.clone())
                 .with_allowed_account(Some(allowed_account));
                 let handler: PipelineHandler = build_channel_handler(
+                    AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                        ChannelKind::Irc,
+                    )),
                     provider.clone(),
                     config,
                     writer,
@@ -5934,6 +5978,9 @@ pub(crate) fn spawn_channel_adapters(
                 let channel =
                     crate::channels::irc::IrcChannel::for_twitch(username, oauth, channels);
                 let handler: PipelineHandler = build_channel_handler(
+                    AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                        ChannelKind::Twitch,
+                    )),
                     provider.clone(),
                     config,
                     writer,
@@ -6003,6 +6050,9 @@ pub(crate) fn spawn_channel_adapters(
                     .with_allowlist(Some(allowed_pubkey), writer.clone())
                     .with_cursor_path(neoth_home.join("channel-state/nostr-cursor.json"));
                 let handler: PipelineHandler = build_channel_handler(
+                    AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                        ChannelKind::Nostr,
+                    )),
                     provider.clone(),
                     config,
                     writer,
@@ -6072,6 +6122,9 @@ pub(crate) fn spawn_channel_adapters(
                     Ok(channel) => {
                         let channel = channel.with_allowlist(Some(allowed_sender), writer.clone());
                         let handler: PipelineHandler = build_channel_handler(
+                            AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                                ChannelKind::GoogleChat,
+                            )),
                             provider.clone(),
                             config,
                             writer,
@@ -6160,6 +6213,9 @@ pub(crate) fn spawn_channel_adapters(
             Some(provider),
         ) => {
             let handler: PipelineHandler = build_channel_handler(
+                AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                    ChannelKind::WhatsAppBusiness,
+                )),
                 provider.clone(),
                 config,
                 writer,
@@ -6309,6 +6365,9 @@ pub(crate) fn spawn_channel_adapters(
             ) {
                 Ok(channel) => {
                     let handler: PipelineHandler = build_channel_handler(
+                        AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                            ChannelKind::WhatsAppBaileys,
+                        )),
                         provider.clone(),
                         config,
                         writer,
@@ -6375,6 +6434,9 @@ pub(crate) fn spawn_channel_adapters(
     ) {
         (Some(access_token), Some(secret), Some(allowed_sender), Some(provider)) => {
             let handler: PipelineHandler = build_channel_handler(
+                AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                    ChannelKind::Line,
+                )),
                 provider.clone(),
                 config,
                 writer,
@@ -6515,6 +6577,9 @@ pub(crate) fn spawn_channel_adapters(
             ) {
                 Ok(channel) => {
                     let handler: PipelineHandler = build_channel_handler(
+                        AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                            ChannelKind::Keet,
+                        )),
                         provider.clone(),
                         config,
                         writer,
@@ -6566,11 +6631,12 @@ pub(crate) fn spawn_channel_adapters(
 /// channel adapter (Telegram / Slack socket-mode / WhatsApp webhook). The three
 /// adapters previously inlined an identical 11-field [`PipelineHandlerDeps`]
 /// literal; this is the single construction site so the field mapping lives in
-/// one place. `provider` is the adapter-specific provider clone; everything else
-/// is borrowed from the shared daemon locals and cloned into the deps exactly as
-/// before (behaviour-identical to the inline literals).
+/// one place. `binding` comes from the authenticated adapter startup; payloads
+/// cannot choose their account or mint legacy-operator migration authority.
+/// Other dependencies are borrowed from the shared daemon locals.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_channel_handler(
+    binding: AuthenticatedInboundBinding,
     provider: Arc<dyn Provider>,
     config: &FreedomConfig,
     writer: &WalWriterHandle,
@@ -6588,6 +6654,7 @@ pub(crate) fn build_channel_handler(
     views_executor: Option<std::sync::Arc<crate::memory::store::ViewsExecutor>>,
 ) -> PipelineHandler {
     build_channel_handler_inner(
+        binding,
         provider,
         None,
         config,
@@ -6607,6 +6674,7 @@ pub(crate) fn build_channel_handler(
 /// adapter. Used only by Telegram and Slack; all other adapters are final-only.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_live_channel_handler(
+    binding: AuthenticatedInboundBinding,
     provider: Arc<dyn Provider>,
     live_channel: Arc<dyn Channel>,
     config: &FreedomConfig,
@@ -6621,6 +6689,7 @@ pub(crate) fn build_live_channel_handler(
     views_executor: Option<std::sync::Arc<crate::memory::store::ViewsExecutor>>,
 ) -> PipelineHandler {
     build_channel_handler_inner(
+        binding,
         provider,
         Some(live_channel),
         config,
@@ -6638,6 +6707,7 @@ pub(crate) fn build_live_channel_handler(
 
 #[allow(clippy::too_many_arguments)]
 fn build_channel_handler_inner(
+    binding: AuthenticatedInboundBinding,
     provider: Arc<dyn Provider>,
     live_channel: Option<Arc<dyn Channel>>,
     config: &FreedomConfig,
@@ -6652,6 +6722,7 @@ fn build_channel_handler_inner(
     views_executor: Option<std::sync::Arc<crate::memory::store::ViewsExecutor>>,
 ) -> PipelineHandler {
     build_pipeline_handler(PipelineHandlerDeps {
+        inbound_binding: binding,
         provider,
         live_channel,
         writer: writer.clone(),

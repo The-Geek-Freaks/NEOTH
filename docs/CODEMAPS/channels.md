@@ -1,7 +1,26 @@
 # Channels Codemap — Adapters
 
-**Last Updated:** 2026-07-14
-**Entry Points:** `SRC/neothd/src/channels/mod.rs`
+**Last Updated:** 2026-09-13
+**Entry Points:** `SRC/neothd/src/channels/mod.rs`, `SRC/neothd/src/cli/serve_tasks.rs`
+
+## Account-bound inbound state
+
+`serve_tasks` constructs one `AuthenticatedInboundBinding` per authenticated
+adapter. Current singleton adapters use `ChannelRef::default_account`; the
+payload never chooses an account. `serve_pipeline` rejects a mismatched
+channel before I/O and resolves the human identity through the V39 v2 alias
+table. Only the startup-owned opaque Telegram admission token can enable the
+exact legacy operator claim. V1 aliases remain account-unbound history.
+
+`channels/identity.rs` owns v2 lookup, atomic creation/claim, and atomic explicit
+merge. Claim UUID/time remain historical facts across a merge.
+`channels/rate_limit.rs` keys buckets by `(ChannelRef, sender)`.
+`permissions/lease.rs::channel_lease_subject` is shared by inbound ChannelSend,
+MCP authorization, and `neoth lease channel-subject`. Pipeline session, profile,
+archive and media identifiers incorporate the bound account.
+
+Configuration, credential ownership, outbound routing and account-management
+surfaces remain later P1-16 work; this slice does not expose multi-account setup.
 
 ## Architecture
 

@@ -148,6 +148,7 @@ async fn emit_identity_merged(
         .map(|a| {
             serde_json::json!({
                 "channel": a.channel,
+                "account_id": a.account_id,
                 "sender_id": a.sender_id,
                 "chat_id": a.chat_id,
             })
@@ -218,7 +219,11 @@ fn render_list(ids: &[identity_store::Identity], output: OutputFormat) {
             for id in ids {
                 println!("{}  ({} alias(es))", id.uuid, id.aliases.len());
                 for a in &id.aliases {
-                    println!("    {} / {} / {}", a.channel, a.sender_id, a.chat_id);
+                    let account = a.account_id.as_deref().unwrap_or("legacy-unbound");
+                    println!(
+                        "    {} / {} / {} / {}",
+                        a.channel, account, a.sender_id, a.chat_id
+                    );
                 }
             }
         }

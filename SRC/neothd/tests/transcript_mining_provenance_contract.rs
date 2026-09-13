@@ -39,7 +39,10 @@ fn fresh_current_database_requires_stage3b_attestation_for_all_proof_births() {
         .expect("fresh schema version");
     assert_eq!(schema_version, store::SCHEMA_VERSION.to_string());
     assert!(
-        store::SCHEMA_VERSION >= 38,
+        schema_version
+            .parse::<u32>()
+            .expect("numeric schema version")
+            >= 38,
         "Stage 3b requires v38 or later"
     );
 

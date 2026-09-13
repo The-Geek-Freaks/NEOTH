@@ -5,7 +5,9 @@
 
 use std::path::Path;
 
-use anyhow::{Context as _, Result};
+#[cfg(windows)]
+use anyhow::Context as _;
+use anyhow::Result;
 use base64::Engine;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

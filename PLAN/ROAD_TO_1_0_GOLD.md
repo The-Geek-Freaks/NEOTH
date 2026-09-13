@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**Wave 14 first account identity locally accepted (2026-09-13):** startup
+anchors `ChannelRef`; V39 separates account-qualified aliases, and an opaque
+admitted-singleton token permits only the exact legacy Telegram operator claim.
+Scoped state, media references, rate limits, lease subjects and receipts retain
+the account binding. Final selected tests pass **327/0/0**; the ten affected
+integration targets pass **81/0/0**. Strict Clippy, Core and formatting pass;
+exact source/binary evidence is in `docs/gold-wave14-verification.md`.
+P1-16 remains **OPEN** for account configuration, credentials, outbound routing
+and the remaining surfaces. Counts stay **1,010 complete / 312 open / 2 partial**
+(314 raw; 313 pre-tag blockers). Wave 13 CI `34762817827` is final: Windows
+passed; macOS has 17 failures and Linux an unused import fixed in this batch.
+macOS repairs are prepared for the next batch; no cross-platform-green claim.
+Builds remain one job, Idle, four logical CPUs and a 32 GiB free-memory floor.
+
 **Wave 13 P1-11 accepted (2026-09-13):** bounded local session-start recall
 preloads only from an existing bound read-only `views.db` after RAW delivery and
 before the first provider request. It preserves the fresh recall policy,

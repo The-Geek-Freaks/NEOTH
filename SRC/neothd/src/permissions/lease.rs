@@ -22,6 +22,28 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::channels::registry::ChannelRef;
+
+/// Build the exact account-scoped subject used by channel-originated leases.
+///
+/// The channel and account components come from the validated canonical
+/// [`ChannelRef`]. `sender` is UTF-8 hex encoded rather than delimiter joined,
+/// so arbitrary sender identifiers (including `/`, `:`, and Unicode) cannot
+/// collide with the subject structure.
+pub fn channel_lease_subject(channel_ref: &ChannelRef, sender: &str) -> String {
+    let mut subject = format!(
+        "channel-ref/{}/{}/sender-hex/",
+        channel_ref.channel_id.as_str(),
+        channel_ref.account_id.as_str(),
+    );
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for byte in sender.bytes() {
+        subject.push(char::from(HEX[usize::from(byte >> 4)]));
+        subject.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    subject
+}
+
 /// The leasable capability classes. Deliberately a COARSE, serde-stable
 /// subset of [`super::Action`] — a lease grants a *category* of action,
 /// not a single parameterised call, so the wire form stays small and the
@@ -472,6 +494,107 @@ mod tests {
             !s.active_for("peerB", &LeaseScope::Read, T0 + 50),
             "other subject → deny"
         );
+    }
+
+    fn channel_ref(channel: crate::channels::ChannelKind, account: &str) -> ChannelRef {
+        ChannelRef::new(
+            channel,
+            crate::channels::registry::ChannelAccountId::new(account).unwrap(),
+        )
+    }
+
+    #[test]
+    fn channel_lease_subject_is_account_and_sender_scoped() {
+        let account_a = channel_ref(crate::channels::ChannelKind::Telegram, "account-a");
+        let account_b = channel_ref(crate::channels::ChannelKind::Telegram, "account-b");
+        let alice_a = channel_lease_subject(&account_a, "alice");
+        let bob_a = channel_lease_subject(&account_a, "bob");
+        let alice_b = channel_lease_subject(&account_b, "alice");
+
+        assert_eq!(
+            alice_a,
+            "channel-ref/telegram/account-a/sender-hex/616c696365"
+        );
+        assert_ne!(
+            alice_a, bob_a,
+            "different senders must never share a lease subject"
+        );
+        assert_ne!(
+            alice_a, alice_b,
+            "different accounts must never share a lease subject"
+        );
+    }
+
+    #[test]
+    fn channel_lease_subject_hex_encoding_prevents_delimiter_and_unicode_collisions() {
+        let channel = channel_ref(crate::channels::ChannelKind::Telegram, "default");
+        let slash = channel_lease_subject(&channel, "alice/bob");
+        let joined = channel_lease_subject(&channel, "alice");
+        let unicode = channel_lease_subject(&channel, "\u{00e4}");
+        let lookalike = channel_lease_subject(&channel, "c3a4");
+
+        assert_eq!(
+            slash,
+            "channel-ref/telegram/default/sender-hex/616c6963652f626f62"
+        );
+        assert_ne!(slash, joined);
+        assert_eq!(unicode, "channel-ref/telegram/default/sender-hex/c3a4");
+        assert_ne!(
+            unicode, lookalike,
+            "UTF-8 bytes must not collide with hex text"
+        );
+    }
+
+    #[test]
+    fn account_subject_lease_authorizes_only_that_subject_for_channel_and_mcp_scopes() {
+        let account_a = channel_ref(crate::channels::ChannelKind::Telegram, "account-a");
+        let account_b = channel_ref(crate::channels::ChannelKind::Telegram, "account-b");
+        let alice_a = channel_lease_subject(&account_a, "alice");
+        let alice_b = channel_lease_subject(&account_b, "alice");
+        let mut store = LeaseStore::default();
+        store.grant(CapabilityLease::new(
+            alice_a.clone(),
+            LeaseScope::ChannelSend,
+            100,
+            T0,
+        ));
+        store.grant(CapabilityLease::new(
+            alice_a.clone(),
+            LeaseScope::McpTool("server:tool".into()),
+            100,
+            T0,
+        ));
+
+        assert!(store.active_for(&alice_a, &LeaseScope::ChannelSend, T0 + 1));
+        assert!(!store.active_for(&alice_b, &LeaseScope::ChannelSend, T0 + 1));
+        assert!(store.active_for(&alice_a, &LeaseScope::McpTool("server:tool".into()), T0 + 1,));
+        assert!(!store.active_for(&alice_b, &LeaseScope::McpTool("server:tool".into()), T0 + 1,));
+    }
+
+    #[test]
+    fn legacy_bare_sender_leases_do_not_authorize_account_subjects() {
+        let account_a = channel_ref(crate::channels::ChannelKind::Telegram, "account-a");
+        let account_b = channel_ref(crate::channels::ChannelKind::Telegram, "account-b");
+        let alice_a = channel_lease_subject(&account_a, "alice");
+        let alice_b = channel_lease_subject(&account_b, "alice");
+        let mut store = LeaseStore::default();
+        store.grant(CapabilityLease::new(
+            "alice",
+            LeaseScope::ChannelSend,
+            100,
+            T0,
+        ));
+        store.grant(CapabilityLease::new(
+            "alice",
+            LeaseScope::McpTool("server:tool".into()),
+            100,
+            T0,
+        ));
+
+        assert!(!store.active_for(&alice_a, &LeaseScope::ChannelSend, T0 + 1));
+        assert!(!store.active_for(&alice_b, &LeaseScope::ChannelSend, T0 + 1));
+        assert!(!store.active_for(&alice_a, &LeaseScope::McpTool("server:tool".into()), T0 + 1));
+        assert!(!store.active_for(&alice_b, &LeaseScope::McpTool("server:tool".into()), T0 + 1));
     }
 
     #[test]

@@ -126,7 +126,8 @@ impl std::ops::DerefMut for PrivateHistoryConnection {
 /// v35: persist the first operator decision for a profile-resolution request.
 /// v36: establish the sealed transcript-mining provenance prerequisite.
 /// v37: add post-v37 exact raw-frame plans without promoting any v36 row.
-pub const SCHEMA_VERSION: i64 = 38;
+/// v39: account-qualified aliases and exact legacy operator claims.
+pub const SCHEMA_VERSION: i64 = 39;
 
 /// Current P1-08 metadata schema, split so the v36→v37 migration can rebuild
 /// the altered strict tables before the final trigger set is installed.  The
@@ -2334,6 +2335,18 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_human_identity_aliases_uuid
             ON idx_human_identity_aliases (uuid);
+        CREATE TABLE IF NOT EXISTS idx_human_identity_aliases_v2 (
+            uuid TEXT NOT NULL, channel TEXT NOT NULL, account_id TEXT NOT NULL,
+            sender_id TEXT NOT NULL, chat_id TEXT NOT NULL,
+            UNIQUE(channel, account_id, sender_id, chat_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_human_identity_aliases_v2_uuid
+            ON idx_human_identity_aliases_v2 (uuid);
+        CREATE TABLE IF NOT EXISTS idx_human_identity_legacy_claims (
+            channel TEXT NOT NULL, account_id TEXT NOT NULL, sender_id TEXT NOT NULL,
+            chat_id TEXT NOT NULL, uuid TEXT NOT NULL, claimed_at_unix INTEGER NOT NULL,
+            UNIQUE(channel, account_id, sender_id, chat_id)
+        );
 
         -- EM-01b P1c — inbound-email dedup / seen-state. `neoth email fetch`
         -- uses IMAP `SEARCH UNSEEN` + `BODY.PEEK[]` (non-destructive — it never
@@ -2527,6 +2540,8 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         .context("apply v37 transcript mining metadata triggers")?;
     crate::memory::migrations::migration_v37_to_v38(conn)
         .context("apply v38 transcript mining schema and attestor triggers")?;
+    crate::memory::migrations::migration_v38_to_v39(conn)
+        .context("apply v39 account-qualified identity schema")?;
     // SPEC-11 merge tombstone — idempotent column add for an `idx_human_identity`
     // created before the `merged_into` column existed. `CREATE TABLE IF NOT
     // EXISTS` never alters an existing table, so back-fill the column here;
