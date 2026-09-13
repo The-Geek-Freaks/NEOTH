@@ -3,6 +3,17 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-13
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Wave 12 local CI repair accepted 2026-09-13:** SQLite fixture registration,
+> private Windows hygiene storage, schema/CLI/MCP contracts and exact typed
+> provider-audit linkage are repaired. **359 module tests and two native
+> durability regressions pass**, including the twenty reported CI failures
+> under their current names. Core, strict Clippy, formatting and independent
+> review pass. Final build retained at least 215.98 GiB RAM free with one job,
+> Idle priority and four logical CPUs. Evidence: `docs/gold-wave12-verification.md`
+> and its ten-input manifest/exact matrix. Full CI on the published repair
+> commit is the next gate; no cross-platform acceptance, checkbox, count or
+> P1-08 status change is claimed. Publication targets GitHub main directly.
+>
 > **Wave 11 component accepted 2026-09-13 — GOLD-LF-P1-08 Stage 4:** explicit
 > local candidate export binds selected spans to authenticated RAW/Bound custody.
 > All nine persisted harness consumers revalidate current eligibility; source

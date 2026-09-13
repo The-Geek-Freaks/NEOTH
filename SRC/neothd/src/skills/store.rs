@@ -4142,6 +4142,14 @@ pub(crate) fn force_parent_sync_failure_for_test(enabled: bool) {
     FORCE_PARENT_SYNC_FAILURE.with(|forced| forced.set(enabled));
 }
 
+#[cfg(all(test, windows))]
+pub(crate) fn with_unsupported_windows_private_child_volume_for_test<T>(
+    operation: impl FnOnce() -> T,
+) -> T {
+    let _scope = windows_private_atomic_stage::unsupported_volume_for_test();
+    operation()
+}
+
 pub(crate) fn cap_metadata_is_link_like(metadata: &cap_std::fs::Metadata) -> bool {
     if metadata.is_symlink() {
         return true;

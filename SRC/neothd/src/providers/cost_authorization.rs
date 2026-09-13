@@ -3211,7 +3211,8 @@ mod tests {
         drop(writer);
         join.await.unwrap();
 
-        let frames = wal_frames(&segment);
+        let frames = wal_frames_without_provider_gate_trust(&segment);
+        assert_provider_gate_trust_decisions(&segment, &frames, AutonomyLevel::Custom);
         assert_eq!(frames.len(), 2);
         assert_eq!(
             frames[0].0,
@@ -3722,7 +3723,8 @@ mod tests {
         drop(writer);
         join.await.unwrap();
 
-        let frames = wal_frames(&segment);
+        let frames = wal_frames_without_provider_gate_trust(&segment);
+        assert_provider_gate_trust_decisions(&segment, &frames, AutonomyLevel::Standard);
         assert_eq!(frames.len(), 2);
         assert_eq!(
             frames[0].0,
@@ -3769,7 +3771,8 @@ mod tests {
         drop(writer);
         join.await.unwrap();
 
-        let frames = wal_frames(&segment);
+        let frames = wal_frames_without_provider_gate_trust(&segment);
+        assert_provider_gate_trust_decisions(&segment, &frames, AutonomyLevel::Standard);
         assert_eq!(frames.len(), 2);
         let estimate = &frames[0].1;
         assert_eq!(estimate["cost_bound_kind"], "token_bounded_unknown_pricing");
@@ -3963,7 +3966,8 @@ mod tests {
         drop(writer);
         join.await.unwrap();
 
-        let frames = wal_frames(&segment);
+        let frames = wal_frames_without_provider_gate_trust(&segment);
+        assert_provider_gate_trust_decisions(&segment, &frames, AutonomyLevel::Full);
         assert_eq!(frames.len(), 2);
         assert_eq!(
             frames[0].1["cost_bound_kind"],
@@ -4004,7 +4008,8 @@ mod tests {
         drop(writer);
         join.await.unwrap();
 
-        let frames = wal_frames(&segment);
+        let frames = wal_frames_without_provider_gate_trust(&segment);
+        assert_provider_gate_trust_decisions(&segment, &frames, AutonomyLevel::Standard);
         assert_eq!(frames.len(), 4);
         assert_eq!(
             frames[0].0,
@@ -4048,7 +4053,8 @@ mod tests {
         drop(writer);
         join.await.unwrap();
 
-        let frames = wal_frames(&segment);
+        let frames = wal_frames_without_provider_gate_trust(&segment);
+        assert_provider_gate_trust_decisions(&segment, &frames, AutonomyLevel::Full);
         assert_eq!(frames.len(), 4);
         assert_eq!(
             frames[0].0,
@@ -4103,7 +4109,8 @@ mod tests {
         drop(authorizer);
         drop(writer);
         join.await.unwrap();
-        let frames = wal_frames(&segment);
+        let frames = wal_frames_without_provider_gate_trust(&segment);
+        assert_provider_gate_trust_decisions(&segment, &frames, AutonomyLevel::Full);
         assert_eq!(frames.len(), 2);
         assert_eq!(
             frames[1].0,
@@ -4861,6 +4868,98 @@ mod tests {
         frames
     }
 
+    fn wal_frames_without_provider_gate_trust(
+        segment: &std::path::Path,
+    ) -> Vec<(u8, serde_json::Value)> {
+        let bytes = std::fs::read(segment).unwrap();
+        let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = header.header_len();
+        let mut frames = Vec::new();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            let is_provider_gate_trust = frame.header.event_type
+                == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::TrustDecision as u8;
+            if frame.header.event_type != crate::wal::events::EVENT_TYPE_COMPACTION_MARKER
+                && !is_provider_gate_trust
+            {
+                frames.push((
+                    frame.header.event_type,
+                    serde_json::from_slice(frame.payload).unwrap(),
+                ));
+            }
+            let total = frame.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        frames
+    }
+
+    fn assert_provider_gate_trust_decisions(
+        segment: &std::path::Path,
+        compatibility_frames: &[(u8, serde_json::Value)],
+        autonomy: AutonomyLevel,
+    ) {
+        let compatibility_decisions = compatibility_frames
+            .iter()
+            .filter(|(event_type, _)| {
+                matches!(
+                    *event_type,
+                    crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED
+                        | crate::wal::events::EVENT_TYPE_PERMISSION_DENIED
+                )
+            })
+            .collect::<Vec<_>>();
+        let bytes = std::fs::read(segment).unwrap();
+        let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = header.header_len();
+        let mut decisions = Vec::new();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::TrustDecision as u8
+            {
+                decisions.push(
+                    crate::permissions::trust_ledger::TrustEvent::decode(frame.payload)
+                        .expect("decode provider Gate TrustDecision"),
+                );
+            }
+            let total = frame.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        assert_eq!(decisions.len(), compatibility_decisions.len());
+        for ((event_type, payload), trust) in compatibility_decisions.into_iter().zip(decisions) {
+            assert_eq!(
+                trust.schema_version,
+                crate::permissions::trust_ledger::TRUST_EVENT_SCHEMA_VERSION
+            );
+            assert_eq!(trust.autonomy_level, autonomy);
+            assert_eq!(
+                trust.outcome,
+                if *event_type == crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED {
+                    crate::permissions::trust_ledger::TrustOutcome::Allowed
+                } else {
+                    crate::permissions::trust_ledger::TrustOutcome::Denied
+                }
+            );
+            assert_eq!(
+                trust.authorization_id.as_deref(),
+                payload["authorization_id"].as_str()
+            );
+            assert_eq!(
+                trust.request_binding_sha256.as_deref(),
+                payload["request_binding_sha256"].as_str()
+            );
+        }
+    }
+
     fn wal_event_types(segment: &std::path::Path) -> Vec<u8> {
         let bytes = std::fs::read(segment).unwrap();
         let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
@@ -5140,7 +5239,8 @@ mod tests {
         drop(writer);
         join.await.unwrap();
 
-        let frames = wal_frames(&segment);
+        let frames = wal_frames_without_provider_gate_trust(&segment);
+        assert_provider_gate_trust_decisions(&segment, &frames, AutonomyLevel::Full);
         assert_eq!(frames.len(), 4);
         for pair in frames.chunks_exact(2) {
             assert_eq!(
@@ -5876,7 +5976,7 @@ mod tests {
             (
                 "coding/decomposer.rs",
                 2,
-                "b91ef440307aadbd08bbb12b8ed98ed510aeafca1d994609a6fd06c508657599",
+                "d86652d3d9d409c8f30326989499c2e7bbcc5aa4a387d7061057b6138b260ceb",
             ),
             (
                 "coding/plan_review.rs",

@@ -1,0 +1,58 @@
+{
+  "schema": "neoth-gold-source-manifest/v1",
+  "item": "wave12-ci-repairs",
+  "baseCommit": "970f819155b95bf61eeec86989e11ea5f69ca4e5",
+  "recordedUtc": "2026-09-13T12:34:58.671539+00:00",
+  "files": [
+    {
+      "path": "SRC/neothd/src/providers/cost_authorization.rs",
+      "bytes": 235423,
+      "sha256": "F16C3810502EC3FD555DD734739ABF700CEED519706A058DA6EDFD4D92DC4492"
+    },
+    {
+      "path": "SRC/neothd/src/cli/chat.rs",
+      "bytes": 857726,
+      "sha256": "A783D9183D0C474F7A385994B4E5257D491E82950CE005AB3A94D8B315D3B6BF"
+    },
+    {
+      "path": "SRC/neothd/src/memory/transcript_store.rs",
+      "bytes": 40557,
+      "sha256": "F5B4C231420FA30D6ADFB916DBA3F2AC2C10F6A4038AF9E3053D73250EAD7036"
+    },
+    {
+      "path": "SRC/neothd/src/reflection/hygiene_store.rs",
+      "bytes": 81932,
+      "sha256": "0D61328BD0BF7DE4A391E9EF44E94D1BF6A65511E348484BAAE2C0AC5C35AAF2"
+    },
+    {
+      "path": "SRC/neothd/src/cli/history.rs",
+      "bytes": 12442,
+      "sha256": "3C15361B52B4ADAFDBDEBF65964B9A5D417D70270BDF1A506AFC7CD52115BE91"
+    },
+    {
+      "path": "SRC/neothd/src/cli/parity_drift.rs",
+      "bytes": 38161,
+      "sha256": "FED5563852C1AC4C7AEAC0C24BC152F11E5C1EFE4DD0719392F9788E336C9547"
+    },
+    {
+      "path": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "bytes": 109056,
+      "sha256": "9E74B13D244145653CF7735D98D48EB5E34F12F4E42307BB03DC38E3A021DA09"
+    },
+    {
+      "path": "SRC/neothd/Cargo.toml",
+      "bytes": 45369,
+      "sha256": "1CB66DF511C3597704295BA4A2DCCC3145ED26F8FC2EE08D209DC6ECDFAF70C7"
+    },
+    {
+      "path": "SRC/Cargo.lock",
+      "bytes": 371518,
+      "sha256": "DBFD9688EB561001A857202B0649E2F2D18948026AD5E335818B400502D9376E"
+    },
+    {
+      "path": "SRC/neothd/src/skills/store.rs",
+      "bytes": 230337,
+      "sha256": "7D0B1026A01F950422BB711A769FBC0FF43C5624D342A6B8DF21B986799F27E1"
+    }
+  ]
+}

@@ -340,7 +340,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!((history_tables, version), (0, 37));
+        assert_eq!((history_tables, version), (0, store::SCHEMA_VERSION));
         assert!(history_path.exists());
     }
 }

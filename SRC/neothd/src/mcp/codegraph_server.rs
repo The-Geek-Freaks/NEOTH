@@ -1756,19 +1756,24 @@ mod tests {
     }
 
     #[test]
-    fn codegraph_tools_lists_eight_canonical_tools() {
+    fn codegraph_tools_lists_nine_canonical_tools() {
         let tools = codegraph_tools();
-        assert_eq!(tools.len(), 8);
+        assert_eq!(tools.len(), 9);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-        assert!(names.contains(&"codegraph_relevant_files"));
-        assert!(names.contains(&"codegraph_recall_v1"));
-        assert!(names.contains(&"codegraph_extract_identifiers"));
-        assert!(names.contains(&"codegraph_path_keywords"));
-        assert!(names.contains(&"codegraph_callers"));
-        assert!(names.contains(&"codegraph_callees"));
-        assert!(names.contains(&"codegraph_impact_radius"));
-        assert!(names.contains(&"codegraph_diff_impact"));
-        assert!(names.contains(&"codegraph_outline"));
+        assert_eq!(
+            names,
+            vec![
+                "codegraph_relevant_files",
+                "codegraph_recall_v1",
+                "codegraph_extract_identifiers",
+                "codegraph_path_keywords",
+                "codegraph_callers",
+                "codegraph_callees",
+                "codegraph_impact_radius",
+                "codegraph_diff_impact",
+                "codegraph_outline",
+            ]
+        );
     }
 
     #[test]
@@ -2337,12 +2342,12 @@ fn root() { alpha(); beta(); }
                 "root": repo.path(),
                 "source": "stdin",
                 "unified_diff": concat!(
-                    "diff --git a/changed.rs b/changed.rs\\n",
-                    "--- a/changed.rs\\n",
-                    "+++ b/changed.rs\\n",
-                    "@@ -1 +1 @@\\n",
-                    "-fn changed() {}\\n",
-                    "+fn changed() {}\\n"
+                    "diff --git a/changed.rs b/changed.rs\n",
+                    "--- a/changed.rs\n",
+                    "+++ b/changed.rs\n",
+                    "@@ -1 +1 @@\n",
+                    "-fn changed() {}\n",
+                    "+fn changed() {}\n"
                 ),
                 "direction": "callers",
                 "max_depth": 3,

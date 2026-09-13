@@ -981,7 +981,7 @@ mod tests {
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(6));
         let connections: Vec<_> = (0..6)
             .map(|_| {
-                let conn = Connection::open(&db_path).unwrap();
+                let conn = store::open(&db_path).unwrap();
                 conn.busy_timeout(std::time::Duration::from_secs(5))
                     .unwrap();
                 conn

@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**Wave 12 local CI repair accepted (2026-09-13):** the twenty reported Windows
+failures from full CI `34753681098` pass in the current module suite. Repairs
+cover the SQLite factory fixture, private Windows hygiene directories, current
+schema/CLI/MCP contracts and exact typed provider-audit linkage. Native durable
+and unsupported-volume writes retain distinct verified outcomes. **359 module
+tests plus two native durability tests pass**; Core, strict Clippy, formatting
+and independent review pass. Evidence: `docs/gold-wave12-verification.md` and
+its ten-input source/test receipts. Compilation stays at one job, Idle and
+four logical CPUs; minimum free RAM in the final build was 215.98 GiB.
+Full CI on the published repair commit remains the next gate. No checkbox,
+count or P1-08 status changes; cross-platform acceptance is not yet claimed.
+
 **Wave 11 component accepted (2026-09-13):** P1-08 Stage 4 now exports explicitly
 selected authenticated local transcript spans with signed custody. All nine
 persisted harness consumers revalidate current source eligibility; revoked,

@@ -16393,6 +16393,7 @@ modes:
         let mut response_index = None;
         let mut chunk_count = 0usize;
         let mut refusal_observed = false;
+        let mut permission_payload: Option<serde_json::Value> = None;
         let mut request_payload: Option<serde_json::Value> = None;
         let mut response_payload: Option<serde_json::Value> = None;
         while !cursor.is_empty() {
@@ -16411,7 +16412,10 @@ modes:
                     assert_eq!(payload["provider"], "mock_stream");
                     assert_eq!(payload["model"], "mock-stream-1");
                 }
-                crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED => permission_index = Some(index),
+                crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED => {
+                    permission_index = Some(index);
+                    permission_payload = Some(serde_json::from_slice(frame.payload).unwrap());
+                }
                 EVENT_TYPE_PROVIDER_REQUEST => {
                     request_index = Some(index);
                     request_payload = Some(serde_json::from_slice(frame.payload).unwrap());
@@ -16428,8 +16432,51 @@ modes:
             index += 1;
         }
         assert!(opened_index.unwrap() < council_index.unwrap());
-        assert_eq!(permission_index.unwrap(), cost_index.unwrap() + 1);
-        assert_eq!(request_index.unwrap(), permission_index.unwrap() + 1);
+        assert!(cost_index.unwrap() < permission_index.unwrap());
+        let trust_subtype = crate::wal::events::ExtendedSubtype::TrustDecision as u8;
+        let (trust_index, trust) = {
+            let mut cursor = frames;
+            let mut trust = None;
+            let mut index = 0usize;
+            while !cursor.is_empty() {
+                let frame = decode_frame(cursor).expect("decode provider Gate TrustDecision");
+                if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                    && frame.header.event_subtype == trust_subtype
+                {
+                    assert!(
+                        trust.is_none(),
+                        "provider Gate must emit exactly one TrustDecision"
+                    );
+                    trust = Some((
+                        index,
+                        crate::permissions::trust_ledger::TrustEvent::decode(frame.payload)
+                            .unwrap(),
+                    ));
+                }
+                cursor = &cursor[frame.header.total_len as usize..];
+                index += 1;
+            }
+            trust.expect("provider Gate must emit one TrustDecision")
+        };
+        assert_eq!(
+            trust.schema_version,
+            crate::permissions::trust_ledger::TRUST_EVENT_SCHEMA_VERSION
+        );
+        assert_eq!(trust.autonomy_level, UNPRICED_TEST_PROVIDER_AUTONOMY);
+        assert_eq!(
+            trust.outcome,
+            crate::permissions::trust_ledger::TrustOutcome::Allowed
+        );
+        let permission_payload = permission_payload.expect("provider permission payload");
+        assert_eq!(
+            trust.authorization_id.as_deref(),
+            permission_payload["authorization_id"].as_str()
+        );
+        assert_eq!(
+            trust.request_binding_sha256.as_deref(),
+            permission_payload["request_binding_sha256"].as_str()
+        );
+        assert!(permission_index.unwrap() < trust_index && trust_index < request_index.unwrap());
         assert!(request_index.unwrap() < response_index.unwrap());
         assert_eq!(chunk_count, 2);
         assert!(
@@ -16438,6 +16485,14 @@ modes:
         );
         let request_payload = request_payload.unwrap();
         let response_payload = response_payload.unwrap();
+        assert_eq!(
+            request_payload["invocation_id"],
+            permission_payload["authorization_id"]
+        );
+        assert_eq!(
+            request_payload["request_binding_sha256"],
+            permission_payload["request_binding_sha256"]
+        );
         assert_eq!(response_payload["streamed"], true);
         assert_eq!(response_payload["input_tokens"], 5);
         assert_eq!(response_payload["output_tokens"], 3);
@@ -16598,8 +16653,8 @@ modes:
         let cost_index = cost_index.expect("COST_ESTIMATE_SHOWN on failure");
         let permission_index = permission_index.expect("PERMISSION_GRANTED on failure");
         assert!(
-            permission_index == cost_index + 1 && request_index == permission_index + 1,
-            "cost + permission must precede the durable leaf intent and failed provider call"
+            cost_index < permission_index && permission_index < request_index,
+            "cost + typed Gate audit + permission must precede the durable leaf intent and failed provider call"
         );
     }
 
@@ -16760,19 +16815,40 @@ modes:
             "model_source must be 'freedom' when only config.provider_model is set"
         );
 
-        // (e) Turn intent precedes the exact-request boundary gate. COST and
-        //     PERMISSION remain adjacent immediately before the provider call.
+        // (e) Turn intent precedes the exact-request boundary gate. Gate's
+        // compatibility permission and typed TrustDecision must both bind the
+        // same actual request before durable provider intent.
         let mut cursor2 = &bytes[SEGMENT_HEADER_LEN..];
         let mut perm_idx: Option<usize> = None;
+        let mut trust_idx: Option<usize> = None;
         let mut req_idx: Option<usize> = None;
         let mut cost_idx: Option<usize> = None;
         let mut cost_model: Option<String> = None;
+        let mut permission_payload: Option<serde_json::Value> = None;
+        let mut trust_event = None;
         let mut idx = 0usize;
         while !cursor2.is_empty() {
             let frame = decode_frame(cursor2).expect("decode frame for ordering check");
             match frame.header.event_type {
                 t if t == crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED => {
                     perm_idx = Some(idx);
+                    permission_payload = Some(
+                        serde_json::from_slice(frame.payload).expect("parse permission payload"),
+                    );
+                }
+                t if t == crate::wal::events::EVENT_TYPE_EXTENDED
+                    && frame.header.event_subtype
+                        == crate::wal::events::ExtendedSubtype::TrustDecision as u8 =>
+                {
+                    assert!(
+                        trust_event.is_none(),
+                        "provider Gate must emit exactly one TrustDecision"
+                    );
+                    trust_idx = Some(idx);
+                    trust_event = Some(
+                        crate::permissions::trust_ledger::TrustEvent::decode(frame.payload)
+                            .expect("decode provider Gate TrustDecision"),
+                    );
                 }
                 t if t == crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN => {
                     cost_idx = Some(idx);
@@ -16789,12 +16865,39 @@ modes:
             idx += 1;
         }
         let perm_pos = perm_idx.expect("PERMISSION_GRANTED must be present");
+        let trust_pos = trust_idx.expect("provider Gate TrustDecision must be present");
         let req_pos = req_idx.expect("PROVIDER_REQUEST must be present");
         let cost_pos = cost_idx.expect("COST_ESTIMATE_SHOWN must be present");
         assert!(
-            perm_pos == cost_pos + 1 && req_pos == perm_pos + 1,
-            "expected COST_ESTIMATE_SHOWN -> PERMISSION_GRANTED -> PROVIDER_REQUEST; \
-             got req={req_pos}, cost={cost_pos}, perm={perm_pos}"
+            cost_pos < perm_pos && perm_pos < trust_pos && trust_pos < req_pos,
+            "expected COST_ESTIMATE_SHOWN -> PERMISSION_GRANTED -> TrustDecision -> PROVIDER_REQUEST; got req={req_pos}, cost={cost_pos}, perm={perm_pos}, trust={trust_pos}"
+        );
+        let permission_payload = permission_payload.expect("provider permission payload");
+        let trust_event = trust_event.expect("provider Gate TrustDecision");
+        assert_eq!(
+            trust_event.schema_version,
+            crate::permissions::trust_ledger::TRUST_EVENT_SCHEMA_VERSION
+        );
+        assert_eq!(trust_event.autonomy_level, UNPRICED_TEST_PROVIDER_AUTONOMY);
+        assert_eq!(
+            trust_event.outcome,
+            crate::permissions::trust_ledger::TrustOutcome::Allowed
+        );
+        assert_eq!(
+            trust_event.authorization_id.as_deref(),
+            permission_payload["authorization_id"].as_str()
+        );
+        assert_eq!(
+            trust_event.request_binding_sha256.as_deref(),
+            permission_payload["request_binding_sha256"].as_str()
+        );
+        assert_eq!(
+            req_payload["invocation_id"],
+            permission_payload["authorization_id"]
+        );
+        assert_eq!(
+            req_payload["request_binding_sha256"],
+            permission_payload["request_binding_sha256"]
         );
         assert_eq!(
             cost_model, dispatch_model,

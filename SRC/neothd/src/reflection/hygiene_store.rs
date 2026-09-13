@@ -720,6 +720,7 @@ fn open_hygiene_directory(
         &reflections_path,
     )
     .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?;
+    tighten_legacy_private_directory(&reflections_path, &reflections)?;
     verify_private_hygiene_directory(&reflections)?;
     let display_path = reflections_path.join("hygiene");
     let dir = crate::skills::store::open_or_create_private_child_dir(
@@ -728,6 +729,7 @@ fn open_hygiene_directory(
         &display_path,
     )
     .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?;
+    tighten_legacy_private_directory(&display_path, &dir)?;
     verify_private_hygiene_directory(&dir)?;
     Ok(crate::skills::store::BoundDirectory { dir, display_path })
 }
@@ -750,6 +752,7 @@ fn open_daily_admission_directory(
         &reflections_path,
     )
     .map_err(|_| HygieneStoreError::SafeStoreUnavailable)?;
+    tighten_legacy_private_directory(&reflections_path, &reflections)?;
     verify_private_hygiene_directory(&reflections)?;
     let display_path = reflections_path.join("daily-admission");
     let dir = crate::skills::store::open_or_create_private_child_dir(
@@ -1953,7 +1956,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_reports_unknown_parent_sync_and_uses_bound_lock_cas_handles() {
+    fn windows_unsupported_durability_requires_recovery_and_preserves_lock_cas() {
         let home = test_home();
         let store_one = open_hygiene_directory(home.path()).expect("first bound directory");
         let (lock_one, binding_one) = crate::skills::store::open_or_create_bound_lockfile(
@@ -1990,7 +1993,11 @@ mod tests {
         drop(lock_one);
         drop(lock_two);
 
-        let first = apply_hygiene_plan(home.path(), 0, input(200 * DAY)).expect("first apply");
+        let first =
+            crate::skills::store::with_unsupported_windows_private_child_volume_for_test(|| {
+                apply_hygiene_plan(home.path(), 0, input(200 * DAY))
+            })
+            .expect("first apply");
         assert_eq!(first.durability, HygieneDurability::RecoveryReadRequired);
         let before = std::fs::read(hygiene_state_path(home.path())).expect("state bytes");
         assert!(matches!(
