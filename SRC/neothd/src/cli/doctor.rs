@@ -830,8 +830,9 @@ mod tests {
         // + canonical TTS runtime/provider readiness = 54;
         // + ppt_master, graphify and officecli readiness = 57;
         // + asynchronous cluster runtime membership = 58;
-        // + code-map lifecycle readiness = 59.
-        assert_eq!(all_check_docs().count(), 59);
+        // + code-map lifecycle readiness = 59;
+        // + account-bound channel transport flapping = 60.
+        assert_eq!(all_check_docs().count(), 60);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────
@@ -1619,8 +1620,9 @@ mod tests {
         // + OMI runtime config/credential/ledger/supervisor posture = 53;
         // + canonical TTS runtime/provider readiness = 54;
         // + ppt_master, graphify and officecli readiness = 57;
-        // + code-map lifecycle state/repair diagnostic = 58.
-        assert_eq!(outs.len(), 58);
+        // + code-map lifecycle state/repair diagnostic = 58;
+        // + account-bound channel transport flapping = 59.
+        assert_eq!(outs.len(), 59);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }

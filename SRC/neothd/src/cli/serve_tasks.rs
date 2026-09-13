@@ -5045,6 +5045,44 @@ pub(crate) struct TelegramAccountBundle {
     legacy_singleton: bool,
 }
 
+/// Opaque proof that a live adapter was built from an admitted nonlegacy
+/// Telegram map entry. Its only constructor stays with TelegramAccountBundle,
+/// so generic channel startup and inbound envelopes cannot invent a binding.
+#[derive(Clone)]
+pub(crate) struct MappedTelegramLiveEgressProvenance {
+    channel_ref: ChannelRef,
+}
+
+impl MappedTelegramLiveEgressProvenance {
+    pub(crate) fn channel_ref(&self) -> &ChannelRef {
+        &self.channel_ref
+    }
+}
+
+impl TelegramAccountBundle {
+    /// The only production factory for a live account-evidence capability.
+    /// A legacy singleton and a malformed non-Telegram fixture cannot mint it.
+    pub(crate) fn mapped_live_egress_provenance(
+        &self,
+    ) -> Option<MappedTelegramLiveEgressProvenance> {
+        (!self.legacy_singleton && self.channel_ref.channel_id == ChannelKind::Telegram).then(
+            || MappedTelegramLiveEgressProvenance {
+                channel_ref: self.channel_ref.clone(),
+            },
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(channel_ref: ChannelRef, legacy_singleton: bool) -> Self {
+        Self {
+            channel_ref,
+            token: crate::secret::SecretString::from("test-token"),
+            allowed_user_id: 1,
+            legacy_singleton,
+        }
+    }
+}
+
 pub(crate) fn telegram_account_bundles(
     runtime: &crate::config::RuntimeConfigPair,
 ) -> anyhow::Result<Vec<TelegramAccountBundle>> {
@@ -5506,16 +5544,21 @@ pub(crate) fn spawn_channel_adapters(
                 .with_gate_writer(writer.clone()),
             );
             let live_channel: Arc<dyn Channel> = channel.clone();
+            let binding = if account.legacy_singleton {
+                AuthenticatedInboundBinding::for_legacy_telegram_singleton(
+                    AdmittedLegacyTelegramSingleton {
+                        sender_id: account.allowed_user_id,
+                    },
+                )
+            } else {
+                AuthenticatedInboundBinding::for_mapped_telegram(
+                    account
+                        .mapped_live_egress_provenance()
+                        .expect("nonlegacy Telegram account must yield mapped live provenance"),
+                )
+            };
             let handler: PipelineHandler = build_live_channel_handler(
-                if account.legacy_singleton {
-                    AuthenticatedInboundBinding::for_legacy_telegram_singleton(
-                        AdmittedLegacyTelegramSingleton {
-                            sender_id: account.allowed_user_id,
-                        },
-                    )
-                } else {
-                    AuthenticatedInboundBinding::for_account(account.channel_ref.clone())
-                },
+                binding,
                 provider.clone(),
                 live_channel,
                 config,
@@ -10642,6 +10685,47 @@ mod channel_reconcile_tests {
             changed_channel_accounts(&legacy_fingerprint, &migrated_fingerprint),
             vec![ChannelRef::default_account(ChannelKind::Telegram)],
             "legacy authority provenance must be part of the restart fingerprint"
+        );
+    }
+
+    #[test]
+    fn only_nonlegacy_telegram_bundles_mint_live_egress_provenance() {
+        let legacy = TelegramAccountBundle {
+            channel_ref: ChannelRef::default_account(ChannelKind::Telegram),
+            token: SecretString::from("legacy-token"),
+            allowed_user_id: 7,
+            legacy_singleton: true,
+        };
+        let mapped_a = TelegramAccountBundle {
+            channel_ref: ChannelRef::new(
+                ChannelKind::Telegram,
+                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
+            ),
+            token: SecretString::from("mapped-token-a"),
+            allowed_user_id: 8,
+            legacy_singleton: false,
+        };
+        let mapped_default = TelegramAccountBundle {
+            channel_ref: ChannelRef::default_account(ChannelKind::Telegram),
+            token: SecretString::from("mapped-token-default"),
+            allowed_user_id: 9,
+            legacy_singleton: false,
+        };
+        assert!(legacy.mapped_live_egress_provenance().is_none());
+        assert_eq!(
+            mapped_a
+                .mapped_live_egress_provenance()
+                .unwrap()
+                .channel_ref(),
+            &mapped_a.channel_ref
+        );
+        assert_eq!(
+            mapped_default
+                .mapped_live_egress_provenance()
+                .unwrap()
+                .channel_ref(),
+            &mapped_default.channel_ref,
+            "a literal map account named default remains map provenance"
         );
     }
 

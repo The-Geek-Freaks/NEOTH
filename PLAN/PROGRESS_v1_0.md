@@ -3,6 +3,33 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-13
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Wave 20 account transport evidence — CURRENT IN PROGRESS 2026-09-13
+> (supersedes the earlier source-only note):** nine admitted files carry bound
+> nonlegacy Telegram metadata through one complete authenticated home-WAL scan
+> to read-only evidence and Doctor flapping. TestBuild01 **PASS** 7m29s,
+> min182.78GiB/peak15.1; four real authenticated-WAL tests and unknown-outcome
+> sanitizer review pass. Selected01 **391/3/0** found a real legacy JSON
+> byte-order regression plus two Doctor count pins. The writer restored the
+> former `json!` value/optional-reference shape and raw-byte assertion; Doctor's
+> all-check documentation list has 60 entries and `run_all_checks` returns 59
+> runtime outcomes. The admitted mapped live-auth repair retains opaque
+> capability gates and `append_authenticated`: `CHANNEL_SEND` precedes its
+> success/failure terminal marker, while unbound payload/order remains unchanged.
+> TestBuild02 **PASS** 4m07s/min183.27GiB/peak11.07; Selected02 **394/0/0** was
+> before that repair; Python19+11+8 and Clippy03 **PASS** 3m12s/min205.12GiB/
+> peak7.31. Final TestBuild03 **PASS** 3m49s/min202.66GiB/peak10.65; final
+> selected **397/0/0** in26.48s/catalogue14389; 13 integration targets
+> **157/0/0**/build4m27/min205.11GiB/peak10.82; fmt/GUI lint/self-test **PASS**.
+> Binary SHA-256 `6B53DF7714F73FBEA15C1C093D1B82201550C21C1E14FDA9D50480C41D5FAE4E`,
+> 279900672 bytes; receipts 153 source inputs/14 executables. W20 is **LOCALLY
+> VERIFIED**; publication identity is the Git commit containing this receipt. No
+> current-head full-CI/cross-platform acceptance claim. No new authority/routes/
+> credentials/retries/runtime-health
+> authority/physical delivery. P1-14/P1-16/P1-17 remain OPEN;
+> counts 1324/1010/312/2 (314 raw; 313 pre-tag blockers). W17 CI terminally
+> failed macOS13 SQLite-`NOFOLLOW` temp fixtures; Linux/Windows passed. W18
+> Preflight34780142255 and Quality34780141999 passed.
+>
 > **Waves 18–19 GUI/connect account consumers — LOCALLY VERIFIED;
 > full CI pending 2026-09-13:** six independently reviewed files on published
 > Wave17 `ad4c4826`. Nested account rows/exact selected Telegram test and canonical

@@ -39,6 +39,9 @@ pub mod backup_retention;
 /// `0x0F CAPABILITY_EVOLVER_RAN`. Companion CLI surface: `neoth self-dev scan`.
 pub mod capability_evolver;
 pub mod channel_runtime_health;
+/// Read-only account-bound adapter attempt/result evidence from the
+/// authenticated complete home WAL.
+pub(crate) mod channel_transport_evidence;
 /// GOLD-ADAPT-HERMES-03 — Mid-run clarification gate. When a worker hits an
 /// ambiguity it calls [`clarify::ClarificationGate::park`], which parks the
 /// run in `Waiting` state and surfaces a [`clarify::ClarificationRequest`].

@@ -58,6 +58,10 @@ pub struct LiveDelivery {
     channel: Arc<dyn Channel>,
     chat_id: String,
     kind: ChannelKind,
+    /// Present only when the authenticated nonlegacy Telegram map startup
+    /// carried an opaque provenance capability into this delivery.
+    mapped_telegram_live_egress:
+        Option<crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance>,
     config: LiveDeliveryConfig,
     /// `None` until the first `send_or_edit` succeeds; then the platform id of
     /// the live message every subsequent edit targets.
@@ -148,10 +152,49 @@ impl LiveDelivery {
         kind: ChannelKind,
         config: LiveDeliveryConfig,
     ) -> Self {
+        Self::new_inner(channel, chat_id, kind, config, None)
+    }
+
+    /// Construct an account-bound live delivery only for the mapped Telegram
+    /// path. The caller obtains the sealed capability from the authenticated
+    /// startup binding, never an inbound message or a loose ChannelRef.
+    pub(crate) fn new_mapped_telegram(
+        channel: Arc<dyn Channel>,
+        chat_id: String,
+        kind: ChannelKind,
+        config: LiveDeliveryConfig,
+        provenance: crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance,
+    ) -> std::result::Result<Self, ChannelError> {
+        if kind != ChannelKind::Telegram
+            || provenance.channel_ref().channel_id != ChannelKind::Telegram
+        {
+            return Err(ChannelError::Transport(
+                "mapped live delivery channel reference does not match Telegram".to_string(),
+            ));
+        }
+        Ok(Self::new_inner(
+            channel,
+            chat_id,
+            kind,
+            config,
+            Some(provenance),
+        ))
+    }
+
+    fn new_inner(
+        channel: Arc<dyn Channel>,
+        chat_id: String,
+        kind: ChannelKind,
+        config: LiveDeliveryConfig,
+        mapped_telegram_live_egress: Option<
+            crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance,
+        >,
+    ) -> Self {
         Self {
             channel,
             chat_id,
             kind,
+            mapped_telegram_live_egress,
             config,
             sent_message_id: None,
             last_edit_ms: None,
@@ -279,15 +322,30 @@ impl LiveDelivery {
         // GOLD-LF-P1-01a — durable intent BEFORE the message leaves. Fail
         // closed: an unrecorded egress is exactly what this pair exists to
         // prevent, and unlike a file write a send cannot be undone.
-        let Some(intent_id) = crate::channels::send_gate::emit_egress_intent(
-            writer,
-            self.kind.as_str(),
-            &self.chat_id,
-            text,
-            crate::time::now_unix_secs(),
-        )
-        .await
-        else {
+        let intent = match self.mapped_telegram_live_egress.as_ref() {
+            Some(provenance) => {
+                crate::channels::send_gate::emit_account_bound_egress_intent(
+                    writer,
+                    self.kind.as_str(),
+                    &self.chat_id,
+                    text,
+                    crate::time::now_unix_secs(),
+                    provenance,
+                )
+                .await
+            }
+            None => {
+                crate::channels::send_gate::emit_egress_intent(
+                    writer,
+                    self.kind.as_str(),
+                    &self.chat_id,
+                    text,
+                    crate::time::now_unix_secs(),
+                )
+                .await
+            }
+        };
+        let Some(intent_id) = intent else {
             return Err(ChannelError::Transport(
                 "mandatory pre-egress audit intent could not be recorded".to_string(),
             ));
@@ -295,14 +353,16 @@ impl LiveDelivery {
 
         match self.channel.send_text(&self.chat_id, text).await {
             Ok(id) => {
-                crate::channels::send_gate::emit_egress_result(
-                    writer,
-                    &intent_id,
-                    "delivered",
-                    Some(&id.0),
-                    crate::time::now_unix_secs(),
-                )
-                .await;
+                if self.mapped_telegram_live_egress.is_none() {
+                    crate::channels::send_gate::emit_egress_result(
+                        writer,
+                        &intent_id,
+                        "delivered",
+                        Some(&id.0),
+                        crate::time::now_unix_secs(),
+                    )
+                    .await;
+                }
                 let payload = crate::channels::send_gate::channel_egress_payload(
                     self.kind.as_str(),
                     &self.chat_id,
@@ -320,6 +380,17 @@ impl LiveDelivery {
                         "WAL append live CHANNEL_SEND failed after delivery"
                     );
                 }
+                if let Some(provenance) = self.mapped_telegram_live_egress.as_ref() {
+                    crate::channels::send_gate::emit_account_bound_egress_result(
+                        writer,
+                        &intent_id,
+                        "delivered",
+                        Some(&id.0),
+                        crate::time::now_unix_secs(),
+                        provenance,
+                    )
+                    .await;
+                }
                 Ok(id)
             }
             Err(error) => {
@@ -329,14 +400,16 @@ impl LiveDelivery {
                     ChannelError::RateLimited { .. } => "rate_limited",
                     ChannelError::Auth(_) => "auth",
                 };
-                crate::channels::send_gate::emit_egress_result(
-                    writer,
-                    &intent_id,
-                    error_kind,
-                    None,
-                    crate::time::now_unix_secs(),
-                )
-                .await;
+                if self.mapped_telegram_live_egress.is_none() {
+                    crate::channels::send_gate::emit_egress_result(
+                        writer,
+                        &intent_id,
+                        error_kind,
+                        None,
+                        crate::time::now_unix_secs(),
+                    )
+                    .await;
+                }
                 let payload = crate::channels::send_gate::channel_egress_failed_payload(
                     self.kind.as_str(),
                     &self.chat_id,
@@ -350,6 +423,17 @@ impl LiveDelivery {
                         error = %audit_error,
                         "WAL append failed live CHANNEL_SEND audit failed"
                     );
+                }
+                if let Some(provenance) = self.mapped_telegram_live_egress.as_ref() {
+                    crate::channels::send_gate::emit_account_bound_egress_result(
+                        writer,
+                        &intent_id,
+                        error_kind,
+                        None,
+                        crate::time::now_unix_secs(),
+                        provenance,
+                    )
+                    .await;
                 }
                 Err(error)
             }
@@ -612,6 +696,30 @@ mod tests {
         }
     }
 
+    struct FailingSendChannel {
+        sends: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Channel for FailingSendChannel {
+        fn name(&self) -> &'static str {
+            "failing_send"
+        }
+
+        async fn run(&self, _handler: PipelineHandler) -> Result<()> {
+            Ok(())
+        }
+
+        async fn send_text(
+            &self,
+            _chat_id: &str,
+            _text: &str,
+        ) -> std::result::Result<MessageId, ChannelError> {
+            self.sends.fetch_add(1, Ordering::SeqCst);
+            Err(ChannelError::Transport("mock transport failure".to_owned()))
+        }
+    }
+
     async fn test_writer() -> (
         WalWriterHandle,
         tokio::task::JoinHandle<Result<(), String>>,
@@ -621,6 +729,23 @@ mod tests {
         crate::wal::writer::spawn_isolated_ready_test_writer("live-delivery-test")
             .await
             .expect("start ready, isolated live-delivery WAL fixture")
+    }
+
+    async fn authenticated_home_writer() -> (
+        tempfile::TempDir,
+        WalWriterHandle,
+        tokio::task::JoinHandle<Result<(), String>>,
+    ) {
+        let home = tempfile::tempdir().expect("create authenticated home");
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).expect("create authenticated home WAL");
+        let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
+            wal.join("000001.wal"),
+            home.path().to_path_buf(),
+        )
+        .expect("spawn authenticated home writer");
+        ready.wait().await.expect("ready authenticated home writer");
+        (home, writer, join)
     }
 
     fn count_channel_edit_frames(seg: &std::path::Path) -> usize {
@@ -681,6 +806,336 @@ mod tests {
         join.await
             .expect("live-delivery writer task must join")
             .expect("live-delivery writer must complete successfully");
+    }
+
+    #[tokio::test]
+    async fn mapped_live_intents_keep_accounts_isolated_and_generic_paths_unbound() {
+        let bundle_a = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
+            crate::channels::registry::ChannelRef::new(
+                ChannelKind::Telegram,
+                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
+            ),
+            false,
+        );
+        let bundle_b = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
+            crate::channels::registry::ChannelRef::new(
+                ChannelKind::Telegram,
+                crate::channels::registry::ChannelAccountId::new("account_b").unwrap(),
+            ),
+            false,
+        );
+        let bundle_default = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
+            crate::channels::registry::ChannelRef::new(
+                ChannelKind::Telegram,
+                crate::channels::registry::ChannelAccountId::new("default").unwrap(),
+            ),
+            false,
+        );
+        let channel_a = Arc::new(MockChannel::new(false));
+        let channel_b = Arc::new(MockChannel::new(false));
+        let channel_default = Arc::new(MockChannel::new(false));
+        let legacy_channel = Arc::new(MockChannel::new(false));
+        let slack_channel = Arc::new(MockChannel::new(false));
+        let mut mapped_a = LiveDelivery::new_mapped_telegram(
+            channel_a.clone(),
+            "private-chat-a".into(),
+            ChannelKind::Telegram,
+            fast_config(),
+            bundle_a.mapped_live_egress_provenance().unwrap(),
+        )
+        .unwrap();
+        let mut mapped_b = LiveDelivery::new_mapped_telegram(
+            channel_b.clone(),
+            "private-chat-b".into(),
+            ChannelKind::Telegram,
+            fast_config(),
+            bundle_b.mapped_live_egress_provenance().unwrap(),
+        )
+        .unwrap();
+        let mut mapped_default = LiveDelivery::new_mapped_telegram(
+            channel_default.clone(),
+            "private-chat-default".into(),
+            ChannelKind::Telegram,
+            fast_config(),
+            bundle_default.mapped_live_egress_provenance().unwrap(),
+        )
+        .unwrap();
+        // These represent legacy Telegram and generic Slack startup: both use
+        // the public unbound constructor and must keep channel_ref absent.
+        let mut legacy_telegram = LiveDelivery::new(
+            legacy_channel.clone(),
+            "private-chat-legacy".into(),
+            ChannelKind::Telegram,
+            fast_config(),
+        );
+        let mut generic_slack = LiveDelivery::new(
+            slack_channel.clone(),
+            "private-chat-slack".into(),
+            ChannelKind::Slack,
+            fast_config(),
+        );
+        let (home, writer, join) = authenticated_home_writer().await;
+        let seg = home.path().join("wal").join("000001.wal");
+        mapped_a
+            .send_or_edit(&writer, "private-body-a", false)
+            .await
+            .unwrap();
+        mapped_b
+            .send_or_edit(&writer, "private-body-b", false)
+            .await
+            .unwrap();
+        mapped_default
+            .send_or_edit(&writer, "private-body-default", false)
+            .await
+            .unwrap();
+        legacy_telegram
+            .send_or_edit(&writer, "private-body-legacy", false)
+            .await
+            .unwrap();
+        generic_slack
+            .send_or_edit(&writer, "private-body-slack", false)
+            .await
+            .unwrap();
+        drop(writer);
+        join.await.unwrap().unwrap();
+
+        let bytes = std::fs::read(&seg).unwrap();
+        let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = header.header_len();
+        let mut bound_accounts = Vec::new();
+        let mut unbound_channels = Vec::new();
+        while cursor < bytes.len() {
+            let decoded = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            if decoded.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8
+            {
+                let payload: serde_json::Value = serde_json::from_slice(decoded.payload).unwrap();
+                let rendered = payload.to_string();
+                assert!(!rendered.contains("private-chat"));
+                assert!(!rendered.contains("private-body"));
+                assert!(!rendered.contains("msg-0"));
+                assert!(!rendered.contains("token"));
+                match payload.get("channel_ref") {
+                    Some(channel_ref) => {
+                        bound_accounts.push(channel_ref["account_id"].as_str().unwrap().to_owned())
+                    }
+                    None => unbound_channels.push(payload["channel"].as_str().unwrap().to_owned()),
+                }
+            }
+            cursor += decoded.header.total_len as usize;
+        }
+        bound_accounts.sort();
+        unbound_channels.sort();
+        assert_eq!(
+            bound_accounts,
+            vec![
+                "account_a".to_owned(),
+                "account_b".to_owned(),
+                "default".to_owned()
+            ]
+        );
+        assert_eq!(
+            unbound_channels,
+            vec!["slack".to_owned(), "telegram".to_owned()]
+        );
+        assert_eq!(channel_a.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(channel_b.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(channel_default.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(legacy_channel.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(slack_channel.sends.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn mapped_live_delivery_is_visible_to_authenticated_evidence_before_writer_shutdown() {
+        let bundle = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
+            crate::channels::registry::ChannelRef::new(
+                ChannelKind::Telegram,
+                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
+            ),
+            false,
+        );
+        let account_ref = bundle.channel_ref.clone();
+        let channel = Arc::new(MockChannel::new(false));
+        let mut delivery = LiveDelivery::new_mapped_telegram(
+            channel.clone(),
+            "private-chat".into(),
+            ChannelKind::Telegram,
+            fast_config(),
+            bundle.mapped_live_egress_provenance().unwrap(),
+        )
+        .unwrap();
+        let (home, writer, join) = authenticated_home_writer().await;
+        delivery
+            .send_or_edit(&writer, "private-body", false)
+            .await
+            .expect("mapped mock send");
+
+        let counters = crate::daemon::channel_transport_evidence::read_account_transport_evidence(
+            home.path(),
+            crate::time::now_unix_i64(),
+        )
+        .expect("authenticated mapped live frames are readable before writer shutdown");
+        let observed = counters.get(&account_ref).expect("mapped account row");
+        assert_eq!(observed.completed, 1);
+        assert_eq!(observed.accepted, 1);
+        assert_eq!(observed.failed, 0);
+        assert_eq!(channel.sends.load(Ordering::SeqCst), 1);
+
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn mapped_live_delivery_refuses_before_send_when_authenticated_marker_is_unavailable() {
+        let bundle = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
+            crate::channels::registry::ChannelRef::new(
+                ChannelKind::Telegram,
+                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
+            ),
+            false,
+        );
+        let channel = Arc::new(MockChannel::new(false));
+        let mut delivery = LiveDelivery::new_mapped_telegram(
+            channel.clone(),
+            "private-chat".into(),
+            ChannelKind::Telegram,
+            fast_config(),
+            bundle.mapped_live_egress_provenance().unwrap(),
+        )
+        .unwrap();
+        let home = tempfile::tempdir().expect("create marker-disabled live writer home");
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).expect("create marker-disabled live writer WAL");
+        let segment = wal.join(format!(
+            "{}-{}-000001.wal",
+            uuid::Uuid::now_v7(),
+            crate::wal::writer::HMAC_ROTATION_SURFACE,
+        ));
+        let (marker_unavailable, join) =
+            crate::wal::writer::spawn_hmac_rotation_for_home(segment, home.path().to_path_buf())
+                .expect("start live marker-disabled writer");
+        assert!(
+            marker_unavailable.is_alive(),
+            "marker-disabled writer stays live"
+        );
+        assert!(
+            crate::channels::send_gate::emit_egress_intent(
+                &marker_unavailable,
+                "telegram",
+                "ordinary-recipient",
+                "ordinary-body",
+                crate::time::now_unix_secs(),
+            )
+            .await
+            .is_some(),
+            "ordinary append remains acknowledged without authentication markers"
+        );
+        assert!(
+            delivery
+                .send_or_edit(&marker_unavailable, "private-body", false)
+                .await
+                .is_err(),
+            "bound intent refuses when it cannot create an authenticated marker"
+        );
+        assert_eq!(
+            channel.sends.load(Ordering::SeqCst),
+            0,
+            "marker refusal occurs before the mock transport"
+        );
+        drop(marker_unavailable);
+        join.await.expect("marker-disabled writer task joins");
+    }
+
+    #[tokio::test]
+    async fn mapped_failure_audits_before_its_authenticated_terminal_result() {
+        let bundle = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
+            crate::channels::registry::ChannelRef::new(
+                ChannelKind::Telegram,
+                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
+            ),
+            false,
+        );
+        let channel = Arc::new(FailingSendChannel {
+            sends: AtomicUsize::new(0),
+        });
+        let mut delivery = LiveDelivery::new_mapped_telegram(
+            channel.clone(),
+            "private-chat".into(),
+            ChannelKind::Telegram,
+            fast_config(),
+            bundle.mapped_live_egress_provenance().unwrap(),
+        )
+        .unwrap();
+        let (home, writer, join) = authenticated_home_writer().await;
+        assert!(
+            delivery
+                .send_or_edit(&writer, "private-body", false)
+                .await
+                .is_err()
+        );
+        let counters = crate::daemon::channel_transport_evidence::read_account_transport_evidence(
+            home.path(),
+            crate::time::now_unix_i64(),
+        )
+        .expect("authenticated failed mapped result is readable before writer shutdown");
+        let observed = counters
+            .get(&bundle.channel_ref)
+            .expect("mapped failed account row");
+        assert_eq!(observed.completed, 1);
+        assert_eq!(observed.accepted, 0);
+        assert_eq!(observed.failed, 1);
+        drop(writer);
+        join.await.unwrap().unwrap();
+
+        let bytes = std::fs::read(home.path().join("wal").join("000001.wal")).unwrap();
+        let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = header.header_len();
+        let mut relevant = Vec::new();
+        let mut terminal = None;
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8
+            {
+                relevant.push("intent");
+            } else if frame.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_SEND {
+                relevant.push("audit");
+            } else if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8
+            {
+                relevant.push("result");
+                terminal =
+                    Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(relevant, vec!["intent", "audit", "result"]);
+        assert_eq!(terminal.unwrap()["outcome"], "transport");
+        assert_eq!(channel.sends.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn mapped_constructor_rejects_channel_mismatch_before_any_adapter_effect() {
+        let channel = Arc::new(MockChannel::new(false));
+        let bundle = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
+            crate::channels::registry::ChannelRef::new(
+                ChannelKind::Telegram,
+                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
+            ),
+            false,
+        );
+        assert!(
+            LiveDelivery::new_mapped_telegram(
+                channel.clone(),
+                "private-chat".into(),
+                ChannelKind::Slack,
+                fast_config(),
+                bundle.mapped_live_egress_provenance().unwrap(),
+            )
+            .is_err()
+        );
+        assert_eq!(channel.sends.load(Ordering::SeqCst), 0);
+        assert_eq!(channel.edits.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

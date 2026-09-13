@@ -17,6 +17,7 @@
 //! The audit is **metadata-only**: the recipient (a phone number for WhatsApp)
 //! and the message body are xxh3-64 HASHED, never stored in the clear.
 
+use crate::channels::ChannelKind;
 use crate::permissions::Decision;
 
 /// What the send path should do — decided PURELY from the inputs so the policy
@@ -159,20 +160,88 @@ pub async fn emit_egress_intent(
     message: &str,
     ts_unix: u64,
 ) -> Option<String> {
+    emit_egress_intent_inner(writer, channel, recipient, message, ts_unix, None).await
+}
+
+/// Account-bound variant for the admitted nonlegacy Telegram map live path.
+/// Other channel paths deliberately keep using the unbound wrapper, whose JSON
+/// payload remains byte-compatible because it has no channel_ref key.
+pub(crate) async fn emit_account_bound_egress_intent(
+    writer: &crate::wal::writer::WalWriterHandle,
+    channel: &str,
+    recipient: &str,
+    message: &str,
+    ts_unix: u64,
+    provenance: &crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance,
+) -> Option<String> {
+    if provenance.channel_ref().channel_id != ChannelKind::Telegram
+        || channel != ChannelKind::Telegram.as_str()
+    {
+        tracing::warn!(
+            channel,
+            bound_channel = %provenance.channel_ref().channel_id.as_str(),
+            "refusing account-bound egress intent with mismatched channel reference"
+        );
+        return None;
+    }
     let intent_id = crate::wal::events::next_intent_id(
         b"channel-egress",
         &format!("{channel}:{recipient}"),
         ts_unix as i64,
     );
-    let payload = serde_json::to_vec(&serde_json::json!({
+    let mut value = serde_json::json!({
         "intent_id": intent_id,
         "channel": channel,
         "to_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64(recipient.as_bytes())),
         "message_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64(message.as_bytes())),
         "message_bytes": message.len(),
         "ts_unix": ts_unix,
-    }))
-    .unwrap_or_default();
+    });
+    value["channel_ref"] = serde_json::to_value(provenance.channel_ref()).ok()?;
+    let payload = serde_json::to_vec(&value).unwrap_or_default();
+    let header = crate::wal::HeaderBuilder::new(0x00, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8)
+        .build();
+    match writer.append_authenticated(header, payload).await {
+        Ok(_) => Some(intent_id),
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                channel,
+                "mandatory authenticated account-bound egress intent could not be recorded; send refused"
+            );
+            None
+        }
+    }
+}
+
+async fn emit_egress_intent_inner(
+    writer: &crate::wal::writer::WalWriterHandle,
+    channel: &str,
+    recipient: &str,
+    message: &str,
+    ts_unix: u64,
+    channel_ref: Option<&crate::channels::registry::ChannelRef>,
+) -> Option<String> {
+    let intent_id = crate::wal::events::next_intent_id(
+        b"channel-egress",
+        &format!("{channel}:{recipient}"),
+        ts_unix as i64,
+    );
+    // Keep the former JSON object serializer, including its map-key ordering.
+    // Unbound callers never gain a channel_ref key.
+    let mut value = serde_json::json!({
+        "intent_id": intent_id,
+        "channel": channel,
+        "to_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64(recipient.as_bytes())),
+        "message_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64(message.as_bytes())),
+        "message_bytes": message.len(),
+        "ts_unix": ts_unix,
+    });
+    if let Some(channel_ref) = channel_ref {
+        value["channel_ref"] = serde_json::to_value(channel_ref).ok()?;
+    }
+    let payload = serde_json::to_vec(&value).unwrap_or_default();
     let header = crate::wal::HeaderBuilder::new(0x00, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8)
         .build();
@@ -214,6 +283,40 @@ pub async fn emit_egress_result(
     }
 }
 
+/// Terminal 0x21 record for the sealed mapped-Telegram live path. Its payload
+/// is deliberately identical to the unbound result; the authenticated marker
+/// binds it to the earlier authenticated mapped intent without copying account
+/// data into the result frame.
+pub(crate) async fn emit_account_bound_egress_result(
+    writer: &crate::wal::writer::WalWriterHandle,
+    intent_id: &str,
+    outcome: &str,
+    provider_message_id: Option<&str>,
+    ts_unix: u64,
+    provenance: &crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance,
+) {
+    if provenance.channel_ref().channel_id != ChannelKind::Telegram {
+        tracing::warn!("refusing account-bound egress result with non-Telegram provenance");
+        return;
+    }
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "intent_id": intent_id,
+        "outcome": outcome,
+        "provider_message_id": provider_message_id,
+        "ts_unix": ts_unix,
+    }))
+    .unwrap_or_default();
+    let header = crate::wal::HeaderBuilder::new(0x00, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8)
+        .build();
+    if let Err(error) = writer.append_authenticated(header, payload).await {
+        tracing::warn!(
+            error = %error,
+            "authenticated WAL append CHANNEL_EGRESS_RESULT failed after bound egress"
+        );
+    }
+}
+
 #[cfg(test)]
 mod intent_tests {
     use super::*;
@@ -239,11 +342,15 @@ mod intent_tests {
 
         let bytes = tokio::fs::read(&seg).await.unwrap();
         let mut frames = Vec::new();
+        let mut raw_unbound_intent = None;
         let mut cursor = SEGMENT_HEADER_LEN;
         while cursor < bytes.len() {
             let Ok(frame) = decode_frame(&bytes[cursor..]) else {
                 break;
             };
+            if frame.header.event_subtype == ExtendedSubtype::ChannelEgressIntent as u8 {
+                raw_unbound_intent = Some(frame.payload.to_vec());
+            }
             frames.push((
                 frame.header.event_subtype,
                 serde_json::from_slice::<serde_json::Value>(frame.payload)
@@ -267,7 +374,119 @@ mod intent_tests {
         let intent_text = intent.1.to_string();
         assert!(!intent_text.contains("chat-42"), "recipient must be hashed");
         assert!(!intent_text.contains("hallo"), "body must be hashed");
+        assert!(
+            intent.1.get("channel_ref").is_none(),
+            "unbound compatibility payload must not gain an account reference"
+        );
+        let expected_legacy_intent = serde_json::to_vec(&serde_json::json!({
+            "intent_id": intent.1["intent_id"].as_str().unwrap(),
+            "channel": "telegram",
+            "to_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64("chat-42".as_bytes())),
+            "message_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64("hallo".as_bytes())),
+            "message_bytes": 5,
+            "ts_unix": 1_700_000_000_u64,
+        }))
+        .unwrap();
+        assert_eq!(
+            raw_unbound_intent.expect("raw unbound intent"),
+            expected_legacy_intent,
+            "the None branch retains the exact former intent JSON bytes"
+        );
         assert_eq!(intent.1["message_bytes"], 5);
+    }
+
+    #[tokio::test]
+    async fn mapped_telegram_intent_carries_only_typed_ref_and_mismatch_writes_nothing() {
+        let home = tempfile::tempdir().expect("create authenticated bound send-gate home");
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).expect("create authenticated bound send-gate WAL");
+        let seg = wal.join("000001.wal");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(seg.clone(), home.path().to_path_buf())
+                .expect("spawn authenticated bound send-gate WAL fixture");
+        ready
+            .wait()
+            .await
+            .expect("initialize authenticated bound send-gate WAL fixture");
+        let bundle_a = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
+            crate::channels::registry::ChannelRef::new(
+                ChannelKind::Telegram,
+                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
+            ),
+            false,
+        );
+        let bundle_default = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
+            crate::channels::registry::ChannelRef::new(
+                ChannelKind::Telegram,
+                crate::channels::registry::ChannelAccountId::new("default").unwrap(),
+            ),
+            false,
+        );
+        let provenance_a = bundle_a.mapped_live_egress_provenance().unwrap();
+        let provenance_default = bundle_default.mapped_live_egress_provenance().unwrap();
+        let id_a = emit_account_bound_egress_intent(
+            &writer,
+            "telegram",
+            "private-recipient-a",
+            "private-body-a",
+            1_700_000_000,
+            &provenance_a,
+        )
+        .await
+        .expect("mapped account A intent");
+        let id_default = emit_account_bound_egress_intent(
+            &writer,
+            "telegram",
+            "private-recipient-default",
+            "private-body-default",
+            1_700_000_001,
+            &provenance_default,
+        )
+        .await
+        .expect("literal mapped default intent");
+        assert!(
+            emit_account_bound_egress_intent(
+                &writer,
+                "slack",
+                "must-not-reach-wal",
+                "must-not-reach-wal",
+                1_700_000_002,
+                &provenance_a,
+            )
+            .await
+            .is_none(),
+            "mismatched ref refuses before an egress intent is appended"
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+
+        let bytes = tokio::fs::read(&seg).await.unwrap();
+        let mut cursor = SEGMENT_HEADER_LEN;
+        let mut refs = Vec::new();
+        while cursor < bytes.len() {
+            let frame = decode_frame(&bytes[cursor..]).expect("complete test frame");
+            if frame.header.event_subtype == ExtendedSubtype::ChannelEgressIntent as u8 {
+                let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                refs.push((payload["intent_id"].clone(), payload));
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(refs.len(), 2, "mismatch added no WAL intent");
+        for (intent_id, payload) in refs {
+            assert!(
+                intent_id.as_str().is_some_and(|id| id.len() == 32
+                    && id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())),
+                "bound live ids stay canonical lower-case 32-hex"
+            );
+            let text = payload.to_string();
+            assert!(!text.contains("private-recipient"));
+            assert!(!text.contains("private-body"));
+            assert!(!text.contains("token"));
+        }
+        assert_eq!(id_a.len(), 32);
+        assert_eq!(id_default.len(), 32);
     }
 
     #[tokio::test]

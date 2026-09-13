@@ -2,9 +2,11 @@
 //! qwen weights, refusal recovery, provider flapping, circuit breakers,
 //! usage/cost today.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::super::{CheckDoc, CheckFn, CheckOutcome, CheckStatus};
+use crate::channels::registry::ChannelRef;
 
 /// SC-08 n8n API bearer-token at-rest protection. When the n8n API is
 /// enabled, its bearer token lives at `~/.neoth/n8n_api_token`. On
@@ -271,6 +273,110 @@ pub(crate) fn check_provider_flapping(home: &Path) -> CheckOutcome {
     }
 }
 
+/// Account-isolated flapping detection for authenticated adapter transport
+/// attempts. `accepted` means the adapter accepted the call; it is not a
+/// recipient-delivery or read receipt.
+pub(crate) fn check_channel_transport_flapping(home: &Path) -> CheckOutcome {
+    check_channel_transport_flapping_at(home, crate::time::now_unix_i64())
+}
+
+fn check_channel_transport_flapping_at(home: &Path, now_unix: i64) -> CheckOutcome {
+    classify_channel_transport_evidence(
+        crate::daemon::channel_transport_evidence::read_account_transport_evidence(home, now_unix),
+    )
+}
+
+fn classify_channel_transport_evidence(
+    evidence: anyhow::Result<
+        BTreeMap<ChannelRef, crate::daemon::channel_transport_evidence::TransportCounters>,
+    >,
+) -> CheckOutcome {
+    const NAME: &str = "channel transport flapping";
+    let counters = match evidence {
+        Ok(counters) => counters,
+        Err(_) => {
+            return CheckOutcome {
+                name: NAME,
+                status: CheckStatus::Fail,
+                detail: "account-bound transport evidence unavailable".to_string(),
+            };
+        }
+    };
+
+    let has_attempts = counters.values().any(|counter| counter.completed > 0);
+    let mut inconclusive = Vec::new();
+    for (channel_ref, counter) in &counters {
+        if counter.unknown_after_armed > 0 || counter.unsettled_live_intent > 0 {
+            inconclusive.push(format!(
+                "{}: {} unknown after armed, {} unsettled",
+                channel_account_label(channel_ref),
+                counter.unknown_after_armed,
+                counter.unsettled_live_intent,
+            ));
+        }
+    }
+    if !has_attempts && inconclusive.is_empty() {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Pass,
+            detail: "no account-bound transport attempts in last 24h".to_string(),
+        };
+    }
+
+    let mut warnings = Vec::new();
+    for (channel_ref, counter) in &counters {
+        if counter.completed < FLAPPING_MIN_SAMPLES {
+            continue;
+        }
+        let failure_pct = (counter.failed as f64 / counter.completed as f64) * 100.0;
+        if failure_pct >= FLAPPING_THRESHOLD_PCT {
+            warnings.push(format!(
+                "{}: {}/{} failed ({failure_pct:.0}%); {} accepted by adapter",
+                channel_account_label(channel_ref),
+                counter.failed,
+                counter.completed,
+                counter.accepted,
+            ));
+        }
+    }
+    if warnings.is_empty() && inconclusive.is_empty() {
+        CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Pass,
+            detail: format!(
+                "every account with ≥{FLAPPING_MIN_SAMPLES} completed adapter attempts is below {FLAPPING_THRESHOLD_PCT:.0}% failures"
+            ),
+        }
+    } else {
+        let mut details = Vec::new();
+        if !warnings.is_empty() {
+            details.push(format!(
+                "account-bound transport flapping detected — {}",
+                warnings.join("; ")
+            ));
+        }
+        if !inconclusive.is_empty() {
+            details.push(format!(
+                "inconclusive account-bound transport evidence — {}",
+                inconclusive.join("; ")
+            ));
+        }
+        CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: details.join("; "),
+        }
+    }
+}
+
+fn channel_account_label(channel_ref: &ChannelRef) -> String {
+    format!(
+        "{}/{}",
+        channel_ref.channel_id.as_str(),
+        channel_ref.account_id.as_str()
+    )
+}
+
 /// QM-10 Phase 1 doctor surface: render the registered circuit-
 /// breaker states. v0.1.x: there's no persisted breaker state across
 /// daemon restarts, so this check only has content when a long-running
@@ -404,6 +510,7 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_usage_today,
     check_circuit_breakers,
     check_provider_flapping,
+    check_channel_transport_flapping,
     check_refusal_recovery,
     check_local_qwen_weights,
     check_n8n_api_token,
@@ -474,6 +581,12 @@ pub(crate) const DOCS: &[CheckDoc] = &[
               gives the per-channel fix.",
     },
     CheckDoc {
+        name: "channel transport flapping",
+        purpose: "Reads authenticated, account-bound adapter transport evidence from the last 24 hours. Warns per account at five or more completed attempts and twenty percent or more failures. An adapter acceptance confirms only that adapter call, never recipient delivery or a read receipt.",
+        common_failures: "A mapped Telegram account has repeated adapter failures, or an Armed/unsettled record leaves the evidence inconclusive after an interrupted process.",
+        fix: "Inspect the named channel/account's credentials and adapter logs. Resolve inconclusive records before treating failure percentages as complete; this check does not retry, probe, or change delivery state.",
+    },
+    CheckDoc {
         name: "refusal recovery",
         purpose: "SPEC-10 LOWKEY refusal-recovery health. When the model \
                   refuses a legitimate request, `try_recover` reframes the \
@@ -531,3 +644,161 @@ pub(crate) const DOCS: &[CheckDoc] = &[
               `n8n_api.enabled: false`.",
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::channels::registry::{ChannelAccountId, ChannelId};
+
+    fn account(name: &str) -> ChannelRef {
+        ChannelRef::new(ChannelId::Telegram, ChannelAccountId::new(name).unwrap())
+    }
+
+    fn counters(
+        completed: u64,
+        accepted: u64,
+        failed: u64,
+        unknown: u64,
+        unsettled: u64,
+    ) -> crate::daemon::channel_transport_evidence::TransportCounters {
+        crate::daemon::channel_transport_evidence::TransportCounters {
+            completed,
+            accepted,
+            failed,
+            unknown_after_armed: unknown,
+            unsettled_live_intent: unsettled,
+        }
+    }
+
+    #[test]
+    fn account_transport_flapping_isolated_per_account_at_threshold() {
+        let evidence = BTreeMap::from([
+            (account("account-a"), counters(5, 4, 1, 0, 0)),
+            (account("account-b"), counters(5, 5, 0, 0, 0)),
+        ]);
+
+        let outcome = classify_channel_transport_evidence(Ok(evidence));
+
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(
+            outcome
+                .detail
+                .contains("telegram/account-a: 1/5 failed (20%)")
+        );
+        assert!(!outcome.detail.contains("telegram/account-b"));
+        assert!(outcome.detail.contains("accepted by adapter"));
+        assert!(!outcome.detail.contains("delivered"));
+    }
+
+    #[test]
+    fn account_transport_flapping_passes_when_no_bound_attempts_exist() {
+        let outcome = classify_channel_transport_evidence(Ok(BTreeMap::new()));
+
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert_eq!(
+            outcome.detail,
+            "no account-bound transport attempts in last 24h"
+        );
+    }
+
+    #[test]
+    fn account_transport_flapping_unknown_evidence_is_inconclusive_without_rate() {
+        let evidence = BTreeMap::from([(account("default"), counters(0, 0, 0, 1, 0))]);
+
+        let outcome = classify_channel_transport_evidence(Ok(evidence));
+
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("inconclusive"));
+        assert!(
+            outcome
+                .detail
+                .contains("telegram/default: 1 unknown after armed")
+        );
+        assert!(!outcome.detail.contains('%'));
+    }
+
+    #[test]
+    fn account_transport_flapping_keeps_known_rate_when_another_account_is_unknown() {
+        let evidence = BTreeMap::from([
+            (account("account-a"), counters(5, 4, 1, 0, 0)),
+            (account("account-b"), counters(0, 0, 0, 1, 0)),
+        ]);
+
+        let outcome = classify_channel_transport_evidence(Ok(evidence));
+
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(
+            outcome
+                .detail
+                .contains("telegram/account-a: 1/5 failed (20%)")
+        );
+        assert!(
+            outcome
+                .detail
+                .contains("telegram/account-b: 1 unknown after armed")
+        );
+        assert!(!outcome.detail.contains("telegram/account-b: 0/"));
+    }
+
+    #[test]
+    fn account_transport_flapping_keeps_same_account_rate_with_unknown_evidence() {
+        let evidence = BTreeMap::from([(account("account-a"), counters(5, 4, 1, 1, 0))]);
+
+        let outcome = classify_channel_transport_evidence(Ok(evidence));
+
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(
+            outcome
+                .detail
+                .contains("telegram/account-a: 1/5 failed (20%)")
+        );
+        assert!(
+            outcome
+                .detail
+                .contains("telegram/account-a: 1 unknown after armed")
+        );
+    }
+
+    #[test]
+    fn account_transport_flapping_renders_unsettled_evidence_without_rate_when_uncompleted() {
+        let evidence = BTreeMap::from([(account("account-a"), counters(0, 0, 0, 0, 1))]);
+
+        let outcome = classify_channel_transport_evidence(Ok(evidence));
+
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(
+            outcome
+                .detail
+                .contains("telegram/account-a: 0 unknown after armed, 1 unsettled")
+        );
+        assert!(!outcome.detail.contains("telegram/account-a: 0/"));
+    }
+
+    #[test]
+    fn account_transport_flapping_below_minimum_completed_attempts_passes() {
+        let evidence = BTreeMap::from([(account("account-a"), counters(4, 0, 4, 0, 0))]);
+
+        let outcome = classify_channel_transport_evidence(Ok(evidence));
+
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(
+            outcome
+                .detail
+                .contains("every account with ≥5 completed adapter attempts")
+        );
+    }
+
+    #[test]
+    fn account_transport_flapping_reader_error_is_fixed_unavailable_failure() {
+        let outcome = classify_channel_transport_evidence(Err(anyhow::anyhow!(
+            "sensitive path must not render"
+        )));
+
+        assert_eq!(outcome.status, CheckStatus::Fail);
+        assert_eq!(
+            outcome.detail,
+            "account-bound transport evidence unavailable"
+        );
+        assert!(!outcome.detail.contains("sensitive path"));
+    }
+}

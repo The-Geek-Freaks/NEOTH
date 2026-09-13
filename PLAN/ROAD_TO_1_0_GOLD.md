@@ -8,6 +8,35 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**Wave 20 account transport evidence — CURRENT IN PROGRESS checkpoint
+(2026-09-13; supersedes the earlier source-only note):** nine admitted source
+files add bound nonlegacy Telegram metadata, one complete authenticated home-WAL
+scan, and Doctor account flapping. TestBuild01 **PASS**: 7m29s, 182.78 GiB
+minimum free, 15.1 GiB peak; four real authenticated-WAL tests and the
+unknown-outcome sanitizer review pass. Selected01 **391/3/0** found a real
+legacy JSON byte-order regression plus two new Doctor count pins. The writer now
+retains the former `json!` value/optional-reference shape and the raw-byte
+assertion; Doctor's all-check documentation list has 60 entries and
+`run_all_checks` returns 59 runtime outcomes. The admitted mapped live-auth
+repair keeps opaque capability gates and the existing `append_authenticated`
+path: `CHANNEL_SEND` precedes its terminal marker on success/failure, with
+unbound payload/order unchanged. TestBuild02 **PASS** 4m07s/min183.27GiB/
+peak11.07; Selected02 **394/0/0** preceded that repair; Python19+11+8 and
+Clippy03 **PASS** 3m12s/min205.12GiB/peak7.31. Final TestBuild03 **PASS**
+3m49s/min202.66GiB/peak10.65; final selected **397/0/0** in26.48s/catalogue
+14389; 13 integration targets **157/0/0**/build4m27/min205.11GiB/peak10.82;
+fmt/GUI lint/self-test **PASS**. Final binary SHA-256
+`6B53DF7714F73FBEA15C1C093D1B82201550C21C1E14FDA9D50480C41D5FAE4E`,
+279900672 bytes; receipts have 153 source inputs/14 executables. W20 is
+**LOCALLY VERIFIED**; publication identity is the Git commit containing this
+receipt. No current-head full-CI or cross-platform acceptance claim. It adds no
+authority, routing, credentials,
+retries, runtime-health authority, or physical delivery.
+P1-14, P1-16, and P1-17 remain **OPEN**; counts remain **1,010 complete / 312
+open / 2 partial** (314 raw; 313 pre-tag blockers). Wave17 CI is terminal
+failed on macOS (13 SQLite-`NOFOLLOW` temp-fixture failures); Linux/Windows
+passed. W18 Preflight `34780142255` and Code Quality `34780141999` passed.
+
 **Waves 18–19 GUI and connect account consumers — LOCALLY VERIFIED;
 full CI pending (2026-09-13):** six independently reviewed source files extend
 published Wave17 `ad4c4826`. Settings/Channels preserves nested account readiness

@@ -899,6 +899,275 @@ struct WalEvidence {
     results: HashMap<String, ProactiveResultFrame>,
 }
 
+/// Classification used by the single home-WAL evidence scan. Shared 0x20/0x21
+/// frames without the proactive discriminator remain available to the live
+/// channel collector.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProactiveFrameDisposition {
+    ConsumedProactive,
+    NotProactive,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VerifiedTransportFailure {
+    Transport,
+    Authentication,
+    RateLimited,
+    NotSupported,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VerifiedProactiveTerminal {
+    AcceptedByAdapter {
+        completed_at_unix: i64,
+    },
+    Failed {
+        kind: VerifiedTransportFailure,
+        completed_at_unix: i64,
+    },
+    CrashUnknown {
+        completed_at_unix: i64,
+    },
+    NotAttempted {
+        completed_at_unix: i64,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VerifiedProactiveAccountEgress {
+    pub(crate) channel_ref: ChannelRef,
+    pub(crate) intent_id: String,
+    pub(crate) created_at_unix: i64,
+    pub(crate) armed_at_unix: Option<i64>,
+    pub(crate) terminal: Option<VerifiedProactiveTerminal>,
+}
+
+/// Frame-fed, read-only v4 account evidence decoder. It never opens a WAL,
+/// performs recovery, or consults mutable runtime configuration.
+pub(crate) struct ProactiveAccountEgressCollector {
+    evidence: WalEvidence,
+}
+
+impl ProactiveAccountEgressCollector {
+    pub(crate) fn new() -> Self {
+        Self {
+            evidence: WalEvidence::default(),
+        }
+    }
+
+    pub(crate) fn observe(
+        &mut self,
+        frame: &crate::wal::frame::DecodedFrame<'_>,
+    ) -> Result<ProactiveFrameDisposition> {
+        if frame.header.event_type != EVENT_TYPE_EXTENDED {
+            return Ok(ProactiveFrameDisposition::NotProactive);
+        }
+        let subtype = frame.header.event_subtype;
+        if subtype != ExtendedSubtype::ChannelEgressIntent as u8
+            && subtype != ExtendedSubtype::ChannelEgressArmed as u8
+            && subtype != ExtendedSubtype::ChannelEgressResult as u8
+        {
+            return Ok(ProactiveFrameDisposition::NotProactive);
+        }
+
+        let value: serde_json::Value =
+            serde_json::from_slice(frame.payload).context("decode channel egress WAL frame")?;
+        if subtype != ExtendedSubtype::ChannelEgressArmed as u8
+            && value.get("proactive_binding_version").is_none()
+        {
+            return Ok(ProactiveFrameDisposition::NotProactive);
+        }
+        anyhow::ensure!(
+            value
+                .get("proactive_binding_version")
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|version| {
+                    version == u64::from(LEGACY_WAL_BINDING_VERSION)
+                        || version == u64::from(PREVIOUS_WAL_BINDING_VERSION)
+                        || version == u64::from(WAL_BINDING_VERSION)
+                        || version == u64::from(ACCOUNT_BOUND_WAL_BINDING_VERSION)
+                }),
+            "unsupported proactive WAL binding version"
+        );
+
+        if subtype == ExtendedSubtype::ChannelEgressIntent as u8 {
+            let intent: ProactiveIntentFrame =
+                serde_json::from_value(value).context("decode proactive intent frame")?;
+            validate_intent_frame(&intent)?;
+            anyhow::ensure!(
+                self.evidence
+                    .intents
+                    .insert(intent.intent_id.clone(), intent)
+                    .is_none(),
+                "duplicate proactive intent frame"
+            );
+        } else if subtype == ExtendedSubtype::ChannelEgressArmed as u8 {
+            let armed: ProactiveArmedFrame =
+                serde_json::from_value(value).context("decode proactive Armed frame")?;
+            validate_armed_frame(&armed)?;
+            anyhow::ensure!(
+                self.evidence
+                    .armed
+                    .insert(armed.intent_id.clone(), armed)
+                    .is_none(),
+                "duplicate proactive Armed frame"
+            );
+        } else {
+            let result: ProactiveResultFrame =
+                serde_json::from_value(value).context("decode proactive result frame")?;
+            validate_result_frame(&result)?;
+            anyhow::ensure!(
+                self.evidence
+                    .results
+                    .insert(result.intent_id.clone(), result)
+                    .is_none(),
+                "duplicate proactive result frame"
+            );
+        }
+        Ok(ProactiveFrameDisposition::ConsumedProactive)
+    }
+
+    pub(crate) fn finish(self) -> Result<Vec<VerifiedProactiveAccountEgress>> {
+        validate_wal_evidence_relationships(&self.evidence)?;
+        let mut verified = Vec::new();
+        for intent in self.evidence.intents.values() {
+            if intent.proactive_binding_version != ACCOUNT_BOUND_WAL_BINDING_VERSION {
+                continue;
+            }
+            let channel_ref = intent
+                .channel_ref
+                .clone()
+                .context("v4 proactive intent is missing its account binding")?;
+            validate_account_bound_channel_ref(&channel_ref, &intent.target_channel)?;
+            let armed = self.evidence.armed.get(&intent.intent_id);
+            let terminal = self
+                .evidence
+                .results
+                .get(&intent.intent_id)
+                .map(|result| {
+                    anyhow::ensure!(
+                        result.completed_at_unix >= intent.created_at_unix,
+                        "proactive result precedes its intent"
+                    );
+                    let requires_armed = |label: &str| -> Result<&ProactiveArmedFrame> {
+                        armed.with_context(|| {
+                            format!("proactive {label} result lacks Armed evidence")
+                        })
+                    };
+                    match result.outcome {
+                        ProactiveEgressOutcome::Delivered => {
+                            requires_armed("delivery")?;
+                            Ok(VerifiedProactiveTerminal::AcceptedByAdapter {
+                                completed_at_unix: result.completed_at_unix,
+                            })
+                        }
+                        ProactiveEgressOutcome::TransportError => {
+                            requires_armed("transport failure")?;
+                            Ok(VerifiedProactiveTerminal::Failed {
+                                kind: VerifiedTransportFailure::Transport,
+                                completed_at_unix: result.completed_at_unix,
+                            })
+                        }
+                        ProactiveEgressOutcome::AuthError => {
+                            requires_armed("authentication failure")?;
+                            Ok(VerifiedProactiveTerminal::Failed {
+                                kind: VerifiedTransportFailure::Authentication,
+                                completed_at_unix: result.completed_at_unix,
+                            })
+                        }
+                        ProactiveEgressOutcome::RateLimited => {
+                            requires_armed("rate-limited failure")?;
+                            Ok(VerifiedProactiveTerminal::Failed {
+                                kind: VerifiedTransportFailure::RateLimited,
+                                completed_at_unix: result.completed_at_unix,
+                            })
+                        }
+                        ProactiveEgressOutcome::SidecarOnly
+                            if result.error_kind.as_deref() == Some("not_supported") =>
+                        {
+                            requires_armed("not-supported failure")?;
+                            Ok(VerifiedProactiveTerminal::Failed {
+                                kind: VerifiedTransportFailure::NotSupported,
+                                completed_at_unix: result.completed_at_unix,
+                            })
+                        }
+                        ProactiveEgressOutcome::CrashUnknown => {
+                            requires_armed("crash-unknown")?;
+                            Ok(VerifiedProactiveTerminal::CrashUnknown {
+                                completed_at_unix: result.completed_at_unix,
+                            })
+                        }
+                        ProactiveEgressOutcome::AdapterConfigurationError
+                        | ProactiveEgressOutcome::SidecarOnly
+                        | ProactiveEgressOutcome::PolicySuppressed
+                        | ProactiveEgressOutcome::PolicyChangedBeforeEffect
+                        | ProactiveEgressOutcome::NotAttempted => {
+                            anyhow::ensure!(
+                                armed.is_none(),
+                                "pre-effect proactive result unexpectedly follows Armed evidence"
+                            );
+                            Ok(VerifiedProactiveTerminal::NotAttempted {
+                                completed_at_unix: result.completed_at_unix,
+                            })
+                        }
+                    }
+                })
+                .transpose()?;
+            if terminal.is_none() && armed.is_none() {
+                continue;
+            }
+            verified.push(VerifiedProactiveAccountEgress {
+                channel_ref,
+                intent_id: intent.intent_id.clone(),
+                created_at_unix: intent.created_at_unix,
+                armed_at_unix: armed.map(|frame| frame.armed_at_unix),
+                terminal,
+            });
+        }
+        verified.sort_by(|left, right| left.intent_id.cmp(&right.intent_id));
+        Ok(verified)
+    }
+}
+
+fn validate_wal_evidence_relationships(evidence: &WalEvidence) -> Result<()> {
+    for intent_id in evidence.results.keys() {
+        anyhow::ensure!(
+            evidence.intents.contains_key(intent_id),
+            "proactive result exists without its intent"
+        );
+    }
+    for (intent_id, armed) in &evidence.armed {
+        let intent = evidence
+            .intents
+            .get(intent_id)
+            .context("proactive Armed frame exists without its intent")?;
+        anyhow::ensure!(
+            armed.prepared_binding_sha256 == intent.binding_sha256
+                && armed.armed_at_unix == intent.created_at_unix,
+            "proactive Armed frame conflicts with Prepared intent"
+        );
+    }
+    for (intent_id, result) in &evidence.results {
+        let intent = &evidence.intents[intent_id];
+        let expected_binding = evidence.armed.get(intent_id).map_or_else(
+            || &intent.binding_sha256,
+            |armed| &armed.armed_binding_sha256,
+        );
+        anyhow::ensure!(
+            result.binding_sha256.as_str() == expected_binding.as_str(),
+            "proactive result conflicts with authenticated dispatch phase"
+        );
+        anyhow::ensure!(
+            result.target_channel == intent.target_channel
+                && result.channel_ref == intent.channel_ref
+                && result.recipient_sha256 == intent.recipient_sha256
+                && result.message_bytes == intent.message_bytes,
+            "proactive result metadata conflicts with authenticated intent"
+        );
+    }
+    Ok(())
+}
+
 fn effect_hash(domain: &[u8], value: &[u8]) -> String {
     crate::wal::events::effect_digest(domain, value)
 }
@@ -2056,41 +2325,7 @@ fn scan_wal_evidence(
         )
         .context("authenticate selected WAL chain for proactive recovery")?;
     }
-    for intent_id in evidence.results.keys() {
-        anyhow::ensure!(
-            evidence.intents.contains_key(intent_id),
-            "proactive result exists without its intent"
-        );
-    }
-    for (intent_id, armed) in &evidence.armed {
-        let intent = evidence
-            .intents
-            .get(intent_id)
-            .context("proactive Armed frame exists without its intent")?;
-        anyhow::ensure!(
-            armed.prepared_binding_sha256 == intent.binding_sha256
-                && armed.armed_at_unix == intent.created_at_unix,
-            "proactive Armed frame conflicts with Prepared intent"
-        );
-    }
-    for (intent_id, result) in &evidence.results {
-        let intent = &evidence.intents[intent_id];
-        let expected_binding = evidence.armed.get(intent_id).map_or_else(
-            || &intent.binding_sha256,
-            |armed| &armed.armed_binding_sha256,
-        );
-        anyhow::ensure!(
-            result.binding_sha256.as_str() == expected_binding.as_str(),
-            "proactive result conflicts with authenticated dispatch phase"
-        );
-        anyhow::ensure!(
-            result.target_channel == intent.target_channel
-                && result.channel_ref == intent.channel_ref
-                && result.recipient_sha256 == intent.recipient_sha256
-                && result.message_bytes == intent.message_bytes,
-            "proactive result metadata conflicts with authenticated intent"
-        );
-    }
+    validate_wal_evidence_relationships(&evidence)?;
     Ok(evidence)
 }
 
@@ -8244,5 +8479,183 @@ mod tests {
         );
         drop(writer);
         join.await.unwrap().unwrap();
+    }
+
+    #[test]
+    fn account_evidence_collector_projects_only_verified_v4_terminal_and_armed_states() {
+        let ref_a = ChannelRef::new(
+            ChannelId::Telegram,
+            crate::channels::registry::ChannelAccountId::new("account-a").unwrap(),
+        );
+        let ref_b = ChannelRef::new(
+            ChannelId::Telegram,
+            crate::channels::registry::ChannelAccountId::new("account-b").unwrap(),
+        );
+        let delivered = new_claim_with_deadline_and_channel_ref(
+            bound_item("collector-delivered", "account-a"),
+            "collector",
+            "telegram",
+            "111",
+            100,
+            160,
+            Some(ref_a.clone()),
+        )
+        .unwrap();
+        let failed = new_claim_with_deadline_and_channel_ref(
+            bound_item("collector-failed", "account-b"),
+            "collector",
+            "telegram",
+            "222",
+            100,
+            160,
+            Some(ref_b.clone()),
+        )
+        .unwrap();
+        let policy = new_claim_with_deadline_and_channel_ref(
+            bound_item("collector-policy", "account-a"),
+            "collector",
+            "telegram",
+            "111",
+            100,
+            160,
+            Some(ref_a.clone()),
+        )
+        .unwrap();
+        let unsettled = new_claim_with_deadline_and_channel_ref(
+            bound_item("collector-unsettled", "account-b"),
+            "collector",
+            "telegram",
+            "222",
+            100,
+            160,
+            Some(ref_b.clone()),
+        )
+        .unwrap();
+        let crash_unknown = new_claim_with_deadline_and_channel_ref(
+            bound_item("collector-crash-unknown", "account-a"),
+            "collector",
+            "telegram",
+            "111",
+            100,
+            160,
+            Some(ref_a.clone()),
+        )
+        .unwrap();
+        let delivered_armed = claim_in_phase(&delivered, ProactiveEgressPhase::Armed);
+        let failed_armed = claim_in_phase(&failed, ProactiveEgressPhase::Armed);
+        let unsettled_armed = claim_in_phase(&unsettled, ProactiveEgressPhase::Armed);
+        let crash_unknown_armed = claim_in_phase(&crash_unknown, ProactiveEgressPhase::Armed);
+        let receipt = MessageId("provider-receipt".to_string());
+        let transport = ChannelError::Transport("offline".to_string());
+        let mut collector = ProactiveAccountEgressCollector::new();
+        for claim in [&delivered, &failed, &policy, &unsettled, &crash_unknown] {
+            let intent = intent_frame(claim);
+            collector
+                .evidence
+                .intents
+                .insert(intent.intent_id.clone(), intent);
+        }
+        for claim in [
+            &delivered_armed,
+            &failed_armed,
+            &unsettled_armed,
+            &crash_unknown_armed,
+        ] {
+            let armed = armed_frame(claim).unwrap();
+            collector
+                .evidence
+                .armed
+                .insert(armed.intent_id.clone(), armed);
+        }
+        let delivered_result = terminal_result(
+            &delivered_armed,
+            ProactiveEgressOutcome::Delivered,
+            Some(&receipt),
+            None,
+            101,
+        );
+        let failed_result = terminal_result(
+            &failed_armed,
+            ProactiveEgressOutcome::TransportError,
+            None,
+            Some(&transport),
+            101,
+        );
+        let policy_result = terminal_result(
+            &policy,
+            ProactiveEgressOutcome::PolicyChangedBeforeEffect,
+            None,
+            None,
+            101,
+        );
+        let crash_unknown_result = terminal_result(
+            &crash_unknown_armed,
+            ProactiveEgressOutcome::CrashUnknown,
+            None,
+            None,
+            101,
+        );
+        for result in [
+            delivered_result,
+            failed_result,
+            policy_result,
+            crash_unknown_result,
+        ] {
+            collector
+                .evidence
+                .results
+                .insert(result.intent_id.clone(), result);
+        }
+
+        let records = collector.finish().unwrap();
+        assert_eq!(records.len(), 5);
+        assert!(records.iter().any(|record| {
+            record.channel_ref == ref_a
+                && matches!(
+                    record.terminal.as_ref(),
+                    Some(VerifiedProactiveTerminal::AcceptedByAdapter { .. })
+                )
+        }));
+        assert!(records.iter().any(|record| {
+            record.channel_ref == ref_b
+                && matches!(
+                    record.terminal.as_ref(),
+                    Some(VerifiedProactiveTerminal::Failed {
+                        kind: VerifiedTransportFailure::Transport,
+                        ..
+                    })
+                )
+        }));
+        assert!(records.iter().any(|record| {
+            record.channel_ref == ref_a
+                && matches!(
+                    record.terminal.as_ref(),
+                    Some(VerifiedProactiveTerminal::NotAttempted { .. })
+                )
+        }));
+        assert!(records.iter().any(|record| {
+            record.channel_ref == ref_b
+                && record.armed_at_unix == Some(100)
+                && record.terminal.is_none()
+        }));
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| matches!(
+                    record.terminal.as_ref(),
+                    Some(VerifiedProactiveTerminal::CrashUnknown { .. })
+                ))
+                .count(),
+            1,
+            "terminal CrashUnknown counts once rather than also as Armed-without-Result"
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.terminal.is_none() && record.armed_at_unix == Some(100))
+                .count(),
+            1,
+            "Armed-without-Result counts once independently of terminal CrashUnknown"
+        );
     }
 }

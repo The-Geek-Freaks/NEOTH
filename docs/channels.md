@@ -131,6 +131,50 @@ channel reference. Historical queue rows, claims, and WAL records retain their
 existing versions and recovery semantics. P1-16 remains open for other account,
 transport, pairing, UI, health, and outbound surfaces.
 
+### Account transport evidence and Doctor flapping (W20; validation pending)
+
+W20 adds a read-only, account-isolated transport-evidence view for two already
+authorized paths: mapped nonlegacy Telegram live replies and v4 mapped Telegram
+proactive egress. Only the validated `TelegramAccountBundle` path may attach the
+bound account metadata to a live intent; generic/default bindings, the legacy
+Telegram singleton, other channels, webhooks, probes, and outboxes remain
+unbound.
+
+The evidence reader performs one complete authenticated home-WAL scan. It first
+validates each bound intent/result relationship and only then derives the
+24-hour per-account counters. Incomplete, unavailable, malformed, replaced, or
+unauthenticated WAL yields no partial counters. The stored typed reference is
+historical evidence: it is never rebound through current configuration,
+credentials, runtime health, or a route default.
+
+`neoth doctor` can surface account-specific transport flapping from those
+validated counters. It considers only completed adapter attempts for the failure
+rate (initially at least five completed attempts and at least 20% failures).
+Armed-without-result and unsettled live intents are explicit inconclusive
+evidence and warn without being counted as completed attempts. A scan error is
+unavailable rather than a partial report; no observed bound attempts passes the
+check.
+
+This is metadata and diagnosis only. It does not create authorization, routes,
+credentials, retries, runtime-health authority, or a physical-delivery claim.
+W20 now has nine admitted source files and TestBuild01 passes; four real
+authenticated-WAL tests also pass. An initial selected run exposed a real legacy
+JSON byte-order regression, repaired by restoring the former `json!` value plus
+optional-reference writer shape; the raw-byte assertion remains unchanged.
+Doctor's all-check documentation list has 60 entries, while `run_all_checks`
+returns 59 runtime outcomes. The admitted mapped live-auth repair keeps the
+existing opaque capability gates and `append_authenticated` path: `CHANNEL_SEND`
+precedes the terminal marker for success and failure, without changing unbound
+payload/order behavior. TestBuild02 **PASS** (4m07s; 183.27 GiB minimum free;
+11.07 GiB peak), Selected02 **394/0/0** (before this repair), Python 19+11+8,
+and Clippy03 **PASS** are intermediate evidence. Final TestBuild03 **PASS**
+(3m49s; 202.66 GiB minimum free; 10.65 GiB peak), final selected **397/0/0**
+(catalogue 14,389), 13 integration targets **157/0/0**, and formatting/GUI
+lint/self-test pass. W20 is locally verified; its publication identity is the
+Git commit containing this receipt. No current-head full-CI or cross-platform
+acceptance is claimed. See
+[the W20 verification receipt](gold-wave20-verification.md).
+
 ## Managing channels from the CLI
 
 The `neoth channel` family manages the canonical messaging registry (Telegram,

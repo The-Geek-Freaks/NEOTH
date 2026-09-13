@@ -59,6 +59,49 @@ without a send and cannot bind A work to B. A historical unbound Telegram item
 continues through the legacy flat path only while the effective map is empty.
 This Telegram-only slice does not establish full multi-account readiness.
 
+## Account transport evidence and Doctor flapping
+
+W20 carries opaque bound metadata only from a validated nonlegacy
+`TelegramAccountBundle`, through the private inbound/live-delivery path to its
+intent. `daemon/channel_transport_evidence.rs` then combines that bound-live
+metadata with the existing strict v4 proactive decoder in **one** complete
+authenticated home-WAL scan. Generic/default bindings, legacy Telegram, other
+channels, webhooks, probes, outboxes, provider events, and runtime health cannot
+manufacture an account transport observation.
+
+The reader validates intent/result relationships before applying its 24-hour
+window and returns an error rather than partial counters for an incomplete,
+unavailable, malformed, replaced, or unauthenticated prefix. Bound `ChannelRef`
+values are historical WAL evidence and are not rebound from current config,
+credentials, tags, or routing. It reports accepted adapter receipts, typed
+failures, unknown-after-armed, unsettled live intent, or not-attempted states;
+it never asserts remote or human receipt.
+
+`cli/doctor/checks/providers.rs` consumes this one reader for account-isolated
+transport flapping. The initial threshold is at least five completed attempts
+and at least 20% failures. Unknown/unsettled counts warn but are excluded from
+the completed failure rate; no observations passes, and a reader error fails as
+unavailable without per-account partial details. This adds no new authorization,
+route, credential, retry, or delivery behavior.
+
+W20 has nine admitted source files, formatting and TestBuild01 pass, and four
+real authenticated-WAL tests pass. An initial selected run found a real legacy
+JSON byte-order regression; the repaired writer restores the former `json!`
+value plus optional-reference shape, preserving the raw-byte assertion. Doctor's
+all-check documentation list has 60 entries, while `run_all_checks` returns 59
+runtime outcomes. The admitted mapped live-auth repair uses the existing opaque
+capability gates and `append_authenticated` path: `CHANNEL_SEND` precedes its
+terminal marker for both success and failure, while unbound payload/order stays
+unchanged. TestBuild02 **PASS** (4m07s; 183.27 GiB minimum free; 11.07 GiB
+peak), Selected02 **394/0/0** before this repair, Python 19+11+8, and Clippy03
+**PASS** are intermediate evidence. Final TestBuild03 **PASS** (3m49s; 202.66
+GiB minimum free; 10.65 GiB peak), final selected **397/0/0** (catalogue
+14,389), 13 integration targets **157/0/0**, and formatting/GUI lint/self-test
+pass. The slice is locally verified; its publication identity is the Git commit
+containing this receipt. No current-head full-CI or cross-platform acceptance is
+claimed; see
+[the provisional receipt](../gold-wave20-verification.md).
+
 ## Account readiness and live-instance projection
 
 `cli/channel.rs::run_list` derives Telegram account children from the coherent
