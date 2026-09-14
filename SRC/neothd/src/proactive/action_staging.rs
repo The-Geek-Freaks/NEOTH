@@ -953,6 +953,7 @@ pub fn build_proposal_notification(proposal: &ProposedAction) -> ProactiveItem {
         dedup_key: format!("ob_03_proposal:{}", proposal.id),
         channel: String::new(),
         account_id: None,
+        account_binding: None,
         source: "ob_03".to_string(),
         body: format!(
             "Vorschlag bereit zur Sichtung: {} — siehe Obsidian-Vault unter Proposals/{}.md",

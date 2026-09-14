@@ -165,6 +165,10 @@ pub(crate) enum UpdaterLeafEffect {
     ReleaseArchiveFetch,
     ReleaseSignatureFetch,
     VerifiedStageWrite,
+    /// The one contained local process admitted for the recurring SelfStage
+    /// lane.  It is intentionally separate from `VerifiedStageWrite`: the
+    /// latter represents the old same-process prepare/publish lease.
+    SelfStageOwnedHelper,
     #[allow(dead_code)] // R3-18 CLI probe lane is still fail-closed.
     CliInstalledVersionProbe,
     #[allow(dead_code)] // R3-18 CLI probe lane is still fail-closed.
@@ -189,6 +193,7 @@ impl UpdaterLeafEffect {
             Self::ReleaseArchiveFetch => "release_archive_fetch",
             Self::ReleaseSignatureFetch => "release_signature_fetch",
             Self::VerifiedStageWrite => "verified_stage_write",
+            Self::SelfStageOwnedHelper => "self_stage_owned_helper",
             Self::CliInstalledVersionProbe => "cli_installed_version_probe",
             Self::CliLatestVersionProbe => "cli_latest_version_probe",
             Self::OsvScan => "osv_scan",
@@ -210,7 +215,8 @@ impl UpdaterLeafEffect {
             Self::ReleaseChecksumFetch
             | Self::ReleaseArchiveFetch
             | Self::ReleaseSignatureFetch
-            | Self::VerifiedStageWrite => matches!(lane, UpdaterAuthorityLane::SelfStage),
+            | Self::VerifiedStageWrite
+            | Self::SelfStageOwnedHelper => matches!(lane, UpdaterAuthorityLane::SelfStage),
             Self::CliInstalledVersionProbe | Self::CliLatestVersionProbe => {
                 matches!(lane, UpdaterAuthorityLane::CliVersionProbe)
             }
@@ -232,6 +238,7 @@ impl UpdaterLeafEffect {
             | Self::RegistryHealthProbe
             | Self::VendorInstallerFetch => UpdaterLeafTargetKind::Http,
             Self::VerifiedStageWrite => UpdaterLeafTargetKind::Stage,
+            Self::SelfStageOwnedHelper => UpdaterLeafTargetKind::Process,
             Self::CliInstalledVersionProbe
             | Self::CliLatestVersionProbe
             | Self::CliInstall
@@ -273,6 +280,12 @@ impl UpdaterLeafEffect {
                 )
             }
             Self::VerifiedStageWrite => outcome == UpdaterLeafOutcomeCode::Prepared,
+            Self::SelfStageOwnedHelper => matches!(
+                outcome,
+                UpdaterLeafOutcomeCode::Committed
+                    | UpdaterLeafOutcomeCode::Unchanged
+                    | UpdaterLeafOutcomeCode::Indeterminate
+            ),
             Self::CliInstalledVersionProbe => outcome == UpdaterLeafOutcomeCode::Completed,
             Self::CliLatestVersionProbe | Self::SkillGitProbe => {
                 matches!(
@@ -332,6 +345,8 @@ pub(crate) enum UpdaterProgram {
     PowerShell,
     #[allow(dead_code)] // R3-18 denied process lanes are adopted separately.
     Curl,
+    /// Current executable, restricted to the hidden updater-stage helper.
+    NeothSelfHelper,
 }
 
 impl UpdaterProgram {
@@ -342,6 +357,7 @@ impl UpdaterProgram {
             Self::Git => "git",
             Self::PowerShell => "powershell",
             Self::Curl => "curl",
+            Self::NeothSelfHelper => "neoth_self_helper",
         }
     }
 }
@@ -469,9 +485,67 @@ struct ProcessBinding {
     stdin_sha256: String,
     stdin_size_bytes: u64,
     max_output_bytes: u64,
+    #[serde(default)]
+    owned_stage_slot: Option<OwnedStageSlotBinding>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OwnedStageSlotBinding {
+    pub(crate) relative_operation_dir: String,
+}
+
+impl OwnedStageSlotBinding {
+    pub(crate) fn new(relative_operation_dir: String) -> Result<Self> {
+        let expected_prefix = "staged/operations/";
+        let suffix = relative_operation_dir
+            .strip_prefix(expected_prefix)
+            .context("owned stage slot must be below staged/operations")?;
+        anyhow::ensure!(
+            suffix.len() == 32
+                && suffix
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() && b <= b'9'),
+            "owned stage slot must end in lowercase hex"
+        );
+        anyhow::ensure!(
+            suffix
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
+            "owned stage slot must end in lowercase hex"
+        );
+        Ok(Self {
+            relative_operation_dir,
+        })
+    }
 }
 
 impl ProcessBinding {
+    fn for_request(
+        program: UpdaterProgram,
+        argv: &[String],
+        stdin: &[u8],
+        max_output_bytes: u64,
+    ) -> Result<Self> {
+        anyhow::ensure!(max_output_bytes > 0, "max process output must be non-zero");
+        let argv_count = u32::try_from(argv.len()).context("updater argv count overflow")?;
+        let stdin_size_bytes =
+            u64::try_from(stdin.len()).context("updater process stdin length overflow")?;
+        let mut argv_digest = Sha256::new();
+        for arg in argv {
+            digest_field(&mut argv_digest, b"arg", arg.as_bytes());
+        }
+        Ok(Self {
+            program,
+            argv_sha256: hex::encode(argv_digest.finalize()),
+            argv_count,
+            stdin_sha256: sha256_hex(stdin),
+            stdin_size_bytes,
+            max_output_bytes,
+            owned_stage_slot: None,
+        })
+    }
+
     fn validate(&self) -> Result<()> {
         validate_sha256(&self.argv_sha256)?;
         validate_sha256(&self.stdin_sha256)?;
@@ -621,16 +695,6 @@ impl UpdaterLeafRequest {
         stdin: &[u8],
         max_output_bytes: u64,
     ) -> Result<Self> {
-        anyhow::ensure!(max_output_bytes > 0, "max process output must be non-zero");
-        let argv_count = u32::try_from(argv.len()).context("updater argv count overflow")?;
-        let stdin_size_bytes =
-            u64::try_from(stdin.len()).context("updater process stdin length overflow")?;
-
-        let mut argv_digest = Sha256::new();
-        for arg in argv {
-            digest_field(&mut argv_digest, b"arg", arg.as_bytes());
-        }
-
         Self::build(
             operation_id.into(),
             request_id.into(),
@@ -639,14 +703,41 @@ impl UpdaterLeafRequest {
             lane,
             component,
             effect,
-            UpdaterLeafTarget::Process(ProcessBinding {
+            UpdaterLeafTarget::Process(ProcessBinding::for_request(
                 program,
-                argv_sha256: hex::encode(argv_digest.finalize()),
-                argv_count,
-                stdin_sha256: sha256_hex(stdin),
-                stdin_size_bytes,
+                argv,
+                stdin,
                 max_output_bytes,
-            }),
+            )?),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn owned_stage_helper(
+        operation_id: impl Into<String>,
+        request_id: impl Into<String>,
+        accepted_epoch: u64,
+        argv: &[String],
+        stdin: &[u8],
+        max_output_bytes: u64,
+        relative_operation_dir: String,
+    ) -> Result<Self> {
+        let mut binding = ProcessBinding::for_request(
+            UpdaterProgram::NeothSelfHelper,
+            argv,
+            stdin,
+            max_output_bytes,
+        )?;
+        binding.owned_stage_slot = Some(OwnedStageSlotBinding::new(relative_operation_dir)?);
+        Self::build(
+            operation_id.into(),
+            request_id.into(),
+            accepted_epoch,
+            UpdaterAuthorityTask::NeothSelf,
+            UpdaterAuthorityLane::SelfStage,
+            UpdaterAuthorityComponent::Neoth,
+            UpdaterLeafEffect::SelfStageOwnedHelper,
+            UpdaterLeafTarget::Process(binding),
         )
     }
 
@@ -986,6 +1077,9 @@ fn validate_process_binding(effect: UpdaterLeafEffect, target: &UpdaterLeafTarge
             UpdaterProgram::Npm | UpdaterProgram::PowerShell
         ),
         UpdaterLeafEffect::SkillGitProbe => matches!(process.program, UpdaterProgram::Git),
+        UpdaterLeafEffect::SelfStageOwnedHelper => {
+            matches!(process.program, UpdaterProgram::NeothSelfHelper)
+        }
         _ => false,
     };
     anyhow::ensure!(
@@ -994,6 +1088,17 @@ fn validate_process_binding(effect: UpdaterLeafEffect, target: &UpdaterLeafTarge
         effect.as_str(),
         process.program.as_str()
     );
+    if effect == UpdaterLeafEffect::SelfStageOwnedHelper {
+        anyhow::ensure!(
+            process.owned_stage_slot.is_some(),
+            "owned SelfStage helper omitted its authenticated operation slot"
+        );
+    } else {
+        anyhow::ensure!(
+            process.owned_stage_slot.is_none(),
+            "non-helper updater process carried an owned stage slot"
+        );
+    }
     Ok(())
 }
 
@@ -1012,6 +1117,9 @@ pub(crate) enum UpdaterLeafOutcomeCode {
     #[allow(dead_code)] // Retained for recovery/legacy WAL classifications.
     Staged,
     Clean,
+    Committed,
+    Unchanged,
+    Indeterminate,
 }
 
 impl UpdaterLeafOutcomeCode {
@@ -1026,6 +1134,9 @@ impl UpdaterLeafOutcomeCode {
             Self::Prepared => "prepared",
             Self::Staged => "staged",
             Self::Clean => "clean",
+            Self::Committed => "committed",
+            Self::Unchanged => "unchanged",
+            Self::Indeterminate => "indeterminate",
         }
     }
 }
@@ -1041,6 +1152,9 @@ fn parse_updater_leaf_outcome(value: &str) -> Result<UpdaterLeafOutcomeCode> {
         "prepared" => Ok(UpdaterLeafOutcomeCode::Prepared),
         "staged" => Ok(UpdaterLeafOutcomeCode::Staged),
         "clean" => Ok(UpdaterLeafOutcomeCode::Clean),
+        "committed" => Ok(UpdaterLeafOutcomeCode::Committed),
+        "unchanged" => Ok(UpdaterLeafOutcomeCode::Unchanged),
+        "indeterminate" => Ok(UpdaterLeafOutcomeCode::Indeterminate),
         _ => anyhow::bail!("updater success has invalid outcome"),
     }
 }
@@ -1340,6 +1454,41 @@ impl RecoveredUpdaterLeafIntent {
             request_id: self.request.request_id.clone(),
         }
     }
+
+    pub(crate) fn owned_stage_helper_binding(&self) -> Option<RecoveredOwnedStageHelperBinding> {
+        let UpdaterLeafTarget::Process(process) = &self.request.target else {
+            return None;
+        };
+        if self.request.effect != UpdaterLeafEffect::SelfStageOwnedHelper
+            || process.program != UpdaterProgram::NeothSelfHelper
+        {
+            return None;
+        }
+        Some(RecoveredOwnedStageHelperBinding {
+            operation_id: self.request.operation_id.clone(),
+            request_id: self.request.request_id.clone(),
+            request_binding_sha256: self.request.binding_sha256.clone(),
+            relative_operation_dir: process
+                .owned_stage_slot
+                .as_ref()?
+                .relative_operation_dir
+                .clone(),
+            stdin_sha256: process.stdin_sha256.clone(),
+            stdin_size_bytes: process.stdin_size_bytes,
+            run_budgets: self.request.run_budgets.clone()?,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RecoveredOwnedStageHelperBinding {
+    pub(crate) operation_id: String,
+    pub(crate) request_id: String,
+    pub(crate) request_binding_sha256: String,
+    pub(crate) relative_operation_dir: String,
+    pub(crate) stdin_sha256: String,
+    pub(crate) stdin_size_bytes: u64,
+    pub(crate) run_budgets: UpdaterRunBudgets,
 }
 
 #[derive(Clone, Debug)]
@@ -1395,6 +1544,25 @@ impl RecoveredUpdaterLeafResult {
             RecoveredUpdaterLeafResultKind::Failure { error_kind, .. }
                 if error_kind == "interrupted"
         )
+    }
+
+    /// A terminal owned-stage helper result which explicitly acknowledges that
+    /// the effect outcome is still unknown.  Reconciliation must retain the
+    /// authenticated helper binding in this case rather than terminalizing its
+    /// outer pass from the receipt alone.
+    pub(super) fn owned_stage_indeterminate_binding(
+        &self,
+        intent: &RecoveredUpdaterLeafIntent,
+    ) -> Option<RecoveredOwnedStageHelperBinding> {
+        matches!(
+            &self.kind,
+            RecoveredUpdaterLeafResultKind::Success {
+                outcome: UpdaterLeafOutcomeCode::Indeterminate,
+                ..
+            }
+        )
+        .then(|| intent.owned_stage_helper_binding())
+        .flatten()
     }
 
     pub(super) fn validate_matches(&self, intent: &RecoveredUpdaterLeafIntent) -> Result<()> {
@@ -1620,6 +1788,52 @@ pub(super) fn synthetic_interrupted_result_payload(
         ts_unix,
     )
     .context("serialize recovered updater leaf result")
+}
+
+/// Recovery-only success terminal for an authenticated owned SelfStage helper.
+/// Generic interrupted recovery must never be used for this effect.
+pub(super) fn synthetic_recovered_owned_stage_success_payload(
+    intent: &RecoveredUpdaterLeafIntent,
+    outcome: UpdaterLeafOutcomeCode,
+    ts_unix: u64,
+) -> Result<Vec<u8>> {
+    anyhow::ensure!(
+        intent.owned_stage_helper_binding().is_some()
+            && matches!(
+                outcome,
+                UpdaterLeafOutcomeCode::Committed | UpdaterLeafOutcomeCode::Unchanged
+            ),
+        "recovered owned stage success requires an exact helper intent and committed/unchanged outcome"
+    );
+    serialize_result_payload(
+        &intent.request,
+        &UpdaterLeafTerminal::Success {
+            outcome,
+            observed_sha256: None,
+            observed_size_bytes: None,
+        },
+        ts_unix,
+    )
+}
+
+#[cfg(test)]
+pub(super) fn synthetic_owned_stage_indeterminate_payload_for_test(
+    intent: &RecoveredUpdaterLeafIntent,
+    ts_unix: u64,
+) -> Result<Vec<u8>> {
+    anyhow::ensure!(
+        intent.owned_stage_helper_binding().is_some(),
+        "test indeterminate terminal requires an exact owned helper intent"
+    );
+    serialize_result_payload(
+        &intent.request,
+        &UpdaterLeafTerminal::Success {
+            outcome: UpdaterLeafOutcomeCode::Indeterminate,
+            observed_sha256: None,
+            observed_size_bytes: None,
+        },
+        ts_unix,
+    )
 }
 
 pub(super) fn serialize_updater_leaf_intent_payload(
@@ -1996,6 +2210,24 @@ impl UpdaterLeafPermit {
             )),
         })
     }
+
+    /// Process lifecycles own their Effect→Quiesce transition themselves. Do
+    /// not wrap them in the generic HTTP effect timeout: dropping this future
+    /// would skip its cooperative cancellation, child reap and readback.
+    async fn execute_lifecycle<F, Fut, T>(
+        self,
+        request: &UpdaterLeafRequest,
+        effect: F,
+    ) -> std::result::Result<
+        std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>,
+        UpdaterLeafExecutionError,
+    >
+    where
+        F: FnOnce(UpdaterLeafAuthority) -> Fut,
+        Fut: Future<Output = std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>>,
+    {
+        self.execute(request, None, effect).await
+    }
 }
 
 /// Owns the mandatory terminal edge after the intent became durable.
@@ -2193,6 +2425,38 @@ impl UpdaterLeafAuthority {
         );
         Ok(())
     }
+
+    fn validate_process(
+        self,
+        expected_effect: UpdaterLeafEffect,
+        program: UpdaterProgram,
+        argv: &[String],
+        stdin: &[u8],
+        max_output_bytes: u64,
+    ) -> std::result::Result<(), UpdaterLeafFailure> {
+        let effect = self.effect;
+        let UpdaterLeafTarget::Process(binding) = self.target else {
+            return Err(UpdaterLeafFailure::new(
+                UpdaterLeafFailureKind::Protocol,
+                anyhow::anyhow!("process executor received a non-process updater request"),
+            ));
+        };
+        let mut expected = ProcessBinding::for_request(program, argv, stdin, max_output_bytes)
+            .map_err(|source| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Protocol, source))?;
+        expected.owned_stage_slot = binding
+            .owned_stage_slot
+            .as_ref()
+            .map(|slot| OwnedStageSlotBinding::new(slot.relative_operation_dir.clone()))
+            .transpose()
+            .map_err(|source| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Protocol, source))?;
+        if effect != expected_effect || binding != expected {
+            return Err(UpdaterLeafFailure::new(
+                UpdaterLeafFailureKind::Protocol,
+                anyhow::anyhow!("process leaf arguments do not match the admitted updater request"),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Successful verified-stage effect whose generation lease remains live until
@@ -2204,9 +2468,15 @@ impl UpdaterLeafAuthority {
 pub(crate) struct UpdaterStageCompletion<T> {
     value: T,
     generation_lease: UpdaterLeafLease,
+    receipt: Option<UpdaterLeafTerminalReceipt>,
 }
 
 impl<T> UpdaterStageCompletion<T> {
+    pub(crate) fn terminal_receipt(&self) -> Option<&UpdaterLeafTerminalReceipt> {
+        self.receipt.as_ref()
+    }
+
+    #[cfg(test)]
     pub(crate) fn publish_with<F, R>(self, publish: F) -> R
     where
         F: FnOnce(T) -> R,
@@ -2214,8 +2484,28 @@ impl<T> UpdaterStageCompletion<T> {
         let Self {
             value,
             generation_lease,
+            receipt,
         } = self;
         let result = publish(value);
+        drop(receipt);
+        drop(generation_lease);
+        result
+    }
+
+    /// Consume an acknowledged prepared stage while retaining its accepted
+    /// generation lease across asynchronous owned-helper lifecycle work.
+    pub(crate) async fn consume_with_async<F, Fut, R>(self, consume: F) -> R
+    where
+        F: FnOnce(T) -> Fut,
+        Fut: Future<Output = R>,
+    {
+        let Self {
+            value,
+            generation_lease,
+            receipt,
+        } = self;
+        let result = consume(value).await;
+        drop(receipt);
         drop(generation_lease);
         result
     }
@@ -2381,6 +2671,42 @@ impl UpdaterLeafAuthorizer {
         .await
     }
 
+    /// Execute the sole contained SelfStage helper through an exact process
+    /// binding.  The caller still owns spawning, containment and reaping; this
+    /// boundary owns the ordered WAL Intent/Result and forbids any other
+    /// program/effect pairing.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_process_with_receipt<F, Fut, T>(
+        &self,
+        request: UpdaterLeafRequest,
+        run_clock: UpdaterRunClock,
+        expected_effect: UpdaterLeafEffect,
+        program: UpdaterProgram,
+        argv: &[String],
+        stdin: &[u8],
+        max_output_bytes: u64,
+        run: F,
+    ) -> std::result::Result<(T, UpdaterLeafTerminalReceipt), UpdaterLeafExecutionError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>>,
+    {
+        if request.run_budgets.as_ref() != Some(run_clock.budgets()) {
+            return Err(UpdaterLeafExecutionError::Audit {
+                phase: UpdaterLeafAuditPhase::Intent,
+                effect_error_sha256: None,
+                source: anyhow::anyhow!(
+                    "budgeted updater process leaf did not carry the outer pass budget tuple"
+                ),
+            });
+        }
+        self.execute_lifecycle_with_clock(request, Some(&run_clock), move |authority| async move {
+            authority.validate_process(expected_effect, program, argv, stdin, max_output_bytes)?;
+            run().await
+        })
+        .await
+    }
+
     /// Execute one verified-stage leaf through the only crate-visible local
     /// stage authority surface.
     pub(crate) async fn execute_stage<F, Fut, T>(
@@ -2397,19 +2723,77 @@ impl UpdaterLeafAuthorizer {
         Fut: Future<Output = std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>>,
     {
         let (value, generation_lease, _) = self
-            .execute_with_lease(request, None, move |authority| async move {
-                authority.validate_stage(
-                    neoth_home,
-                    destination,
-                    content_sha256,
-                    content_size_bytes,
-                )?;
-                run().await
-            })
+            .execute_with_lease(
+                request,
+                None,
+                move |authority| async move {
+                    authority.validate_stage(
+                        neoth_home,
+                        destination,
+                        content_sha256,
+                        content_size_bytes,
+                    )?;
+                    run().await
+                },
+                true,
+            )
             .await?;
         Ok(UpdaterStageCompletion {
             value,
             generation_lease,
+            receipt: None,
+        })
+    }
+
+    /// Budgeted recurring SelfStage variant.  The stage filesystem operation
+    /// owns its blocking lifecycle, so it deliberately does not use the
+    /// generic HTTP effect timeout (which would drop the guard mid-mutation).
+    /// It still shares the admitted pass budget tuple and returns the durable
+    /// terminal receipt required by the outer pass RESULT.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_stage_with_receipt<F, Fut, T>(
+        &self,
+        request: UpdaterLeafRequest,
+        run_clock: UpdaterRunClock,
+        neoth_home: &Path,
+        destination: &Path,
+        content_sha256: &str,
+        content_size_bytes: u64,
+        run: F,
+    ) -> std::result::Result<UpdaterStageCompletion<T>, UpdaterLeafExecutionError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>>,
+    {
+        if request.run_budgets.as_ref() != Some(run_clock.budgets()) {
+            return Err(UpdaterLeafExecutionError::Audit {
+                phase: UpdaterLeafAuditPhase::Intent,
+                effect_error_sha256: None,
+                source: anyhow::anyhow!(
+                    "budgeted updater stage leaf did not carry the outer pass budget tuple"
+                ),
+            });
+        }
+        let (value, generation_lease, receipt) = self
+            .execute_with_lease(
+                request,
+                Some(&run_clock),
+                move |authority| async move {
+                    authority.validate_stage(
+                        neoth_home,
+                        destination,
+                        content_sha256,
+                        content_size_bytes,
+                    )?;
+                    run().await
+                },
+                false,
+            )
+            .await?;
+        Ok(UpdaterStageCompletion {
+            value,
+            generation_lease,
+            receipt: Some(receipt),
         })
     }
 
@@ -2439,9 +2823,27 @@ impl UpdaterLeafAuthorizer {
         F: FnOnce(UpdaterLeafAuthority) -> Fut,
         Fut: Future<Output = std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>>,
     {
-        let (value, generation_lease, receipt) =
-            self.execute_with_lease(request, run_clock, effect).await?;
+        let (value, generation_lease, receipt) = self
+            .execute_with_lease(request, run_clock, effect, true)
+            .await?;
         drop(generation_lease);
+        Ok((value, receipt))
+    }
+
+    async fn execute_lifecycle_with_clock<F, Fut, T>(
+        &self,
+        request: UpdaterLeafRequest,
+        run_clock: Option<&UpdaterRunClock>,
+        effect: F,
+    ) -> std::result::Result<(T, UpdaterLeafTerminalReceipt), UpdaterLeafExecutionError>
+    where
+        F: FnOnce(UpdaterLeafAuthority) -> Fut,
+        Fut: Future<Output = std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>>,
+    {
+        let (value, lease, receipt) = self
+            .execute_with_lease(request, run_clock, effect, false)
+            .await?;
+        drop(lease);
         Ok((value, receipt))
     }
 
@@ -2450,6 +2852,7 @@ impl UpdaterLeafAuthorizer {
         request: UpdaterLeafRequest,
         run_clock: Option<&UpdaterRunClock>,
         effect: F,
+        enforce_effect_deadline: bool,
     ) -> std::result::Result<
         (T, UpdaterLeafLease, UpdaterLeafTerminalReceipt),
         UpdaterLeafExecutionError,
@@ -2497,7 +2900,11 @@ impl UpdaterLeafAuthorizer {
         let mut audit = intent.into_guard();
 
         let permit = UpdaterLeafPermit::for_request(&request);
-        let mut outcome = permit.execute(&request, run_clock, effect).await?;
+        let mut outcome = if enforce_effect_deadline {
+            permit.execute(&request, run_clock, effect).await?
+        } else {
+            permit.execute_lifecycle(&request, effect).await?
+        };
         if let Ok(success) = &outcome
             && let Err(source) = request.validate_success(success)
         {
@@ -3223,6 +3630,75 @@ mod tests {
         assert_eq!(value, "done");
         assert_eq!(receipt.request_id, "req-budgeted-late-terminal");
         assert_eq!(sink.events.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn owned_stage_process_terminal_ack_remains_owned_after_deadline() {
+        let sink = Arc::new(BlockingResultSink::default());
+        let authorizer = Arc::new(authorizer(sink.clone()));
+        let run_clock = UpdaterRunClock::start(
+            UpdaterRunLimits::new(
+                Duration::from_millis(10),
+                Duration::from_millis(15),
+                Duration::from_millis(20),
+                Duration::from_millis(25),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let stdin = b"sealed-owned-stage-request";
+        let argv = vec![
+            "updater-stage-helper".to_string(),
+            "--request-sha256".to_string(),
+            sha256_hex(stdin),
+        ];
+        let request = UpdaterLeafRequest::owned_stage_helper(
+            "op-owned-stage-late-terminal",
+            "req-owned-stage-late-terminal",
+            TEST_EPOCH,
+            &argv,
+            stdin,
+            16 * 1024,
+            format!("staged/operations/{}", "a".repeat(32)),
+        )
+        .unwrap()
+        .with_run_budgets(run_clock.budgets().clone())
+        .unwrap();
+        let task_authorizer = Arc::clone(&authorizer);
+        let task = tokio::spawn(async move {
+            task_authorizer
+                .execute_process_with_receipt(
+                    request,
+                    run_clock,
+                    UpdaterLeafEffect::SelfStageOwnedHelper,
+                    UpdaterProgram::NeothSelfHelper,
+                    &argv,
+                    stdin,
+                    16 * 1024,
+                    || async {
+                        Ok(UpdaterLeafSuccess::new(
+                            "committed",
+                            UpdaterLeafOutcomeCode::Committed,
+                        ))
+                    },
+                )
+                .await
+        });
+        sink.result_started.notified().await;
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert!(
+            !task.is_finished(),
+            "owned helper terminal acknowledgement detached after its inherited deadline"
+        );
+        sink.release_result.notify_one();
+        let (value, receipt) = task.await.unwrap().unwrap();
+        assert_eq!(value, "committed");
+        assert_eq!(receipt.request_id, "req-owned-stage-late-terminal");
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, ExtendedSubtype::UpdaterLeafIntent);
+        assert_eq!(events[1].0, ExtendedSubtype::UpdaterLeafResult);
+        assert_eq!(events[1].1["outcome"], "committed");
     }
 
     #[tokio::test]

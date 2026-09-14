@@ -2325,6 +2325,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // enough to drain, because aborting it could manufacture an audit orphan.
     let mut updater_supervisor = crate::cli::serve_tasks::spawn_updater_supervisor(
         &neoth_home,
+        &segment_chain_base_path,
         std::sync::Arc::clone(&reload_controller),
         writer.clone(),
     );
@@ -2339,10 +2340,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             cron_task
                 .as_ref()
                 .map(|h| WatchedWorker::new("cron_scheduler", h.abort_handle())),
-            Some(WatchedWorker::new(
-                "updater_supervisor",
-                updater_supervisor.abort_handle(),
-            )),
+            Some(WatchedWorker::liveness("updater_supervisor", {
+                let liveness = updater_supervisor.liveness();
+                move || liveness.is_finished()
+            })),
             omi_handle
                 .as_ref()
                 .map(|h| WatchedWorker::new("omi_ingest", h.abort_handle())),

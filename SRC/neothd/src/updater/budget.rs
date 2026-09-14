@@ -76,6 +76,18 @@ impl UpdaterRunLimits {
             Duration::from_secs(165),
         )
     }
+
+    /// The contained SelfStage helper gets its own finite pass contract.  The
+    /// extra effect time covers archive unpacking, while the later phases
+    /// retain enough room to cancel, kill/reap and durably close its WAL edge.
+    pub(crate) fn default_owned_self_stage() -> Result<Self> {
+        Self::new(
+            Duration::from_secs(180),
+            Duration::from_secs(195),
+            Duration::from_secs(210),
+            Duration::from_secs(225),
+        )
+    }
 }
 
 /// Values serialized in the pass and every leaf's Intent/Result.

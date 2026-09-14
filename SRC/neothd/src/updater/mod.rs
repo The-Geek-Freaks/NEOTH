@@ -32,6 +32,7 @@ pub(crate) mod budget;
 pub mod install_transaction;
 pub mod pipeline;
 pub mod probes;
+pub(crate) mod process_containment;
 pub(crate) mod reconcile;
 pub mod release_bundle;
 pub mod self_update;

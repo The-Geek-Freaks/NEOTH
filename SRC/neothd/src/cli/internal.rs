@@ -3,6 +3,7 @@
 //! These commands are intentionally absent from help output.  Their inputs
 //! remain fully validated because hidden is not an authorization boundary.
 
+use std::io::Read as _;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -29,6 +30,13 @@ pub enum InternalAction {
     BackgroundWorker {
         #[arg(long, value_name = "PATH")]
         job: PathBuf,
+    },
+    /// Consume one sealed SelfStage capability from exact bounded stdin.
+    #[command(name = "updater-stage-helper")]
+    UpdaterStageHelper {
+        /// SHA-256 of the exact request bytes supplied on stdin.
+        #[arg(long, value_name = "HEX")]
+        request_sha256: String,
     },
 }
 
@@ -200,6 +208,19 @@ pub async fn run_internal(args: InternalArgs, output: OutputFormat) -> Result<()
                 })
             );
         }
+        InternalAction::UpdaterStageHelper { request_sha256 } => {
+            let mut request = Vec::new();
+            std::io::stdin()
+                .take(192 * 1024 + 1)
+                .read_to_end(&mut request)
+                .context("read bounded updater-stage-helper stdin")?;
+            anyhow::ensure!(
+                request.len() <= 192 * 1024,
+                "updater-stage-helper request exceeds its fixed stdin bound"
+            );
+            crate::updater::self_update::run_owned_stage_helper(&request, &request_sha256)?;
+            println!("{}", serde_json::json!({ "status": "completed" }));
+        }
     }
     Ok(())
 }
@@ -283,6 +304,27 @@ mod tests {
             panic!("hidden background worker command did not parse");
         };
         assert_eq!(job, PathBuf::from("instance/bgjobs/0123456789abcdef.job"));
+    }
+
+    #[test]
+    fn hidden_owned_stage_helper_accepts_only_the_request_hash_argument() {
+        let cli = crate::cli::Cli::try_parse_from([
+            "neoth",
+            "--output",
+            "json",
+            "internal",
+            "updater-stage-helper",
+            "--request-sha256",
+            "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+        ])
+        .unwrap();
+        let crate::cli::Commands::Internal(InternalArgs {
+            action: InternalAction::UpdaterStageHelper { request_sha256 },
+        }) = cli.command
+        else {
+            panic!("hidden stage helper did not parse");
+        };
+        assert_eq!(request_sha256.len(), 64);
     }
 
     #[test]

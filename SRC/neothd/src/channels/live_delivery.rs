@@ -50,6 +50,36 @@ pub enum SendOutcome {
     Coalesced,
 }
 
+/// Opaque factory-held authority for durable live egress evidence. The mapped
+/// and legacy families stay distinct so a legacy singleton cannot masquerade
+/// as an account/incarnation-bound Telegram adapter.
+#[derive(Clone)]
+pub(crate) enum LiveEgressProvenance {
+    MappedTelegram(crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance),
+    LegacySingleton(crate::cli::serve_tasks::LegacyLiveEgressProvenance),
+}
+
+impl LiveEgressProvenance {
+    pub(crate) fn mapped_telegram(
+        value: crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance,
+    ) -> Self {
+        Self::MappedTelegram(value)
+    }
+
+    pub(crate) fn legacy_singleton(
+        value: crate::cli::serve_tasks::LegacyLiveEgressProvenance,
+    ) -> Self {
+        Self::LegacySingleton(value)
+    }
+
+    fn channel_ref(&self) -> &crate::channels::registry::ChannelRef {
+        match self {
+            Self::MappedTelegram(value) => value.channel_ref(),
+            Self::LegacySingleton(value) => value.channel_ref(),
+        }
+    }
+}
+
 /// Stateful wrapper that sends a message once, then edits it in place on
 /// subsequent updates — bounded by [`LiveDeliveryConfig`] so it can't trip a
 /// channel's edit rate limit. NOT `Clone` — the send/edit state is
@@ -60,8 +90,7 @@ pub struct LiveDelivery {
     kind: ChannelKind,
     /// Present only when the authenticated nonlegacy Telegram map startup
     /// carried an opaque provenance capability into this delivery.
-    mapped_telegram_live_egress:
-        Option<crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance>,
+    live_egress: Option<LiveEgressProvenance>,
     config: LiveDeliveryConfig,
     /// `None` until the first `send_or_edit` succeeds; then the platform id of
     /// the live message every subsequent edit targets.
@@ -167,10 +196,42 @@ impl LiveDelivery {
     ) -> std::result::Result<Self, ChannelError> {
         if kind != ChannelKind::Telegram
             || provenance.channel_ref().channel_id != ChannelKind::Telegram
+            || provenance.account_binding().channel_ref() != provenance.channel_ref()
         {
             return Err(ChannelError::Transport(
                 "mapped live delivery channel reference does not match Telegram".to_string(),
             ));
+        }
+        Ok(Self::new_inner(
+            channel,
+            chat_id,
+            kind,
+            config,
+            Some(LiveEgressProvenance::mapped_telegram(provenance)),
+        ))
+    }
+
+    pub(crate) fn new_authenticated_live(
+        channel: Arc<dyn Channel>,
+        chat_id: String,
+        kind: ChannelKind,
+        config: LiveDeliveryConfig,
+        provenance: LiveEgressProvenance,
+    ) -> std::result::Result<Self, ChannelError> {
+        let expected = crate::channels::registry::ChannelRef::default_account(kind);
+        match &provenance {
+            LiveEgressProvenance::MappedTelegram(value)
+                if kind == ChannelKind::Telegram
+                    && value.channel_ref().channel_id == ChannelKind::Telegram
+                    && value.account_binding().channel_ref() == value.channel_ref() => {}
+            LiveEgressProvenance::LegacySingleton(_)
+                if matches!(kind, ChannelKind::Telegram | ChannelKind::Slack)
+                    && provenance.channel_ref() == &expected => {}
+            _ => {
+                return Err(ChannelError::Transport(
+                    "live egress provenance does not match legacy factory channel".into(),
+                ));
+            }
         }
         Ok(Self::new_inner(
             channel,
@@ -186,15 +247,13 @@ impl LiveDelivery {
         chat_id: String,
         kind: ChannelKind,
         config: LiveDeliveryConfig,
-        mapped_telegram_live_egress: Option<
-            crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance,
-        >,
+        live_egress: Option<LiveEgressProvenance>,
     ) -> Self {
         Self {
             channel,
             chat_id,
             kind,
-            mapped_telegram_live_egress,
+            live_egress,
             config,
             sent_message_id: None,
             last_edit_ms: None,
@@ -322,9 +381,20 @@ impl LiveDelivery {
         // GOLD-LF-P1-01a — durable intent BEFORE the message leaves. Fail
         // closed: an unrecorded egress is exactly what this pair exists to
         // prevent, and unlike a file write a send cannot be undone.
-        let intent = match self.mapped_telegram_live_egress.as_ref() {
-            Some(provenance) => {
+        let intent = match self.live_egress.as_ref() {
+            Some(LiveEgressProvenance::MappedTelegram(provenance)) => {
                 crate::channels::send_gate::emit_account_bound_egress_intent(
+                    writer,
+                    self.kind.as_str(),
+                    &self.chat_id,
+                    text,
+                    crate::time::now_unix_secs(),
+                    provenance,
+                )
+                .await
+            }
+            Some(LiveEgressProvenance::LegacySingleton(provenance)) => {
+                crate::channels::send_gate::emit_legacy_live_egress_intent(
                     writer,
                     self.kind.as_str(),
                     &self.chat_id,
@@ -353,7 +423,7 @@ impl LiveDelivery {
 
         match self.channel.send_text(&self.chat_id, text).await {
             Ok(id) => {
-                if self.mapped_telegram_live_egress.is_none() {
+                if self.live_egress.is_none() {
                     crate::channels::send_gate::emit_egress_result(
                         writer,
                         &intent_id,
@@ -380,17 +450,32 @@ impl LiveDelivery {
                         "WAL append live CHANNEL_SEND failed after delivery"
                     );
                 }
-                if let Some(provenance) = self.mapped_telegram_live_egress.as_ref() {
-                    crate::channels::send_gate::emit_account_bound_egress_result(
-                        writer,
-                        &intent_id,
-                        "delivered",
-                        Some(&id.0),
-                        crate::time::now_unix_secs(),
-                        provenance,
-                    )
-                    .await
-                    .map_err(|()| {
+                if let Some(provenance) = self.live_egress.as_ref() {
+                    let receipt = match provenance {
+                        LiveEgressProvenance::MappedTelegram(value) => {
+                            crate::channels::send_gate::emit_account_bound_egress_result(
+                                writer,
+                                &intent_id,
+                                "delivered",
+                                Some(&id.0),
+                                crate::time::now_unix_secs(),
+                                value,
+                            )
+                            .await
+                        }
+                        LiveEgressProvenance::LegacySingleton(value) => {
+                            crate::channels::send_gate::emit_legacy_live_egress_result(
+                                writer,
+                                &intent_id,
+                                "delivered",
+                                Some(&id.0),
+                                crate::time::now_unix_secs(),
+                                value,
+                            )
+                            .await
+                        }
+                    };
+                    receipt.map_err(|()| {
                         ChannelError::Transport(
                         "mandatory authenticated account-bound egress receipt could not be recorded"
                             .to_string(),
@@ -406,7 +491,7 @@ impl LiveDelivery {
                     ChannelError::RateLimited { .. } => "rate_limited",
                     ChannelError::Auth(_) => "auth",
                 };
-                if self.mapped_telegram_live_egress.is_none() {
+                if self.live_egress.is_none() {
                     crate::channels::send_gate::emit_egress_result(
                         writer,
                         &intent_id,
@@ -430,17 +515,32 @@ impl LiveDelivery {
                         "WAL append failed live CHANNEL_SEND audit failed"
                     );
                 }
-                if let Some(provenance) = self.mapped_telegram_live_egress.as_ref() {
-                    crate::channels::send_gate::emit_account_bound_egress_result(
-                        writer,
-                        &intent_id,
-                        error_kind,
-                        None,
-                        crate::time::now_unix_secs(),
-                        provenance,
-                    )
-                    .await
-                    .map_err(|()| {
+                if let Some(provenance) = self.live_egress.as_ref() {
+                    let receipt = match provenance {
+                        LiveEgressProvenance::MappedTelegram(value) => {
+                            crate::channels::send_gate::emit_account_bound_egress_result(
+                                writer,
+                                &intent_id,
+                                error_kind,
+                                None,
+                                crate::time::now_unix_secs(),
+                                value,
+                            )
+                            .await
+                        }
+                        LiveEgressProvenance::LegacySingleton(value) => {
+                            crate::channels::send_gate::emit_legacy_live_egress_result(
+                                writer,
+                                &intent_id,
+                                error_kind,
+                                None,
+                                crate::time::now_unix_secs(),
+                                value,
+                            )
+                            .await
+                        }
+                    };
+                    receipt.map_err(|()| {
                         ChannelError::Transport(
                         "mandatory authenticated account-bound egress receipt could not be recorded"
                             .to_string(),
@@ -760,6 +860,49 @@ mod tests {
         (home, writer, join)
     }
 
+    /// Test fixtures must use the same coherent public/credential pair and
+    /// bundle factory as mapped startup. A loose `ChannelRef` cannot mint live
+    /// egress provenance.
+    fn mapped_bundle_from_runtime(
+        account_id: &str,
+        allowed_user_id: u64,
+    ) -> crate::cli::serve_tasks::TelegramAccountBundle {
+        let account_id = crate::channels::registry::ChannelAccountId::new(account_id)
+            .expect("valid mapped fixture account id");
+        let mut runtime = crate::config::RuntimeConfigPair {
+            config: crate::config::FreedomConfig::default(),
+            raw_credentials: crate::config::credentials::Credentials::default(),
+            credentials: crate::config::credentials::Credentials::default(),
+        };
+        runtime.config.channel_accounts.telegram.insert(
+            account_id.clone(),
+            crate::config::TelegramAccountConfig {
+                allowed_user_id,
+                ..Default::default()
+            },
+        );
+        let credential = crate::config::credentials::TelegramAccountCredentials {
+            token: Some(crate::secret::SecretString::new(
+                "mapped-fixture-token".to_owned(),
+            )),
+        };
+        runtime
+            .raw_credentials
+            .channel_accounts
+            .telegram
+            .insert(account_id.clone(), credential.clone());
+        runtime
+            .credentials
+            .channel_accounts
+            .telegram
+            .insert(account_id.clone(), credential);
+        crate::cli::serve_tasks::telegram_account_bundles(&runtime)
+            .expect("coherent mapped runtime pair yields one fixture bundle")
+            .into_iter()
+            .next()
+            .expect("one exact mapped fixture bundle")
+    }
+
     fn count_channel_edit_frames(seg: &std::path::Path) -> usize {
         let Ok(bytes) = std::fs::read(seg) else {
             return 0;
@@ -821,28 +964,146 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn legacy_slack_factory_provenance_emits_ordered_marked_authenticated_lifecycle() {
+        let channel = Arc::new(MockChannel::new(false));
+        let provenance =
+            crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(ChannelKind::Slack)
+                .expect("Slack is an admitted legacy live factory");
+        let mut live = LiveDelivery::new_authenticated_live(
+            channel.clone(),
+            "legacy-slack-chat".into(),
+            ChannelKind::Slack,
+            fast_config(),
+            LiveEgressProvenance::legacy_singleton(provenance),
+        )
+        .unwrap();
+        let (home, writer, join) = authenticated_home_writer().await;
+        let segment = home.path().join("wal").join("000001.wal");
+        live.send_or_edit(&writer, "legacy slack body", false)
+            .await
+            .unwrap();
+        assert_eq!(channel.sends.load(Ordering::SeqCst), 1);
+        drop(writer);
+        join.await.unwrap().unwrap();
+
+        let bytes = std::fs::read(segment).unwrap();
+        let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = header.header_len();
+        let mut lifecycle = Vec::new();
+        let mut egress = Vec::new();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8
+            {
+                lifecycle.push("intent");
+                egress.push(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+            } else if frame.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_SEND {
+                lifecycle.push("audit");
+            } else if matches!(frame.header.event_subtype,
+                value if value == crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8
+                    || value == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8)
+            {
+                lifecycle.push("result");
+                egress.push(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(lifecycle, vec!["intent", "audit", "result"]);
+        assert_eq!(
+            egress.len(),
+            2,
+            "Intent and Result must bracket the one adapter send"
+        );
+        assert_eq!(egress[0]["live_provenance"], "legacy_singleton_v2");
+        assert_eq!(egress[0]["channel"], "slack");
+        assert_eq!(egress[0]["channel_ref"]["account_id"], "default");
+        assert_eq!(egress[1]["intent_id"], egress[0]["intent_id"]);
+        assert_eq!(egress[1]["outcome"], "delivered");
+    }
+
+    #[tokio::test]
+    async fn legacy_slack_transport_failure_writes_truthful_authenticated_terminal() {
+        let channel = Arc::new(FailingSendChannel {
+            sends: AtomicUsize::new(0),
+        });
+        let provenance =
+            crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(ChannelKind::Slack)
+                .expect("Slack is an admitted legacy live factory");
+        let mut live = LiveDelivery::new_authenticated_live(
+            channel.clone(),
+            "legacy-slack-failure".into(),
+            ChannelKind::Slack,
+            fast_config(),
+            LiveEgressProvenance::legacy_singleton(provenance),
+        )
+        .unwrap();
+        let (home, writer, join) = authenticated_home_writer().await;
+        let segment = home.path().join("wal").join("000001.wal");
+        assert!(
+            live.send_or_edit(&writer, "legacy slack body", false)
+                .await
+                .is_err()
+        );
+        assert_eq!(channel.sends.load(Ordering::SeqCst), 1);
+        drop(writer);
+        join.await.unwrap().unwrap();
+
+        let bytes = std::fs::read(segment).unwrap();
+        let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = header.header_len();
+        let mut lifecycle = Vec::new();
+        let mut intent = None;
+        let mut terminal = None;
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8
+            {
+                lifecycle.push("intent");
+                intent = Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+            } else if frame.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_SEND {
+                lifecycle.push("audit");
+            } else if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8
+            {
+                lifecycle.push("result");
+                terminal =
+                    Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        let intent = intent.expect("authenticated legacy intent");
+        let terminal = terminal.expect("authenticated legacy terminal");
+        assert_eq!(lifecycle, vec!["intent", "audit", "result"]);
+        assert_eq!(intent["live_provenance"], "legacy_singleton_v2");
+        assert_eq!(terminal["intent_id"], intent["intent_id"]);
+        assert_eq!(terminal["outcome"], "transport");
+    }
+
+    #[test]
+    fn legacy_capability_refuses_cross_channel_use_before_adapter_effect() {
+        let slack =
+            crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(ChannelKind::Slack)
+                .expect("Slack is an admitted legacy live factory");
+        let rejected = LiveDelivery::new_authenticated_live(
+            Arc::new(MockChannel::new(false)),
+            "wrong-channel".into(),
+            ChannelKind::Telegram,
+            fast_config(),
+            LiveEgressProvenance::legacy_singleton(slack),
+        );
+        assert!(
+            rejected.is_err(),
+            "a sealed Slack singleton capability cannot be used by Telegram"
+        );
+    }
+
+    #[tokio::test]
     async fn mapped_live_intents_keep_accounts_isolated_and_generic_paths_unbound() {
-        let bundle_a = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
-            crate::channels::registry::ChannelRef::new(
-                ChannelKind::Telegram,
-                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
-            ),
-            false,
-        );
-        let bundle_b = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
-            crate::channels::registry::ChannelRef::new(
-                ChannelKind::Telegram,
-                crate::channels::registry::ChannelAccountId::new("account_b").unwrap(),
-            ),
-            false,
-        );
-        let bundle_default = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
-            crate::channels::registry::ChannelRef::new(
-                ChannelKind::Telegram,
-                crate::channels::registry::ChannelAccountId::new("default").unwrap(),
-            ),
-            false,
-        );
+        let bundle_a = mapped_bundle_from_runtime("account_a", 101);
+        let bundle_b = mapped_bundle_from_runtime("account_b", 202);
+        let bundle_default = mapped_bundle_from_runtime("default", 303);
         let channel_a = Arc::new(MockChannel::new(false));
         let channel_b = Arc::new(MockChannel::new(false));
         let channel_default = Arc::new(MockChannel::new(false));
@@ -959,13 +1220,7 @@ mod tests {
 
     #[tokio::test]
     async fn mapped_live_delivery_is_visible_to_authenticated_evidence_before_writer_shutdown() {
-        let bundle = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
-            crate::channels::registry::ChannelRef::new(
-                ChannelKind::Telegram,
-                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
-            ),
-            false,
-        );
+        let bundle = mapped_bundle_from_runtime("account_a", 101);
         let account_ref = bundle.channel_ref.clone();
         let channel = Arc::new(MockChannel::new(false));
         let mut delivery = LiveDelivery::new_mapped_telegram(
@@ -999,13 +1254,7 @@ mod tests {
 
     #[tokio::test]
     async fn mapped_live_delivery_refuses_before_send_when_authenticated_marker_is_unavailable() {
-        let bundle = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
-            crate::channels::registry::ChannelRef::new(
-                ChannelKind::Telegram,
-                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
-            ),
-            false,
-        );
+        let bundle = mapped_bundle_from_runtime("account_a", 101);
         let channel = Arc::new(MockChannel::new(false));
         let mut delivery = LiveDelivery::new_mapped_telegram(
             channel.clone(),
@@ -1060,13 +1309,7 @@ mod tests {
 
     #[tokio::test]
     async fn mapped_failure_audits_before_its_authenticated_terminal_result() {
-        let bundle = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
-            crate::channels::registry::ChannelRef::new(
-                ChannelKind::Telegram,
-                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
-            ),
-            false,
-        );
+        let bundle = mapped_bundle_from_runtime("account_a", 101);
         let channel = Arc::new(FailingSendChannel {
             sends: AtomicUsize::new(0),
         });
@@ -1129,13 +1372,7 @@ mod tests {
     #[test]
     fn mapped_constructor_rejects_channel_mismatch_before_any_adapter_effect() {
         let channel = Arc::new(MockChannel::new(false));
-        let bundle = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
-            crate::channels::registry::ChannelRef::new(
-                ChannelKind::Telegram,
-                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
-            ),
-            false,
-        );
+        let bundle = mapped_bundle_from_runtime("account_a", 101);
         assert!(
             LiveDelivery::new_mapped_telegram(
                 channel.clone(),

@@ -110,12 +110,14 @@ pub(crate) struct PipelineHandlerDeps {
 #[derive(Clone)]
 pub(crate) struct AuthenticatedInboundBinding {
     pub(crate) channel_ref: ChannelRef,
+    account_binding: Option<crate::config::ChannelAccountBinding>,
     legacy_singleton_alias_claim:
         Option<Arc<crate::channels::identity::LegacySingletonAliasClaimAuthority>>,
     /// Present only when the nonlegacy Telegram map startup handed over its
     /// sealed account provenance. Generic and legacy constructors keep None.
     mapped_telegram_live_egress:
         Option<crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance>,
+    legacy_live_egress: Option<crate::cli::serve_tasks::LegacyLiveEgressProvenance>,
 }
 
 impl AuthenticatedInboundBinding {
@@ -123,8 +125,10 @@ impl AuthenticatedInboundBinding {
     pub(crate) fn for_account(channel_ref: ChannelRef) -> Self {
         Self {
             channel_ref,
+            account_binding: None,
             legacy_singleton_alias_claim: None,
             mapped_telegram_live_egress: None,
+            legacy_live_egress: None,
         }
     }
 
@@ -135,23 +139,48 @@ impl AuthenticatedInboundBinding {
     ) -> Self {
         Self {
             channel_ref: provenance.channel_ref().clone(),
+            account_binding: Some(provenance.account_binding().clone()),
             legacy_singleton_alias_claim: None,
             mapped_telegram_live_egress: Some(provenance),
+            legacy_live_egress: None,
         }
     }
 
     /// Constructed only by the already-admitted Telegram singleton startup
     /// branch. The opaque admission proof is only constructed there; inbound
     /// data and other production modules cannot supply an arbitrary sender.
-    pub(super) fn for_legacy_telegram_singleton(
+    pub(super) fn for_legacy_live(
         admission: crate::cli::serve_tasks::AdmittedLegacyTelegramSingleton,
+        provenance: crate::cli::serve_tasks::LegacyLiveEgressProvenance,
     ) -> Self {
+        debug_assert_eq!(
+            provenance.channel_ref(),
+            &ChannelRef::default_account(ChannelId::Telegram)
+        );
         Self {
             channel_ref: ChannelRef::default_account(ChannelId::Telegram),
+            account_binding: None,
             legacy_singleton_alias_claim: Some(Arc::new(
                 crate::channels::identity::LegacySingletonAliasClaimAuthority::from_admitted_telegram_singleton(&admission),
             )),
             mapped_telegram_live_egress: None,
+            legacy_live_egress: Some(provenance),
+        }
+    }
+
+    pub(super) fn for_legacy_live_slack(
+        provenance: crate::cli::serve_tasks::LegacyLiveEgressProvenance,
+    ) -> Self {
+        debug_assert_eq!(
+            provenance.channel_ref(),
+            &ChannelRef::default_account(ChannelId::Slack)
+        );
+        Self {
+            channel_ref: ChannelRef::default_account(ChannelId::Slack),
+            account_binding: None,
+            legacy_singleton_alias_claim: None,
+            mapped_telegram_live_egress: None,
+            legacy_live_egress: Some(provenance),
         }
     }
 
@@ -165,6 +194,27 @@ impl AuthenticatedInboundBinding {
         &self,
     ) -> Option<crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance> {
         self.mapped_telegram_live_egress.clone()
+    }
+
+    fn live_egress_provenance(
+        &self,
+    ) -> Option<crate::channels::live_delivery::LiveEgressProvenance> {
+        self.mapped_telegram_live_egress()
+            .map(crate::channels::live_delivery::LiveEgressProvenance::mapped_telegram)
+            .or_else(|| {
+                self.legacy_live_egress
+                    .clone()
+                    .map(crate::channels::live_delivery::LiveEgressProvenance::legacy_singleton)
+            })
+    }
+
+    fn lease_subject(&self, sender: &str) -> String {
+        match &self.account_binding {
+            Some(binding) => {
+                crate::permissions::lease::channel_bound_lease_subject(binding, sender)
+            }
+            None => crate::permissions::lease::channel_lease_subject(&self.channel_ref, sender),
+        }
     }
 }
 
@@ -959,10 +1009,7 @@ async fn authorize_channel_send<P: crate::permissions::PolicyArgument>(
     let gate = {
         let base = Gate::for_policy(autonomy_policy.policy_snapshot()).with_lease_snapshot(
             &lease_store,
-            crate::permissions::lease::channel_lease_subject(
-                &binding.channel_ref,
-                &inbound.sender_id,
-            ),
+            binding.lease_subject(&inbound.sender_id),
             now,
         );
         if let Some(asker) = channel_asker {
@@ -3913,10 +3960,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         // caller. The sender_id is already HMAC/platform-verified
                         // by the channel adapter before this closure runs (L620
                         // ChannelSend gate also uses it as the lease subject).
-                        Some(crate::permissions::lease::channel_lease_subject(
-                            &inbound_binding.channel_ref,
-                            &inbound.sender_id,
-                        )),
+                        Some(inbound_binding.lease_subject(&inbound.sender_id)),
                         // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
                         &config_for_handler.tools.harness,
                         &mut compaction_budget,
@@ -4011,8 +4055,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             .as_ref()
                             .expect("can_stream_live requires a live channel"),
                     );
-                    let delivery = match inbound_binding.mapped_telegram_live_egress() {
-                        Some(provenance) => crate::channels::LiveDelivery::new_mapped_telegram(
+                    let delivery = match inbound_binding.live_egress_provenance() {
+                        Some(provenance) => crate::channels::LiveDelivery::new_authenticated_live(
                             channel,
                             inbound.chat_id.clone(),
                             inbound.channel,
@@ -4020,7 +4064,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             provenance,
                         )
                         .map_err(|error| {
-                            anyhow::anyhow!("construct mapped Telegram live delivery: {error}")
+                            anyhow::anyhow!("construct authenticated live delivery: {error}")
                         })?,
                         None => crate::channels::LiveDelivery::new(
                             channel,
@@ -5469,6 +5513,50 @@ mod tests {
     use crate::channels::{Channel, ChannelError, ChannelKind, MessageId, PipelineHandler};
 
     #[test]
+    fn legacy_telegram_and_slack_startup_bindings_expose_only_their_sealed_default_capability() {
+        let telegram = AuthenticatedInboundBinding::for_legacy_live(
+            crate::cli::serve_tasks::AdmittedLegacyTelegramSingleton::for_test(77),
+            crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(ChannelKind::Telegram)
+                .expect("Telegram legacy startup is admitted"),
+        );
+        let slack = AuthenticatedInboundBinding::for_legacy_live_slack(
+            crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(ChannelKind::Slack)
+                .expect("Slack legacy startup is admitted"),
+        );
+        let mapped = AuthenticatedInboundBinding::for_mapped_telegram(
+            configured_mapped_telegram_bundles()[0]
+                .mapped_live_egress_provenance()
+                .expect("runtime-mapped account has its separate W32 capability"),
+        );
+
+        for (binding, expected) in [
+            (&telegram, ChannelKind::Telegram),
+            (&slack, ChannelKind::Slack),
+        ] {
+            match binding
+                .live_egress_provenance()
+                .expect("legacy startup provenance")
+            {
+                crate::channels::live_delivery::LiveEgressProvenance::LegacySingleton(
+                    capability,
+                ) => {
+                    assert_eq!(
+                        capability.channel_ref(),
+                        &ChannelRef::default_account(expected)
+                    );
+                }
+                crate::channels::live_delivery::LiveEgressProvenance::MappedTelegram(_) => {
+                    panic!("legacy startup must not receive a mapped account capability")
+                }
+            }
+        }
+        assert!(matches!(
+            mapped.live_egress_provenance(),
+            Some(crate::channels::live_delivery::LiveEgressProvenance::MappedTelegram(_))
+        ));
+    }
+
+    #[test]
     fn channel_route_audit_roundtrips_the_exact_shared_report() {
         let report = crate::skills::resolver::SkillRouteReport {
             outcome: crate::skills::resolver::SkillRouteOutcome::NoMatch,
@@ -6031,17 +6119,15 @@ mod tests {
 
     #[test]
     fn bundle_capability_is_the_only_mapped_live_delivery_input() {
-        let bundle_a = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
-            ChannelRef::new(
-                ChannelId::Telegram,
-                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
-            ),
-            false,
-        );
-        let bundle_default = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
-            ChannelRef::default_account(ChannelId::Telegram),
-            false,
-        );
+        let bundles = configured_mapped_telegram_bundles();
+        let bundle_a = bundles
+            .iter()
+            .find(|bundle| bundle.channel_ref.account_id.as_str() == "ops_a")
+            .expect("configured A bundle");
+        let bundle_default = bundles
+            .iter()
+            .find(|bundle| bundle.channel_ref.account_id.as_str() == "ops_b")
+            .expect("configured B bundle");
         let legacy = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
             ChannelRef::default_account(ChannelId::Telegram),
             true,
@@ -6052,8 +6138,8 @@ mod tests {
         let binding_default = AuthenticatedInboundBinding::for_mapped_telegram(
             bundle_default.mapped_live_egress_provenance().unwrap(),
         );
-        assert_eq!(binding_a.channel_ref.account_id.as_str(), "account_a");
-        assert_eq!(binding_default.channel_ref.account_id.as_str(), "default");
+        assert_eq!(binding_a.channel_ref.account_id.as_str(), "ops_a");
+        assert_eq!(binding_default.channel_ref.account_id.as_str(), "ops_b");
         assert!(
             legacy.mapped_live_egress_provenance().is_none(),
             "legacy singleton cannot mint mapped delivery provenance"
@@ -6161,15 +6247,17 @@ mod tests {
             "pipeline transcript sessions do not collide"
         );
         assert_ne!(
+            binding_a.lease_subject(&raw.sender_id),
+            binding_b.lease_subject(&raw.sender_id),
+            "a lease subject for A cannot name B"
+        );
+        assert_eq!(
+            binding_a.lease_subject(&raw.sender_id),
             crate::permissions::lease::channel_lease_subject(
                 &binding_a.channel_ref,
-                &raw.sender_id,
+                &raw.sender_id
             ),
-            crate::permissions::lease::channel_lease_subject(
-                &binding_b.channel_ref,
-                &raw.sender_id,
-            ),
-            "a lease subject for A cannot name B"
+            "historical mapped None-incarnation accounts preserve their existing lease subjects"
         );
         assert_ne!(
             channel_media_source_ref(&binding_a, &raw),
@@ -6180,11 +6268,10 @@ mod tests {
         let home = tempfile::tempdir().expect("create account-isolation home");
         let wal = home.path().join("wal");
         std::fs::create_dir_all(&wal).expect("create account-isolation WAL directory");
-        let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
-            wal.join("000001.wal"),
-            home.path().to_path_buf(),
-        )
-        .expect("start authenticated account-isolation writer");
+        let segment = wal.join("000001.wal");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
+                .expect("start authenticated account-isolation writer");
         ready
             .wait()
             .await
@@ -6251,6 +6338,34 @@ mod tests {
         join.await
             .expect("account-isolation writer task joins")
             .expect("account-isolation writer completes");
+
+        let bytes = std::fs::read(segment).expect("read mapped live fixture WAL");
+        let header = crate::wal::segment_header::parse_segment_header(&bytes)
+            .expect("parse mapped live fixture header");
+        let mut cursor = header.header_len();
+        let mut mapped_intents = Vec::new();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..])
+                .expect("decode mapped live fixture frame");
+            if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8
+            {
+                mapped_intents.push(
+                    serde_json::from_slice::<serde_json::Value>(frame.payload)
+                        .expect("mapped live intent JSON"),
+                );
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(mapped_intents.len(), 2);
+        for intent in mapped_intents {
+            assert!(
+                intent.get("live_provenance").is_none(),
+                "W32 mapped intent grammar remains marker-free"
+            );
+            assert!(intent.get("channel_ref").is_some());
+            assert!(intent.get("account_binding").is_some());
+        }
     }
 
     fn inbound(text: Option<&str>, edit_unix: Option<i64>) -> InboundMessage {
@@ -6604,8 +6719,10 @@ mod tests {
             "INSERT INTO idx_human_identity_aliases (uuid, channel, sender_id, chat_id) VALUES (?1, 'telegram', '42', 'chat')",
             [pinned],
         ).unwrap();
-        let binding = AuthenticatedInboundBinding::for_legacy_telegram_singleton(
+        let binding = AuthenticatedInboundBinding::for_legacy_live(
             crate::cli::serve_tasks::AdmittedLegacyTelegramSingleton::for_test(42),
+            crate::cli::serve_tasks::legacy_live_egress_provenance_for_test(ChannelKind::Telegram)
+                .expect("Telegram legacy startup is admitted"),
         );
         let resolved = crate::channels::identity::resolve_or_create_human_uuid_v2(
             &conn,

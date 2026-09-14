@@ -583,7 +583,7 @@ pub(crate) const DOCS: &[CheckDoc] = &[
     CheckDoc {
         name: "channel transport flapping",
         purpose: "Reads authenticated, account-bound adapter transport evidence from the last 24 hours. Warns per account at five or more completed attempts and twenty percent or more failures. An adapter acceptance confirms only that adapter call, never recipient delivery or a read receipt.",
-        common_failures: "A mapped Telegram account has repeated adapter failures, or an Armed/unsettled record leaves the evidence inconclusive after an interrupted process.",
+        common_failures: "An authenticated mapped Telegram or legacy Telegram/Slack live account has repeated adapter failures, or an Armed/unsettled record leaves the evidence inconclusive after an interrupted process.",
         fix: "Inspect the named channel/account's credentials and adapter logs. Resolve inconclusive records before treating failure percentages as complete; this check does not retry, probe, or change delivery state.",
     },
     CheckDoc {
@@ -688,6 +688,22 @@ mod tests {
         assert!(!outcome.detail.contains("telegram/account-b"));
         assert!(outcome.detail.contains("accepted by adapter"));
         assert!(!outcome.detail.contains("delivered"));
+    }
+
+    #[test]
+    fn account_transport_flapping_keeps_legacy_slack_separate_from_default_telegram() {
+        let telegram_default = ChannelRef::default_account(ChannelId::Telegram);
+        let slack_default = ChannelRef::default_account(ChannelId::Slack);
+        let evidence = BTreeMap::from([
+            (telegram_default, counters(5, 5, 0, 0, 0)),
+            (slack_default, counters(5, 3, 2, 0, 0)),
+        ]);
+
+        let outcome = classify_channel_transport_evidence(Ok(evidence));
+
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("slack/default: 2/5 failed (40%)"));
+        assert!(!outcome.detail.contains("telegram/default"));
     }
 
     #[test]

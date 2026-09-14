@@ -20,18 +20,21 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
 use super::authority::{
-    RecoveredUpdaterLeafIdentity, RecoveredUpdaterLeafIntent, RecoveredUpdaterLeafResult,
-    RecoveredUpdaterLeafTerminal, decode_and_validate_updater_leaf_intent,
-    decode_and_validate_updater_leaf_result, decode_updater_leaf_terminal_receipt,
-    synthetic_interrupted_result_payload,
+    RecoveredOwnedStageHelperBinding, RecoveredUpdaterLeafIdentity, RecoveredUpdaterLeafIntent,
+    RecoveredUpdaterLeafResult, RecoveredUpdaterLeafTerminal,
+    decode_and_validate_updater_leaf_intent, decode_and_validate_updater_leaf_result,
+    decode_updater_leaf_terminal_receipt, synthetic_interrupted_result_payload,
+    synthetic_recovered_owned_stage_success_payload,
 };
 use crate::wal::events::{
     EVENT_TYPE_EXTENDED, EVENT_TYPE_UPDATER_TASK_FIRED, EVENT_TYPE_UPDATER_TASK_RESULT,
     ExtendedSubtype,
 };
 use crate::wal::payloads_u04::{
-    ComponentOutcome, MAX_UPDATER_LEAF_RECEIPTS_PER_PASS, UpdaterTaskFiredPayload,
-    UpdaterTaskResultPayload, UpdaterTerminalOutcome, updater_fired_receipt_sha256,
+    ComponentOutcome, MAX_UPDATER_LEAF_RECEIPTS_PER_PASS,
+    UPDATER_LEAF_RECEIPT_BINDING_SCHEMA_VERSION, UpdaterLeafReceiptBinding, UpdaterPassLane,
+    UpdaterTaskFiredPayload, UpdaterTaskResultPayload, UpdaterTerminalOutcome,
+    updater_fired_receipt_sha256,
 };
 #[cfg(test)]
 use crate::wal::scan::for_each_frame_at_home;
@@ -114,18 +117,106 @@ async fn reconcile_unfinished_updater_leaves_inner(
         already_terminal: state.already_terminal,
         interrupted: 0,
     };
-    persist_checkpoint_async(neoth_home, segment_path, &frontier, &state)
-        .await
-        .context("durably checkpoint updater reconciliation before synthetic terminals")?;
+    let mut verified_terminal_blocks = Vec::new();
     if append_synthetic_terminals {
         let unfinished = state.unfinished_intents();
         for intent in unfinished {
+            if let Some(binding) = intent.owned_stage_helper_binding() {
+                match crate::updater::self_update::reconcile_owned_stage_helper_intent(
+                    neoth_home, &binding,
+                ) {
+                    crate::updater::self_update::OwnedStageRecovery::Blocked(block) => {
+                        let checkpoint_block = CheckpointOwnedStageBlock {
+                            operation_id: block.operation_id,
+                            request_id: block.request_id,
+                            request_binding_sha256: block.request_binding_sha256,
+                            relative_operation_dir: block.relative_operation_dir,
+                            terminal_indeterminate: false,
+                            stdin_sha256: binding.stdin_sha256.clone(),
+                            stdin_size_bytes: binding.stdin_size_bytes,
+                            run_budgets: Some(binding.run_budgets.clone()),
+                        };
+                        state.insert_owned_stage_block(checkpoint_block)?;
+                        continue;
+                    }
+                    crate::updater::self_update::OwnedStageRecovery::Verified(readback) => {
+                        let outcome = match readback {
+                            crate::updater::self_update::OwnedStageReadback::Committed => {
+                                crate::updater::authority::UpdaterLeafOutcomeCode::Committed
+                            }
+                            crate::updater::self_update::OwnedStageReadback::Unchanged => {
+                                crate::updater::authority::UpdaterLeafOutcomeCode::Unchanged
+                            }
+                            crate::updater::self_update::OwnedStageReadback::Indeterminate => {
+                                unreachable!(
+                                    "recovery never verifies indeterminate SelfStage state"
+                                )
+                            }
+                        };
+                        append_recovered_owned_stage_success(writer, &intent, outcome).await?;
+                        let identity = intent.identity();
+                        state.owned_stage_blocks.retain(|block| {
+                            !(block.operation_id == identity.operation_id
+                                && block.request_id == identity.request_id
+                                && block.request_binding_sha256 == binding.request_binding_sha256
+                                && block.relative_operation_dir == binding.relative_operation_dir)
+                        });
+                        continue;
+                    }
+                }
+            }
             append_interrupted_result(writer, &intent).await?;
             summary.interrupted = summary
                 .interrupted
                 .checked_add(1)
                 .context("updater interruption count overflow")?;
         }
+        // A helper may itself have acknowledged `Indeterminate` before its
+        // parent could write the outer receipt.  It is no longer an open leaf,
+        // so re-enter its exact signed binding here.  Only a verified
+        // filesystem preimage/publication clears the admission block; the
+        // existing terminal receipt is then the sole leaf bound to the outer
+        // recovery RESULT below.
+        let terminal_blocks = state
+            .owned_stage_blocks
+            .iter()
+            .filter(|block| block.terminal_indeterminate)
+            .cloned()
+            .collect::<Vec<_>>();
+        for block in terminal_blocks {
+            let binding = terminal_owned_stage_binding(&block)?;
+            match crate::updater::self_update::reconcile_owned_stage_helper_intent(
+                neoth_home, &binding,
+            ) {
+                crate::updater::self_update::OwnedStageRecovery::Blocked(recovered) => {
+                    anyhow::ensure!(
+                        recovered.operation_id == block.operation_id
+                            && recovered.request_id == block.request_id
+                            && recovered.request_binding_sha256 == block.request_binding_sha256
+                            && recovered.relative_operation_dir == block.relative_operation_dir,
+                        "terminal owned SelfStage recovery changed its signed binding"
+                    );
+                }
+                crate::updater::self_update::OwnedStageRecovery::Verified(
+                    crate::updater::self_update::OwnedStageReadback::Committed
+                    | crate::updater::self_update::OwnedStageReadback::Unchanged,
+                ) => {
+                    // Keep this signed block through the outer RESULT append.
+                    // The transient permit is scoped to this reconciliation;
+                    // a crash or append failure therefore remains blocked.
+                    verified_terminal_blocks.push(block);
+                }
+                crate::updater::self_update::OwnedStageRecovery::Verified(
+                    crate::updater::self_update::OwnedStageReadback::Indeterminate,
+                ) => unreachable!("owned-stage recovery never verifies indeterminate state"),
+            }
+        }
+        // Persist retained helper identities before any generic terminal or
+        // outer-pass synthesis. A crash here must continue to block the next
+        // bootstrap/cadence, never silently erase the mutation ambiguity.
+        persist_checkpoint_async(neoth_home, segment_path, &frontier, &state)
+            .await
+            .context("durably checkpoint updater owned-stage blocks before synthetic terminals")?;
         if summary.interrupted > 0 {
             let home = neoth_home.to_path_buf();
             let scan_segment_path = segment_path.to_path_buf();
@@ -149,6 +240,13 @@ async fn reconcile_unfinished_updater_leaves_inner(
                     "advance updater reconciliation checkpoint after terminal acknowledgement",
                 )?;
         }
+    } else {
+        // The no-append path models a crash after authenticated scan state is
+        // durable but before synthetic terminals are acknowledged. Preserve
+        // the exact open frontier so restart recovery can append once.
+        persist_checkpoint_async(neoth_home, segment_path, &frontier, &state)
+            .await
+            .context("durably checkpoint updater open intents before synthetic terminals")?;
     }
 
     let pass_summary = reconcile_unfinished_updater_passes(
@@ -157,9 +255,45 @@ async fn reconcile_unfinished_updater_leaves_inner(
         writer,
         phase,
         append_synthetic_terminals,
+        &state.owned_stage_blocks,
+        &verified_terminal_blocks,
     )
     .await
     .context("reconcile durable recurring updater FIRED/RESULT pairs")?;
+    if append_synthetic_terminals && !verified_terminal_blocks.is_empty() {
+        let acknowledged = &pass_summary.terminal_operation_ids;
+        let prior_len = state.owned_stage_blocks.len();
+        state.owned_stage_blocks.retain(|block| {
+            !(block.terminal_indeterminate
+                && verified_terminal_blocks
+                    .iter()
+                    .any(|verified| verified == block)
+                && acknowledged
+                    .iter()
+                    .any(|operation_id| operation_id == &block.operation_id))
+        });
+        if state.owned_stage_blocks.len() != prior_len {
+            let home = neoth_home.to_path_buf();
+            let scan_segment_path = segment_path.to_path_buf();
+            let prior_frontier = frontier.clone();
+            let mut moved_state = state;
+            (state, frontier) = tokio::task::spawn_blocking(move || {
+                let frontier = scan_updater_tail(
+                    &home,
+                    &scan_segment_path,
+                    &mut moved_state,
+                    Some(&prior_frontier),
+                    reconciliation_scan_limits(),
+                )?;
+                Ok::<_, anyhow::Error>((moved_state, frontier))
+            })
+            .await
+            .context("join outer RESULT acknowledgement checkpoint scan")??;
+            persist_checkpoint_async(neoth_home, segment_path, &frontier, &state)
+                .await
+                .context("clear verified owned-stage block after outer RESULT acknowledgement")?;
+        }
+    }
     tracing::info!(
         phase = phase.as_str(),
         scanned_intents = summary.scanned_intents,
@@ -173,11 +307,38 @@ async fn reconcile_unfinished_updater_leaves_inner(
     Ok(summary)
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+fn terminal_owned_stage_binding(
+    block: &CheckpointOwnedStageBlock,
+) -> Result<RecoveredOwnedStageHelperBinding> {
+    anyhow::ensure!(
+        block.terminal_indeterminate,
+        "terminal helper binding requested for open owned-stage block"
+    );
+    let run_budgets = block
+        .run_budgets
+        .clone()
+        .context("terminal owned SelfStage recovery block lacks run budgets")?;
+    anyhow::ensure!(
+        !block.stdin_sha256.is_empty() && block.stdin_size_bytes > 0,
+        "terminal owned SelfStage recovery block lacks exact stdin binding"
+    );
+    Ok(RecoveredOwnedStageHelperBinding {
+        operation_id: block.operation_id.clone(),
+        request_id: block.request_id.clone(),
+        request_binding_sha256: block.request_binding_sha256.clone(),
+        relative_operation_dir: block.relative_operation_dir.clone(),
+        stdin_sha256: block.stdin_sha256.clone(),
+        stdin_size_bytes: block.stdin_size_bytes,
+        run_budgets,
+    })
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct UpdaterPassReconcileSummary {
     scanned: usize,
     terminal: usize,
     interrupted: usize,
+    terminal_operation_ids: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -192,6 +353,7 @@ struct UpdaterPassScanState {
     terminal_leaves: HashMap<String, Vec<RecoveredUpdaterLeafTerminal>>,
     scanned: usize,
     terminal: usize,
+    terminal_operation_ids: Vec<String>,
 }
 
 impl UpdaterPassScanState {
@@ -343,6 +505,7 @@ impl UpdaterPassScanState {
                     .terminal
                     .checked_add(1)
                     .context("updater pass terminal counter overflow")?;
+                self.terminal_operation_ids.push(run_id);
             }
             _ => unreachable!("updater pass event type checked above"),
         }
@@ -356,6 +519,8 @@ async fn reconcile_unfinished_updater_passes(
     writer: &WalWriterHandle,
     phase: UpdaterReconcilePhase,
     append_synthetic_terminals: bool,
+    owned_stage_blocks: &[CheckpointOwnedStageBlock],
+    verified_terminal_blocks: &[CheckpointOwnedStageBlock],
 ) -> Result<UpdaterPassReconcileSummary> {
     let home = neoth_home.to_path_buf();
     let base = segment_path.to_path_buf();
@@ -377,6 +542,7 @@ async fn reconcile_unfinished_updater_passes(
         scanned: state.scanned,
         terminal: state.terminal,
         interrupted: 0,
+        terminal_operation_ids: state.terminal_operation_ids.clone(),
     };
     if !append_synthetic_terminals {
         return Ok(summary);
@@ -390,7 +556,30 @@ async fn reconcile_unfinished_updater_passes(
             .cmp(&right.1.fired.ts_unix)
             .then_with(|| left.0.cmp(&right.0))
     });
-    for (_, open) in unfinished {
+    for (operation_id, open) in unfinished {
+        if owned_stage_blocks.iter().any(|block| {
+            block.operation_id == operation_id
+                && !verified_terminal_blocks
+                    .iter()
+                    .any(|verified| verified == block)
+        }) {
+            continue;
+        }
+        if open.fired.identity.lane == Some(UpdaterPassLane::SelfStage) {
+            let leaves = state
+                .terminal_leaves
+                .remove(&operation_id)
+                .unwrap_or_default();
+            if !leaves.is_empty() {
+                append_recovered_self_stage_pass(writer, open, leaves).await?;
+                summary.terminal_operation_ids.push(operation_id.clone());
+                summary.interrupted = summary
+                    .interrupted
+                    .checked_add(1)
+                    .context("updater recovered SelfStage pass count overflow")?;
+                continue;
+            }
+        }
         append_interrupted_updater_pass(writer, open, phase).await?;
         summary.interrupted = summary
             .interrupted
@@ -398,6 +587,51 @@ async fn reconcile_unfinished_updater_passes(
             .context("updater pass interruption counter overflow")?;
     }
     Ok(summary)
+}
+
+async fn append_recovered_self_stage_pass(
+    writer: &WalWriterHandle,
+    open: OpenUpdaterPass,
+    leaves: Vec<RecoveredUpdaterLeafTerminal>,
+) -> Result<()> {
+    let budgets = leaves
+        .first()
+        .and_then(|leaf| leaf.run_budgets.clone())
+        .context("verified recovered SelfStage leaf omitted inherited run budgets")?;
+    anyhow::ensure!(
+        leaves
+            .iter()
+            .all(|leaf| leaf.run_budgets.as_ref() == Some(&budgets)),
+        "verified recovered SelfStage leaf budgets disagree"
+    );
+    let result = UpdaterTaskResultPayload {
+        identity: open.fired.identity,
+        task_kind: open.fired.task_kind,
+        ts_unix: crate::time::now_unix_secs(),
+        duration_ms: 0,
+        terminal_outcome: Some(UpdaterTerminalOutcome::Interrupted),
+        fired_receipt_sha256: Some(open.fired_receipt_sha256),
+        leaf_receipt_binding: Some(UpdaterLeafReceiptBinding {
+            schema_version: UPDATER_LEAF_RECEIPT_BINDING_SCHEMA_VERSION,
+            budgets,
+            terminal_receipts: leaves.into_iter().map(|leaf| leaf.receipt).collect(),
+        }),
+        components: vec![ComponentOutcome::failed(
+            "self_stage",
+            "unknown",
+            "startup reconciliation verified the owned SelfStage filesystem state after an interrupted pass",
+        )],
+    };
+    let payload =
+        serde_json::to_vec(&result).context("serialize recovered SelfStage outer RESULT")?;
+    let header = HeaderBuilder::new(EVENT_TYPE_UPDATER_TASK_RESULT, &payload)
+        .flags(EventFlags::SYNTHETIC)
+        .build();
+    writer
+        .append(header, payload)
+        .await
+        .context("append receipt-bound recovered SelfStage outer RESULT")?;
+    Ok(())
 }
 
 async fn append_interrupted_updater_pass(
@@ -457,6 +691,11 @@ struct ReconcileCheckpointBody {
     scanned_intents: u64,
     already_terminal: u64,
     open_intents: Vec<CheckpointOpenIntent>,
+    /// Durable, HMAC-bound SelfStage operations whose filesystem state has not
+    /// been verified.  This is deliberately part of the existing frontier,
+    /// never an unauthenticated sidecar.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    owned_stage_blocks: Vec<CheckpointOwnedStageBlock>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -464,6 +703,53 @@ struct ReconcileCheckpointBody {
 struct CheckpointOpenIntent {
     order: u64,
     payload_hex: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CheckpointOwnedStageBlock {
+    pub(crate) operation_id: String,
+    pub(crate) request_id: String,
+    pub(crate) request_binding_sha256: String,
+    pub(crate) relative_operation_dir: String,
+    /// A terminal `Indeterminate` helper has no open leaf intent left in the
+    /// scan state, but its original request binding remains authenticated by
+    /// this checkpoint and is required for the explicit filesystem readback.
+    #[serde(default)]
+    pub(crate) terminal_indeterminate: bool,
+    #[serde(default)]
+    pub(crate) stdin_sha256: String,
+    #[serde(default)]
+    pub(crate) stdin_size_bytes: u64,
+    #[serde(default)]
+    pub(crate) run_budgets: Option<crate::updater::budget::UpdaterRunBudgets>,
+}
+
+/// Read-only pre-admission state.  A non-empty set means a future SelfStage
+/// cadence must not append FIRED or spawn a helper.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SelfStageRecoveryGate {
+    pub(crate) blocked: Vec<CheckpointOwnedStageBlock>,
+}
+
+impl SelfStageRecoveryGate {
+    pub(crate) fn is_blocked(&self) -> bool {
+        !self.blocked.is_empty()
+    }
+}
+
+/// Verify the authenticated recovery frontier before a SelfStage admission.
+/// The caller receives only signed operation bindings and must not infer a
+/// clear state from a missing or unreadable checkpoint.
+pub(crate) fn self_stage_recovery_gate(
+    neoth_home: &Path,
+    segment_path: &Path,
+) -> Result<SelfStageRecoveryGate> {
+    Ok(SelfStageRecoveryGate {
+        blocked: load_checkpoint(neoth_home, segment_path)?
+            .map(|body| body.owned_stage_blocks)
+            .unwrap_or_default(),
+    })
 }
 
 struct OpenLeafAudit {
@@ -493,9 +779,24 @@ struct AuditScanState {
     scanned_intents: usize,
     already_terminal: usize,
     max_live: usize,
+    owned_stage_blocks: Vec<CheckpointOwnedStageBlock>,
 }
 
 impl AuditScanState {
+    fn insert_owned_stage_block(&mut self, block: CheckpointOwnedStageBlock) -> Result<()> {
+        if let Some(existing) = self.owned_stage_blocks.iter().find(|existing| {
+            existing.operation_id == block.operation_id && existing.request_id == block.request_id
+        }) {
+            anyhow::ensure!(
+                existing == &block,
+                "owned SelfStage recovery block conflicts with its prior signed binding"
+            );
+        } else {
+            self.owned_stage_blocks.push(block);
+        }
+        Ok(())
+    }
+
     fn new(max_live: usize) -> Result<Self> {
         anyhow::ensure!(max_live > 0, "updater live-identity scan limit is zero");
         Ok(Self {
@@ -505,6 +806,7 @@ impl AuditScanState {
             scanned_intents: 0,
             already_terminal: 0,
             max_live,
+            owned_stage_blocks: Vec::new(),
         })
     }
 
@@ -590,6 +892,18 @@ impl AuditScanState {
                 identity.operation_id, identity.request_id
             )
         })?;
+        if let Some(binding) = result.owned_stage_indeterminate_binding(&open.intent) {
+            self.insert_owned_stage_block(CheckpointOwnedStageBlock {
+                operation_id: binding.operation_id,
+                request_id: binding.request_id,
+                request_binding_sha256: binding.request_binding_sha256,
+                relative_operation_dir: binding.relative_operation_dir,
+                terminal_indeterminate: true,
+                stdin_sha256: binding.stdin_sha256,
+                stdin_size_bytes: binding.stdin_size_bytes,
+                run_budgets: Some(binding.run_budgets),
+            })?;
+        }
         self.open_payload_bytes = self
             .open_payload_bytes
             .checked_sub(open.payload.len())
@@ -625,6 +939,48 @@ impl AuditScanState {
             .collect::<Result<Vec<_>>>()?;
         intents.sort_unstable_by_key(|intent| intent.order);
         Ok(intents)
+    }
+
+    fn checkpoint_owned_stage_blocks(&self) -> Result<Vec<CheckpointOwnedStageBlock>> {
+        let mut blocks = self.owned_stage_blocks.clone();
+        blocks.sort_unstable_by(|left, right| {
+            left.operation_id
+                .cmp(&right.operation_id)
+                .then_with(|| left.request_id.cmp(&right.request_id))
+        });
+        for pair in blocks.windows(2) {
+            anyhow::ensure!(
+                pair[0].operation_id != pair[1].operation_id
+                    || pair[0].request_id != pair[1].request_id,
+                "updater checkpoint contains duplicate owned SelfStage recovery blocks"
+            );
+        }
+        for block in &blocks {
+            let matches_open = self.open.iter().any(|(identity, open)| {
+                identity.operation_id == block.operation_id
+                    && identity.request_id == block.request_id
+                    && open
+                        .intent
+                        .owned_stage_helper_binding()
+                        .is_some_and(|binding| {
+                            binding.request_binding_sha256 == block.request_binding_sha256
+                                && binding.relative_operation_dir == block.relative_operation_dir
+                        })
+            });
+            anyhow::ensure!(
+                matches_open || block.terminal_indeterminate,
+                "updater checkpoint has dangling owned SelfStage recovery block"
+            );
+            if block.terminal_indeterminate {
+                anyhow::ensure!(
+                    block.run_budgets.is_some()
+                        && !block.stdin_sha256.is_empty()
+                        && block.stdin_size_bytes > 0,
+                    "terminal owned SelfStage recovery block lacks its exact helper binding"
+                );
+            }
+        }
+        Ok(blocks)
     }
 
     fn from_checkpoint(body: &ReconcileCheckpointBody, max_live: usize) -> Result<Self> {
@@ -693,6 +1049,8 @@ impl AuditScanState {
             state.open_payload_bytes = open_payload_bytes;
             prior_order = Some(order);
         }
+        state.owned_stage_blocks = body.owned_stage_blocks.clone();
+        let _ = state.checkpoint_owned_stage_blocks()?;
         Ok(state)
     }
 
@@ -962,6 +1320,7 @@ async fn persist_checkpoint_async(
         already_terminal: u64::try_from(state.already_terminal)
             .context("updater checkpoint terminal count exceeds u64")?,
         open_intents: state.checkpoint_open_intents()?,
+        owned_stage_blocks: state.checkpoint_owned_stage_blocks()?,
     };
     tokio::task::spawn_blocking(move || persist_checkpoint_body(&home, body))
         .await
@@ -1023,6 +1382,42 @@ fn decode_checkpoint_tag(tag: &str) -> Result<[u8; 32]> {
         .map_err(|_| anyhow::anyhow!("updater checkpoint HMAC is not 32 bytes"))
 }
 
+#[cfg(test)]
+pub(crate) fn persist_owned_stage_block_for_test(
+    neoth_home: &Path,
+    segment_path: &Path,
+    block: CheckpointOwnedStageBlock,
+) -> Result<()> {
+    let name = segment_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .context("test updater segment has no UTF-8 name")?
+        .to_string();
+    persist_checkpoint_body(
+        neoth_home,
+        ReconcileCheckpointBody {
+            schema_version: CHECKPOINT_SCHEMA_VERSION,
+            chain_base_name: name.clone(),
+            frontier: HomeWalFrontier {
+                segment_name: name,
+                segment_generation: 0,
+                segment_seq: 1,
+                segment_start_ts_ns: 1,
+                segment_node_id: [0; 16],
+                next_logical_offset: crate::wal::segment_header::SEGMENT_HEADER_LEN as u64,
+            },
+            next_order: 0,
+            scanned_intents: 0,
+            already_terminal: 0,
+            open_intents: Vec::new(),
+            // The test fixture exercises cron's signed admission boundary only;
+            // reconciliation's stricter open-intent correspondence is covered by
+            // the recovery fixtures above.
+            owned_stage_blocks: vec![block],
+        },
+    )
+}
+
 async fn append_interrupted_result(
     writer: &WalWriterHandle,
     intent: &RecoveredUpdaterLeafIntent,
@@ -1036,6 +1431,27 @@ async fn append_interrupted_result(
         .append(header, payload)
         .await
         .context("append recovered updater leaf result")?;
+    Ok(())
+}
+
+async fn append_recovered_owned_stage_success(
+    writer: &WalWriterHandle,
+    intent: &RecoveredUpdaterLeafIntent,
+    outcome: crate::updater::authority::UpdaterLeafOutcomeCode,
+) -> Result<()> {
+    let payload = synthetic_recovered_owned_stage_success_payload(
+        intent,
+        outcome,
+        crate::time::now_unix_secs(),
+    )?;
+    let header = HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
+        .event_subtype(ExtendedSubtype::UpdaterLeafResult as u8)
+        .flags(EventFlags::SYNTHETIC)
+        .build();
+    writer
+        .append(header, payload)
+        .await
+        .context("append verified recovered owned SelfStage leaf result")?;
     Ok(())
 }
 
@@ -1240,7 +1656,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn startup_reconciliation_materializes_one_receipt_bound_interrupted_pass() {
+    async fn startup_reconciliation_currently_blindly_terminals_an_open_selfstage_pass() {
         let home = tempfile::tempdir().unwrap();
         let (writer, join, segment) = writer_for_home(home.path());
         let identity =
@@ -1271,6 +1687,12 @@ mod tests {
             results[0].terminal_outcome,
             Some(UpdaterTerminalOutcome::Interrupted)
         );
+        // Regression fixture for W30 restart safety: this documents the
+        // unsafe current behavior.  The reconciler has no sealed operation
+        // request/readback capability here, so it closes an open SelfStage
+        // FIRED as `Interrupted` rather than proving pending.json/generation
+        // state and blocking the following cadence.  Replace this assertion
+        // when the authenticated operation-custody mapping lands.
         assert_eq!(
             results[0].fired_receipt_sha256.as_deref(),
             Some(expected_receipt.as_str())
@@ -1296,6 +1718,498 @@ mod tests {
 
         drop(writer);
         join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn unresolved_owned_helper_survives_restart_without_leaf_or_outer_terminal() {
+        let home = tempfile::tempdir().unwrap();
+        let (writer, join, segment) = writer_for_home(home.path());
+        let identity = UpdaterPassIdentity::new(UpdaterPassLane::SelfStage, 19);
+        let operation = identity
+            .correlatable_pass_id_for(UpdaterTaskKind::NeothSelf)
+            .unwrap()
+            .to_string();
+        append_updater_pass_payload(
+            &writer,
+            EVENT_TYPE_UPDATER_TASK_FIRED,
+            serde_json::to_vec(&UpdaterTaskFiredPayload {
+                identity: identity.clone(),
+                task_kind: UpdaterTaskKind::NeothSelf,
+                ts_unix: 19,
+            })
+            .unwrap(),
+        )
+        .await;
+        let argv = vec![
+            "--output".to_string(),
+            "json".to_string(),
+            "internal".to_string(),
+            "updater-stage-helper".to_string(),
+            "--request-sha256".to_string(),
+            "a".repeat(64),
+        ];
+        let request = UpdaterLeafRequest::owned_stage_helper(
+            operation,
+            "owned-recovery-1",
+            19,
+            &argv,
+            b"sealed-but-missing-operation",
+            16 * 1024,
+            format!("staged/operations/{}", "a".repeat(32)),
+        )
+        .unwrap()
+        .with_run_budgets(inherited_test_budgets())
+        .unwrap();
+        append_payload(
+            &writer,
+            ExtendedSubtype::UpdaterLeafIntent,
+            intent_payload(&request),
+        )
+        .await;
+        reconcile_unfinished_updater_leaves(
+            home.path(),
+            &segment,
+            &writer,
+            UpdaterReconcilePhase::Startup,
+        )
+        .await
+        .unwrap();
+        let gate = self_stage_recovery_gate(home.path(), &segment).unwrap();
+        assert!(gate.is_blocked());
+        assert_eq!(gate.blocked.len(), 1);
+        assert!(
+            read_updater_results(home.path()).is_empty(),
+            "blocked helper must retain its outer FIRED"
+        );
+        drop(writer);
+        join.await.unwrap();
+
+        let (writer, join) = restart_writer_for_home(home.path(), &segment).await;
+        reconcile_unfinished_updater_leaves(
+            home.path(),
+            &segment,
+            &writer,
+            UpdaterReconcilePhase::Startup,
+        )
+        .await
+        .unwrap();
+        let restarted_gate = self_stage_recovery_gate(home.path(), &segment).unwrap();
+        assert!(
+            restarted_gate.is_blocked(),
+            "restart must retain the exact signed block"
+        );
+        assert_eq!(
+            restarted_gate.blocked.len(),
+            1,
+            "repeated recovery must not duplicate an exact signed block"
+        );
+        assert!(
+            read_updater_results(home.path()).is_empty(),
+            "restart must not blind-terminal the retained pass"
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn terminal_indeterminate_owned_helper_keeps_outer_open_and_blocks_after_restart() {
+        let home = tempfile::tempdir().unwrap();
+        let (writer, join, segment) = writer_for_home(home.path());
+        let identity = UpdaterPassIdentity::new(UpdaterPassLane::SelfStage, 29);
+        let operation = identity
+            .correlatable_pass_id_for(UpdaterTaskKind::NeothSelf)
+            .unwrap()
+            .to_string();
+        let (binding, invocation) = crate::updater::self_update::owned_stage_recovery_fixture(
+            home.path(),
+            &operation,
+            "terminal-indeterminate",
+            crate::updater::self_update::OwnedStageReadback::Unchanged,
+        )
+        .unwrap();
+        // The real terminal says `Indeterminate`; removing the sealed request
+        // makes the subsequent exact readback equally unresolved, rather than
+        // allowing this fixture's unchanged preimage to clear the block.
+        std::fs::remove_file(
+            home.path()
+                .join(&binding.relative_operation_dir)
+                .join("request.json"),
+        )
+        .unwrap();
+        append_updater_pass_payload(
+            &writer,
+            EVENT_TYPE_UPDATER_TASK_FIRED,
+            serde_json::to_vec(&UpdaterTaskFiredPayload {
+                identity: identity.clone(),
+                task_kind: UpdaterTaskKind::NeothSelf,
+                ts_unix: 29,
+            })
+            .unwrap(),
+        )
+        .await;
+        let argv = vec![
+            "--output".to_string(),
+            "json".to_string(),
+            "internal".to_string(),
+            "updater-stage-helper".to_string(),
+            "--request-sha256".to_string(),
+            invocation.request_sha256().to_string(),
+        ];
+        let request = UpdaterLeafRequest::owned_stage_helper(
+            operation,
+            "terminal-indeterminate",
+            29,
+            &argv,
+            invocation.request_bytes(),
+            16 * 1024,
+            binding.relative_operation_dir,
+        )
+        .unwrap()
+        .with_run_budgets(binding.run_budgets)
+        .unwrap();
+        let intent = intent_payload(&request);
+        let recovered_intent = decode_and_validate_updater_leaf_intent(&intent).unwrap();
+        let terminal =
+            crate::updater::authority::synthetic_owned_stage_indeterminate_payload_for_test(
+                &recovered_intent,
+                30,
+            )
+            .unwrap();
+        append_payload(&writer, ExtendedSubtype::UpdaterLeafIntent, intent).await;
+        append_payload_with_flags(
+            &writer,
+            ExtendedSubtype::UpdaterLeafResult,
+            terminal,
+            EventFlags::empty(),
+        )
+        .await;
+
+        reconcile_unfinished_updater_leaves(
+            home.path(),
+            &segment,
+            &writer,
+            UpdaterReconcilePhase::Startup,
+        )
+        .await
+        .unwrap();
+        let gate = self_stage_recovery_gate(home.path(), &segment).unwrap();
+        assert!(
+            gate.is_blocked(),
+            "terminal Indeterminate must become a signed admission block"
+        );
+        assert_eq!(gate.blocked.len(), 1);
+        assert!(gate.blocked[0].terminal_indeterminate);
+        assert!(
+            read_updater_pass_results(home.path()).is_empty(),
+            "the outer FIRED must remain open"
+        );
+        drop(writer);
+        join.await.unwrap();
+
+        let (writer, join) = restart_writer_for_home(home.path(), &segment).await;
+        reconcile_unfinished_updater_leaves(
+            home.path(),
+            &segment,
+            &writer,
+            UpdaterReconcilePhase::Startup,
+        )
+        .await
+        .unwrap();
+        let restarted = self_stage_recovery_gate(home.path(), &segment).unwrap();
+        assert!(
+            restarted.is_blocked(),
+            "a restart cannot blind-terminal terminal Indeterminate"
+        );
+        assert_eq!(
+            restarted.blocked.len(),
+            1,
+            "restart must retain one exact signed block"
+        );
+        assert!(
+            read_updater_pass_results(home.path()).is_empty(),
+            "restart must not append an outer RESULT"
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn verified_terminal_indeterminate_readback_clears_only_its_block_and_binds_existing_receipt()
+     {
+        let home = tempfile::tempdir().unwrap();
+        let (writer, join, segment) = writer_for_home(home.path());
+        let identity = UpdaterPassIdentity::new(UpdaterPassLane::SelfStage, 31);
+        let operation = identity
+            .correlatable_pass_id_for(UpdaterTaskKind::NeothSelf)
+            .unwrap()
+            .to_string();
+        let (binding, invocation) = crate::updater::self_update::owned_stage_recovery_fixture(
+            home.path(),
+            &operation,
+            "terminal-recovered",
+            crate::updater::self_update::OwnedStageReadback::Unchanged,
+        )
+        .unwrap();
+        append_updater_pass_payload(
+            &writer,
+            EVENT_TYPE_UPDATER_TASK_FIRED,
+            serde_json::to_vec(&UpdaterTaskFiredPayload {
+                identity: identity.clone(),
+                task_kind: UpdaterTaskKind::NeothSelf,
+                ts_unix: 31,
+            })
+            .unwrap(),
+        )
+        .await;
+        let argv = vec![
+            "--output".to_string(),
+            "json".to_string(),
+            "internal".to_string(),
+            "updater-stage-helper".to_string(),
+            "--request-sha256".to_string(),
+            invocation.request_sha256().to_string(),
+        ];
+        let request = UpdaterLeafRequest::owned_stage_helper(
+            operation,
+            "terminal-recovered",
+            31,
+            &argv,
+            invocation.request_bytes(),
+            16 * 1024,
+            binding.relative_operation_dir,
+        )
+        .unwrap()
+        .with_run_budgets(binding.run_budgets)
+        .unwrap();
+        let intent = intent_payload(&request);
+        let terminal =
+            crate::updater::authority::synthetic_owned_stage_indeterminate_payload_for_test(
+                &decode_and_validate_updater_leaf_intent(&intent).unwrap(),
+                32,
+            )
+            .unwrap();
+        append_payload(&writer, ExtendedSubtype::UpdaterLeafIntent, intent).await;
+        append_payload(&writer, ExtendedSubtype::UpdaterLeafResult, terminal).await;
+
+        reconcile_unfinished_updater_leaves(
+            home.path(),
+            &segment,
+            &writer,
+            UpdaterReconcilePhase::Startup,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !self_stage_recovery_gate(home.path(), &segment)
+                .unwrap()
+                .is_blocked()
+        );
+        let results = read_updater_pass_results(home.path());
+        assert_eq!(results.len(), 1);
+        results[0].validate_leaf_receipt_binding().unwrap();
+        assert_eq!(
+            results[0]
+                .leaf_receipt_binding
+                .as_ref()
+                .unwrap()
+                .terminal_receipts
+                .len(),
+            1
+        );
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn outer_result_append_failure_keeps_verified_terminal_block_through_restart() {
+        let home = tempfile::tempdir().unwrap();
+        let (writer, join, segment) = writer_for_home(home.path());
+        let identity = UpdaterPassIdentity::new(UpdaterPassLane::SelfStage, 33);
+        let operation = identity
+            .correlatable_pass_id_for(UpdaterTaskKind::NeothSelf)
+            .unwrap()
+            .to_string();
+        let (binding, invocation) = crate::updater::self_update::owned_stage_recovery_fixture(
+            home.path(),
+            &operation,
+            "outer-append-failure",
+            crate::updater::self_update::OwnedStageReadback::Unchanged,
+        )
+        .unwrap();
+        append_updater_pass_payload(
+            &writer,
+            EVENT_TYPE_UPDATER_TASK_FIRED,
+            serde_json::to_vec(&UpdaterTaskFiredPayload {
+                identity,
+                task_kind: UpdaterTaskKind::NeothSelf,
+                ts_unix: 33,
+            })
+            .unwrap(),
+        )
+        .await;
+        let argv = vec![
+            "--output".to_string(),
+            "json".to_string(),
+            "internal".to_string(),
+            "updater-stage-helper".to_string(),
+            "--request-sha256".to_string(),
+            invocation.request_sha256().to_string(),
+        ];
+        let request = UpdaterLeafRequest::owned_stage_helper(
+            operation,
+            "outer-append-failure",
+            33,
+            &argv,
+            invocation.request_bytes(),
+            16 * 1024,
+            binding.relative_operation_dir,
+        )
+        .unwrap()
+        .with_run_budgets(binding.run_budgets)
+        .unwrap();
+        let intent = intent_payload(&request);
+        let terminal =
+            crate::updater::authority::synthetic_owned_stage_indeterminate_payload_for_test(
+                &decode_and_validate_updater_leaf_intent(&intent).unwrap(),
+                34,
+            )
+            .unwrap();
+        append_payload(&writer, ExtendedSubtype::UpdaterLeafIntent, intent).await;
+        append_payload(&writer, ExtendedSubtype::UpdaterLeafResult, terminal).await;
+        drop(writer);
+        join.await.unwrap();
+
+        let closed_writer = crate::wal::writer::closed_test_writer();
+        let failed = reconcile_unfinished_updater_leaves(
+            home.path(),
+            &segment,
+            &closed_writer,
+            UpdaterReconcilePhase::Startup,
+        )
+        .await;
+        assert!(
+            failed.is_err(),
+            "injected closed writer must fail the recovered outer RESULT append"
+        );
+        assert!(
+            self_stage_recovery_gate(home.path(), &segment)
+                .unwrap()
+                .is_blocked(),
+            "failed outer acknowledgement must retain the signed admission block"
+        );
+
+        let (writer, join) = restart_writer_for_home(home.path(), &segment).await;
+        reconcile_unfinished_updater_leaves(
+            home.path(),
+            &segment,
+            &writer,
+            UpdaterReconcilePhase::Startup,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !self_stage_recovery_gate(home.path(), &segment)
+                .unwrap()
+                .is_blocked(),
+            "only the acknowledged recovered outer RESULT may clear the terminal block"
+        );
+        assert_eq!(read_updater_pass_results(home.path()).len(), 1);
+        drop(writer);
+        join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn verified_owned_stage_recovery_committed_and_unchanged_close_receipt_bound_outer() {
+        for readback in [
+            crate::updater::self_update::OwnedStageReadback::Committed,
+            crate::updater::self_update::OwnedStageReadback::Unchanged,
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let (writer, join, segment) = writer_for_home(home.path());
+            let identity = UpdaterPassIdentity::new(UpdaterPassLane::SelfStage, 23);
+            let operation = identity
+                .correlatable_pass_id_for(UpdaterTaskKind::NeothSelf)
+                .unwrap()
+                .to_string();
+            let request_id = format!(
+                "recover-{}",
+                match readback {
+                    crate::updater::self_update::OwnedStageReadback::Committed => "committed",
+                    _ => "unchanged",
+                }
+            );
+            let (binding, invocation) = crate::updater::self_update::owned_stage_recovery_fixture(
+                home.path(),
+                &operation,
+                &request_id,
+                readback,
+            )
+            .unwrap();
+            append_updater_pass_payload(
+                &writer,
+                EVENT_TYPE_UPDATER_TASK_FIRED,
+                serde_json::to_vec(&UpdaterTaskFiredPayload {
+                    identity: identity.clone(),
+                    task_kind: UpdaterTaskKind::NeothSelf,
+                    ts_unix: 23,
+                })
+                .unwrap(),
+            )
+            .await;
+            let argv = vec![
+                "--output".to_string(),
+                "json".to_string(),
+                "internal".to_string(),
+                "updater-stage-helper".to_string(),
+                "--request-sha256".to_string(),
+                invocation.request_sha256().to_string(),
+            ];
+            let request = UpdaterLeafRequest::owned_stage_helper(
+                operation,
+                request_id,
+                23,
+                &argv,
+                invocation.request_bytes(),
+                16 * 1024,
+                binding.relative_operation_dir,
+            )
+            .unwrap()
+            .with_run_budgets(binding.run_budgets)
+            .unwrap();
+            append_payload(
+                &writer,
+                ExtendedSubtype::UpdaterLeafIntent,
+                intent_payload(&request),
+            )
+            .await;
+            reconcile_unfinished_updater_leaves(
+                home.path(),
+                &segment,
+                &writer,
+                UpdaterReconcilePhase::Startup,
+            )
+            .await
+            .unwrap();
+            let results = read_updater_pass_results(home.path());
+            assert_eq!(results.len(), 1);
+            results[0].validate_leaf_receipt_binding().unwrap();
+            assert_eq!(
+                results[0]
+                    .leaf_receipt_binding
+                    .as_ref()
+                    .unwrap()
+                    .terminal_receipts
+                    .len(),
+                1
+            );
+            assert!(
+                !self_stage_recovery_gate(home.path(), &segment)
+                    .unwrap()
+                    .is_blocked()
+            );
+            drop(writer);
+            join.await.unwrap();
+        }
     }
 
     #[tokio::test]
@@ -2125,6 +3039,7 @@ mod tests {
             scanned_intents: 0,
             already_terminal: 0,
             open_intents: Vec::new(),
+            owned_stage_blocks: Vec::new(),
         };
         persist_checkpoint_body(home.path(), body).unwrap();
 
@@ -2141,6 +3056,82 @@ mod tests {
             format!("{error:#}").contains("failed under the active WAL key"),
             "{error:#}"
         );
+    }
+
+    #[tokio::test]
+    async fn legacy_signed_checkpoint_without_owned_stage_blocks_remains_loadable() {
+        let home = tempfile::tempdir().unwrap();
+        let (writer, join, segment) = writer_for_home(home.path());
+        let state = AuditScanState::new(MAX_LIVE_UPDATER_IDENTITIES).unwrap();
+        let frontier = HomeWalFrontier {
+            segment_name: "000001.wal".into(),
+            segment_generation: 0,
+            segment_seq: 1,
+            segment_start_ts_ns: 1,
+            segment_node_id: [0; 16],
+            next_logical_offset: crate::wal::segment_header::SEGMENT_HEADER_LEN as u64,
+        };
+        persist_checkpoint_async(home.path(), &segment, &frontier, &state)
+            .await
+            .unwrap();
+        let bytes = std::fs::read(home.path().join("wal").join(CHECKPOINT_NAME)).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            value["body"].get("owned_stage_blocks").is_none(),
+            "empty v1 extension must preserve legacy canonical bytes"
+        );
+        assert!(
+            !self_stage_recovery_gate(home.path(), &segment)
+                .unwrap()
+                .is_blocked()
+        );
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn modifying_signed_owned_stage_block_fails_checkpoint_hmac() {
+        let home = tempfile::tempdir().unwrap();
+        let (writer, join, segment) = writer_for_home(home.path());
+        persist_owned_stage_block_for_test(
+            home.path(),
+            &segment,
+            CheckpointOwnedStageBlock {
+                operation_id: "op".into(),
+                request_id: "req".into(),
+                request_binding_sha256: "a".repeat(64),
+                relative_operation_dir: format!("staged/operations/{}", "b".repeat(32)),
+                terminal_indeterminate: false,
+                stdin_sha256: String::new(),
+                stdin_size_bytes: 0,
+                run_budgets: None,
+            },
+        )
+        .unwrap();
+        let path = home.path().join("wal").join(CHECKPOINT_NAME);
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        value["body"]["owned_stage_blocks"][0]["request_id"] = serde_json::json!("tampered");
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(self_stage_recovery_gate(home.path(), &segment).is_err());
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[test]
+    fn mismatched_owned_stage_block_is_rejected_before_checkpoint_persistence() {
+        let mut state = AuditScanState::new(MAX_LIVE_UPDATER_IDENTITIES).unwrap();
+        state.owned_stage_blocks.push(CheckpointOwnedStageBlock {
+            operation_id: "missing-operation".into(),
+            request_id: "missing-request".into(),
+            request_binding_sha256: "a".repeat(64),
+            relative_operation_dir: format!("staged/operations/{}", "b".repeat(32)),
+            terminal_indeterminate: false,
+            stdin_sha256: String::new(),
+            stdin_size_bytes: 0,
+            run_budgets: None,
+        });
+        assert!(state.checkpoint_owned_stage_blocks().is_err());
     }
 
     #[tokio::test]

@@ -1359,6 +1359,13 @@ pub enum ChannelAccountAction {
         #[arg(long)]
         enabled: bool,
     },
+    /// Retire exactly one configured Telegram account.  `--account` is
+    /// mandatory; even a literal configured `default` is never inferred.
+    Remove {
+        channel: String,
+        #[arg(long)]
+        account: crate::channels::registry::ChannelAccountId,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -2152,6 +2159,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             }) => {
                 channel::run_account_set_dm_pairing(&ch, account, enabled, &global_output)?;
             }
+            ChannelAction::Account(ChannelAccountAction::Remove {
+                channel: ch,
+                account,
+            }) => channel::run_account_remove(&ch, account, &global_output)?,
             ChannelAction::Pairing(ChannelPairingAction::List {
                 channel: ch,
                 account,

@@ -1774,6 +1774,7 @@ async fn notify_task_accepted(neoth_home: &std::path::Path, task_id: &str, peer_
             dedup_key: format!("cluster:accept:{task_id}"),
             channel: String::new(), // operator's default channel
             account_id: None,
+            account_binding: None,
             source: "cluster_task_accept".to_string(),
             body: format!(
                 "Cluster: task {task_id} accepted from peer {peer_short}... — running locally."

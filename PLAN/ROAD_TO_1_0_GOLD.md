@@ -8,17 +8,25 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
-**Waves 29 and 31 mapped Telegram DM pairing and macOS-recall diagnosis —
-LOCALLY VALIDATED (2026-09-14):** Fifteen admitted
-source files / 179 inputs / 14 executables atop published `d2ae7b4b`; Clippy08,
-TestBuild04, 741 selected tests, 13 AccountConfigContracts (157 tests), fmt,
-docgen, final GUI check, and Python integrity checks pass.
-Mapped pairing remains explicit per-account opt-in: private non-pinned requests
-only, maximum three, one-hour expiry, A/B binding isolation, and receipt failure
-before the chat pipeline. W31 only records diagnostics for the two macOS recall
-assertions; it claims no deadline change or fix. No current-head GitHub CI is
-claimed. P1-16 and P1-17 remain **OPEN**; counts are **1,324 total / 1,011
-complete / 311 open / 2 partial** (313 raw; 312 pre-tag blockers).
+**Waves 30, 32 and 34 SelfStage, mapped-account retirement, and legacy
+provenance — LOCALLY VERIFIED; COMMIT/PUSH PENDING (2026-09-14):**
+the repaired shared W30 production/fixture post-verification helper is
+independently reviewed and admitted. It records intent before the private
+operation, retains the prepared receipt and generation lease through the
+contained helper, and permits public publication only from that helper. The
+41-source/49-path scope is locally verified: final Clippy13 **PASS** in3.05s,
+TestBuild05 **PASS** in3m31s, and fullSelected06 **1327/0/0** in59.20s from
+catalogue14488/29 filters. All 13 account-config targets pass **157/0/0**;
+the no-GUI-link GUI check passes in6m11 with 13 unchanged trusted-probe
+warnings; Python19+11+8 passes. The manifest and matrix record 188 inputs and
+14 executables. The only post-unit/GUI delta is the standalone
+`proactive_egress_contract_source_gate.rs`, rechecked by strict Clippy and all
+13 contract targets; unit/GUI production inputs were unchanged. This is local
+verification, pending the Git commit containing this receipt and push. W37 is
+approved but not admitted; W35/36/38 remain a reviewed proposal. W32/P1-16,
+W34/P1-17, and R3-18B remain open; counts are unchanged. W29–31 published `abb39e12aa0f0889083e08d8041910a22994018f`
+full CI `34803269509` remains an incomplete macOS failure boundary, not a green
+platform receipt.
 
 **Waves 21–23 named Telegram account onboarding and macOS SQLite-path repair —
 LOCALLY VALIDATED (2026-09-14):** eleven frozen Rust/Slint source files build

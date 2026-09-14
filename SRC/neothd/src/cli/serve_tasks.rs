@@ -3374,11 +3374,13 @@ pub(crate) fn spawn_bg_monitor_task(
 
 pub(crate) fn spawn_updater_supervisor(
     home: &std::path::Path,
+    segment_chain_base_path: &std::path::Path,
     reload_controller: Arc<ReloadController>,
     writer: WalWriterHandle,
 ) -> crate::daemon::updater_cron::UpdaterSupervisorHandle {
     let handle = crate::daemon::updater_cron::spawn_updater_supervisor(
         home.to_path_buf(),
+        segment_chain_base_path.to_path_buf(),
         reload_controller,
         writer,
     );
@@ -5040,6 +5042,7 @@ pub(crate) type ChannelFleet = std::collections::HashMap<ChannelRef, Vec<JoinHan
 #[derive(Clone)]
 pub(crate) struct TelegramAccountBundle {
     pub(crate) channel_ref: ChannelRef,
+    account_binding: Option<crate::config::ChannelAccountBinding>,
     token: crate::secret::SecretString,
     allowed_user_id: u64,
     legacy_singleton: bool,
@@ -5052,12 +5055,46 @@ pub(crate) struct TelegramAccountBundle {
 #[derive(Clone)]
 pub(crate) struct MappedTelegramLiveEgressProvenance {
     channel_ref: ChannelRef,
+    account_binding: crate::config::ChannelAccountBinding,
 }
 
 impl MappedTelegramLiveEgressProvenance {
     pub(crate) fn channel_ref(&self) -> &ChannelRef {
         &self.channel_ref
     }
+
+    pub(crate) fn account_binding(&self) -> &crate::config::ChannelAccountBinding {
+        &self.account_binding
+    }
+}
+
+/// Startup-only proof for the two legacy adapters that actually construct a
+/// live send/edit handler. Its fields are private and no inbound envelope or
+/// loose `ChannelRef` can mint it.
+#[derive(Clone)]
+pub(crate) struct LegacyLiveEgressProvenance {
+    channel_ref: ChannelRef,
+}
+
+impl LegacyLiveEgressProvenance {
+    pub(crate) fn channel_ref(&self) -> &ChannelRef {
+        &self.channel_ref
+    }
+}
+
+fn legacy_live_egress_provenance(kind: ChannelKind) -> LegacyLiveEgressProvenance {
+    debug_assert!(matches!(kind, ChannelKind::Telegram | ChannelKind::Slack));
+    LegacyLiveEgressProvenance {
+        channel_ref: ChannelRef::default_account(kind),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn legacy_live_egress_provenance_for_test(
+    kind: ChannelKind,
+) -> Option<LegacyLiveEgressProvenance> {
+    matches!(kind, ChannelKind::Telegram | ChannelKind::Slack)
+        .then(|| legacy_live_egress_provenance(kind))
 }
 
 /// Opaque authenticated pairing admission.  It is formed only while the
@@ -5168,11 +5205,13 @@ impl TelegramAccountBundle {
     pub(crate) fn mapped_live_egress_provenance(
         &self,
     ) -> Option<MappedTelegramLiveEgressProvenance> {
-        (!self.legacy_singleton && self.channel_ref.channel_id == ChannelKind::Telegram).then(
-            || MappedTelegramLiveEgressProvenance {
+        (!self.legacy_singleton && self.channel_ref.channel_id == ChannelKind::Telegram)
+            .then(|| self.account_binding.clone())
+            .flatten()
+            .map(|account_binding| MappedTelegramLiveEgressProvenance {
                 channel_ref: self.channel_ref.clone(),
-            },
-        )
+                account_binding,
+            })
     }
 
     /// The only transfer point for an authenticated explicit pairing policy.
@@ -5199,6 +5238,7 @@ impl TelegramAccountBundle {
     pub(crate) fn for_test(channel_ref: ChannelRef, legacy_singleton: bool) -> Self {
         Self {
             channel_ref,
+            account_binding: None,
             token: crate::secret::SecretString::from("test-token"),
             allowed_user_id: 1,
             legacy_singleton,
@@ -5235,6 +5275,11 @@ pub(crate) fn telegram_account_bundles(
         .authenticated_telegram_accounts()?
         .into_iter()
         .map(|account| -> anyhow::Result<TelegramAccountBundle> {
+            let account_binding = account.account_binding();
+            anyhow::ensure!(
+                account.is_legacy_singleton() == account_binding.is_none(),
+                "authenticated Telegram account binding does not match its origin"
+            );
             let (allowed_user_id, dm_pairing) = match account.inbound_admission() {
                 crate::config::TelegramInboundAdmission::PinnedOperator { allowed_user_id } => {
                     (*allowed_user_id, None)
@@ -5265,6 +5310,7 @@ pub(crate) fn telegram_account_bundles(
             };
             Ok(TelegramAccountBundle {
                 channel_ref: account.channel_ref().clone(),
+                account_binding,
                 token: account.token().clone(),
                 allowed_user_id,
                 legacy_singleton: account.is_legacy_singleton(),
@@ -5588,6 +5634,16 @@ pub(crate) fn channel_account_fingerprints(
         hasher.write(b"neoth/telegram-account-fingerprint/v1");
         hasher.write(account.channel_ref.channel_id.as_str().as_bytes());
         hasher.write(account.channel_ref.account_id.as_str().as_bytes());
+        if let Some(binding) = &account.account_binding {
+            hasher.write(b"/incarnation/");
+            hasher.write(
+                binding
+                    .incarnation()
+                    .map_or(b"none", |value| value.as_str().as_bytes()),
+            );
+        } else {
+            hasher.write(b"/legacy-singleton");
+        }
         hasher.write_u64(account.allowed_user_id);
         hasher.write_u8(u8::from(account.legacy_singleton));
         hasher.write_u8(u8::from(account.dm_pairing.is_some()));
@@ -5769,10 +5825,11 @@ pub(crate) fn spawn_channel_adapters(
             };
             let live_channel: Arc<dyn Channel> = channel.clone();
             let binding = if account.legacy_singleton {
-                AuthenticatedInboundBinding::for_legacy_telegram_singleton(
+                AuthenticatedInboundBinding::for_legacy_live(
                     AdmittedLegacyTelegramSingleton {
                         sender_id: account.allowed_user_id,
                     },
+                    legacy_live_egress_provenance(ChannelKind::Telegram),
                 )
             } else {
                 AuthenticatedInboundBinding::for_mapped_telegram(
@@ -5844,9 +5901,9 @@ pub(crate) fn spawn_channel_adapters(
                     let channel = Arc::new(channel);
                     let live_channel: Arc<dyn Channel> = channel.clone();
                     let handler: PipelineHandler = build_live_channel_handler(
-                        AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
-                            ChannelKind::Slack,
-                        )),
+                        AuthenticatedInboundBinding::for_legacy_live_slack(
+                            legacy_live_egress_provenance(ChannelKind::Slack),
+                        ),
                         provider.clone(),
                         live_channel,
                         config,
@@ -8600,6 +8657,25 @@ pub(crate) fn bootstrap_plugin_invoker(
 mod tests {
     use super::*;
 
+    #[test]
+    fn admitted_legacy_live_factories_seal_distinct_default_capabilities() {
+        // This calls the same production constructor used by the Telegram and
+        // Slack startup branches. It must remain a closed capability family:
+        // no arbitrary channel can opt into authenticated legacy egress.
+        let telegram = legacy_live_egress_provenance(ChannelKind::Telegram);
+        let slack = legacy_live_egress_provenance(ChannelKind::Slack);
+        assert_eq!(
+            telegram.channel_ref(),
+            &ChannelRef::default_account(ChannelKind::Telegram)
+        );
+        assert_eq!(
+            slack.channel_ref(),
+            &ChannelRef::default_account(ChannelKind::Slack)
+        );
+        assert_ne!(telegram.channel_ref(), slack.channel_ref());
+        assert!(legacy_live_egress_provenance_for_test(ChannelKind::Discord).is_none());
+    }
+
     #[cfg(feature = "cluster")]
     #[test]
     fn pending_companion_invites_are_exclusively_claimed_and_fail_closed() {
@@ -10687,6 +10763,7 @@ mod channel_reconcile_tests {
         runtime.config.channel_accounts.telegram.insert(
             account.account_id.clone(),
             crate::config::TelegramAccountConfig {
+                incarnation: None,
                 allowed_user_id: 11,
                 dm_pairing: Some(crate::config::TelegramDmPairingConfig { enabled: true }),
             },
@@ -11003,6 +11080,7 @@ mod channel_reconcile_tests {
         let default_ref = ChannelRef::default_account(ChannelKind::Telegram);
         let legacy = TelegramAccountBundle {
             channel_ref: default_ref.clone(),
+            account_binding: None,
             token: SecretString::from("token"),
             allowed_user_id: 7,
             legacy_singleton: true,
@@ -11010,6 +11088,7 @@ mod channel_reconcile_tests {
         };
         let migrated_default = TelegramAccountBundle {
             channel_ref: default_ref,
+            account_binding: None,
             token: SecretString::from("token"),
             allowed_user_id: 7,
             legacy_singleton: false,
@@ -11027,9 +11106,106 @@ mod channel_reconcile_tests {
     }
 
     #[test]
-    fn only_nonlegacy_telegram_bundles_mint_live_egress_provenance() {
+    fn readded_account_changes_only_its_runtime_tag_and_reload_fingerprint() {
+        fn configured_pair(
+            a_incarnation: &str,
+            b_incarnation: &str,
+        ) -> crate::config::RuntimeConfigPair {
+            let mut runtime = crate::config::RuntimeConfigPair {
+                config: FreedomConfig::default(),
+                raw_credentials: crate::config::credentials::Credentials::default(),
+                credentials: crate::config::credentials::Credentials::default(),
+            };
+            for (name, user, token, incarnation) in [
+                ("account-a", 11, "same-a-token", a_incarnation),
+                ("account-b", 22, "same-b-token", b_incarnation),
+            ] {
+                let id = crate::channels::registry::ChannelAccountId::new(name).unwrap();
+                runtime.config.channel_accounts.telegram.insert(
+                    id.clone(),
+                    crate::config::TelegramAccountConfig {
+                        allowed_user_id: user,
+                        incarnation: Some(
+                            crate::config::AccountIncarnation::parse(incarnation).unwrap(),
+                        ),
+                        ..Default::default()
+                    },
+                );
+                let credential = crate::config::credentials::TelegramAccountCredentials {
+                    token: Some(SecretString::from(token)),
+                };
+                runtime
+                    .raw_credentials
+                    .channel_accounts
+                    .telegram
+                    .insert(id.clone(), credential.clone());
+                runtime
+                    .credentials
+                    .channel_accounts
+                    .telegram
+                    .insert(id, credential);
+            }
+            runtime
+        }
+
+        let before = configured_pair(
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222",
+        );
+        let after = configured_pair(
+            "33333333-3333-4333-8333-333333333333",
+            "22222222-2222-4222-8222-222222222222",
+        );
+        let home = tempfile::tempdir().unwrap();
+        let before_bundles = telegram_account_bundles(&before).unwrap();
+        let after_bundles = telegram_account_bundles(&after).unwrap();
+        assert!(
+            before_bundles
+                .iter()
+                .all(|bundle| bundle.mapped_live_egress_provenance().is_some()),
+            "only the authenticated runtime bundle factory may mint mapped provenance"
+        );
+        let before_fingerprints = channel_account_fingerprints(
+            &before.config,
+            &before.credentials,
+            &before_bundles,
+            home.path(),
+        );
+        let after_fingerprints = channel_account_fingerprints(
+            &after.config,
+            &after.credentials,
+            &after_bundles,
+            home.path(),
+        );
+        assert_eq!(
+            changed_channel_accounts(&before_fingerprints, &after_fingerprints),
+            vec![ChannelRef::new(
+                ChannelKind::Telegram,
+                crate::channels::registry::ChannelAccountId::new("account-a").unwrap(),
+            )],
+            "same-credential re-add must replace only A's adapter"
+        );
+        let before_tags =
+            runtime_health_binding_tags(&before.authenticated_telegram_accounts().unwrap());
+        let after_tags =
+            runtime_health_binding_tags(&after.authenticated_telegram_accounts().unwrap());
+        let a = ChannelRef::new(
+            ChannelKind::Telegram,
+            crate::channels::registry::ChannelAccountId::new("account-a").unwrap(),
+        );
+        let b = ChannelRef::new(
+            ChannelKind::Telegram,
+            crate::channels::registry::ChannelAccountId::new("account-b").unwrap(),
+        );
+        assert!(before_tags[&a] != after_tags[&a]);
+        assert!(before_tags[&b] == after_tags[&b]);
+    }
+
+    #[test]
+    fn unbound_nonlegacy_test_fixtures_cannot_mint_live_egress_provenance() {
         let legacy = TelegramAccountBundle {
             channel_ref: ChannelRef::default_account(ChannelKind::Telegram),
+            account_binding: None,
             token: SecretString::from("legacy-token"),
             allowed_user_id: 7,
             legacy_singleton: true,
@@ -11040,6 +11216,7 @@ mod channel_reconcile_tests {
                 ChannelKind::Telegram,
                 crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
             ),
+            account_binding: None,
             token: SecretString::from("mapped-token-a"),
             allowed_user_id: 8,
             legacy_singleton: false,
@@ -11047,27 +11224,15 @@ mod channel_reconcile_tests {
         };
         let mapped_default = TelegramAccountBundle {
             channel_ref: ChannelRef::default_account(ChannelKind::Telegram),
+            account_binding: None,
             token: SecretString::from("mapped-token-default"),
             allowed_user_id: 9,
             legacy_singleton: false,
             dm_pairing: None,
         };
         assert!(legacy.mapped_live_egress_provenance().is_none());
-        assert_eq!(
-            mapped_a
-                .mapped_live_egress_provenance()
-                .unwrap()
-                .channel_ref(),
-            &mapped_a.channel_ref
-        );
-        assert_eq!(
-            mapped_default
-                .mapped_live_egress_provenance()
-                .unwrap()
-                .channel_ref(),
-            &mapped_default.channel_ref,
-            "a literal map account named default remains map provenance"
-        );
+        assert!(mapped_a.mapped_live_egress_provenance().is_none());
+        assert!(mapped_default.mapped_live_egress_provenance().is_none());
     }
 
     #[test]

@@ -49,6 +49,7 @@ pub(crate) use instance_paths::InstancePaths;
 // readable by anyone other than the operator.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
@@ -56,6 +57,62 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use zeroize::Zeroize as _;
+
+/// Canonical, non-secret generation for one reusable named channel account.
+///
+/// This is deliberately a UUID string on disk so it remains inspectable in a
+/// public policy file.  Parsing rejects non-canonical spellings: callers must
+/// never compare two textual representations of the same UUID as distinct
+/// authority generations.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AccountIncarnation(String);
+
+impl AccountIncarnation {
+    pub(crate) fn new_random() -> Self {
+        Self(uuid::Uuid::new_v4().hyphenated().to_string())
+    }
+
+    pub(crate) fn parse(value: impl AsRef<str>) -> Result<Self> {
+        let value = value.as_ref();
+        let parsed =
+            uuid::Uuid::parse_str(value).with_context(|| "account incarnation must be a UUID")?;
+        let canonical = parsed.hyphenated().to_string();
+        anyhow::ensure!(
+            value == canonical,
+            "account incarnation must be a canonical lowercase hyphenated UUID"
+        );
+        Ok(Self(canonical))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for AccountIncarnation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl Serialize for AccountIncarnation {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for AccountIncarnation {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Self::parse(&raw).map_err(serde::de::Error::custom)
+    }
+}
 
 pub mod credentials;
 // D003-KEYCHAIN-01 — OS keychain backend, migration helpers, SecretStore trait.
@@ -129,6 +186,10 @@ pub(crate) struct RuntimeConfigPair {
 #[serde(default)]
 pub struct TelegramAccountConfig {
     pub allowed_user_id: u64,
+    /// `None` is the historical mapped-account generation.  It is distinct
+    /// from a legacy singleton (which has no account binding at all).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incarnation: Option<AccountIncarnation>,
     /// Absent preserves the historical pinned-operator admission. Pairing is
     /// intentionally opt-in and is invalid for legacy singleton Telegram.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -165,10 +226,31 @@ pub(crate) enum TelegramAccountOrigin {
 
 pub(crate) struct AuthenticatedTelegramAccount {
     channel_ref: crate::channels::registry::ChannelRef,
+    account_binding: Option<ChannelAccountBinding>,
     token: crate::secret::SecretString,
     allowed_user_id: u64,
     origin: TelegramAccountOrigin,
     inbound_admission: TelegramInboundAdmission,
+}
+
+/// Authenticated authority identity for a named account.  Fields and
+/// construction stay private to this module so an inbound payload or an
+/// arbitrary sender factory cannot mint account authority.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ChannelAccountBinding {
+    channel_ref: crate::channels::registry::ChannelRef,
+    incarnation: Option<AccountIncarnation>,
+}
+
+impl ChannelAccountBinding {
+    pub(crate) fn channel_ref(&self) -> &crate::channels::registry::ChannelRef {
+        &self.channel_ref
+    }
+
+    pub(crate) fn incarnation(&self) -> Option<&AccountIncarnation> {
+        self.incarnation.as_ref()
+    }
 }
 
 /// Authenticated-only ingress policy. It cannot be reconstructed from a
@@ -189,6 +271,11 @@ pub(crate) enum TelegramInboundAdmission {
 impl AuthenticatedTelegramAccount {
     pub(crate) fn channel_ref(&self) -> &crate::channels::registry::ChannelRef {
         &self.channel_ref
+    }
+    /// `Some` for every mapped account, including historical `None`
+    /// incarnations; `None` is reserved for the legacy scalar singleton.
+    pub(crate) fn account_binding(&self) -> Option<ChannelAccountBinding> {
+        self.account_binding.clone()
     }
     pub(crate) fn token(&self) -> &crate::secret::SecretString {
         &self.token
@@ -227,6 +314,7 @@ impl RuntimeConfigPair {
                         channel_ref: crate::channels::registry::ChannelRef::default_account(
                             crate::channels::registry::ChannelId::Telegram,
                         ),
+                        account_binding: None,
                         token,
                         allowed_user_id,
                         origin: TelegramAccountOrigin::LegacySingleton,
@@ -273,6 +361,10 @@ impl RuntimeConfigPair {
                 crate::channels::registry::ChannelId::Telegram,
                 account_id.clone(),
             );
+            let account_binding = ChannelAccountBinding {
+                channel_ref: channel_ref.clone(),
+                incarnation: policy.incarnation.clone(),
+            };
             let inbound_admission = match &policy.dm_pairing {
                 None => TelegramInboundAdmission::PinnedOperator {
                     allowed_user_id: policy.allowed_user_id,
@@ -286,6 +378,14 @@ impl RuntimeConfigPair {
                     let mut digest = Sha256::new();
                     digest.update(b"neoth/dm-pairing-binding/v1\0");
                     digest.update(serde_json::to_vec(&channel_ref)?);
+                    // Preserve the W29-published `None` generation byte-for-
+                    // byte.  A materialized incarnation gets an unambiguous
+                    // suffix, so a same-credential re-add cannot query old
+                    // pairing rows.
+                    if let Some(incarnation) = &policy.incarnation {
+                        digest.update(b"neoth/dm-pairing-incarnation/v1\0");
+                        digest.update(incarnation.as_str().as_bytes());
+                    }
                     digest.update(policy.allowed_user_id.to_be_bytes());
                     digest.update(token.expose_secret().as_bytes());
                     TelegramInboundAdmission::DmPairing {
@@ -297,6 +397,7 @@ impl RuntimeConfigPair {
             };
             resolved.push(AuthenticatedTelegramAccount {
                 channel_ref,
+                account_binding: Some(account_binding),
                 token: token.clone(),
                 allowed_user_id: policy.allowed_user_id,
                 origin: TelegramAccountOrigin::ConfiguredAccount,
@@ -388,7 +489,73 @@ mod telegram_account_tests {
             assert_eq!(account.allowed_user_id(), user);
             assert_eq!(account.token().expose_secret(), token);
             assert!(!account.is_legacy_singleton());
+            assert!(account.account_binding().is_some());
         }
+    }
+
+    #[test]
+    fn mapped_none_is_a_binding_but_legacy_singleton_is_not() {
+        let mut mapped = pair();
+        add_account(&mut mapped, "account-a", 11, Some("a-token"));
+        let binding = mapped
+            .authenticated_telegram_accounts()
+            .unwrap()
+            .remove(0)
+            .account_binding()
+            .expect("mapped account must expose a binding");
+        assert_eq!(binding.incarnation(), None);
+        assert_eq!(binding.channel_ref().account_id.as_str(), "account-a");
+
+        let mut legacy = pair();
+        legacy.config.telegram_token = Some(crate::secret::SecretString::new("legacy".into()));
+        legacy.config.telegram_user_id = Some(11);
+        assert!(
+            legacy.authenticated_telegram_accounts().unwrap()[0]
+                .account_binding()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn incarnation_rejects_noncanonical_uuid_and_readd_changes_pairing_tag() {
+        assert!(AccountIncarnation::parse("not-a-uuid").is_err());
+        assert!(AccountIncarnation::parse("550E8400-E29B-41D4-A716-446655440000").is_err());
+        let first = AccountIncarnation::parse("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let second = AccountIncarnation::parse("123e4567-e89b-42d3-a456-426614174000").unwrap();
+        let mut pair = pair();
+        add_account(&mut pair, "account-a", 11, Some("same-token"));
+        let id = ChannelAccountId::new("account-a").unwrap();
+        let policy = pair.config.channel_accounts.telegram.get_mut(&id).unwrap();
+        policy.dm_pairing = Some(TelegramDmPairingConfig { enabled: true });
+        policy.incarnation = Some(first);
+        let before = match pair
+            .authenticated_telegram_accounts()
+            .unwrap()
+            .remove(0)
+            .inbound_admission()
+        {
+            TelegramInboundAdmission::DmPairing { binding_tag, .. } => binding_tag.clone(),
+            _ => unreachable!(),
+        };
+        pair.config
+            .channel_accounts
+            .telegram
+            .get_mut(&id)
+            .unwrap()
+            .incarnation = Some(second);
+        let after = match pair
+            .authenticated_telegram_accounts()
+            .unwrap()
+            .remove(0)
+            .inbound_admission()
+        {
+            TelegramInboundAdmission::DmPairing { binding_tag, .. } => binding_tag.clone(),
+            _ => unreachable!(),
+        };
+        assert_ne!(
+            before, after,
+            "same credentials in a re-add must not revive pairing authority"
+        );
     }
 
     #[test]
@@ -1357,11 +1524,12 @@ pub struct FreedomConfig {
     /// (or similar).
     #[serde(default)]
     pub code_map: CodeMapConfig,
-    /// Daemon self-update intent. `enabled: false` creates no self-update lane.
-    /// Enabled recurring lanes currently terminalize as `SkippedByGate` before
-    /// network/process/staging effects; `auto_apply` records future verified-
-    /// staging intent only. Manual checks remain active, and the running binary
-    /// is replaced only by `neoth update --self --apply`.
+    /// Daemon self-update policy. `enabled: false` creates no self-update lane.
+    /// With the global updater enabled and a nonzero check interval, recurring
+    /// checks may run; `auto_apply` additionally enables bounded, verified
+    /// staging for Elevated/Full autonomy. The owned helper and signed recovery
+    /// gate preserve receipt binding. The running binary is replaced only by
+    /// `neoth update --self --apply`.
     #[serde(default)]
     pub auto_update: AutoUpdateConfig,
     /// Pick #6 Phase 4 (2026-05-21): coding-workflow runtime knobs.

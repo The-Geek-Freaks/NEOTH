@@ -37,8 +37,9 @@ impl BindingTag {
     pub(crate) fn from_authenticated_telegram_account(
         account: &AuthenticatedTelegramAccount,
     ) -> Self {
-        Self::from_parts(
+        Self::from_parts_with_binding(
             account.channel_ref(),
+            account.account_binding().as_ref(),
             account.allowed_user_id(),
             account.is_legacy_singleton(),
             account.token().expose_secret().as_bytes(),
@@ -46,8 +47,9 @@ impl BindingTag {
         )
     }
 
-    fn from_parts(
+    fn from_parts_with_binding(
         channel: &ChannelRef,
+        account_binding: Option<&crate::config::ChannelAccountBinding>,
         allowed_user_id: u64,
         legacy: bool,
         token: &[u8],
@@ -58,6 +60,17 @@ impl BindingTag {
         digest.update(
             serde_json::to_vec(channel).expect("validated ChannelRef serialization is infallible"),
         );
+        match account_binding {
+            None => digest.update(b"/legacy-singleton"),
+            Some(binding) => {
+                digest.update(b"/mapped-account/incarnation/");
+                digest.update(
+                    binding
+                        .incarnation()
+                        .map_or(&b"none"[..], |value| value.as_str().as_bytes()),
+                );
+            }
+        }
         digest.update(allowed_user_id.to_be_bytes());
         digest.update([u8::from(legacy)]);
         digest.update(token);
@@ -388,8 +401,9 @@ mod tests {
     }
     fn tag(reference: &ChannelRef, user: u64, legacy: bool, token: &str) -> BindingTag {
         let secret = SecretString::new(token.into());
-        BindingTag::from_parts(
+        BindingTag::from_parts_with_binding(
             reference,
+            None,
             user,
             legacy,
             secret.expose_secret().as_bytes(),

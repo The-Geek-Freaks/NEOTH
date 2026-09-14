@@ -148,6 +148,37 @@ generation, final GUI check, and integrity checks passed. This feature does not
 provide pairing migration, physical-provider live acceptance, or complete
 multi-account readiness.
 
+### Account retirement and re-add (W32; validation pending)
+
+The admitted W32 surface adds explicit retirement for one mapped Telegram
+account:
+
+```powershell
+neoth channel account remove telegram --account <account-id>
+```
+
+The command never assumes a default account. A later re-add of the same visible
+name receives a fresh internal UUID, so existing leases, pending pairing
+requests, and queued work remain tied to the retired account. Historical records
+with no UUID remain compatible only when the current account remains in that
+same historical form; they are never silently relabelled as the replacement.
+Validation is pending, and P1-16 remains open.
+
+### SelfStage verified staging (W30; enablement pending)
+
+SelfStage is an opt-in verified staging path. The manual command
+`neoth update --self --apply` performs the binary swap. Self-probe and
+SelfStageAllowed apply only to this lane; CLI, npm, Git, OSV, installer, and
+Skill update lanes remain denied. Production runtime execution is pending the
+proof that an enabled outer/helper route produces the required ordered receipts.
+R3-18B remains open.
+
+### Legacy Telegram and Slack provenance (W34; validation pending)
+
+W34 adds sealed startup provenance only for legacy Telegram and Slack live
+delivery. Mapped Telegram remains separate. This limited source-admitted slice
+does not establish provenance for other channels or close P1-17.
+
 ### OpenClaw account import (W26; locally validated)
 
 The OpenClaw importer accepts `--config`, `--source-account`, `--account`, and

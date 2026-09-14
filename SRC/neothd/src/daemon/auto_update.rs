@@ -2,7 +2,7 @@
 //!
 //! Elevated/Full plus the operator update switches select the mutation lanes.
 //! NEOTH self-probe and verified self-stage now consume request-bound authority
-//! plus mandatory intent/result WAL at every concrete GitHub/stage leaf. CLI
+//! plus mandatory intent/result WAL at every concrete GitHub/helper leaf. CLI
 //! npm/OSV/install mutation remains explicitly fail-closed until its own leaves
 //! enforce the same contract. Manual `neoth update` commands are unaffected.
 //!
@@ -46,6 +46,10 @@ pub(crate) enum RecurringMutationOutcome {
     BlockedByGate,
     SkippedByPolicy,
     GenerationRetired,
+    /// The contained helper proved that it did not change the sealed stage
+    /// pointer or create its expected generation.  This is a normal terminal
+    /// failure and is eligible for the next cadence.
+    StageUnchanged,
     Completed,
     Staged {
         prior_version: String,
@@ -93,6 +97,7 @@ fn now_unix_secs() -> u64 {
 
 /// One unattended neoth-self staging pass. The denied recurring-egress gate is
 /// consumed before release metadata, asset download, verification or staging.
+#[cfg(test)]
 pub(crate) async fn run_self_stage_pass(
     gate: GateDecision,
     home: &Path,
@@ -111,7 +116,43 @@ pub(crate) async fn run_self_stage_pass(
             );
             run_self_stage_pass_allowed(home, &snapshot.config().auto_update, writer, &authority)
                 .await
+                .map_err(|error| error.to_string())
         }
+    }
+}
+
+/// Bound SelfStage entry point used only by the admitted cron outer pass.  It
+/// deliberately accepts the already-created authority so a recurring stage
+/// pass cannot fall back to the legacy clockless constructor.
+pub(crate) async fn run_self_stage_pass_bound(
+    gate: GateDecision,
+    home: &Path,
+    snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
+    writer: &WalWriterHandle,
+    authority: &updater::self_update::RecurringSelfUpdateAuthority,
+) -> anyhow::Result<RecurringMutationOutcome> {
+    match gate {
+        GateDecision::Deny { reason } => {
+            tracing::debug!(%reason, "neoth-self staging blocked before recurring egress");
+            Ok(RecurringMutationOutcome::BlockedByGate)
+        }
+        GateDecision::Allow => match run_self_stage_pass_allowed(
+            home,
+            &snapshot.config().auto_update,
+            writer,
+            authority,
+        )
+        .await
+        {
+            Ok(outcome) => Ok(outcome),
+            Err(_error)
+                if authority.owned_stage_readback()
+                    == Some(updater::self_update::OwnedStageReadback::Unchanged) =>
+            {
+                Ok(RecurringMutationOutcome::StageUnchanged)
+            }
+            Err(error) => Err(error),
+        },
     }
 }
 
@@ -126,14 +167,12 @@ async fn run_self_stage_pass_allowed(
     config: &crate::config::AutoUpdateConfig,
     writer: &WalWriterHandle,
     authority: &updater::self_update::RecurringSelfUpdateAuthority,
-) -> Result<RecurringMutationOutcome, String> {
+) -> anyhow::Result<RecurringMutationOutcome> {
     let target = match updater::self_update::resolve_release_target(config.target_triple.as_deref())
     {
         Ok(target) => target,
         Err(error) => {
-            return Err(format!(
-                "neoth-self staging rejected the configured release target: {error}"
-            ));
+            return Err(error.context("neoth-self staging rejected the configured release target"));
         }
     };
     let release = match updater::self_update::fetch_release_for_channel_authorized(
@@ -151,18 +190,14 @@ async fn run_self_stage_pass_allowed(
             return Ok(RecurringMutationOutcome::SkippedByPolicy);
         }
         Err(error) => {
-            return Err(format!(
-                "neoth-self staging release metadata leaf failed: {error}"
-            ));
+            return Err(error.context("neoth-self staging release metadata leaf failed"));
         }
     };
     let current = updater::self_update::current_version();
     let is_newer = match updater::self_update::version_is_newer(&release.tag_name, current) {
         Ok(is_newer) => is_newer,
         Err(error) => {
-            return Err(format!(
-                "neoth-self staging release tag is not valid SemVer: {error}"
-            ));
+            return Err(error.context("neoth-self staging release tag is not valid SemVer"));
         }
     };
     if !is_newer {
@@ -193,12 +228,15 @@ async fn run_self_stage_pass_allowed(
             return Ok(RecurringMutationOutcome::SkippedByPolicy);
         }
         Err(error) => {
-            return Err(format!("neoth-self staging leaf failed: {error}"));
+            return Err(error.context("neoth-self staging leaf failed"));
         }
     };
-    emit_self_update_staged(writer, &pending).await?;
-    write_stage_notification(home, &pending)
-        .map_err(|error| format!("self-update notification sidecar write failed: {error}"))?;
+    emit_self_update_staged(writer, &pending)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    write_stage_notification(home, &pending).map_err(|error| {
+        anyhow::Error::new(error).context("self-update notification sidecar write failed")
+    })?;
     tracing::info!(
         to = %pending.to_version,
         channel = %pending.channel,

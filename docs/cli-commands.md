@@ -320,6 +320,13 @@ Add or replace one named Telegram account after a read-only getMe probe
 - `--telegram-user-id <TELEGRAM_USER_ID>`
 - `--token <TOKEN>`
 
+#### `neoth channel account remove`
+
+Retire exactly one configured Telegram account.  `--account` is mandatory; even a literal configured `default` is never inferred
+
+- `<CHANNEL>`
+- `--account <ACCOUNT>`
+
 #### `neoth channel account set-credentials` _(hidden)_
 
 Read the named Telegram account token and policy from a strict private stdin envelope
@@ -1834,6 +1841,12 @@ Complete a portable update after the invoking Windows process exits
 - `--request-sha256 <HEX>` — Parent-computed SHA-256 binding for the exact request bytes
 - `--wait-pid <WAIT_PID>` — PID of the old installed CLI process that must exit first
 
+### `neoth internal updater-stage-helper`
+
+Consume one sealed SelfStage capability from exact bounded stdin
+
+- `--request-sha256 <HEX>` — SHA-256 of the exact request bytes supplied on stdin
+
 ## `neoth jobs`
 
 List + validate scheduled jobs defined in `~/.neoth/jobs.yaml`
@@ -1983,7 +1996,7 @@ SL-01a — capability leases. Grant a paired peer or a plugin a TTL-bounded scop
 
 ### `neoth lease channel-subject`
 
-Print the canonical account-scoped subject for a channel sender. This is pure: it does not read leases, credentials, or config. `neoth lease channel-subject <channel> <account> <sender>`
+Print the canonical account-scoped subject for a channel sender. Named Telegram accounts are resolved from the current authenticated runtime pair so this command cannot mint authority for a later re-add. `neoth lease channel-subject <channel> <account> <sender>`
 
 - `<CHANNEL>` — Channel canonical ID or accepted alias, canonicalized through the channel registry
 - `<ACCOUNT>` — Validated channel account ID

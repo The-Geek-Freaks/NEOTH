@@ -23,6 +23,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::channels::registry::ChannelRef;
+use crate::config::ChannelAccountBinding;
 
 /// Build the exact account-scoped subject used by channel-originated leases.
 ///
@@ -36,6 +37,33 @@ pub fn channel_lease_subject(channel_ref: &ChannelRef, sender: &str) -> String {
         channel_ref.channel_id.as_str(),
         channel_ref.account_id.as_str(),
     );
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for byte in sender.bytes() {
+        subject.push(char::from(HEX[usize::from(byte >> 4)]));
+        subject.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    subject
+}
+
+/// Build the versioned lease subject for a validated named-account generation.
+///
+/// The binding originates only from an authenticated runtime configuration
+/// bundle. A same-name account re-added with a fresh incarnation therefore
+/// cannot consume a lease granted to its retired predecessor.
+pub(crate) fn channel_bound_lease_subject(binding: &ChannelAccountBinding, sender: &str) -> String {
+    let Some(incarnation) = binding.incarnation() else {
+        // A historical mapped account had no incarnation field. Preserve the
+        // exact established subject so its existing lease records remain
+        // usable until that account is retired and re-added with a UUID.
+        return channel_lease_subject(binding.channel_ref(), sender);
+    };
+    let mut subject = format!(
+        "channel-binding/v1/{}/{}/incarnation/",
+        binding.channel_ref().channel_id.as_str(),
+        binding.channel_ref().account_id.as_str(),
+    );
+    subject.push_str(incarnation.as_str());
+    subject.push_str("/sender-hex/");
     const HEX: &[u8; 16] = b"0123456789abcdef";
     for byte in sender.bytes() {
         subject.push(char::from(HEX[usize::from(byte >> 4)]));

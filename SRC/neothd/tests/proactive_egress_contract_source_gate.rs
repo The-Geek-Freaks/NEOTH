@@ -532,24 +532,44 @@ fn bound_and_compatibility_wrappers_converge_before_prepared_on_exact_fresh_acco
     );
     assert!(
         compatibility.contains("Some(transport_recipient.to_string()),")
-            && compatibility.contains("Some(channel),")
-            && compatibility.contains("None,\n        None,"),
-        "the compatibility wrapper must pass only its prebuilt transport inputs to the shared executor"
+            && compatibility
+                .contains("Some(channel),\n        None,\n        None,\n        None,"),
+        "the compatibility wrapper must pass only its prebuilt transport inputs and no account authority to the shared executor"
     );
 
-    let bound = between(
+    let v5_bound = between(
         EGRESS,
         "pub(crate) async fn execute_claimed_once_account_bound<",
+        "/// Compatibility executor for an authenticated v4 record.",
+    );
+    assert_eq!(
+        v5_bound.matches("execute_claimed_once_inner(").count(),
+        1,
+        "the v5 incarnation-bound wrapper must delegate once to the shared durable executor"
+    );
+    assert!(
+        v5_bound.contains("Some(account_binding.channel_ref().clone()),")
+            && v5_bound.contains("Some(account_binding),")
+            && v5_bound.contains("Some(config_source_path),"),
+        "the v5 wrapper must carry its sealed account binding and config source into shared admission"
+    );
+
+    let v4_compatibility = between(
+        EGRESS,
+        "pub(crate) async fn execute_claimed_once_account_bound_v4<",
         "// The two public compatibility wrappers deliberately converge",
     );
     assert_eq!(
-        bound.matches("execute_claimed_once_inner(").count(),
+        v4_compatibility
+            .matches("execute_claimed_once_inner(")
+            .count(),
         1,
-        "the account-bound wrapper must delegate once to the shared durable executor"
+        "the retained v4 wrapper must delegate once to the shared durable executor"
     );
     assert!(
-        bound.contains("Some(channel_ref),") && bound.contains("Some(config_source_path),"),
-        "the bound wrapper must carry its typed account ref and config source into shared admission"
+        v4_compatibility
+            .contains("Some(channel_ref),\n        None,\n        Some(config_source_path),"),
+        "the retained v4 wrapper must preserve its typed ref and historical no-incarnation admission"
     );
 
     let inner = between(
@@ -572,32 +592,54 @@ fn bound_and_compatibility_wrappers_converge_before_prepared_on_exact_fresh_acco
     );
     let bound_claim = between(
         inner,
-        "let mut claim = new_claim_with_deadline_and_channel_ref(",
+        "let mut claim = new_claim_with_deadline_and_account_binding(",
         "let claim_file = persist_prepared_claim(&delivery_lock, home, &claim)",
     );
     assert!(
-        bound_claim.contains("channel_ref.clone(),"),
-        "the freshly admitted typed account ref must be persisted into the durable claim"
+        bound_claim.contains("channel_ref.clone(),")
+            && bound_claim.contains("account_binding.clone(),"),
+        "the freshly admitted typed account ref and its incarnation must be persisted into the durable claim"
     );
     assert!(
         inner.contains("item.account_id.as_ref() != Some(&channel_ref.account_id)"),
         "the bound executor must reject a queued account id that conflicts with its typed ref"
     );
-    let fresh_account = between(
+    let fresh_v5_account = between(
         EGRESS,
         "fn fresh_bound_telegram_account(",
+        "fn fresh_historic_bound_telegram_account(",
+    );
+    assert!(
+        fresh_v5_account
+            .contains("crate::config::load_runtime_config_pair_from_path(config_source_path)")
+            && fresh_v5_account.contains(
+                "accepted == loaded && accepted_config.ssh_tunnels == runtime.config.ssh_tunnels"
+            )
+            && fresh_v5_account.contains("runtime\n        .authenticated_telegram_accounts()")
+            && fresh_v5_account.contains(
+                "!account.is_legacy_singleton() && account.account_binding().as_ref() == Some(binding)"
+            ),
+        "v5 admission must require one accepted coherent pair and resolve only its exact non-legacy sealed account binding"
+    );
+    let fresh_v4_account = between(
+        EGRESS,
+        "fn fresh_historic_bound_telegram_account(",
         "/// Sole production transport seam for proactive messages.",
     );
     assert!(
-        fresh_account
+        fresh_v4_account
             .contains("crate::config::load_runtime_config_pair_from_path(config_source_path)")
-            && fresh_account.contains(
+            && fresh_v4_account.contains(
                 "accepted == loaded && accepted_config.ssh_tunnels == runtime.config.ssh_tunnels"
             )
-            && fresh_account.contains("runtime\n        .authenticated_telegram_accounts()")
-            && fresh_account
-                .contains("!account.is_legacy_singleton() && account.channel_ref() == channel_ref"),
-        "fresh account admission must require accepted public config plus SSH equality and resolve only an exact non-legacy account from one coherent pair"
+            && fresh_v4_account.contains("runtime\n        .authenticated_telegram_accounts()")
+            && fresh_v4_account.contains(
+                "!account.is_legacy_singleton()\n                && account.channel_ref() == channel_ref"
+            )
+            && fresh_v4_account.contains(
+                "binding.incarnation().is_none()"
+            ),
+        "v4 admission must require one accepted coherent pair and resolve only its exact non-legacy historical no-incarnation account"
     );
 }
 
@@ -687,21 +729,26 @@ fn owned_transport_cancellation_is_abort_then_reap_and_recovery_is_fail_closed()
         reap < scan,
         "recovery must reap cancelled adapter work before inspecting durable claims"
     );
+    let recovery_tokens = rust_code_only(recovery)
+        .split_whitespace()
+        .collect::<String>();
     assert!(
-        recovery.contains("PREVIOUS_CLAIM_VERSION | CLAIM_VERSION | ACCOUNT_BOUND_CLAIM_VERSION")
+        recovery_tokens.matches(
+            "PREVIOUS_CLAIM_VERSION|CLAIM_VERSION|ACCOUNT_BOUND_CLAIM_VERSION|INCARNATION_BOUND_CLAIM_VERSION"
+        ).count() == 2
             && recovery.contains("claim.phase == ProactiveEgressPhase::Armed")
             && recovery.contains("is_some_and(|deadline| now_unix < deadline)")
             && recovery.contains("ArmedClaimLeaseProbe::Busy => continue")
             && recovery.contains("continue;"),
-        "only an unexpired v2/v3/v4 Armed claim whose exact lease is not Busy may remain in-flight during recovery"
+        "only an unexpired v2/v3/v4/v5 Armed claim whose exact lease is not Busy may remain in-flight during recovery"
     );
     assert!(
         !recovery.contains("now_unix <= deadline"),
-        "deadline equality must not leave a v2/v3/v4 Armed attempt in-flight"
+        "deadline equality must not leave a v2/v3/v4/v5 Armed attempt in-flight"
     );
     assert!(
         recovery.contains("ProactiveEgressOutcome::CrashUnknown"),
-        "legacy or expired v2/v3/v4 Armed uncertainty must settle fail-closed"
+        "legacy or expired v2/v3/v4/v5 Armed uncertainty must settle fail-closed"
     );
 }
 

@@ -110,6 +110,7 @@ pub fn detect_inactivity_gap(
         dedup_key: format!("pattern:inactivity:{day_bucket}"),
         channel: String::new(), // operator default channel
         account_id: None,
+        account_binding: None,
         source: "pattern_cron".to_string(),
         body: format!(
             "Ich habe seit {elapsed} nichts von dir gehört — alles gut? \
@@ -252,6 +253,7 @@ pub fn detect_query_repeat(
         dedup_key: format!("pattern:query-repeat:{text_hash}:{day_bucket}"),
         channel: String::new(),
         account_id: None,
+        account_binding: None,
         source: "pattern_cron".to_string(),
         body: format!(
             "Du hast in letzter Zeit ~{count}× das Gleiche gefragt (»{ex}«) — \
@@ -326,6 +328,7 @@ pub fn detect_topic_burst(
         dedup_key: format!("pattern:topic-burst:{topic}:{week_bucket}"),
         channel: String::new(),
         account_id: None,
+        account_binding: None,
         source: "pattern_cron".to_string(),
         body: format!(
             "Du beschäftigst dich gerade viel mit »{topic}« (~{count} Erwähnungen in \
@@ -375,6 +378,7 @@ pub fn detect_time_of_day_shift(
         dedup_key: format!("pattern:tod-shift:{week_bucket}"),
         channel: String::new(),
         account_id: None,
+        account_binding: None,
         source: "pattern_cron".to_string(),
         body: format!(
             "Deine aktivsten Stunden haben sich verschoben (~{baseline_peak:02}:00 → \

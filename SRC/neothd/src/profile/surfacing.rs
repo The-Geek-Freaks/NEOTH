@@ -139,6 +139,7 @@ pub fn build_g02_proactive_item(
         dedup_key,
         channel: channel.to_string(),
         account_id: None,
+        account_binding: None,
         source: "g02_surfacing".to_string(),
         body,
         scheduled_for_unix: now_unix,

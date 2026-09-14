@@ -54,6 +54,30 @@ AccountConfigContracts, formatting, CLI doc generation, final GUI check, and
 integrity checks passed. This is not a pairing-migration or live-provider
 acceptance.
 
+## W32 account retirement identity (validation pending)
+
+`channel account remove telegram --account <id>` retires exactly one mapped
+account through the paired prepared journal and dynamic-key CAS/rollback
+boundary. A same-name re-add receives a fresh internal UUID. Lease subjects,
+ingress permits, pairing state, v5 queue/claims/WAL/evidence, and fresh egress
+binding consume that identity. Historical no-UUID records are compatible only
+against exact current historical state, never as authority for a replacement.
+P1-16 remains open.
+
+## W30 SelfStage staging boundary (enablement pending)
+
+The admitted owned-helper foundation carries ordered receipt outcomes for the
+opt-in SelfStage staging lane. `neoth update --self --apply` is the manual
+binary-swap path; SelfStageAllowed and self-probe do not authorize CLI, npm,
+Git, OSV, installer, or Skill lanes. Runtime execution remains pending the
+enabled production outer/helper-route proof. R3-18B remains open.
+
+## W34 legacy factory provenance (validation pending)
+
+Only legacy Telegram and Slack factories receive sealed startup provenance;
+mapped Telegram remains a separate variant. P1-17 remains open for all other
+channel provenance surfaces.
+
 ## OpenClaw account import (W26; locally validated)
 
 The new importer selects exactly one OpenClaw source account through `--config`

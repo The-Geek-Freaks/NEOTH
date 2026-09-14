@@ -15,8 +15,8 @@
 //!   complete FIRED/RESULT pair, so audit frames cannot interleave ambiguously.
 //! - NEOTH self-probe has request-bound leaf authority, one inherited pass
 //!   deadline, cooperative HTTP cancellation, and retained deadline ownership.
-//!   Self-stage remains explicitly denied because its blocking preparation and
-//!   publication work cannot yet be cooperatively cancelled.
+//!   Self-stage is admitted only through its contained helper, inherited
+//!   clock/control, leaf receipt binding and retained recovery path.
 //! - CLI version probes, skill/plugin probes and CLI auto-apply remain denied
 //!   until their process, registry, Git and install leaves enforce the same
 //!   exact authority contract. In particular, the binary-version child has no
@@ -52,11 +52,59 @@ use crate::wal::{EventFlags, HeaderBuilder};
 use futures_util::FutureExt;
 use sha2::{Digest as _, Sha256};
 
+/// Narrow test-only release-source replacement. The outer pass, stage leaf,
+/// contained helper, receipt collector and WAL remain production code.
+#[cfg(test)]
+static SAFE_OWNED_STAGE_HELPER_FIXTURE_HOMES: std::sync::Mutex<Vec<PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+struct SafeOwnedStageHelperFixtureGuard(PathBuf);
+
+#[cfg(test)]
+impl Drop for SafeOwnedStageHelperFixtureGuard {
+    fn drop(&mut self) {
+        let mut registered = SAFE_OWNED_STAGE_HELPER_FIXTURE_HOMES
+            .lock()
+            .expect("owned-stage cron fixture registry");
+        registered.retain(|home| home != &self.0);
+    }
+}
+
+#[cfg(test)]
+fn enable_safe_owned_stage_helper_fixture(
+    home: &std::path::Path,
+) -> SafeOwnedStageHelperFixtureGuard {
+    let mut registered = SAFE_OWNED_STAGE_HELPER_FIXTURE_HOMES
+        .lock()
+        .expect("owned-stage cron fixture registry");
+    let home = home.to_path_buf();
+    assert!(
+        !registered
+            .iter()
+            .any(|registered_home| registered_home == &home),
+        "owned-stage cron fixture home is already registered"
+    );
+    registered.push(home.clone());
+    SafeOwnedStageHelperFixtureGuard(home)
+}
+
+#[cfg(test)]
+fn take_safe_owned_stage_helper_fixture(home: &std::path::Path) -> bool {
+    let mut registered = SAFE_OWNED_STAGE_HELPER_FIXTURE_HOMES
+        .lock()
+        .expect("owned-stage cron fixture registry");
+    registered
+        .iter()
+        .position(|registered_home| registered_home == home)
+        .map(|index| registered.remove(index))
+        .is_some()
+}
+
 /// Legacy recurring lanes are denied until their concrete network/process
 /// leaves consume request-bound authority. Manual, operator-initiated updater
 /// commands are unaffected.
 pub const UNAUDITED_RECURRING_EGRESS_DENIED: &str = "recurring updater network probe blocked: request-bound autonomy and mandatory intent/result WAL are not wired at every concrete transport/process leaf; binary probe lacks a timeout, npm/Git do not own descendant process trees, and installers lack one inherited deadline/cancellation token";
-pub const UNBOUNDED_RECURRING_LIFECYCLE_DENIED: &str = "recurring NEOTH self-stage blocked: HTTP has leaf-local timeouts but no inherited absolute pass deadline covers blocking stage prepare/publish, terminal WAL acknowledgement, or generation quiescence; spawn_blocking work cannot be cooperatively cancelled";
 const REQUEST_BOUND_POLICY_REFUSED: &str =
     "accepted updater policy refused this exact recurring leaf";
 const ACCEPTED_GENERATION_RETIRED: &str =
@@ -308,7 +356,18 @@ fn effective_lane_schedules(config: &crate::config::FreedomConfig) -> Vec<LaneSc
             lane: RecurringUpdateLane::CliAutoApply,
             interval_secs: config.updater.interval_secs,
         });
-        if config.auto_update.check_interval_secs != 0 {
+        // A scheduled SelfStage eventually executes the contained current_exe
+        // helper. Its exact leaf is ExecArbitrary, so schedule it only when
+        // the accepted configured policy already permits that action. Keep
+        // this policy-derived rather than hard-coding a level: the scheduler
+        // rail and any configured policy evolution remain authoritative.
+        if config.auto_update.check_interval_secs != 0
+            && crate::permissions::evaluate(
+                &crate::permissions::Action::ExecArbitrary,
+                &config.autonomy_policy(),
+            )
+            .is_allow()
+        {
             schedules.push(LaneSchedule {
                 lane: RecurringUpdateLane::SelfStage,
                 interval_secs: config.auto_update.check_interval_secs,
@@ -325,9 +384,10 @@ fn recurring_egress_gate(lane: RecurringUpdateLane) -> crate::updater::pipeline:
         // request-bound authority, the pass clock/control, and ordered leaf
         // receipts; it does not stage or publish an update.
         RecurringUpdateLane::NeothSelfProbe => crate::updater::pipeline::GateDecision::Allow,
-        RecurringUpdateLane::SelfStage => crate::updater::pipeline::GateDecision::Deny {
-            reason: UNBOUNDED_RECURRING_LIFECYCLE_DENIED.to_string(),
-        },
+        // W30 owns contained helper lifecycle, receipt-bound outer results,
+        // and recovery gating before FIRED. Existing configuration/scheduling
+        // opt-ins still decide whether this lane is ever scheduled.
+        RecurringUpdateLane::SelfStage => crate::updater::pipeline::GateDecision::Allow,
         // CLI/npm/Git/OSV/install leaves remain inert until their own exact
         // request-bound authority wrappers land.
         RecurringUpdateLane::CliVersionProbe
@@ -359,6 +419,11 @@ impl UpdaterPassControl {
             clock: Arc::new(std::sync::Mutex::new(None)),
             wal_root_guard,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self::new(None)
     }
 
     pub(crate) fn cancel(&self) {
@@ -474,12 +539,28 @@ pub(crate) struct UpdaterSupervisorHandle {
     failure_notified: bool,
 }
 
+/// Observation-only view of the supervisor task. It intentionally cannot
+/// abort, join, cancel, or otherwise affect an admitted updater pass.
+#[derive(Clone)]
+pub(crate) struct UpdaterSupervisorLiveness {
+    join: tokio::task::AbortHandle,
+}
+
+impl UpdaterSupervisorLiveness {
+    pub(crate) fn is_finished(&self) -> bool {
+        self.join.is_finished()
+    }
+}
+
 impl UpdaterSupervisorHandle {
-    pub(crate) fn abort_handle(&self) -> tokio::task::AbortHandle {
-        self.join
-            .as_ref()
-            .expect("live updater supervisor handle")
-            .abort_handle()
+    pub(crate) fn liveness(&self) -> UpdaterSupervisorLiveness {
+        UpdaterSupervisorLiveness {
+            join: self
+                .join
+                .as_ref()
+                .expect("live updater supervisor handle")
+                .abort_handle(),
+        }
     }
 
     /// Required daemon-boundary signal. It resolves only when the supervisor
@@ -571,15 +652,23 @@ impl Drop for UpdaterSupervisorHandle {
 /// so a later accepted generation can enable lanes without a daemon restart.
 pub(crate) fn spawn_updater_supervisor(
     home: PathBuf,
+    segment_chain_base_path: PathBuf,
     reload_controller: Arc<crate::config::reload::ReloadController>,
     writer: WalWriterHandle,
 ) -> UpdaterSupervisorHandle {
     let wal_root_guard = writer.clone();
     let executor: LaneExecutor = Arc::new(move |lane, snapshot, gate, control| {
         let home = home.clone();
+        let segment_chain_base_path = segment_chain_base_path.clone();
         let writer = writer.clone();
         Box::pin(run_production_lane_once(
-            lane, snapshot, home, writer, gate, control,
+            lane,
+            snapshot,
+            home,
+            segment_chain_base_path,
+            writer,
+            gate,
+            control,
         ))
     });
     spawn_updater_supervisor_with_executor(reload_controller, executor, Some(wal_root_guard))
@@ -962,6 +1051,7 @@ async fn run_production_lane_once(
     lane: RecurringUpdateLane,
     snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
     home: PathBuf,
+    segment_chain_base_path: PathBuf,
     writer: WalWriterHandle,
     gate: crate::updater::pipeline::GateDecision,
     control: UpdaterPassControl,
@@ -997,25 +1087,25 @@ async fn run_production_lane_once(
             Ok(())
         }
         RecurringUpdateLane::SelfStage => {
-            let skipped_reason = match &gate {
-                crate::updater::pipeline::GateDecision::Deny { reason } => reason.clone(),
-                crate::updater::pipeline::GateDecision::Allow => {
-                    REQUEST_BOUND_POLICY_REFUSED.to_string()
-                }
-            };
-            run_mutation_pass_at(
+            let recovery = crate::updater::reconcile::self_stage_recovery_gate(
+                &home,
+                &segment_chain_base_path,
+            )
+            .map_err(|error| format!("verify SelfStage recovery admission gate: {error:#}"))?;
+            if recovery.is_blocked() {
+                tracing::warn!(
+                    blocked_operations = recovery.blocked.len(),
+                    "SelfStage cadence remains blocked by authenticated unresolved recovery state"
+                );
+                return Ok(());
+            }
+            run_authorized_self_stage(
                 pass_identity,
-                UpdaterTaskKind::NeothSelf,
-                "self_stage",
-                crate::updater::self_update::current_version(),
-                &skipped_reason,
+                Arc::clone(&snapshot),
+                &home,
                 &writer,
-                crate::daemon::auto_update::run_self_stage_pass(
-                    gate,
-                    &home,
-                    Arc::clone(&snapshot),
-                    &writer,
-                ),
+                gate,
+                control,
             )
             .await?;
             Ok(())
@@ -1141,6 +1231,17 @@ where
             None,
             UpdaterTerminalOutcome::Cancelled,
         ),
+        Ok(Ok(crate::daemon::auto_update::RecurringMutationOutcome::StageUnchanged)) => (
+            ComponentOutcome::failed(
+                component_name,
+                current_version,
+                "contained SelfStage helper left the sealed stage unchanged",
+            ),
+            Some(TerminalizedPassFailure::RetryNextCadence(
+                "contained SelfStage helper left the sealed stage unchanged".to_string(),
+            )),
+            UpdaterTerminalOutcome::Failed,
+        ),
         Ok(Ok(crate::daemon::auto_update::RecurringMutationOutcome::Completed)) => (
             ComponentOutcome::up_to_date(component_name, current_version),
             None,
@@ -1184,8 +1285,9 @@ where
             tracing::warn!(
                 task_kind = task_kind.as_str(),
                 component = component_name,
+                terminal_outcome = ?terminal_outcome,
                 %error,
-                "recurring updater leaf failed; durable Failed RESULT recorded; retrying next cadence"
+                "recurring updater leaf reached a durable terminal outcome; retrying next cadence"
             );
         }
         Some(TerminalizedPassFailure::CloseSupervisor(error)) => return Err(error),
@@ -1212,6 +1314,223 @@ async fn run_authorized_self_probe(
         })
     })
     .await
+}
+
+/// The W30 SelfStage outer pass.  It intentionally does not use the generic
+/// mutation wrapper: the helper's leaf receipts and its indeterminate durable
+/// state must control the outer RESULT and future admission.
+async fn run_authorized_self_stage(
+    identity: UpdaterPassIdentity,
+    snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
+    home: &std::path::Path,
+    writer: &WalWriterHandle,
+    gate: crate::updater::pipeline::GateDecision,
+    control: UpdaterPassControl,
+) -> Result<UpdaterTaskResultPayload, String> {
+    let task_kind = UpdaterTaskKind::NeothSelf;
+    let fired_receipt_sha256 = append_updater_fired(&identity, task_kind, writer).await?;
+    let pass_id = identity
+        .correlatable_pass_id_for(task_kind)
+        .ok_or_else(|| "authorized SelfStage requires a bound outer pass identity".to_string())?
+        .to_string();
+    let run_clock = UpdaterRunLimits::default_owned_self_stage()
+        .and_then(UpdaterRunClock::start)
+        .map_err(|error| format!("admit bounded SelfStage pass: {error}"))?;
+    control
+        .admit(run_clock.clone())
+        .map_err(|error| format!("record admitted SelfStage clock: {error:#}"))?;
+    let cancellation = control.clone();
+    let authority = crate::updater::self_update::RecurringSelfUpdateAuthority::for_stage_bound(
+        writer.clone(),
+        Arc::clone(&snapshot),
+        pass_id,
+        run_clock.clone(),
+        control,
+    );
+    let started = std::time::Instant::now();
+    let current = crate::updater::self_update::current_version();
+    let checked = std::panic::AssertUnwindSafe(async {
+        #[cfg(test)]
+        if take_safe_owned_stage_helper_fixture(home) {
+            crate::updater::self_update::run_safe_owned_stage_for_cron_test(&authority, home).await
+        } else {
+            crate::daemon::auto_update::run_self_stage_pass_bound(
+                gate, home, snapshot, writer, &authority,
+            )
+            .await
+        }
+        #[cfg(not(test))]
+        crate::daemon::auto_update::run_self_stage_pass_bound(
+            gate, home, snapshot, writer, &authority,
+        )
+        .await
+    })
+    .catch_unwind()
+    .await;
+    let terminal_receipts = authority
+        .terminal_receipts()
+        .map_err(|error| format!("collect acknowledged SelfStage leaf receipts: {error}"))?;
+    if authority.outer_terminal_indeterminate() {
+        // This covers both a leaf Result-ACK uncertainty and a proved
+        // indeterminate stage readback.  Retaining FIRED plus leaf terminal
+        // evidence forces the existing authenticated reconciliation path to
+        // close the pass before any future generation can admit SelfStage.
+        return Err(
+            "SelfStage state or leaf terminal acknowledgement is indeterminate; outer RESULT withheld for explicit reconciliation"
+                .to_string(),
+        );
+    }
+    let leaf_receipt_binding =
+        (!terminal_receipts.is_empty()).then_some(UpdaterLeafReceiptBinding {
+            schema_version: UPDATER_LEAF_RECEIPT_BINDING_SCHEMA_VERSION,
+            budgets: run_clock.budgets().clone(),
+            terminal_receipts,
+        });
+    let (component, mut terminalized_failure, mut terminal_outcome) = match checked {
+        Ok(Ok(crate::daemon::auto_update::RecurringMutationOutcome::BlockedByGate)) => (
+            ComponentOutcome::skipped_by_gate("self_stage", current, REQUEST_BOUND_POLICY_REFUSED),
+            None,
+            UpdaterTerminalOutcome::SkippedByGate,
+        ),
+        Ok(Ok(crate::daemon::auto_update::RecurringMutationOutcome::SkippedByPolicy)) => (
+            ComponentOutcome::skipped_by_gate("self_stage", current, REQUEST_BOUND_POLICY_REFUSED),
+            None,
+            UpdaterTerminalOutcome::SkippedByGate,
+        ),
+        Ok(Ok(crate::daemon::auto_update::RecurringMutationOutcome::GenerationRetired)) => (
+            ComponentOutcome::skipped_by_gate("self_stage", current, ACCEPTED_GENERATION_RETIRED),
+            None,
+            UpdaterTerminalOutcome::Cancelled,
+        ),
+        Ok(Ok(crate::daemon::auto_update::RecurringMutationOutcome::StageUnchanged))
+            if cancellation.is_cancelled() =>
+        {
+            (
+                ComponentOutcome::skipped_by_gate(
+                    "self_stage",
+                    current,
+                    "contained SelfStage helper left the stage unchanged after its owning generation cancelled",
+                ),
+                None,
+                UpdaterTerminalOutcome::Cancelled,
+            )
+        }
+        Ok(Ok(crate::daemon::auto_update::RecurringMutationOutcome::StageUnchanged)) => (
+            ComponentOutcome::failed(
+                "self_stage",
+                current,
+                "contained SelfStage helper left the sealed stage unchanged",
+            ),
+            Some(TerminalizedPassFailure::RetryNextCadence(
+                "contained SelfStage helper left the sealed stage unchanged".to_string(),
+            )),
+            UpdaterTerminalOutcome::Failed,
+        ),
+        Ok(Ok(crate::daemon::auto_update::RecurringMutationOutcome::Completed)) => (
+            ComponentOutcome::up_to_date("self_stage", current),
+            None,
+            UpdaterTerminalOutcome::Completed,
+        ),
+        Ok(Ok(crate::daemon::auto_update::RecurringMutationOutcome::Staged {
+            prior_version,
+            staged_version,
+        })) => (
+            ComponentOutcome::staged("self_stage", prior_version, staged_version),
+            None,
+            UpdaterTerminalOutcome::Completed,
+        ),
+        Ok(Err(error)) => {
+            let (failure, outcome) =
+                authorized_stage_failure_disposition(error, cancellation.is_cancelled());
+            let diagnostic = match &failure {
+                TerminalizedPassFailure::RetryNextCadence(value)
+                | TerminalizedPassFailure::CloseSupervisor(value) => value.clone(),
+            };
+            (
+                ComponentOutcome::failed("self_stage", current, diagnostic),
+                Some(failure),
+                outcome,
+            )
+        }
+        Err(_) => {
+            let diagnostic = "authorized SelfStage executor panicked".to_string();
+            (
+                ComponentOutcome::failed("self_stage", current, &diagnostic),
+                Some(TerminalizedPassFailure::CloseSupervisor(diagnostic)),
+                UpdaterTerminalOutcome::Failed,
+            )
+        }
+    };
+    if run_clock
+        .remaining(UpdaterDeadlinePhase::Terminal)
+        .is_zero()
+    {
+        terminal_outcome = UpdaterTerminalOutcome::TimedOut;
+        terminalized_failure = Some(TerminalizedPassFailure::RetryNextCadence(
+            "SelfStage terminal acknowledgement exceeded its inherited absolute deadline"
+                .to_string(),
+        ));
+    }
+    let result = UpdaterTaskResultPayload {
+        identity,
+        task_kind,
+        ts_unix: crate::time::now_unix_secs(),
+        duration_ms: started.elapsed().as_millis().min(u32::MAX as u128) as u32,
+        terminal_outcome: Some(terminal_outcome),
+        fired_receipt_sha256: Some(fired_receipt_sha256),
+        leaf_receipt_binding,
+        components: vec![component],
+    };
+    append_updater_result(&result, writer).await?;
+    match terminalized_failure {
+        Some(TerminalizedPassFailure::RetryNextCadence(error)) => tracing::warn!(
+            task_kind = task_kind.as_str(),
+            terminal_outcome = ?terminal_outcome,
+            %error,
+            "SelfStage reached a durable terminal outcome; retrying next cadence"
+        ),
+        Some(TerminalizedPassFailure::CloseSupervisor(error)) => return Err(error),
+        None => {}
+    }
+    Ok(result)
+}
+
+fn authorized_stage_failure_disposition(
+    error: anyhow::Error,
+    cancellation_requested: bool,
+) -> (TerminalizedPassFailure, UpdaterTerminalOutcome) {
+    match error.downcast_ref::<crate::updater::authority::UpdaterLeafExecutionError>() {
+        Some(crate::updater::authority::UpdaterLeafExecutionError::Effect {
+            kind: "cancelled",
+            ..
+        }) if cancellation_requested => (
+            TerminalizedPassFailure::RetryNextCadence(format!(
+                "authorized SelfStage cancelled by its owning generation: {error}"
+            )),
+            UpdaterTerminalOutcome::Cancelled,
+        ),
+        Some(crate::updater::authority::UpdaterLeafExecutionError::Effect {
+            kind: "timeout",
+            ..
+        }) => (
+            TerminalizedPassFailure::RetryNextCadence(format!(
+                "authorized SelfStage timed out: {error}"
+            )),
+            UpdaterTerminalOutcome::TimedOut,
+        ),
+        Some(crate::updater::authority::UpdaterLeafExecutionError::Effect { .. }) => (
+            TerminalizedPassFailure::RetryNextCadence(format!(
+                "authorized SelfStage leaf failed: {error}"
+            )),
+            UpdaterTerminalOutcome::Failed,
+        ),
+        _ => (
+            TerminalizedPassFailure::CloseSupervisor(format!(
+                "authorized SelfStage lost its typed leaf authority boundary: {error}"
+            )),
+            UpdaterTerminalOutcome::Failed,
+        ),
+    }
 }
 
 async fn run_authorized_self_probe_with_check<F>(
@@ -1954,6 +2273,7 @@ mod tests {
             RecurringUpdateLane::CliAutoApply,
             controller.accepted_snapshot(),
             dir.path().to_path_buf(),
+            seg.clone(),
             writer.clone(),
             recurring_egress_gate(RecurringUpdateLane::CliAutoApply),
             UpdaterPassControl::new(None),
@@ -1980,6 +2300,199 @@ mod tests {
         assert_eq!(
             result.components[0].status,
             crate::wal::payloads_u04::ComponentStatus::SkippedByGate
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn enabled_selfstage_production_lane_binds_real_owned_helper_receipts_before_outer_result()
+     {
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let segment = wal.join("000001.wal");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
+                .unwrap();
+        ready.wait().await.unwrap();
+        let mut config = crate::config::FreedomConfig::default();
+        // The current_exe owned helper is ExecArbitrary, which FailClosed
+        // admits autonomously only at Full. This preserves production policy.
+        config.autonomy = crate::permissions::AutonomyLevel::Full;
+        config.updater.enabled = true;
+        config.updater.interval_secs = 60;
+        config.auto_update.enabled = true;
+        config.auto_update.auto_apply = true;
+        config.auto_update.check_interval_secs = 60;
+        assert!(
+            crate::permissions::evaluate(
+                &crate::permissions::Action::ExecArbitrary,
+                &config.autonomy_policy(),
+            )
+            .is_allow(),
+            "the enabled SelfStage fixture must satisfy its real helper leaf policy"
+        );
+        assert!(
+            effective_lane_schedules(&config)
+                .iter()
+                .any(|schedule| schedule.lane == RecurringUpdateLane::SelfStage),
+            "the fixture must use the same enabled scheduler admission state as production"
+        );
+        let controller =
+            crate::config::reload::ReloadController::new(config, home.path().join("freedom.yaml"));
+
+        let _fixture = enable_safe_owned_stage_helper_fixture(home.path());
+        run_production_lane_once(
+            RecurringUpdateLane::SelfStage,
+            controller.accepted_snapshot(),
+            home.path().to_path_buf(),
+            segment.clone(),
+            writer.clone(),
+            crate::updater::pipeline::GateDecision::Allow,
+            UpdaterPassControl::new(Some(writer.clone())),
+        )
+        .await
+        .expect("admitted production SelfStage lane must terminalize its safe helper fixture");
+        drop(_fixture);
+        drop(writer);
+        join.await.unwrap().unwrap();
+
+        let bytes = std::fs::read(&segment).unwrap();
+        let mut offset = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut order = Vec::new();
+        let mut leaf_results = std::collections::HashMap::new();
+        let mut outer_result = None;
+        while offset < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[offset..]).unwrap();
+            if frame.header.event_type == EVENT_TYPE_UPDATER_TASK_FIRED {
+                order.push("outer-fired");
+            } else if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::UpdaterLeafIntent as u8
+            {
+                let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                order.push(match payload["effect"].as_str() {
+                    Some("verified_stage_write") => "stage-intent",
+                    Some("self_stage_owned_helper") => "helper-intent",
+                    other => panic!("unexpected SelfStage leaf effect: {other:?}"),
+                });
+            } else if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::UpdaterLeafResult as u8
+            {
+                let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                let request_id = payload["request_id"].as_str().unwrap().to_owned();
+                assert_eq!(payload["status"], "success");
+                order.push(match payload["effect"].as_str() {
+                    Some("verified_stage_write") => "stage-result",
+                    Some("self_stage_owned_helper") => "helper-result",
+                    other => panic!("unexpected SelfStage leaf result effect: {other:?}"),
+                });
+                leaf_results.insert(
+                    request_id,
+                    crate::wal::payloads_u04::updater_leaf_result_receipt_sha256(frame.payload),
+                );
+            } else if frame.header.event_type == EVENT_TYPE_UPDATER_TASK_RESULT {
+                order.push("outer-result");
+                outer_result = Some(
+                    serde_json::from_slice::<UpdaterTaskResultPayload>(frame.payload).unwrap(),
+                );
+            }
+            offset += frame.header.total_len as usize;
+        }
+        assert_eq!(
+            order,
+            vec![
+                "outer-fired",
+                "stage-intent",
+                "stage-result",
+                "helper-intent",
+                "helper-result",
+                "outer-result",
+            ]
+        );
+        let outer_result = outer_result.expect("receipt-bound outer SelfStage result");
+        assert_eq!(
+            outer_result.terminal_outcome,
+            Some(UpdaterTerminalOutcome::Completed)
+        );
+        outer_result.validate_leaf_receipt_binding().unwrap();
+        let receipts = &outer_result.leaf_receipt_binding.unwrap().terminal_receipts;
+        assert_eq!(receipts.len(), 2, "stage and helper leaves are both bound");
+        for receipt in receipts {
+            assert_eq!(
+                leaf_results.get(&receipt.request_id),
+                Some(&receipt.result_receipt_sha256),
+                "outer receipt binding must name the exact acknowledged leaf result"
+            );
+        }
+        let recovery = crate::updater::reconcile::self_stage_recovery_gate(home.path(), &segment)
+            .expect("completed receipt-bound SelfStage may be admitted after recovery scan");
+        assert!(!recovery.is_blocked());
+    }
+
+    #[test]
+    fn home_scoped_safe_helper_fixture_cannot_be_consumed_by_an_unrelated_selfstage_home() {
+        let fixture_home = tempfile::tempdir().unwrap();
+        let unrelated_home = tempfile::tempdir().unwrap();
+        let guard = enable_safe_owned_stage_helper_fixture(fixture_home.path());
+        assert!(
+            !take_safe_owned_stage_helper_fixture(unrelated_home.path()),
+            "an unrelated SelfStage home must retain the real production route"
+        );
+        assert!(
+            take_safe_owned_stage_helper_fixture(fixture_home.path()),
+            "only the exact registered temp home may consume its fixture"
+        );
+        drop(guard);
+    }
+
+    #[tokio::test]
+    async fn signed_owned_stage_block_returns_before_selfstage_fired_or_helper_work() {
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let segment = wal.join("000001.wal");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
+                .unwrap();
+        ready.wait().await.unwrap();
+        crate::updater::reconcile::persist_owned_stage_block_for_test(
+            home.path(),
+            &segment,
+            crate::updater::reconcile::CheckpointOwnedStageBlock {
+                operation_id: "self-stage-pass".into(),
+                request_id: "owned-request".into(),
+                request_binding_sha256: "a".repeat(64),
+                relative_operation_dir: format!("staged/operations/{}", "b".repeat(32)),
+                terminal_indeterminate: false,
+                stdin_sha256: String::new(),
+                stdin_size_bytes: 0,
+                run_budgets: None,
+            },
+        )
+        .unwrap();
+        let controller = crate::config::reload::ReloadController::new(
+            crate::config::FreedomConfig::default(),
+            home.path().join("freedom.yaml"),
+        );
+        run_production_lane_once(
+            RecurringUpdateLane::SelfStage,
+            controller.accepted_snapshot(),
+            home.path().to_path_buf(),
+            segment.clone(),
+            writer.clone(),
+            crate::updater::pipeline::GateDecision::Allow,
+            UpdaterPassControl::new(None),
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        join.await.unwrap().unwrap();
+        let bytes = std::fs::read(&segment).unwrap();
+        assert_eq!(
+            bytes.len(),
+            crate::wal::segment_header::SEGMENT_HEADER_LEN,
+            "signed recovery block must return before SelfStage FIRED or helper work"
         );
     }
 
@@ -2211,7 +2724,17 @@ mod tests {
         );
 
         config.auto_update.auto_apply = true;
-        assert_eq!(lane_set(&config).len(), 5);
+        let elevated_lanes = lane_set(&config);
+        assert_eq!(elevated_lanes.len(), 4);
+        assert!(
+            !elevated_lanes.contains(&RecurringUpdateLane::SelfStage),
+            "Elevated may schedule auto-apply but not its ExecArbitrary owned helper"
+        );
+        config.autonomy = AutonomyLevel::Full;
+        assert!(
+            lane_set(&config).contains(&RecurringUpdateLane::SelfStage),
+            "Full with every updater opt-in and a nonzero cadence schedules SelfStage"
+        );
         config.updater.enabled = false;
         assert!(lane_set(&config).is_empty(), "global updater switch wins");
 
@@ -2226,19 +2749,58 @@ mod tests {
     }
 
     #[test]
-    fn recurring_network_gate_admits_only_bounded_self_probe() {
+    fn self_stage_schedule_requires_enabled_master_and_helper_policy() {
+        use crate::permissions::AutonomyLevel;
+
+        let mut config = crate::config::FreedomConfig::default();
+        config.autonomy = AutonomyLevel::Full;
+        config.updater.enabled = false;
+        config.updater.interval_secs = 60;
+        config.auto_update.enabled = true;
+        config.auto_update.auto_apply = true;
+        config.auto_update.check_interval_secs = 60;
+        assert!(
+            !lane_set(&config).contains(&RecurringUpdateLane::SelfStage),
+            "an explicitly disabled updater master wins even with a nonzero cadence"
+        );
+
+        config.updater.enabled = true;
+        config.autonomy = AutonomyLevel::Elevated;
+        assert!(
+            !lane_set(&config).contains(&RecurringUpdateLane::SelfStage),
+            "Elevated cannot schedule a helper that its FailClosed leaf would refuse"
+        );
+
+        config.autonomy = AutonomyLevel::Full;
+        assert!(
+            lane_set(&config).contains(&RecurringUpdateLane::SelfStage),
+            "Full plus all updater opt-ins and a nonzero cadence admits SelfStage"
+        );
+    }
+    #[test]
+    fn zero_check_interval_schedules_neither_self_probe_nor_owned_self_stage() {
+        use crate::permissions::AutonomyLevel;
+        let mut config = crate::config::FreedomConfig::default();
+        config.autonomy = AutonomyLevel::Elevated;
+        config.updater.enabled = true;
+        config.auto_update.enabled = true;
+        config.auto_update.auto_apply = true;
+        config.auto_update.check_interval_secs = 0;
+        let lanes = lane_set(&config);
+        assert!(!lanes.contains(&RecurringUpdateLane::NeothSelfProbe));
+        assert!(!lanes.contains(&RecurringUpdateLane::SelfStage));
+    }
+
+    #[test]
+    fn recurring_network_gate_admits_only_reviewed_self_lanes() {
         assert!(matches!(
             recurring_egress_gate(RecurringUpdateLane::NeothSelfProbe),
             GateDecision::Allow
         ));
-        match recurring_egress_gate(RecurringUpdateLane::SelfStage) {
-            GateDecision::Deny { reason } => {
-                assert_eq!(reason, UNBOUNDED_RECURRING_LIFECYCLE_DENIED);
-                assert!(reason.contains("absolute pass deadline"));
-                assert!(reason.contains("spawn_blocking"));
-            }
-            GateDecision::Allow => panic!("SelfStage must remain denied in Wave 25"),
-        }
+        assert!(matches!(
+            recurring_egress_gate(RecurringUpdateLane::SelfStage),
+            GateDecision::Allow
+        ));
         for lane in [
             RecurringUpdateLane::CliVersionProbe,
             RecurringUpdateLane::SkillPluginProbe,
@@ -2522,7 +3084,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("freedom.yaml");
         let mut config = crate::config::FreedomConfig::default();
-        config.autonomy = AutonomyLevel::Elevated;
+        config.autonomy = AutonomyLevel::Full;
         config.updater.enabled = true;
         config.updater.interval_secs = 60;
         config.auto_update.enabled = true;
@@ -3040,17 +3602,27 @@ mod tests {
         });
 
         let starts = Arc::new(AtomicUsize::new(0));
+        let (admitted_control_tx, admitted_control_rx) = tokio::sync::oneshot::channel();
+        let admitted_control_tx = Arc::new(std::sync::Mutex::new(Some(admitted_control_tx)));
         let executor: LaneExecutor = {
             let writer = writer.clone();
             let identity = identity.clone();
             let starts = Arc::clone(&starts);
+            let admitted_control_tx = Arc::clone(&admitted_control_tx);
             Arc::new(move |lane, snapshot, _gate, control| {
                 assert_eq!(lane, RecurringUpdateLane::NeothSelfProbe);
                 let writer = writer.clone();
                 let identity = identity.clone();
                 let starts = Arc::clone(&starts);
+                let admitted_control_tx = Arc::clone(&admitted_control_tx);
                 Box::pin(async move {
                     starts.fetch_add(1, Ordering::SeqCst);
+                    if let Some(sender) = admitted_control_tx.lock().unwrap().take() {
+                        assert!(
+                            sender.send(control.clone()).is_ok(),
+                            "test observer dropped the admitted pass control"
+                        );
+                    }
                     run_authorized_self_probe_with_check(
                         identity,
                         snapshot,
@@ -3145,10 +3717,17 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let (joined_lane, cadence) = tokio::time::timeout(Duration::from_secs(1), lane)
+        let admitted_control = admitted_control_rx
             .await
-            .unwrap()
-            .unwrap()
+            .expect("generation loopback executor must expose its admitted pass control");
+        let drain_deadline = admitted_control
+            .deadline(UpdaterDeadlinePhase::Operation)
+            .expect("loopback HTTP headers prove the pass was admitted before cancellation");
+        let joined = tokio::time::timeout_at(drain_deadline, lane)
+            .await
+            .expect("generation cancellation did not finish the durable leaf receipt, outer RESULT, and lane drain before the admitted operation deadline");
+        let (joined_lane, cadence) = joined
+            .expect("generation lane task must complete without a join error after cancellation")
             .expect("generation cancellation must join the admitted loopback pass cleanly");
         assert_eq!(joined_lane, RecurringUpdateLane::NeothSelfProbe);
         assert!(
@@ -3161,6 +3740,7 @@ mod tests {
             "the retired generation cannot start a successor before its admitted pass joins"
         );
 
+        drop(admitted_control);
         drop(writer);
         writer_join.await.unwrap().unwrap();
         server.await.unwrap();

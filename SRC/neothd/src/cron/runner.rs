@@ -778,12 +778,13 @@ async fn run_job_with_paths(
                             let dedup_key = format!("cron-delivery:{id}");
                             let queued =
                                 resolve_cron_delivery_route(home, &job.id, &delivery.channel)
-                                    .and_then(|(channel, account_id)| {
-                                        enqueue_cron_delivery(
+                                    .and_then(|(channel, account_id, account_binding)| {
+                                        enqueue_cron_delivery_with_binding(
                                             proactive_queue_path,
                                             &job.id,
                                             &channel,
                                             account_id,
+                                            account_binding,
                                             &output_text,
                                             &dedup_key,
                                             now_unix_secs(),
@@ -954,6 +955,7 @@ async fn run_job_with_paths(
                     dedup_key,
                     channel: "cli".to_string(),
                     account_id: None,
+                    account_binding: None,
                     source: "hermes_07".to_string(),
                     body,
                     scheduled_for_unix: 0,
@@ -1175,6 +1177,7 @@ fn scope_cron_mcp_servers(
 /// Durably enqueue one completed cron result. The dedup key identifies the
 /// concrete JOB_FIRED WAL event, so retrying the same event is idempotent while
 /// a later scheduled run still produces a distinct notification.
+#[cfg(test)]
 fn enqueue_cron_delivery(
     queue_path: &Path,
     job_id: &str,
@@ -1184,11 +1187,37 @@ fn enqueue_cron_delivery(
     dedup_key: &str,
     now_unix: i64,
 ) -> Result<bool> {
+    enqueue_cron_delivery_with_binding(
+        queue_path,
+        job_id,
+        channel,
+        account_id,
+        None,
+        output_text,
+        dedup_key,
+        now_unix,
+    )
+}
+
+/// Production account-aware queue admission. A mapped account is persisted
+/// with the authenticated binding selected from the coherent runtime pair;
+/// a caller cannot enqueue a named current account with a loose ref only.
+fn enqueue_cron_delivery_with_binding(
+    queue_path: &Path,
+    job_id: &str,
+    channel: &str,
+    account_id: Option<crate::channels::registry::ChannelAccountId>,
+    account_binding: Option<crate::config::ChannelAccountBinding>,
+    output_text: &str,
+    dedup_key: &str,
+    now_unix: i64,
+) -> Result<bool> {
     let item = ProactiveItem {
         priority: 70,
         dedup_key: dedup_key.to_string(),
         channel: channel.to_string(),
         account_id,
+        account_binding,
         source: format!("cron:{job_id}"),
         body: output_text.to_string(),
         scheduled_for_unix: 0,
@@ -1209,14 +1238,38 @@ fn resolve_cron_delivery_route(
     home: &Path,
     job_id: &str,
     configured_channel: &str,
-) -> Result<(String, Option<crate::channels::registry::ChannelAccountId>)> {
+) -> Result<(
+    String,
+    Option<crate::channels::registry::ChannelAccountId>,
+    Option<crate::config::ChannelAccountBinding>,
+)> {
     let routing = ChannelRouting::load_from(&home.join(CHANNEL_ROUTING_FILE))
         .context("load channel routing for Cron delivery")?;
     let source = format!("cron:{job_id}");
     match routing.resolve_route(&source, false) {
-        Some(route) if route.account_id.is_some() => Ok((route.channel, route.account_id)),
-        None => Ok((configured_channel.trim().to_ascii_lowercase(), None)),
-        Some(_) => Ok((configured_channel.trim().to_ascii_lowercase(), None)),
+        Some(route) if route.account_id.is_some() => {
+            anyhow::ensure!(
+                route.channel == "telegram",
+                "named Cron delivery route is not Telegram"
+            );
+            let account_id = route.account_id.expect("route guard retained account id");
+            let runtime =
+                crate::config::load_runtime_config_pair_from_path(&home.join("freedom.yaml"))
+                    .context("load coherent runtime pair for account-bound Cron delivery")?;
+            let binding = runtime
+                .authenticated_telegram_accounts()?
+                .into_iter()
+                .find_map(|account| {
+                    let binding = account.account_binding()?;
+                    (binding.channel_ref().account_id == account_id).then_some(binding)
+                })
+                .context(
+                    "named Cron delivery account is not authenticated in the coherent runtime pair",
+                )?;
+            Ok(("telegram".to_string(), Some(account_id), Some(binding)))
+        }
+        None => Ok((configured_channel.trim().to_ascii_lowercase(), None, None)),
+        Some(_) => Ok((configured_channel.trim().to_ascii_lowercase(), None, None)),
     }
 }
 
@@ -1419,6 +1472,29 @@ mod workstream_c_tests {
             Some("test-model".to_string()),
             "cron.runner.test",
         )
+    }
+
+    struct RouteQueueChannel(AtomicUsize);
+
+    #[async_trait]
+    impl crate::channels::Channel for RouteQueueChannel {
+        fn name(&self) -> &'static str {
+            "route-queue-test"
+        }
+
+        async fn run(&self, _handler: crate::channels::PipelineHandler) -> Result<()> {
+            Ok(())
+        }
+
+        async fn send_proactive(
+            &self,
+            _chat_id: &str,
+            _text: &str,
+        ) -> std::result::Result<crate::channels::MessageId, crate::channels::ChannelError>
+        {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(crate::channels::MessageId("route-queue".to_string()))
+        }
     }
 
     fn briefing_job() -> Job {
@@ -1933,17 +2009,46 @@ channel_accounts:
             .save_to(&dir.path().join(CHANNEL_ROUTING_FILE))
             .unwrap();
 
-        let (channel, selected_account) =
+        let mut config = crate::config::FreedomConfig::default();
+        config.channel_accounts.telegram.insert(
+            account.clone(),
+            crate::config::TelegramAccountConfig {
+                allowed_user_id: 42,
+                incarnation: Some(
+                    serde_yaml::from_str("\"018f3d1e-2c50-7000-8000-000000000031\"").unwrap(),
+                ),
+                ..Default::default()
+            },
+        );
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            serde_yaml::to_string(&config).unwrap(),
+        )
+        .unwrap();
+        let mut credentials = crate::config::credentials::Credentials::default();
+        credentials.channel_accounts.telegram.insert(
+            account.clone(),
+            crate::config::credentials::TelegramAccountCredentials {
+                token: Some(crate::secret::SecretString::new("test-token".to_string())),
+            },
+        );
+        credentials
+            .write(&dir.path().join("credentials.yaml"))
+            .unwrap();
+
+        let (channel, selected_account, binding) =
             resolve_cron_delivery_route(dir.path(), "daily", "cli").unwrap();
         assert_eq!(channel, "telegram");
         assert_eq!(selected_account, Some(account.clone()));
+        assert_eq!(binding.as_ref().unwrap().channel_ref().account_id, account);
 
         let queue_path = dir.path().join("proactive_queue.json");
-        enqueue_cron_delivery(
+        enqueue_cron_delivery_with_binding(
             &queue_path,
             "daily",
             &channel,
             selected_account,
+            binding,
             "finished body",
             "cron-delivery:daily:1",
             1_700_000_000,
@@ -1951,6 +2056,104 @@ channel_accounts:
         .unwrap();
         let reloaded = ProactiveQueue::load_from(&queue_path).unwrap();
         assert_eq!(reloaded.peek()[0].account_id, Some(account));
+        assert!(reloaded.peek()[0].account_binding.is_some());
+    }
+
+    #[tokio::test]
+    async fn production_named_route_seals_binding_before_queue_claim_and_mock_factory() {
+        let home = tempdir().unwrap();
+        let account = crate::channels::registry::ChannelAccountId::new("ops_a").unwrap();
+        let mut routing = ChannelRouting::default();
+        routing.default_channel = Some("telegram".to_string());
+        routing.telegram_default_account_id = Some(account.clone());
+        routing
+            .save_to(&home.path().join(CHANNEL_ROUTING_FILE))
+            .unwrap();
+        let mut config = crate::config::FreedomConfig::default();
+        config.autonomy = crate::permissions::AutonomyLevel::Full;
+        config.channel_accounts.telegram.insert(
+            account.clone(),
+            crate::config::TelegramAccountConfig {
+                allowed_user_id: 42,
+                incarnation: Some(
+                    serde_yaml::from_str("\"018f3d1e-2c50-7000-8000-000000000051\"").unwrap(),
+                ),
+                ..Default::default()
+            },
+        );
+        let source_path = home.path().join("freedom.yaml");
+        std::fs::write(&source_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        let mut credentials = crate::config::credentials::Credentials::default();
+        credentials.channel_accounts.telegram.insert(
+            account.clone(),
+            crate::config::credentials::TelegramAccountCredentials {
+                token: Some(crate::secret::SecretString::new("route-token".to_string())),
+            },
+        );
+        credentials
+            .write(&home.path().join("credentials.yaml"))
+            .unwrap();
+
+        let (channel, account_id, binding) =
+            resolve_cron_delivery_route(home.path(), "route-queue", "telegram").unwrap();
+        let queue_path = home.path().join("proactive_queue.json");
+        assert!(
+            enqueue_cron_delivery_with_binding(
+                &queue_path,
+                "route-queue",
+                &channel,
+                account_id,
+                binding.clone(),
+                "completed output",
+                "route-queue:exact",
+                200,
+            )
+            .unwrap()
+        );
+        let queue = ProactiveQueue::load_from(&queue_path).unwrap();
+        let item = queue.peek()[0].clone();
+        let generation = queue.entry_generation(&item.dedup_key).unwrap().to_string();
+        assert_eq!(
+            item.account_binding, binding,
+            "route must seal its current authenticated binding before queue generation"
+        );
+
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let segment = wal.join("000001.wal");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
+                .unwrap();
+        ready.wait().await.unwrap();
+        let accepted = crate::config::reload::ReloadController::new(config, source_path.clone())
+            .accepted_snapshot();
+        let context = crate::daemon::proactive_egress::ProactiveEgressContext::new(
+            home.path(),
+            &segment,
+            &writer,
+            accepted,
+            200,
+            std::time::Duration::from_secs(60),
+        );
+        let channel = Arc::new(RouteQueueChannel(AtomicUsize::new(0)));
+        let observed = Arc::clone(&channel);
+        assert_eq!(
+            crate::daemon::proactive_egress::execute_claimed_once_account_bound(
+                &context,
+                item,
+                &generation,
+                "telegram",
+                binding.unwrap(),
+                &source_path,
+                move |_token, _user| observed,
+            )
+            .await
+            .unwrap(),
+            Some(crate::daemon::proactive_dispatcher::ProactiveStatus::Delivered)
+        );
+        assert_eq!(channel.0.load(Ordering::SeqCst), 1);
+        drop(writer);
+        join.await.unwrap().unwrap();
     }
 
     #[tokio::test]

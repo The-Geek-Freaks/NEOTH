@@ -479,14 +479,13 @@ impl Default for TaskEngineConfig {
 /// Operator-facing self-update policy.
 ///
 /// Field semantics:
-///   - `enabled` — arms the recurring self-update lane. Default `false` creates
-///     no lane. Production recurring passes currently terminalize as
-///     `SkippedByGate` before GitHub, process, download or staging effects;
-///     manual update commands remain available.
-///   - `auto_apply` — records the operator's future verified-stage intent.
-///     It does not bypass the current recurring deny gate. Once leaf authority
-///     is complete, an allowed Elevated/Full daemon may authenticate and stage
-///     a release, but never swap the running binary; the operator completes
+///   - `enabled` — arms recurring self-update checks when the global updater
+///     is enabled and the check interval is nonzero. Default `false` creates
+///     no self-update lane; manual update commands remain available.
+///   - `auto_apply` — additionally permits an Elevated/Full daemon to
+///     authenticate and stage a release through the bounded owned helper.
+///     Signed recovery admission and acknowledged leaf receipts bind each
+///     pass. Staging never swaps the running binary; the operator completes
 ///     that step with `neoth update --self --apply`.
 ///   - `channel` — release channel. `stable` selects final releases only;
 ///     `rc` also accepts release candidates; `nightly` accepts final, RC, and

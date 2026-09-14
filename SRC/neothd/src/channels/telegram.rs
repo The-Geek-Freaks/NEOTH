@@ -62,7 +62,7 @@ enum TelegramAdmission {
     DmPairing {
         capability: crate::cli::serve_tasks::TelegramDmPairingCapability,
         store: Arc<crate::channels::dm_pairing::DmPairingStore>,
-        reply: crate::cli::serve_tasks::PairingReplySender,
+        reply: Box<crate::cli::serve_tasks::PairingReplySender>,
     },
 }
 
@@ -86,7 +86,7 @@ impl TelegramChannel {
             admission: TelegramAdmission::DmPairing {
                 capability,
                 store,
-                reply,
+                reply: Box::new(reply),
             },
             gate_writer: None,
         }
@@ -1207,6 +1207,7 @@ mod tests {
                 allowed_user_id: pinned_operator,
                 dm_pairing: enabled
                     .then_some(crate::config::TelegramDmPairingConfig { enabled: true }),
+                ..Default::default()
             },
         );
         runtime
@@ -1268,7 +1269,7 @@ mod tests {
         TelegramAdmission::DmPairing {
             capability,
             store,
-            reply,
+            reply: Box::new(reply),
         }
     }
 
@@ -1825,6 +1826,7 @@ mod tests {
             crate::config::TelegramAccountConfig {
                 allowed_user_id: 44,
                 dm_pairing: Some(crate::config::TelegramDmPairingConfig { enabled: true }),
+                ..Default::default()
             },
         );
         runtime
@@ -2046,7 +2048,7 @@ mod tests {
         let admission = TelegramAdmission::DmPairing {
             capability,
             store: Arc::clone(&store),
-            reply,
+            reply: Box::new(reply),
         };
         let pipeline_calls = Arc::new(AtomicUsize::new(0));
         let calls = Arc::clone(&pipeline_calls);

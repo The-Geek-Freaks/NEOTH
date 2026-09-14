@@ -53,6 +53,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::channels::registry::ChannelAccountId;
+use crate::config::ChannelAccountBinding;
 
 pub mod action_staging;
 
@@ -79,6 +80,11 @@ pub struct ProactiveItem {
     /// historic account-unbound wire shape and must never be inferred later.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_id: Option<ChannelAccountId>,
+    /// Exact authenticated generation of a named Telegram account.  It is
+    /// written only by the validated routing path and prevents a retired
+    /// account name from inheriting queued egress authority after re-add.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) account_binding: Option<ChannelAccountBinding>,
     /// Producer tag for audit. e.g. `"g_01_mini"` / `"pl_03"` /
     /// `"ob_03"` / `"self_correction"`.
     pub source: String,
@@ -144,6 +150,8 @@ pub(crate) enum ProactiveItemInvalidity {
     EncodedItemTooLarge,
     ItemEncodingFailed,
     DuplicateDedupKey,
+    AccountBindingMismatch,
+    AccountBindingChannelMismatch,
 }
 
 impl std::fmt::Display for ProactiveItemInvalidity {
@@ -157,6 +165,10 @@ impl std::fmt::Display for ProactiveItemInvalidity {
             Self::EncodedItemTooLarge => "serialized proactive item exceeds 1179648 bytes",
             Self::ItemEncodingFailed => "proactive item could not be serialized",
             Self::DuplicateDedupKey => "proactive dedup key duplicates an earlier queue item",
+            Self::AccountBindingMismatch => "proactive account binding conflicts with account id",
+            Self::AccountBindingChannelMismatch => {
+                "proactive account binding conflicts with channel"
+            }
         })
     }
 }
@@ -168,6 +180,23 @@ impl ProactiveItem {
     /// queue migration and durable egress. Limits are byte limits because the
     /// serialized/channel payload is byte-addressed, not Unicode-scalar based.
     pub(crate) fn validate(&self) -> std::result::Result<(), ProactiveItemInvalidity> {
+        match (&self.account_id, &self.account_binding) {
+            (Some(account_id), Some(binding))
+                if &binding.channel_ref().account_id != account_id =>
+            {
+                return Err(ProactiveItemInvalidity::AccountBindingMismatch);
+            }
+            (Some(_), Some(binding))
+                if binding.channel_ref().channel_id
+                    != crate::channels::registry::ChannelId::Telegram
+                    || self.channel != "telegram" =>
+            {
+                return Err(ProactiveItemInvalidity::AccountBindingChannelMismatch);
+            }
+            (Some(_), Some(_)) => {}
+            (None, Some(_)) => return Err(ProactiveItemInvalidity::AccountBindingMismatch),
+            (Some(_), None) | (None, None) => {}
+        }
         if self.dedup_key.is_empty() {
             return Err(ProactiveItemInvalidity::EmptyDedupKey);
         }
@@ -847,6 +876,7 @@ mod tests {
             dedup_key: key.into(),
             channel: "telegram".into(),
             account_id: None,
+            account_binding: None,
             source: source.into(),
             body: format!("body of {key}"),
             scheduled_for_unix: 0,
@@ -1099,6 +1129,44 @@ mod tests {
                 .entry_generation("duplicate"),
             Some(repaired_generation.as_str()),
             "the repaired generation must remain stable after quarantine persistence"
+        );
+    }
+
+    #[test]
+    fn malformed_incarnation_binding_channel_is_quarantined_before_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("proactive_queue.json");
+        let malformed = serde_json::json!({
+            "priority": 50,
+            "dedup_key": "malformed-bound-channel",
+            "channel": "slack",
+            "account_id": "account-a",
+            "account_binding": {
+                "channel_ref": {"channel_id": "telegram", "account_id": "account-a"},
+                "incarnation": "018f3d1e-2c50-7000-8000-000000000001"
+            },
+            "source": "test",
+            "body": "private body",
+            "scheduled_for_unix": 0,
+            "is_failure": false,
+            "expires_unix": 0
+        });
+        let value = serde_json::json!({
+            "items": [malformed], "drained_at": [], "config": {"max_per_day": 3},
+            "settled_egress_intents": [], "item_generations": {}
+        });
+        crate::util::atomic_write::atomic_write_private(
+            &path,
+            &serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+        ProactiveQueue::modify(&path, |_| (false, ())).unwrap();
+        let queue = ProactiveQueue::load_from(&path).unwrap();
+        assert!(queue.peek().is_empty());
+        assert_eq!(queue.quarantined_items.len(), 1);
+        assert_eq!(
+            queue.quarantined_items[0].reason,
+            ProactiveItemInvalidity::AccountBindingChannelMismatch
         );
     }
 

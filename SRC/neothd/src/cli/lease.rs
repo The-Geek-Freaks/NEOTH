@@ -11,13 +11,15 @@
 //! skip the one-shot append (the daemon will re-derive state from
 //! leases.json) — the operation itself always succeeds.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::channels::registry::{ChannelAccountId, ChannelRef, resolve_channel_id};
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::permissions::lease::{CapabilityLease, LeaseScope, LeaseStore, channel_lease_subject};
+use crate::permissions::lease::{
+    CapabilityLease, LeaseScope, LeaseStore, channel_bound_lease_subject, channel_lease_subject,
+};
 use crate::wal::events::{
     EVENT_TYPE_LEASE_EXPIRED, EVENT_TYPE_LEASE_GRANTED, EVENT_TYPE_LEASE_REVOKED,
 };
@@ -52,7 +54,9 @@ pub enum LeaseAction {
     },
     /// List active leases (expired ones are pruned + audited first).
     List,
-    /// Print the canonical account-scoped subject for a channel sender. This is pure: it does not read leases, credentials, or config.
+    /// Print the canonical account-scoped subject for a channel sender. Named
+    /// Telegram accounts are resolved from the current authenticated runtime
+    /// pair so this command cannot mint authority for a later re-add.
     /// `neoth lease channel-subject <channel> <account> <sender>`.
     ChannelSubject {
         /// Channel canonical ID or accepted alias, canonicalized through the channel registry.
@@ -72,7 +76,17 @@ pub async fn run_lease(args: LeaseArgs) -> Result<()> {
             sender,
         } => {
             let channel_ref = parse_channel_ref(channel, account)?;
-            let subject = channel_lease_subject(&channel_ref, sender);
+            let home = FreedomConfig::default_neoth_home();
+            let subject = if channel_ref.channel_id == crate::channels::ChannelKind::Telegram {
+                let runtime =
+                    crate::config::load_runtime_config_pair_from_path(&home.join("freedom.yaml"))
+                        .context(
+                        "load current authenticated Telegram account bindings for lease subject",
+                    )?;
+                channel_subject_for_runtime(&runtime, &channel_ref, sender)?
+            } else {
+                channel_lease_subject(&channel_ref, sender)
+            };
             match args.output {
                 OutputFormat::Json | OutputFormat::Jsonl => println!(
                     "{}",
@@ -195,6 +209,33 @@ fn parse_channel_ref(channel: &str, account: &str) -> Result<ChannelRef> {
     })?;
     let account_id = ChannelAccountId::new(account.to_owned())?;
     Ok(ChannelRef::new(channel_id, account_id))
+}
+
+/// Resolve a Telegram CLI subject from the coherent public/credential runtime
+/// pair. The named account must exist *now* and yield the sealed authenticated
+/// binding; a raw `ChannelRef` is intentionally insufficient authority.
+fn channel_subject_for_runtime(
+    runtime: &crate::config::RuntimeConfigPair,
+    channel_ref: &ChannelRef,
+    sender: &str,
+) -> Result<String> {
+    if channel_ref.channel_id != crate::channels::ChannelKind::Telegram {
+        return Ok(channel_lease_subject(channel_ref, sender));
+    }
+    let account = runtime
+        .authenticated_telegram_accounts()?
+        .into_iter()
+        .find(|account| account.channel_ref() == channel_ref)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Telegram account `{}` is not currently configured",
+                channel_ref.account_id.as_str()
+            )
+        })?;
+    match account.account_binding() {
+        Some(binding) => Ok(channel_bound_lease_subject(&binding, sender)),
+        None => Ok(channel_lease_subject(channel_ref, sender)),
+    }
 }
 
 fn short_id(id: &str) -> String {
@@ -330,6 +371,65 @@ mod tests {
         );
         assert_eq!(projected["channel_ref"]["channel_id"], "telegram");
         assert_eq!(projected["channel_ref"]["account_id"], "default");
+    }
+
+    #[test]
+    fn named_telegram_subject_requires_current_binding_and_readd_revokes_old_subject() {
+        fn runtime(incarnation: Option<&str>) -> crate::config::RuntimeConfigPair {
+            let mut runtime = crate::config::RuntimeConfigPair {
+                config: FreedomConfig::default(),
+                raw_credentials: crate::config::credentials::Credentials::default(),
+                credentials: crate::config::credentials::Credentials::default(),
+            };
+            let account = ChannelAccountId::new("ops").unwrap();
+            runtime.config.channel_accounts.telegram.insert(
+                account.clone(),
+                crate::config::TelegramAccountConfig {
+                    allowed_user_id: 42,
+                    incarnation: incarnation
+                        .map(crate::config::AccountIncarnation::parse)
+                        .transpose()
+                        .unwrap(),
+                    ..Default::default()
+                },
+            );
+            let credentials = crate::config::credentials::TelegramAccountCredentials {
+                token: Some(crate::secret::SecretString::from("same-token")),
+            };
+            runtime
+                .raw_credentials
+                .channel_accounts
+                .telegram
+                .insert(account.clone(), credentials.clone());
+            runtime
+                .credentials
+                .channel_accounts
+                .telegram
+                .insert(account, credentials);
+            runtime
+        }
+
+        let reference = parse_channel_ref("telegram", "ops").unwrap();
+        let before = channel_subject_for_runtime(
+            &runtime(Some("11111111-1111-4111-8111-111111111111")),
+            &reference,
+            "42",
+        )
+        .unwrap();
+        let after = channel_subject_for_runtime(
+            &runtime(Some("22222222-2222-4222-8222-222222222222")),
+            &reference,
+            "42",
+        )
+        .unwrap();
+        let historical_none =
+            channel_subject_for_runtime(&runtime(None), &reference, "42").unwrap();
+        assert_ne!(
+            before, after,
+            "same-name re-add must not inherit its old lease subject"
+        );
+        assert!(before.starts_with("channel-binding/v1/telegram/ops/incarnation/"));
+        assert_eq!(historical_none, channel_lease_subject(&reference, "42"));
     }
 
     #[tokio::test]

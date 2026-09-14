@@ -2275,8 +2275,8 @@ pub fn run_account_set_dm_pairing(
             let raw = raw.context("Telegram account policy requires freedom.yaml")?;
             let mut doc: serde_yaml::Value = serde_yaml::from_str(raw)
                 .context("parse freedom.yaml while retaining unknown fields")?;
-            // Validate the exact account in the coherent candidate before change;
-            // legacy and partial maps cannot acquire a pairing policy.
+            // Validate from an immutable snapshot before borrowing the raw
+            // document mutably for its lossless nested edit.
             let mut typed: FreedomConfig = serde_yaml::from_value(doc.clone())
                 .context("validate current public Telegram policy")?;
             let root = doc
@@ -2294,6 +2294,8 @@ pub fn run_account_set_dm_pairing(
                 .get_mut(serde_yaml::Value::String(account.as_str().to_owned()))
                 .and_then(serde_yaml::Value::as_mapping_mut)
                 .context("selected Telegram account is not configured")?;
+            // Validate the exact account in the coherent candidate before change;
+            // legacy and partial maps cannot acquire a pairing policy.
             let entry = typed
                 .channel_accounts
                 .telegram
@@ -2303,6 +2305,13 @@ pub fn run_account_set_dm_pairing(
                 entry.allowed_user_id != 0,
                 "selected Telegram account has no pinned operator"
             );
+            // Enabling pairing is a new durable authority boundary.  Historic
+            // pairing configurations with `None` stay readable, but a fresh
+            // enable materializes a generation before the prepared pair is
+            // committed and the adapter is replaced.
+            if enabled && entry.incarnation.is_none() {
+                entry.incarnation = Some(crate::config::AccountIncarnation::new_random());
+            }
             entry.dm_pairing =
                 enabled.then_some(crate::config::TelegramDmPairingConfig { enabled: true });
             // Mutate only this known nested node; all unrelated YAML values remain.
@@ -2311,6 +2320,12 @@ pub fn run_account_set_dm_pairing(
                     serde_yaml::Value::String("dm_pairing".into()),
                     serde_yaml::to_value(crate::config::TelegramDmPairingConfig { enabled: true })?,
                 );
+                if let Some(incarnation) = &entry.incarnation {
+                    policy.insert(
+                        serde_yaml::Value::String("incarnation".into()),
+                        serde_yaml::to_value(incarnation)?,
+                    );
+                }
             } else {
                 policy.remove(serde_yaml::Value::String("dm_pairing".into()));
             }
@@ -2353,6 +2368,54 @@ pub fn run_account_set_dm_pairing(
             "telegram account `{}` DM pairing {} and reload requested",
             account.as_str(),
             if enabled { "enabled" } else { "disabled" }
+        ),
+    }
+    Ok(())
+}
+
+/// Retire exactly one named mapped account.  The account id is an explicit
+/// clap argument, so this function has no default/sole-account fallback.
+pub fn run_account_remove(
+    channel: &str,
+    account: ChannelAccountId,
+    output: &OutputFormat,
+) -> Result<()> {
+    run_telegram_account_remove_at(
+        &FreedomConfig::default_neoth_home(),
+        channel,
+        account,
+        output,
+    )
+}
+
+fn run_telegram_account_remove_at(
+    home: &std::path::Path,
+    channel: &str,
+    account: ChannelAccountId,
+    output: &OutputFormat,
+) -> Result<()> {
+    anyhow::ensure!(
+        channel == "telegram",
+        "named account retirement supports only canonical `telegram`"
+    );
+    let prepared = Credentials::prepare_telegram_account_removal_at(
+        &home.join("freedom.yaml"),
+        &home.join("credentials.yaml"),
+        account,
+    )?;
+    let retired = prepared.account_id().clone();
+    Credentials::commit_prepared_telegram_account_removal_at(prepared)?;
+    crate::cli::reload::request_reload_at(home).context(
+        "Telegram account retirement committed, but the live-reload request failed; run `neoth reload`",
+    )?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({"channel":"telegram","account":retired.as_str(),"removed":true})
+        ),
+        OutputFormat::Table => println!(
+            "telegram account `{}` retired and reload requested",
+            retired.as_str()
         ),
     }
     Ok(())

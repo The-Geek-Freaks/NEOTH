@@ -963,7 +963,14 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
         // happens to be selected now. Account-unbound historical items retain
         // the existing dynamic channel-routing behaviour.
         let selected_channel = routing_channel_for_item(&routing, &item);
-        let target_channel = match canonical_target_channel(selected_channel, &item.channel) {
+        let target_channel = match if item.account_id.is_some() {
+            // A sealed mapped Telegram binding fixes the physical channel as
+            // well as the account generation. Mutable routing must not turn
+            // queued A authority into a different adapter class.
+            Ok("telegram".to_string())
+        } else {
+            canonical_target_channel(selected_channel, &item.channel)
+        } {
             Ok(channel) => channel,
             Err(channel_bytes) => {
                 warn!(
@@ -1015,8 +1022,29 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
                         channel_ref,
                     )
                     .await?
-                } else {
+                } else if let Some(binding) = item.account_binding.clone() {
+                    // The persisted sealed binding, never a reconstructed
+                    // ChannelRef, is the durable authority input for v5.
                     crate::daemon::proactive_egress::execute_claimed_once_account_bound(
+                        &egress,
+                        item,
+                        &queue_generation,
+                        &target_channel,
+                        binding,
+                        config_source_path,
+                        |token, allowed_user_id| {
+                            Arc::new(crate::channels::telegram::TelegramChannel::new(
+                                token,
+                                Some(allowed_user_id),
+                            ))
+                        },
+                    )
+                    .await?
+                } else {
+                    // Exact v4 compatibility: the executor admits only a
+                    // current mapped account whose incarnation is historic
+                    // None. A re-added Some(UUID) settles without a factory.
+                    crate::daemon::proactive_egress::execute_claimed_once_account_bound_v4(
                         &egress,
                         item,
                         &queue_generation,
@@ -1225,6 +1253,7 @@ mod tests {
             dedup_key: key.to_string(),
             channel: "cli".to_string(),
             account_id: None,
+            account_binding: None,
             source: "test".to_string(),
             body: format!("test body {key}"),
             scheduled_for_unix: ts,

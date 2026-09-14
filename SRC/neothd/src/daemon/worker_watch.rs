@@ -13,6 +13,7 @@
 //! caller aborts the returned watcher handle FIRST during shutdown, so the
 //! deliberate abort of the watched workers never registers as a "death".
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::task::{AbortHandle, JoinHandle};
@@ -23,12 +24,27 @@ use crate::wal::writer::WalWriterHandle;
 /// only for `is_finished()` — the daemon retains the real `JoinHandle`).
 pub struct WatchedWorker {
     pub name: &'static str,
-    pub handle: AbortHandle,
+    is_finished: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
 impl WatchedWorker {
     pub fn new(name: &'static str, handle: AbortHandle) -> Self {
-        Self { name, handle }
+        Self {
+            name,
+            is_finished: Arc::new(move || handle.is_finished()),
+        }
+    }
+
+    /// Register an observation-only liveness source. The watcher never gains
+    /// cancellation authority over a worker through this constructor.
+    pub fn liveness(
+        name: &'static str,
+        is_finished: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            name,
+            is_finished: Arc::new(is_finished),
+        }
     }
 }
 
@@ -63,7 +79,7 @@ pub fn spawn_worker_watch(
 /// + once-per-worker dedup is unit-testable without the timing loop.
 async fn scan_workers(workers: &[WatchedWorker], alerted: &mut [bool], writer: &WalWriterHandle) {
     for (i, w) in workers.iter().enumerate() {
-        if !alerted[i] && w.handle.is_finished() {
+        if !alerted[i] && (w.is_finished)() {
             alerted[i] = true;
             emit_worker_died(writer, w.name).await;
         }
@@ -168,6 +184,25 @@ mod tests {
         scan_workers(&workers, &mut alerted, &writer).await;
         assert!(!alerted[0], "a live worker must NOT alert");
         handle.abort();
+        drop(writer);
+        let _ = join.await;
+    }
+
+    #[tokio::test]
+    async fn observation_only_liveness_source_is_detected_without_abort_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let (writer, join) = crate::wal::writer::spawn(dir.path().join("000001.wal")).unwrap();
+        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = Arc::clone(&finished);
+        let workers = vec![WatchedWorker::liveness("updater", move || {
+            observed.load(std::sync::atomic::Ordering::Acquire)
+        })];
+        let mut alerted = vec![false];
+        scan_workers(&workers, &mut alerted, &writer).await;
+        assert!(!alerted[0]);
+        finished.store(true, std::sync::atomic::Ordering::Release);
+        scan_workers(&workers, &mut alerted, &writer).await;
+        assert!(alerted[0]);
         drop(writer);
         let _ = join.await;
     }

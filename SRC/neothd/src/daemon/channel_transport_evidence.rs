@@ -72,6 +72,19 @@ struct BoundLiveIntentFrame {
     _message_bytes: usize,
     ts_unix: u64,
     channel_ref: Option<ChannelRef>,
+    #[serde(default)]
+    account_binding: Option<crate::config::ChannelAccountBinding>,
+    #[serde(default)]
+    live_provenance: Option<LiveProvenanceMarker>,
+}
+
+/// Closed, intent-only authority family marker.  The marker is not a source of
+/// authority: the authenticated WAL plus the exact `ChannelRef` grammar are
+/// still required before a record can become Doctor evidence.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+enum LiveProvenanceMarker {
+    #[serde(rename = "legacy_singleton_v2")]
+    LegacySingletonV2,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -117,7 +130,10 @@ impl BoundLiveCollector {
         let Ok(value) = serde_json::from_slice::<serde_json::Value>(payload) else {
             return Ok(());
         };
-        if value.get("channel_ref").is_none() {
+        // Historical unbound rows had neither account reference nor marker.
+        // They remain excluded. A row that claims an authority family but
+        // omits its typed reference is malformed evidence, never a fallback.
+        if value.get("channel_ref").is_none() && value.get("live_provenance").is_none() {
             return Ok(());
         }
         let intent: BoundLiveIntentFrame =
@@ -126,7 +142,7 @@ impl BoundLiveCollector {
             .channel_ref
             .as_ref()
             .context("bound live intent omits channel_ref")?;
-        validate_live_identity(&intent.intent_id, channel_ref, &intent.channel)?;
+        validate_live_identity(&intent, channel_ref)?;
         validate_live_intent_payload(&intent)?;
         let intent_id = intent.intent_id.clone();
         anyhow::ensure!(
@@ -309,15 +325,47 @@ pub(crate) fn read_account_transport_evidence(
     aggregate_recent_observations(observations, now_unix)
 }
 
-fn validate_live_identity(intent_id: &str, channel_ref: &ChannelRef, channel: &str) -> Result<()> {
+fn validate_live_identity(intent: &BoundLiveIntentFrame, channel_ref: &ChannelRef) -> Result<()> {
     anyhow::ensure!(
-        is_canonical_live_intent_id(intent_id),
+        is_canonical_live_intent_id(&intent.intent_id),
         "bound live intent id is not canonical lower-case 32-hex"
     );
-    anyhow::ensure!(
-        channel == "telegram" && channel_ref.channel_id == ChannelId::Telegram,
-        "bound live evidence requires an exact Telegram channel/ref pair"
-    );
+    match intent.live_provenance {
+        // Marker absence is byte-compatible with the pre-W34 mapped Telegram
+        // grammar. Do not let its compatibility branch admit Slack-shaped
+        // historical rows.
+        None => {
+            anyhow::ensure!(
+                intent.channel == "telegram" && channel_ref.channel_id == ChannelId::Telegram,
+                "unmarked live evidence requires an exact mapped Telegram channel/ref pair"
+            );
+            if let Some(binding) = intent.account_binding.as_ref() {
+                // W32 writers bind every mapped account, including the
+                // historical mapped generation whose incarnation is `None`.
+                // The sealed binding must still name this exact channel ref.
+                anyhow::ensure!(
+                    binding.channel_ref() == channel_ref,
+                    "bound live intent account binding conflicts with channel reference"
+                );
+            }
+        }
+        Some(LiveProvenanceMarker::LegacySingletonV2) => {
+            anyhow::ensure!(
+                intent.account_binding.is_none(),
+                "legacy singleton live evidence must not carry a mapped account binding"
+            );
+            let expected_channel = match channel_ref.channel_id {
+                ChannelId::Telegram => "telegram",
+                ChannelId::Slack => "slack",
+                _ => anyhow::bail!("legacy singleton live evidence has unsupported channel kind"),
+            };
+            anyhow::ensure!(
+                intent.channel == expected_channel
+                    && *channel_ref == ChannelRef::default_account(channel_ref.channel_id),
+                "legacy singleton live evidence requires an exact default channel/ref pair"
+            );
+        }
+    }
     Ok(())
 }
 
@@ -504,6 +552,10 @@ mod tests {
         )
     }
 
+    fn default_ref(channel_id: ChannelId) -> ChannelRef {
+        ChannelRef::default_account(channel_id)
+    }
+
     fn intent_json(intent_id: &str, channel_ref: &ChannelRef, ts_unix: u64) -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
             "intent_id": intent_id,
@@ -515,6 +567,94 @@ mod tests {
             "channel_ref": channel_ref,
         }))
         .expect("encode bound live intent")
+    }
+
+    fn legacy_singleton_intent_json(
+        intent_id: &str,
+        channel: &str,
+        channel_ref: &ChannelRef,
+        ts_unix: u64,
+    ) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "intent_id": intent_id,
+            "channel": channel,
+            "to_hash": "0123456789abcdef",
+            "message_hash": "fedcba9876543210",
+            "message_bytes": 4,
+            "ts_unix": ts_unix,
+            "channel_ref": channel_ref,
+            "live_provenance": "legacy_singleton_v2",
+        }))
+        .expect("encode marked legacy singleton live intent")
+    }
+
+    fn w32_mapped_intent_json_with_incarnation(
+        home: &Path,
+        intent_id: &str,
+        account_id: &str,
+        ts_unix: u64,
+        incarnation: Option<&str>,
+    ) -> Vec<u8> {
+        let account_id = ChannelAccountId::new(account_id).unwrap();
+        let mut config = crate::config::FreedomConfig::default();
+        config.channel_accounts.telegram.insert(
+            account_id.clone(),
+            crate::config::TelegramAccountConfig {
+                allowed_user_id: 42,
+                incarnation: incarnation
+                    .map(crate::config::AccountIncarnation::parse)
+                    .transpose()
+                    .expect("canonical mapped-account fixture incarnation"),
+                ..Default::default()
+            },
+        );
+        let config_path = home.join("freedom.yaml");
+        std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        let mut credentials = crate::config::credentials::Credentials::default();
+        credentials.channel_accounts.telegram.insert(
+            account_id.clone(),
+            crate::config::credentials::TelegramAccountCredentials {
+                token: Some(crate::secret::SecretString::new("test-token".to_string())),
+            },
+        );
+        credentials.write(&home.join("credentials.yaml")).unwrap();
+        let runtime = crate::config::load_runtime_config_pair_from_path(&config_path).unwrap();
+        let binding = runtime
+            .authenticated_telegram_accounts()
+            .unwrap()
+            .into_iter()
+            .find_map(|account| {
+                let binding = account.account_binding()?;
+                (binding.channel_ref().account_id == account_id).then_some(binding)
+            })
+            .expect("coherent authenticated runtime pair yields sealed mapped binding");
+        let channel_ref = binding.channel_ref().clone();
+        serde_json::to_vec(&serde_json::json!({
+            "intent_id": intent_id,
+            "channel": "telegram",
+            "to_hash": "0123456789abcdef",
+            "message_hash": "fedcba9876543210",
+            "message_bytes": 4,
+            "ts_unix": ts_unix,
+            "channel_ref": channel_ref,
+            "account_binding": binding,
+        }))
+        .expect("encode sealed W32 mapped live intent")
+    }
+
+    fn w32_mapped_intent_json(
+        home: &Path,
+        intent_id: &str,
+        account_id: &str,
+        ts_unix: u64,
+    ) -> Vec<u8> {
+        w32_mapped_intent_json_with_incarnation(
+            home,
+            intent_id,
+            account_id,
+            ts_unix,
+            Some("550e8400-e29b-41d4-a716-446655440000"),
+        )
     }
 
     fn result_json(intent_id: &str, outcome: &str, ts_unix: u64) -> Vec<u8> {
@@ -603,22 +743,163 @@ mod tests {
     }
 
     #[test]
-    fn unbound_legacy_live_json_is_not_evidence() {
+    fn old_unmarked_slack_with_a_reference_is_rejected() {
         let mut collector = BoundLiveCollector::default();
+        let old_slack_ref = default_ref(ChannelId::Slack);
         let unbound = serde_json::to_vec(&serde_json::json!({
             "intent_id": LIVE_A,
-            "channel": "telegram",
+            "channel": "slack",
             "to_hash": "0123456789abcdef",
             "message_hash": "fedcba9876543210",
             "message_bytes": 4,
             "ts_unix": 100,
+            "channel_ref": old_slack_ref,
         }))
         .unwrap();
-        collector.observe_intent(&unbound, 0).unwrap();
+        assert!(collector.observe_intent(&unbound, 0).is_err());
+    }
+
+    #[test]
+    fn mapped_telegram_legacy_intent_payload_stays_marker_free() {
+        let payload = intent_json(LIVE_A, &account_ref("historic-mapped"), 100);
+        let value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert!(value.get("live_provenance").is_none());
+        assert!(value.get("account_binding").is_none());
+        assert_eq!(value["channel"], "telegram");
+    }
+
+    #[test]
+    fn sealed_w32_mapped_binding_remains_marker_free_and_ref_bound() {
+        let home = tempfile::tempdir().unwrap();
+        let payload = w32_mapped_intent_json(home.path(), LIVE_A, "mapped-a", 100);
+        let value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert!(value.get("live_provenance").is_none());
+        let mut collector = BoundLiveCollector::default();
+        collector.observe_intent(&payload, 0).unwrap();
+
+        let mut mismatched: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        mismatched["channel_ref"] = serde_json::to_value(account_ref("different-account")).unwrap();
+        assert!(
+            BoundLiveCollector::default()
+                .observe_intent(&serde_json::to_vec(&mismatched).unwrap(), 0)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn sealed_w32_historical_none_incarnation_binding_remains_ref_bound() {
+        let home = tempfile::tempdir().unwrap();
+        let payload = w32_mapped_intent_json_with_incarnation(
+            home.path(),
+            LIVE_A,
+            "historic-none",
+            100,
+            None,
+        );
+        let mut collector = BoundLiveCollector::default();
+        collector.observe_intent(&payload, 0).unwrap();
         collector
             .observe_result(&result_json(LIVE_A, "delivered", 101), 1)
             .unwrap();
-        assert!(collector.finish().unwrap().is_empty());
+        let observed = collector.finish().unwrap();
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0].channel_ref, account_ref("historic-none"));
+        assert_eq!(
+            observed[0].state,
+            AccountTransportState::AcceptedByAdapter,
+            "a runtime-minted historical None-incarnation binding remains valid evidence"
+        );
+
+        let mut mismatched: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        mismatched["channel_ref"] = serde_json::to_value(account_ref("different-account")).unwrap();
+        assert!(
+            BoundLiveCollector::default()
+                .observe_intent(&serde_json::to_vec(&mismatched).unwrap(), 0)
+                .is_err(),
+            "historical None incarnation never relaxes exact channel-ref matching"
+        );
+    }
+
+    #[test]
+    fn live_provenance_grammar_admits_only_mapped_telegram_or_marked_default_singletons() {
+        let telegram_default = default_ref(ChannelId::Telegram);
+        let slack_default = default_ref(ChannelId::Slack);
+        let mut accepted = BoundLiveCollector::default();
+        accepted
+            .observe_intent(
+                &legacy_singleton_intent_json(LIVE_A, "telegram", &telegram_default, 100),
+                0,
+            )
+            .unwrap();
+        accepted
+            .observe_intent(
+                &legacy_singleton_intent_json(LIVE_B, "slack", &slack_default, 100),
+                1,
+            )
+            .unwrap();
+
+        let mut old_unmarked_slack =
+            serde_json::from_slice::<serde_json::Value>(&intent_json(LIVE_A, &slack_default, 100))
+                .unwrap();
+        old_unmarked_slack["channel"] = serde_json::Value::String("slack".to_string());
+        assert!(
+            BoundLiveCollector::default()
+                .observe_intent(&serde_json::to_vec(&old_unmarked_slack).unwrap(), 0)
+                .is_err()
+        );
+
+        let nondefault_slack =
+            ChannelRef::new(ChannelId::Slack, ChannelAccountId::new("work").unwrap());
+        assert!(
+            BoundLiveCollector::default()
+                .observe_intent(
+                    &legacy_singleton_intent_json(LIVE_A, "slack", &nondefault_slack, 100),
+                    0,
+                )
+                .is_err()
+        );
+        assert!(
+            BoundLiveCollector::default()
+                .observe_intent(
+                    &legacy_singleton_intent_json(LIVE_A, "slack", &telegram_default, 100),
+                    0,
+                )
+                .is_err()
+        );
+        let discord_default = default_ref(ChannelId::Discord);
+        assert!(
+            BoundLiveCollector::default()
+                .observe_intent(
+                    &legacy_singleton_intent_json(LIVE_A, "discord", &discord_default, 100),
+                    0,
+                )
+                .is_err()
+        );
+
+        let mut unknown_marker = serde_json::from_slice::<serde_json::Value>(
+            &legacy_singleton_intent_json(LIVE_A, "slack", &slack_default, 100),
+        )
+        .unwrap();
+        unknown_marker["live_provenance"] = serde_json::Value::String("future_marker".to_string());
+        assert!(
+            BoundLiveCollector::default()
+                .observe_intent(&serde_json::to_vec(&unknown_marker).unwrap(), 0)
+                .is_err()
+        );
+
+        let mut marked_without_ref = serde_json::from_slice::<serde_json::Value>(
+            &legacy_singleton_intent_json(LIVE_A, "slack", &slack_default, 100),
+        )
+        .unwrap();
+        marked_without_ref
+            .as_object_mut()
+            .unwrap()
+            .remove("channel_ref");
+        assert!(
+            BoundLiveCollector::default()
+                .observe_intent(&serde_json::to_vec(&marked_without_ref).unwrap(), 0)
+                .is_err()
+        );
     }
 
     #[test]
@@ -827,6 +1108,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn authenticated_home_wal_keeps_marked_slack_and_mapped_telegram_counters_isolated() {
+        let home = tempfile::tempdir().expect("test home");
+        let (_segment, writer, join) = ready_authenticated_writer(home.path()).await;
+        let mapped_telegram = account_ref("mapped-account-a");
+        let legacy_slack = default_ref(ChannelId::Slack);
+        append_authenticated_live_frame(
+            &writer,
+            ExtendedSubtype::ChannelEgressIntent,
+            intent_json(LIVE_A, &mapped_telegram, 100),
+        )
+        .await;
+        append_authenticated_live_frame(
+            &writer,
+            ExtendedSubtype::ChannelEgressResult,
+            result_json(LIVE_A, "delivered", 101),
+        )
+        .await;
+        append_authenticated_live_frame(
+            &writer,
+            ExtendedSubtype::ChannelEgressIntent,
+            legacy_singleton_intent_json(LIVE_B, "slack", &legacy_slack, 100),
+        )
+        .await;
+        append_authenticated_live_frame(
+            &writer,
+            ExtendedSubtype::ChannelEgressResult,
+            result_json(LIVE_B, "transport", 101),
+        )
+        .await;
+        drop(writer);
+        join.await.unwrap().unwrap();
+
+        let counters = read_account_transport_evidence(home.path(), 101).unwrap();
+        assert_eq!(counters.len(), 2);
+        assert_eq!(counters.get(&mapped_telegram).unwrap().accepted, 1);
+        assert_eq!(counters.get(&mapped_telegram).unwrap().failed, 0);
+        assert_eq!(counters.get(&legacy_slack).unwrap().accepted, 0);
+        assert_eq!(counters.get(&legacy_slack).unwrap().failed, 1);
+    }
+
+    #[tokio::test]
     async fn complete_empty_and_unbound_authenticated_home_wals_have_no_account_evidence() {
         let empty_home = tempfile::tempdir().expect("empty test home");
         let (_segment, writer, join) = ready_authenticated_writer(empty_home.path()).await;
@@ -865,21 +1187,49 @@ mod tests {
             .expect("close unbound authenticated home WAL writer");
         assert!(
             read_account_transport_evidence(unbound_home.path(), 101)
-                .expect("read complete authenticated WAL with unbound rows")
+                .expect("read complete authenticated WAL with old no-ref rows")
                 .is_empty(),
-            "legacy rows without a typed account ref must not create account evidence"
+            "old rows without a typed account ref must remain excluded from account evidence"
+        );
+
+        let old_slack_home = tempfile::tempdir().expect("old Slack test home");
+        let (_segment, writer, join) = ready_authenticated_writer(old_slack_home.path()).await;
+        let old_slack = serde_json::to_vec(&serde_json::json!({
+            "intent_id": LIVE_A,
+            "channel": "slack",
+            "to_hash": "0123456789abcdef",
+            "message_hash": "fedcba9876543210",
+            "message_bytes": 4,
+            "ts_unix": 100,
+            "channel_ref": default_ref(ChannelId::Slack),
+        }))
+        .unwrap();
+        append_authenticated_live_frame(&writer, ExtendedSubtype::ChannelEgressIntent, old_slack)
+            .await;
+        append_authenticated_live_frame(
+            &writer,
+            ExtendedSubtype::ChannelEgressResult,
+            result_json(LIVE_A, "delivered", 101),
+        )
+        .await;
+        drop(writer);
+        join.await.unwrap().unwrap();
+        assert!(
+            read_account_transport_evidence(old_slack_home.path(), 101).is_err(),
+            "old unmarked Slack-shaped evidence must not gain authority after W34"
         );
     }
 
     #[tokio::test]
-    async fn authenticated_home_wal_reader_rejects_incomplete_later_tail_without_prefix_counters() {
+    async fn authenticated_home_wal_reader_rejects_incomplete_later_tail_without_legacy_prefix_counters()
+     {
         let home = tempfile::tempdir().expect("test home");
         let (segment, writer, join) = ready_authenticated_writer(home.path()).await;
-        let ref_a = account_ref("account-a");
+        let legacy_slack = default_ref(ChannelId::Slack);
         append_authenticated_live_frame(
             &writer,
             ExtendedSubtype::ChannelEgressIntent,
-            intent_json(LIVE_A, &ref_a, 100),
+            legacy_singleton_intent_json(LIVE_A, "slack", &legacy_slack, 100),
         )
         .await;
         append_authenticated_live_frame(

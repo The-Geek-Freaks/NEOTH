@@ -197,6 +197,7 @@ pub async fn run_checkin_tick(
         dedup_key,
         channel: String::new(),
         account_id: None,
+        account_binding: None,
         source: template.source_tag().to_string(),
         body,
         scheduled_for_unix: 0,

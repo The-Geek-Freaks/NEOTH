@@ -176,6 +176,7 @@ pub(crate) async fn emit_account_bound_egress_intent(
 ) -> Option<String> {
     if provenance.channel_ref().channel_id != ChannelKind::Telegram
         || channel != ChannelKind::Telegram.as_str()
+        || provenance.account_binding().channel_ref() != provenance.channel_ref()
     {
         tracing::warn!(
             channel,
@@ -198,6 +199,7 @@ pub(crate) async fn emit_account_bound_egress_intent(
         "ts_unix": ts_unix,
     });
     value["channel_ref"] = serde_json::to_value(provenance.channel_ref()).ok()?;
+    value["account_binding"] = serde_json::to_value(provenance.account_binding()).ok()?;
     let payload = serde_json::to_vec(&value).unwrap_or_default();
     let header = crate::wal::HeaderBuilder::new(0x00, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8)
@@ -213,6 +215,50 @@ pub(crate) async fn emit_account_bound_egress_intent(
             None
         }
     }
+}
+
+/// Authenticated legacy singleton Intent. This is intentionally a distinct
+/// closed wire family from unmarked mapped Telegram records.
+pub(crate) async fn emit_legacy_live_egress_intent(
+    writer: &crate::wal::writer::WalWriterHandle,
+    channel: &str,
+    recipient: &str,
+    message: &str,
+    ts_unix: u64,
+    provenance: &crate::cli::serve_tasks::LegacyLiveEgressProvenance,
+) -> Option<String> {
+    let channel_ref = provenance.channel_ref();
+    if !matches!(
+        channel_ref.channel_id,
+        ChannelKind::Telegram | ChannelKind::Slack
+    ) || channel_ref
+        != &crate::channels::registry::ChannelRef::default_account(channel_ref.channel_id)
+        || channel != channel_ref.channel_id.as_str()
+    {
+        return None;
+    }
+    let intent_id = crate::wal::events::next_intent_id(
+        b"channel-egress",
+        &format!("{channel}:{recipient}"),
+        ts_unix as i64,
+    );
+    let mut value = serde_json::json!({
+        "intent_id": intent_id, "channel": channel,
+        "to_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64(recipient.as_bytes())),
+        "message_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64(message.as_bytes())),
+        "message_bytes": message.len(), "ts_unix": ts_unix,
+        "live_provenance": "legacy_singleton_v2",
+    });
+    value["channel_ref"] = serde_json::to_value(channel_ref).ok()?;
+    let payload = serde_json::to_vec(&value).ok()?;
+    let header = crate::wal::HeaderBuilder::new(0x00, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressIntent as u8)
+        .build();
+    writer
+        .append_authenticated(header, payload)
+        .await
+        .ok()
+        .map(|_| intent_id)
 }
 
 async fn emit_egress_intent_inner(
@@ -299,6 +345,10 @@ pub(crate) async fn emit_account_bound_egress_result(
         tracing::warn!("refusing account-bound egress result with non-Telegram provenance");
         return Err(());
     }
+    if provenance.account_binding().channel_ref() != provenance.channel_ref() {
+        tracing::warn!("refusing account-bound egress result with mismatched sealed binding");
+        return Err(());
+    }
     let payload = serde_json::to_vec(&serde_json::json!({
         "intent_id": intent_id,
         "outcome": outcome,
@@ -321,12 +371,84 @@ pub(crate) async fn emit_account_bound_egress_result(
         })
 }
 
+pub(crate) async fn emit_legacy_live_egress_result(
+    writer: &crate::wal::writer::WalWriterHandle,
+    intent_id: &str,
+    outcome: &str,
+    provider_message_id: Option<&str>,
+    ts_unix: u64,
+    provenance: &crate::cli::serve_tasks::LegacyLiveEgressProvenance,
+) -> std::result::Result<(), ()> {
+    let channel_ref = provenance.channel_ref();
+    if !matches!(
+        channel_ref.channel_id,
+        ChannelKind::Telegram | ChannelKind::Slack
+    ) || channel_ref
+        != &crate::channels::registry::ChannelRef::default_account(channel_ref.channel_id)
+    {
+        return Err(());
+    }
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "intent_id": intent_id, "outcome": outcome,
+        "provider_message_id": provider_message_id, "ts_unix": ts_unix,
+    }))
+    .map_err(|_| ())?;
+    let header = crate::wal::HeaderBuilder::new(0x00, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8)
+        .build();
+    writer
+        .append_authenticated(header, payload)
+        .await
+        .map(|_| ())
+        .map_err(|_| ())
+}
+
 #[cfg(test)]
 mod intent_tests {
     use super::*;
     use crate::wal::events::ExtendedSubtype;
     use crate::wal::frame::decode_frame;
     use crate::wal::segment_header::SEGMENT_HEADER_LEN;
+
+    fn mapped_bundle_from_runtime(
+        account_id: &str,
+        allowed_user_id: u64,
+    ) -> crate::cli::serve_tasks::TelegramAccountBundle {
+        let account_id = crate::channels::registry::ChannelAccountId::new(account_id)
+            .expect("valid mapped fixture account id");
+        let mut runtime = crate::config::RuntimeConfigPair {
+            config: crate::config::FreedomConfig::default(),
+            raw_credentials: crate::config::credentials::Credentials::default(),
+            credentials: crate::config::credentials::Credentials::default(),
+        };
+        runtime.config.channel_accounts.telegram.insert(
+            account_id.clone(),
+            crate::config::TelegramAccountConfig {
+                allowed_user_id,
+                ..Default::default()
+            },
+        );
+        let credential = crate::config::credentials::TelegramAccountCredentials {
+            token: Some(crate::secret::SecretString::new(
+                "mapped-fixture-token".to_owned(),
+            )),
+        };
+        runtime
+            .raw_credentials
+            .channel_accounts
+            .telegram
+            .insert(account_id.clone(), credential.clone());
+        runtime
+            .credentials
+            .channel_accounts
+            .telegram
+            .insert(account_id.clone(), credential);
+        crate::cli::serve_tasks::telegram_account_bundles(&runtime)
+            .expect("coherent mapped runtime pair yields one fixture bundle")
+            .into_iter()
+            .next()
+            .expect("one exact mapped fixture bundle")
+    }
 
     #[tokio::test]
     async fn egress_intent_binds_the_message_by_hash_and_pairs_its_result() {
@@ -412,20 +534,8 @@ mod intent_tests {
             .wait()
             .await
             .expect("initialize authenticated bound send-gate WAL fixture");
-        let bundle_a = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
-            crate::channels::registry::ChannelRef::new(
-                ChannelKind::Telegram,
-                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
-            ),
-            false,
-        );
-        let bundle_default = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
-            crate::channels::registry::ChannelRef::new(
-                ChannelKind::Telegram,
-                crate::channels::registry::ChannelAccountId::new("default").unwrap(),
-            ),
-            false,
-        );
+        let bundle_a = mapped_bundle_from_runtime("account_a", 101);
+        let bundle_default = mapped_bundle_from_runtime("default", 202);
         let provenance_a = bundle_a.mapped_live_egress_provenance().unwrap();
         let provenance_default = bundle_default.mapped_live_egress_provenance().unwrap();
         let id_a = emit_account_bound_egress_intent(
@@ -488,6 +598,12 @@ mod intent_tests {
             assert!(!text.contains("private-recipient"));
             assert!(!text.contains("private-body"));
             assert!(!text.contains("token"));
+            assert_eq!(payload["channel"], "telegram");
+            assert!(
+                payload["channel_ref"].is_object()
+                    && payload["account_binding"]["channel_ref"] == payload["channel_ref"],
+                "the runtime-minted provenance keeps its sealed binding on the exact typed ref"
+            );
         }
         assert_eq!(id_a.len(), 32);
         assert_eq!(id_default.len(), 32);
@@ -519,13 +635,7 @@ mod intent_tests {
         let (writer, join) =
             crate::wal::writer::spawn_hmac_rotation_for_home(segment, home.path().to_path_buf())
                 .expect("start live marker-disabled writer");
-        let bundle = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
-            crate::channels::registry::ChannelRef::new(
-                ChannelKind::Telegram,
-                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
-            ),
-            false,
-        );
+        let bundle = mapped_bundle_from_runtime("account_a", 101);
         assert!(
             emit_account_bound_egress_result(
                 &writer,

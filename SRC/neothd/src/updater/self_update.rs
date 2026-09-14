@@ -8,6 +8,7 @@
 //! signed-app layouts fail closed and require their platform installer.
 
 use std::collections::BTreeSet;
+use std::ffi::OsString;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -17,8 +18,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
+use futures_util::FutureExt as _;
 use reqwest::header::LOCATION;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
@@ -27,9 +29,10 @@ use crate::permissions::gate::ConfirmStrategy;
 use crate::updater::authority::{
     UpdaterAuthorityComponent, UpdaterAuthorityLane, UpdaterAuthorityTask, UpdaterHttpMethod,
     UpdaterLeafAuthorizer, UpdaterLeafEffect, UpdaterLeafFailure, UpdaterLeafFailureKind,
-    UpdaterLeafOutcomeCode, UpdaterLeafRequest, UpdaterLeafSuccess, UpdaterStageCompletion,
+    UpdaterLeafOutcomeCode, UpdaterLeafRequest, UpdaterLeafSuccess, UpdaterProgram,
+    UpdaterStageCompletion,
 };
-use crate::updater::budget::UpdaterRunClock;
+use crate::updater::budget::{UpdaterDeadlinePhase, UpdaterRunClock};
 use crate::wal::payloads_u04::UpdaterLeafTerminalReceipt;
 use crate::wal::writer::WalWriterHandle;
 #[cfg(windows)]
@@ -54,6 +57,9 @@ pub struct LatestRelease {
     #[serde(default)]
     pub assets: Vec<ReleaseAsset>,
 }
+
+#[cfg(test)]
+pub(crate) use tests::run_safe_owned_stage_for_cron_test;
 
 /// One file attached to a GitHub Release. cargo-dist names the
 /// tarball after `<binary>-<target-triple>.<format>` and uploads
@@ -235,6 +241,7 @@ pub(crate) struct RecurringSelfUpdateAuthority {
     pass_control: Option<crate::daemon::updater_cron::UpdaterPassControl>,
     terminal_receipts: Mutex<Vec<UpdaterLeafTerminalReceipt>>,
     outer_terminal_indeterminate: AtomicBool,
+    owned_stage_readback: AtomicU64,
 }
 
 impl RecurringSelfUpdateAuthority {
@@ -255,6 +262,7 @@ impl RecurringSelfUpdateAuthority {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn for_stage(
         writer: WalWriterHandle,
         snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
@@ -264,6 +272,23 @@ impl RecurringSelfUpdateAuthority {
             snapshot,
             UpdaterAuthorityLane::SelfStage,
             "self-stage",
+        )
+    }
+
+    pub(crate) fn for_stage_bound(
+        writer: WalWriterHandle,
+        snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
+        outer_pass_id: String,
+        run_clock: UpdaterRunClock,
+        pass_control: crate::daemon::updater_cron::UpdaterPassControl,
+    ) -> Self {
+        Self::new_bound(
+            writer,
+            snapshot,
+            UpdaterAuthorityLane::SelfStage,
+            outer_pass_id,
+            Some(run_clock),
+            Some(pass_control),
         )
     }
 
@@ -290,9 +315,11 @@ impl RecurringSelfUpdateAuthority {
             pass_control,
             terminal_receipts: Mutex::new(Vec::new()),
             outer_terminal_indeterminate: AtomicBool::new(false),
+            owned_stage_readback: AtomicU64::new(0),
         }
     }
 
+    #[cfg(test)]
     fn new_legacy(
         writer: WalWriterHandle,
         snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
@@ -316,6 +343,15 @@ impl RecurringSelfUpdateAuthority {
 
     pub(crate) fn outer_terminal_indeterminate(&self) -> bool {
         self.outer_terminal_indeterminate.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn owned_stage_readback(&self) -> Option<OwnedStageReadback> {
+        match self.owned_stage_readback.load(Ordering::Acquire) {
+            1 => Some(OwnedStageReadback::Committed),
+            2 => Some(OwnedStageReadback::Unchanged),
+            3 => Some(OwnedStageReadback::Indeterminate),
+            _ => None,
+        }
     }
 
     fn request_id(&self, effect: &str) -> String {
@@ -478,17 +514,137 @@ impl RecurringSelfUpdateAuthority {
             content_sha256,
             content_size_bytes,
         )?;
-        self.authorizer
-            .execute_stage(
+        let completion = match self.run_clock.clone() {
+            Some(clock) => {
+                let request = request.with_run_budgets(clock.budgets().clone())?;
+                self.authorizer
+                    .execute_stage_with_receipt(
+                        request,
+                        clock,
+                        neoth_home,
+                        stage_namespace,
+                        content_sha256,
+                        content_size_bytes,
+                        run,
+                    )
+                    .await
+                    .map_err(anyhow::Error::new)?
+            }
+            None => self
+                .authorizer
+                .execute_stage(
+                    request,
+                    neoth_home,
+                    stage_namespace,
+                    content_sha256,
+                    content_size_bytes,
+                    run,
+                )
+                .await
+                .map_err(anyhow::Error::new)?,
+        };
+        if let Some(receipt) = completion.terminal_receipt().cloned() {
+            self.terminal_receipts
+                .lock()
+                .map_err(|_| anyhow::anyhow!("recurring updater receipt collector is poisoned"))?
+                .push(receipt);
+        }
+        Ok(completion)
+    }
+
+    async fn execute_owned_stage_helper(
+        &self,
+        invocation: OwnedStageInvocation,
+    ) -> Result<OwnedStageReadback> {
+        let clock = self
+            .run_clock
+            .clone()
+            .context("owned SelfStage helper requires admitted run clock")?;
+        let argv = vec![
+            "--output".to_string(),
+            "json".to_string(),
+            "internal".to_string(),
+            "updater-stage-helper".to_string(),
+            "--request-sha256".to_string(),
+            invocation.request_sha256().to_string(),
+        ];
+        let request = build_owned_stage_helper_request(
+            &self.operation_id,
+            self.accepted_epoch,
+            &argv,
+            &invocation,
+            clock.budgets().clone(),
+        )?;
+        let completed = self
+            .authorizer
+            .execute_process_with_receipt(
                 request,
-                neoth_home,
-                stage_namespace,
-                content_sha256,
-                content_size_bytes,
-                run,
+                clock.clone(),
+                UpdaterLeafEffect::SelfStageOwnedHelper,
+                UpdaterProgram::NeothSelfHelper,
+                &argv,
+                invocation.request_bytes(),
+                16 * 1024,
+                || async {
+                    match run_owned_stage_invocation(&invocation, &clock, self.pass_control.clone())
+                        .await
+                    {
+                        Ok(readback) => {
+                            let outcome = match readback {
+                                OwnedStageReadback::Committed => UpdaterLeafOutcomeCode::Committed,
+                                OwnedStageReadback::Unchanged => UpdaterLeafOutcomeCode::Unchanged,
+                                OwnedStageReadback::Indeterminate => {
+                                    UpdaterLeafOutcomeCode::Indeterminate
+                                }
+                            };
+                            Ok(UpdaterLeafSuccess::new(readback, outcome))
+                        }
+                        Err(error) => Err(UpdaterLeafFailure::new(
+                            UpdaterLeafFailureKind::Process,
+                            error,
+                        )),
+                    }
+                },
             )
-            .await
-            .map_err(anyhow::Error::new)
+            .await;
+        match completed {
+            Ok((readback, receipt)) => {
+                self.terminal_receipts
+                    .lock()
+                    .map_err(|_| {
+                        anyhow::anyhow!("recurring updater receipt collector is poisoned")
+                    })?
+                    .push(receipt);
+                if readback == OwnedStageReadback::Indeterminate {
+                    self.outer_terminal_indeterminate
+                        .store(true, Ordering::Release);
+                }
+                self.owned_stage_readback.store(
+                    match readback {
+                        OwnedStageReadback::Committed => 1,
+                        OwnedStageReadback::Unchanged => 2,
+                        OwnedStageReadback::Indeterminate => 3,
+                    },
+                    Ordering::Release,
+                );
+                Ok(readback)
+            }
+            Err(error) => {
+                if let Some(receipt) = error.terminal_receipt() {
+                    self.terminal_receipts
+                        .lock()
+                        .map_err(|_| {
+                            anyhow::anyhow!("recurring updater receipt collector is poisoned")
+                        })?
+                        .push(receipt);
+                }
+                if error.leaves_outer_terminal_indeterminate() {
+                    self.outer_terminal_indeterminate
+                        .store(true, Ordering::Release);
+                }
+                Err(anyhow::Error::new(error))
+            }
+        }
     }
 }
 
@@ -1337,6 +1493,10 @@ const MAX_RELEASE_ARCHIVE_BYTES: usize = 512 * 1024 * 1024;
 const MAX_CHECKSUM_BYTES: usize = 16 * 1024;
 const MAX_SIGNATURE_BYTES: usize = 64 * 1024;
 const MAX_PENDING_JSON_BYTES: usize = 64 * 1024;
+const MAX_OWNED_STAGE_REQUEST_BYTES: usize = MAX_PENDING_JSON_BYTES * 3;
+const OWNED_STAGE_ARCHIVE_NAME: &str = "verified-archive";
+const OWNED_STAGE_SIGNATURE_NAME: &str = "verified-signature";
+const OWNED_STAGE_RESULT_NAME: &str = "result.json";
 const STAGE_MUTATION_LOCK_NAME: &str = ".neoth-self-update.lock";
 const MAX_STAGE_GENERATION_ENTRIES: usize = 64;
 const MAX_STAGE_FILES_PER_GENERATION: usize = 8;
@@ -3190,6 +3350,985 @@ pub struct PendingUpdate {
     pub staged_ts_unix: i64,
 }
 
+/// Fixed, capability-only input for `internal updater-stage-helper`.  The
+/// parent stores this exact JSON in a private operation directory and sends the
+/// same bytes on stdin; the helper never performs home/config/release lookup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OwnedStageRequest {
+    schema_version: u8,
+    operation_id: String,
+    request_id: String,
+    nonce: String,
+    operation_dir: String,
+    stage_dir: PathBuf,
+    budgets: crate::updater::budget::UpdaterRunBudgets,
+    pending_preimage: Vec<u8>,
+    expected_pending: Vec<u8>,
+    pending: PendingUpdate,
+    archive_sha256: String,
+    has_signature: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum OwnedStageHelperStatus {
+    Committed,
+    PreconditionChanged,
+    Cancelled,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnedStageResult {
+    schema_version: u8,
+    operation_id: String,
+    request_id: String,
+    request_sha256: String,
+    nonce: String,
+    status: OwnedStageHelperStatus,
+}
+
+impl OwnedStageRequest {
+    fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.schema_version == 1,
+            "unsupported owned stage request schema"
+        );
+        validate_owned_stage_id(&self.operation_id, "operation")?;
+        validate_owned_stage_id(&self.request_id, "request")?;
+        anyhow::ensure!(
+            self.nonce.len() == 64 && self.nonce.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "owned stage nonce must be 32 random bytes encoded as hex"
+        );
+        anyhow::ensure!(
+            self.operation_dir.len() == 32
+                && self
+                    .operation_dir
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit()),
+            "owned stage operation directory is not a private random name"
+        );
+        self.budgets.validate()?;
+        anyhow::ensure!(
+            self.stage_dir.is_absolute(),
+            "owned stage directory is not absolute"
+        );
+        anyhow::ensure!(
+            self.pending_preimage.len() <= MAX_PENDING_JSON_BYTES,
+            "owned stage preimage exceeds pending bound"
+        );
+        anyhow::ensure!(
+            !self.expected_pending.is_empty()
+                && self.expected_pending.len() <= MAX_PENDING_JSON_BYTES,
+            "owned stage expected pending body is invalid"
+        );
+        let decoded: PendingUpdate = serde_json::from_slice(&self.expected_pending)
+            .context("owned stage expected pending body does not decode")?;
+        anyhow::ensure!(
+            decoded == self.pending,
+            "owned stage expected pending body differs from sealed pending record"
+        );
+        anyhow::ensure!(
+            self.pending.stage_generation.as_deref().is_some(),
+            "owned stage pending record omitted generation"
+        );
+        validate_sha256_hex(&self.archive_sha256)?;
+        anyhow::ensure!(
+            self.pending
+                .archive_sha256
+                .eq_ignore_ascii_case(&self.archive_sha256),
+            "owned stage archive hash differs from pending record"
+        );
+        Ok(())
+    }
+}
+
+/// Parent-owned sealed child invocation.  The request bytes are retained in
+/// the private operation directory for post-reap recovery and are also the
+/// exact stdin payload whose hash is recorded in the process leaf Intent.
+#[derive(Debug, Clone)]
+pub(crate) struct OwnedStageInvocation {
+    request_bytes: Vec<u8>,
+    request_sha256: String,
+}
+
+impl OwnedStageInvocation {
+    pub(crate) fn request_bytes(&self) -> &[u8] {
+        &self.request_bytes
+    }
+    pub(crate) fn request_sha256(&self) -> &str {
+        &self.request_sha256
+    }
+}
+
+/// Create one private, create-new operation below the sealed stage namespace.
+/// This is deliberately parent-only: the helper gets only the canonical JSON
+/// stdin bytes and can discover no release/config/home state.
+pub(crate) fn create_owned_stage_operation(
+    stage_dir: &Path,
+    operation_id: String,
+    request_id: String,
+    budgets: crate::updater::budget::UpdaterRunBudgets,
+    pending: PendingUpdate,
+    pending_body: Vec<u8>,
+    archive: &[u8],
+    signature: Option<&str>,
+) -> Result<OwnedStageInvocation> {
+    anyhow::ensure!(
+        stage_dir.is_absolute(),
+        "owned stage operation requires absolute stage directory"
+    );
+    anyhow::ensure!(
+        pending_body.len() <= MAX_PENDING_JSON_BYTES,
+        "owned stage pending body exceeds bound"
+    );
+    let decoded: PendingUpdate = serde_json::from_slice(&pending_body)?;
+    anyhow::ensure!(
+        decoded == pending,
+        "owned stage parent pending bytes differ from record"
+    );
+    verify_sha256_bytes(archive, &pending.archive_sha256)?;
+    let absolute = std::path::absolute(stage_dir)?;
+    let home = absolute
+        .parent()
+        .context("owned stage has no NEOTH home parent")?;
+    let anchor = home.parent().unwrap_or(home);
+    let stage = crate::skills::store::open_bound_directory_from_trusted_anchor(
+        anchor,
+        &absolute,
+        true,
+        "owned self-update stage",
+    )?
+    .context("create owned self-update stage")?;
+    harden_stage_directory_capability(&stage.dir, &stage.display_path)?;
+
+    // Capture the exact pointer body under the same lock that child prepare
+    // will acquire.  Drop before spawning so the child can independently lock.
+    let preimage = {
+        let lock = acquire_stage_mutation_lock(&stage.dir, stage_dir)?;
+        let body = match stage
+            .dir
+            .symlink_metadata(std::ffi::OsStr::new("pending.json"))
+        {
+            Ok(_) => crate::skills::store::read_regular_file_bounded(
+                &stage.dir,
+                std::ffi::OsStr::new("pending.json"),
+                &pending_json_path(stage_dir),
+                MAX_PENDING_JSON_BYTES,
+            )?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => return Err(error).context("read owned stage parent preimage"),
+        };
+        drop(lock);
+        body
+    };
+    let operations_path = stage_dir.join("operations");
+    let operations = crate::skills::store::open_or_create_private_child_dir(
+        &stage.dir,
+        std::ffi::OsStr::new("operations"),
+        &operations_path,
+    )?;
+    harden_stage_directory_capability(&operations, &operations_path)?;
+    let operation_dir = uuid::Uuid::now_v7().simple().to_string();
+    let operation_path = operations_path.join(&operation_dir);
+    operations
+        .create_dir(&operation_dir)
+        .context("create-new owned stage operation")?;
+    let operation = crate::skills::store::open_real_child_dir(
+        &operations,
+        std::ffi::OsStr::new(&operation_dir),
+        &operation_path,
+    )?;
+    harden_stage_directory_capability(&operation, &operation_path)?;
+    crate::skills::store::atomic_write_private_child(
+        &operation,
+        std::ffi::OsStr::new(OWNED_STAGE_ARCHIVE_NAME),
+        &operation_path.join(OWNED_STAGE_ARCHIVE_NAME),
+        archive,
+    )?;
+    if let Some(signature) = signature {
+        crate::skills::store::atomic_write_private_child(
+            &operation,
+            std::ffi::OsStr::new(OWNED_STAGE_SIGNATURE_NAME),
+            &operation_path.join(OWNED_STAGE_SIGNATURE_NAME),
+            signature.as_bytes(),
+        )?;
+    }
+    let mut nonce = [0_u8; 32];
+    getrandom::getrandom(&mut nonce)
+        .map_err(|error| anyhow::anyhow!("owned stage nonce OS RNG unavailable: {error}"))?;
+    let request = OwnedStageRequest {
+        schema_version: 1,
+        operation_id,
+        request_id,
+        nonce: hex::encode(nonce),
+        operation_dir,
+        stage_dir: stage_dir.to_path_buf(),
+        budgets,
+        pending_preimage: preimage,
+        expected_pending: pending_body,
+        archive_sha256: pending.archive_sha256.clone(),
+        pending,
+        has_signature: signature.is_some(),
+    };
+    request.validate()?;
+    let request_bytes = serde_json::to_vec(&request)?;
+    anyhow::ensure!(
+        request_bytes.len() <= MAX_OWNED_STAGE_REQUEST_BYTES,
+        "owned stage request exceeds fixed bound"
+    );
+    let request_sha256 = hex::encode(Sha256::digest(&request_bytes));
+    crate::skills::store::atomic_write_private_child(
+        &operation,
+        std::ffi::OsStr::new("request.json"),
+        &operation_path.join("request.json"),
+        &request_bytes,
+    )?;
+    Ok(OwnedStageInvocation {
+        request_bytes,
+        request_sha256,
+    })
+}
+
+fn build_owned_stage_helper_request(
+    operation_id: &str,
+    accepted_epoch: u64,
+    argv: &[String],
+    invocation: &OwnedStageInvocation,
+    budgets: crate::updater::budget::UpdaterRunBudgets,
+) -> Result<UpdaterLeafRequest> {
+    let sealed: OwnedStageRequest = serde_json::from_slice(invocation.request_bytes())
+        .context("decode sealed owned stage request for Intent binding")?;
+    sealed.validate()?;
+    anyhow::ensure!(
+        sealed.operation_id == operation_id,
+        "owned SelfStage Intent operation differs from sealed operation request"
+    );
+    anyhow::ensure!(
+        sealed.budgets == budgets,
+        "owned SelfStage Intent budgets differ from sealed operation request"
+    );
+    UpdaterLeafRequest::owned_stage_helper(
+        operation_id,
+        &sealed.request_id,
+        accepted_epoch,
+        argv,
+        invocation.request_bytes(),
+        16 * 1024,
+        format!("staged/operations/{}", sealed.operation_dir),
+    )?
+    .with_run_budgets(budgets)
+}
+
+/// Test-only construction for recovery tests in `updater::reconcile`.  It
+/// creates the same sealed operation/capability that the parent owns in
+/// production, then leaves either an exact committed publication or the old
+/// preimage with no generation.  The returned binding is derived from the
+/// authenticated process Intent, not hand-assembled test data.
+#[cfg(test)]
+pub(crate) fn owned_stage_recovery_fixture(
+    home: &Path,
+    operation_id: &str,
+    request_id: &str,
+    readback: OwnedStageReadback,
+) -> Result<(
+    crate::updater::authority::RecoveredOwnedStageHelperBinding,
+    OwnedStageInvocation,
+)> {
+    std::fs::create_dir_all(home).context("create owned stage recovery test home")?;
+    let stage_dir = home.join("staged");
+    let generation = "a".repeat(32);
+    let target = "x86_64-unknown-linux-gnu";
+    let archive = b"owned-stage-recovery-archive";
+    let archive_sha256 = hex::encode(Sha256::digest(archive));
+    let asset = expected_asset_name("neoth", "v1.2.3", target);
+    let generation_dir = validated_stage_generation_dir(&stage_dir, &generation)?;
+    let pending = PendingUpdate {
+        to_version: "v1.2.3".into(),
+        source_repo: "The-Geek-Freaks/NEOTH".into(),
+        channel: ReleaseChannel::Stable,
+        archive_sha256,
+        download_url: format!("https://example.invalid/{asset}"),
+        signature_status: "not_present".into(),
+        staged_archive: generation_dir.join(&asset).display().to_string(),
+        staged_signature: None,
+        stage_generation: Some(generation),
+        target_triple: target.into(),
+        staged_ts_unix: 1,
+    };
+    let budgets = crate::updater::budget::UpdaterRunBudgets::from_absolute(1, 2, 3, 4, 5)?;
+    let pending_body = serde_json::to_vec_pretty(&pending)?;
+    let invocation = create_owned_stage_operation(
+        &stage_dir,
+        operation_id.to_string(),
+        request_id.to_string(),
+        budgets.clone(),
+        pending,
+        pending_body,
+        archive,
+        None,
+    )?;
+    let request: OwnedStageRequest = serde_json::from_slice(invocation.request_bytes())?;
+    // Derive the authenticated process Intent from the sealed request rather
+    // than hand-assembling its hash/binding fields in recovery tests.
+    let args = vec![
+        "--output".to_string(),
+        "json".to_string(),
+        "internal".to_string(),
+        "updater-stage-helper".to_string(),
+        "--request-sha256".to_string(),
+        invocation.request_sha256().to_string(),
+    ];
+    let request_binding =
+        build_owned_stage_helper_request(operation_id, 41, &args, &invocation, budgets.clone())?;
+    if readback == OwnedStageReadback::Committed {
+        run_owned_stage_helper(invocation.request_bytes(), invocation.request_sha256())?;
+    }
+    Ok((
+        crate::updater::authority::RecoveredOwnedStageHelperBinding {
+            operation_id: operation_id.to_string(),
+            request_id: request_id.to_string(),
+            request_binding_sha256: request_binding.binding_sha256().to_string(),
+            relative_operation_dir: format!("staged/operations/{}", request.operation_dir),
+            stdin_sha256: hex::encode(Sha256::digest(invocation.request_bytes())),
+            stdin_size_bytes: invocation.request_bytes().len() as u64,
+            run_budgets: budgets,
+        },
+        invocation,
+    ))
+}
+
+fn validate_owned_stage_id(value: &str, label: &str) -> Result<()> {
+    anyhow::ensure!(
+        !value.is_empty() && value.len() <= 160,
+        "owned stage {label} id is invalid"
+    );
+    anyhow::ensure!(
+        value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')),
+        "owned stage {label} id contains unsafe characters"
+    );
+    Ok(())
+}
+
+fn validate_sha256_hex(value: &str) -> Result<()> {
+    anyhow::ensure!(
+        value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "expected SHA-256 hex"
+    );
+    Ok(())
+}
+
+/// Hidden helper entrypoint. The only transport is bounded stdin and the
+/// request hash supplied by the parent process binding.
+pub(crate) fn run_owned_stage_helper(request_bytes: &[u8], request_sha256: &str) -> Result<()> {
+    anyhow::ensure!(
+        request_bytes.len() <= MAX_OWNED_STAGE_REQUEST_BYTES,
+        "owned stage request exceeds fixed bound"
+    );
+    validate_sha256_hex(request_sha256)?;
+    anyhow::ensure!(
+        hex::encode(Sha256::digest(request_bytes)).eq_ignore_ascii_case(request_sha256),
+        "owned stage stdin differs from argv request hash"
+    );
+    let request: OwnedStageRequest =
+        serde_json::from_slice(request_bytes).context("decode owned stage request")?;
+    request.validate()?;
+    run_owned_stage_helper_request(&request, request_sha256)
+}
+
+fn run_owned_stage_helper_request(request: &OwnedStageRequest, request_sha256: &str) -> Result<()> {
+    let operations_path = request.stage_dir.join("operations");
+    let operation_path = operations_path.join(&request.operation_dir);
+    let stage = crate::skills::store::open_bound_directory(
+        &request.stage_dir,
+        false,
+        "owned stage helper",
+    )?
+    .context("owned stage namespace is missing")?;
+    let operations = crate::skills::store::open_real_child_dir(
+        &stage.dir,
+        std::ffi::OsStr::new("operations"),
+        &operations_path,
+    )
+    .context("open owned stage operation namespace")?;
+    let operation = crate::skills::store::open_real_child_dir(
+        &operations,
+        std::ffi::OsStr::new(&request.operation_dir),
+        &operation_path,
+    )
+    .context("open owned stage operation capability")?;
+    let cancel_path = operation_path.join("cancel");
+    if operation
+        .symlink_metadata(std::ffi::OsStr::new("cancel"))
+        .is_ok()
+    {
+        return write_owned_stage_result(
+            &operation,
+            &operation_path,
+            request,
+            request_sha256,
+            OwnedStageHelperStatus::Cancelled,
+        );
+    }
+    let archive = crate::skills::store::read_regular_file_bounded(
+        &operation,
+        std::ffi::OsStr::new(OWNED_STAGE_ARCHIVE_NAME),
+        &operation_path.join(OWNED_STAGE_ARCHIVE_NAME),
+        MAX_RELEASE_ARCHIVE_BYTES,
+    )
+    .context("read sealed owned stage archive")?;
+    verify_sha256_bytes(&archive, &request.archive_sha256)
+        .context("sealed owned stage archive hash mismatch")?;
+    let signature = if request.has_signature {
+        Some(
+            String::from_utf8(crate::skills::store::read_regular_file_bounded(
+                &operation,
+                std::ffi::OsStr::new(OWNED_STAGE_SIGNATURE_NAME),
+                &operation_path.join(OWNED_STAGE_SIGNATURE_NAME),
+                MAX_SIGNATURE_BYTES,
+            )?)
+            .context("owned stage signature is not UTF-8")?,
+        )
+    } else {
+        None
+    };
+
+    // `prepare_stage_generation` takes the existing stage mutation lock and
+    // holds it through `publish`; its new preimage parameter makes the helper
+    // refuse a concurrent pointer change before private generation creation.
+    let generation = request
+        .pending
+        .stage_generation
+        .as_deref()
+        .expect("validated generation");
+    let generation_dir = validated_stage_generation_dir(&request.stage_dir, generation)?;
+    let archive_path = generation_dir.join(expected_asset_name(
+        "neoth",
+        &request.pending.to_version,
+        &request.pending.target_triple,
+    ));
+    let signature_path = signature.as_ref().map(|_| {
+        generation_dir.join(minisig_companion_name(
+            archive_path
+                .file_name()
+                .and_then(|v| v.to_str())
+                .expect("asset name"),
+        ))
+    });
+    let prepared = prepare_stage_generation(
+        &request.stage_dir,
+        &generation_dir,
+        &archive_path,
+        signature_path.as_deref(),
+        &archive,
+        signature.as_deref(),
+        request.pending.clone(),
+        request.expected_pending.clone(),
+        Some(&request.pending_preimage),
+    )?;
+    if operation
+        .symlink_metadata(std::ffi::OsStr::new("cancel"))
+        .is_ok()
+    {
+        drop(prepared);
+        return write_owned_stage_result(
+            &operation,
+            &operation_path,
+            request,
+            request_sha256,
+            OwnedStageHelperStatus::Cancelled,
+        );
+    }
+    prepared.publish()?;
+    let _ = cancel_path;
+    write_owned_stage_result(
+        &operation,
+        &operation_path,
+        request,
+        request_sha256,
+        OwnedStageHelperStatus::Committed,
+    )
+}
+
+fn write_owned_stage_result(
+    operation: &cap_std::fs::Dir,
+    operation_path: &Path,
+    request: &OwnedStageRequest,
+    request_sha256: &str,
+    status: OwnedStageHelperStatus,
+) -> Result<()> {
+    let body = serde_json::to_vec(&OwnedStageResult {
+        schema_version: 1,
+        operation_id: request.operation_id.clone(),
+        request_id: request.request_id.clone(),
+        request_sha256: request_sha256.to_ascii_lowercase(),
+        nonce: request.nonce.clone(),
+        status,
+    })?;
+    crate::skills::store::atomic_write_private_child(
+        operation,
+        std::ffi::OsStr::new(OWNED_STAGE_RESULT_NAME),
+        &operation_path.join(OWNED_STAGE_RESULT_NAME),
+        &body,
+    )
+}
+
+/// Parent-side post-reap truth classification.  A helper JSON status is only a
+/// binding check; visibility is determined solely from lock-held filesystem
+/// readback.  Callers treat `Indeterminate` as a retained-recovery condition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnedStageReadback {
+    Committed,
+    Unchanged,
+    Indeterminate,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct OwnedStageRecoveryBlock {
+    pub(crate) operation_id: String,
+    pub(crate) request_id: String,
+    pub(crate) request_binding_sha256: String,
+    pub(crate) relative_operation_dir: String,
+}
+
+pub(crate) enum OwnedStageRecovery {
+    Verified(OwnedStageReadback),
+    Blocked(OwnedStageRecoveryBlock),
+}
+
+/// Recovery entry for a durable helper Intent. It never infers a terminal from
+/// an absent result file; only exact pointer/generation states are verified.
+pub(crate) fn reconcile_owned_stage_helper_intent(
+    home: &Path,
+    binding: &crate::updater::authority::RecoveredOwnedStageHelperBinding,
+) -> OwnedStageRecovery {
+    let block = || {
+        OwnedStageRecovery::Blocked(OwnedStageRecoveryBlock {
+            operation_id: binding.operation_id.clone(),
+            request_id: binding.request_id.clone(),
+            request_binding_sha256: binding.request_binding_sha256.clone(),
+            relative_operation_dir: binding.relative_operation_dir.clone(),
+        })
+    };
+    let operation_dir = match binding
+        .relative_operation_dir
+        .strip_prefix("staged/operations/")
+        .filter(|name| name.len() == 32 && name.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
+        Some(name) => name,
+        None => return block(),
+    };
+    if binding.stdin_size_bytes > MAX_OWNED_STAGE_REQUEST_BYTES as u64 {
+        return block();
+    }
+    let stage_path = home.join("staged");
+    let operations_path = stage_path.join("operations");
+    let operation_path = operations_path.join(operation_dir);
+    let trusted_anchor = home.parent().unwrap_or(home);
+    let bytes = (|| -> Result<Vec<u8>> {
+        let home_cap = crate::skills::store::open_bound_directory_from_trusted_anchor(
+            trusted_anchor,
+            home,
+            false,
+            "owned stage recovery home",
+        )?
+        .context("owned stage recovery home is missing")?;
+        let stage = crate::skills::store::open_real_child_dir(
+            &home_cap.dir,
+            std::ffi::OsStr::new("staged"),
+            &stage_path,
+        )
+        .context("owned stage recovery stage is not a real child")?;
+        let operations = crate::skills::store::open_real_child_dir(
+            &stage,
+            std::ffi::OsStr::new("operations"),
+            &operations_path,
+        )
+        .context("owned stage recovery operations is not a real child")?;
+        let operation = crate::skills::store::open_real_child_dir(
+            &operations,
+            std::ffi::OsStr::new(operation_dir),
+            &operation_path,
+        )
+        .context("owned stage recovery operation is not a real child")?;
+        crate::skills::store::read_regular_file_bounded(
+            &operation,
+            std::ffi::OsStr::new("request.json"),
+            &operation_path.join("request.json"),
+            binding.stdin_size_bytes as usize,
+        )
+        .context("owned stage recovery request is not a bounded regular child")
+    })();
+    let bytes = match bytes {
+        Ok(bytes) if bytes.len() as u64 == binding.stdin_size_bytes => bytes,
+        _ => return block(),
+    };
+    if !hex::encode(Sha256::digest(&bytes)).eq_ignore_ascii_case(&binding.stdin_sha256) {
+        return block();
+    }
+    let request: OwnedStageRequest = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(_) => return block(),
+    };
+    if request.validate().is_err()
+        || request.operation_id != binding.operation_id
+        || request.request_id != binding.request_id
+        || request.budgets != binding.run_budgets
+        || request.stage_dir != home.join("staged")
+        || binding.relative_operation_dir != format!("staged/operations/{}", request.operation_dir)
+    {
+        return block();
+    }
+    match classify_owned_stage_filesystem(&request) {
+        Ok(OwnedStageReadback::Committed) => {
+            OwnedStageRecovery::Verified(OwnedStageReadback::Committed)
+        }
+        Ok(OwnedStageReadback::Unchanged) => {
+            OwnedStageRecovery::Verified(OwnedStageReadback::Unchanged)
+        }
+        _ => block(),
+    }
+}
+
+pub(crate) fn read_owned_stage_readback(
+    request_bytes: &[u8],
+    request_sha256: &str,
+) -> Result<OwnedStageReadback> {
+    let request: OwnedStageRequest =
+        serde_json::from_slice(request_bytes).context("decode owned stage readback request")?;
+    request.validate()?;
+    validate_sha256_hex(request_sha256)?;
+    anyhow::ensure!(
+        hex::encode(Sha256::digest(request_bytes)).eq_ignore_ascii_case(request_sha256),
+        "owned stage readback request hash mismatch"
+    );
+    let stage = crate::skills::store::open_bound_directory(
+        &request.stage_dir,
+        false,
+        "owned stage readback",
+    )?
+    .context("owned stage readback namespace missing")?;
+    let operations_path = request.stage_dir.join("operations");
+    let operation_path = operations_path.join(&request.operation_dir);
+    let operations = crate::skills::store::open_real_child_dir(
+        &stage.dir,
+        std::ffi::OsStr::new("operations"),
+        &operations_path,
+    )
+    .context("owned stage operation namespace missing")?;
+    let operation = crate::skills::store::open_real_child_dir(
+        &operations,
+        std::ffi::OsStr::new(&request.operation_dir),
+        &operation_path,
+    )
+    .context("owned stage operation capability missing")?;
+    let helper_result: OwnedStageResult = serde_json::from_slice(
+        &crate::skills::store::read_regular_file_bounded(
+            &operation,
+            std::ffi::OsStr::new(OWNED_STAGE_RESULT_NAME),
+            &operation_path.join(OWNED_STAGE_RESULT_NAME),
+            MAX_PENDING_JSON_BYTES,
+        )
+        .context("owned stage helper result missing or malformed")?,
+    )
+    .context("decode owned stage helper result")?;
+    anyhow::ensure!(
+        helper_result.schema_version == 1
+            && helper_result.operation_id == request.operation_id
+            && helper_result.request_id == request.request_id
+            && helper_result.nonce == request.nonce
+            && helper_result
+                .request_sha256
+                .eq_ignore_ascii_case(request_sha256),
+        "owned stage helper result is not bound to its request"
+    );
+    let mutation_lock = acquire_stage_mutation_lock(&stage.dir, &request.stage_dir)?;
+    let pending_path = pending_json_path(&request.stage_dir);
+    let pending = match stage
+        .dir
+        .symlink_metadata(std::ffi::OsStr::new("pending.json"))
+    {
+        Ok(_) => crate::skills::store::read_regular_file_bounded(
+            &stage.dir,
+            std::ffi::OsStr::new("pending.json"),
+            &pending_path,
+            MAX_PENDING_JSON_BYTES,
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error.into()),
+    };
+    let result = match pending {
+        Ok(body) if body == request.expected_pending => {
+            let decoded: PendingUpdate = serde_json::from_slice(&body)?;
+            if decoded.stage_generation == request.pending.stage_generation
+                && decoded
+                    .archive_sha256
+                    .eq_ignore_ascii_case(&request.archive_sha256)
+            {
+                OwnedStageReadback::Committed
+            } else {
+                OwnedStageReadback::Indeterminate
+            }
+        }
+        Ok(body) if body == request.pending_preimage => {
+            let generation = request
+                .pending
+                .stage_generation
+                .as_deref()
+                .expect("validated generation");
+            if !validated_stage_generation_dir(&request.stage_dir, generation)?.exists() {
+                OwnedStageReadback::Unchanged
+            } else {
+                OwnedStageReadback::Indeterminate
+            }
+        }
+        Ok(_) | Err(_) => OwnedStageReadback::Indeterminate,
+    };
+    drop(mutation_lock);
+    Ok(result)
+}
+
+fn classify_owned_stage_filesystem(request: &OwnedStageRequest) -> Result<OwnedStageReadback> {
+    let stage = crate::skills::store::open_bound_directory(
+        &request.stage_dir,
+        false,
+        "owned stage recovery",
+    )?
+    .context("owned stage recovery namespace missing")?;
+    let _lock = acquire_stage_mutation_lock(&stage.dir, &request.stage_dir)?;
+    let body = match stage
+        .dir
+        .symlink_metadata(std::ffi::OsStr::new("pending.json"))
+    {
+        Ok(_) => crate::skills::store::read_regular_file_bounded(
+            &stage.dir,
+            std::ffi::OsStr::new("pending.json"),
+            &pending_json_path(&request.stage_dir),
+            MAX_PENDING_JSON_BYTES,
+        )?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(error.into()),
+    };
+    if body == request.expected_pending {
+        let pending: PendingUpdate = serde_json::from_slice(&body)?;
+        return Ok(
+            if pending.stage_generation == request.pending.stage_generation
+                && pending
+                    .archive_sha256
+                    .eq_ignore_ascii_case(&request.archive_sha256)
+            {
+                OwnedStageReadback::Committed
+            } else {
+                OwnedStageReadback::Indeterminate
+            },
+        );
+    }
+    if body == request.pending_preimage {
+        let generation = request
+            .pending
+            .stage_generation
+            .as_deref()
+            .context("owned stage generation missing")?;
+        return Ok(
+            if !validated_stage_generation_dir(&request.stage_dir, generation)?.exists() {
+                OwnedStageReadback::Unchanged
+            } else {
+                OwnedStageReadback::Indeterminate
+            },
+        );
+    }
+    Ok(OwnedStageReadback::Indeterminate)
+}
+
+/// Parent lifecycle after the process leaf Intent is durable.  The caller
+/// remains responsible for wrapping this in `execute_process_with_receipt`;
+/// this function owns only the bounded helper process and durable readback.
+pub(crate) async fn run_owned_stage_invocation(
+    invocation: &OwnedStageInvocation,
+    run_clock: &UpdaterRunClock,
+    pass_control: Option<crate::daemon::updater_cron::UpdaterPassControl>,
+) -> Result<OwnedStageReadback> {
+    let request: OwnedStageRequest = serde_json::from_slice(invocation.request_bytes())?;
+    request.validate()?;
+    let program = std::env::current_exe().context("resolve current updater helper executable")?;
+    #[cfg(not(test))]
+    let args = vec![
+        OsString::from("--output"),
+        OsString::from("json"),
+        OsString::from("internal"),
+        OsString::from("updater-stage-helper"),
+        OsString::from("--request-sha256"),
+        OsString::from(invocation.request_sha256()),
+    ];
+    // Cargo's test binary is also a real subprocess.  Keep this narrow test
+    // transport so the lifecycle tests exercise stdin, containment, deadline
+    // cancellation, reap, and independent readback without building the GUI
+    // daemon executable.  Production always uses the hidden CLI entrypoint.
+    #[cfg(test)]
+    let args = vec![OsString::from("owned_stage_helper_subprocess_entry")];
+    let mut child = crate::updater::process_containment::ContainedChild::spawn(
+        &program,
+        &args,
+        invocation.request_bytes(),
+        16 * 1024,
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("contain owned stage helper: {error}"))?;
+    let observed = std::panic::AssertUnwindSafe(run_owned_stage_with_child(
+        &mut child,
+        &request,
+        invocation,
+        run_clock,
+        pass_control,
+    ))
+    .catch_unwind()
+    .await;
+    match observed {
+        Ok(result) => result,
+        Err(_) => match child.terminate_and_reap().await {
+            Ok(_) => Err(anyhow::anyhow!(
+                "owned stage helper lifecycle panicked after spawn"
+            )),
+            Err(error) => Err(anyhow::anyhow!(
+                "owned stage helper lifecycle panicked after spawn; contained cleanup failed: {error}"
+            )),
+        },
+    }
+}
+
+async fn run_owned_stage_with_child(
+    child: &mut crate::updater::process_containment::ContainedChild,
+    request: &OwnedStageRequest,
+    invocation: &OwnedStageInvocation,
+    run_clock: &UpdaterRunClock,
+    pass_control: Option<crate::daemon::updater_cron::UpdaterPassControl>,
+) -> Result<OwnedStageReadback> {
+    #[cfg(test)]
+    if std::env::var_os("NEOTH_TEST_OWNED_STAGE_PANIC_AFTER_SPAWN").is_some() {
+        panic!("injected owned stage lifecycle panic after child spawn");
+    }
+    enum EffectWait {
+        Completed(
+            std::result::Result<
+                crate::updater::process_containment::ContainedOutput,
+                crate::updater::process_containment::ContainedChildError,
+            >,
+        ),
+        Cancelled,
+    }
+    let effect_wait = match pass_control {
+        Some(control) => tokio::select! {
+            biased;
+            _ = control.cancelled() => EffectWait::Cancelled,
+            result = child.wait_until(run_clock.deadline(UpdaterDeadlinePhase::Effect).into()) => EffectWait::Completed(result),
+        },
+        None => EffectWait::Completed(
+            child
+                .wait_until(run_clock.deadline(UpdaterDeadlinePhase::Effect).into())
+                .await,
+        ),
+    };
+    let output = match effect_wait {
+        EffectWait::Completed(Ok(output)) => output,
+        EffectWait::Cancelled
+        | EffectWait::Completed(Err(
+            crate::updater::process_containment::ContainedChildError::DeadlineElapsed,
+        )) => {
+            if let Err(error) = write_owned_stage_cancel(request) {
+                let cleanup = child.terminate_and_reap().await;
+                return match cleanup {
+                    Ok(_) => Err(error).context("write owned stage cancellation marker"),
+                    Err(cleanup_error) => Err(error).context(format!(
+                        "write owned stage cancellation marker; contained cleanup failed: {cleanup_error}"
+                    )),
+                };
+            }
+            match child
+                .wait_until(run_clock.deadline(UpdaterDeadlinePhase::Quiesce).into())
+                .await
+            {
+                Ok(output) => output,
+                Err(crate::updater::process_containment::ContainedChildError::DeadlineElapsed) => {
+                    child.terminate_and_reap().await.map_err(|error| {
+                        anyhow::anyhow!("terminate/reap owned stage helper: {error}")
+                    })?
+                }
+                Err(error) => {
+                    let cleanup = child.terminate_and_reap().await;
+                    return match cleanup {
+                        Ok(_) => Err(anyhow::anyhow!(
+                            "wait cancelled owned stage helper: {error}"
+                        )),
+                        Err(cleanup_error) => Err(anyhow::anyhow!(
+                            "wait cancelled owned stage helper: {error}; contained cleanup failed: {cleanup_error}"
+                        )),
+                    };
+                }
+            }
+        }
+        EffectWait::Completed(Err(error)) => {
+            let cleanup = child.terminate_and_reap().await;
+            return match cleanup {
+                Ok(_) => Err(anyhow::anyhow!("wait owned stage helper: {error}")),
+                Err(cleanup_error) => Err(anyhow::anyhow!(
+                    "wait owned stage helper: {error}; contained cleanup failed: {cleanup_error}"
+                )),
+            };
+        }
+    };
+    if !output.status.success() {
+        // The child is already reaped. Its private result, if any, is assessed
+        // only by the independent parent readback below.
+        return Ok(read_owned_stage_readback(
+            invocation.request_bytes(),
+            invocation.request_sha256(),
+        )
+        .unwrap_or(OwnedStageReadback::Indeterminate));
+    }
+    Ok(
+        read_owned_stage_readback(invocation.request_bytes(), invocation.request_sha256())
+            .unwrap_or(OwnedStageReadback::Indeterminate),
+    )
+}
+
+fn write_owned_stage_cancel(request: &OwnedStageRequest) -> Result<()> {
+    let stage = crate::skills::store::open_bound_directory(
+        &request.stage_dir,
+        false,
+        "owned stage cancel",
+    )?
+    .context("owned stage cancel namespace missing")?;
+    let operations_path = request.stage_dir.join("operations");
+    let operation_path = operations_path.join(&request.operation_dir);
+    let operations = crate::skills::store::open_real_child_dir(
+        &stage.dir,
+        std::ffi::OsStr::new("operations"),
+        &operations_path,
+    )?;
+    let operation = crate::skills::store::open_real_child_dir(
+        &operations,
+        std::ffi::OsStr::new(&request.operation_dir),
+        &operation_path,
+    )?;
+    // create_new provides a single durable cancellation edge; an existing
+    // marker is idempotent and never resets a deadline.
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    match operation.open_with(std::ffi::OsStr::new("cancel"), &options) {
+        Ok(file) => {
+            file.sync_all()?;
+            crate::skills::store::sync_parent_directory(&operation, &operation_path)?;
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// A staged artifact may be reused only under the currently selected release
 /// feed, target, and channel. Legacy records have no `source_repo` and fail
 /// this check, forcing a fresh authenticated download.
@@ -4454,6 +5593,88 @@ pub(crate) async fn stage_update_authorized(
     .await
 }
 
+struct AuthorizedOwnedStageWork {
+    invocation: OwnedStageInvocation,
+    pending: PendingUpdate,
+}
+
+/// The shared post-verification recurring transition. The verified stage leaf
+/// owns creation of the private operation only after its Intent is durable;
+/// the contained helper is the sole generation and `pending.json` publisher.
+async fn authorized_verified_bytes_to_owned_stage(
+    authority: &RecurringSelfUpdateAuthority,
+    neoth_home: &Path,
+    stage_dir: &Path,
+    pending: PendingUpdate,
+    pending_body: Vec<u8>,
+    archive: Vec<u8>,
+    signature: Option<String>,
+) -> Result<PendingUpdate> {
+    anyhow::ensure!(
+        neoth_home.is_absolute() && stage_dir == neoth_home.join("staged"),
+        "authorized SelfStage bytes require the accepted NEOTH staging namespace"
+    );
+    let (transaction_binding, transaction_size) =
+        staged_transaction_binding(&archive, signature.as_deref(), &pending_body)?;
+    let run_budgets = authority
+        .run_clock
+        .as_ref()
+        .context("authorized SelfStage lacks run clock")?
+        .budgets()
+        .clone();
+    let stage_pending = pending.clone();
+    let stage_body = pending_body.clone();
+    let stage_archive = archive.clone();
+    let stage_signature = signature.clone();
+    let observed_binding = transaction_binding.clone();
+    let completion = authority
+        .execute_stage(
+            neoth_home,
+            stage_dir,
+            &transaction_binding,
+            transaction_size,
+            move || async move {
+                let invocation = create_owned_stage_operation(
+                    stage_dir,
+                    authority.operation_id.clone(),
+                    authority.request_id("owned-stage-request"),
+                    run_budgets,
+                    stage_pending.clone(),
+                    stage_body,
+                    &stage_archive,
+                    stage_signature.as_deref(),
+                )
+                .map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Io, error))?;
+                UpdaterLeafSuccess::new(
+                    AuthorizedOwnedStageWork {
+                        invocation,
+                        pending: stage_pending,
+                    },
+                    UpdaterLeafOutcomeCode::Prepared,
+                )
+                .with_observed_artifact(&observed_binding, transaction_size)
+                .map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Protocol, error))
+            },
+        )
+        .await?;
+    completion
+        .consume_with_async(|work| async move {
+            match authority
+                .execute_owned_stage_helper(work.invocation)
+                .await?
+            {
+                OwnedStageReadback::Committed => Ok(work.pending),
+                OwnedStageReadback::Unchanged => {
+                    anyhow::bail!("owned SelfStage helper left the stage unchanged")
+                }
+                OwnedStageReadback::Indeterminate => anyhow::bail!(
+                    "owned SelfStage helper stage state is indeterminate; reconciliation required"
+                ),
+            }
+        })
+        .await
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn stage_update_inner(
     authorized: Option<(&RecurringSelfUpdateAuthority, &Path)>,
@@ -4569,62 +5790,30 @@ async fn stage_update_inner(
         staged_ts_unix: now_unix,
     };
     let body = serde_json::to_vec_pretty(&pending).context("serialise pending.json")?;
-    let (transaction_sha256, transaction_size) =
-        staged_transaction_binding(&asset_bytes, signature_text.as_deref(), &body)?;
-    let preparation = StagePreparation {
-        stage_dir: stage_dir.to_path_buf(),
-        generation_dir,
-        staged_archive,
-        staged_signature: staged_signature_path,
-        archive_bytes: asset_bytes,
-        signature_text,
-        pending,
-        pending_body: body,
-    };
-
     match authorized {
         Some((authority, neoth_home)) => {
-            let completion = authority
-                .execute_stage(
-                    neoth_home,
-                    stage_dir,
-                    &transaction_sha256,
-                    transaction_size,
-                    move || async move {
-                        match preparation.run_blocking().await {
-                            Ok(prepared) => {
-                                let observed_sha256 = prepared.binding_sha256().to_string();
-                                let observed_size = prepared.binding_size_bytes();
-                                UpdaterLeafSuccess::new(prepared, UpdaterLeafOutcomeCode::Prepared)
-                                    .with_observed_artifact(&observed_sha256, observed_size)
-                                    .map_err(|error| {
-                                        UpdaterLeafFailure::new(
-                                            UpdaterLeafFailureKind::Protocol,
-                                            error,
-                                        )
-                                    })
-                            }
-                            Err(error) => {
-                                let kind = error
-                                    .chain()
-                                    .find_map(|cause| {
-                                        cause.downcast_ref::<tokio::task::JoinError>()
-                                    })
-                                    .filter(|join| join.is_panic())
-                                    .map_or(UpdaterLeafFailureKind::Io, |_| {
-                                        UpdaterLeafFailureKind::Panic
-                                    });
-                                Err(UpdaterLeafFailure::new(kind, error))
-                            }
-                        }
-                    },
-                )
-                .await?;
-            tokio::task::spawn_blocking(move || completion.publish_with(PreparedStage::publish))
-                .await
-                .context("join updater stage publication task")?
+            authorized_verified_bytes_to_owned_stage(
+                authority,
+                neoth_home,
+                stage_dir,
+                pending,
+                body,
+                asset_bytes,
+                signature_text,
+            )
+            .await
         }
         None => {
+            let preparation = StagePreparation {
+                stage_dir: stage_dir.to_path_buf(),
+                generation_dir,
+                staged_archive,
+                staged_signature: staged_signature_path,
+                archive_bytes: asset_bytes,
+                signature_text,
+                pending,
+                pending_body: body,
+            };
             let prepared = preparation.run_blocking().await?;
             tokio::task::spawn_blocking(move || prepared.publish())
                 .await
@@ -4975,10 +6164,12 @@ struct PreparedStage {
 }
 
 impl PreparedStage {
+    #[cfg(test)]
     fn binding_sha256(&self) -> &str {
         &self.binding_sha256
     }
 
+    #[cfg(test)]
     fn binding_size_bytes(&self) -> u64 {
         self.binding_size_bytes
     }
@@ -5162,6 +6353,7 @@ impl StagePreparation {
                 self.signature_text.as_deref(),
                 self.pending,
                 self.pending_body,
+                None,
             )
         })
         .await
@@ -5179,6 +6371,7 @@ fn prepare_stage_generation(
     signature_text: Option<&str>,
     pending: PendingUpdate,
     pending_body: Vec<u8>,
+    expected_pending_preimage: Option<&[u8]>,
 ) -> Result<PreparedStage> {
     let pending_path = pending_json_path(stage_dir);
     anyhow::ensure!(
@@ -5244,6 +6437,25 @@ fn prepare_stage_generation(
     .context("self-update stage directory was not created")?;
     harden_stage_directory_capability(&stage.dir, &stage.display_path)?;
     let mutation_lock = acquire_stage_mutation_lock(&stage.dir, stage_dir)?;
+    if let Some(expected) = expected_pending_preimage {
+        let observed = match stage
+            .dir
+            .symlink_metadata(std::ffi::OsStr::new("pending.json"))
+        {
+            Ok(_) => crate::skills::store::read_regular_file_bounded(
+                &stage.dir,
+                std::ffi::OsStr::new("pending.json"),
+                &pending_json_path(stage_dir),
+                MAX_PENDING_JSON_BYTES,
+            )?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => return Err(error).context("inspect owned stage pending preimage"),
+        };
+        anyhow::ensure!(
+            observed == expected,
+            "owned stage precondition_changed: visible pending body differs from parent preimage"
+        );
+    }
     let generations_path = stage_dir.join("generations");
     let generations = crate::skills::store::open_or_create_private_child_dir(
         &stage.dir,
@@ -5480,7 +6692,682 @@ pub fn resolve_update_assets<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read as _;
     use tempfile::tempdir;
+
+    static OWNED_STAGE_HELPER_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    struct OwnedStageChildEnv;
+
+    impl Drop for OwnedStageChildEnv {
+        fn drop(&mut self) {
+            unsafe {
+                std::env::remove_var("NEOTH_TEST_OWNED_STAGE_HELPER_MODE");
+                std::env::remove_var("NEOTH_TEST_OWNED_STAGE_HELPER_REQUEST_SHA256");
+                std::env::remove_var("NEOTH_TEST_OWNED_STAGE_HELPER_STARTED_MARKER");
+                std::env::remove_var("NEOTH_TEST_OWNED_STAGE_PANIC_AFTER_SPAWN");
+            }
+        }
+    }
+
+    /// The child side of the real contained-process lifecycle fixtures.  The
+    /// parent passes the sealed request on stdin exactly as production does.
+    #[test]
+    fn owned_stage_helper_subprocess_entry() {
+        let Ok(mode) = std::env::var("NEOTH_TEST_OWNED_STAGE_HELPER_MODE") else {
+            return;
+        };
+        let mut request = Vec::new();
+        std::io::stdin()
+            .read_to_end(&mut request)
+            .expect("read contained helper stdin");
+        let request_sha256 = std::env::var("NEOTH_TEST_OWNED_STAGE_HELPER_REQUEST_SHA256")
+            .unwrap_or_else(|_| {
+                if mode == "commit_auto_hash" {
+                    hex::encode(Sha256::digest(&request))
+                } else {
+                    panic!("contained helper child received request hash")
+                }
+            });
+        if mode == "sleep_before_helper" {
+            if let Some(marker) = std::env::var_os("NEOTH_TEST_OWNED_STAGE_HELPER_STARTED_MARKER") {
+                std::fs::write(marker, b"started").expect("mark contained helper started");
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        run_owned_stage_helper(&request, &request_sha256)
+            .expect("contained helper must consume its sealed request");
+        if mode == "publish_then_sleep" {
+            if let Some(marker) = std::env::var_os("NEOTH_TEST_OWNED_STAGE_HELPER_STARTED_MARKER") {
+                std::fs::write(marker, b"published").expect("mark contained helper published");
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        if mode == "commit_remove_result" {
+            let decoded: OwnedStageRequest = serde_json::from_slice(&request)
+                .expect("decode test helper request after publication");
+            std::fs::remove_file(
+                decoded
+                    .stage_dir
+                    .join("operations")
+                    .join(decoded.operation_dir)
+                    .join(OWNED_STAGE_RESULT_NAME),
+            )
+            .expect("remove helper result for parent readback failure fixture");
+        }
+        if mode == "exit_after_publish" {
+            // Prove that a lost helper exit status after publication cannot
+            // replace the parent's lock-held filesystem readback.
+            let decoded: OwnedStageRequest = serde_json::from_slice(&request)
+                .expect("decode test helper request after publication");
+            std::fs::write(
+                decoded
+                    .stage_dir
+                    .join("operations")
+                    .join(decoded.operation_dir)
+                    .join("test-exited-after-publish"),
+                b"helper-exited-after-publish",
+            )
+            .expect("mark deliberate post-publish helper loss");
+            std::process::exit(73);
+        }
+    }
+
+    fn owned_stage_invocation_fixture(
+        stage_dir: &Path,
+        operation_id: &str,
+        budgets: crate::updater::budget::UpdaterRunBudgets,
+    ) -> OwnedStageInvocation {
+        let generation = "a".repeat(32);
+        let (pending, _) = pending_fixture(stage_dir, &generation, "v1.2.3", b"owned archive", 1);
+        let pending_body = serde_json::to_vec_pretty(&pending).expect("encode exact pending body");
+        create_owned_stage_operation(
+            stage_dir,
+            operation_id.to_string(),
+            format!("{operation_id}:request"),
+            budgets,
+            pending,
+            pending_body,
+            b"owned archive",
+            None,
+        )
+        .expect("seal owned stage operation")
+    }
+
+    #[test]
+    fn owned_stage_operation_mints_exact_32_byte_hex_nonce() {
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("home").join("staged");
+        let invocation = owned_stage_invocation_fixture(
+            &stage_dir,
+            "nonce-width",
+            crate::updater::budget::UpdaterRunBudgets::from_absolute(1, 2, 3, 4, 5).unwrap(),
+        );
+        let request: OwnedStageRequest =
+            serde_json::from_slice(invocation.request_bytes()).unwrap();
+        assert_eq!(request.nonce.len(), 64);
+        assert!(request.nonce.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        request.validate().unwrap();
+    }
+
+    async fn with_owned_stage_child_mode<T>(
+        mode: &str,
+        invocation: &OwnedStageInvocation,
+        run: impl std::future::Future<Output = T>,
+    ) -> T {
+        unsafe {
+            std::env::set_var("NEOTH_TEST_OWNED_STAGE_HELPER_MODE", mode);
+            std::env::set_var(
+                "NEOTH_TEST_OWNED_STAGE_HELPER_REQUEST_SHA256",
+                invocation.request_sha256(),
+            );
+        }
+        let cleanup = OwnedStageChildEnv;
+        let result = run.await;
+        drop(cleanup);
+        result
+    }
+
+    /// Production-outer-pass fixture: retain the actual bounded authority,
+    /// verified-stage leaf and contained `current_exe` helper, while replacing
+    /// only remote release acquisition with a private deterministic archive.
+    /// It returns the normal mutation outcome for `run_authorized_self_stage`.
+    pub(crate) async fn run_safe_owned_stage_for_cron_test(
+        authority: &RecurringSelfUpdateAuthority,
+        home: &Path,
+    ) -> anyhow::Result<crate::daemon::auto_update::RecurringMutationOutcome> {
+        let _guard = OWNED_STAGE_HELPER_ENV_LOCK.lock().await;
+        let stage_dir = home.join("staged");
+        let (pending, _) = pending_fixture(
+            &stage_dir,
+            &"a".repeat(32),
+            "v999.0.0",
+            b"cron-owned-helper-archive",
+            1,
+        );
+        let pending_body = serde_json::to_vec_pretty(&pending)?;
+        unsafe {
+            std::env::set_var("NEOTH_TEST_OWNED_STAGE_HELPER_MODE", "commit_auto_hash");
+        }
+        let cleanup = OwnedStageChildEnv;
+        let staged = authorized_verified_bytes_to_owned_stage(
+            authority,
+            home,
+            &stage_dir,
+            pending,
+            pending_body,
+            b"cron-owned-helper-archive".to_vec(),
+            None,
+        )
+        .await?;
+        drop(cleanup);
+        Ok(
+            crate::daemon::auto_update::RecurringMutationOutcome::Staged {
+                prior_version: current_version().to_string(),
+                staged_version: staged.to_version,
+            },
+        )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn authorized_stage_failure_writes_no_helper_intent_or_visible_pending() {
+        let root = tempdir().unwrap();
+        let home = root.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let stage_dir = home.join("staged");
+        std::fs::write(&stage_dir, b"not-a-stage-directory").unwrap();
+        let wal = home.join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let segment = wal.join("000001.wal");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.clone()).unwrap();
+        ready.wait().await.unwrap();
+        let reload = crate::config::reload::ReloadController::new(
+            crate::config::FreedomConfig::default(),
+            home.join("freedom.yaml"),
+        );
+        let clock = crate::updater::budget::UpdaterRunClock::start(
+            crate::updater::budget::UpdaterRunLimits::new(
+                Duration::from_secs(2),
+                Duration::from_secs(3),
+                Duration::from_secs(4),
+                Duration::from_secs(5),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let authority = RecurringSelfUpdateAuthority::for_stage_bound(
+            writer.clone(),
+            reload.accepted_snapshot(),
+            "stage-failure".into(),
+            clock,
+            crate::daemon::updater_cron::UpdaterPassControl::for_test(),
+        );
+        let (pending, _) = pending_fixture(
+            &stage_dir,
+            &"a".repeat(32),
+            "v999.0.0",
+            b"stage-failure-archive",
+            1,
+        );
+        let pending_body = serde_json::to_vec_pretty(&pending).unwrap();
+        assert!(
+            authorized_verified_bytes_to_owned_stage(
+                &authority,
+                &home,
+                &stage_dir,
+                pending,
+                pending_body,
+                b"stage-failure-archive".to_vec(),
+                None,
+            )
+            .await
+            .is_err()
+        );
+        // `authority` retains the writer through its durable leaf authorizer.
+        // Release it before awaiting writer shutdown so sender retention fails
+        // finitely instead of hanging the whole selected test set.
+        drop(authority);
+        drop(writer);
+        tokio::time::timeout(Duration::from_secs(5), join)
+            .await
+            .expect("stage-failure fixture writer retained after authority release")
+            .unwrap()
+            .unwrap();
+        let bytes = std::fs::read(segment).unwrap();
+        let mut offset = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut effects = Vec::new();
+        while offset < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[offset..]).unwrap();
+            if frame.header.event_subtype
+                == crate::wal::events::ExtendedSubtype::UpdaterLeafIntent as u8
+                || frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::UpdaterLeafResult as u8
+            {
+                let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                effects.push(payload["effect"].as_str().unwrap().to_owned());
+            }
+            offset += frame.header.total_len as usize;
+        }
+        assert_eq!(
+            effects,
+            vec!["verified_stage_write", "verified_stage_write"]
+        );
+        assert!(!pending_json_path(&stage_dir).exists());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn owned_stage_contained_helper_commits_and_parent_readback_is_exact() {
+        let _guard = OWNED_STAGE_HELPER_ENV_LOCK.lock().await;
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("home").join("staged");
+        let clock = crate::updater::budget::UpdaterRunClock::start(
+            crate::updater::budget::UpdaterRunLimits::new(
+                Duration::from_secs(2),
+                Duration::from_secs(3),
+                Duration::from_secs(4),
+                Duration::from_secs(5),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let invocation =
+            owned_stage_invocation_fixture(&stage_dir, "op-owned-commit", clock.budgets().clone());
+
+        let observed = with_owned_stage_child_mode(
+            "commit",
+            &invocation,
+            run_owned_stage_invocation(&invocation, &clock, None),
+        )
+        .await
+        .unwrap();
+        assert_eq!(observed, OwnedStageReadback::Committed);
+        assert_eq!(
+            read_owned_stage_readback(invocation.request_bytes(), invocation.request_sha256())
+                .unwrap(),
+            OwnedStageReadback::Committed,
+            "parent must independently verify the child publication"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn owned_stage_effect_deadline_writes_cancel_reaps_child_and_keeps_unchanged_readback() {
+        let _guard = OWNED_STAGE_HELPER_ENV_LOCK.lock().await;
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("home").join("staged");
+        let clock = crate::updater::budget::UpdaterRunClock::start(
+            crate::updater::budget::UpdaterRunLimits::new(
+                Duration::from_millis(40),
+                Duration::from_secs(1),
+                Duration::from_secs(2),
+                Duration::from_secs(3),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let invocation =
+            owned_stage_invocation_fixture(&stage_dir, "op-owned-cancel", clock.budgets().clone());
+        let request: OwnedStageRequest =
+            serde_json::from_slice(invocation.request_bytes()).unwrap();
+
+        let observed = with_owned_stage_child_mode(
+            "sleep_before_helper",
+            &invocation,
+            run_owned_stage_invocation(&invocation, &clock, None),
+        )
+        .await
+        .unwrap();
+        assert_eq!(observed, OwnedStageReadback::Unchanged);
+        assert!(
+            stage_dir
+                .join("operations")
+                .join(&request.operation_dir)
+                .join("cancel")
+                .exists()
+        );
+        assert_eq!(
+            read_owned_stage_readback(invocation.request_bytes(), invocation.request_sha256())
+                .unwrap(),
+            OwnedStageReadback::Unchanged,
+            "cooperative cancellation must be reaped before the parent reads the unchanged state"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn bound_control_cancel_reaps_real_helper_and_retains_cancelled_leaf_receipt() {
+        let _guard = OWNED_STAGE_HELPER_ENV_LOCK.lock().await;
+        let root = tempdir().unwrap();
+        let home = root.path().join("home");
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let (writer, writer_join, ready) =
+            crate::wal::writer::spawn_for_home_ready(wal_dir.join("000001.wal"), home.clone())
+                .unwrap();
+        ready.wait().await.unwrap();
+        // The contained current_exe helper is ExecArbitrary. Production permits
+        // this autonomous SelfStage effect only at Full; FailClosed must refuse
+        // the lower policy levels rather than making this fixture pass.
+        let mut config = crate::config::FreedomConfig::default();
+        config.autonomy = crate::permissions::AutonomyLevel::Full;
+        let reload =
+            crate::config::reload::ReloadController::new(config, home.join("freedom.yaml"));
+        let clock = crate::updater::budget::UpdaterRunClock::start(
+            crate::updater::budget::UpdaterRunLimits::new(
+                Duration::from_secs(2),
+                Duration::from_secs(3),
+                Duration::from_secs(4),
+                Duration::from_secs(5),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let control = crate::daemon::updater_cron::UpdaterPassControl::for_test();
+        let authority = Arc::new(RecurringSelfUpdateAuthority::for_stage_bound(
+            writer.clone(),
+            reload.accepted_snapshot(),
+            "pass-owned-control-cancel".into(),
+            clock.clone(),
+            control.clone(),
+        ));
+        let stage_dir = home.join("staged");
+        let (pending, _) =
+            pending_fixture(&stage_dir, &"a".repeat(32), "v1.2.3", b"owned archive", 1);
+        let pending_body = serde_json::to_vec_pretty(&pending).unwrap();
+        let invocation = create_owned_stage_operation(
+            &stage_dir,
+            authority.operation_id.clone(),
+            authority.request_id("owned-stage-request"),
+            clock.budgets().clone(),
+            pending,
+            pending_body,
+            b"owned archive",
+            None,
+        )
+        .unwrap();
+        let sealed: OwnedStageRequest = serde_json::from_slice(invocation.request_bytes()).unwrap();
+        let started_marker = root.path().join("contained-helper-started");
+        unsafe {
+            std::env::set_var("NEOTH_TEST_OWNED_STAGE_HELPER_MODE", "sleep_before_helper");
+            std::env::set_var(
+                "NEOTH_TEST_OWNED_STAGE_HELPER_REQUEST_SHA256",
+                invocation.request_sha256(),
+            );
+            std::env::set_var(
+                "NEOTH_TEST_OWNED_STAGE_HELPER_STARTED_MARKER",
+                &started_marker,
+            );
+        }
+        let cleanup = OwnedStageChildEnv;
+        let task_authority = Arc::clone(&authority);
+        let task =
+            tokio::spawn(
+                async move { task_authority.execute_owned_stage_helper(invocation).await },
+            );
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !started_marker.exists() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("real contained helper did not start");
+        control.cancel();
+        let readback = task.await.unwrap().unwrap();
+        drop(cleanup);
+
+        assert_eq!(readback, OwnedStageReadback::Unchanged);
+        assert!(
+            stage_dir
+                .join("operations")
+                .join(sealed.operation_dir)
+                .join("cancel")
+                .exists()
+        );
+        let receipts = authority.terminal_receipts().unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert!(receipts[0].request_id.contains("owned-stage-request"));
+        drop(authority);
+        drop(writer);
+        writer_join.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn owned_stage_helper_loss_after_publish_uses_parent_readback_not_exit_status() {
+        let _guard = OWNED_STAGE_HELPER_ENV_LOCK.lock().await;
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("home").join("staged");
+        let clock = crate::updater::budget::UpdaterRunClock::start(
+            crate::updater::budget::UpdaterRunLimits::new(
+                Duration::from_secs(2),
+                Duration::from_secs(3),
+                Duration::from_secs(4),
+                Duration::from_secs(5),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let invocation = owned_stage_invocation_fixture(
+            &stage_dir,
+            "op-owned-exit-after-publish",
+            clock.budgets().clone(),
+        );
+        let request: OwnedStageRequest =
+            serde_json::from_slice(invocation.request_bytes()).unwrap();
+
+        let observed = with_owned_stage_child_mode(
+            "exit_after_publish",
+            &invocation,
+            run_owned_stage_invocation(&invocation, &clock, None),
+        )
+        .await
+        .unwrap();
+        assert_eq!(observed, OwnedStageReadback::Committed);
+        assert!(
+            stage_dir
+                .join("operations")
+                .join(&request.operation_dir)
+                .join("test-exited-after-publish")
+                .exists(),
+            "fixture must prove the helper deliberately exited after publication"
+        );
+        assert_eq!(
+            read_owned_stage_readback(invocation.request_bytes(), invocation.request_sha256())
+                .unwrap(),
+            OwnedStageReadback::Committed,
+            "a non-zero helper exit after publication must remain an exact committed readback"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn control_cancel_after_publish_keeps_committed_readback_truthful() {
+        let _guard = OWNED_STAGE_HELPER_ENV_LOCK.lock().await;
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("home").join("staged");
+        let clock = crate::updater::budget::UpdaterRunClock::start(
+            crate::updater::budget::UpdaterRunLimits::new(
+                Duration::from_secs(2),
+                Duration::from_secs(3),
+                Duration::from_secs(4),
+                Duration::from_secs(5),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let invocation = owned_stage_invocation_fixture(
+            &stage_dir,
+            "op-owned-cancel-after-publish",
+            clock.budgets().clone(),
+        );
+        let control = crate::daemon::updater_cron::UpdaterPassControl::for_test();
+        let marker = root.path().join("helper-published");
+        unsafe {
+            std::env::set_var("NEOTH_TEST_OWNED_STAGE_HELPER_MODE", "publish_then_sleep");
+            std::env::set_var(
+                "NEOTH_TEST_OWNED_STAGE_HELPER_REQUEST_SHA256",
+                invocation.request_sha256(),
+            );
+            std::env::set_var("NEOTH_TEST_OWNED_STAGE_HELPER_STARTED_MARKER", &marker);
+        }
+        let cleanup = OwnedStageChildEnv;
+        let task = tokio::spawn({
+            let control = control.clone();
+            async move { run_owned_stage_invocation(&invocation, &clock, Some(control)).await }
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !marker.exists() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("helper did not publish before control cancellation");
+        control.cancel();
+        assert_eq!(task.await.unwrap().unwrap(), OwnedStageReadback::Committed);
+        drop(cleanup);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn owned_stage_readback_failure_after_reaped_child_is_indeterminate() {
+        let _guard = OWNED_STAGE_HELPER_ENV_LOCK.lock().await;
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("home").join("staged");
+        let clock = crate::updater::budget::UpdaterRunClock::start(
+            crate::updater::budget::UpdaterRunLimits::new(
+                Duration::from_secs(2),
+                Duration::from_secs(3),
+                Duration::from_secs(4),
+                Duration::from_secs(5),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let invocation = owned_stage_invocation_fixture(
+            &stage_dir,
+            "op-owned-readback-failure",
+            clock.budgets().clone(),
+        );
+        assert_eq!(
+            with_owned_stage_child_mode(
+                "commit_remove_result",
+                &invocation,
+                run_owned_stage_invocation(&invocation, &clock, None),
+            )
+            .await
+            .unwrap(),
+            OwnedStageReadback::Indeterminate,
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn panic_after_spawn_reaps_owned_helper_before_returning_error() {
+        let _guard = OWNED_STAGE_HELPER_ENV_LOCK.lock().await;
+        let root = tempdir().unwrap();
+        let stage_dir = root.path().join("home").join("staged");
+        let clock = crate::updater::budget::UpdaterRunClock::start(
+            crate::updater::budget::UpdaterRunLimits::new(
+                Duration::from_secs(2),
+                Duration::from_secs(3),
+                Duration::from_secs(4),
+                Duration::from_secs(5),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let invocation = owned_stage_invocation_fixture(
+            &stage_dir,
+            "op-owned-panic-after-spawn",
+            clock.budgets().clone(),
+        );
+        unsafe { std::env::set_var("NEOTH_TEST_OWNED_STAGE_PANIC_AFTER_SPAWN", "1") };
+        let cleanup = OwnedStageChildEnv;
+        let error = run_owned_stage_invocation(&invocation, &clock, None)
+            .await
+            .unwrap_err();
+        drop(cleanup);
+        assert!(format!("{error:#}").contains("panicked after spawn"));
+    }
+
+    #[test]
+    fn real_owned_stage_intent_builder_authenticates_the_sealed_operation_slot() {
+        let root = tempdir().unwrap();
+        let home = root.path().join("home");
+        let (binding, invocation) = owned_stage_recovery_fixture(
+            &home,
+            "op-owned-real-builder",
+            "req-owned-real-builder",
+            OwnedStageReadback::Unchanged,
+        )
+        .expect("build a sealed owned operation and its real process Intent");
+        let sealed: OwnedStageRequest = serde_json::from_slice(invocation.request_bytes()).unwrap();
+        assert_eq!(
+            binding.relative_operation_dir,
+            format!("staged/operations/{}", sealed.operation_dir),
+            "the production request builder must carry the sealed private operation slot"
+        );
+        assert_eq!(binding.stdin_sha256, invocation.request_sha256());
+        assert_eq!(
+            binding.stdin_size_bytes,
+            invocation.request_bytes().len() as u64
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owned_stage_recovery_refuses_symlinked_request_capability() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir().unwrap();
+        let home = root.path().join("home");
+        let (binding, invocation) = owned_stage_recovery_fixture(
+            &home,
+            "op-owned-recovery-link",
+            "req-owned-recovery-link",
+            OwnedStageReadback::Unchanged,
+        )
+        .unwrap();
+        let sealed: OwnedStageRequest = serde_json::from_slice(invocation.request_bytes()).unwrap();
+        let request_path = home
+            .join("staged")
+            .join("operations")
+            .join(sealed.operation_dir)
+            .join("request.json");
+        let outside = root.path().join("outside-request.json");
+        std::fs::write(&outside, invocation.request_bytes()).unwrap();
+        std::fs::remove_file(&request_path).unwrap();
+        symlink(&outside, &request_path).unwrap();
+
+        assert!(matches!(
+            reconcile_owned_stage_helper_intent(&home, &binding),
+            OwnedStageRecovery::Blocked(_)
+        ));
+    }
+
+    #[test]
+    fn owned_stage_recovery_refuses_oversized_request_before_decode() {
+        let root = tempdir().unwrap();
+        let home = root.path().join("home");
+        let (binding, invocation) = owned_stage_recovery_fixture(
+            &home,
+            "op-owned-recovery-oversize",
+            "req-owned-recovery-oversize",
+            OwnedStageReadback::Unchanged,
+        )
+        .unwrap();
+        let sealed: OwnedStageRequest = serde_json::from_slice(invocation.request_bytes()).unwrap();
+        let request_path = home
+            .join("staged")
+            .join("operations")
+            .join(sealed.operation_dir)
+            .join("request.json");
+        std::fs::write(
+            &request_path,
+            vec![b'x'; binding.stdin_size_bytes as usize + 1],
+        )
+        .unwrap();
+
+        assert!(matches!(
+            reconcile_owned_stage_helper_intent(&home, &binding),
+            OwnedStageRecovery::Blocked(_)
+        ));
+    }
 
     #[test]
     fn release_metadata_url_stays_on_anonymous_github_api_https() {
@@ -6775,9 +8662,44 @@ mod tests {
             None,
             pending.clone(),
             body,
+            None,
         )
         .unwrap();
         (prepared, pending, archive)
+    }
+
+    #[test]
+    fn owned_stage_request_rejects_changed_budget_nonce_pending_and_unknown_fields() {
+        let root = tempdir().unwrap();
+        let stage = root.path().join("staged");
+        let (pending, _) = pending_fixture(&stage, &"a".repeat(32), "v1.2.3", b"archive", 1);
+        let body = serde_json::to_vec_pretty(&pending).unwrap();
+        let request = OwnedStageRequest {
+            schema_version: 1,
+            operation_id: "pass:1".into(),
+            request_id: "pass:stage:1".into(),
+            nonce: "b".repeat(64),
+            operation_dir: "c".repeat(32),
+            stage_dir: stage,
+            budgets: crate::updater::budget::UpdaterRunBudgets::from_absolute(1, 2, 3, 4, 5)
+                .unwrap(),
+            pending_preimage: Vec::new(),
+            expected_pending: body,
+            pending,
+            archive_sha256: hex::encode(Sha256::digest(b"archive")),
+            has_signature: false,
+        };
+        request.validate().unwrap();
+        let mut invalid = request.clone();
+        invalid.nonce = "bad".into();
+        assert!(invalid.validate().is_err());
+        let mut invalid = request.clone();
+        invalid.expected_pending = b"{}".to_vec();
+        assert!(invalid.validate().is_err());
+        let value = serde_json::to_value(&request).unwrap();
+        let mut unknown = value.clone();
+        unknown["unexpected"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<OwnedStageRequest>(unknown).is_err());
     }
 
     #[test]
@@ -7192,6 +9114,7 @@ mod tests {
             None,
             pending,
             pending_body,
+            None,
         )
         .expect_err("a linked orphan generation must block collection");
 
@@ -7234,11 +9157,82 @@ mod tests {
             None,
             pending,
             pending_body,
+            None,
         )
         .expect_err("an over-budget generation namespace must fail closed");
 
         assert!(format!("{error:#}").contains("64-entry limit"));
         assert!(!archive.parent().unwrap().exists());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn bound_self_stage_collects_verified_stage_and_owned_helper_receipts() {
+        let _guard = OWNED_STAGE_HELPER_ENV_LOCK.lock().await;
+        let root = tempdir().unwrap();
+        let home = root.path().join("home");
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let (writer, writer_join, ready) =
+            crate::wal::writer::spawn_for_home_ready(wal_dir.join("000001.wal"), home.clone())
+                .unwrap();
+        ready.wait().await.unwrap();
+        // A real contained helper is ExecArbitrary and therefore requires the
+        // same Full autonomous policy as an enabled production SelfStage pass.
+        let mut config = crate::config::FreedomConfig::default();
+        config.autonomy = crate::permissions::AutonomyLevel::Full;
+        let reload =
+            crate::config::reload::ReloadController::new(config, home.join("freedom.yaml"));
+        let mut authority =
+            RecurringSelfUpdateAuthority::for_stage(writer.clone(), reload.accepted_snapshot());
+        let clock = crate::updater::budget::UpdaterRunClock::start(
+            crate::updater::budget::UpdaterRunLimits::new(
+                Duration::from_secs(2),
+                Duration::from_secs(3),
+                Duration::from_secs(4),
+                Duration::from_secs(5),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        authority.run_clock = Some(clock.clone());
+        let stage_dir = home.join("staged");
+        let (pending, _) = pending_fixture(
+            &stage_dir,
+            &"a".repeat(32),
+            "v1.2.3",
+            b"verified archive",
+            1,
+        );
+        let pending_body = serde_json::to_vec_pretty(&pending).unwrap();
+        // Exercise the same verified-bytes transition as production. The stage
+        // leaf owns sealing; the helper alone publishes the generation/pending.
+        unsafe {
+            std::env::set_var("NEOTH_TEST_OWNED_STAGE_HELPER_MODE", "commit_auto_hash");
+        }
+        let cleanup = OwnedStageChildEnv;
+        let staged = authorized_verified_bytes_to_owned_stage(
+            &authority,
+            &home,
+            &stage_dir,
+            pending,
+            pending_body,
+            b"verified archive".to_vec(),
+            None,
+        )
+        .await
+        .unwrap();
+        drop(cleanup);
+        assert_eq!(staged.to_version, "v1.2.3");
+        let receipts = authority.terminal_receipts().unwrap();
+        assert_eq!(
+            receipts.len(),
+            2,
+            "outer receipt set must include stage and helper leaves"
+        );
+        assert_ne!(receipts[0].request_id, receipts[1].request_id);
+        drop(authority);
+        drop(writer);
+        writer_join.await.unwrap().unwrap();
     }
 
     #[test]
