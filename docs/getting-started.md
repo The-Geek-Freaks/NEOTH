@@ -59,8 +59,9 @@ same-UID hostile host process is outside that boundary. Linux Graphify labeling
 is deliberately unavailable there until its loopback broker has an equally
 contained bridge; the relevant v1.0 Gold acceptance tests remain open.
 
-The separate manual crates.io workflow publishes `neoth-plugin-sdk` first and
-allows `neoth` only after the exact SDK version is visible to Cargo.
+The separate manual crates.io workflow publishes `neoth-openclaw-custody` and
+`neoth-plugin-sdk` before it allows `neoth` to package; it waits until both
+exact dependency versions are visible to Cargo.
 
 Verify:
 

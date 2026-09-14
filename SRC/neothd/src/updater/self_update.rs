@@ -232,6 +232,7 @@ pub(crate) struct RecurringSelfUpdateAuthority {
     lane: UpdaterAuthorityLane,
     next_request: AtomicU64,
     run_clock: Option<UpdaterRunClock>,
+    pass_control: Option<crate::daemon::updater_cron::UpdaterPassControl>,
     terminal_receipts: Mutex<Vec<UpdaterLeafTerminalReceipt>>,
     outer_terminal_indeterminate: AtomicBool,
 }
@@ -242,6 +243,7 @@ impl RecurringSelfUpdateAuthority {
         snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
         outer_pass_id: String,
         run_clock: UpdaterRunClock,
+        pass_control: crate::daemon::updater_cron::UpdaterPassControl,
     ) -> Self {
         Self::new_bound(
             writer,
@@ -249,6 +251,7 @@ impl RecurringSelfUpdateAuthority {
             UpdaterAuthorityLane::NeothSelfProbe,
             outer_pass_id,
             Some(run_clock),
+            Some(pass_control),
         )
     }
 
@@ -270,6 +273,7 @@ impl RecurringSelfUpdateAuthority {
         lane: UpdaterAuthorityLane,
         operation_id: String,
         run_clock: Option<UpdaterRunClock>,
+        pass_control: Option<crate::daemon::updater_cron::UpdaterPassControl>,
     ) -> Self {
         let accepted_epoch = snapshot.epoch();
         Self {
@@ -283,6 +287,7 @@ impl RecurringSelfUpdateAuthority {
             lane,
             next_request: AtomicU64::new(1),
             run_clock,
+            pass_control,
             terminal_receipts: Mutex::new(Vec::new()),
             outer_terminal_indeterminate: AtomicBool::new(false),
         }
@@ -299,7 +304,7 @@ impl RecurringSelfUpdateAuthority {
             snapshot.epoch(),
             uuid::Uuid::now_v7().simple()
         );
-        Self::new_bound(writer, snapshot, lane, operation_id, None)
+        Self::new_bound(writer, snapshot, lane, operation_id, None, None)
     }
 
     pub(crate) fn terminal_receipts(&self) -> Result<Vec<UpdaterLeafTerminalReceipt>> {
@@ -352,6 +357,7 @@ impl RecurringSelfUpdateAuthority {
         )?;
         if let Some(clock) = &self.run_clock {
             request = request.with_run_budgets(clock.budgets().clone())?;
+            let pass_control = self.pass_control.clone();
             let completed = self
                 .authorizer
                 .execute_http_with_receipt(
@@ -363,7 +369,20 @@ impl RecurringSelfUpdateAuthority {
                     &[],
                     expected_content_sha256,
                     max_response_bytes,
-                    run,
+                    move || async move {
+                        if let Some(control) = pass_control {
+                            tokio::select! {
+                                biased;
+                                _ = control.cancelled() => Err(UpdaterLeafFailure::new(
+                                    UpdaterLeafFailureKind::Cancelled,
+                                    anyhow::anyhow!("updater pass cancellation requested during HTTP effect"),
+                                )),
+                                outcome = run() => outcome,
+                            }
+                        } else {
+                            run().await
+                        }
+                    },
                 )
                 .await;
             match completed {
@@ -406,6 +425,30 @@ impl RecurringSelfUpdateAuthority {
             )
             .await
             .map_err(anyhow::Error::new)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn execute_http_for_probe_test<F, Fut>(
+        &self,
+        effect_id: &str,
+        url: &str,
+        run: F,
+    ) -> Result<()>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<
+                Output = std::result::Result<UpdaterLeafSuccess<()>, UpdaterLeafFailure>,
+            >,
+    {
+        self.execute_http(
+            effect_id,
+            UpdaterLeafEffect::ReleaseMetadataFetch,
+            url,
+            None,
+            MAX_RELEASE_METADATA_BYTES,
+            run,
+        )
+        .await
     }
 
     async fn execute_stage<F, Fut, T>(

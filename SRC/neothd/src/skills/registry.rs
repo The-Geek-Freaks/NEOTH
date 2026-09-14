@@ -1642,6 +1642,7 @@ mod watcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::skills::resolver::{SkillRouteDecision, SkillRouteRequest, SkillRouteResolver};
     use tempfile::tempdir;
     use tokio::fs::{create_dir_all, write};
 
@@ -2327,6 +2328,135 @@ system_prompt: test
             active.authority_record_sha256(),
             Some(generation_n.record_sha256()),
             "a new registry acquisition must not expose the stale N receipt"
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_real_reload_keeps_resolved_body_and_epoch_compound_pinned() {
+        // This uses the production registry reload path and installed-authority
+        // fixtures; it is deliberately not an ArcSwap stand-in.  Route A must
+        // keep its individual body Arc and the matching compound snapshot
+        // while B is published concurrently.
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        let id = "body-pinning-real-reload";
+        write_skill(
+            &skills_dir,
+            id,
+            r#"id: body-pinning-real-reload
+description: invocation pinning fixture
+system_prompt: BODY-A
+trigger_keywords: [pin-body]
+tool_allowlist: [tool-a]
+modes:
+  - id: mode-a
+    description: A
+    spectrum: balanced
+    oversight: low
+    output: { format: markdown }
+    trigger_phrases: [pin-body-mode]
+    system_prompt_delta: MODE-A
+"#,
+        )
+        .await;
+        install_test_authority_key(home.path());
+        record_test_install_incarnation(home.path(), id);
+        let config_a = crate::config::FreedomConfig::default();
+        let reload = test_reload_controller(home.path(), config_a.clone());
+        activate_test_skill(home.path(), id, reload.as_ref());
+        let registry = SkillRegistry::load_with_reload_controller(&skills_dir, Arc::clone(&reload))
+            .await
+            .unwrap();
+        let snapshot_a = registry.authority_bound_snapshot().unwrap();
+        let epoch_a = snapshot_a.config_epoch();
+        let authority_a = snapshot_a.authority_epoch();
+        let SkillRouteDecision::Match(route_a) = SkillRouteResolver::new(snapshot_a)
+            .resolve(SkillRouteRequest::automatic("pin-body-mode", 1, &[]), None)
+            .await
+        else {
+            panic!("generation A must resolve");
+        };
+        assert_eq!(
+            route_a.system_prompt_layer().as_deref(),
+            Some("BODY-A\n\nMODE-A")
+        );
+        assert_eq!(route_a.skill().manifest.tool_allowlist, vec!["tool-a"]);
+        assert_eq!(route_a.report().config_epoch, epoch_a);
+        assert_eq!(route_a.report().authority_epoch, authority_a);
+
+        // Replace the live package and authorize it under a distinct accepted
+        // config epoch. The retained A route has no route-time lookup into B.
+        write_skill(
+            &skills_dir,
+            id,
+            r#"id: body-pinning-real-reload
+description: invocation pinning fixture
+system_prompt: BODY-B
+trigger_keywords: [pin-body]
+tool_allowlist: [tool-b]
+modes:
+  - id: mode-b
+    description: B
+    spectrum: balanced
+    oversight: low
+    output: { format: markdown }
+    trigger_phrases: [pin-body-mode]
+    system_prompt_delta: MODE-B
+"#,
+        )
+        .await;
+        record_test_install_incarnation(home.path(), id);
+        let mut config_b = config_a;
+        config_b.skills.disabled = vec!["unrelated-bundled-skill".to_owned()];
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&config_b).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            reload.try_reload().unwrap(),
+            crate::config::reload::ReloadResult::Reloaded { .. }
+        ));
+        activate_test_skill(home.path(), id, reload.as_ref());
+
+        let concurrent_registry = Arc::clone(&registry);
+        let reloader = tokio::spawn(async move {
+            for _ in 0..8 {
+                concurrent_registry.reload_now().await.unwrap();
+            }
+        });
+        // Read the old invocation while the real registry reload loop runs.
+        for _ in 0..32 {
+            assert_eq!(
+                route_a.system_prompt_layer().as_deref(),
+                Some("BODY-A\n\nMODE-A")
+            );
+            assert_eq!(route_a.mode().map(|mode| mode.id.as_str()), Some("mode-a"));
+            assert_eq!(route_a.skill().manifest.tool_allowlist, vec!["tool-a"]);
+            assert_eq!(route_a.report().config_epoch, epoch_a);
+            assert_eq!(route_a.report().authority_epoch, authority_a);
+            tokio::task::yield_now().await;
+        }
+        reloader.await.unwrap();
+
+        let snapshot_b = registry.authority_bound_snapshot().unwrap();
+        assert_ne!(snapshot_b.config_epoch(), epoch_a);
+        let SkillRouteDecision::Match(route_b) = SkillRouteResolver::new(snapshot_b.clone())
+            .resolve(SkillRouteRequest::automatic("pin-body-mode", 1, &[]), None)
+            .await
+        else {
+            panic!("generation B must resolve");
+        };
+        assert_eq!(
+            route_b.system_prompt_layer().as_deref(),
+            Some("BODY-B\n\nMODE-B")
+        );
+        assert_eq!(route_b.mode().map(|mode| mode.id.as_str()), Some("mode-b"));
+        assert_eq!(route_b.skill().manifest.tool_allowlist, vec!["tool-b"]);
+        assert_eq!(route_b.report().config_epoch, snapshot_b.config_epoch());
+        assert_eq!(
+            route_b.report().authority_epoch,
+            snapshot_b.authority_epoch()
         );
     }
 

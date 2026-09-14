@@ -2,7 +2,9 @@
 
 use std::ops::Deref;
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize};
 
 /// On-disk YAML manifest. Parsed once at load time + validated.
@@ -319,16 +321,55 @@ impl Skill {
     }
 }
 
+/// One immutable routed Skill generation. A resolved invocation retains this
+/// exact Arc while its enclosing `SkillSnapshot` retains the matching config
+/// and authority publication.
+#[derive(Debug, Clone)]
+pub struct SkillBody(Skill);
+
+impl SkillBody {
+    fn new(skill: Skill) -> Self {
+        Self(skill)
+    }
+
+    pub fn as_skill(&self) -> &Skill {
+        &self.0
+    }
+}
+
+impl Deref for SkillBody {
+    type Target = Skill;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_skill()
+    }
+}
+
 /// Immutable Skill admitted to routing.
 ///
 /// The inner `Skill` remains useful for inventory and package tooling, but a
 /// production router accepts only this sealed runtime form. This prevents a
 /// raw user manifest or `enabled: true` flag from becoming execution
 /// authority merely because a caller obtained a `Vec<Skill>`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct RuntimeSkill {
-    skill: Skill,
+    body: Arc<SkillBody>,
     origin: RuntimeSkillOrigin,
+}
+
+impl Serialize for RuntimeSkill {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Keep the pre-pinning JSON contract (`skill`, `origin`) while the
+        // in-memory body uses Arc without requiring serde's optional `rc`
+        // feature or exposing a second serialized representation.
+        let mut state = serializer.serialize_struct("RuntimeSkill", 2)?;
+        state.serialize_field("skill", self.body.as_skill())?;
+        state.serialize_field("origin", &self.origin)?;
+        state.end()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -361,7 +402,7 @@ impl RuntimeSkill {
             origin: RuntimeSkillOrigin::TrustedBundled {
                 embedded_content_hash: skill.content_hash.clone(),
             },
-            skill,
+            body: Arc::new(SkillBody::new(skill)),
         })
     }
 
@@ -394,11 +435,11 @@ impl RuntimeSkill {
             decision_id: authority.record().decision_id.clone(),
         };
         Ok(Self {
-            skill: Skill {
+            body: Arc::new(SkillBody::new(Skill {
                 manifest: authority.manifest().clone(),
                 path,
                 content_hash,
-            },
+            })),
             origin,
         })
     }
@@ -454,7 +495,15 @@ impl RuntimeSkill {
     }
 
     pub fn as_skill(&self) -> &Skill {
-        &self.skill
+        self.body.as_skill()
+    }
+
+    /// Clone the immutable routed body for one resolved invocation. This is
+    /// separate from the compound snapshot retained for config/authority
+    /// proof, so a later registry publication cannot replace body data used
+    /// by an in-flight route.
+    pub fn body(&self) -> Arc<SkillBody> {
+        Arc::clone(&self.body)
     }
 }
 
@@ -462,7 +511,7 @@ impl Deref for RuntimeSkill {
     type Target = Skill;
 
     fn deref(&self) -> &Self::Target {
-        &self.skill
+        self.as_skill()
     }
 }
 

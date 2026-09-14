@@ -87,6 +87,9 @@ jobs:
           sdk = tomllib.loads(
               pathlib.Path("SRC/neoth-plugin-sdk/Cargo.toml").read_text(encoding="utf-8")
           )
+          custody = tomllib.loads(
+              pathlib.Path("SRC/neoth-openclaw-custody/Cargo.toml").read_text(encoding="utf-8")
+          )
           versions = {
               "neoth": core["package"]["version"],
               "neothd-gui": gui["package"]["version"],
@@ -132,6 +135,16 @@ jobs:
               raise SystemExit(
                   f"::error::SDK package must be neoth-plugin-sdk, got {sdk['package']['name']}"
               )
+          if custody["package"]["name"] != "neoth-openclaw-custody":
+              raise SystemExit(
+                  "::error::Custody package must be neoth-openclaw-custody, got "
+                  f"{custody['package']['name']}"
+              )
+          if custody["package"]["version"] != "1.0.0":
+              raise SystemExit(
+                  "::error::Custody package version must be exactly 1.0.0, got "
+                  f"{custody['package']['version']}"
+              )
           sdk_dependency = core["dependencies"]["neoth-plugin-sdk"]
           if sdk_dependency.get("version") != sdk["package"]["version"]:
               raise SystemExit(
@@ -146,6 +159,21 @@ jobs:
               raise SystemExit(
                   "::error::Core SDK dependency must enable the _host integration feature"
               )
+          for manifest_name, manifest in (("neoth", core), ("neoth-migrate", migrate)):
+              custody_dependency = manifest["dependencies"].get("neoth-openclaw-custody")
+              if custody_dependency is None:
+                  raise SystemExit(
+                      f"::error::{manifest_name} must depend on neoth-openclaw-custody"
+                  )
+              if custody_dependency.get("version") != "1.0.0":
+                  raise SystemExit(
+                      f"::error::{manifest_name} custody dependency must pin version 1.0.0, got "
+                      f"{custody_dependency.get('version')}"
+                  )
+              if custody_dependency.get("path") != "../neoth-openclaw-custody":
+                  raise SystemExit(
+                      f"::error::{manifest_name} must retain the workspace custody path"
+                  )
           if {target["name"] for target in migrate.get("bin", [])} != {"neoth-migrate"}:
               raise SystemExit("::error::Migration package must expose neoth-migrate")
           if {target["name"] for target in relay.get("bin", [])} != {"neoth-relay"}:
@@ -187,7 +215,8 @@ jobs:
               f"Release contract OK: {ref_name} == neoth == neothd-gui "
               f"== neoth-migrate == neoth-relay == whatsapp-baileys-bridge "
               f"== keet-bridge "
-              f"== {tag_version}; neoth-plugin-sdk={sdk['package']['version']}"
+              f"== {tag_version}; neoth-plugin-sdk={sdk['package']['version']}; "
+              f"neoth-openclaw-custody={custody['package']['version']}"
           )
 
       - name: Require complete Road to 1.0 Gold

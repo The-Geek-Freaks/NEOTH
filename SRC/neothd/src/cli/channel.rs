@@ -2128,6 +2128,90 @@ pub async fn run_add(channel: &str, flags: &ChannelAddFlags, output: &OutputForm
     run_add_at(&FreedomConfig::default_neoth_home(), channel, flags, output).await
 }
 
+pub async fn run_import_openclaw_telegram(
+    config: &std::path::Path,
+    source_account: &str,
+    account_id: ChannelAccountId,
+    allowed_user_id: u64,
+    output: &OutputFormat,
+) -> Result<()> {
+    run_import_openclaw_telegram_at_with_probe(
+        &FreedomConfig::default_neoth_home(),
+        config,
+        source_account,
+        account_id,
+        allowed_user_id,
+        output,
+        |binding| async move {
+            probe_telegram_account_binding_with(binding, |token, allowed_user_id| async move {
+                crate::channels::telegram::TelegramChannel::new(token, Some(allowed_user_id))
+                    .validate()
+                    .await
+            })
+            .await
+        },
+    )
+    .await
+}
+
+/// Source selection happens before the candidate is prepared.  Its complete
+/// source-set binding is synchronously re-read after the probe and before the
+/// exact prepared CAS commit, so no source change can be mistaken for the
+/// credential that was probed.
+async fn run_import_openclaw_telegram_at_with_probe<F, Fut>(
+    home: &std::path::Path,
+    config: &std::path::Path,
+    source_account: &str,
+    account_id: ChannelAccountId,
+    allowed_user_id: u64,
+    output: &OutputFormat,
+    probe: F,
+) -> Result<()>
+where
+    F: FnOnce(TelegramProbeBinding) -> Fut,
+    Fut: std::future::Future<Output = Result<ChannelTestResult>>,
+{
+    anyhow::ensure!(
+        allowed_user_id != 0,
+        "telegram user ID must be a positive integer"
+    );
+    let inventory = neoth_openclaw_custody::canonical_known_channel_inventory_sha256();
+    let selected =
+        neoth_openclaw_custody::select_telegram_account(config, source_account, &inventory)?;
+    let source_label = selected.source_account_label().to_owned();
+    let source_binding = selected.source_set().clone();
+    let token = selected
+        .into_token()
+        .with_exposed(|token| SecretString::from(token));
+    let fields = TelegramAccountAddFields {
+        account_id,
+        allowed_user_id,
+        token,
+    };
+    let (saved_account, _probe_result) = run_telegram_account_prepare_probe_commit_reload(
+        home,
+        "telegram",
+        fields,
+        probe,
+        || {
+            let current = neoth_openclaw_custody::inspect_source_set(config, &inventory)?;
+            anyhow::ensure!(
+                current == source_binding,
+                "OpenClaw source changed while candidate was being probed; no account state was saved"
+            );
+            Ok(())
+        },
+    )
+    .await?;
+    print_openclaw_import_saved(
+        output,
+        &source_label,
+        &source_binding.source_set_sha256,
+        &saved_account,
+    );
+    Ok(())
+}
+
 pub async fn run_account_add(
     channel: &str,
     account_id: ChannelAccountId,
@@ -2196,6 +2280,29 @@ where
     F: FnOnce(TelegramProbeBinding) -> Fut,
     Fut: std::future::Future<Output = Result<ChannelTestResult>>,
 {
+    let (account_id, _probe_result) =
+        run_telegram_account_prepare_probe_commit_reload(home, channel, fields, probe, || Ok(()))
+            .await?;
+    print_telegram_account_saved(output, &account_id);
+    Ok(())
+}
+
+/// Shared transaction boundary for ordinary account add and explicit source
+/// import: prepare one candidate, probe that exact candidate, run a
+/// synchronous no-write pre-commit guard, then use the same prepared CAS
+/// commit and reload path.
+async fn run_telegram_account_prepare_probe_commit_reload<F, Fut, C>(
+    home: &std::path::Path,
+    channel: &str,
+    fields: TelegramAccountAddFields,
+    probe: F,
+    pre_commit: C,
+) -> Result<(ChannelAccountId, ChannelTestResult)>
+where
+    F: FnOnce(TelegramProbeBinding) -> Fut,
+    Fut: std::future::Future<Output = Result<ChannelTestResult>>,
+    C: FnOnce() -> Result<()>,
+{
     anyhow::ensure!(
         channel == "telegram",
         "account onboarding supports only canonical `telegram`"
@@ -2221,8 +2328,13 @@ where
         result.status == "ok",
         "candidate Telegram account probe failed; no account state was saved"
     );
+    pre_commit()?;
     Credentials::commit_prepared_telegram_account_upsert_at(prepared)?;
     crate::cli::reload::request_reload_at(home).context("Telegram account storage committed, but the live-reload request failed; run `neoth reload`")?;
+    Ok((account_id, result))
+}
+
+fn print_telegram_account_saved(output: &OutputFormat, account_id: &ChannelAccountId) {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",
@@ -2230,7 +2342,39 @@ where
         ),
         OutputFormat::Table => println!("telegram account `{}` saved", account_id.as_str()),
     }
-    Ok(())
+}
+
+fn print_openclaw_import_saved(
+    output: &OutputFormat,
+    source_account: &str,
+    source_set_sha256: &str,
+    account_id: &ChannelAccountId,
+) {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            openclaw_import_saved_json(source_account, source_set_sha256, account_id)
+        ),
+        OutputFormat::Table => println!(
+            "OpenClaw source account `{source_account}` imported into telegram/{} (source set {source_set_sha256}; probed; saved)",
+            account_id.as_str()
+        ),
+    }
+}
+
+fn openclaw_import_saved_json(
+    source_account: &str,
+    source_set_sha256: &str,
+    account_id: &ChannelAccountId,
+) -> serde_json::Value {
+    serde_json::json!({
+        "source_account": source_account,
+        "channel": "telegram",
+        "account": account_id.as_str(),
+        "source_set_sha256": source_set_sha256,
+        "probed": true,
+        "saved": true,
+    })
 }
 
 /// A validated, live-testable channel mutation that has not touched durable
@@ -5373,6 +5517,213 @@ mod tests {
             std::fs::read_to_string(home.path().join("freedom.yaml")).unwrap(),
             "future_extension: changed\n"
         );
+    }
+
+    fn write_openclaw_telegram_source(path: &std::path::Path, work_token: &str) {
+        std::fs::write(
+            path,
+            serde_json::json!({
+                "channels": {
+                    "telegram": {
+                        "accounts": {
+                            "work": { "botToken": work_token },
+                            "other": { "botToken": valid_tg_token() },
+                        }
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
+
+    fn accepted_import_probe(binding: TelegramProbeBinding) -> Result<ChannelTestResult> {
+        Ok(ChannelTestResult {
+            channel: "telegram".into(),
+            account: Some(binding.channel_ref.account_id),
+            status: "ok",
+            detail: "fake accepted".into(),
+        })
+    }
+
+    #[tokio::test]
+    async fn openclaw_import_copies_selected_token_to_exact_target_only() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let source_dir = tempfile::tempdir().unwrap();
+        let source = source_dir.path().join("openclaw.json");
+        let selected_token = valid_tg_token();
+        write_openclaw_telegram_source(&source, &selected_token);
+
+        run_import_openclaw_telegram_at_with_probe(
+            home.path(),
+            &source,
+            "work",
+            ChannelAccountId::new("ops_a").unwrap(),
+            42,
+            &OutputFormat::Json,
+            move |binding| async move {
+                assert_eq!(binding.channel_ref.account_id.as_str(), "ops_a");
+                assert_eq!(binding.allowed_user_id, 42);
+                assert_eq!(binding.token.expose(), selected_token);
+                accepted_import_probe(binding)
+            },
+        )
+        .await
+        .unwrap();
+
+        let pair =
+            crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml"))
+                .unwrap();
+        let accounts = pair.authenticated_telegram_accounts().unwrap();
+        assert!(
+            accounts
+                .iter()
+                .any(|account| account.channel_ref().account_id.as_str() == "ops_a")
+        );
+        assert!(
+            !accounts
+                .iter()
+                .any(|account| account.channel_ref().account_id.as_str() == "work")
+        );
+        assert_eq!(
+            accounts
+                .iter()
+                .find(|account| account.channel_ref().account_id.as_str() == "ops_a")
+                .unwrap()
+                .allowed_user_id(),
+            42
+        );
+    }
+
+    #[tokio::test]
+    async fn openclaw_import_source_change_after_probe_leaves_neoth_untouched() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let source_dir = tempfile::tempdir().unwrap();
+        let source = source_dir.path().join("openclaw.json");
+        write_openclaw_telegram_source(&source, &valid_tg_token());
+        let freedom = home.path().join("freedom.yaml");
+        let credentials = home.path().join("credentials.yaml");
+        let before_freedom = std::fs::read(&freedom).unwrap();
+        let before_credentials = std::fs::read(&credentials).unwrap_or_default();
+        let source_for_probe = source.clone();
+
+        let error = run_import_openclaw_telegram_at_with_probe(
+            home.path(),
+            &source,
+            "work",
+            ChannelAccountId::new("ops_a").unwrap(),
+            42,
+            &OutputFormat::Json,
+            move |binding| async move {
+                write_openclaw_telegram_source(
+                    &source_for_probe,
+                    &format!("123456789:{}", "b".repeat(35)),
+                );
+                accepted_import_probe(binding)
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("source changed"));
+        assert_eq!(std::fs::read(&freedom).unwrap(), before_freedom);
+        assert_eq!(
+            std::fs::read(&credentials).unwrap_or_default(),
+            before_credentials
+        );
+        assert!(
+            !home
+                .path()
+                .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+                .exists()
+        );
+    }
+
+    #[tokio::test]
+    async fn openclaw_import_failed_probe_has_zero_neoth_effect() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let source_dir = tempfile::tempdir().unwrap();
+        let source = source_dir.path().join("openclaw.json");
+        write_openclaw_telegram_source(&source, &valid_tg_token());
+        let freedom = home.path().join("freedom.yaml");
+        let credentials = home.path().join("credentials.yaml");
+        let before_freedom = std::fs::read(&freedom).unwrap();
+        let before_credentials = std::fs::read(&credentials).unwrap_or_default();
+
+        assert!(
+            run_import_openclaw_telegram_at_with_probe(
+                home.path(),
+                &source,
+                "work",
+                ChannelAccountId::new("ops_a").unwrap(),
+                42,
+                &OutputFormat::Json,
+                |_binding| async { anyhow::bail!("fake probe failure") },
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(std::fs::read(&freedom).unwrap(), before_freedom);
+        assert_eq!(
+            std::fs::read(&credentials).unwrap_or_default(),
+            before_credentials
+        );
+        assert!(
+            !home
+                .path()
+                .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+                .exists()
+        );
+    }
+
+    #[tokio::test]
+    async fn openclaw_import_refuses_legacy_source_without_exposing_token() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let source_dir = tempfile::tempdir().unwrap();
+        let source = source_dir.path().join("openclaw.json");
+        let sentinel = valid_tg_token();
+        std::fs::write(
+            &source,
+            serde_json::json!({
+                "channels": { "telegram": {
+                    "botToken": sentinel.clone(),
+                    "accounts": { "work": { "botToken": valid_tg_token() } }
+                }}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let error = run_import_openclaw_telegram_at_with_probe(
+            home.path(),
+            &source,
+            "work",
+            ChannelAccountId::new("ops_a").unwrap(),
+            42,
+            &OutputFormat::Json,
+            |_binding| async { unreachable!("source must be refused before probe") },
+        )
+        .await
+        .unwrap_err();
+        assert!(!format!("{error:#}").contains(&sentinel));
+        assert!(!home.path().join("credentials.yaml").exists());
+    }
+
+    #[test]
+    fn openclaw_import_output_is_secret_free() {
+        let sentinel = valid_tg_token();
+        let rendered = openclaw_import_saved_json(
+            "work",
+            "source-set-digest",
+            &ChannelAccountId::new("ops_a").unwrap(),
+        )
+        .to_string();
+        assert!(!rendered.contains(&sentinel));
+        assert!(rendered.contains("source_set_sha256"));
+        assert!(rendered.contains("probed"));
+        assert!(rendered.contains("saved"));
     }
 
     #[tokio::test]

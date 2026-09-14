@@ -2492,6 +2492,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let mut writer_join_result: Option<
         std::result::Result<Result<(), String>, tokio::task::JoinError>,
     > = None;
+    let mut retained_updater_passes = Vec::new();
     let required_boundary_died = tokio::select! {
         biased;
         _ = shutdown::wait_for_signal() => false,
@@ -2518,11 +2519,22 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             }
             true
         }
-        reason = updater_supervisor.wait_for_failure() => {
-            error!(
-                %reason,
-                "required updater supervisor boundary failed — treating recurring-update lifecycle loss as fatal"
-            );
+        failure = updater_supervisor.wait_for_failure() => {
+            match failure {
+                crate::daemon::updater_cron::UpdaterSupervisorFailure::DeadlineExceeded(passes) => {
+                    error!(
+                        retained_passes = passes.len(),
+                        "updater operation deadline exceeded; holding retained pass ownership through ordered late join"
+                    );
+                    retained_updater_passes = passes;
+                }
+                crate::daemon::updater_cron::UpdaterSupervisorFailure::Failed(reason) => {
+                    error!(
+                        %reason,
+                        "required updater supervisor boundary failed — treating recurring-update lifecycle loss as fatal"
+                    );
+                }
+            }
             true
         }
         result = async {
@@ -2693,6 +2705,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         snapshot_refresh_handle,
         omi_handle,
         updater_supervisor,
+        retained_updater_passes,
         catalog_task,
         #[cfg(feature = "cluster")]
         cluster_audit_task,

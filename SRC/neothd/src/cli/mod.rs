@@ -1198,6 +1198,17 @@ pub enum ProviderAction {
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug)]
 pub enum ChannelAction {
+    /// Import one explicitly selected OpenClaw Telegram token into one explicit NEOTH account.
+    ImportOpenclawTelegram {
+        #[arg(long)]
+        config: std::path::PathBuf,
+        #[arg(long)]
+        source_account: String,
+        #[arg(long)]
+        account: crate::channels::registry::ChannelAccountId,
+        #[arg(long)]
+        telegram_user_id: u64,
+    },
     /// Add or replace one explicitly named Telegram account without inferring a default.
     #[command(subcommand)]
     Account(ChannelAccountAction),
@@ -2064,6 +2075,21 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             self_dev::run(&home, args, None, global_output).await?;
         }
         Commands::Channel { action } => match action {
+            ChannelAction::ImportOpenclawTelegram {
+                config,
+                source_account,
+                account,
+                telegram_user_id,
+            } => {
+                channel::run_import_openclaw_telegram(
+                    &config,
+                    &source_account,
+                    account,
+                    telegram_user_id,
+                    &global_output,
+                )
+                .await?;
+            }
             ChannelAction::Account(ChannelAccountAction::Add {
                 channel: ch,
                 account,
@@ -2449,6 +2475,73 @@ mod default_invocation_tests {
                 "42",
                 "--token",
                 "t"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn openclaw_telegram_import_has_explicit_source_and_target_without_token_input() {
+        let parsed = Cli::try_parse_from([
+            "neoth",
+            "channel",
+            "import-openclaw-telegram",
+            "--config",
+            "C:/private/openclaw.json",
+            "--source-account",
+            "work",
+            "--account",
+            "ops_a",
+            "--telegram-user-id",
+            "42",
+        ])
+        .unwrap();
+        assert!(matches!(
+            parsed.command,
+            Commands::Channel {
+                action: ChannelAction::ImportOpenclawTelegram {
+                    source_account,
+                    account,
+                    telegram_user_id: 42,
+                    ..
+                }
+            } if source_account == "work" && account.as_str() == "ops_a"
+        ));
+
+        for forbidden in ["--token", "--stdin"] {
+            assert!(
+                Cli::try_parse_from([
+                    "neoth",
+                    "channel",
+                    "import-openclaw-telegram",
+                    "--config",
+                    "openclaw.json",
+                    "--source-account",
+                    "work",
+                    "--account",
+                    "ops_a",
+                    "--telegram-user-id",
+                    "42",
+                    forbidden,
+                    "telegram-token-sentinel",
+                ])
+                .is_err(),
+                "{forbidden} must never become an import input path"
+            );
+        }
+        assert!(
+            Cli::try_parse_from([
+                "neoth",
+                "channel",
+                "import-openclaw-telegram",
+                "--config",
+                "openclaw.json",
+                "--source-account",
+                "work",
+                "--account",
+                "not an account",
+                "--telegram-user-id",
+                "42",
             ])
             .is_err()
         );

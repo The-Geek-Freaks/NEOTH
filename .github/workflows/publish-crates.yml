@@ -30,6 +30,7 @@ jobs:
     outputs:
       core_version: ${{ steps.contract.outputs.core_version }}
       sdk_version: ${{ steps.contract.outputs.sdk_version }}
+      custody_version: ${{ steps.contract.outputs.custody_version }}
     steps:
       - name: Checkout selected tag
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -39,7 +40,7 @@ jobs:
         with:
           toolchain: '1.91.0'
 
-      - name: Verify tag, package names, binaries, and SDK dependency
+      - name: Verify tag, package names, binaries, SDK, and custody dependencies
         id: contract
         shell: python
         env:
@@ -85,8 +86,15 @@ jobs:
           sdk = tomllib.loads(
               pathlib.Path("SRC/neoth-plugin-sdk/Cargo.toml").read_text(encoding="utf-8")
           )
+          custody = tomllib.loads(
+              pathlib.Path("SRC/neoth-openclaw-custody/Cargo.toml").read_text(encoding="utf-8")
+          )
+          migrate = tomllib.loads(
+              pathlib.Path("SRC/neoth-migrate/Cargo.toml").read_text(encoding="utf-8")
+          )
           core_package = core["package"]
           sdk_package = sdk["package"]
+          custody_package = custody["package"]
           tag_version = release_tag[1:]
 
           if core_package["name"] != "neoth":
@@ -98,6 +106,16 @@ jobs:
           if sdk_package["name"] != "neoth-plugin-sdk":
               raise SystemExit(
                   f"SDK package must be neoth-plugin-sdk, got {sdk_package['name']}"
+              )
+          if custody_package["name"] != "neoth-openclaw-custody":
+              raise SystemExit(
+                  "custody package must be neoth-openclaw-custody, got "
+                  f"{custody_package['name']}"
+              )
+          if custody_package["version"] != "1.0.0":
+              raise SystemExit(
+                  "custody package version must be exactly 1.0.0, got "
+                  f"{custody_package['version']}"
               )
 
           bin_names = {target["name"] for target in core.get("bin", [])}
@@ -120,32 +138,55 @@ jobs:
           if "_host" not in sdk_dep.get("features", []):
               raise SystemExit("neoth must enable the SDK _host feature")
 
+          for manifest_name, manifest in (("neoth", core), ("neoth-migrate", migrate)):
+              custody_dep = manifest["dependencies"].get("neoth-openclaw-custody")
+              if custody_dep is None:
+                  raise SystemExit(
+                      f"{manifest_name} must depend on neoth-openclaw-custody"
+                  )
+              if custody_dep.get("version") != "1.0.0":
+                  raise SystemExit(
+                      f"{manifest_name} custody dependency must pin version 1.0.0, got "
+                      f"{custody_dep.get('version')}"
+                  )
+              if custody_dep.get("path") != "../neoth-openclaw-custody":
+                  raise SystemExit(
+                      f"{manifest_name} must retain the local custody path dependency"
+                  )
+
           output = pathlib.Path(os.environ["GITHUB_OUTPUT"])
           with output.open("a", encoding="utf-8") as handle:
               handle.write(f"core_version={core_package['version']}\n")
               handle.write(f"sdk_version={sdk_version}\n")
+              handle.write(f"custody_version={custody_package['version']}\n")
 
           print(
               "Publish contract OK: "
               f"{release_tag} -> neoth {core_package['version']}; "
-              f"dependency neoth-plugin-sdk {sdk_version}"
+              f"dependencies neoth-plugin-sdk {sdk_version}, "
+              f"neoth-openclaw-custody {custody_package['version']}"
           )
 
-      # The core package cannot resolve until the SDK is visible in the
-      # crates.io index. Package the independent SDK here; the next job owns the
-      # ordered publish + propagation wait for the core crate.
+      # The core package cannot resolve until its registry dependencies are
+      # visible. Package both independent crates here; the next job owns their
+      # ordered publish + propagation wait before packaging the core crate.
+      - name: Package custody without publishing
+        working-directory: SRC
+        run: cargo package -p neoth-openclaw-custody --locked --no-verify
+
       - name: Package SDK without publishing
         working-directory: SRC
         run: cargo package -p neoth-plugin-sdk --locked --no-verify
 
   publish:
-    name: Publish SDK, then neoth
+    name: Publish custody, SDK, then neoth
     needs: verify
     runs-on: ubuntu-24.04
     environment: crates-io
     env:
       CORE_VERSION: ${{ needs.verify.outputs.core_version }}
       SDK_VERSION: ${{ needs.verify.outputs.sdk_version }}
+      CUSTODY_VERSION: ${{ needs.verify.outputs.custody_version }}
     steps:
       - name: Checkout selected tag
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -159,6 +200,80 @@ jobs:
       # `repository` metadata is self-asserted and therefore not ownership
       # proof; an already-published version is accepted only when its registry
       # checksum matches the bytes this selected release tag packages locally.
+      - name: Package custody for immutable-content verification
+        working-directory: SRC
+        run: cargo package -p neoth-openclaw-custody --locked --no-verify
+
+      - name: Check custody registry state
+        id: custody_registry
+        working-directory: SRC
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          response="$RUNNER_TEMP/crates-io-response.json"
+          status=$(curl --silent --show-error --output "$response" --write-out '%{http_code}' \
+            --header 'User-Agent: NEOTH-release-workflow' \
+            "https://crates.io/api/v1/crates/neoth-openclaw-custody/$CUSTODY_VERSION")
+
+          case "$status" in
+            200)
+              python - "$response" "target/package/neoth-openclaw-custody-$CUSTODY_VERSION.crate" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          local_archive = pathlib.Path(sys.argv[2])
+          expected_checksum = ((data.get("version") or {}).get("checksum") or "").lower()
+          actual_checksum = hashlib.sha256(local_archive.read_bytes()).hexdigest()
+          if not expected_checksum or actual_checksum != expected_checksum:
+              raise SystemExit(
+                  "existing neoth-openclaw-custody version does not match this release tag: "
+                  f"local sha256={actual_checksum}, crates.io checksum={expected_checksum!r}"
+              )
+          repository = (
+              (data.get("crate") or {}).get("repository")
+              or (data.get("version") or {}).get("repository")
+              or ""
+          )
+          normalized = repository.lower().rstrip("/").removesuffix(".git")
+          if normalized != "https://github.com/the-geek-freaks/neoth":
+              raise SystemExit(
+                  "existing neoth-openclaw-custody version has unexpected repository: "
+                  f"{repository!r}"
+              )
+          PY
+              echo "neoth-openclaw-custody $CUSTODY_VERSION already exists with this tag's exact package checksum."
+              echo "needs_publish=false" >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo "needs_publish=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::crates.io returned HTTP $status while checking neoth-openclaw-custody $CUSTODY_VERSION."
+              cat "$response"
+              exit 1
+              ;;
+          esac
+
+      - name: Publish custody
+        if: steps.custody_registry.outputs.needs_publish == 'true'
+        working-directory: SRC
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::error::CARGO_REGISTRY_TOKEN is not configured for the crates-io environment."
+            exit 1
+          fi
+          # The exact archive was produced above. Avoid running package build
+          # scripts while the registry token is present.
+          cargo publish -p neoth-openclaw-custody --locked --no-verify
+
       - name: Package SDK for immutable-content verification
         working-directory: SRC
         run: cargo package -p neoth-plugin-sdk --locked --no-verify
@@ -232,21 +347,21 @@ jobs:
           # scripts while the registry token is present.
           cargo publish -p neoth-plugin-sdk --locked --no-verify
 
-      - name: Wait for SDK index propagation and package neoth
+      - name: Wait for custody and SDK index propagation, then package neoth
         working-directory: SRC
         shell: bash
         run: |
           set -euo pipefail
           for attempt in $(seq 1 30); do
             if cargo package -p neoth --locked --no-verify; then
-              echo "neoth-plugin-sdk $SDK_VERSION is resolvable; neoth $CORE_VERSION packages cleanly."
+              echo "neoth-openclaw-custody $CUSTODY_VERSION and neoth-plugin-sdk $SDK_VERSION are resolvable; neoth $CORE_VERSION packages cleanly."
               exit 0
             fi
             if [ "$attempt" -eq 30 ]; then
-              echo "::error::neoth-plugin-sdk $SDK_VERSION did not become resolvable within 5 minutes."
+              echo "::error::neoth-openclaw-custody $CUSTODY_VERSION and neoth-plugin-sdk $SDK_VERSION did not become resolvable within 5 minutes."
               exit 1
             fi
-            echo "SDK not visible to Cargo yet (attempt $attempt/30); retrying in 10 seconds."
+            echo "custody and/or SDK not visible to Cargo yet (attempt $attempt/30); retrying in 10 seconds."
             sleep 10
           done
 

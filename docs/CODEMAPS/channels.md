@@ -35,6 +35,19 @@ other account families, and remaining account-aware routing remain open.
 W21–23 is locally validated: Rust, unit, headless-GUI, contract, and Python
 gates pass. Native GUI acceptance and macOS CI remain separate.
 
+## OpenClaw account import (W26; locally validated)
+
+The new importer selects exactly one OpenClaw source account through `--config`
+and `--source-account`, then writes one explicit Telegram target via `--account`
+and `--telegram-user-id`. The token stays in memory, the target candidate is
+probed before commit, and a source-set recheck precedes the existing prepared
+CAS commit. `raw_json` shared custody yields canonical redacted migration
+reports. Manual publish/release code consumes that crate without publishing a
+registry artifact. Local validation covers final selection, Compound Clippy,
+AccountConfigContracts, custody, formatting, and Python checks. It does not
+claim a full OpenClaw configuration or transcript migration, pairing migration,
+a physical provider live import, or registry publication.
+
 `cli/channel.rs` performs `neoth channel migrate-legacy telegram --account
 <account-id>` as a paired migration with recovery cleanup. It does not expose
 secret material. When a map is active, legacy flat Telegram add/remove/

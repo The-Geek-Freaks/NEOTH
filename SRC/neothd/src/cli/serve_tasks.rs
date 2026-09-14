@@ -7445,6 +7445,9 @@ pub(crate) struct BackgroundHandles {
     pub snapshot_refresh_handle: Option<JoinHandle<()>>,
     pub omi_handle: Option<JoinHandle<()>>,
     pub updater_supervisor: crate::daemon::updater_cron::UpdaterSupervisorHandle,
+    /// Finite deadline outcome returned by the supervisor.  These handles
+    /// still own their controls and WAL roots and must late-join before close.
+    pub retained_updater_passes: Vec<crate::daemon::updater_cron::RetainedUpdaterPass>,
     // ── deferred crons (not fleet-managed) ─────────────────────────────────
     pub catalog_task: JoinHandle<()>,
     #[cfg(feature = "cluster")]
@@ -7573,6 +7576,7 @@ pub(crate) async fn shutdown_background_tasks(
         snapshot_refresh_handle,
         omi_handle,
         updater_supervisor,
+        mut retained_updater_passes,
         catalog_task,
         #[cfg(feature = "cluster")]
         cluster_audit_task,
@@ -7723,6 +7727,29 @@ pub(crate) async fn shutdown_background_tasks(
         let rest: Vec<_> = fleet.drain().collect();
         (wal, rest)
     };
+
+    // Take the updater through the finite outcome contract before the fleet
+    // drain below.  A SelfMap timeout is permitted to return early, so it
+    // cannot retain an `UpdaterSupervisorHandle` whose Drop would detach an
+    // admitted updater pass or its WAL root.
+    if let Some(failure) = updater_supervisor.shutdown().await {
+        match failure {
+            crate::daemon::updater_cron::UpdaterSupervisorFailure::DeadlineExceeded(passes) => {
+                retained_updater_passes.extend(passes);
+            }
+            crate::daemon::updater_cron::UpdaterSupervisorFailure::Failed(reason) => {
+                warn!(%reason, "updater supervisor failed while shutdown was requested");
+            }
+        }
+    }
+    let retained_updater_deadline = !retained_updater_passes.is_empty();
+    let mut retained_updater_error = None;
+    for pass in retained_updater_passes {
+        if let Err(error) = pass.join().await {
+            retained_updater_error.get_or_insert(error);
+        }
+    }
+
     for (key, handle) in wal_handles.into_iter().chain(rest_handles) {
         if let CronTaskStopOutcome::TimedOut(handle) = handle.shutdown().await {
             let phase = match &handle.join {
@@ -7751,10 +7778,6 @@ pub(crate) async fn shutdown_background_tasks(
     // the writer drain is irrelevant — but abort it cleanly like the others.
     crate::cli::serve_tasks::abort_optional(snapshot_refresh_handle).await;
     crate::cli::serve_tasks::abort_optional(omi_handle).await;
-
-    // GOLD-R3-18: one ordered shutdown cancels and joins every probe/apply/stage
-    // lane before the WAL writer closes.
-    updater_supervisor.shutdown().await;
 
     // Abort the catalog refresh task. May be in the middle of an HTTPS
     // round-trip; aborting drops the connection, which is fine — the
@@ -8050,6 +8073,13 @@ pub(crate) async fn shutdown_background_tasks(
     if let Some(error) = writer_join_error {
         return Err(error);
     }
+    if let Some(error) = retained_updater_error {
+        anyhow::bail!("fatal updater deadline drain completed late: {error}");
+    }
+    anyhow::ensure!(
+        !retained_updater_deadline,
+        "fatal updater operation deadline exceeded; retained pass was late-joined before writer shutdown"
+    );
     Ok(())
 }
 

@@ -664,6 +664,7 @@ async-stream = "0.3"
 # the crates.io index before the public package can be packaged or published.
 # `_host` feature flips on the host-only PermissionToken::mint() ctor.
 neoth-plugin-sdk = { path = "../neoth-plugin-sdk", version = "0.1.0-alpha.0", features = ["_host"] }
+neoth-openclaw-custody = { path = "../neoth-openclaw-custody", version = "1.0.0" }
 
 # V10-04 GA blocker — wasmtime runtime for WASM plugin host. Optional
 # (feature `wasm-plugin-host`). Pinned to 26.x; the 2026 API is stable

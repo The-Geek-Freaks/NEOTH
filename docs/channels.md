@@ -124,6 +124,20 @@ separate P1-16 work. W21–23 is locally validated: Rust, unit, headless-GUI,
 contract, and Python gates pass. Native GUI acceptance and macOS CI remain
 separate.
 
+### OpenClaw account import (W26; locally validated)
+
+The OpenClaw importer accepts `--config`, `--source-account`, `--account`, and
+`--telegram-user-id` to create one explicitly named target account from one
+selected source account. It reads the selected token only in memory, probes the
+prepared target before mutation, rechecks the source set, and then uses the
+same prepared CAS commit path as the named-account workflow. Its report uses
+shared raw-JSON custody and is canonically redacted. Local validation covers
+the final selection (1,492 pass / 0 fail / 1 existing Unix-only ignored),
+Compound Clippy, AccountConfigContracts, custody, formatting, and Python
+checks. This does not claim a full OpenClaw configuration or transcript
+migration, pairing migration, a physical provider live import, or registry
+publication.
+
 ### Account-bound proactive Telegram routing (Wave 16; locally verified)
 
 `neoth proactive route --default --channel telegram --account <account-id>`

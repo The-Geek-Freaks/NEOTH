@@ -284,8 +284,12 @@
   vs. chromiumoxide für headless Win11.
 - **Ralph-Retry (error-aware LLM-Retry-Tool)** `[CODEX]` `GOLD-LF-P2-14`
 - **Role-Enforcement-Pipeline (Hemisphären)** `[CODEX]` `GOLD-LF-P2-15`
-- **E-22 Skill-Hot-Reload Arc<SkillBody>-Pinning** `[CODEX]` `GOLD-LF-P2-16` — ArcSwap swappt
-  zwischen Turns; Invocation-Pinning (Option 3) fehlt.
+- **E-22 Skill-Hot-Reload Arc<SkillBody>-Pinning** `[CODEX]` `GOLD-LF-P2-16` — ✅ Die
+  aufgelöste Route hält jetzt `Arc<SkillBody>` und den Body/Config-Snapshot je Invocation;
+  eine spätere ArcSwap-Publikation betrifft nur neue Invocations. Der reale A/B-Concurrent-
+  Reload-Test belegt dieses Pinning. Quelle: `SRC/neothd/src/skills/{schema,resolver,registry}.rs`;
+  Evidence: `docs/gold-wave24-26-verification.md` und
+  `docs/verification/gold-wave24-26-{source-manifest,test-matrix}.json`.
 - **omniparser-Reopen-Entscheid** `[EITHER]` `GOLD-LF-P2-17` — DO_NOT_ADOPT.md:38 Reopen-Bedingung
   (PC-01/PC-02) ist seit GOLD:958/970 erfüllt, nie revisited. Decision-only:
   600MB-ONNX vs. Fresh-Win11-Filter neu bewerten, Verdict in DO_NOT_ADOPT

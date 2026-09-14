@@ -6000,6 +6000,182 @@ mod tests {
         assert!(!delivery.has_sent());
     }
 
+    /// One production-shaped two-account acceptance path.  The account
+    /// authority originates in `RuntimeConfigPair::authenticated_telegram_accounts`
+    /// and is converted by the normal serve-task bundle factory; no test may
+    /// construct a `TelegramAccountBundle` or mapped provenance directly.
+    fn configured_mapped_telegram_bundles() -> Vec<crate::cli::serve_tasks::TelegramAccountBundle> {
+        let mut runtime = crate::config::RuntimeConfigPair {
+            config: FreedomConfig::default(),
+            raw_credentials: crate::config::credentials::Credentials::default(),
+            credentials: crate::config::credentials::Credentials::default(),
+        };
+        for (account_id, allowed_user_id, token) in [
+            ("ops_a", 101_u64, "fixture-ops-a-token"),
+            ("ops_b", 202_u64, "fixture-ops-b-token"),
+        ] {
+            let account_id = crate::channels::registry::ChannelAccountId::new(account_id)
+                .expect("fixture account id");
+            runtime.config.channel_accounts.telegram.insert(
+                account_id.clone(),
+                crate::config::TelegramAccountConfig { allowed_user_id },
+            );
+            let credential = crate::config::credentials::TelegramAccountCredentials {
+                token: Some(crate::secret::SecretString::new(token.to_owned())),
+            };
+            runtime
+                .raw_credentials
+                .channel_accounts
+                .telegram
+                .insert(account_id.clone(), credential.clone());
+            runtime
+                .credentials
+                .channel_accounts
+                .telegram
+                .insert(account_id, credential);
+        }
+        crate::cli::serve_tasks::telegram_account_bundles(&runtime)
+            .expect("coherent runtime pair yields admitted Telegram bundles")
+    }
+
+    #[tokio::test]
+    async fn configured_a_and_b_remain_isolated_from_pipeline_ingress_through_live_wal() {
+        let bundles = configured_mapped_telegram_bundles();
+        assert_eq!(
+            bundles.len(),
+            2,
+            "the runtime pair admits both exact accounts"
+        );
+        let bundle_a = bundles
+            .iter()
+            .find(|bundle| bundle.channel_ref.account_id.as_str() == "ops_a")
+            .expect("ops_a bundle from runtime pair");
+        let bundle_b = bundles
+            .iter()
+            .find(|bundle| bundle.channel_ref.account_id.as_str() == "ops_b")
+            .expect("ops_b bundle from runtime pair");
+
+        let binding_a = AuthenticatedInboundBinding::for_mapped_telegram(
+            bundle_a
+                .mapped_live_egress_provenance()
+                .expect("configured nonlegacy A mints sealed provenance"),
+        );
+        let binding_b = AuthenticatedInboundBinding::for_mapped_telegram(
+            bundle_b
+                .mapped_live_egress_provenance()
+                .expect("configured nonlegacy B mints sealed provenance"),
+        );
+        let raw = inbound(Some("same admitted envelope"), None);
+
+        // This is the first production pipeline operation over raw adapter
+        // input. The envelope supplies only the channel family; the selected
+        // account remains the adapter-startup binding on each branch.
+        assert!(admit_bound_inbound(&binding_a, raw.clone()).is_some());
+        assert!(admit_bound_inbound(&binding_b, raw.clone()).is_some());
+        let a_sender = scoped_sender_hash_of(&binding_a, &raw.sender_id);
+        let b_sender = scoped_sender_hash_of(&binding_b, &raw.sender_id);
+        assert_ne!(a_sender, b_sender, "same raw sender is account scoped");
+        let a_session =
+            persist_sanitized_channel_caption(&None, &binding_a, &a_sender, "safe", 7).await;
+        let b_session =
+            persist_sanitized_channel_caption(&None, &binding_b, &b_sender, "safe", 7).await;
+        assert_ne!(
+            a_session, b_session,
+            "pipeline transcript sessions do not collide"
+        );
+        assert_ne!(
+            crate::permissions::lease::channel_lease_subject(
+                &binding_a.channel_ref,
+                &raw.sender_id,
+            ),
+            crate::permissions::lease::channel_lease_subject(
+                &binding_b.channel_ref,
+                &raw.sender_id,
+            ),
+            "a lease subject for A cannot name B"
+        );
+        assert_ne!(
+            channel_media_source_ref(&binding_a, &raw),
+            channel_media_source_ref(&binding_b, &raw),
+            "media provenance follows the admitted account binding"
+        );
+
+        let home = tempfile::tempdir().expect("create account-isolation home");
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).expect("create account-isolation WAL directory");
+        let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
+            wal.join("000001.wal"),
+            home.path().to_path_buf(),
+        )
+        .expect("start authenticated account-isolation writer");
+        ready
+            .wait()
+            .await
+            .expect("initialize account-isolation writer");
+        let channel_a = Arc::new(LiveReleaseChannel::default());
+        let channel_b = Arc::new(LiveReleaseChannel::default());
+        let mut delivery_a = crate::channels::LiveDelivery::new_mapped_telegram(
+            channel_a.clone(),
+            raw.chat_id.clone(),
+            ChannelKind::Telegram,
+            crate::config::LiveDeliveryConfig {
+                edits_enabled: true,
+                min_edit_interval_ms: 0,
+                max_edits_per_message: 1,
+                final_edit_always_allowed: true,
+            },
+            bundle_a
+                .mapped_live_egress_provenance()
+                .expect("A delivery keeps A capability"),
+        )
+        .expect("construct A mapped delivery");
+        let mut delivery_b = crate::channels::LiveDelivery::new_mapped_telegram(
+            channel_b.clone(),
+            raw.chat_id.clone(),
+            ChannelKind::Telegram,
+            crate::config::LiveDeliveryConfig {
+                edits_enabled: true,
+                min_edit_interval_ms: 0,
+                max_edits_per_message: 1,
+                final_edit_always_allowed: true,
+            },
+            bundle_b
+                .mapped_live_egress_provenance()
+                .expect("B delivery keeps B capability"),
+        )
+        .expect("construct B mapped delivery");
+        delivery_a
+            .send_or_edit(&writer, "A-only response", false)
+            .await
+            .expect("A mock delivery");
+        delivery_b
+            .send_or_edit(&writer, "B-only response", false)
+            .await
+            .expect("B mock delivery");
+
+        let evidence = crate::daemon::channel_transport_evidence::read_account_transport_evidence(
+            home.path(),
+            crate::time::now_unix_i64(),
+        )
+        .expect("complete authenticated live WAL has account evidence");
+        for binding in [&binding_a, &binding_b] {
+            let counters = evidence
+                .get(&binding.channel_ref)
+                .expect("each admitted account has exactly its own WAL row");
+            assert_eq!(counters.completed, 1);
+            assert_eq!(counters.accepted, 1);
+            assert_eq!(counters.failed, 0);
+        }
+        assert_eq!(evidence.len(), 2, "no raw envelope account was invented");
+        assert_eq!(channel_a.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(channel_b.sends.load(Ordering::SeqCst), 1);
+
+        drop(writer);
+        join.await
+            .expect("account-isolation writer task joins")
+            .expect("account-isolation writer completes");
+    }
+
     fn inbound(text: Option<&str>, edit_unix: Option<i64>) -> InboundMessage {
         InboundMessage {
             channel: ChannelKind::Telegram,

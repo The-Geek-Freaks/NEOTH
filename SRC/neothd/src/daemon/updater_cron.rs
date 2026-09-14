@@ -13,12 +13,10 @@
 //!   and a typed `0x45 UPDATER_TASK_RESULT` terminal receipt.
 //! - Lanes that share a historical `UpdaterTaskKind` are serialized across the
 //!   complete FIRED/RESULT pair, so audit frames cannot interleave ambiguously.
-//! - NEOTH self-probe and self-stage have request-bound leaf authority, but
-//!   remain explicitly denied. Their HTTP leaves have per-request DNS,
-//!   connect, idle-read and total timeouts; the pass still lacks one inherited
-//!   absolute deadline spanning every request, blocking stage preparation,
-//!   publication, terminal-WAL acknowledgement and generation quiescence.
-//!   `spawn_blocking` stage work cannot currently be cooperatively cancelled.
+//! - NEOTH self-probe has request-bound leaf authority, one inherited pass
+//!   deadline, cooperative HTTP cancellation, and retained deadline ownership.
+//!   Self-stage remains explicitly denied because its blocking preparation and
+//!   publication work cannot yet be cooperatively cancelled.
 //! - CLI version probes, skill/plugin probes and CLI auto-apply remain denied
 //!   until their process, registry, Git and install leaves enforce the same
 //!   exact authority contract. In particular, the binary-version child has no
@@ -58,7 +56,7 @@ use sha2::{Digest as _, Sha256};
 /// leaves consume request-bound authority. Manual, operator-initiated updater
 /// commands are unaffected.
 pub const UNAUDITED_RECURRING_EGRESS_DENIED: &str = "recurring updater network probe blocked: request-bound autonomy and mandatory intent/result WAL are not wired at every concrete transport/process leaf; binary probe lacks a timeout, npm/Git do not own descendant process trees, and installers lack one inherited deadline/cancellation token";
-pub const UNBOUNDED_RECURRING_LIFECYCLE_DENIED: &str = "recurring NEOTH self-update blocked: HTTP has leaf-local timeouts but no inherited absolute pass deadline covers blocking stage prepare/publish, terminal WAL acknowledgement, or generation quiescence; spawn_blocking work cannot be cooperatively cancelled";
+pub const UNBOUNDED_RECURRING_LIFECYCLE_DENIED: &str = "recurring NEOTH self-stage blocked: HTTP has leaf-local timeouts but no inherited absolute pass deadline covers blocking stage prepare/publish, terminal WAL acknowledgement, or generation quiescence; spawn_blocking work cannot be cooperatively cancelled";
 const REQUEST_BOUND_POLICY_REFUSED: &str =
     "accepted updater policy refused this exact recurring leaf";
 const ACCEPTED_GENERATION_RETIRED: &str =
@@ -103,22 +101,50 @@ fn mutation_failure_disposition(error: String) -> TerminalizedPassFailure {
     }
 }
 
-fn authorized_probe_failure_disposition(error: anyhow::Error) -> TerminalizedPassFailure {
+fn authorized_probe_failure_disposition(
+    error: anyhow::Error,
+    cancellation_requested: bool,
+) -> (TerminalizedPassFailure, UpdaterTerminalOutcome) {
     match error.downcast_ref::<crate::updater::authority::UpdaterLeafExecutionError>() {
+        Some(crate::updater::authority::UpdaterLeafExecutionError::Effect {
+            kind: "cancelled",
+            ..
+        }) if cancellation_requested => (
+            TerminalizedPassFailure::RetryNextCadence(format!(
+                "authorized self-update probe cancelled by its owning generation: {error}"
+            )),
+            UpdaterTerminalOutcome::Cancelled,
+        ),
         Some(crate::updater::authority::UpdaterLeafExecutionError::Effect {
             kind: "panic" | "cancelled" | "policy",
             ..
-        }) => TerminalizedPassFailure::CloseSupervisor(format!(
-            "authorized self-update probe failed: {error}"
-        )),
-        Some(crate::updater::authority::UpdaterLeafExecutionError::Effect { .. }) | None => {
+        }) => (
+            TerminalizedPassFailure::CloseSupervisor(format!(
+                "authorized self-update probe failed: {error}"
+            )),
+            UpdaterTerminalOutcome::Failed,
+        ),
+        Some(crate::updater::authority::UpdaterLeafExecutionError::Effect {
+            kind: "timeout",
+            ..
+        }) => (
             TerminalizedPassFailure::RetryNextCadence(format!(
                 "authorized self-update probe failed: {error}"
-            ))
-        }
-        Some(_) => TerminalizedPassFailure::CloseSupervisor(format!(
-            "authorized self-update probe failed: {error}"
-        )),
+            )),
+            UpdaterTerminalOutcome::TimedOut,
+        ),
+        Some(crate::updater::authority::UpdaterLeafExecutionError::Effect { .. }) | None => (
+            TerminalizedPassFailure::RetryNextCadence(format!(
+                "authorized self-update probe failed: {error}"
+            )),
+            UpdaterTerminalOutcome::Failed,
+        ),
+        Some(_) => (
+            TerminalizedPassFailure::CloseSupervisor(format!(
+                "authorized self-update probe failed: {error}"
+            )),
+            UpdaterTerminalOutcome::Failed,
+        ),
     }
 }
 
@@ -295,14 +321,13 @@ fn effective_lane_schedules(config: &crate::config::FreedomConfig) -> Vec<LaneSc
 
 fn recurring_egress_gate(lane: RecurringUpdateLane) -> crate::updater::pipeline::GateDecision {
     match lane {
-        // The HTTP-only plumbing is present but has not yet passed the full
-        // native lifecycle acceptance gate, including bounded terminal drain.
-        // SelfStage still reaches blocking local work.  Keep both denied.
-        RecurringUpdateLane::NeothSelfProbe | RecurringUpdateLane::SelfStage => {
-            crate::updater::pipeline::GateDecision::Deny {
-                reason: UNBOUNDED_RECURRING_LIFECYCLE_DENIED.to_string(),
-            }
-        }
+        // Wave 25 admits only the concrete HTTP self-probe.  It now consumes
+        // request-bound authority, the pass clock/control, and ordered leaf
+        // receipts; it does not stage or publish an update.
+        RecurringUpdateLane::NeothSelfProbe => crate::updater::pipeline::GateDecision::Allow,
+        RecurringUpdateLane::SelfStage => crate::updater::pipeline::GateDecision::Deny {
+            reason: UNBOUNDED_RECURRING_LIFECYCLE_DENIED.to_string(),
+        },
         // CLI/npm/Git/OSV/install leaves remain inert until their own exact
         // request-bound authority wrappers land.
         RecurringUpdateLane::CliVersionProbe
@@ -314,11 +339,126 @@ fn recurring_egress_gate(lane: RecurringUpdateLane) -> crate::updater::pipeline:
 }
 
 type LaneFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'static>>;
+/// One admitted pass owns its cancellation edge and the single run clock which
+/// bound its durable leaf requests.  A deadline is observable only after
+/// admission, so denied lanes cannot manufacture a lifecycle owner.
+#[derive(Clone)]
+pub(crate) struct UpdaterPassControl {
+    cancelled: tokio::sync::watch::Sender<bool>,
+    clock: Arc<std::sync::Mutex<Option<UpdaterRunClock>>>,
+    // The real writer clone remains with this control from admission until a
+    // joined terminal result, including an escalated deadline drain.
+    wal_root_guard: Option<WalWriterHandle>,
+}
+
+impl UpdaterPassControl {
+    fn new(wal_root_guard: Option<WalWriterHandle>) -> Self {
+        let (cancelled, _) = tokio::sync::watch::channel(false);
+        Self {
+            cancelled,
+            clock: Arc::new(std::sync::Mutex::new(None)),
+            wal_root_guard,
+        }
+    }
+
+    pub(crate) fn cancel(&self) {
+        self.cancelled.send_replace(true);
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        *self.cancelled.borrow()
+    }
+
+    pub(crate) fn admit(&self, clock: UpdaterRunClock) -> anyhow::Result<()> {
+        let mut admitted = self
+            .clock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("updater pass admission clock is poisoned"))?;
+        anyhow::ensure!(admitted.is_none(), "updater pass clock was admitted twice");
+        *admitted = Some(clock);
+        Ok(())
+    }
+
+    pub(crate) fn deadline(&self, phase: UpdaterDeadlinePhase) -> Option<tokio::time::Instant> {
+        let clock = self
+            .clock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        clock.as_ref().map(|clock| clock.deadline(phase))
+    }
+
+    pub(crate) async fn cancelled(&self) {
+        let mut cancelled = self.cancelled.subscribe();
+        if *cancelled.borrow() {
+            return;
+        }
+        let _ = cancelled.changed().await;
+    }
+}
+
+/// A deadline-expired admitted pass whose task, cancellation control, and
+/// writer root are still owned by the daemon boundary.  It must be joined
+/// before any writer-close or clean shutdown continuation.
+pub(crate) struct RetainedUpdaterPass {
+    lane: RecurringUpdateLane,
+    control: UpdaterPassControl,
+    pass: tokio::task::JoinHandle<Result<(), String>>,
+}
+
+impl RetainedUpdaterPass {
+    pub(crate) async fn join(self) -> Result<(), String> {
+        let Self {
+            lane,
+            control,
+            pass,
+        } = self;
+        // Keep both the cancellation control and its WAL root guard alive
+        // until the child has acknowledged its terminal state.
+        let _root_guard = &control.wal_root_guard;
+        match pass.await {
+            Ok(result) => result.map_err(|error| {
+                format!(
+                    "retained updater pass `{}` completed late: {error}",
+                    lane.as_str()
+                )
+            }),
+            Err(error) => Err(format!(
+                "retained updater pass `{}` join failed: {error}",
+                lane.as_str()
+            )),
+        }
+    }
+}
+
+pub(crate) enum UpdaterSupervisorFailure {
+    Failed(String),
+    DeadlineExceeded(Vec<RetainedUpdaterPass>),
+}
+
+enum UpdaterSupervisorExit {
+    Clean,
+    Failed(UpdaterSupervisorFailure),
+}
+
+impl std::fmt::Display for UpdaterSupervisorFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Failed(reason) => formatter.write_str(reason),
+            Self::DeadlineExceeded(passes) => write!(
+                formatter,
+                "fatal updater operation deadline exceeded for {} retained pass(es); late join is required",
+                passes.len()
+            ),
+        }
+    }
+}
+
 type LaneExecutor = Arc<
     dyn Fn(
             RecurringUpdateLane,
             Arc<crate::config::reload::AcceptedConfigSnapshot>,
             crate::updater::pipeline::GateDecision,
+            UpdaterPassControl,
         ) -> LaneFuture
         + Send
         + Sync
@@ -328,8 +468,10 @@ type LaneExecutor = Arc<
 /// Sole daemon owner for all recurring update work.
 pub(crate) struct UpdaterSupervisorHandle {
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
-    join: Option<tokio::task::JoinHandle<()>>,
-    failure: Option<tokio::sync::oneshot::Receiver<String>>,
+    join: Option<tokio::task::JoinHandle<UpdaterSupervisorExit>>,
+    // Notification only: ownership is always retained in `join`'s output.
+    failure: Option<tokio::sync::oneshot::Receiver<()>>,
+    failure_notified: bool,
 }
 
 impl UpdaterSupervisorHandle {
@@ -343,29 +485,70 @@ impl UpdaterSupervisorHandle {
     /// Required daemon-boundary signal. It resolves only when the supervisor
     /// exits unexpectedly or panics; ordinary shutdown is initiated after the
     /// daemon's main boundary select has already completed.
-    pub(crate) async fn wait_for_failure(&mut self) -> String {
-        match self
-            .failure
-            .as_mut()
-            .expect("live updater supervisor failure receiver")
-            .await
+    pub(crate) async fn wait_for_failure(&mut self) -> UpdaterSupervisorFailure {
+        if !self.failure_notified {
+            let notification = {
+                let receiver = self
+                    .failure
+                    .as_mut()
+                    .expect("live updater supervisor failure receiver");
+                receiver.await
+            };
+            match notification {
+                Ok(()) => {
+                    // There is no await between receipt and this state write.
+                    // A select cancellation during the following join can
+                    // therefore retry without awaiting a consumed oneshot.
+                    self.failure_notified = true;
+                    let _ = self.failure.take();
+                }
+                Err(_) => {
+                    return UpdaterSupervisorFailure::Failed(
+                        "updater supervisor failure notification closed".to_string(),
+                    );
+                }
+            }
+        }
         {
-            Ok(reason) => reason,
-            Err(_) => "updater supervisor task panicked or was aborted".to_string(),
+            // `wait_for_failure` is polled inside Serve's `select!`.
+            // Await the owned handle by mutable borrow so another ready
+            // branch may cancel this future without moving/detaching it.
+            let completion = {
+                let join = self.join.as_mut().expect("live updater supervisor join");
+                join.await
+            };
+            let _ = self.join.take();
+            match completion {
+                Ok(UpdaterSupervisorExit::Failed(reason)) => reason,
+                Ok(UpdaterSupervisorExit::Clean) => UpdaterSupervisorFailure::Failed(
+                    "updater supervisor ended cleanly without a shutdown request".to_string(),
+                ),
+                Err(error) => UpdaterSupervisorFailure::Failed(format!(
+                    "updater supervisor task panicked or was aborted: {error}"
+                )),
+            }
         }
     }
 
-    /// Stop the current accepted generation, cancel and join any active lane,
-    /// then join the supervisor itself.
-    pub(crate) async fn shutdown(mut self) {
+    /// Stop the current generation and return any deadline-expired pass still
+    /// owned by its supervisor.  This is finite: the caller, not this method,
+    /// must hold the returned ownership in its fail-stopped late-join branch.
+    pub(crate) async fn shutdown(mut self) -> Option<UpdaterSupervisorFailure> {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
         }
-        if let Some(join) = self.join.take()
-            && let Err(error) = join.await
-        {
-            tracing::warn!(%error, "updater supervisor join failed during shutdown");
+        if let Some(join) = self.join.take() {
+            match join.await {
+                Ok(UpdaterSupervisorExit::Clean) => return None,
+                Ok(UpdaterSupervisorExit::Failed(reason)) => return Some(reason),
+                Err(error) => {
+                    return Some(UpdaterSupervisorFailure::Failed(format!(
+                        "updater supervisor join failed during shutdown: {error}"
+                    )));
+                }
+            }
         }
+        None
     }
 }
 
@@ -391,32 +574,49 @@ pub(crate) fn spawn_updater_supervisor(
     reload_controller: Arc<crate::config::reload::ReloadController>,
     writer: WalWriterHandle,
 ) -> UpdaterSupervisorHandle {
-    let executor: LaneExecutor = Arc::new(move |lane, snapshot, gate| {
+    let wal_root_guard = writer.clone();
+    let executor: LaneExecutor = Arc::new(move |lane, snapshot, gate, control| {
         let home = home.clone();
         let writer = writer.clone();
-        Box::pin(run_production_lane_once(lane, snapshot, home, writer, gate))
+        Box::pin(run_production_lane_once(
+            lane, snapshot, home, writer, gate, control,
+        ))
     });
-    spawn_updater_supervisor_with_executor(reload_controller, executor)
+    spawn_updater_supervisor_with_executor(reload_controller, executor, Some(wal_root_guard))
 }
 
 fn spawn_updater_supervisor_with_executor(
     reload_controller: Arc<crate::config::reload::ReloadController>,
     executor: LaneExecutor,
+    wal_root_guard: Option<WalWriterHandle>,
 ) -> UpdaterSupervisorHandle {
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let (failure_tx, failure_rx) = tokio::sync::oneshot::channel();
     let audit_locks = Arc::new(UpdaterAuditLocks::default());
     let join = tokio::spawn(async move {
-        if let Err(reason) =
-            run_updater_supervisor(reload_controller, executor, audit_locks, shutdown_rx).await
+        match run_updater_supervisor(
+            reload_controller,
+            executor,
+            audit_locks,
+            shutdown_rx,
+            wal_root_guard,
+        )
+        .await
         {
-            let _ = failure_tx.send(reason);
+            Ok(()) => UpdaterSupervisorExit::Clean,
+            Err(reason) => {
+                // This carries no owned future.  A failed send cannot detach
+                // a pass because the `JoinHandle` output below retains it.
+                let _ = failure_tx.send(());
+                UpdaterSupervisorExit::Failed(reason)
+            }
         }
     });
     UpdaterSupervisorHandle {
         shutdown: Some(shutdown_tx),
         join: Some(join),
         failure: Some(failure_rx),
+        failure_notified: false,
     }
 }
 
@@ -424,6 +624,24 @@ enum SupervisorWake {
     Reload,
     Shutdown,
     LaneExited(String),
+    DeadlineExceeded(RetainedUpdaterPass),
+}
+
+enum UpdaterLaneFailure {
+    Failed(String),
+    DeadlineExceeded(RetainedUpdaterPass),
+}
+
+impl std::fmt::Debug for UpdaterLaneFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Failed(reason) => formatter.debug_tuple("Failed").field(reason).finish(),
+            Self::DeadlineExceeded(pass) => formatter
+                .debug_struct("DeadlineExceeded")
+                .field("lane", &pass.lane.as_str())
+                .finish(),
+        }
+    }
 }
 
 async fn run_updater_supervisor(
@@ -431,7 +649,8 @@ async fn run_updater_supervisor(
     executor: LaneExecutor,
     audit_locks: Arc<UpdaterAuditLocks>,
     mut shutdown: tokio::sync::oneshot::Receiver<()>,
-) -> Result<(), String> {
+    wal_root_guard: Option<WalWriterHandle>,
+) -> Result<(), UpdaterSupervisorFailure> {
     let mut generation = reload_controller.subscribe_generation();
     let mut cadence_by_lane = std::collections::HashMap::<RecurringUpdateLane, LaneCadence>::new();
     tracing::info!("reload-owned updater supervisor online (recurring egress remains fail-closed)");
@@ -460,6 +679,7 @@ async fn run_updater_supervisor(
                 executor.clone(),
                 Arc::clone(&audit_locks),
                 cancel_generation.subscribe(),
+                wal_root_guard.clone(),
             ));
         }
         tracing::debug!(
@@ -468,7 +688,7 @@ async fn run_updater_supervisor(
             "accepted updater generation active"
         );
 
-        let wake = tokio::select! {
+        let wake = Some(tokio::select! {
             biased;
             _ = &mut shutdown => SupervisorWake::Shutdown,
             changed = generation.changed() => {
@@ -479,36 +699,57 @@ async fn run_updater_supervisor(
                 }
             }
             lane = lanes.join_next(), if !lanes.is_empty() => {
-                let reason = match lane {
-                    Some(Ok(Ok((lane, _)))) => format!(
-                        "recurring update lane `{}` exited outside generation cancellation",
-                        lane.as_str()
-                    ),
-                    Some(Ok(Err(reason))) => reason,
-                    Some(Err(error)) => {
-                        format!("recurring update lane task failed: {error}")
+                match lane {
+                    Some(Ok(Err(UpdaterLaneFailure::DeadlineExceeded(pass)))) => {
+                        tracing::error!(epoch, lane = pass.lane.as_str(), "updater operation deadline exceeded; retaining pass at serve boundary");
+                        SupervisorWake::DeadlineExceeded(pass)
                     }
-                    None => "recurring update lane set ended unexpectedly".to_string(),
-                };
-                tracing::error!(epoch, %reason, "recurring updater supervisor is failing closed");
-                SupervisorWake::LaneExited(reason)
+                    Some(Ok(Ok((lane, _)))) => {
+                        let reason = format!("recurring update lane `{}` exited outside generation cancellation", lane.as_str());
+                        tracing::error!(epoch, %reason, "recurring updater supervisor is failing closed");
+                        SupervisorWake::LaneExited(reason)
+                    }
+                    Some(Ok(Err(UpdaterLaneFailure::Failed(reason)))) => {
+                        tracing::error!(epoch, %reason, "recurring updater supervisor is failing closed");
+                        SupervisorWake::LaneExited(reason)
+                    }
+                    Some(Err(error)) => {
+                        let reason = format!("recurring update lane task failed: {error}");
+                        tracing::error!(epoch, %reason, "recurring updater supervisor is failing closed");
+                        SupervisorWake::LaneExited(reason)
+                    }
+                    None => {
+                        let reason = "recurring update lane set ended unexpectedly".to_string();
+                        tracing::error!(epoch, %reason, "recurring updater supervisor is failing closed");
+                        SupervisorWake::LaneExited(reason)
+                    }
+                }
             }
-        };
+        });
 
         cancel_generation.send_replace(true);
         let mut drain_failure = None;
+        let mut retained_passes = Vec::new();
         while let Some(result) = lanes.join_next().await {
             match result {
                 Ok(Ok((lane, cadence))) => {
                     cadence_by_lane.insert(lane, cadence);
                 }
-                Ok(Err(reason)) => {
+                Ok(Err(UpdaterLaneFailure::Failed(reason))) => {
                     tracing::error!(
                         epoch,
                         %reason,
                         "recurring update lane failed while draining accepted work"
                     );
                     drain_failure.get_or_insert(reason);
+                }
+                Ok(Err(UpdaterLaneFailure::DeadlineExceeded(pass))) => {
+                    tracing::error!(
+                        epoch,
+                        lane = pass.lane.as_str(),
+                        "additional updater deadline pass retained at serve boundary"
+                    );
+                    retained_passes.push(pass);
                 }
                 Err(error) => {
                     let reason = format!("recurring update lane join failed: {error}");
@@ -517,12 +758,34 @@ async fn run_updater_supervisor(
                 }
             }
         }
+        // Only a deadline wake transfers its owned pass out of `wake`.
+        // Reload, shutdown, and ordinary lane-failure wakes must remain
+        // available after every child has joined so their exact lifecycle
+        // decision can be made below.
+        let wake = match wake {
+            Some(SupervisorWake::DeadlineExceeded(pass)) => {
+                retained_passes.push(pass);
+                None
+            }
+            wake => wake,
+        };
+        if !retained_passes.is_empty() {
+            return Err(UpdaterSupervisorFailure::DeadlineExceeded(retained_passes));
+        }
         if let Some(reason) = drain_failure {
-            return Err(format!(
+            return Err(UpdaterSupervisorFailure::Failed(format!(
                 "recurring updater failed while draining epoch {epoch}: {reason}"
-            ));
+            )));
         }
 
+        let wake = match wake {
+            Some(wake) => wake,
+            None => {
+                return Err(UpdaterSupervisorFailure::Failed(
+                    "updater supervisor lost its non-deadline wake state".to_string(),
+                ));
+            }
+        };
         match wake {
             SupervisorWake::Reload => {
                 tracing::debug!(epoch, "retired updater generation after accepted reload");
@@ -532,9 +795,12 @@ async fn run_updater_supervisor(
                 return Ok(());
             }
             SupervisorWake::LaneExited(reason) => {
-                return Err(format!(
+                return Err(UpdaterSupervisorFailure::Failed(format!(
                     "recurring updater lane failed at epoch {epoch}: {reason}"
-                ));
+                )));
+            }
+            SupervisorWake::DeadlineExceeded(pass) => {
+                return Err(UpdaterSupervisorFailure::DeadlineExceeded(vec![pass]));
             }
         }
     }
@@ -546,7 +812,8 @@ async fn run_lane_loop(
     executor: LaneExecutor,
     audit_locks: Arc<UpdaterAuditLocks>,
     mut cancel_generation: tokio::sync::watch::Receiver<bool>,
-) -> Result<(RecurringUpdateLane, LaneCadence), String> {
+    wal_root_guard: Option<WalWriterHandle>,
+) -> Result<(RecurringUpdateLane, LaneCadence), UpdaterLaneFailure> {
     let lane = cadence.schedule.lane;
     loop {
         tokio::select! {
@@ -578,24 +845,66 @@ async fn run_lane_loop(
         }
 
         let gate = recurring_egress_gate(lane);
-        let work = std::panic::AssertUnwindSafe(executor(lane, Arc::clone(&snapshot), gate))
-            .catch_unwind();
-        tokio::pin!(work);
+        let control = UpdaterPassControl::new(wal_root_guard.clone());
+        let lane_control = control.clone();
+        let lane_snapshot = Arc::clone(&snapshot);
+        let lane_executor = Arc::clone(&executor);
+        // `JoinHandle` is deliberately retained through every branch below.
+        // Dropping it would detach a future which may already own a durable
+        // updater Intent and its generation/WAL lease.
+        let mut work = tokio::spawn(async move {
+            let execution = std::panic::AssertUnwindSafe(lane_executor(
+                lane,
+                lane_snapshot,
+                gate,
+                lane_control,
+            ))
+            .catch_unwind()
+            .await;
+            require_successful_lane_execution(lane, execution)
+        });
         let (cancellation_requested, execution) = tokio::select! {
             biased;
             changed = cancel_generation.changed() => {
                 let _ = changed;
-                // Never drop admitted work: a probe may already have written
-                // FIRED, and a future authorized executor may own a blocking
-                // worker or child process. Join it to its terminal RESULT before
-                // replacing the accepted generation.
-                (true, (&mut work).await)
+                control.cancel();
+                let joined = match control.deadline(UpdaterDeadlinePhase::Operation) {
+                    Some(deadline) => match tokio::time::timeout_at(deadline, &mut work).await {
+                        Ok(joined) => joined,
+                        Err(_) => {
+                            // This is a fatal lifecycle state, but it is not a
+                            // return path: retain the actual task ownership and
+                            // WAL clone until the late terminal join finishes.
+                            // Return the owned drain object, rather than an
+                            // ordinary error.  Serve keeps this exact task,
+                            // control and writer guard through its explicit
+                            // fail-stopped late-join branch.
+                            tracing::error!(lane = lane.as_str(), "updater operation deadline expired while draining an admitted pass; retaining owner until late join");
+                            return Err(UpdaterLaneFailure::DeadlineExceeded(
+                                RetainedUpdaterPass {
+                                    lane,
+                                    control,
+                                    pass: work,
+                                },
+                            ));
+                        }
+                    },
+                    None => work.await,
+                };
+                (true, joined)
             }
             result = &mut work => {
                 (false, result)
             }
         };
-        require_successful_lane_execution(lane, execution)?;
+        match execution {
+            Ok(result) => result.map_err(UpdaterLaneFailure::Failed)?,
+            Err(error) => {
+                return Err(UpdaterLaneFailure::Failed(format!(
+                    "recurring update lane task join failed: {error}"
+                )));
+            }
+        }
         cadence.advance_after_run(tokio::time::Instant::now());
         if cancellation_requested || *cancel_generation.borrow() {
             return Ok((lane, cadence));
@@ -655,6 +964,7 @@ async fn run_production_lane_once(
     home: PathBuf,
     writer: WalWriterHandle,
     gate: crate::updater::pipeline::GateDecision,
+    control: UpdaterPassControl,
 ) -> Result<(), String> {
     let config = snapshot.config();
     let pass_identity = UpdaterPassIdentity::bound(
@@ -728,7 +1038,8 @@ async fn run_production_lane_once(
                 return Ok(());
             }
             let result =
-                run_authorized_self_probe(pass_identity, Arc::clone(&snapshot), &writer).await?;
+                run_authorized_self_probe(pass_identity, Arc::clone(&snapshot), &writer, control)
+                    .await?;
             tracing::debug!(
                 components = result.components.len(),
                 duration_ms = result.duration_ms,
@@ -887,7 +1198,37 @@ async fn run_authorized_self_probe(
     identity: UpdaterPassIdentity,
     snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
     writer: &WalWriterHandle,
+    control: UpdaterPassControl,
 ) -> Result<UpdaterTaskResultPayload, String> {
+    let config = snapshot.config().auto_update.clone();
+    run_authorized_self_probe_with_check(identity, snapshot, writer, control, move |authority| {
+        Box::pin(async move {
+            crate::updater::self_update::check_for_update_channel_authorized(
+                authority,
+                &config.repo,
+                config.channel,
+            )
+            .await
+        })
+    })
+    .await
+}
+
+async fn run_authorized_self_probe_with_check<F>(
+    identity: UpdaterPassIdentity,
+    snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
+    writer: &WalWriterHandle,
+    control: UpdaterPassControl,
+    check: F,
+) -> Result<UpdaterTaskResultPayload, String>
+where
+    F: for<'a> FnOnce(
+        &'a crate::updater::self_update::RecurringSelfUpdateAuthority,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        anyhow::Result<crate::updater::self_update::UpdateCheck>,
+    >,
+{
     let task_kind = UpdaterTaskKind::NeothSelf;
     let fired_receipt_sha256 = append_updater_fired(&identity, task_kind, writer).await?;
     let pass_id = identity
@@ -899,25 +1240,22 @@ async fn run_authorized_self_probe(
     let run_clock = UpdaterRunLimits::default_http_probe()
         .and_then(UpdaterRunClock::start)
         .map_err(|error| format!("admit bounded updater probe pass: {error}"))?;
+    control
+        .admit(run_clock.clone())
+        .map_err(|error| format!("record admitted updater probe clock: {error:#}"))?;
+    let cancellation = control.clone();
     let authority = crate::updater::self_update::RecurringSelfUpdateAuthority::for_probe(
         writer.clone(),
         Arc::clone(&snapshot),
         pass_id,
         run_clock.clone(),
+        control,
     );
     let started = std::time::Instant::now();
     let current = crate::updater::self_update::current_version();
-    let checked = std::panic::AssertUnwindSafe(async {
-        let config = &snapshot.config().auto_update;
-        crate::updater::self_update::check_for_update_channel_authorized(
-            &authority,
-            &config.repo,
-            config.channel,
-        )
-        .await
-    })
-    .catch_unwind()
-    .await;
+    let checked = std::panic::AssertUnwindSafe(check(&authority))
+        .catch_unwind()
+        .await;
     let terminal_receipts = authority
         .terminal_receipts()
         .map_err(|error| format!("collect acknowledged updater leaf receipts: {error}"))?;
@@ -959,17 +1297,11 @@ async fn run_authorized_self_probe(
             UpdaterTerminalOutcome::Cancelled,
         ),
         Ok(Err(error)) => {
-            let failure = authorized_probe_failure_disposition(error);
+            let (failure, terminal_outcome) =
+                authorized_probe_failure_disposition(error, cancellation.is_cancelled());
             let diagnostic = match &failure {
                 TerminalizedPassFailure::RetryNextCadence(error)
                 | TerminalizedPassFailure::CloseSupervisor(error) => error.to_string(),
-            };
-            let terminal_outcome = if diagnostic.contains("timeout") {
-                UpdaterTerminalOutcome::TimedOut
-            } else if diagnostic.contains("cancelled") {
-                UpdaterTerminalOutcome::Cancelled
-            } else {
-                UpdaterTerminalOutcome::Failed
             };
             (
                 ComponentOutcome::failed("neoth", current, diagnostic),
@@ -1199,6 +1531,7 @@ fn test_lane_for_task(task_kind: UpdaterTaskKind) -> UpdaterPassLane {
 mod tests {
     use super::*;
     use crate::updater::pipeline::GateDecision;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn spec(name: &str, current: &str, latest: Result<&str, &str>) -> ComponentSpec {
         ComponentSpec {
@@ -1369,7 +1702,7 @@ mod tests {
         let executor: LaneExecutor = {
             let attempts = Arc::clone(&attempts);
             let writer = writer.clone();
-            Arc::new(move |lane, snapshot, _gate| {
+            Arc::new(move |lane, snapshot, _gate, _control| {
                 let attempt = attempts.fetch_add(1, Ordering::SeqCst);
                 let writer = writer.clone();
                 let observed_tx = observed_tx.clone();
@@ -1415,6 +1748,7 @@ mod tests {
             executor,
             Arc::new(UpdaterAuditLocks::default()),
             cancel.subscribe(),
+            None,
         ));
 
         assert_eq!(
@@ -1551,7 +1885,7 @@ mod tests {
         let executor: LaneExecutor = {
             let writer = writer.clone();
             let writer_join = Arc::clone(&writer_join);
-            Arc::new(move |lane, _snapshot, _gate| {
+            Arc::new(move |lane, _snapshot, _gate, _control| {
                 if lane != RecurringUpdateLane::CliVersionProbe {
                     return Box::pin(async { Ok(()) });
                 }
@@ -1583,16 +1917,18 @@ mod tests {
                 })
             })
         };
-        let mut handle = spawn_updater_supervisor_with_executor(Arc::clone(&controller), executor);
+        let mut handle =
+            spawn_updater_supervisor_with_executor(Arc::clone(&controller), executor, None);
 
         let failure = tokio::time::timeout(Duration::from_secs(2), handle.wait_for_failure())
             .await
             .expect("supervisor continued after a missing terminal RESULT");
+        let failure = failure.to_string();
         assert!(
             failure.contains("wal append result") && failure.contains("cli_version_probe"),
             "unexpected fail-closed reason: {failure}"
         );
-        handle.shutdown().await;
+        let _ = handle.shutdown().await;
         drop(writer);
 
         let bytes = tokio::fs::read(&segment).await.unwrap();
@@ -1620,6 +1956,7 @@ mod tests {
             dir.path().to_path_buf(),
             writer.clone(),
             recurring_egress_gate(RecurringUpdateLane::CliAutoApply),
+            UpdaterPassControl::new(None),
         )
         .await
         .unwrap();
@@ -1736,7 +2073,7 @@ mod tests {
         let release_first = Arc::new(tokio::sync::Notify::new());
         let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
         let release_for_executor = Arc::clone(&release_first);
-        let executor: LaneExecutor = Arc::new(move |lane, _snapshot, _gate| {
+        let executor: LaneExecutor = Arc::new(move |lane, _snapshot, _gate, _control| {
             let release_first = Arc::clone(&release_for_executor);
             let events = events_tx.clone();
             Box::pin(async move {
@@ -1762,6 +2099,7 @@ mod tests {
             Arc::clone(&executor),
             Arc::clone(&locks),
             cancel.subscribe(),
+            None,
         ));
         assert_eq!(
             events_rx.recv().await.unwrap(),
@@ -1780,6 +2118,7 @@ mod tests {
             executor,
             locks,
             cancel.subscribe(),
+            None,
         ));
         for _ in 0..8 {
             tokio::task::yield_now().await;
@@ -1887,21 +2226,18 @@ mod tests {
     }
 
     #[test]
-    fn recurring_network_gate_keeps_unbounded_self_leaves_fail_closed() {
-        for lane in [
-            RecurringUpdateLane::NeothSelfProbe,
-            RecurringUpdateLane::SelfStage,
-        ] {
-            match recurring_egress_gate(lane) {
-                GateDecision::Deny { reason } => {
-                    assert_eq!(reason, UNBOUNDED_RECURRING_LIFECYCLE_DENIED);
-                    assert!(reason.contains("absolute pass deadline"));
-                    assert!(reason.contains("spawn_blocking"));
-                }
-                GateDecision::Allow => {
-                    panic!("{lane:?} must remain denied until R3-18B is complete")
-                }
+    fn recurring_network_gate_admits_only_bounded_self_probe() {
+        assert!(matches!(
+            recurring_egress_gate(RecurringUpdateLane::NeothSelfProbe),
+            GateDecision::Allow
+        ));
+        match recurring_egress_gate(RecurringUpdateLane::SelfStage) {
+            GateDecision::Deny { reason } => {
+                assert_eq!(reason, UNBOUNDED_RECURRING_LIFECYCLE_DENIED);
+                assert!(reason.contains("absolute pass deadline"));
+                assert!(reason.contains("spawn_blocking"));
             }
+            GateDecision::Allow => panic!("SelfStage must remain denied in Wave 25"),
         }
         for lane in [
             RecurringUpdateLane::CliVersionProbe,
@@ -1990,7 +2326,7 @@ mod tests {
         let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
         let executor: LaneExecutor = {
             let release = Arc::clone(&release);
-            Arc::new(move |lane, snapshot, _gate| {
+            Arc::new(move |lane, snapshot, _gate, _control| {
                 if lane != RecurringUpdateLane::CliVersionProbe {
                     return Box::pin(async { Ok(()) });
                 }
@@ -2013,7 +2349,7 @@ mod tests {
             })
         };
 
-        let handle = spawn_updater_supervisor_with_executor(controller, executor);
+        let handle = spawn_updater_supervisor_with_executor(controller, executor, None);
         assert!(matches!(
             next_work_event(&mut events_rx).await,
             WorkEvent::Started { epoch: 0, .. }
@@ -2066,7 +2402,7 @@ mod tests {
             let max_active = Arc::clone(&max_active);
             let release_epoch_zero = Arc::clone(&release_epoch_zero);
             let writer = writer.clone();
-            Arc::new(move |lane, snapshot, gate| {
+            Arc::new(move |lane, snapshot, gate, _control| {
                 assert!(matches!(gate, GateDecision::Deny { .. }));
                 if lane != RecurringUpdateLane::CliVersionProbe {
                     return Box::pin(async { Ok(()) });
@@ -2113,7 +2449,8 @@ mod tests {
                 })
             })
         };
-        let handle = spawn_updater_supervisor_with_executor(Arc::clone(&controller), executor);
+        let handle =
+            spawn_updater_supervisor_with_executor(Arc::clone(&controller), executor, None);
 
         assert_eq!(
             next_work_event(&mut events_rx).await,
@@ -2145,7 +2482,7 @@ mod tests {
             "joined pass must advance cadence instead of duplicating immediately"
         );
 
-        handle.shutdown().await;
+        let _ = handle.shutdown().await;
         drop(writer);
         writer_join.await.unwrap();
         assert_eq!(active.load(Ordering::SeqCst), 0);
@@ -2197,7 +2534,7 @@ mod tests {
         ));
 
         let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
-        let executor: LaneExecutor = Arc::new(move |lane, snapshot, gate| {
+        let executor: LaneExecutor = Arc::new(move |lane, snapshot, gate, _control| {
             assert_eq!(
                 gate,
                 recurring_egress_gate(lane),
@@ -2209,7 +2546,8 @@ mod tests {
                 Ok(())
             })
         });
-        let handle = spawn_updater_supervisor_with_executor(Arc::clone(&controller), executor);
+        let handle =
+            spawn_updater_supervisor_with_executor(Arc::clone(&controller), executor, None);
 
         for _ in 0..8 {
             tokio::task::yield_now().await;
@@ -2268,6 +2606,608 @@ mod tests {
             "every lane fires exactly once at its preserved absolute deadline"
         );
 
-        handle.shutdown().await;
+        let _ = handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn admitted_operation_deadline_reports_fatal_but_retains_join_until_late_release() {
+        let home = tempfile::tempdir().unwrap();
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            crate::config::FreedomConfig::default(),
+            home.path().join("freedom.yaml"),
+        ));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let started_tx = Arc::new(std::sync::Mutex::new(Some(started_tx)));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let executor: LaneExecutor = {
+            let release = Arc::clone(&release);
+            let started_tx = Arc::clone(&started_tx);
+            Arc::new(move |_lane, _snapshot, _gate, control| {
+                let release = Arc::clone(&release);
+                let started_tx = Arc::clone(&started_tx);
+                Box::pin(async move {
+                    let clock = UpdaterRunClock::start(
+                        UpdaterRunLimits::new(
+                            Duration::from_millis(5),
+                            Duration::from_millis(10),
+                            Duration::from_millis(15),
+                            Duration::from_millis(20),
+                        )
+                        .map_err(|error| error.to_string())?,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    control.admit(clock).map_err(|error| error.to_string())?;
+                    if let Ok(mut started) = started_tx.lock()
+                        && let Some(started) = started.take()
+                    {
+                        let _ = started.send(());
+                    }
+                    // Models a terminal-WAL acknowledgement that cannot yet
+                    // complete. It intentionally ignores cancellation until
+                    // the test grants the late join.
+                    release.notified().await;
+                    Ok(())
+                })
+            })
+        };
+        let (cancel, _) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(run_lane_loop(
+            LaneCadence {
+                schedule: LaneSchedule {
+                    lane: RecurringUpdateLane::NeothSelfProbe,
+                    interval_secs: 60,
+                },
+                next_due: tokio::time::Instant::now(),
+            },
+            controller.accepted_snapshot(),
+            executor,
+            Arc::new(UpdaterAuditLocks::default()),
+            cancel.subscribe(),
+            None,
+        ));
+        started_rx.await.expect("admitted pass started");
+        cancel.send_replace(true);
+        let retained = tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("operation deadline must return its owned retained outcome")
+            .expect("lane loop task completed");
+        let retained = match retained {
+            Err(UpdaterLaneFailure::DeadlineExceeded(retained)) => retained,
+            Err(UpdaterLaneFailure::Failed(reason)) => {
+                panic!("unexpected ordinary failure: {reason}")
+            }
+            Ok(_) => panic!("deadline drain unexpectedly completed cleanly"),
+        };
+        assert!(
+            !retained.pass.is_finished(),
+            "deadline outcome must retain, not drop or detach, the admitted JoinHandle"
+        );
+        release.notify_waiters();
+        retained
+            .join()
+            .await
+            .expect("retained lane task joins after release");
+    }
+
+    #[tokio::test]
+    async fn dropped_failure_notification_does_not_drop_retained_pass_ownership() {
+        let release = Arc::new(tokio::sync::Notify::new());
+        let pass_release = Arc::clone(&release);
+        let pass = tokio::spawn(async move {
+            pass_release.notified().await;
+            Ok(())
+        });
+        let retained = RetainedUpdaterPass {
+            lane: RecurringUpdateLane::NeothSelfProbe,
+            control: UpdaterPassControl::new(None),
+            pass,
+        };
+        let (shutdown_tx, _shutdown_rx) = tokio::sync::oneshot::channel();
+        let (failure_tx, failure_rx) = tokio::sync::oneshot::channel();
+        drop(failure_tx);
+        let join = tokio::spawn(async move {
+            UpdaterSupervisorExit::Failed(UpdaterSupervisorFailure::DeadlineExceeded(vec![
+                retained,
+            ]))
+        });
+        let mut handle = UpdaterSupervisorHandle {
+            shutdown: Some(shutdown_tx),
+            join: Some(join),
+            failure: Some(failure_rx),
+            failure_notified: false,
+        };
+        assert!(matches!(
+            handle.wait_for_failure().await,
+            UpdaterSupervisorFailure::Failed(reason)
+                if reason.contains("notification closed")
+        ));
+        let retained = tokio::time::timeout(Duration::from_secs(1), handle.shutdown())
+            .await
+            .expect("shutdown must return a finite retained ownership outcome")
+            .expect("shutdown must return the deadline outcome");
+        let mut retained = match retained {
+            UpdaterSupervisorFailure::DeadlineExceeded(passes) => passes,
+            UpdaterSupervisorFailure::Failed(reason) => panic!("unexpected failure: {reason}"),
+        };
+        let retained = retained.pop().expect("one retained pass");
+        assert!(
+            !retained.pass.is_finished(),
+            "finite shutdown outcome must still own the live pass for Serve"
+        );
+        let late_join = tokio::spawn(async move { retained.join().await });
+        tokio::task::yield_now().await;
+        assert!(
+            !late_join.is_finished(),
+            "Serve late join must retain ownership until the terminal release"
+        );
+        release.notify_waiters();
+        tokio::time::timeout(Duration::from_secs(1), late_join)
+            .await
+            .expect("serve late join completed")
+            .expect("late join task completed")
+            .expect("retained pass completed");
+    }
+
+    #[tokio::test]
+    async fn cancelling_pending_wait_for_failure_leaves_shutdown_ownership_intact() {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let (failure_tx, failure_rx) = tokio::sync::oneshot::channel::<()>();
+        let join = tokio::spawn(async move {
+            let _ = shutdown_rx.await;
+            UpdaterSupervisorExit::Clean
+        });
+        let mut handle = UpdaterSupervisorHandle {
+            shutdown: Some(shutdown_tx),
+            join: Some(join),
+            failure: Some(failure_rx),
+            failure_notified: false,
+        };
+        {
+            let pending = handle.wait_for_failure();
+            tokio::pin!(pending);
+            tokio::select! {
+                biased;
+                _ = &mut pending => panic!("failure notification was not sent"),
+                _ = tokio::task::yield_now() => {}
+            }
+        }
+        // Keep the sender live: cancellation of the `select!` branch, rather
+        // than receiver closure, is the condition under test.
+        let _keep_failure_sender = failure_tx;
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), handle.shutdown())
+                .await
+                .expect("ordinary shutdown still owns its supervisor")
+                .is_none(),
+            "cancelling a pending wait must not move or detach the join handle"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_wait_after_notification_retries_the_borrowed_supervisor_join() {
+        let (shutdown_tx, _shutdown_rx) = tokio::sync::oneshot::channel();
+        let (failure_tx, failure_rx) = tokio::sync::oneshot::channel();
+        let release = Arc::new(tokio::sync::Notify::new());
+        let join_release = Arc::clone(&release);
+        let join = tokio::spawn(async move {
+            join_release.notified().await;
+            UpdaterSupervisorExit::Failed(UpdaterSupervisorFailure::Failed(
+                "expected failure".to_string(),
+            ))
+        });
+        let mut handle = UpdaterSupervisorHandle {
+            shutdown: Some(shutdown_tx),
+            join: Some(join),
+            failure: Some(failure_rx),
+            failure_notified: false,
+        };
+        failure_tx.send(()).unwrap();
+        {
+            let pending = handle.wait_for_failure();
+            tokio::pin!(pending);
+            tokio::select! {
+                biased;
+                _ = &mut pending => panic!("supervisor join was intentionally held"),
+                _ = tokio::task::yield_now() => {}
+            }
+        }
+        release.notify_one();
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), handle.wait_for_failure())
+                .await
+                .expect("retry must await the still-owned join"),
+            UpdaterSupervisorFailure::Failed(reason) if reason == "expected failure"
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancelled_loopback_http_writes_leaf_receipt_before_outer_cancelled_result() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("000001.wal");
+        let (writer, writer_join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.clone()).unwrap();
+        ready.wait().await.unwrap();
+        // The production probe uses FailClosed confirmation.  External HTTP
+        // becomes autonomous at Elevated, so this fixture reaches the real
+        // request-bound effect instead of returning before the loopback
+        // transport can signal its header boundary.
+        let mut config = crate::config::FreedomConfig::default();
+        config.autonomy = crate::permissions::AutonomyLevel::Elevated;
+        let reload =
+            crate::config::reload::ReloadController::new(config, home.join("freedom.yaml"));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (headers_tx, headers_rx) = tokio::sync::oneshot::channel();
+        let (eof_tx, eof_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut bytes = [0u8; 512];
+            let read = stream.read(&mut bytes).await.unwrap();
+            assert!(read > 0 && bytes[..read].starts_with(b"GET "));
+            let _ = headers_tx.send(());
+            while stream.read(&mut bytes).await.unwrap() != 0 {}
+            let _ = eof_tx.send(());
+        });
+        let control = UpdaterPassControl::new(Some(writer.clone()));
+        let cancel = control.clone();
+        let task_writer = writer.clone();
+        let task_identity = UpdaterPassIdentity::new(UpdaterPassLane::NeothSelfProbe, 0);
+        let mut task = tokio::spawn(async move {
+            run_authorized_self_probe_with_check(
+                task_identity,
+                reload.accepted_snapshot(),
+                &task_writer,
+                control,
+                move |authority| {
+                    Box::pin(async move {
+                        authority
+                            .execute_http_for_probe_test(
+                                "loopback-cancel",
+                                "https://loopback.invalid/",
+                                move || async move {
+                                    let mut stream = tokio::net::TcpStream::connect(address)
+                                        .await
+                                        .map_err(|error| {
+                                            crate::updater::authority::UpdaterLeafFailure::new(
+                                    crate::updater::authority::UpdaterLeafFailureKind::Protocol,
+                                    error.into(),
+                                )
+                                        })?;
+                                    stream
+                                        .write_all(b"GET / HTTP/1.1\r\nHost: loopback\r\n\r\n")
+                                        .await
+                                        .map_err(|error| {
+                                            crate::updater::authority::UpdaterLeafFailure::new(
+                                    crate::updater::authority::UpdaterLeafFailureKind::Protocol,
+                                    error.into(),
+                                )
+                                        })?;
+                                    let mut byte = [0u8; 1];
+                                    let _ = stream.read(&mut byte).await.map_err(|error| {
+                                        crate::updater::authority::UpdaterLeafFailure::new(
+                                    crate::updater::authority::UpdaterLeafFailureKind::Protocol,
+                                    error.into(),
+                                )
+                                    })?;
+                                    Ok(crate::updater::authority::UpdaterLeafSuccess::new(
+                                (),
+                                crate::updater::authority::UpdaterLeafOutcomeCode::Completed,
+                            ))
+                                },
+                            )
+                            .await?;
+                        Ok(crate::updater::self_update::UpdateCheck {
+                            current: "0.0.0".to_string(),
+                            latest: "0.0.0".to_string(),
+                            needs_update: false,
+                            release_url: String::new(),
+                            published_at: String::new(),
+                        })
+                    })
+                },
+            )
+            .await
+        });
+        {
+            let headers = tokio::time::timeout(Duration::from_secs(1), headers_rx);
+            tokio::pin!(headers);
+            tokio::select! {
+                header = &mut headers => {
+                    header
+                        .expect("authorized loopback effect did not write request headers in time")
+                        .expect("loopback server dropped its header signal");
+                }
+                outcome = &mut task => {
+                    panic!(
+                        "authorized updater probe returned before its injected loopback HTTP effect connected: {outcome:?}"
+                    );
+                }
+            }
+        }
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(1), eof_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .expect("owning generation cancellation must finish the pass normally");
+        assert_eq!(
+            result.terminal_outcome,
+            Some(UpdaterTerminalOutcome::Cancelled)
+        );
+        result.validate_leaf_receipt_binding().unwrap();
+        let receipt = &result
+            .leaf_receipt_binding
+            .as_ref()
+            .unwrap()
+            .terminal_receipts[0];
+        assert!(receipt.request_id.contains("loopback-cancel"));
+        drop(cancel);
+        drop(writer);
+        writer_join.await.unwrap().unwrap();
+        server.await.unwrap();
+        let bytes = tokio::fs::read(segment).await.unwrap();
+        let mut offset = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut leaf_result_payload = None;
+        let mut leaf_result_offset = None;
+        let mut outer_result = None;
+        let mut outer_result_offset = None;
+        while offset < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[offset..]).unwrap();
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::UpdaterLeafResult as u8
+            {
+                let leaf: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                assert_eq!(leaf["status"], "failure");
+                assert_eq!(leaf["error_kind"], "cancelled");
+                leaf_result_payload = Some(frame.payload.to_vec());
+                leaf_result_offset = Some(offset);
+            }
+            if frame.header.event_type == EVENT_TYPE_UPDATER_TASK_RESULT {
+                let decoded: UpdaterTaskResultPayload =
+                    serde_json::from_slice(frame.payload).unwrap();
+                if decoded.identity == result.identity {
+                    outer_result = Some(decoded);
+                    outer_result_offset = Some(offset);
+                }
+            }
+            offset += frame.header.total_len as usize;
+        }
+        let leaf_result_payload = leaf_result_payload.expect("durable cancelled leaf result");
+        let outer_result = outer_result.expect("durable outer result after leaf terminal");
+        assert_eq!(
+            outer_result.terminal_outcome,
+            Some(UpdaterTerminalOutcome::Cancelled)
+        );
+        outer_result.validate_leaf_receipt_binding().unwrap();
+        let receipt = &outer_result
+            .leaf_receipt_binding
+            .as_ref()
+            .unwrap()
+            .terminal_receipts[0];
+        assert!(receipt.request_id.contains("loopback-cancel"));
+        assert!(
+            leaf_result_offset.expect("leaf result offset")
+                < outer_result_offset.expect("outer result offset"),
+            "the outer receipt binding must follow the acknowledged leaf terminal"
+        );
+        let bound = &outer_result.leaf_receipt_binding.unwrap().terminal_receipts[0];
+        assert_eq!(
+            bound.result_receipt_sha256,
+            crate::wal::payloads_u04::updater_leaf_result_receipt_sha256(&leaf_result_payload)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn generation_cancelled_loopback_leaf_joins_before_lane_replacement() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("000001.wal");
+        let (writer, writer_join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.clone()).unwrap();
+        ready.wait().await.unwrap();
+
+        let mut config = crate::config::FreedomConfig::default();
+        config.autonomy = crate::permissions::AutonomyLevel::Elevated;
+        let controller =
+            crate::config::reload::ReloadController::new(config, home.join("freedom.yaml"));
+        let snapshot = controller.accepted_snapshot();
+        let identity = UpdaterPassIdentity::new(UpdaterPassLane::NeothSelfProbe, 0);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (headers_tx, headers_rx) = tokio::sync::oneshot::channel();
+        let (eof_tx, eof_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut bytes = [0u8; 512];
+            let read = stream.read(&mut bytes).await.unwrap();
+            assert!(read > 0 && bytes[..read].starts_with(b"GET "));
+            let _ = headers_tx.send(());
+            while stream.read(&mut bytes).await.unwrap() != 0 {}
+            let _ = eof_tx.send(());
+        });
+
+        let starts = Arc::new(AtomicUsize::new(0));
+        let executor: LaneExecutor = {
+            let writer = writer.clone();
+            let identity = identity.clone();
+            let starts = Arc::clone(&starts);
+            Arc::new(move |lane, snapshot, _gate, control| {
+                assert_eq!(lane, RecurringUpdateLane::NeothSelfProbe);
+                let writer = writer.clone();
+                let identity = identity.clone();
+                let starts = Arc::clone(&starts);
+                Box::pin(async move {
+                    starts.fetch_add(1, Ordering::SeqCst);
+                    run_authorized_self_probe_with_check(
+                        identity,
+                        snapshot,
+                        &writer,
+                        control,
+                        move |authority| {
+                            Box::pin(async move {
+                                authority
+                                    .execute_http_for_probe_test(
+                                        "generation-loopback-cancel",
+                                        "https://loopback.invalid/",
+                                        move || async move {
+                                            let mut stream = tokio::net::TcpStream::connect(address)
+                                                .await
+                                                .map_err(|error| {
+                                                    crate::updater::authority::UpdaterLeafFailure::new(
+                                                        crate::updater::authority::UpdaterLeafFailureKind::Protocol,
+                                                        error.into(),
+                                                    )
+                                                })?;
+                                            stream
+                                                .write_all(b"GET / HTTP/1.1\r\nHost: loopback\r\n\r\n")
+                                                .await
+                                                .map_err(|error| {
+                                                    crate::updater::authority::UpdaterLeafFailure::new(
+                                                        crate::updater::authority::UpdaterLeafFailureKind::Protocol,
+                                                        error.into(),
+                                                    )
+                                                })?;
+                                            let mut byte = [0u8; 1];
+                                            let _ = stream.read(&mut byte).await.map_err(|error| {
+                                                crate::updater::authority::UpdaterLeafFailure::new(
+                                                    crate::updater::authority::UpdaterLeafFailureKind::Protocol,
+                                                    error.into(),
+                                                )
+                                            })?;
+                                            Ok(crate::updater::authority::UpdaterLeafSuccess::new(
+                                                (),
+                                                crate::updater::authority::UpdaterLeafOutcomeCode::Completed,
+                                            ))
+                                        },
+                                    )
+                                    .await?;
+                                Ok(crate::updater::self_update::UpdateCheck {
+                                    current: "0.0.0".to_string(),
+                                    latest: "0.0.0".to_string(),
+                                    needs_update: false,
+                                    release_url: String::new(),
+                                    published_at: String::new(),
+                                })
+                            })
+                        },
+                    )
+                    .await
+                    .map(|_| ())
+                })
+            })
+        };
+        let (generation_cancel, _) = tokio::sync::watch::channel(false);
+        let mut lane = tokio::spawn(run_lane_loop(
+            LaneCadence {
+                schedule: LaneSchedule {
+                    lane: RecurringUpdateLane::NeothSelfProbe,
+                    interval_secs: 60,
+                },
+                next_due: tokio::time::Instant::now(),
+            },
+            snapshot,
+            executor,
+            Arc::new(UpdaterAuditLocks::default()),
+            generation_cancel.subscribe(),
+            Some(writer.clone()),
+        ));
+        {
+            let headers = tokio::time::timeout(Duration::from_secs(1), headers_rx);
+            tokio::pin!(headers);
+            tokio::select! {
+                header = &mut headers => {
+                    header
+                        .expect("generation-owned loopback effect did not write request headers in time")
+                        .expect("loopback server dropped its header signal");
+                }
+                outcome = &mut lane => {
+                    panic!(
+                        "generation lane returned before its injected loopback HTTP effect connected: {outcome:?}"
+                    );
+                }
+            }
+        }
+        generation_cancel.send_replace(true);
+        tokio::time::timeout(Duration::from_secs(1), eof_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        let (joined_lane, cadence) = tokio::time::timeout(Duration::from_secs(1), lane)
+            .await
+            .unwrap()
+            .unwrap()
+            .expect("generation cancellation must join the admitted loopback pass cleanly");
+        assert_eq!(joined_lane, RecurringUpdateLane::NeothSelfProbe);
+        assert!(
+            cadence.next_due > tokio::time::Instant::now(),
+            "the joined pass must carry its advanced cadence into normal replacement"
+        );
+        assert_eq!(
+            starts.load(Ordering::SeqCst),
+            1,
+            "the retired generation cannot start a successor before its admitted pass joins"
+        );
+
+        drop(writer);
+        writer_join.await.unwrap().unwrap();
+        server.await.unwrap();
+        let bytes = tokio::fs::read(segment).await.unwrap();
+        let mut offset = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut leaf_result_payload = None;
+        let mut leaf_result_offset = None;
+        let mut outer_result = None;
+        let mut outer_result_offset = None;
+        while offset < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[offset..]).unwrap();
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::UpdaterLeafResult as u8
+            {
+                let leaf: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                assert_eq!(leaf["status"], "failure");
+                assert_eq!(leaf["error_kind"], "cancelled");
+                leaf_result_payload = Some(frame.payload.to_vec());
+                leaf_result_offset = Some(offset);
+            }
+            if frame.header.event_type == EVENT_TYPE_UPDATER_TASK_RESULT {
+                let decoded: UpdaterTaskResultPayload =
+                    serde_json::from_slice(frame.payload).unwrap();
+                if decoded.identity == identity {
+                    outer_result = Some(decoded);
+                    outer_result_offset = Some(offset);
+                }
+            }
+            offset += frame.header.total_len as usize;
+        }
+        let leaf_result_payload = leaf_result_payload.expect("durable cancelled leaf result");
+        let outer_result = outer_result.expect("durable outer result after leaf terminal");
+        assert_eq!(
+            outer_result.terminal_outcome,
+            Some(UpdaterTerminalOutcome::Cancelled)
+        );
+        outer_result.validate_leaf_receipt_binding().unwrap();
+        assert!(
+            leaf_result_offset.expect("leaf result offset")
+                < outer_result_offset.expect("outer result offset"),
+            "the outer receipt binding must follow the acknowledged leaf terminal"
+        );
+        let bound = &outer_result.leaf_receipt_binding.unwrap().terminal_receipts[0];
+        assert_eq!(
+            bound.result_receipt_sha256,
+            crate::wal::payloads_u04::updater_leaf_result_receipt_sha256(&leaf_result_payload)
+        );
     }
 }

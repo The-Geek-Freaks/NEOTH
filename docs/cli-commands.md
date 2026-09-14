@@ -350,6 +350,15 @@ Add a channel non-interactively (pass --token etc.) or interactively (stdin prom
 - `--allowed-rooms-csv <ALLOWED_ROOMS_CSV>` — Matrix room IDs (`!id:server`) or Baileys group JIDs (`…@g.us`), CSV
 - `--allow-plaintext` — Matrix only: explicitly permit plaintext rooms. Encrypted rooms are required when this flag is absent
 
+### `neoth channel import-openclaw-telegram`
+
+Import one explicitly selected OpenClaw Telegram token into one explicit NEOTH account
+
+- `--config <CONFIG>`
+- `--source-account <SOURCE_ACCOUNT>`
+- `--account <ACCOUNT>`
+- `--telegram-user-id <TELEGRAM_USER_ID>`
+
 ### `neoth channel list`
 
 List configured channels

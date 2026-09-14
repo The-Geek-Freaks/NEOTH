@@ -15,7 +15,7 @@ use super::router::{
     EMBEDDING_THRESHOLD, fuzzy_keyword_bonus, keyword_matches, keyword_weight, lowercase_tokens,
     passes_path_gate,
 };
-use super::schema::{ModeEntry, RuntimeSkill, Skill};
+use super::schema::{ModeEntry, RuntimeSkill, Skill, SkillBody};
 
 /// Ordered routing stage. The resolver never evaluates a later stage after an
 /// earlier stage produced a match or conflict.
@@ -101,6 +101,11 @@ pub struct SkillRouteReport {
 #[derive(Debug, Clone)]
 pub struct ResolvedSkillRoute {
     snapshot: SkillSnapshot,
+    /// The immutable routed body is captured at successful resolution. The
+    /// retained snapshot proves the matching config/authority generation;
+    /// this Arc prevents every invocation accessor from doing an index lookup
+    /// that could be changed by a later registry reload.
+    body: Arc<SkillBody>,
     skill_index: usize,
     mode_index: Option<usize>,
     report: SkillRouteReport,
@@ -112,7 +117,7 @@ impl ResolvedSkillRoute {
     }
 
     pub fn skill(&self) -> &Skill {
-        self.runtime_skill().as_skill()
+        self.body.as_skill()
     }
 
     pub fn mode(&self) -> Option<&ModeEntry> {
@@ -547,6 +552,7 @@ impl SkillRouteResolver {
         );
         SkillRouteDecision::Match(ResolvedSkillRoute {
             snapshot: self.snapshot.clone(),
+            body: self.snapshot.skills()[candidate.skill_index].body(),
             skill_index: candidate.skill_index,
             mode_index: candidate.mode_index,
             report,
@@ -1141,6 +1147,7 @@ mod tests {
             crate::config::SkillVisibility::On,
             Vec::new(),
         )]);
+        let expected_body = snapshot.skills()[0].body();
         let resolver = SkillRouteResolver::new(snapshot.clone());
         let SkillRouteDecision::Match(route) = resolver
             .resolve(SkillRouteRequest::automatic("owned", 1, &[]), None)
@@ -1151,6 +1158,7 @@ mod tests {
         drop(snapshot);
         drop(resolver);
         assert_eq!(route.skill().id(), "owned");
+        assert!(Arc::ptr_eq(&expected_body, &route.body));
         assert!(route.report().candidates[0].execution.trusted_bundled);
     }
 }

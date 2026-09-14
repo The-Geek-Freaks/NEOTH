@@ -7322,6 +7322,7 @@ dependencies = [
  "memmap2",
  "minisign-verify",
  "natural",
+ "neoth-openclaw-custody",
  "neoth-plugin-sdk",
  "nostr",
  "nostr-sdk",
@@ -7397,7 +7398,7 @@ dependencies = [
  "anyhow",
  "clap",
  "ignore",
- "json5",
+ "neoth-openclaw-custody",
  "pulldown-cmark 0.12.2",
  "rusqlite",
  "same-file",
@@ -7408,6 +7409,19 @@ dependencies = [
  "tempfile",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "neoth-openclaw-custody"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "json5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "zeroize",
 ]
 
 [[package]]

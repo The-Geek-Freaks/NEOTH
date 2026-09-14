@@ -3,6 +3,24 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-14
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Waves 24–26 and 28 factory isolation, bounded updater, OpenClaw import, and
+> skill-route capture — LOCALLY VALIDATED 2026-09-14:** W21–23 base
+> `9dac2ee235690fa7c3c9a0e02cc5a60c53426a7c` has Preflight/Code Quality passes.
+> Its fullCI34787875712 terminally failed only on macOS103806563594: 16034 pass/
+> 2 fail/23 skip in the unchanged session-start-recall path; Windows/Linux pass.
+> W24 adds factory A/B isolation. W25's real lane/supervisor loopback admits only
+> control-originated typed cancellation as normal Cancel and keeps unexpected
+> cancellation fatal; R3-18B remains OPEN. W26 probes/rechecks an in-memory
+> selected OpenClaw account before prepared CAS commit and emits canonical
+> redacted custody reports without registry publication. W28 captures
+> `Arc<SkillBody>` and its resolved body/config through concurrent reload, so
+> P2-16 is COMPLETE. Final selection PASS1492/0/1/catalogue14415 in122.04s;
+> Build04 PASS4m15/min205.6GiB/peak10.7; CompoundClippy PASS5m08/min205.37/
+> peak9.72; contracts13 PASS157/build5m06/min206.53/peak8.27; custody108+21,
+> Python19/11/8/6/3, fmt/GUIlint/selftest and docgen pass. No native GUI, live
+> import, registry publication, or cross-platform claim. P1-16 OPEN; counts
+> 1324/1011/311/2 (313 raw; 312 pre-tag).
+>
 > **Waves 21–23 named Telegram account onboarding and macOS SQLite-path repair —
 > LOCALLY VALIDATED 2026-09-14:** eleven frozen Rust/Slint source files build
 > on W20 published `080131b4320ac3935d1f5d05e242295e5c3625a8`. Clippy PASS
@@ -1180,7 +1198,8 @@
 > checker runs in required Gold CI. `GOLD-LF-INTEGRITY-01`, the fully wired
 > external-output boundary `GOLD-LF-P1-03`, and `GOLD-LF-P1-04` HLC-ordered
 > WAL replay, P1-05 trust decisions, P1-06 agreement, P1-07 family gate and
-> P1-11 bounded context preparation are closed: **7 done / 111
+> P1-11 bounded context preparation and P2-16 hot-reload invocation pinning are
+> closed: **8 done / 110
 > implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
 > Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
 > explicit operator source evidence byte-exact and rejecting unsafe executable

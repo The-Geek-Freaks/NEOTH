@@ -21,6 +21,7 @@ resolver = "2"
 members = [
     "neothd",
     "neoth-plugin-sdk",
+    "neoth-openclaw-custody",
     "neothd-gui",
     "neoth-migrate",
     "neoth-relay",
