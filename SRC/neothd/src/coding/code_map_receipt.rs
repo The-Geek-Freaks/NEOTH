@@ -34,6 +34,8 @@ const MAX_DIFF_IMPACT_SEEDS: usize = 256;
 const MAX_DIFF_IMPACT_AFFECTED_IDENTITIES: usize = 96;
 const MAX_DIFF_IMPACT_KIND_BYTES: usize = 128;
 const MAX_DIFF_IMPACT_PROMPT_PROJECTION_BYTES: usize = 16 * 1024;
+const MAX_IMPACT_TEST_GAP_NODES: usize = 24;
+const MAX_IMPACT_TEST_GAP_OBSERVED_TESTS_PER_NODE: usize = 8;
 
 /// Why a code-map selection was included in the original assembled context.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +79,49 @@ pub struct DiffImpactCitation {
     pub evidence_truncated: bool,
     pub root_snapshot_complete: bool,
     pub allow_stale: bool,
+    /// Optional W48 advisory derived from this exact impact digest. Older
+    /// receipts decode without it; a present citation is validation-bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact_test_gap: Option<ImpactTestGapCitation>,
+}
+
+/// Bounded structural test evidence. Empty observations are explicitly not an
+/// absence claim and neither raw diff nor source/test body is retained.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImpactTestGapCitation {
+    pub impact_digest: String,
+    pub root_identity: String,
+    pub index_generation: i64,
+    pub graph_generation: i64,
+    pub outcome: crate::code_map::test_coverage::ImpactTestGapOutcome,
+    pub impact_partial: bool,
+    pub work_budget_capped: bool,
+    pub no_observed_test_is_not_absence: bool,
+    pub nodes: Vec<ImpactTestGapNodeCitation>,
+}
+
+/// Bounded test evidence for one concrete impact declaration. A missing
+/// coverage result stays an explicit uncertainty; it is never converted into
+/// a statement that no test exists.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImpactTestGapNodeCitation {
+    pub impact_node: DiffImpactAffectedIdentity,
+    pub identity: crate::code_map::test_coverage::ImpactTestGapIdentity,
+    pub coverage_unknown: bool,
+    pub no_observed_test_in_indexed_map: bool,
+    pub observed_tests: Vec<ImpactTestGapObservedTestCitation>,
+}
+
+/// A name-only observed test relation. Source or test bodies are deliberately
+/// absent from this persisted and prompt-projected form.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImpactTestGapObservedTestCitation {
+    pub path: String,
+    pub symbol: String,
+    pub confidence: u8,
 }
 
 impl DiffImpactCitation {
@@ -123,6 +168,9 @@ impl DiffImpactCitation {
                 self.affected_identities_truncated,
             ),
         );
+        if let Some(gap) = &self.impact_test_gap {
+            out.push_str(&gap.render_prompt_projection());
+        }
         out
     }
     pub(crate) fn from_receipt(
@@ -177,6 +225,7 @@ impl DiffImpactCitation {
             evidence_truncated: receipt.impact.evidence_truncated,
             root_snapshot_complete: receipt.root_snapshot_complete,
             allow_stale: receipt.allow_stale,
+            impact_test_gap: None,
         };
         citation.validate()?;
         Ok((citation, metadata_redacted))
@@ -199,6 +248,9 @@ impl DiffImpactCitation {
             !self.allow_stale,
             "allow-stale diff-impact output cannot enter coding citation"
         );
+        if let Some(gap) = &self.impact_test_gap {
+            gap.validate_against(self)?;
+        }
         validate_diff_source(&self.source)?;
         validate_diff_seed_files("exact diff-impact seeds", &self.exact_symbol_seeds)?;
         validate_diff_seed_files("fallback diff-impact seeds", &self.file_fallback_seeds)?;
@@ -226,6 +278,219 @@ impl DiffImpactCitation {
                 identity.line > 0,
                 "diff-impact affected identity line must be positive"
             );
+        }
+        Ok(())
+    }
+}
+
+impl ImpactTestGapCitation {
+    pub(crate) fn from_result(
+        diff: &DiffImpactCitation,
+        root_identity: &str,
+        result: &crate::code_map::test_coverage::ImpactTestGapResult,
+    ) -> Result<Self> {
+        ensure!(
+            result.impact_digest == diff.impact_digest,
+            "test-gap digest differs from diff-impact citation"
+        );
+        let mut nodes = Vec::new();
+        for node in result.per_node.iter().take(MAX_IMPACT_TEST_GAP_NODES) {
+            let mut path = node.impact_node.file.clone();
+            let mut symbol = node.impact_node.symbol.clone();
+            let mut kind = node.impact_node.kind.clone();
+            let mut redacted = false;
+            sanitize_metadata_field(&mut path, &mut redacted);
+            sanitize_metadata_field(&mut symbol, &mut redacted);
+            sanitize_metadata_field(&mut kind, &mut redacted);
+            let (coverage_unknown, no_observed_test_in_indexed_map, observed_tests) =
+                match &node.coverage {
+                    None => (true, false, Vec::new()),
+                    Some(coverage) => {
+                        let mut observed_tests = Vec::new();
+                        for observed in coverage
+                            .observed_tests
+                            .iter()
+                            .take(MAX_IMPACT_TEST_GAP_OBSERVED_TESTS_PER_NODE)
+                        {
+                            let mut path = observed.test.file.clone();
+                            let mut symbol = observed.test.symbol.clone();
+                            let mut redacted = false;
+                            sanitize_metadata_field(&mut path, &mut redacted);
+                            sanitize_metadata_field(&mut symbol, &mut redacted);
+                            observed_tests.push(ImpactTestGapObservedTestCitation {
+                                path,
+                                symbol,
+                                confidence: observed.confidence,
+                            });
+                        }
+                        let uncertainty = &coverage.uncertainty;
+                        let coverage_unknown = uncertainty.stale_graph
+                            || uncertainty.partial_graph
+                            || uncertainty.depth_capped
+                            || uncertainty.node_capped
+                            || uncertainty.edge_rows_capped
+                            || uncertainty.unresolved_or_ambiguous
+                            || uncertainty.unsupported_or_unclassified;
+                        (
+                            coverage_unknown,
+                            uncertainty.no_observed_test,
+                            observed_tests,
+                        )
+                    }
+                };
+            nodes.push(ImpactTestGapNodeCitation {
+                impact_node: DiffImpactAffectedIdentity {
+                    path,
+                    symbol,
+                    line: node.impact_node.line,
+                    kind,
+                },
+                identity: node.identity.clone(),
+                coverage_unknown,
+                no_observed_test_in_indexed_map,
+                observed_tests,
+            });
+        }
+        let citation = Self {
+            impact_digest: result.impact_digest.clone(),
+            root_identity: root_identity.to_owned(),
+            index_generation: result.index_generation,
+            graph_generation: result.graph_generation,
+            outcome: result.outcome.clone(),
+            impact_partial: result.impact_partial,
+            work_budget_capped: result.work_budget.capped,
+            no_observed_test_is_not_absence: result.no_observed_test_is_not_absence,
+            nodes,
+        };
+        citation.validate_against(diff)?;
+        Ok(citation)
+    }
+    fn render_prompt_projection(&self) -> String {
+        let mut out = String::from("impact-test-gap structural evidence:\n");
+        append_projection_line(&mut out, "outcome", &format!("{:?}", self.outcome));
+        append_projection_line(&mut out, "no_observed_test_is_not_absence", "true");
+        append_projection_line(
+            &mut out,
+            "partial_flags",
+            &format!(
+                "impact={}; work_budget={}",
+                self.impact_partial, self.work_budget_capped
+            ),
+        );
+        for node in &self.nodes {
+            append_projection_line(
+                &mut out,
+                "  impact_node",
+                &format!(
+                    "{} :: {} @{} ({}) identity={:?} coverage_unknown={}",
+                    node.impact_node.path,
+                    node.impact_node.symbol,
+                    node.impact_node.line,
+                    node.impact_node.kind,
+                    node.identity,
+                    node.coverage_unknown
+                ),
+            );
+            for observed in &node.observed_tests {
+                append_projection_line(
+                    &mut out,
+                    "    observed_test",
+                    &format!(
+                        "{} :: {} confidence={}",
+                        observed.path, observed.symbol, observed.confidence
+                    ),
+                );
+            }
+            if node.no_observed_test_in_indexed_map {
+                append_projection_line(
+                    &mut out,
+                    "    observed_test",
+                    "no observed test in this indexed map",
+                );
+            }
+        }
+        out
+    }
+    fn validate_against(&self, diff: &DiffImpactCitation) -> Result<()> {
+        ensure!(
+            is_lowercase_sha256(&self.impact_digest) && self.impact_digest == diff.impact_digest,
+            "test-gap citation impact digest mismatch"
+        );
+        bounded_nonempty(
+            "test-gap root identity",
+            &self.root_identity,
+            MAX_ROOT_IDENTITY_BYTES,
+        )?;
+        ensure!(
+            sanitize_metadata_value(&self.root_identity) == self.root_identity,
+            "test-gap root identity contains unsanitized metadata"
+        );
+        ensure!(
+            self.index_generation > 0 && self.index_generation == self.graph_generation,
+            "test-gap citation generation binding is invalid"
+        );
+        ensure!(
+            self.no_observed_test_is_not_absence,
+            "test-gap citation must retain non-absence truth marker"
+        );
+        ensure!(
+            self.nodes.len() <= MAX_IMPACT_TEST_GAP_NODES,
+            "test-gap citation nodes exceed bound"
+        );
+        for node in &self.nodes {
+            relative_contained_path("test-gap node path", &node.impact_node.path)?;
+            bounded_nonempty(
+                "test-gap node symbol",
+                &node.impact_node.symbol,
+                MAX_SYMBOL_BYTES,
+            )?;
+            bounded_nonempty(
+                "test-gap node kind",
+                &node.impact_node.kind,
+                MAX_DIFF_IMPACT_KIND_BYTES,
+            )?;
+            ensure!(
+                sanitize_metadata_value(&node.impact_node.path) == node.impact_node.path,
+                "test-gap node path contains unsanitized metadata"
+            );
+            ensure!(
+                sanitize_metadata_value(&node.impact_node.symbol) == node.impact_node.symbol,
+                "test-gap node symbol contains unsanitized metadata"
+            );
+            ensure!(
+                sanitize_metadata_value(&node.impact_node.kind) == node.impact_node.kind,
+                "test-gap node kind contains unsanitized metadata"
+            );
+            ensure!(
+                node.impact_node.line > 0,
+                "test-gap node line must be positive"
+            );
+            ensure!(
+                node.observed_tests.len() <= MAX_IMPACT_TEST_GAP_OBSERVED_TESTS_PER_NODE,
+                "test-gap observed tests exceed bound"
+            );
+            if node.no_observed_test_in_indexed_map {
+                ensure!(
+                    node.observed_tests.is_empty(),
+                    "no-observed-test node cannot retain observed test identities"
+                );
+            }
+            for observed in &node.observed_tests {
+                relative_contained_path("observed test path", &observed.path)?;
+                bounded_nonempty("observed test symbol", &observed.symbol, MAX_SYMBOL_BYTES)?;
+                ensure!(
+                    sanitize_metadata_value(&observed.path) == observed.path,
+                    "observed test path contains unsanitized metadata"
+                );
+                ensure!(
+                    sanitize_metadata_value(&observed.symbol) == observed.symbol,
+                    "observed test symbol contains unsanitized metadata"
+                );
+                ensure!(
+                    observed.confidence <= 100,
+                    "observed test confidence exceeds 100"
+                );
+            }
         }
         Ok(())
     }
@@ -377,7 +642,23 @@ impl CodeMapContextSource {
             "stale code-map sources must not be used for coding context"
         );
         match (&self.kind, &self.diff_impact) {
-            (CodeMapContextKind::DiffImpact, Some(citation)) => citation.validate()?,
+            (CodeMapContextKind::DiffImpact, Some(citation)) => {
+                citation.validate()?;
+                if let Some(gap) = &citation.impact_test_gap {
+                    ensure!(
+                        gap.root_identity == self.root_identity,
+                        "test-gap citation root identity differs from enclosing code-map source"
+                    );
+                    ensure!(
+                        gap.index_generation == self.index_generation,
+                        "test-gap citation index generation differs from enclosing code-map source"
+                    );
+                    ensure!(
+                        gap.graph_generation == self.graph_generation,
+                        "test-gap citation graph generation differs from enclosing code-map source"
+                    );
+                }
+            }
             (CodeMapContextKind::DiffImpact, None) => {
                 anyhow::bail!("diff-impact code-map source requires a typed citation")
             }
@@ -895,6 +1176,7 @@ mod tests {
             evidence_truncated: false,
             root_snapshot_complete: true,
             allow_stale: false,
+            impact_test_gap: None,
         }
     }
 
@@ -944,6 +1226,141 @@ mod tests {
         assert!(projection.contains("unresolved_seeds=1"));
         assert!(projection.contains("budget_truncated=true"));
         assert!(!projection.contains("diff --git"));
+    }
+
+    #[test]
+    fn test_gap_citation_is_backward_optional_and_validation_bound_to_its_diff() {
+        let old_json = serde_json::to_string(&diff_citation()).unwrap();
+        assert!(!old_json.contains("impact_test_gap"));
+        assert!(
+            serde_json::from_str::<DiffImpactCitation>(&old_json)
+                .unwrap()
+                .impact_test_gap
+                .is_none()
+        );
+
+        let mut source = source(CodeMapContextKind::DiffImpact);
+        let mut citation = diff_citation();
+        let impact_digest = citation.impact_digest.clone();
+        let impact_node = citation.affected_identities[0].clone();
+        citation.impact_test_gap = Some(ImpactTestGapCitation {
+            impact_digest,
+            root_identity: source.root_identity.clone(),
+            index_generation: source.index_generation,
+            graph_generation: source.graph_generation,
+            outcome: crate::code_map::test_coverage::ImpactTestGapOutcome::Complete,
+            impact_partial: false,
+            work_budget_capped: false,
+            no_observed_test_is_not_absence: true,
+            nodes: vec![ImpactTestGapNodeCitation {
+                impact_node,
+                identity: crate::code_map::test_coverage::ImpactTestGapIdentity::Exact,
+                coverage_unknown: false,
+                no_observed_test_in_indexed_map: false,
+                observed_tests: vec![ImpactTestGapObservedTestCitation {
+                    path: "tests/changed_test.rs".to_owned(),
+                    symbol: "changed_is_covered".to_owned(),
+                    confidence: 80,
+                }],
+            }],
+        });
+        source.diff_impact = Some(citation);
+        assert!(source.validate().is_ok());
+        let projection = source
+            .diff_impact
+            .as_ref()
+            .unwrap()
+            .render_prompt_projection();
+        assert!(projection.contains("impact-test-gap structural evidence:"));
+        assert!(projection.contains("no_observed_test_is_not_absence: true"));
+        assert!(projection.contains("tests/changed_test.rs :: changed_is_covered confidence=80"));
+        assert!(!projection.contains("diff --git"));
+
+        source
+            .diff_impact
+            .as_mut()
+            .unwrap()
+            .impact_test_gap
+            .as_mut()
+            .unwrap()
+            .impact_digest = "c".repeat(64);
+        assert!(
+            source.validate().is_err(),
+            "test-gap data cannot detach from its diff"
+        );
+
+        let expected_digest = source.diff_impact.as_ref().unwrap().impact_digest.clone();
+        source
+            .diff_impact
+            .as_mut()
+            .unwrap()
+            .impact_test_gap
+            .as_mut()
+            .unwrap()
+            .impact_digest = expected_digest;
+        source
+            .diff_impact
+            .as_mut()
+            .unwrap()
+            .impact_test_gap
+            .as_mut()
+            .unwrap()
+            .root_identity = "other-volume:other-root".to_owned();
+        assert!(
+            source.validate().is_err(),
+            "nested root identity cannot detach from its source"
+        );
+        let expected_root_identity = source.root_identity.clone();
+        source
+            .diff_impact
+            .as_mut()
+            .unwrap()
+            .impact_test_gap
+            .as_mut()
+            .unwrap()
+            .root_identity = expected_root_identity;
+        source
+            .diff_impact
+            .as_mut()
+            .unwrap()
+            .impact_test_gap
+            .as_mut()
+            .unwrap()
+            .index_generation += 1;
+        source
+            .diff_impact
+            .as_mut()
+            .unwrap()
+            .impact_test_gap
+            .as_mut()
+            .unwrap()
+            .graph_generation += 1;
+        assert!(
+            source.validate().is_err(),
+            "nested index generation cannot detach from its source"
+        );
+        let expected_index_generation = source.index_generation;
+        source
+            .diff_impact
+            .as_mut()
+            .unwrap()
+            .impact_test_gap
+            .as_mut()
+            .unwrap()
+            .index_generation = expected_index_generation;
+        let mismatched_graph_generation = source.graph_generation + 1;
+        source
+            .diff_impact
+            .as_mut()
+            .unwrap()
+            .impact_test_gap
+            .as_mut()
+            .unwrap()
+            .graph_generation = mismatched_graph_generation;
+        assert!(
+            source.validate().is_err(),
+            "nested graph generation cannot detach from its source"
+        );
     }
 
     #[test]

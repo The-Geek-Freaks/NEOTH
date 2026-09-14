@@ -466,11 +466,24 @@ const LEGACY_CODEGRAPH_V8_TOOLS: &[&str] = &[
     "codegraph_outline",
 ];
 
+const LEGACY_CODEGRAPH_V9_TOOLS: &[&str] = &[
+    "codegraph_relevant_files",
+    "codegraph_recall_v1",
+    "codegraph_extract_identifiers",
+    "codegraph_path_keywords",
+    "codegraph_callers",
+    "codegraph_callees",
+    "codegraph_impact_radius",
+    "codegraph_diff_impact",
+    "codegraph_outline",
+];
+
 fn is_exact_legacy_codegraph_catalogue(tools: &[String]) -> bool {
     [
         LEGACY_CODEGRAPH_V6_TOOLS,
         LEGACY_CODEGRAPH_V7_TOOLS,
         LEGACY_CODEGRAPH_V8_TOOLS,
+        LEGACY_CODEGRAPH_V9_TOOLS,
     ]
     .iter()
     .any(|catalogue| {
@@ -1456,7 +1469,8 @@ reason = "test block before external call"
     #[test]
     fn built_in_codegraph_registration_is_hardened_and_complete() {
         let config = codegraph_server_config(std::path::Path::new("neothd"), None);
-        assert_eq!(crate::mcp::codegraph_server::TOOL_NAMES.len(), 9);
+        assert_eq!(crate::mcp::codegraph_server::TOOL_NAMES.len(), 10);
+        assert!(crate::mcp::codegraph_server::TOOL_NAMES.contains(&"codegraph_diff_test_gaps"));
         assert_eq!(config.id, "neoth-codegraph");
         assert_eq!(config.command, "neothd");
         assert_eq!(config.args, ["mcp", "codegraph-serve"]);
@@ -1569,6 +1583,31 @@ reason = "test block before external call"
     }
 
     #[test]
+    fn codegraph_registration_upgrades_trusted_nine_tool_catalogue_with_test_gaps() {
+        let desired = codegraph_server_config(std::path::Path::new("neothd"), None);
+        let mut legacy = desired.clone();
+        legacy.allow_tools = Some(
+            LEGACY_CODEGRAPH_V9_TOOLS
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+        );
+        let mut servers = McpServers {
+            smart_loading: true,
+            servers: vec![legacy],
+        };
+        assert_eq!(
+            upsert_codegraph_server(&mut servers, &desired),
+            CodegraphRegistrationOutcome::RepairedLegacy
+        );
+        assert_eq!(servers.servers, vec![desired.clone()]);
+        assert_eq!(
+            upsert_codegraph_server(&mut servers, &desired),
+            CodegraphRegistrationOutcome::AlreadyCurrent
+        );
+    }
+
+    #[test]
     fn codegraph_registration_repairs_trusted_legacy_catalogue_and_preserves_non_codegraph_extras()
     {
         let desired = codegraph_server_config(std::path::Path::new("neothd"), None);
@@ -1608,7 +1647,10 @@ reason = "test block before external call"
             &tools[crate::mcp::codegraph_server::TOOL_NAMES.len()..],
             ["operator_custom_tool"]
         );
-        assert_eq!(tools.len(), before.allow_tools.as_ref().unwrap().len() + 3);
+        assert_eq!(
+            tools.len(),
+            crate::mcp::codegraph_server::TOOL_NAMES.len() + 1
+        );
         assert_eq!(
             upsert_codegraph_server(&mut servers, &desired),
             CodegraphRegistrationOutcome::Conflict,

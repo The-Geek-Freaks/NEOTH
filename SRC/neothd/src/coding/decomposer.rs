@@ -1079,6 +1079,7 @@ mod tests {
             evidence_truncated: false,
             root_snapshot_complete: true,
             allow_stale: false,
+            impact_test_gap: None,
         };
         let text = format!(
             "Diff-impact advisory context (explicit source):\n{}",

@@ -22,7 +22,8 @@
 //!   operator's code-map DB path and returns a [`ToolCallResult`]
 //!   ready for the MCP `tools/call` response envelope.
 //!
-//! Today's tool set (9 tools, including a versioned recall receipt and diff impact):
+//! Today's tool set (10 tools, including a versioned recall receipt, diff impact,
+//! and its bounded observed-test projection):
 //!
 //! - `codegraph_relevant_files` — top-N files for a prompt
 //! - `codegraph_recall_v1` — identity/generation-bound recall envelope
@@ -32,6 +33,7 @@
 //! - `codegraph_callees` — transitive callees of a symbol (forward BFS)
 //! - `codegraph_impact_radius` — generation-bound, concrete-node blast radius
 //! - `codegraph_diff_impact` — explicit Git diff acquisition into that radius
+//! - `codegraph_diff_test_gaps` — bounded observed-test evidence for that exact impact
 //! - `codegraph_outline` — structural outline for a file already indexed in
 //!   the persisted code map
 //!
@@ -318,7 +320,7 @@ pub fn codegraph_tools() -> Vec<McpTool> {
                     },
                     "base": {"type": "string", "description": "Required only for source=committed."},
                     "target": {"type": "string", "description": "Required only for source=committed."},
-                    "unified_diff": {"type": "string", "description": "Required only for source=stdin."},
+                    "unified_diff": {"type": "string", "maxLength": crate::code_map::diff::MAX_DIFF_BYTES, "description": "Required only for source=stdin. Character limit is advisory; the authoritative UTF-8 byte limit is enforced before parsing."},
                     "direction": {"type": "string", "enum": ["callers", "callees", "both"], "default": "callers"},
                     "max_depth": {"type": "integer", "minimum": 0, "maximum": crate::code_map::impact::MAX_IMPACT_DEPTH, "default": crate::code_map::impact::DEFAULT_MAX_DEPTH},
                     "max_nodes": {"type": "integer", "minimum": 0, "maximum": crate::code_map::impact::MAX_IMPACT_NODES, "default": crate::code_map::impact::DEFAULT_MAX_NODES},
@@ -326,6 +328,21 @@ pub fn codegraph_tools() -> Vec<McpTool> {
                 },
                 "required": ["root"],
                 "additionalProperties": false
+            }),
+            annotations: read_only_annotations(),
+        },
+        McpTool {
+            name: "codegraph_diff_test_gaps".into(),
+            description: Some("Run one explicit bounded diff-impact analysis, then project only typed, generation-bound observed test evidence. Empty observed evidence is never an absence claim; raw unified diff is never returned or persisted.".into()),
+            input_schema: serde_json::json!({
+                "type":"object", "properties": {
+                    "root":{"type":"string"}, "source":{"type":"string","enum":["working_tree","staged","committed","stdin"],"default":"working_tree"},
+                    "base":{"type":"string"}, "target":{"type":"string"}, "unified_diff":{"type":"string","maxLength":crate::code_map::diff::MAX_DIFF_BYTES,"description":"Character limit is advisory; the authoritative UTF-8 byte limit is enforced before parsing."},
+                    "direction":{"type":"string","enum":["callers","callees","both"],"default":"callers"},
+                    "max_depth":{"type":"integer","minimum":0,"maximum":crate::code_map::impact::MAX_IMPACT_DEPTH,"default":crate::code_map::impact::DEFAULT_MAX_DEPTH},
+                    "max_nodes":{"type":"integer","minimum":0,"maximum":crate::code_map::impact::MAX_IMPACT_NODES,"default":crate::code_map::impact::DEFAULT_MAX_NODES},
+                    "allow_stale":{"type":"boolean","default":false}
+                }, "required":["root"], "additionalProperties":false
             }),
             annotations: read_only_annotations(),
         },
@@ -372,6 +389,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "codegraph_callees",
     "codegraph_impact_radius",
     "codegraph_diff_impact",
+    "codegraph_diff_test_gaps",
     "codegraph_outline",
 ];
 
@@ -412,6 +430,7 @@ pub(crate) fn dispatch_codegraph_tool_at(
         "codegraph_callees" => tool_callees(db_path, args, cwd),
         "codegraph_impact_radius" => tool_impact_radius(db_path, args, cwd),
         "codegraph_diff_impact" => tool_diff_impact(db_path, args, cwd),
+        "codegraph_diff_test_gaps" => tool_diff_test_gaps(db_path, args, cwd),
         "codegraph_outline" => tool_outline(db_path, args, cwd),
         other => error_result(format!(
             "unknown codegraph tool `{other}` (known: {})",
@@ -717,11 +736,23 @@ struct DiffImpactArgs {
     allow_stale: bool,
 }
 
-fn tool_diff_impact(db_path: &Path, args: &serde_json::Value, _cwd: &Path) -> ToolCallResult {
-    let parsed: DiffImpactArgs = match serde_json::from_value(args.clone()) {
-        Ok(parsed) => parsed,
-        Err(error) => return error_result(format!("bad args: {error}")),
-    };
+/// Acquire, validate, map, and analyze one explicit diff as a typed value.
+/// Both MCP consumers call this shared path before either renders a response.
+fn resolve_diff_impact(
+    db_path: &Path,
+    args: &serde_json::Value,
+) -> Result<crate::code_map::impact::ImpactResult> {
+    // This check intentionally borrows the JSON string before `from_value`
+    // clones it. JSON Schema's maxLength is character-based; this byte cap is
+    // the authoritative bound for multibyte UTF-8 and runs before parsing/IO.
+    if let Some(input) = args.get("unified_diff").and_then(serde_json::Value::as_str) {
+        anyhow::ensure!(
+            input.len() <= crate::code_map::diff::MAX_DIFF_BYTES,
+            "unified_diff exceeds {} UTF-8 byte limit",
+            crate::code_map::diff::MAX_DIFF_BYTES
+        );
+    }
+    let parsed: DiffImpactArgs = serde_json::from_value(args.clone()).context("bad args")?;
     let DiffImpactArgs {
         root,
         source,
@@ -741,10 +772,12 @@ fn tool_diff_impact(db_path: &Path, args: &serde_json::Value, _cwd: &Path) -> To
                 crate::code_map::diff_git::GitDiffSource::WorkingTree,
             )
         }
-        (DiffImpactSource::Staged, None, None, None) => crate::code_map::diff_git::acquire_git_diff(
-            &root,
-            crate::code_map::diff_git::GitDiffSource::Staged,
-        ),
+        (DiffImpactSource::Staged, None, None, None) => {
+            crate::code_map::diff_git::acquire_git_diff(
+                &root,
+                crate::code_map::diff_git::GitDiffSource::Staged,
+            )
+        }
         (DiffImpactSource::Committed, Some(base), Some(target), None) => {
             crate::code_map::diff_git::acquire_git_diff(
                 &root,
@@ -754,88 +787,36 @@ fn tool_diff_impact(db_path: &Path, args: &serde_json::Value, _cwd: &Path) -> To
         (DiffImpactSource::Stdin, None, None, Some(input)) => {
             crate::code_map::diff_git::parse_stdin_diff(&input)
         }
-        _ => return error_result(
-            "bad args: source requires exactly its matching fields: working_tree/staged have none, committed has base and target, stdin has unified_diff".into(),
+        _ => anyhow::bail!(
+            "source requires exactly its matching fields: working_tree/staged have none, committed has base and target, stdin has unified_diff"
         ),
     };
-    let acquired = match acquired {
-        Ok(acquired) => acquired,
-        Err(error) => {
-            return error_result(format!(
-                "codegraph_diff_impact failed to acquire diff: {error:#}"
-            ));
-        }
-    };
-    let exists = match db_path.try_exists() {
-        Ok(exists) => exists,
-        Err(error) => {
-            return error_result(format!(
-                "codegraph_diff_impact failed to inspect {}: {error}",
-                db_path.display()
-            ));
-        }
-    };
+    let acquired = acquired.context("acquire explicit diff")?;
+    let exists = db_path
+        .try_exists()
+        .with_context(|| format!("inspect code-map DB {}", db_path.display()))?;
     if !exists {
-        return error_result(format!(
-            "codegraph_diff_impact failed: code-map DB {} does not exist; run `neoth code-map persist` first",
+        anyhow::bail!(
+            "code-map DB {} does not exist; run `neoth code-map persist` first",
             db_path.display()
-        ));
+        );
     }
-    let conn = match open_code_map_read_only(db_path) {
-        Ok(conn) => conn,
-        Err(error) => {
-            return error_result(format!(
-                "codegraph_diff_impact failed to open {}: {error:#}",
-                db_path.display()
-            ));
-        }
-    };
-    let canonical_root = match root.canonicalize() {
-        Ok(root) if root.is_dir() => root,
-        Ok(root) => {
-            return error_result(format!(
-                "codegraph_diff_impact root is not a directory: {}",
-                root.display()
-            ));
-        }
-        Err(error) => {
-            return error_result(format!(
-                "codegraph_diff_impact failed to canonicalize root {}: {error}",
-                root.display()
-            ));
-        }
-    };
-    let canonical_root_text = match canonical_root.to_str() {
-        Some(root) => root,
-        None => return error_result("codegraph_diff_impact root is not valid UTF-8".into()),
-    };
-    let indexed = match crate::code_map::persist::load_map(&conn, canonical_root_text) {
-        Ok(Some(map)) => map,
-        Ok(None) => {
-            return error_result(format!(
-                "codegraph_diff_impact failed: root {} is not indexed; run `neoth code-map persist` first",
-                canonical_root.display()
-            ));
-        }
-        Err(error) => {
-            return error_result(format!(
-                "codegraph_diff_impact failed to load indexed extents: {error:#}"
-            ));
-        }
-    };
-    let seeds = match crate::code_map::diff_git::map_acquired_diff_to_indexed_impact_seeds(
+    let conn = open_code_map_read_only(db_path)?;
+    let canonical_root = root
+        .canonicalize()
+        .with_context(|| format!("canonicalize root {}", root.display()))?;
+    if !canonical_root.is_dir() {
+        anyhow::bail!("root is not a directory: {}", canonical_root.display());
+    }
+    let canonical_root_text = canonical_root.to_str().context("root is not valid UTF-8")?;
+    let indexed = crate::code_map::persist::load_map(&conn, canonical_root_text)?
+        .context("root is not indexed; run `neoth code-map persist` first")?;
+    let seeds = crate::code_map::diff_git::map_acquired_diff_to_indexed_impact_seeds(
         &canonical_root,
         &acquired,
         &indexed,
-    ) {
-        Ok(seeds) => seeds,
-        Err(error) => {
-            return error_result(format!(
-                "codegraph_diff_impact failed to map diff: {error:#}"
-            ));
-        }
-    };
-    let result = crate::code_map::impact::impact_radius_for_diff_seeds(
+    )?;
+    crate::code_map::impact::impact_radius_for_diff_seeds(
         &conn,
         &canonical_root,
         &seeds,
@@ -845,8 +826,11 @@ fn tool_diff_impact(db_path: &Path, args: &serde_json::Value, _cwd: &Path) -> To
             max_nodes,
             allow_stale,
         },
-    );
-    match result {
+    )
+}
+
+fn tool_diff_impact(db_path: &Path, args: &serde_json::Value, _cwd: &Path) -> ToolCallResult {
+    match resolve_diff_impact(db_path, args) {
         Ok(result) => match serde_json::to_string(&result) {
             Ok(payload) => text_result(payload),
             Err(error) => error_result(format!(
@@ -854,6 +838,38 @@ fn tool_diff_impact(db_path: &Path, args: &serde_json::Value, _cwd: &Path) -> To
             )),
         },
         Err(error) => error_result(format!("codegraph_diff_impact failed: {error:#}")),
+    }
+}
+
+/// W48 composes the existing explicit diff selector with the canonical typed
+/// test-gap service. The intermediate impact value is local and transient;
+/// callers never provide or receive a detached impact receipt as input.
+fn tool_diff_test_gaps(db_path: &Path, args: &serde_json::Value, _cwd: &Path) -> ToolCallResult {
+    let impact = match resolve_diff_impact(db_path, args) {
+        Ok(impact) => impact,
+        Err(error) => return error_result(format!("codegraph_diff_test_gaps failed: {error:#}")),
+    };
+    let conn = match open_code_map_read_only(db_path) {
+        Ok(conn) => conn,
+        Err(error) => {
+            return error_result(format!(
+                "codegraph_diff_test_gaps failed to open {}: {error:#}",
+                db_path.display()
+            ));
+        }
+    };
+    match crate::code_map::test_coverage::test_gap_for_impact(
+        &conn,
+        &impact,
+        crate::code_map::test_coverage::TestCoverageOptions::default(),
+    ) {
+        Ok(result) => match serde_json::to_string(&result) {
+            Ok(payload) => text_result(payload),
+            Err(error) => error_result(format!(
+                "codegraph_diff_test_gaps result serialisation failed: {error}"
+            )),
+        },
+        Err(error) => error_result(format!("codegraph_diff_test_gaps failed: {error:#}")),
     }
 }
 
@@ -1756,9 +1772,9 @@ mod tests {
     }
 
     #[test]
-    fn codegraph_tools_lists_nine_canonical_tools() {
+    fn codegraph_tools_lists_ten_canonical_tools() {
         let tools = codegraph_tools();
-        assert_eq!(tools.len(), 9);
+        assert_eq!(tools.len(), 10);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(
             names,
@@ -1771,6 +1787,7 @@ mod tests {
                 "codegraph_callees",
                 "codegraph_impact_radius",
                 "codegraph_diff_impact",
+                "codegraph_diff_test_gaps",
                 "codegraph_outline",
             ]
         );
@@ -2372,6 +2389,47 @@ fn root() { alpha(); beta(); }
             )]
         );
         assert_eq!(from_mcp.impacted_nodes[0].node.symbol, "caller");
+
+        let gaps = dispatch_codegraph_tool_at(
+            &db,
+            "codegraph_diff_test_gaps",
+            &serde_json::json!({
+                "root": repo.path(), "source": "stdin",
+                "unified_diff": "diff --git a/changed.rs b/changed.rs\n--- a/changed.rs\n+++ b/changed.rs\n@@ -1 +1 @@\n-fn changed() {}\n+fn changed() { caller(); }\n"
+            }),
+            repo.path(),
+        );
+        assert!(!gaps.is_error, "got: {}", text_content(&gaps));
+        let gaps: crate::code_map::test_coverage::ImpactTestGapResult =
+            serde_json::from_str(&text_content(&gaps)).unwrap();
+        assert!(gaps.no_observed_test_is_not_absence);
+    }
+
+    #[test]
+    fn diff_test_gaps_rejects_multibyte_overlimit_stdin_before_db_or_diff_parse() {
+        let repo = tempdir().unwrap();
+        let missing_db = repo.path().join("absent-code-map.db");
+        // Fewer characters than the schema maxLength, but more UTF-8 bytes:
+        // proves the runtime byte check is authoritative at the public MCP
+        // dispatch boundary and fires before either DB access or diff parsing.
+        let oversized = "é".repeat(crate::code_map::diff::MAX_DIFF_BYTES / 2 + 1);
+        let result = dispatch_codegraph_tool_at(
+            &missing_db,
+            "codegraph_diff_test_gaps",
+            &serde_json::json!({
+                "root": repo.path(),
+                "source": "stdin",
+                "unified_diff": oversized,
+            }),
+            repo.path(),
+        );
+        assert!(result.is_error);
+        let text = text_content(&result);
+        assert!(text.contains("UTF-8 byte limit"), "got: {text}");
+        assert!(
+            !text.contains("does not exist"),
+            "byte cap must precede DB access: {text}"
+        );
     }
 
     #[test]

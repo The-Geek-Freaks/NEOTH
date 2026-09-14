@@ -78,6 +78,10 @@
 //! state). A successful commit replaces the snapshot atomically.
 
 use std::path::{Path, PathBuf};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use anyhow::{Context, Result, bail, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
@@ -112,6 +116,13 @@ pub const CODE_MAP_SCHEMA_VERSION: i64 = 10;
 pub(crate) const MAX_FRESHNESS_FILES: usize = 250_000;
 const MAX_FRESHNESS_TEXT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_FRESHNESS_ROW_TEXT_BYTES: usize = 64 * 1024;
+
+/// Doctor never needs an unbounded repository-wide edge census.  This cap
+/// covers the rows materialised by its `tested_by` evidence observation; one
+/// additional sentinel row makes a partial observation explicit.
+pub(crate) const MAX_DOCTOR_TEST_EVIDENCE_ROWS: usize = 1_024;
+const DOCTOR_TEST_EVIDENCE_VM_STEP_LIMIT: usize = 100_000;
+const DOCTOR_TEST_EVIDENCE_VM_STEP_INTERVAL: i32 = 1_000;
 
 /// Instance-default code-map path. `FreedomConfig::default_neoth_home()` is
 /// the shared authority and honours `NEOTH_HOME`; using raw HOME here split
@@ -2203,6 +2214,165 @@ pub(crate) fn root_snapshot_complete(conn: &Connection, root: &str) -> Result<bo
     .map(|complete| complete.unwrap_or(false))
 }
 
+/// Bounded, persisted `TestedBy` evidence for Doctor.  These are structural
+/// graph observations only: an exact edge is not a record that any test was
+/// executed, and an empty observation is never evidence that a repository has
+/// no tests or coverage.
+///
+/// The caller must first establish the root's canonical physical identity and
+/// lifecycle freshness.  This helper neither performs that filesystem work nor
+/// creates, migrates, refreshes, repairs, or writes the SQLite store.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RootTestEvidenceSummary {
+    pub schema_version: i64,
+    pub index_generation: i64,
+    pub graph_generation: i64,
+    pub snapshot_complete: bool,
+    /// `tested_by` rows observed within the bounded query, excluding its
+    /// sentinel row when `capped` is true.
+    pub observed_tested_by_edges: usize,
+    /// Observed rows that carry a non-empty exact target file and the resolved
+    /// provenance tier.  This remains structural graph evidence, not coverage.
+    pub observed_exact_tested_by_edges: usize,
+    /// More matching rows existed beyond `observed_tested_by_edges`; counts
+    /// are deliberately not presented as totals in this state.
+    pub capped: bool,
+}
+
+/// Read a root's persisted test-evidence shape without materialising source,
+/// symbol, or edge text.  The SQL result has both a row/sentinel limit and a
+/// SQLite VM-step interruption bound, so an unindexed or adversarially large
+/// store becomes an explicit diagnostic rather than an unbounded Doctor scan.
+pub(crate) fn root_test_evidence_summary(
+    conn: &Connection,
+    root: &str,
+) -> Result<RootTestEvidenceSummary> {
+    root_test_evidence_summary_with_limits(
+        conn,
+        root,
+        MAX_DOCTOR_TEST_EVIDENCE_ROWS,
+        DOCTOR_TEST_EVIDENCE_VM_STEP_LIMIT,
+        DOCTOR_TEST_EVIDENCE_VM_STEP_INTERVAL,
+    )
+}
+
+/// The production wrapper above fixes both budgets.  Keeping the bounded
+/// operation in one helper lets its real SQLite query prove exact cap and
+/// interruption cleanup semantics without duplicating the query in tests.
+fn root_test_evidence_summary_with_limits(
+    conn: &Connection,
+    root: &str,
+    max_rows: usize,
+    vm_step_limit: usize,
+    vm_step_interval: i32,
+) -> Result<RootTestEvidenceSummary> {
+    ensure!(
+        max_rows > 0,
+        "Doctor test-evidence row cap must be positive"
+    );
+    ensure!(
+        vm_step_limit > 0,
+        "Doctor test-evidence VM-step cap must be positive"
+    );
+    ensure!(
+        vm_step_interval > 0,
+        "Doctor test-evidence VM-step interval must be positive"
+    );
+    let schema_version_raw: String = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .context("read code-map schema version for Doctor evidence")?;
+    let schema_version = schema_version_raw
+        .parse::<i64>()
+        .context("parse code-map schema version for Doctor evidence")?;
+    let index_generation = root_index_generation(conn, root)?
+        .ok_or_else(|| anyhow::anyhow!("Doctor evidence root is not persisted"))?;
+    let graph_generation = root_graph_generation(conn, root)?
+        .ok_or_else(|| anyhow::anyhow!("Doctor evidence root graph is not persisted"))?;
+    let snapshot_complete = root_snapshot_complete(conn, root)?;
+
+    let row_limit = i64::try_from(max_rows.saturating_add(1))
+        .context("convert Doctor evidence row limit to SQLite integer")?;
+    let step_limit = Arc::new(AtomicBool::new(false));
+    let step_limit_for_progress = Arc::clone(&step_limit);
+    let mut steps = 0usize;
+    conn.progress_handler(
+        vm_step_interval,
+        Some(move || {
+            steps = steps.saturating_add(vm_step_interval as usize);
+            let stop = steps >= vm_step_limit;
+            if stop {
+                step_limit_for_progress.store(true, Ordering::Relaxed);
+            }
+            stop
+        }),
+    );
+    let query_result: Result<(usize, usize, bool)> = (|| {
+        let mut statement = conn
+            .prepare(
+                "SELECT target_file IS NOT NULL \
+                         AND length(CAST(target_file AS BLOB)) > 0 \
+                         AND confidence = 100 \
+                         AND confidence_tier = 'resolved' \
+                 FROM code_map_edges \
+                 WHERE root = ?1 AND kind = 'tested_by' \
+                 LIMIT ?2",
+            )
+            .context("prepare bounded Doctor test-evidence query")?;
+        let mut rows = statement
+            .query(rusqlite::params![root, row_limit])
+            .context("query bounded Doctor test evidence")?;
+        let mut observed = 0usize;
+        let mut exact = 0usize;
+        while let Some(row) = rows
+            .next()
+            .context("advance bounded Doctor test evidence")?
+        {
+            if observed == max_rows {
+                return Ok((observed, exact, true));
+            }
+            let is_exact = row
+                .get::<_, bool>(0)
+                .context("read bounded Doctor exact-test-evidence flag")?;
+            observed = observed
+                .checked_add(1)
+                .context("Doctor test-evidence row count overflow")?;
+            if is_exact {
+                exact = exact
+                    .checked_add(1)
+                    .context("Doctor exact-test-evidence row count overflow")?;
+            }
+        }
+        Ok((observed, exact, false))
+    })();
+    conn.progress_handler(0, None::<fn() -> bool>);
+    match query_result {
+        Ok(_) if step_limit.load(Ordering::Relaxed) => bail!(
+            "Doctor test-evidence query exceeded its {} SQLite-VM-step work bound",
+            vm_step_limit
+        ),
+        Ok((observed_tested_by_edges, observed_exact_tested_by_edges, capped)) => {
+            Ok(RootTestEvidenceSummary {
+                schema_version,
+                index_generation,
+                graph_generation,
+                snapshot_complete,
+                observed_tested_by_edges,
+                observed_exact_tested_by_edges,
+                capped,
+            })
+        }
+        Err(error) if step_limit.load(Ordering::Relaxed) => bail!(
+            "Doctor test-evidence query exceeded its {} SQLite-VM-step work bound: {error:#}",
+            vm_step_limit
+        ),
+        Err(error) => Err(error).context("read bounded Doctor test evidence"),
+    }
+}
+
 /// GOLD-R3-13 — is the persisted snapshot for `root` stale relative to the
 /// files currently on disk? Re-scans the root (no symbol extraction) with the
 /// same ignore rules and compares content hashes against the stored rows: a
@@ -3102,6 +3272,136 @@ mod tests {
             None
         );
         assert_eq!(load_edges(&conn, "/repo/a").unwrap(), bounded);
+    }
+
+    #[test]
+    fn doctor_test_evidence_observes_the_exact_row_cap_boundary_without_writing() {
+        let (dir, mut writer) = temp_db();
+        let database_path = dir.path().join("code_map.db");
+        let map = sample_map("/repo/a");
+        persist_map(&mut writer, &map).unwrap();
+        let at_cap: Vec<_> = (0..MAX_DOCTOR_TEST_EVIDENCE_ROWS)
+            .map(|index| {
+                crate::code_map::graph::CodeEdge::resolved_tested_by(
+                    format!("tests/case_{index}.rs"),
+                    format!("observes_{index}"),
+                    "work",
+                    "src/work.rs",
+                )
+            })
+            .collect();
+        persist_edges(&mut writer, "/repo/a", &at_cap).unwrap();
+        drop(writer);
+
+        let before_at_cap = std::fs::read(&database_path).unwrap();
+        let reader = open_read_only(&database_path).unwrap();
+        let summary_at_cap = root_test_evidence_summary(&reader, "/repo/a").unwrap();
+        drop(reader);
+
+        assert_eq!(summary_at_cap.schema_version, CODE_MAP_SCHEMA_VERSION);
+        assert!(summary_at_cap.snapshot_complete);
+        assert_eq!(
+            summary_at_cap.index_generation,
+            summary_at_cap.graph_generation
+        );
+        assert_eq!(
+            summary_at_cap.observed_tested_by_edges,
+            MAX_DOCTOR_TEST_EVIDENCE_ROWS
+        );
+        assert_eq!(
+            summary_at_cap.observed_exact_tested_by_edges,
+            MAX_DOCTOR_TEST_EVIDENCE_ROWS
+        );
+        assert!(
+            !summary_at_cap.capped,
+            "exactly the permitted rows is a complete bounded observation"
+        );
+        assert_eq!(
+            std::fs::read(&database_path).unwrap(),
+            before_at_cap,
+            "Doctor evidence reads must not mutate the SQLite store at the exact cap"
+        );
+
+        let one_past_cap: Vec<_> = (0..=MAX_DOCTOR_TEST_EVIDENCE_ROWS)
+            .map(|index| {
+                crate::code_map::graph::CodeEdge::resolved_tested_by(
+                    format!("tests/case_{index}.rs"),
+                    format!("observes_{index}"),
+                    "work",
+                    "src/work.rs",
+                )
+            })
+            .collect();
+        let mut writer = open(&database_path).unwrap();
+        persist_edges(&mut writer, "/repo/a", &one_past_cap).unwrap();
+        drop(writer);
+
+        let before_sentinel = std::fs::read(&database_path).unwrap();
+        let reader = open_read_only(&database_path).unwrap();
+        let summary_sentinel = root_test_evidence_summary(&reader, "/repo/a").unwrap();
+        drop(reader);
+
+        assert_eq!(
+            summary_sentinel.observed_tested_by_edges,
+            MAX_DOCTOR_TEST_EVIDENCE_ROWS
+        );
+        assert_eq!(
+            summary_sentinel.observed_exact_tested_by_edges,
+            MAX_DOCTOR_TEST_EVIDENCE_ROWS
+        );
+        assert!(
+            summary_sentinel.capped,
+            "one sentinel row beyond the cap must prevent a total claim"
+        );
+        assert_eq!(
+            std::fs::read(&database_path).unwrap(),
+            before_sentinel,
+            "Doctor evidence reads must not mutate the SQLite store after the sentinel"
+        );
+    }
+
+    #[test]
+    fn doctor_test_evidence_vm_interrupt_is_hard_capped_and_removed() {
+        let (dir, mut writer) = temp_db();
+        let database_path = dir.path().join("code_map.db");
+        let map = sample_map("/repo/a");
+        persist_map(&mut writer, &map).unwrap();
+        let edge = crate::code_map::graph::CodeEdge::resolved_tested_by(
+            "tests/work_test.rs",
+            "observes_work",
+            "work",
+            "src/work.rs",
+        );
+        persist_edges(&mut writer, "/repo/a", &[edge]).unwrap();
+        drop(writer);
+
+        let before = std::fs::read(&database_path).unwrap();
+        let reader = open_read_only(&database_path).unwrap();
+        let error = root_test_evidence_summary_with_limits(
+            &reader,
+            "/repo/a",
+            MAX_DOCTOR_TEST_EVIDENCE_ROWS,
+            1,
+            1,
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("exceeded its 1 SQLite-VM-step work bound"),
+            "the first callback must stop at, never after, its exact cap: {error:#}"
+        );
+        let next_operation: i64 = reader.query_row("SELECT 1", [], |row| row.get(0)).unwrap();
+        assert_eq!(
+            next_operation, 1,
+            "the interrupted evidence query must remove its progress handler"
+        );
+        drop(reader);
+        assert_eq!(
+            std::fs::read(&database_path).unwrap(),
+            before,
+            "the interrupted read-only query must leave all database bytes intact"
+        );
     }
 
     #[test]

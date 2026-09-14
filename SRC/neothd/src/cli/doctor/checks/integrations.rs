@@ -169,6 +169,169 @@ pub(crate) fn check_code_map_lifecycle(home: &Path) -> CheckOutcome {
     }
 }
 
+/// CRG-03/04 evidence diagnostic. This is intentionally separate from the
+/// lifecycle check: lifecycle owns store existence, physical-root identity,
+/// freshness, and repair advice; this check only describes bounded persisted
+/// `TestedBy` graph evidence once that lifecycle state is already fresh.
+pub(crate) fn check_code_map_analysis_readiness(home: &Path) -> CheckOutcome {
+    const NAME: &str = "code-map analysis readiness";
+    let config_path = home.join("freedom.yaml");
+    let config = match std::fs::read(&config_path) {
+        Ok(bytes) => match serde_yaml::from_slice::<crate::config::FreedomConfig>(&bytes) {
+            Ok(config) if config.code_map.validate().is_ok() => config,
+            _ => {
+                return CheckOutcome {
+                    name: NAME,
+                    status: CheckStatus::Pass,
+                    detail: "freedom.yaml is unavailable or invalid; the config check owns that diagnostic".into(),
+                };
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            crate::config::FreedomConfig::default()
+        }
+        Err(_) => {
+            return CheckOutcome {
+                name: NAME,
+                status: CheckStatus::Pass,
+                detail:
+                    "freedom.yaml is unavailable or invalid; the config check owns that diagnostic"
+                        .into(),
+            };
+        }
+    };
+    let lifecycle = &config.code_map.lifecycle;
+    if !lifecycle.enabled {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Pass,
+            detail: "disabled by freedom.yaml — no managed analysis snapshot is expected".into(),
+        };
+    }
+    if lifecycle.managed_roots.is_empty() {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Fail,
+            detail: "enabled with no managed roots — the code-map lifecycle check owns this configuration state".into(),
+        };
+    }
+
+    let database_path = home.join("code_map.db");
+    let mut aggregate = CheckStatus::Pass;
+    let mut details = Vec::with_capacity(lifecycle.managed_roots.len());
+    for configured_root in &lifecycle.managed_roots {
+        let lifecycle_status = crate::code_map::lifecycle::inspect(&database_path, configured_root);
+        let Some(physical_root) = lifecycle_status.root.as_deref() else {
+            details.push(format!(
+                "{}: analysis evidence not assessed; code-map lifecycle owns {} state",
+                configured_root.display(),
+                code_map_lifecycle_state_label(&lifecycle_status.state),
+            ));
+            continue;
+        };
+        let crate::code_map::lifecycle::CodeMapLifecycleState::Fresh { snapshot } =
+            &lifecycle_status.state
+        else {
+            details.push(format!(
+                "{}: analysis evidence not assessed; code-map lifecycle owns {} state",
+                physical_root,
+                code_map_lifecycle_state_label(&lifecycle_status.state),
+            ));
+            continue;
+        };
+        let detail = match crate::code_map::persist::open_read_only(&database_path).and_then(
+            |connection| {
+                crate::code_map::persist::root_test_evidence_summary(&connection, physical_root)
+            },
+        ) {
+            Ok(summary) => code_map_analysis_detail(physical_root, snapshot, &summary),
+            Err(error) => (
+                CheckStatus::Warn,
+                format!(
+                    "{physical_root}: read-only test-evidence query was not assessed ({error:#}); no database migration, refresh, or repair was attempted"
+                ),
+            ),
+        };
+        aggregate = more_severe(aggregate, detail.0);
+        details.push(detail.1);
+    }
+    CheckOutcome {
+        name: NAME,
+        status: aggregate,
+        detail: details.join("; "),
+    }
+}
+
+fn code_map_analysis_detail(
+    root: &str,
+    lifecycle: &crate::code_map::lifecycle::LifecycleGeneration,
+    summary: &crate::code_map::persist::RootTestEvidenceSummary,
+) -> (CheckStatus, String) {
+    if summary.schema_version != crate::code_map::persist::CODE_MAP_SCHEMA_VERSION {
+        return (
+            CheckStatus::Warn,
+            format!(
+                "{root}: schema version {} is not current {}; exact test evidence was not assessed",
+                summary.schema_version,
+                crate::code_map::persist::CODE_MAP_SCHEMA_VERSION,
+            ),
+        );
+    }
+    if !summary.snapshot_complete
+        || summary.index_generation != lifecycle.index_generation
+        || summary.graph_generation != lifecycle.graph_generation
+        || summary.index_generation != summary.graph_generation
+    {
+        return (
+            CheckStatus::Warn,
+            format!(
+                "{root}: persisted analysis generations changed or are incomplete after lifecycle inspection; exact test evidence was not assessed"
+            ),
+        );
+    }
+    if summary.capped {
+        return (
+            CheckStatus::Warn,
+            format!(
+                "{root}: bounded read observed the first {} persisted `tested_by` rows and hit its cap; exact test evidence was not assessed as a total",
+                summary.observed_tested_by_edges,
+            ),
+        );
+    }
+    if summary.observed_exact_tested_by_edges == 0 {
+        return (
+            CheckStatus::Warn,
+            format!(
+                "{root}: no observed exact `TestedBy` evidence in {} persisted `tested_by` rows; this does not prove the repository has no tests or coverage",
+                summary.observed_tested_by_edges,
+            ),
+        );
+    }
+    (
+        CheckStatus::Pass,
+        format!(
+            "{root}: observed {} exact `TestedBy` edges among {} persisted `tested_by` rows (structural graph evidence only; not executed test coverage)",
+            summary.observed_exact_tested_by_edges, summary.observed_tested_by_edges,
+        ),
+    )
+}
+
+fn code_map_lifecycle_state_label(
+    state: &crate::code_map::lifecycle::CodeMapLifecycleState,
+) -> &'static str {
+    match state {
+        crate::code_map::lifecycle::CodeMapLifecycleState::Disabled => "disabled",
+        crate::code_map::lifecycle::CodeMapLifecycleState::Absent => "absent",
+        crate::code_map::lifecycle::CodeMapLifecycleState::Unmapped => "unmapped",
+        crate::code_map::lifecycle::CodeMapLifecycleState::Incomplete { .. } => "incomplete",
+        crate::code_map::lifecycle::CodeMapLifecycleState::Fresh { .. } => "fresh",
+        crate::code_map::lifecycle::CodeMapLifecycleState::Stale { .. } => "stale",
+        crate::code_map::lifecycle::CodeMapLifecycleState::Refreshing { .. } => "refreshing",
+        crate::code_map::lifecycle::CodeMapLifecycleState::Recovering { .. } => "recovering",
+        crate::code_map::lifecycle::CodeMapLifecycleState::Corrupt { .. } => "corrupt",
+    }
+}
+
 fn more_severe(current: CheckStatus, candidate: CheckStatus) -> CheckStatus {
     match (current, candidate) {
         (CheckStatus::Fail, _) | (_, CheckStatus::Fail) => CheckStatus::Fail,
@@ -862,6 +1025,7 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_channels_wiring,
     check_vector_index_snapshot,
     check_code_map_lifecycle,
+    check_code_map_analysis_readiness,
     check_omi_runtime,
 ];
 
@@ -988,6 +1152,25 @@ pub(crate) const DOCS: &[CheckDoc] = &[
                   and create a replacement. Ensure lifecycle roots are explicit, \
                   absolute, non-overlapping paths in freedom.yaml.",
     },
+    CheckDoc {
+        name: "code-map analysis readiness",
+        purpose: "Read-only companion to `code-map lifecycle`. After lifecycle \
+                  establishes a fresh complete physical-root snapshot, Doctor \
+                  observes a bounded prefix of persisted `tested_by` graph rows \
+                  and reports exact resolved-target evidence. It never calculates \
+                  a diff impact, test gap, coverage percentage, or executed-test \
+                  result; an empty observation is explicitly not proof of no tests.",
+        common_failures: "Lifecycle is absent/stale/incomplete/recovering/corrupt \
+                  (that diagnostic remains owned by `code-map lifecycle`); an \
+                  older/unreadable schema cannot expose exact target identity; or \
+                  the bounded evidence query reaches its row or SQLite work cap.",
+        fix: "Resolve the lifecycle diagnostic first and then refresh the \
+                  repository through the normal `neoth code-map refresh \
+                  <absolute-root>` path. Doctor does not migrate, refresh, \
+                  rebuild, repair, or infer test absence. If a large store reaches \
+                  the read-only cap, use a scoped CRG consumer rather than \
+                  treating this health summary as a repository-wide census.",
+    },
 ];
 
 #[cfg(test)]
@@ -1003,6 +1186,278 @@ mod omi_tests {
             serde_yaml::to_string(&config).expect("serialize lifecycle fixture config"),
         )
         .expect("write lifecycle fixture config");
+    }
+
+    fn persist_fresh_analysis_fixture(
+        home: &Path,
+        repository: &Path,
+        edges: &[crate::code_map::graph::CodeEdge],
+    ) {
+        write_enabled_code_map_lifecycle(home, repository);
+        let root = crate::code_map::CanonicalRepoRoot::discover(repository)
+            .expect("canonical fixture repository");
+        let map = crate::code_map::RepoMap {
+            root: root.display().to_owned(),
+            files: Vec::new(),
+            report: crate::code_map::ScanReport {
+                total_files: 0,
+                total_bytes: 0,
+                total_loc: 0,
+                by_language: Vec::new(),
+                oversize_skipped: 0,
+                truncated_at: None,
+            },
+        };
+        let mut store = crate::code_map::persist::open(&home.join("code_map.db"))
+            .expect("create fixture store outside Doctor");
+        crate::code_map::persist::persist_map_and_edges(&mut store, &map, edges)
+            .expect("publish fixture map and graph");
+    }
+
+    fn code_map_store_artifacts(home: &Path) -> Vec<(std::ffi::OsString, Vec<u8>)> {
+        let mut artifacts = std::fs::read_dir(home)
+            .expect("read fixture home")
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let name = entry.file_name();
+                name.to_str()
+                    .is_some_and(|name| name.starts_with("code_map.db"))
+                    .then(|| {
+                        (
+                            name,
+                            std::fs::read(entry.path()).expect("read code-map artifact"),
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        artifacts.sort_by(|left, right| left.0.cmp(&right.0));
+        artifacts
+    }
+
+    fn assert_no_pending_fixture_wal(home: &Path) {
+        assert!(
+            code_map_store_artifacts(home)
+                .iter()
+                .all(|(name, _)| name.to_string_lossy().as_ref() != "code_map.db-wal"),
+            "the fixture writer must be closed and leave no pending WAL before the Doctor baseline"
+        );
+    }
+
+    fn assert_valid_read_only_wal_artifacts(home: &Path) {
+        for (name, bytes) in code_map_store_artifacts(home) {
+            match name.to_string_lossy().as_ref() {
+                "code_map.db" | "code_map.db-shm" => {}
+                "code_map.db-wal" => assert!(
+                    bytes.is_empty(),
+                    "a valid read-only Doctor path may coordinate through WAL but must not leave WAL frames"
+                ),
+                unexpected => panic!(
+                    "valid read-only Doctor path created an unexpected code-map artifact {unexpected:?}"
+                ),
+            }
+        }
+    }
+
+    /// A valid SQLite WAL reader may create or remove `code_map.db-shm` and an
+    /// empty `code_map.db-wal` coordination sidecar. Those runtime artifacts do
+    /// not constitute a code-map refresh or persisted-data mutation. The
+    /// non-mutation contract for a valid store is therefore the main DB bytes,
+    /// persisted snapshot data, root generations, and freshness result.
+    fn code_map_read_only_observation(
+        home: &Path,
+        root: &str,
+    ) -> (Vec<u8>, i64, i64, Vec<u8>, bool) {
+        let database_path = home.join("code_map.db");
+        let connection = crate::code_map::persist::open_read_only(&database_path)
+            .expect("open existing fixture store read-only");
+        let index_generation = crate::code_map::persist::root_index_generation(&connection, root)
+            .expect("read fixture index generation")
+            .expect("fixture root exists");
+        let graph_generation = crate::code_map::persist::root_graph_generation(&connection, root)
+            .expect("read fixture graph generation")
+            .expect("fixture root graph exists");
+        let map = crate::code_map::persist::load_map(&connection, root)
+            .expect("load fixture map")
+            .expect("fixture map exists");
+        let serialized_map = serde_json::to_vec(&map).expect("serialize persisted fixture map");
+        let stale = crate::code_map::persist::is_index_stale(&connection, root)
+            .expect("read fixture freshness");
+        drop(connection);
+        (
+            std::fs::read(&database_path).expect("read fixture main DB"),
+            index_generation,
+            graph_generation,
+            serialized_map,
+            stale,
+        )
+    }
+
+    #[test]
+    fn code_map_analysis_readiness_leaves_an_absent_store_lifecycle_owned() {
+        let home = tempfile::tempdir().unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        write_enabled_code_map_lifecycle(home.path(), repository.path());
+        let store = home.path().join("code_map.db");
+
+        let outcome = check_code_map_analysis_readiness(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Pass, "{outcome:?}");
+        assert!(outcome.detail.contains("analysis evidence not assessed"));
+        assert!(outcome.detail.contains("lifecycle owns absent state"));
+        assert!(
+            !store.exists() && code_map_store_artifacts(home.path()).is_empty(),
+            "analysis readiness must not create an absent SQLite store or sidecar"
+        );
+    }
+
+    #[test]
+    fn code_map_analysis_readiness_leaves_a_corrupt_store_lifecycle_owned() {
+        let home = tempfile::tempdir().unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        write_enabled_code_map_lifecycle(home.path(), repository.path());
+        let store = home.path().join("code_map.db");
+        std::fs::write(
+            &store,
+            b"not a SQLite database; preserve this forensic evidence",
+        )
+        .unwrap();
+        let before = code_map_store_artifacts(home.path());
+
+        let outcome = check_code_map_analysis_readiness(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Pass, "{outcome:?}");
+        assert!(outcome.detail.contains("analysis evidence not assessed"));
+        assert!(outcome.detail.contains("lifecycle owns corrupt state"));
+        assert_eq!(
+            code_map_store_artifacts(home.path()),
+            before,
+            "analysis readiness must not migrate, repair, or add sidecars to corrupt evidence"
+        );
+    }
+
+    #[test]
+    fn code_map_analysis_readiness_leaves_a_stale_real_sqlite_store_lifecycle_owned() {
+        let home = tempfile::tempdir().unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        write_enabled_code_map_lifecycle(home.path(), repository.path());
+        let source = repository.path().join("tracked.rs");
+        std::fs::write(&source, "pub fn tracked() {}\n").unwrap();
+        let map = crate::code_map::RepoMapBuilder::new(repository.path())
+            .scan()
+            .expect("scan fixture before persistence");
+        let mut store = crate::code_map::persist::open(&home.path().join("code_map.db"))
+            .expect("create real fixture store outside Doctor");
+        crate::code_map::persist::persist_map_and_edges(&mut store, &map, &[])
+            .expect("publish fresh fixture snapshot");
+        drop(store);
+        std::fs::write(&source, "pub fn tracked() { let changed = true; }\n").unwrap();
+        assert_no_pending_fixture_wal(home.path());
+        let before = code_map_read_only_observation(home.path(), &map.root);
+        assert!(
+            before.4,
+            "source edit must make the fixture stale before Doctor"
+        );
+
+        let outcome = check_code_map_analysis_readiness(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Pass, "{outcome:?}");
+        assert!(outcome.detail.contains("analysis evidence not assessed"));
+        assert!(outcome.detail.contains("lifecycle owns stale state"));
+        let after = code_map_read_only_observation(home.path(), &map.root);
+        assert_eq!(
+            after.0, before.0,
+            "analysis readiness must not change valid stale main DB bytes"
+        );
+        assert_eq!(
+            (after.1, after.2, after.3, after.4),
+            (before.1, before.2, before.3, before.4),
+            "analysis readiness must not refresh stale persisted map data, generations, or freshness"
+        );
+        assert_valid_read_only_wal_artifacts(home.path());
+    }
+
+    #[test]
+    fn code_map_analysis_readiness_preserves_fresh_main_db_data_generations_and_freshness() {
+        let home = tempfile::tempdir().unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        let edge = crate::code_map::graph::CodeEdge::resolved_tested_by(
+            "tests/work_test.rs",
+            "observes_work",
+            "work",
+            "src/work.rs",
+        );
+        persist_fresh_analysis_fixture(home.path(), repository.path(), &[edge]);
+        let root = crate::code_map::CanonicalRepoRoot::discover(repository.path())
+            .expect("canonical fixture root");
+        assert_no_pending_fixture_wal(home.path());
+        let before = code_map_read_only_observation(home.path(), root.display());
+        assert!(!before.4, "fresh fixture must be fresh before Doctor");
+
+        let outcome = check_code_map_analysis_readiness(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Pass, "{outcome:?}");
+        let after = code_map_read_only_observation(home.path(), root.display());
+        assert_eq!(
+            after.0, before.0,
+            "analysis readiness must not change valid fresh main DB bytes"
+        );
+        assert_eq!(
+            (after.1, after.2, after.3, after.4),
+            (before.1, before.2, before.3, before.4),
+            "analysis readiness must not change fresh persisted map data, generations, or freshness"
+        );
+        assert_valid_read_only_wal_artifacts(home.path());
+    }
+
+    #[test]
+    fn code_map_analysis_readiness_reports_exact_evidence_without_coverage_claim() {
+        let home = tempfile::tempdir().unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        let edge = crate::code_map::graph::CodeEdge::resolved_tested_by(
+            "tests/work_test.rs",
+            "observes_work",
+            "work",
+            "src/work.rs",
+        );
+        persist_fresh_analysis_fixture(home.path(), repository.path(), &[edge]);
+
+        let outcome = check_code_map_analysis_readiness(home.path());
+
+        assert_eq!(outcome.name, "code-map analysis readiness");
+        assert_eq!(outcome.status, CheckStatus::Pass, "{outcome:?}");
+        assert!(outcome.detail.contains("observed 1 exact `TestedBy`"));
+        assert!(outcome.detail.contains("not executed test coverage"));
+    }
+
+    #[test]
+    fn code_map_analysis_readiness_warns_for_nonexact_evidence_without_claiming_no_tests() {
+        let home = tempfile::tempdir().unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        let legacy = crate::code_map::graph::CodeEdge {
+            from_file: "tests/work_test.rs".into(),
+            from_symbol: "observes_work".into(),
+            to_name: "work".into(),
+            target_file: Some("src/work.rs".into()),
+            kind: crate::code_map::graph::EdgeKind::TestedBy,
+            confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+            confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
+        };
+        persist_fresh_analysis_fixture(home.path(), repository.path(), &[legacy]);
+
+        let outcome = check_code_map_analysis_readiness(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Warn, "{outcome:?}");
+        assert!(
+            outcome
+                .detail
+                .contains("no observed exact `TestedBy` evidence")
+        );
+        assert!(
+            outcome
+                .detail
+                .contains("does not prove the repository has no tests or coverage"),
+            "{outcome:?}"
+        );
     }
 
     #[test]

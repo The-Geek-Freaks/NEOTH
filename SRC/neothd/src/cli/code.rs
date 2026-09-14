@@ -20,7 +20,7 @@ use crate::cli::OutputFormat;
 use crate::coding::classifier::{Complexity, classify_heuristic};
 use crate::coding::code_map_receipt::{
     CodeMapCaller, CodeMapContextKind, CodeMapContextSource, CodeMapSelectedFile,
-    DiffImpactCitation, MAX_CODE_MAP_SOURCE_BYTES, PreparedCodeMapContext,
+    DiffImpactCitation, ImpactTestGapCitation, MAX_CODE_MAP_SOURCE_BYTES, PreparedCodeMapContext,
 };
 #[cfg(test)]
 use crate::coding::decomposer::{
@@ -724,7 +724,17 @@ fn diff_impact_context_at(
     )?;
     receipt.require_prompt_admissible()?;
     let snapshot = receipt.snapshot();
-    let (citation, metadata_redacted) = DiffImpactCitation::from_receipt(&receipt)?;
+    let (mut citation, metadata_redacted) = DiffImpactCitation::from_receipt(&receipt)?;
+    let gap = crate::code_map::test_coverage::test_gap_for_impact(
+        conn,
+        &receipt.impact,
+        crate::code_map::test_coverage::TestCoverageOptions::default(),
+    )?;
+    citation.impact_test_gap = Some(ImpactTestGapCitation::from_result(
+        &citation,
+        snapshot.root.identity().as_str(),
+        &gap,
+    )?);
     let exact = citation.exact_symbol_seeds.len();
     let fallback = citation.file_fallback_seeds.len();
     let selected = citation.affected_identities.len();
@@ -1112,10 +1122,20 @@ async fn run_pending_phase(args: &CodeArgs) -> Result<()> {
         return Ok(());
     }
 
-    let apply_cfg = args.apply.as_ref().map(|repo| {
+    let apply_cfg = if let Some(repo) = args.apply.as_ref() {
         let mut c = DispatchApplyConfig::new(repo, ApplyOrigin::CliConfirmed)
             .with_local_cli_confirmation()
             .with_policy(cfg.autonomy_policy());
+        // CLI advice is opt-in only for an already present regular DB. It
+        // never creates, migrates or indexes a code map for --apply.
+        let code_map_database_path = crate::code_map::persist::default_path();
+        if std::fs::symlink_metadata(&code_map_database_path)
+            .map(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            let root = crate::code_map::CanonicalRepoRoot::discover(repo)?;
+            c = c.with_pre_apply_impact_advisory(code_map_database_path, root);
+        }
         if let Some(cmd) = cfg.coding.test_cmd.as_deref() {
             c = c
                 .with_test_cmd(cmd)
@@ -1124,8 +1144,10 @@ async fn run_pending_phase(args: &CodeArgs) -> Result<()> {
         if let Some(w) = aw.as_ref() {
             c = c.with_wal_writer(std::sync::Arc::clone(w));
         }
-        c
-    });
+        Some(c)
+    } else {
+        None
+    };
 
     let report = crate::coding::task_executor::run_pending_sessions(
         &conn,
@@ -1573,6 +1595,31 @@ mod tests {
                 }
             ]
         );
+        let test_gap = citation
+            .impact_test_gap
+            .as_ref()
+            .expect("W48 citation must be attached before provider use");
+        assert_eq!(test_gap.impact_digest, citation.impact_digest);
+        assert_eq!(test_gap.root_identity, source.root_identity);
+        assert_eq!(test_gap.index_generation, source.index_generation);
+        assert_eq!(test_gap.graph_generation, source.graph_generation);
+        assert_eq!(
+            &test_gap.outcome,
+            &crate::code_map::test_coverage::ImpactTestGapOutcome::Complete
+        );
+        assert!(!test_gap.impact_partial);
+        assert!(!test_gap.work_budget_capped);
+        assert!(test_gap.no_observed_test_is_not_absence);
+        assert_eq!(test_gap.nodes.len(), 1);
+        let caller_gap = &test_gap.nodes[0];
+        assert_eq!(caller_gap.impact_node, citation.affected_identities[0]);
+        assert_eq!(
+            caller_gap.identity,
+            crate::code_map::test_coverage::ImpactTestGapIdentity::Exact
+        );
+        assert!(!caller_gap.coverage_unknown);
+        assert!(caller_gap.no_observed_test_in_indexed_map);
+        assert!(caller_gap.observed_tests.is_empty());
 
         let views = memstore::open(&dir.path().join("views.db")).unwrap();
         store::ensure_schema(&views).unwrap();
@@ -1602,6 +1649,9 @@ mod tests {
         for prompt in &prompts {
             assert!(prompt.contains("exact: src/auth.rs :: verify_token"));
             assert!(prompt.contains("fallback_file: src/fallback.rs"));
+            assert!(prompt.contains("impact-test-gap structural evidence:"));
+            assert!(prompt.contains("no_observed_test_is_not_absence: true"));
+            assert!(prompt.contains("impact_node: src/routes.rs :: handle_request @1 (function)"));
             for identity in &citation.affected_identities {
                 assert!(prompt.contains(&format!(
                     "affected: {} :: {} @{} ({})",
@@ -1620,6 +1670,14 @@ mod tests {
             assert_eq!(receipt.sources[0].index_generation, source.index_generation);
             assert_eq!(receipt.sources[0].graph_generation, source.graph_generation);
             assert_eq!(receipt.sources[0].diff_impact, source.diff_impact);
+            assert_eq!(
+                receipt.sources[0]
+                    .diff_impact
+                    .as_ref()
+                    .unwrap()
+                    .impact_test_gap,
+                citation.impact_test_gap
+            );
         }
         let persisted = serde_json::to_string(&receipts).unwrap();
         assert!(!persisted.contains(raw_diff));

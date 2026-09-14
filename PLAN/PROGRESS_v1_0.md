@@ -43,7 +43,7 @@
 > WasmCheck02 PASS. The W44 lock, license snapshot and dependency repair are in
 > the same batch. No native-GUI/live-provider/cross-platform/release/parent closure.
 >
-> **W43/W45, W46 and W47 — LOCALLY VERIFIED:** W43/45 composed01
+> **W43/W45, W46 and W47 — PUBLISHED `ed2a8712689c733ea48c2276c14d2c17d4b0fbe3`:** W43/45 composed01
 > APPROVE19 paths; W47 repair06 APPROVE3 target overlays; W46 repair06 APPROVE13
 > paths. The reviewed 31-path union and integration repairs are admitted and
 > formatted. NativeTestBuild04 PASS4m07 and cached TestBuild05 PASS from 247
@@ -53,6 +53,30 @@
 > see `docs/gold-wave43-47-verification.md`. Only the first two CRG-04 kernel
 > leaves close. Current counts1324/1014/308/2, raw310/pre-tag309.
 > W46 covers MCP/provider/direct-CLI; other native surfaces remain open.
+>
+> **W48/W49 and W51 — LOCALLY VALIDATED, 19-PATH PUBLICATION READY:** twelve
+> source changes connect CLI/MCP, Coding and pre-apply advisory receipts plus
+> bounded read-only Doctor readiness. Build04 passed4m16
+> (min206.31GiB/peak10.85GiB); runtime04 passed2119/0/0 in124.30s from14649
+> catalogued tests. Clippy03 passed5m26; contracts15/0 passed after5m19 build;
+> Python45, CI matrix and separate CLI docgen passed. Final source252 and five
+> executable hashes are retained. The 251 build inputs use an independently
+> reviewed derivation from the preserved Build03 inventory and the single
+> pre-build dispatcher repair; missing fresh captures are disclosed in
+> `docs/gold-wave48-49-51-verification.md`. Earlier failed runs remain diagnostic
+> evidence only. W50repair11, W52repair03 and W53repair04 are independently
+> approved WORK proposals for the next combined batch, still unadmitted/unrun.
+> No further checkbox closes; counts1324/1014/308/2.
+> CI34892993263 and Security34892996455 target published `ed2a8712`. Preflight
+> 34892970784 plus cargo-audit/cargo-deny and both CodeQL analyses passed.
+> Security's final alert gate found23 new findings (#471–493). Independent
+> per-alert review confirmed21 test-only fixtures and2 overwritten buffers;
+> those exact instances were dismissed with specific reasons. Open high/critical
+> count is zero; Security34892996455 SUCCESS attempt2. No gate/query disabled.
+> Full CI Linux16284pass/1 review-signature failure; its reviewed three-call
+> context fingerprint repair passed runtime03. Windows16217pass/1 failed at
+> that same fingerprint; its single-job compile succeeded in42m54 without OOM.
+> macOS compilation remains pending.
 >
 > **Current W41/W44 CI boundary:** CI34881450745 completed with Linux quality
 > and Windows/macOS compilation failures. macOS hit its 100-minute compile

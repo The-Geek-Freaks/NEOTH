@@ -672,6 +672,20 @@ Acquire one explicit Git diff, map only hunk-intersecting declaration lines to e
 - `--max-nodes <N>` — Maximum affected declarations returned. Hard ceiling 10000
 - `--allow-stale` — Permit analysis against an index known to predate on-disk edits
 
+### `neoth code-map diff-test-gaps`
+
+Project canonical observed-test evidence from one explicit diff impact
+
+- `--root <PATH>`
+- `--staged`
+- `--base <REF>`
+- `--target <REF>`
+- `--stdin`
+- `--direction <DIRECTION>`
+- `--max-depth <N>`
+- `--max-nodes <N>`
+- `--allow-stale`
+
 ### `neoth code-map impact`
 
 Compute the structural blast radius of changed files or exact declarations in the active persisted repository. Callers (dependents) are the default; every result is bound to matching index/graph generations, refuses a stale index unless explicitly overridden, and reports node-cap versus evidence-budget truncation separately

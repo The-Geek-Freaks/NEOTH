@@ -165,6 +165,31 @@ allow, result-enrichment, and block outcomes are accepted; unsupported actions
 fail closed and cannot rewrite tool arguments. This does not extend hook
 coverage to every native surface.
 
+## Diff impact and observed test evidence
+
+`neoth code-map diff-test-gaps --root PATH` selects one explicit diff source:
+the working tree by default, `--staged`, paired `--base REF --target REF`, or
+`--stdin`, with bounded direction, depth and node options. The read-only MCP
+counterpart, `codegraph_diff_test_gaps`, requires `root` and accepts only the
+fields for its selected source. It rejects unknown fields and checks the UTF-8
+diff byte bound before parsing. Empty observed evidence remains uncertainty;
+raw diff and source/test bodies do not enter the response or citation projection.
+
+Coding carries the same root, generations and impact digest in a typed nested
+test-gap citation, its bounded provider prompt and durable attempt receipts.
+Before applying a patch, the dispatcher can obtain a bounded, read-only advisory
+using an explicit database path and physical repository root. Missing, stale or
+unavailable results are typed advisory outcomes; they neither authorize apply
+nor create, migrate or refresh a store.
+
+Doctor's `code-map analysis readiness` check observes bounded, root-scoped
+structural evidence. Absent, corrupt or stale stores report that analysis was
+not assessed and leave lifecycle diagnosis to the existing lifecycle check.
+It does not create or repair persisted stores. Valid WAL-mode SQLite readers
+may use coordination sidecars; these are distinct from a code-map refresh.
+Counts describe persisted observations, not executed-test coverage or proof
+that tests are absent.
+
 ## WAL source of truth
 
 The WAL is the durable event chain under NEOTH. Views can be rebuilt; the WAL is authoritative.

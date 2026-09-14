@@ -6082,7 +6082,7 @@ mod tests {
             (
                 "mcp/dispatch_loop.rs",
                 3,
-                "29d3fe7971a80d21b711167665d8498d9a08c9a875e62012a0928d10934394dd",
+                "90f67a49eb5e274c31979d86c6515a1031da050c4503fa8fd82e8052dbf3a368",
             ),
             (
                 "mcp/goal_judge.rs",

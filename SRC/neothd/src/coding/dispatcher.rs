@@ -198,6 +198,10 @@ pub struct DispatchApplyConfig {
     /// hard gate (fail-closed). When `None`, the gate is skipped
     /// (CLI one-shot operator-already-confirmed).
     pub autonomy_policy: Option<crate::permissions::AutonomyPolicySnapshot>,
+    /// Optional, explicitly rooted read-only code-map advisory.  This is
+    /// evidence for the operator only; it has no authority over admission or
+    /// the existing ownership/churn risk gate.
+    pub pre_apply_impact_advisory: Option<PreApplyImpactAdvisoryConfig>,
     #[cfg(test)]
     test_pause: Option<std::sync::Arc<PatchApplyPause>>,
 }
@@ -211,6 +215,7 @@ impl std::fmt::Debug for DispatchApplyConfig {
             .field("test_timeout", &self.test_timeout)
             .field("wal_writer", &self.wal_writer.as_ref().map(|_| "<live>"))
             .field("autonomy_policy", &self.autonomy_policy)
+            .field("pre_apply_impact_advisory", &self.pre_apply_impact_advisory)
             .finish()
     }
 }
@@ -231,6 +236,7 @@ impl DispatchApplyConfig {
             test_timeout: std::time::Duration::from_secs(5 * 60),
             wal_writer: None,
             autonomy_policy: None,
+            pre_apply_impact_advisory: None,
             #[cfg(test)]
             test_pause: None,
         }
@@ -328,6 +334,62 @@ impl DispatchApplyConfig {
         self.wal_writer = Some(writer);
         self
     }
+
+    /// Attach an already-selected code-map database and the canonical root it
+    /// was indexed for. This never discovers a database from CWD and is read
+    /// only when an admitted patch is about to be applied.
+    pub fn with_pre_apply_impact_advisory(
+        mut self,
+        database_path: impl Into<std::path::PathBuf>,
+        root: crate::code_map::CanonicalRepoRoot,
+    ) -> Self {
+        self.pre_apply_impact_advisory = Some(PreApplyImpactAdvisoryConfig {
+            database_path: database_path.into(),
+            root,
+            impact_options: crate::code_map::ImpactOptions::default(),
+            coverage_options: crate::code_map::test_coverage::TestCoverageOptions::default(),
+        });
+        self
+    }
+}
+
+/// Explicit dependency for the pre-worktree advisory.  Patch bytes, provider
+/// data and worktree paths are deliberately absent: analysis consumes only the
+/// already verified in-memory patch passed to the dispatcher.
+#[derive(Clone, Debug)]
+pub struct PreApplyImpactAdvisoryConfig {
+    pub database_path: std::path::PathBuf,
+    pub root: crate::code_map::CanonicalRepoRoot,
+    pub impact_options: crate::code_map::ImpactOptions,
+    pub coverage_options: crate::code_map::test_coverage::TestCoverageOptions,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PreApplyImpactAdvisoryState {
+    Available,
+    Unavailable(PreApplyImpactAdvisoryUnavailable),
+}
+
+/// Typed degradation is retained for operator audit, never converted into a
+/// coverage claim. The state cannot affect permission, risk scoring or apply.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PreApplyImpactAdvisoryUnavailable {
+    DatabaseUnavailable,
+    RootOrGenerationUnavailable,
+    Stale,
+    CappedOrPartial,
+    MalformedOrUnmappableInput,
+    AnalysisFailed,
+    ReceiptTooLarge,
+}
+
+#[derive(Clone, Debug)]
+struct PreApplyImpactAdvisory {
+    state: PreApplyImpactAdvisoryState,
+    citation: Option<super::code_map_receipt::ImpactTestGapCitation>,
+    diagnostic: Option<String>,
 }
 
 /// Per-dispatch aggregated outcome. Returned so the caller (likely
@@ -1351,6 +1413,171 @@ fn patch_apply_request_binding(
     hex::encode(digest.finalize())
 }
 
+const MAX_PRE_APPLY_IMPACT_ADVISORY_WAL_BYTES: usize = 24 * 1024;
+const MAX_PRE_APPLY_IMPACT_DIAGNOSTIC_BYTES: usize = 512;
+
+/// Analyze the already admitted in-memory patch before a worktree exists.
+/// Every failure deliberately degrades to a typed informational state; this
+/// function must never change the risk gate or the apply decision.
+fn pre_apply_impact_advisory(
+    config: Option<&PreApplyImpactAdvisoryConfig>,
+    current_target: &crate::code_map::CanonicalRepoRoot,
+    patch_text: &str,
+) -> Option<PreApplyImpactAdvisory> {
+    let config = config?;
+    if config.root != *current_target {
+        return Some(PreApplyImpactAdvisory {
+            state: PreApplyImpactAdvisoryState::Unavailable(
+                PreApplyImpactAdvisoryUnavailable::RootOrGenerationUnavailable,
+            ),
+            citation: None,
+            diagnostic: Some(
+                "configured code-map root differs from admitted repository".to_owned(),
+            ),
+        });
+    }
+    let conn = match crate::code_map::persist::open_read_only(&config.database_path) {
+        Ok(conn) => conn,
+        Err(error) => {
+            return Some(unavailable_pre_apply_impact_advisory(
+                PreApplyImpactAdvisoryUnavailable::DatabaseUnavailable,
+                error,
+            ));
+        }
+    };
+    let request = crate::code_map::DiffImpactRequest {
+        repo_root: current_target.path().to_path_buf(),
+        input: crate::code_map::DiffImpactInput::stdin(patch_text.to_owned()),
+        options: config.impact_options,
+    };
+    let impact = match crate::code_map::analyze_diff_impact(&conn, &request) {
+        Ok(impact) => impact,
+        Err(error) => {
+            return Some(unavailable_pre_apply_impact_advisory(
+                classify_pre_apply_impact_error(&error.to_string()),
+                error,
+            ));
+        }
+    };
+    let diff = match super::code_map_receipt::DiffImpactCitation::from_receipt(&impact) {
+        Ok((citation, _metadata_redacted)) => citation,
+        Err(error) => {
+            return Some(unavailable_pre_apply_impact_advisory(
+                classify_pre_apply_impact_error(&error.to_string()),
+                error,
+            ));
+        }
+    };
+    let gap = match crate::code_map::test_coverage::test_gap_for_impact(
+        &conn,
+        &impact.impact,
+        config.coverage_options.clone(),
+    ) {
+        Ok(gap) => gap,
+        Err(error) => {
+            return Some(unavailable_pre_apply_impact_advisory(
+                PreApplyImpactAdvisoryUnavailable::AnalysisFailed,
+                error,
+            ));
+        }
+    };
+    match super::code_map_receipt::ImpactTestGapCitation::from_result(
+        &diff,
+        current_target.identity().as_str(),
+        &gap,
+    ) {
+        Ok(citation) => Some(PreApplyImpactAdvisory {
+            state: PreApplyImpactAdvisoryState::Available,
+            citation: Some(citation),
+            diagnostic: None,
+        }),
+        Err(error) => Some(unavailable_pre_apply_impact_advisory(
+            classify_pre_apply_impact_error(&error.to_string()),
+            error,
+        )),
+    }
+}
+
+fn unavailable_pre_apply_impact_advisory(
+    state: PreApplyImpactAdvisoryUnavailable,
+    error: impl std::fmt::Display,
+) -> PreApplyImpactAdvisory {
+    let diagnostic = crate::security::redact::sanitize_tool_output(&error.to_string());
+    PreApplyImpactAdvisory {
+        state: PreApplyImpactAdvisoryState::Unavailable(state),
+        citation: None,
+        diagnostic: Some(
+            diagnostic
+                .chars()
+                .take(MAX_PRE_APPLY_IMPACT_DIAGNOSTIC_BYTES)
+                .collect(),
+        ),
+    }
+}
+
+fn classify_pre_apply_impact_error(error: &str) -> PreApplyImpactAdvisoryUnavailable {
+    if error.contains("stale") {
+        PreApplyImpactAdvisoryUnavailable::Stale
+    } else if error.contains("truncated") || error.contains("capped") || error.contains("partial") {
+        PreApplyImpactAdvisoryUnavailable::CappedOrPartial
+    } else if error.contains("no persisted")
+        || error.contains("generation")
+        || error.contains("root identity")
+    {
+        PreApplyImpactAdvisoryUnavailable::RootOrGenerationUnavailable
+    } else if error.contains("stdin") || error.contains("mappable") || error.contains("diff") {
+        PreApplyImpactAdvisoryUnavailable::MalformedOrUnmappableInput
+    } else {
+        PreApplyImpactAdvisoryUnavailable::AnalysisFailed
+    }
+}
+
+/// Produce a bounded audit value that intentionally has no patch, source,
+/// prompt, provider, or worktree content. W48 citations have already
+/// sanitized their metadata; unavailable diagnostics are redacted above.
+fn pre_apply_impact_advisory_wal_value(
+    advisory: Option<&PreApplyImpactAdvisory>,
+) -> serde_json::Value {
+    let Some(advisory) = advisory else {
+        return serde_json::json!({ "state": "not_configured" });
+    };
+    let value = serde_json::json!({
+        "state": &advisory.state,
+        "citation": &advisory.citation,
+        "diagnostic": &advisory.diagnostic,
+    });
+    match serde_json::to_vec(&value) {
+        Ok(serialized) if serialized.len() <= MAX_PRE_APPLY_IMPACT_ADVISORY_WAL_BYTES => value,
+        _ => serde_json::json!({
+            "state": PreApplyImpactAdvisoryState::Unavailable(
+                PreApplyImpactAdvisoryUnavailable::ReceiptTooLarge,
+            ),
+        }),
+    }
+}
+
+fn log_pre_apply_impact_advisory(task: &KanbanTask, advisory: Option<&PreApplyImpactAdvisory>) {
+    let Some(advisory) = advisory else {
+        return;
+    };
+    match (&advisory.state, &advisory.citation) {
+        (PreApplyImpactAdvisoryState::Available, Some(citation)) => {
+            for node in &citation.nodes {
+                if node.coverage_unknown {
+                    info!(task_id = task.task_id.raw(), path = %node.impact_node.path, symbol = %node.impact_node.symbol, "pre-apply code-map test evidence is unresolved or partial; advisory only");
+                } else if node.no_observed_test_in_indexed_map {
+                    info!(task_id = task.task_id.raw(), path = %node.impact_node.path, symbol = %node.impact_node.symbol, "no observed test in complete indexed map; this is not proof of no tests");
+                } else {
+                    info!(task_id = task.task_id.raw(), path = %node.impact_node.path, symbol = %node.impact_node.symbol, observed_tests = node.observed_tests.len(), "pre-apply code-map observed test evidence; advisory only");
+                }
+            }
+        }
+        (state, _) => {
+            info!(task_id = task.task_id.raw(), state = ?state, "pre-apply code-map advisory unavailable; existing risk/apply behavior retained")
+        }
+    }
+}
+
 fn apply_admitted_patch_in_worktree(
     admission: AdmittedPatchApply,
     task: &KanbanTask,
@@ -1386,6 +1613,16 @@ fn apply_admitted_patch_in_worktree(
     if cancellation_probe.is_some_and(|probe| probe.load(std::sync::atomic::Ordering::Acquire)) {
         return Err(APPLY_CANCELLED_BEFORE_WORKTREE.to_string());
     }
+
+    // The accepted patch bytes are immutable and authenticated at this point.
+    // Analyse them before a worktree exists; an unavailable advisory is kept
+    // as typed audit evidence and cannot alter the existing risk/apply path.
+    let impact_advisory = pre_apply_impact_advisory(
+        cfg.pre_apply_impact_advisory.as_ref(),
+        &current_target,
+        patch,
+    );
+    log_pre_apply_impact_advisory(task, impact_advisory.as_ref());
 
     let wt_path =
         crate::coding::worktree::create_task_worktree(current_target.path(), task.task_id)
@@ -1536,6 +1773,7 @@ fn apply_admitted_patch_in_worktree(
                             task,
                             &worktree_path,
                             &patch_hash,
+                            impact_advisory.as_ref(),
                         );
                         Ok(())
                     }
@@ -1546,6 +1784,7 @@ fn apply_admitted_patch_in_worktree(
                             &worktree_path,
                             stage,
                             &msg,
+                            impact_advisory.as_ref(),
                         );
                         Err(msg)
                     }
@@ -1562,6 +1801,7 @@ fn apply_admitted_patch_in_worktree(
                     &wt_path,
                     "apply",
                     &msg,
+                    impact_advisory.as_ref(),
                 );
                 Err(msg)
             }
@@ -1576,6 +1816,7 @@ fn apply_admitted_patch_in_worktree(
                     &wt_path,
                     "apply_check",
                     &msg,
+                    impact_advisory.as_ref(),
                 );
                 Err(msg)
             }
@@ -1608,6 +1849,7 @@ fn emit_patch_applied_wal(
     task: &KanbanTask,
     worktree_path: &std::path::Path,
     patch_hash: &str,
+    impact_advisory: Option<&PreApplyImpactAdvisory>,
 ) {
     let Some(writer) = writer else {
         return;
@@ -1617,6 +1859,7 @@ fn emit_patch_applied_wal(
         "session_id": task.session_id.raw(),
         "worktree_path": worktree_path.display().to_string(),
         "patch_hash": patch_hash,
+        "pre_apply_impact_advisory": pre_apply_impact_advisory_wal_value(impact_advisory),
         "ts_unix": now_unix_secs(),
     })
     .to_string()
@@ -1640,6 +1883,7 @@ fn emit_patch_apply_failed_wal(
     worktree_path: &std::path::Path,
     stage: &str,
     reason: &str,
+    impact_advisory: Option<&PreApplyImpactAdvisory>,
 ) {
     let Some(writer) = writer else {
         return;
@@ -1653,6 +1897,7 @@ fn emit_patch_apply_failed_wal(
         "worktree_path": worktree_path,
         "stage": stage,
         "reason": redacted,
+        "pre_apply_impact_advisory": pre_apply_impact_advisory_wal_value(impact_advisory),
         "ts_unix": now_unix_secs(),
     })
     .to_string()
@@ -3194,6 +3439,533 @@ mod tests {
             .with_wal_writer(std::sync::Arc::clone(writer))
     }
 
+    fn indexed_pre_apply_advisory(
+        repo: &std::path::Path,
+        database_path: std::path::PathBuf,
+        impact_options: crate::code_map::ImpactOptions,
+    ) -> PreApplyImpactAdvisoryConfig {
+        let root = crate::code_map::CanonicalRepoRoot::discover(repo).unwrap();
+        crate::code_map::rebuild_snapshot(&root, &database_path, Default::default()).unwrap();
+        PreApplyImpactAdvisoryConfig {
+            database_path,
+            root,
+            impact_options,
+            coverage_options: crate::code_map::test_coverage::TestCoverageOptions::default(),
+        }
+    }
+
+    fn decoded_wal_payloads(home: &std::path::Path, event_type: u8) -> Vec<serde_json::Value> {
+        let mut payloads = Vec::new();
+        crate::wal::scan::for_each_frame_at_home(
+            home,
+            crate::wal::scan::HomeWalScanLimits::default(),
+            |_, frame| {
+                if frame.header.event_type == event_type {
+                    payloads.push(serde_json::from_slice(frame.payload).unwrap());
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        payloads
+    }
+
+    fn accepted_patch_with_sentinel() -> WorkerOutcome {
+        let mut outcome = green_outcome_with_real_patch();
+        outcome.patch_text = [
+            "diff --git a/src/lib.rs b/src/lib.rs",
+            "--- a/src/lib.rs",
+            "+++ b/src/lib.rs",
+            "@@ -1,3 +1,3 @@",
+            " pub fn target() {",
+            "-    let _ = 0;",
+            "+    let _ = \"W49_RAW_PATCH_SENTINEL_MUST_NOT_REACH_WAL\";",
+            " }",
+            "",
+        ]
+        .join("\n");
+        outcome
+    }
+
+    fn accepted_patch_that_git_rejects() -> WorkerOutcome {
+        let mut outcome = accepted_patch_with_sentinel();
+        outcome.patch_text = [
+            "diff --git a/src/lib.rs b/src/lib.rs",
+            "--- a/src/lib.rs",
+            "+++ b/src/lib.rs",
+            "@@ -1 +1 @@",
+            "-different-base-line",
+            "+W49_RAW_PATCH_SENTINEL_MUST_NOT_REACH_WAL",
+            "",
+        ]
+        .join("\n");
+        outcome
+    }
+
+    fn add_rust_impact_edge_fixture(repo: &std::path::Path) {
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(
+            repo.join("src/lib.rs"),
+            "pub fn target() {\n    let _ = 0;\n}\n\npub fn caller_one() {\n    target();\n}\n\npub fn caller_two() {\n    target();\n}\n",
+        ).unwrap();
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["add", "src/lib.rs"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["commit", "-q", "-m", "impact fixture"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    fn accepted_patch_with_capped_impact() -> WorkerOutcome {
+        accepted_patch_with_sentinel()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn admitted_worker_patch_applies_with_preworktree_advisory_and_decoded_wal_citation() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let (dir, conn) = fresh_db();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo).unwrap();
+        add_rust_impact_edge_fixture(&repo);
+        let advisory = indexed_pre_apply_advisory(
+            &repo,
+            dir.path().join("code-map.db"),
+            crate::code_map::ImpactOptions::default(),
+        );
+        let root = advisory.root.clone();
+        let patch = accepted_patch_with_sentinel();
+        let accepted_patch_bytes = patch.patch_text.clone();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: patch,
+                name: "w49-advisory-applied",
+            }),
+        );
+        let home = dir.path().join("neoth-home");
+        let (writer, writer_join) = authenticated_apply_writer(&home);
+        let apply_cfg = local_test_apply_config(&repo, &writer)
+            .with_autonomy(crate::permissions::AutonomyLevel::Standard)
+            .with_pre_apply_impact_advisory(advisory.database_path.clone(), advisory.root.clone());
+
+        let outcome = dispatch_session_with_apply(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&apply_cfg),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            outcome.tasks_completed, 1,
+            "advisory cannot block admitted apply; outcome={outcome:?}"
+        );
+        let worktree = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
+        assert!(
+            std::fs::read_to_string(worktree.join("src/lib.rs"))
+                .unwrap()
+                .contains("W49_RAW_PATCH_SENTINEL_MUST_NOT_REACH_WAL"),
+            "accepted mapped patch reached a real worktree"
+        );
+        drop(apply_cfg);
+        drop(workers);
+        drop(writer);
+        writer_join.await.unwrap();
+
+        let payloads = decoded_wal_payloads(&home, crate::wal::events::EVENT_TYPE_PATCH_APPLIED);
+        let payload = payloads
+            .iter()
+            .find(|payload| payload["task_id"].as_i64() == Some(task_id.raw()))
+            .expect("PATCH_APPLIED WAL receipt");
+        let receipt = &payload["pre_apply_impact_advisory"];
+        assert_eq!(receipt["state"].as_str(), Some("available"));
+        let citation = &receipt["citation"];
+        assert_eq!(
+            citation["root_identity"].as_str(),
+            Some(root.identity().as_str())
+        );
+        assert!(citation["index_generation"].as_i64().unwrap() > 0);
+        assert_eq!(citation["index_generation"], citation["graph_generation"]);
+        let read_only = crate::code_map::persist::open_read_only(&advisory.database_path).unwrap();
+        let expected = crate::code_map::analyze_diff_impact(
+            &read_only,
+            &crate::code_map::DiffImpactRequest {
+                repo_root: root.path().to_path_buf(),
+                input: crate::code_map::DiffImpactInput::stdin(accepted_patch_bytes.clone()),
+                options: crate::code_map::ImpactOptions::default(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            citation["impact_digest"].as_str(),
+            Some(expected.impact.digest.as_str())
+        );
+        assert!(
+            !serde_json::to_string(payload)
+                .unwrap()
+                .contains("W49_RAW_PATCH_SENTINEL_MUST_NOT_REACH_WAL")
+        );
+        let _ = crate::coding::worktree::cleanup_worktree(&repo, &worktree, true);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn admitted_worker_rejected_patch_keeps_preworktree_advisory_in_decoded_failed_wal() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let (dir, conn) = fresh_db();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo).unwrap();
+        add_rust_impact_edge_fixture(&repo);
+        let advisory = indexed_pre_apply_advisory(
+            &repo,
+            dir.path().join("code-map.db"),
+            crate::code_map::ImpactOptions::default(),
+        );
+        let patch = accepted_patch_that_git_rejects();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: patch,
+                name: "w49-advisory-rejected",
+            }),
+        );
+        let home = dir.path().join("neoth-home");
+        let (writer, writer_join) = authenticated_apply_writer(&home);
+        let apply_cfg = local_test_apply_config(&repo, &writer)
+            .with_autonomy(crate::permissions::AutonomyLevel::Standard)
+            .with_pre_apply_impact_advisory(advisory.database_path.clone(), advisory.root.clone());
+
+        let outcome = dispatch_session_with_apply(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&apply_cfg),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            outcome.tasks_completed, 0,
+            "real git rejection remains a normal failed apply"
+        );
+        drop(apply_cfg);
+        drop(workers);
+        drop(writer);
+        writer_join.await.unwrap();
+
+        let payloads =
+            decoded_wal_payloads(&home, crate::wal::events::EVENT_TYPE_PATCH_APPLY_FAILED);
+        let payload = payloads
+            .iter()
+            .find(|payload| payload["task_id"].as_i64() == Some(task_id.raw()))
+            .expect("PATCH_APPLY_FAILED WAL receipt");
+        let receipt = &payload["pre_apply_impact_advisory"];
+        assert_eq!(receipt["state"].as_str(), Some("available"));
+        assert_eq!(
+            receipt["citation"]["root_identity"].as_str(),
+            Some(advisory.root.identity().as_str())
+        );
+        assert!(receipt["citation"]["index_generation"].as_i64().unwrap() > 0);
+        assert!(
+            !serde_json::to_string(payload)
+                .unwrap()
+                .contains("W49_RAW_PATCH_SENTINEL_MUST_NOT_REACH_WAL")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn missing_or_stale_preapply_advisory_cannot_change_admission_or_real_apply() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        for stale in [false, true] {
+            let (dir, conn) = fresh_db();
+            let repo = dir.path().join("repo");
+            std::fs::create_dir_all(&repo).unwrap();
+            init_repo(&repo).unwrap();
+            add_rust_impact_edge_fixture(&repo);
+            let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+            let database_path = dir.path().join("code-map.db");
+            if stale {
+                crate::code_map::rebuild_snapshot(&root, &database_path, Default::default())
+                    .unwrap();
+                std::fs::write(repo.join("README.md"), "initial\nexternal stale change\n").unwrap();
+            }
+            let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+            let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+            store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+            let mut workers = HemisphereWorkerSet::new();
+            workers.bind(
+                Hemisphere::Left,
+                Box::new(CannedWorker {
+                    outcome: accepted_patch_with_sentinel(),
+                    name: "w49-unavailable-advisory",
+                }),
+            );
+            let home = dir.path().join("neoth-home");
+            let (writer, writer_join) = authenticated_apply_writer(&home);
+            let advisory = PreApplyImpactAdvisoryConfig {
+                database_path,
+                root,
+                impact_options: crate::code_map::ImpactOptions::default(),
+                coverage_options: crate::code_map::test_coverage::TestCoverageOptions::default(),
+            };
+            let apply_cfg = local_test_apply_config(&repo, &writer)
+                .with_autonomy(crate::permissions::AutonomyLevel::Standard)
+                .with_pre_apply_impact_advisory(
+                    advisory.database_path.clone(),
+                    advisory.root.clone(),
+                );
+
+            let outcome = dispatch_session_with_apply(
+                &conn,
+                session_id,
+                &workers,
+                DispatchBudget::default(),
+                Some(&apply_cfg),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                outcome.tasks_completed, 1,
+                "unavailable advisory cannot change apply; outcome={outcome:?}"
+            );
+            assert_eq!(
+                outcome.applied_task_ids,
+                vec![task_id.raw()],
+                "unavailable advisory must retain the exact real apply receipt; outcome={outcome:?}"
+            );
+            let worktree = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
+            assert!(
+                std::fs::read_to_string(worktree.join("src/lib.rs"))
+                    .unwrap()
+                    .contains("W49_RAW_PATCH_SENTINEL_MUST_NOT_REACH_WAL"),
+                "unavailable advisory must not skip the admitted worktree patch"
+            );
+            drop(apply_cfg);
+            drop(workers);
+            drop(writer);
+            writer_join.await.unwrap();
+            let payloads =
+                decoded_wal_payloads(&home, crate::wal::events::EVENT_TYPE_PATCH_APPLIED);
+            let payload = payloads
+                .iter()
+                .find(|payload| payload["task_id"].as_i64() == Some(task_id.raw()))
+                .unwrap();
+            let reason = receipt_unavailable_reason(&payload["pre_apply_impact_advisory"]);
+            assert_eq!(
+                reason,
+                if stale {
+                    "stale"
+                } else {
+                    "database_unavailable"
+                }
+            );
+            assert!(
+                !serde_json::to_string(payload)
+                    .unwrap()
+                    .contains("W49_RAW_PATCH_SENTINEL_MUST_NOT_REACH_WAL")
+            );
+            let _ = crate::coding::worktree::cleanup_worktree(&repo, &worktree, true);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn capped_preapply_impact_is_typed_but_cannot_change_admission_or_real_apply() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let (dir, conn) = fresh_db();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo).unwrap();
+        add_rust_impact_edge_fixture(&repo);
+        let mut impact_options = crate::code_map::ImpactOptions::default();
+        impact_options.max_nodes = 1;
+        let advisory =
+            indexed_pre_apply_advisory(&repo, dir.path().join("code-map.db"), impact_options);
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: accepted_patch_with_capped_impact(),
+                name: "w49-capped-advisory",
+            }),
+        );
+        let home = dir.path().join("neoth-home");
+        let (writer, writer_join) = authenticated_apply_writer(&home);
+        let mut apply_cfg = local_test_apply_config(&repo, &writer)
+            .with_autonomy(crate::permissions::AutonomyLevel::Standard);
+        apply_cfg.pre_apply_impact_advisory = Some(advisory);
+
+        let outcome = dispatch_session_with_apply(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&apply_cfg),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            outcome.tasks_completed, 1,
+            "capped evidence is informational only; outcome={outcome:?}"
+        );
+        assert_eq!(
+            outcome.applied_task_ids,
+            vec![task_id.raw()],
+            "capped advisory must retain the exact real apply receipt; outcome={outcome:?}"
+        );
+        let worktree = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
+        assert!(
+            std::fs::read_to_string(worktree.join("src/lib.rs"))
+                .unwrap()
+                .contains("W49_RAW_PATCH_SENTINEL_MUST_NOT_REACH_WAL"),
+            "capped advisory must not skip the admitted worktree patch"
+        );
+        drop(apply_cfg);
+        drop(workers);
+        drop(writer);
+        writer_join.await.unwrap();
+        let payloads = decoded_wal_payloads(&home, crate::wal::events::EVENT_TYPE_PATCH_APPLIED);
+        let payload = payloads
+            .iter()
+            .find(|payload| payload["task_id"].as_i64() == Some(task_id.raw()))
+            .unwrap();
+        let receipt = &payload["pre_apply_impact_advisory"];
+        assert_eq!(
+            receipt["state"].as_str(),
+            Some("available"),
+            "capped impact receipt state: receipt={receipt:?}; outcome={outcome:?}"
+        );
+        assert_eq!(
+            receipt["citation"]["outcome"]["rejected_input"].as_str(),
+            Some("truncated"),
+            "capped impact receipt must retain typed truncation: receipt={receipt:?}; outcome={outcome:?}"
+        );
+        assert!(
+            receipt["citation"]["impact_partial"].as_bool().unwrap(),
+            "capped impact receipt must mark partial evidence: receipt={receipt:?}; outcome={outcome:?}"
+        );
+        assert!(
+            !serde_json::to_string(payload)
+                .unwrap()
+                .contains("W49_RAW_PATCH_SENTINEL_MUST_NOT_REACH_WAL")
+        );
+        let _ = crate::coding::worktree::cleanup_worktree(&repo, &worktree, true);
+    }
+
+    fn receipt_unavailable_reason(receipt: &serde_json::Value) -> &str {
+        receipt["state"]["unavailable"]
+            .as_str()
+            .expect("typed unavailable advisory state")
+    }
+
+    #[test]
+    fn pre_apply_impact_missing_database_is_typed_and_never_retains_patch_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        let raw_sentinel = "RAW_PRE_APPLY_PATCH_SENTINEL_DO_NOT_PERSIST";
+        let config = PreApplyImpactAdvisoryConfig {
+            database_path: dir.path().join("absent-code-map.db"),
+            root: root.clone(),
+            impact_options: crate::code_map::ImpactOptions::default(),
+            coverage_options: crate::code_map::test_coverage::TestCoverageOptions::default(),
+        };
+
+        let advisory = pre_apply_impact_advisory(Some(&config), &root, raw_sentinel)
+            .expect("configured advisory returns typed degradation");
+        assert!(matches!(
+            advisory.state,
+            PreApplyImpactAdvisoryState::Unavailable(
+                PreApplyImpactAdvisoryUnavailable::DatabaseUnavailable
+            )
+        ));
+        let serialized =
+            serde_json::to_string(&pre_apply_impact_advisory_wal_value(Some(&advisory))).unwrap();
+        assert!(!serialized.contains(raw_sentinel));
+        assert!(serialized.len() <= MAX_PRE_APPLY_IMPACT_ADVISORY_WAL_BYTES);
+    }
+
+    #[test]
+    fn pre_apply_impact_indexed_accepted_patch_has_root_generation_and_digest_citation() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo).unwrap();
+        add_rust_impact_edge_fixture(&repo);
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        let db = dir.path().join("code-map.db");
+        crate::code_map::rebuild_snapshot(&root, &db, Default::default()).unwrap();
+        let patch = accepted_patch_with_sentinel();
+        let config = PreApplyImpactAdvisoryConfig {
+            database_path: db,
+            root: root.clone(),
+            impact_options: crate::code_map::ImpactOptions::default(),
+            coverage_options: crate::code_map::test_coverage::TestCoverageOptions::default(),
+        };
+
+        let advisory = pre_apply_impact_advisory(Some(&config), &root, &patch.patch_text)
+            .expect("configured advisory returns a receipt");
+        let citation = advisory
+            .citation
+            .as_ref()
+            .expect("indexed accepted patch has bounded citation");
+        assert!(matches!(
+            advisory.state,
+            PreApplyImpactAdvisoryState::Available
+        ));
+        assert_eq!(citation.root_identity, root.identity().as_str());
+        assert!(citation.index_generation > 0);
+        assert_eq!(citation.index_generation, citation.graph_generation);
+        assert_eq!(citation.impact_digest.len(), 64);
+        let serialized = serde_json::to_string(&pre_apply_impact_advisory_wal_value(Some(
+            &PreApplyImpactAdvisory {
+                state: PreApplyImpactAdvisoryState::Available,
+                citation: Some(citation.clone()),
+                diagnostic: None,
+            },
+        )))
+        .unwrap();
+        assert!(!serialized.contains(&patch.patch_text));
+        assert!(serialized.len() <= MAX_PRE_APPLY_IMPACT_ADVISORY_WAL_BYTES);
+    }
+
     fn gui_test_apply_config(
         repo: &std::path::Path,
         writer: &std::sync::Arc<crate::wal::writer::WalWriterHandle>,
@@ -3494,7 +4266,7 @@ mod tests {
         let worktree =
             std::path::PathBuf::from(format!("workspace/\x1b[35m{secret}\x1b[0m/task-worktree"));
 
-        emit_patch_apply_failed_wal(Some(&writer), &task, &worktree, "tests", &reason);
+        emit_patch_apply_failed_wal(Some(&writer), &task, &worktree, "tests", &reason, None);
         drop(writer);
         writer_join.await.expect("WAL writer join");
 

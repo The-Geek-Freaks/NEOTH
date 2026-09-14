@@ -282,6 +282,33 @@ pub enum CodeMapAction {
         #[arg(long)]
         allow_stale: bool,
     },
+    /// Project canonical observed-test evidence from one explicit diff impact.
+    DiffTestGaps {
+        #[command(flatten)]
+        request: DiffTestGapArgs,
+    },
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct DiffTestGapArgs {
+    #[arg(long, value_name = "PATH")]
+    root: PathBuf,
+    #[arg(long, conflicts_with_all = ["base", "target", "stdin"])]
+    staged: bool,
+    #[arg(long, value_name = "REF", requires = "target", conflicts_with_all = ["staged", "stdin"])]
+    base: Option<String>,
+    #[arg(long, value_name = "REF", requires = "base", conflicts_with_all = ["staged", "stdin"])]
+    target: Option<String>,
+    #[arg(long, conflicts_with_all = ["staged", "base", "target"])]
+    stdin: bool,
+    #[arg(long, value_enum, default_value_t = ImpactDirectionArg::Callers)]
+    direction: ImpactDirectionArg,
+    #[arg(long, value_name = "N", default_value_t = crate::code_map::impact::DEFAULT_MAX_DEPTH)]
+    max_depth: usize,
+    #[arg(long, value_name = "N", default_value_t = crate::code_map::impact::DEFAULT_MAX_NODES)]
+    max_nodes: usize,
+    #[arg(long)]
+    allow_stale: bool,
 }
 
 fn parse_recall_max(raw: &str) -> std::result::Result<usize, String> {
@@ -377,6 +404,20 @@ pub async fn run_code_map(args: CodeMapArgs) -> Result<()> {
                 max_depth,
                 max_nodes,
                 allow_stale,
+            },
+            args.output,
+        ),
+        CodeMapAction::DiffTestGaps { request } => run_diff_test_gaps(
+            DiffImpactRequest {
+                root: request.root,
+                staged: request.staged,
+                base: request.base,
+                target: request.target,
+                stdin: request.stdin,
+                direction: request.direction,
+                max_depth: request.max_depth,
+                max_nodes: request.max_nodes,
+                allow_stale: request.allow_stale,
             },
             args.output,
         ),
@@ -1076,6 +1117,99 @@ fn run_diff_impact(request: DiffImpactRequest, output: OutputFormat) -> Result<(
     render_impact_result(&result, output)
 }
 
+fn run_diff_test_gaps(request: DiffImpactRequest, output: OutputFormat) -> Result<()> {
+    let db_path = crate::code_map::persist::default_path();
+    let stdin = std::io::stdin();
+    let gaps = run_diff_test_gaps_at(&request, &db_path, &mut stdin.lock())?;
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&gaps)?),
+        OutputFormat::Jsonl => println!("{}", serde_json::to_string(&gaps)?),
+        OutputFormat::Table => println!(
+            "impact test gaps: {:?}; no_observed_test_is_not_absence={}",
+            gaps.outcome, gaps.no_observed_test_is_not_absence
+        ),
+    }
+    Ok(())
+}
+
+/// Shared CLI command-path core. The production command supplies its default
+/// store and standard input; focused fixtures supply an isolated SQLite store
+/// and bounded diff reader while retaining the exact selector/analyse path.
+fn run_diff_test_gaps_at(
+    request: &DiffImpactRequest,
+    db_path: &std::path::Path,
+    input: &mut impl std::io::Read,
+) -> Result<crate::code_map::test_coverage::ImpactTestGapResult> {
+    let source = match (
+        request.staged,
+        request.base.as_ref(),
+        request.target.as_ref(),
+        request.stdin,
+    ) {
+        (true, None, None, false) => crate::code_map::diff_git::GitDiffSource::Staged,
+        (false, Some(base), Some(target), false) => {
+            crate::code_map::diff_git::GitDiffSource::Committed {
+                base: base.clone(),
+                target: target.clone(),
+            }
+        }
+        (false, None, None, true) => crate::code_map::diff_git::GitDiffSource::Stdin,
+        (false, None, None, false) => crate::code_map::diff_git::GitDiffSource::WorkingTree,
+        _ => anyhow::bail!(
+            "choose exactly one diff source: working tree, --staged, --base/--target, or --stdin"
+        ),
+    };
+    let acquired = if source == crate::code_map::diff_git::GitDiffSource::Stdin {
+        let mut bytes = Vec::new();
+        input
+            .take((crate::code_map::diff::MAX_DIFF_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .context("read unified diff from standard input")?;
+        anyhow::ensure!(
+            bytes.len() <= crate::code_map::diff::MAX_DIFF_BYTES,
+            "unified diff standard input exceeds {} byte limit",
+            crate::code_map::diff::MAX_DIFF_BYTES
+        );
+        crate::code_map::diff_git::parse_stdin_diff(
+            &String::from_utf8(bytes).context("unified diff standard input is not UTF-8")?,
+        )?
+    } else {
+        crate::code_map::diff_git::acquire_git_diff(&request.root, source)?
+    };
+    let conn = crate::code_map::persist::open(db_path)
+        .with_context(|| format!("open code_map db at {}", db_path.display()))?;
+    let root = request
+        .root
+        .canonicalize()
+        .with_context(|| format!("canonicalize explicit diff root {}", request.root.display()))?;
+    let indexed = crate::code_map::persist::load_map(
+        &conn,
+        root.to_str()
+            .context("explicit diff root is not valid UTF-8")?,
+    )?
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "explicit diff root {} is not indexed; run `neoth code-map persist` first",
+            root.display()
+        )
+    })?;
+    let seeds = crate::code_map::diff_git::map_acquired_diff_to_indexed_impact_seeds(
+        &root, &acquired, &indexed,
+    )?;
+    let impact = crate::code_map::impact::impact_radius_for_diff_seeds(
+        &conn,
+        &root,
+        &seeds,
+        crate::code_map::impact::ImpactOptions {
+            direction: request.direction.into(),
+            max_depth: request.max_depth,
+            max_nodes: request.max_nodes,
+            allow_stale: request.allow_stale,
+        },
+    )?;
+    crate::code_map::test_coverage::test_gap_for_impact(&conn, &impact, Default::default())
+}
+
 fn run_impact_for_root(
     root: PathBuf,
     seeds: Vec<crate::code_map::impact::ImpactSeed>,
@@ -1286,6 +1420,262 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn diff_test_gaps_cli_reuses_explicit_diff_source_contract() {
+        let parsed = crate::cli::Cli::try_parse_from([
+            "neoth",
+            "code-map",
+            "diff-test-gaps",
+            "--root",
+            "C:/work/repository",
+            "--base",
+            "HEAD~1",
+            "--target",
+            "HEAD",
+        ])
+        .expect("committed diff-test-gaps source must parse");
+        let crate::cli::Commands::CodeMap(parsed) = parsed.command else {
+            panic!("expected code-map command");
+        };
+        assert!(matches!(
+            parsed.action,
+            CodeMapAction::DiffTestGaps { request }
+                if request.root == std::path::Path::new("C:/work/repository")
+                    && request.base.as_deref() == Some("HEAD~1")
+                    && request.target.as_deref() == Some("HEAD")
+                    && !request.staged
+                    && !request.stdin
+        ));
+        assert!(
+            crate::cli::Cli::try_parse_from([
+                "neoth",
+                "code-map",
+                "diff-test-gaps",
+                "--root",
+                "C:/work/repository",
+                "--staged",
+                "--stdin",
+            ])
+            .is_err()
+        );
+    }
+
+    fn parsed_diff_test_gap_request(
+        root: &std::path::Path,
+        allow_stale: bool,
+    ) -> DiffImpactRequest {
+        let mut argv = vec![
+            "neoth".to_owned(),
+            "code-map".to_owned(),
+            "diff-test-gaps".to_owned(),
+            "--root".to_owned(),
+            root.display().to_string(),
+            "--stdin".to_owned(),
+            "--max-depth".to_owned(),
+            "1".to_owned(),
+            "--max-nodes".to_owned(),
+            "1".to_owned(),
+        ];
+        if allow_stale {
+            argv.push("--allow-stale".to_owned());
+        }
+        let parsed =
+            crate::cli::Cli::try_parse_from(argv).expect("real diff-test-gaps CLI must parse");
+        let crate::cli::Commands::CodeMap(parsed) = parsed.command else {
+            panic!("expected code-map command");
+        };
+        let CodeMapAction::DiffTestGaps { request } = parsed.action else {
+            panic!("expected diff-test-gaps action");
+        };
+        DiffImpactRequest {
+            root: request.root,
+            staged: request.staged,
+            base: request.base,
+            target: request.target,
+            stdin: request.stdin,
+            direction: request.direction,
+            max_depth: request.max_depth,
+            max_nodes: request.max_nodes,
+            allow_stale: request.allow_stale,
+        }
+    }
+
+    fn stdin_diff_for_changed() -> Vec<u8> {
+        b"diff --git a/changed.rs b/changed.rs\n--- a/changed.rs\n+++ b/changed.rs\n@@ -1 +1 @@\n-fn changed() {}\n+fn changed() { caller(); }\n".to_vec()
+    }
+
+    #[test]
+    fn diff_test_gaps_cli_command_path_returns_typed_complete_and_stale_rejection() {
+        let repo = tempdir().unwrap();
+        std::fs::write(repo.path().join("changed.rs"), "fn changed() {}\n").unwrap();
+        std::fs::create_dir_all(repo.path().join("src")).unwrap();
+        std::fs::create_dir_all(repo.path().join("tests")).unwrap();
+        std::fs::write(
+            repo.path().join("src/routes.rs"),
+            "fn handle_request() { changed(); }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.path().join("tests/routes_tests.rs"),
+            "fn test_handle_request() { handle_request(); }\n",
+        )
+        .unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(repo.path())
+            .with_symbols(true)
+            .scan()
+            .unwrap();
+        let db_dir = tempdir().unwrap();
+        let db = db_dir.path().join("code_map.db");
+        let mut conn = crate::code_map::persist::open(&db).unwrap();
+        crate::code_map::persist::persist_map(&mut conn, &map).unwrap();
+        crate::code_map::persist::persist_edges(
+            &mut conn,
+            &map.root,
+            &[
+                crate::code_map::graph::CodeEdge::inferred_call(
+                    "src/routes.rs",
+                    "handle_request",
+                    "changed",
+                ),
+                crate::code_map::graph::CodeEdge::resolved_tested_by(
+                    "tests/routes_tests.rs",
+                    "test_handle_request",
+                    "handle_request",
+                    "src/routes.rs",
+                ),
+            ],
+        )
+        .unwrap();
+        drop(conn);
+
+        let request = parsed_diff_test_gap_request(repo.path(), false);
+        let complete = run_diff_test_gaps_at(
+            &request,
+            &db,
+            &mut std::io::Cursor::new(stdin_diff_for_changed()),
+        )
+        .expect("real indexed CLI command path must return a typed gap receipt");
+        assert!(matches!(
+            complete.outcome,
+            crate::code_map::test_coverage::ImpactTestGapOutcome::Complete
+        ));
+        assert!(
+            !complete.input.stale,
+            "the first receipt must commit the fresh canonical impact state"
+        );
+        assert!(complete.no_observed_test_is_not_absence);
+        assert_eq!(
+            complete.work_budget.max_units,
+            crate::code_map::test_coverage::DEFAULT_MAX_TEST_NODES
+        );
+        assert_eq!(complete.index_generation, complete.graph_generation);
+        assert_eq!(complete.impact_digest.len(), 64);
+        assert_eq!(
+            complete.per_node.len(),
+            1,
+            "the changed seed is not an impacted identity"
+        );
+        let caller = &complete.per_node[0].impact_node;
+        assert_eq!(caller.file, "src/routes.rs");
+        assert_eq!(caller.symbol, "handle_request");
+        assert_eq!(caller.line, 1);
+        assert_eq!(caller.kind, "function");
+        assert!(!complete.impact_partial);
+        assert!(!complete.work_budget.capped);
+        assert!(complete.no_observed_test_is_not_absence);
+        let caller_gap = &complete.per_node[0];
+        assert_eq!(
+            caller_gap.identity,
+            crate::code_map::test_coverage::ImpactTestGapIdentity::Exact
+        );
+        let coverage = caller_gap
+            .coverage
+            .as_ref()
+            .expect("the emitted caller must retain a typed coverage result");
+        assert_eq!(coverage.seed.file, "src/routes.rs");
+        assert_eq!(coverage.seed.symbol, "handle_request");
+        assert_eq!(coverage.observed_tests.len(), 1);
+        let observed = &coverage.observed_tests[0];
+        assert_eq!(observed.test.file, "tests/routes_tests.rs");
+        assert_eq!(observed.test.symbol, "test_handle_request");
+        assert_eq!(observed.target.file, "src/routes.rs");
+        assert_eq!(observed.target.symbol, "handle_request");
+        assert_eq!(
+            observed.confidence,
+            crate::code_map::graph::EdgeConfidenceTier::RESOLVED_CONFIDENCE
+        );
+        assert_eq!(
+            observed.confidence_tier,
+            crate::code_map::graph::EdgeConfidenceTier::Resolved
+        );
+        assert_eq!(
+            observed.provenance,
+            crate::code_map::test_coverage::TestCoverageProvenance::FrameworkAndConventionalPath
+        );
+        assert_eq!(observed.distance, 0);
+        assert_eq!(
+            coverage.uncertainty,
+            crate::code_map::test_coverage::TestCoverageUncertainty::default()
+        );
+
+        std::fs::write(
+            repo.path().join("changed.rs"),
+            "fn changed() { caller(); }\n",
+        )
+        .unwrap();
+        let stale_request = parsed_diff_test_gap_request(repo.path(), true);
+        let stale = run_diff_test_gaps_at(
+            &stale_request,
+            &db,
+            &mut std::io::Cursor::new(stdin_diff_for_changed()),
+        )
+        .expect("allow-stale command path must preserve the typed rejection receipt");
+        assert!(matches!(
+            stale.outcome,
+            crate::code_map::test_coverage::ImpactTestGapOutcome::RejectedInput(
+                crate::code_map::test_coverage::ImpactTestGapRejection::Stale
+            )
+        ));
+        assert!(stale.no_observed_test_is_not_absence);
+        assert!(stale.input.stale);
+        assert!(!stale.input.truncated);
+        assert!(!stale.input.budget_truncated);
+        assert!(!stale.input.evidence_truncated);
+        assert!(stale.per_node.is_empty());
+        assert_eq!(stale.root, complete.root);
+        assert_eq!(stale.index_generation, complete.index_generation);
+        assert_eq!(stale.graph_generation, complete.graph_generation);
+        // The impact digest commits the canonical result, including `stale`.
+        // The source edit deliberately changes only freshness, so stale and
+        // fresh receipts must differ without treating that as nondeterminism.
+        assert_ne!(stale.impact_digest, complete.impact_digest);
+        let stale_repeat = run_diff_test_gaps_at(
+            &stale_request,
+            &db,
+            &mut std::io::Cursor::new(stdin_diff_for_changed()),
+        )
+        .expect("the unchanged stale repository must retain its canonical receipt");
+        assert_eq!(stale_repeat.root, stale.root);
+        assert_eq!(stale_repeat.index_generation, stale.index_generation);
+        assert_eq!(stale_repeat.graph_generation, stale.graph_generation);
+        assert_eq!(stale_repeat.outcome, stale.outcome);
+        assert_eq!(stale_repeat.impact_digest, stale.impact_digest);
+    }
+
+    #[test]
+    fn diff_test_gaps_cli_command_path_rejects_stdin_over_the_bound_before_parsing() {
+        let repo = tempdir().unwrap();
+        let request = parsed_diff_test_gap_request(repo.path(), false);
+        let db = repo.path().join("absent-code-map.db");
+        let error = run_diff_test_gaps_at(
+            &request,
+            &db,
+            &mut std::io::Cursor::new(vec![b'x'; crate::code_map::diff::MAX_DIFF_BYTES + 1]),
+        )
+        .expect_err("the MAX_DIFF_BYTES + 1st byte must fail before any truncated diff is parsed");
+        assert!(error.to_string().contains("exceeds"));
     }
 
     #[test]

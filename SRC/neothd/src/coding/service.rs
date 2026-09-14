@@ -485,10 +485,17 @@ async fn build_dispatch_plan(
     config: &crate::config::FreedomConfig,
     neoth_home: &std::path::Path,
     request: &CodingStartRequest,
+    code_map_database_path: &std::path::Path,
 ) -> Result<CodingDispatchPlan> {
     use crate::coding::provider_worker::ProviderWorker;
     use crate::config::inference::HemisphereRole;
 
+    // Establish the explicit physical root before starting provider/WAL
+    // resources, so a bad apply root cannot leave a partial dispatch plan.
+    let advisory_root = request
+        .apply
+        .then(|| crate::code_map::CanonicalRepoRoot::discover(&request.repository_root))
+        .transpose()?;
     let audit = coding_audit_writer_for_home(neoth_home);
     let writer = audit.as_ref().map(|(writer, _)| Arc::clone(writer));
     let mut workers = HemisphereWorkerSet::new();
@@ -550,6 +557,13 @@ async fn build_dispatch_plan(
         };
         let mut apply = DispatchApplyConfig::new(&request.repository_root, origin)
             .with_policy(config.autonomy_policy());
+        // This is an explicit service dependency, not a dispatcher default or
+        // CWD lookup. The read-only open happens only after patch admission;
+        // an absent/stale DB becomes an advisory receipt, never an apply gate.
+        apply = apply.with_pre_apply_impact_advisory(
+            code_map_database_path,
+            advisory_root.expect("apply dispatch has an advisory root"),
+        );
         if request.apply_confirmation == ApplyConfirmation::LocalCliFlag {
             apply = apply.with_local_cli_confirmation();
         } else if request.apply_confirmation == ApplyConfirmation::GuiInteractive {
@@ -2659,7 +2673,15 @@ where
     request.repository_root = repository_root;
     request = request.with_prepared_code_map_context(prepared_context);
     let dispatch_plan = if request.dispatch {
-        Some(build_dispatch_plan(&run_config, &config.neoth_home, &request).await?)
+        Some(
+            build_dispatch_plan(
+                &run_config,
+                &config.neoth_home,
+                &request,
+                code_map_database_path,
+            )
+            .await?,
+        )
     } else {
         None
     };

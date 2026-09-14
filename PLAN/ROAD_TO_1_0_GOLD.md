@@ -62,7 +62,7 @@ passing. The W44 lock, license snapshot and dependency repair are included in th
 same published batch. This is local evidence, not native GUI interaction,
 live-provider delivery, cross-platform CI, release, or parent-roadmap closure.
 
-**W43/W45, W46 and W47 — LOCALLY VERIFIED:** W43/45 composed01 is
+**W43/W45, W46 and W47 — PUBLISHED `ed2a8712689c733ea48c2276c14d2c17d4b0fbe3`:** W43/45 composed01 is
 **APPROVE** across 19 paths. W47 repair06 is **APPROVE** across three target
 overlays. W46 repair06 is **APPROVE** across 13 paths. Independent review approved
 the exact 31-path composition, now admitted and formatted. Integration repairs
@@ -75,6 +75,34 @@ notices passed. The retained union has 248 inputs and five executables across
 two CRG-04 kernel leaves close: counts1324/1014/308/2, raw310/pre-tag309.
 W46 covers MCP, provider and direct-CLI execution; other native surfaces remain
 open. The generated CLI reference is included after its dedicated docgen gate.
+
+**W48/W49 and W51 — LOCALLY VALIDATED, 19-PATH PUBLICATION READY:** twelve
+source changes connect bounded test-gap citations to CLI/MCP, Coding
+prompts/receipts and pre-apply advisory receipts. Doctor gains bounded,
+read-only readiness diagnostics with explicit non-coverage wording.
+Build04 passed4m16 (min206.31GiB/peak10.85GiB); runtime04 passed2119/0/0 in
+124.30s from14649 catalogued tests, including real cap/apply and the reviewed
+provider-call fingerprint. Clippy03 passed5m26; four contracts15/0 passed after
+5m19 compilation. Python45, CI matrix and separate CLI docgen passed.
+Final source252 and five executable hashes are retained. The 251 build inputs
+are an independently reviewed derivation from the preserved Build03 inventory
+and one pre-build dispatcher admission; the missing fresh captures and retained
+failed runs are disclosed in `docs/gold-wave48-49-51-verification.md`.
+W50repair11, W52repair03 and W53repair04 are independently approved WORK
+proposals for the next combined batch, still unadmitted/unrun. No further
+checkbox closes; counts1324/1014/308/2.
+CI34892993263 and Security34892996455 target published `ed2a8712`.
+Preflight34892970784 and Security's cargo-audit/cargo-deny jobs passed on that
+SHA. Both CodeQL analyses passed; the final alert gate found23 new findings.
+Independent per-alert review confirmed21 test-only fixtures and2 overwritten
+output/secret buffers (#471–493). Those exact alerts were dismissed with their
+specific reasons; zero open high/critical CodeQL alerts remain. Security
+34892996455 is fully successful on attempt2; no query or gate was disabled.
+Full CI Linux ran16285 tests with16284 passes/1 review-signature failure;
+W46's adjacent replay-state assignment changed one three-call fingerprint.
+Its exact baseline repair is independently reviewed and passed runtime03.
+Windows16217pass/1 failed at the same fingerprint; its single-job compile
+succeeded in42m54 without OOM. macOS compilation remains pending.
 
 **Current W41/W44 CI boundary:** full CI
 [`34881450745`](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34881450745)
