@@ -22,6 +22,7 @@ pub mod catalog;
 pub mod channel;
 pub mod chat;
 pub mod chat_display;
+pub(crate) mod chat_turn_pipeline;
 pub mod clarify_chat;
 pub mod cloud;
 pub mod cloud_sync_task;

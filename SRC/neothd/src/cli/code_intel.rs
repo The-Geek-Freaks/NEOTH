@@ -514,6 +514,8 @@ mod tests {
             from_symbol: "same_caller".into(),
             to_name: target.into(),
             kind: EdgeKind::Calls,
+            confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+            confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
         }
     }
 

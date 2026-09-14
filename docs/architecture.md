@@ -64,6 +64,26 @@ per-surface controls and documented best-effort/log-only exceptions are in the
 | **Plugin runtime** | Skills as data, WASM plugins as sandboxed code with capability gates. |
 | **Private mesh** | Candidate discovery plus authority-gated cluster nodes over LAN/mDNS, Tailscale, Hysteria, and peeroxide/Hyperswarm. This cluster protocol is distinct from the separately shipped Keet-identity channel companion; neither path claims access to existing Keet app rooms. |
 
+## Shared chat turn engine
+
+The direct CLI adapter prepares and admits the request before opening its
+home-bound WAL writer. It then calls `cli::chat_turn_pipeline` with the selected
+provider, configuration, writer, segment path, cancellation gate, and typed
+output sink. The engine borrows these resources; it does not parse CLI options,
+read a GUI launch envelope, or create and drain a writer.
+
+The caller owns completion. The CLI closes the turn's cancellation gate after
+the engine returns, drops its writer handle, and awaits the writer's completion
+result before publishing deferred done output and the success terminal. A
+writer finalization failure suppresses that success presentation. The accepted
+configuration path also remains available to existing lower-level helpers, so
+a local action uses the selected custom configuration.
+
+Another in-process owner can supply the same admitted resources and its own
+output sink. This seam does not itself provide daemon RPC, job persistence,
+replay, or GUI ownership. The focused verification and its limits are recorded
+in [the Waves 35–38 receipt](gold-wave35-38-verification.md).
+
 ## WAL source of truth
 
 The WAL is the durable event chain under NEOTH. Views can be rebuilt; the WAL is authoritative.

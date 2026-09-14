@@ -43,6 +43,70 @@ pub struct CodeEdge {
     pub from_symbol: String,
     pub to_name: String,
     pub kind: EdgeKind,
+    /// Ordinal evidence strength, not a calibrated probability. Only the
+    /// canonical values selected by `confidence_tier` are valid.
+    pub confidence: u8,
+    pub confidence_tier: EdgeConfidenceTier,
+}
+
+/// Provenance class for one graph edge. Endpoint uniqueness is intentionally
+/// not sufficient to upgrade an inferred regex match: it identifies the
+/// declaration, but does not prove the reference is a real call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeConfidenceTier {
+    Inferred,
+    Resolved,
+}
+
+impl EdgeConfidenceTier {
+    pub const INFERRED_CONFIDENCE: u8 = 50;
+    pub const RESOLVED_CONFIDENCE: u8 = 100;
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Inferred => "inferred",
+            Self::Resolved => "resolved",
+        }
+    }
+
+    pub fn confidence(self) -> u8 {
+        match self {
+            Self::Inferred => Self::INFERRED_CONFIDENCE,
+            Self::Resolved => Self::RESOLVED_CONFIDENCE,
+        }
+    }
+}
+
+impl CodeEdge {
+    pub fn inferred_call(
+        from_file: impl Into<String>,
+        from_symbol: impl Into<String>,
+        to_name: impl Into<String>,
+    ) -> Self {
+        Self {
+            from_file: from_file.into(),
+            from_symbol: from_symbol.into(),
+            to_name: to_name.into(),
+            kind: EdgeKind::Calls,
+            confidence: EdgeConfidenceTier::Inferred.confidence(),
+            confidence_tier: EdgeConfidenceTier::Inferred,
+        }
+    }
+
+    /// Reject corrupt/untrusted edge data before it becomes traversal evidence.
+    pub fn validate_confidence(&self) -> Result<()> {
+        let expected = self.confidence_tier.confidence();
+        if self.confidence != expected {
+            bail!(
+                "code-map edge confidence {} does not match {} tier ordinal {}",
+                self.confidence,
+                self.confidence_tier.as_str(),
+                expected
+            );
+        }
+        Ok(())
+    }
 }
 
 /// Classification of the relationship. v0.1 ships `Calls` only; the
@@ -194,12 +258,11 @@ impl CallGraph {
                             max_edges
                         );
                     }
-                    edges.push(CodeEdge {
-                        from_file: file.file_path.clone(),
-                        from_symbol: symbol.name.clone(),
-                        to_name: name,
-                        kind: EdgeKind::Calls,
-                    });
+                    edges.push(CodeEdge::inferred_call(
+                        file.file_path.clone(),
+                        symbol.name.clone(),
+                        name,
+                    ));
                 }
             }
         }
@@ -276,12 +339,8 @@ impl CallGraph {
                             limit
                         );
                     }
-                    let edge = CodeEdge {
-                        from_file: f.file_path.clone(),
-                        from_symbol: s.name.clone(),
-                        to_name: name.clone(),
-                        kind: EdgeKind::Calls,
-                    };
+                    let edge =
+                        CodeEdge::inferred_call(f.file_path.clone(), s.name.clone(), name.clone());
                     let idx = graph.edges.len();
                     graph.edges.push(edge);
                     graph.by_callee.entry(name).or_default().push(idx);
@@ -931,6 +990,29 @@ mod tests {
     }
 
     #[test]
+    fn regex_builder_edges_remain_inferred_with_an_ordinal_weight() {
+        let graph = CallGraph::build(&[rust_file(
+            "a.rs",
+            "fn target() {}\nfn caller() { target(); }\n",
+        )]);
+        let edge = graph
+            .edges()
+            .iter()
+            .find(|edge| edge.to_name == "target")
+            .unwrap();
+        assert_eq!(edge.confidence_tier, EdgeConfidenceTier::Inferred);
+        assert_eq!(edge.confidence, EdgeConfidenceTier::INFERRED_CONFIDENCE);
+        edge.validate_confidence().unwrap();
+    }
+
+    #[test]
+    fn confidence_tier_rejects_noncanonical_ordinal_pairs() {
+        let mut edge = CodeEdge::inferred_call("a.rs", "caller", "target");
+        edge.confidence = EdgeConfidenceTier::RESOLVED_CONFIDENCE;
+        assert!(edge.validate_confidence().is_err());
+    }
+
+    #[test]
     fn empty_input_returns_empty_graph() {
         let g = CallGraph::build(&[]);
         assert!(g.edges().is_empty());
@@ -1287,24 +1369,9 @@ fn e() {}
     #[test]
     fn bounded_cycle_scan_refuses_oversized_cycle_instead_of_partial_success() {
         let graph = CallGraph::from_edges(vec![
-            CodeEdge {
-                from_file: "cycle.rs".into(),
-                from_symbol: "a".into(),
-                to_name: "b".into(),
-                kind: EdgeKind::Calls,
-            },
-            CodeEdge {
-                from_file: "cycle.rs".into(),
-                from_symbol: "b".into(),
-                to_name: "c".into(),
-                kind: EdgeKind::Calls,
-            },
-            CodeEdge {
-                from_file: "cycle.rs".into(),
-                from_symbol: "c".into(),
-                to_name: "a".into(),
-                kind: EdgeKind::Calls,
-            },
+            CodeEdge::inferred_call("cycle.rs", "a", "b"),
+            CodeEdge::inferred_call("cycle.rs", "b", "c"),
+            CodeEdge::inferred_call("cycle.rs", "c", "a"),
         ]);
 
         let error = graph
@@ -1316,18 +1383,8 @@ fn e() {}
     #[test]
     fn bounded_cycle_scan_refuses_node_and_work_budget_overflow() {
         let graph = CallGraph::from_edges(vec![
-            CodeEdge {
-                from_file: "graph.rs".into(),
-                from_symbol: "a".into(),
-                to_name: "b".into(),
-                kind: EdgeKind::Calls,
-            },
-            CodeEdge {
-                from_file: "graph.rs".into(),
-                from_symbol: "c".into(),
-                to_name: "d".into(),
-                kind: EdgeKind::Calls,
-            },
+            CodeEdge::inferred_call("graph.rs", "a", "b"),
+            CodeEdge::inferred_call("graph.rs", "c", "d"),
         ]);
 
         let node_error = graph

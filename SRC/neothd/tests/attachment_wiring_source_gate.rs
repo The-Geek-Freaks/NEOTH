@@ -5,6 +5,7 @@
 //! operator prompt" design before the provider-facing tests can notice.
 
 const CHAT: &str = include_str!("../src/cli/chat.rs");
+const CHAT_TURN_PIPELINE: &str = include_str!("../src/cli/chat_turn_pipeline.rs");
 const ENRICHED_REQUEST: &str = include_str!("../src/pipeline/enriched_request.rs");
 
 fn between<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
@@ -16,9 +17,11 @@ fn between<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
 
 #[test]
 fn raw_attachment_prompt_prepend_path_cannot_return() {
-    assert!(!CHAT.contains("fn render_attachments_block("));
-    assert!(!CHAT.contains("fn attachment_block("));
-    assert!(!CHAT.contains("format!(\"{block}\\n{base}\")"));
+    for source in [CHAT, CHAT_TURN_PIPELINE] {
+        assert!(!source.contains("fn render_attachments_block("));
+        assert!(!source.contains("fn attachment_block("));
+        assert!(!source.contains("format!(\"{block}\\n{base}\")"));
+    }
     assert!(CHAT.contains("struct ResolvedTurnInput"));
     assert!(CHAT.contains("has_attachments: bool"));
 
@@ -41,29 +44,83 @@ fn attachment_ignoring_slashes_are_rejected_before_extraction() {
     assert!(resolver.contains("reject_attachment_ignoring_slash_before_extraction"));
     assert!(resolver.contains("if name == \"research\""));
     assert!(resolver.contains("command.action.is_some()"));
-    assert!(resolver.contains("does not consume attachments"));
+    assert!(resolver.contains("/{name} does not consume attachments"));
+    assert!(resolver.contains("/{name} is a local action and does not consume attachments"));
 
-    let runner = between(
+    let adapter = between(
         CHAT,
         "async fn run_chat_with_consent(",
-        "const MAX_CHAT_ATTACHMENTS:",
+        "/// The direct adapter's one post-WAL terminal boundary.",
     );
-    let route = runner
-        .find("resolve_turn_input(&args")
-        .expect("route-first input");
-    let wal = runner.find("spawn_for_home(").expect("home-bound turn WAL");
-    let extract = runner
+    let adapter_compact = adapter
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let preparation = adapter_compact
+        .find("prepare_cli_chat_turn(")
+        .expect("adapter preparation");
+    let wal = adapter_compact
+        .find("spawn_for_home_with_completion(")
+        .expect("completion-aware home-bound turn WAL");
+    let engine = adapter_compact
+        .find("chat_turn_pipeline::run_prepared_chat_turn(")
+        .expect("typed turn engine");
+    let writer_drop = adapter_compact[engine..]
+        .find("drop(writer);")
+        .map(|offset| engine + offset)
+        .expect("writer drop after typed turn engine");
+    let completion = adapter_compact[writer_drop..]
+        .find("writer_completion.wait().await")
+        .map(|offset| writer_drop + offset)
+        .expect("completion-aware writer wait");
+    let finalizer = adapter_compact[completion..]
+        .find("finish_cli_chat_turn(")
+        .map(|offset| completion + offset)
+        .expect("post-completion CLI finalizer");
+    assert!(
+        preparation < wal
+            && wal < engine
+            && engine < writer_drop
+            && writer_drop < completion
+            && completion < finalizer,
+        "the adapter must prepare input, open a completion-aware WAL, run the typed engine, drop the writer, await completion, and only then finalize presentation"
+    );
+    assert!(adapter_compact[engine..writer_drop].contains("&writer"));
+    assert!(
+        adapter_compact.contains("letdrained=writer_completion.wait().await.context("),
+        "writer completion errors must retain context before the terminal finalizer decides presentation"
+    );
+
+    let preparation = between(
+        CHAT,
+        "async fn prepare_cli_chat_turn",
+        "async fn resolve_turn_input(",
+    );
+    assert!(
+        preparation.contains("resolve_turn_input(&args"),
+        "turn preparation must route and reject attachment-ignoring slashes before the adapter opens WAL"
+    );
+
+    let engine_start = CHAT_TURN_PIPELINE
+        .find("pub(crate) async fn run_prepared_chat_turn(")
+        .expect("typed turn engine implementation");
+    let engine = &CHAT_TURN_PIPELINE[engine_start..];
+    let extract = engine
         .find("extract_attachment_contexts(")
         .expect("attachment extraction");
-    let correction = runner
+    let correction = engine
         .find("record_operator_correction(")
         .expect("operator correction persistence");
-    assert!(route < wal && wal < extract);
     assert!(
         extract < correction,
         "a rejected attachment turn must not mutate the learned profile"
     );
-    assert!(runner.contains("writer.clone()"));
+    assert!(
+        engine[extract..correction].contains("writer.clone()")
+            && engine[extract..correction].contains("drop(writer);")
+            && engine[extract..correction].contains("return Err(error);"),
+        "extraction must use the caller-owned writer and fail before correction persistence"
+    );
 }
 
 #[test]
@@ -105,7 +162,7 @@ fn typed_attachment_batch_reaches_main_agent_and_slash_builders() {
 
     assert!(CHAT.contains("attachment_contexts: attachment_contexts.cloned()"));
     assert!(CHAT.contains("attachment_contexts: layers.attachment_contexts.as_ref()"));
-    assert!(CHAT.contains("attachment_contexts: attachment_contexts.as_ref()"));
+    assert!(CHAT_TURN_PIPELINE.contains("attachment_contexts: attachment_contexts.as_ref()"));
 
     let custom_slash = between(
         CHAT,
@@ -116,9 +173,6 @@ fn typed_attachment_batch_reaches_main_agent_and_slash_builders() {
     assert!(custom_slash.contains("crate::tokens::budget::Block::D"));
     assert!(custom_slash.contains(".with_required_retention()"));
     assert!(custom_slash.contains("crate::tokens::budget::render_request(&items)"));
-    assert!(CHAT.contains("WAL writer join failed while refusing /research attachments"));
-    assert!(CHAT.contains("WAL writer join failed while refusing local-action attachments"));
-    assert!(CHAT.contains("/research does not consume attachments"));
 }
 
 #[test]

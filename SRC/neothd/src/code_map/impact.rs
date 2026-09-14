@@ -23,7 +23,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::graph::{CodeEdge, EdgeKind};
+use super::graph::{CodeEdge, EdgeConfidenceTier, EdgeKind};
 use super::persist::{
     index_freshness_receipt, load_edges_for_root_bounded_with_text_limit, root_graph_generation,
     root_index_generation,
@@ -166,6 +166,9 @@ pub struct ImpactNodeId {
 pub struct ImpactEdgeEvidence {
     pub caller: ImpactNodeId,
     pub callee: ImpactNodeId,
+    /// Ordinal policy weight; it is not a calibrated probability.
+    pub confidence: u8,
+    pub confidence_tier: EdgeConfidenceTier,
     /// The direction in which this edge was traversed from the prior node.
     /// Always `callers` or `callees`; `both` is a query mode, not an edge.
     pub traversal: ImpactDirection,
@@ -279,6 +282,8 @@ pub struct ImpactResult {
 struct ResolvedEdge {
     caller: ImpactNodeId,
     callee: ImpactNodeId,
+    confidence: u8,
+    confidence_tier: EdgeConfidenceTier,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -290,6 +295,9 @@ struct TraversalStep {
 #[derive(Clone, Debug)]
 struct BestPath {
     distance: usize,
+    /// Lowest ordinal confidence across this path. BFS retains shortest-hop
+    /// semantics; within one depth this is the cap/prioritisation tie-break.
+    confidence: u8,
     path: Vec<ImpactEdgeEvidence>,
     path_wire_bytes: usize,
     output_wire_bytes: usize,
@@ -883,6 +891,9 @@ fn resolve_edges(
     let mut evidence_truncated = false;
 
     for edge in raw_edges {
+        edge.validate_confidence().with_context(
+            || "impact analysis refused an invalid graph-edge confidence/tier pair",
+        )?;
         if edge.kind == EdgeKind::References {
             evidence_truncated |= insert_unresolved_bounded(
                 &mut unresolved,
@@ -990,6 +1001,8 @@ fn resolve_edges(
             let candidate = ResolvedEdge {
                 caller: caller.clone(),
                 callee: callee.clone(),
+                confidence: edge.confidence,
+                confidence_tier: edge.confidence_tier,
             };
             if !resolved.contains(&candidate) {
                 resolved_allocation_bytes = resolved_allocation_bytes
@@ -1068,6 +1081,7 @@ fn resolved_edge_allocation_upper_bound(edge: &ResolvedEdge) -> usize {
     impact_node_text_bytes(&edge.caller)
         .saturating_add(impact_node_text_bytes(&edge.callee))
         .saturating_add(256)
+        .saturating_add(edge.confidence_tier.as_str().len())
         .saturating_mul(12)
 }
 
@@ -1075,6 +1089,16 @@ fn impact_edge_wire_upper_bound(edge: &ImpactEdgeEvidence) -> usize {
     96usize
         .saturating_add(impact_node_wire_upper_bound(&edge.caller))
         .saturating_add(impact_node_wire_upper_bound(&edge.callee))
+        .saturating_add(edge.confidence_tier.as_str().len())
+        .saturating_add(3)
+}
+
+fn compare_traversal_steps(left: &TraversalStep, right: &TraversalStep) -> Ordering {
+    right
+        .evidence
+        .confidence
+        .cmp(&left.evidence.confidence)
+        .then_with(|| left.cmp(right))
 }
 
 fn unresolved_edge_wire_upper_bound(edge: &UnresolvedEdge) -> usize {
@@ -1133,6 +1157,8 @@ fn build_adjacency(
                 evidence: ImpactEdgeEvidence {
                     caller: edge.caller.clone(),
                     callee: edge.callee.clone(),
+                    confidence: edge.confidence,
+                    confidence_tier: edge.confidence_tier,
                     traversal: ImpactDirection::Callees,
                 },
             });
@@ -1144,6 +1170,8 @@ fn build_adjacency(
                 evidence: ImpactEdgeEvidence {
                     caller: edge.caller.clone(),
                     callee: edge.callee.clone(),
+                    confidence: edge.confidence,
+                    confidence_tier: edge.confidence_tier,
                     traversal: ImpactDirection::Callers,
                 },
             });
@@ -1201,6 +1229,7 @@ fn traverse_with_budget(
                 node,
                 BestPath {
                     distance: 0,
+                    confidence: EdgeConfidenceTier::Resolved.confidence(),
                     path: Vec::new(),
                     path_wire_bytes: 0,
                     output_wire_bytes: 0,
@@ -1234,7 +1263,7 @@ fn traverse_with_budget(
             {
                 steps.extend(found.iter().cloned());
             }
-            steps.sort();
+            steps.sort_by(compare_traversal_steps);
             steps.dedup();
 
             for step in steps {
@@ -1245,9 +1274,11 @@ fn traverse_with_budget(
                 let path_wire_bytes = state
                     .path_wire_bytes
                     .saturating_add(impact_edge_wire_upper_bound(&step.evidence));
+                let confidence = state.confidence.min(step.evidence.confidence);
                 path.push(step.evidence);
                 let candidate = BestPath {
                     distance,
+                    confidence,
                     output_wire_bytes: 128usize
                         .saturating_add(impact_node_wire_upper_bound(&step.neighbor))
                         .saturating_add(path_wire_bytes),
@@ -1256,7 +1287,11 @@ fn traverse_with_budget(
                 };
                 let candidate_node = step.neighbor;
                 match candidates.get_mut(&candidate_node) {
-                    Some(existing) if candidate.path < existing.path => {
+                    Some(existing)
+                        if candidate.confidence > existing.confidence
+                            || (candidate.confidence == existing.confidence
+                                && candidate.path < existing.path) =>
+                    {
                         candidate_path_records =
                             candidate_path_records.saturating_sub(existing.path.len());
                         candidate_wire_bytes =
@@ -1278,7 +1313,7 @@ fn traverse_with_budget(
                 }
 
                 while candidates.len() > remaining_nodes {
-                    remove_largest_candidate(
+                    remove_weakest_candidate(
                         &mut candidates,
                         &mut candidate_path_records,
                         &mut candidate_wire_bytes,
@@ -1288,7 +1323,7 @@ fn traverse_with_budget(
                 while candidate_path_records > remaining_records
                     || candidate_wire_bytes > remaining_bytes
                 {
-                    if !remove_largest_candidate(
+                    if !remove_weakest_candidate(
                         &mut candidates,
                         &mut candidate_path_records,
                         &mut candidate_wire_bytes,
@@ -1313,6 +1348,10 @@ fn traverse_with_budget(
             impacted.push(ImpactedNode {
                 node,
                 distance: state.distance,
+                // Confidence only decides which equal-depth candidates survive
+                // a cap. Public impact score remains hop-distance based so a
+                // direct inferred edge never ranks below a two-hop resolved
+                // path in an uncapped result.
                 score: CALL_DEPTH_DECAY.powi(state.distance as i32),
                 path: state.path,
             });
@@ -1325,15 +1364,23 @@ fn traverse_with_budget(
     (impacted, truncated, budget_truncated)
 }
 
-fn remove_largest_candidate(
+fn remove_weakest_candidate(
     candidates: &mut BTreeMap<ImpactNodeId, BestPath>,
     path_records: &mut usize,
     wire_bytes: &mut usize,
 ) -> bool {
-    let Some(largest) = candidates.keys().next_back().cloned() else {
+    let Some(weakest) = candidates
+        .iter()
+        .min_by(|(left_node, left), (right_node, right)| {
+            left.confidence
+                .cmp(&right.confidence)
+                .then_with(|| right_node.cmp(left_node))
+        })
+        .map(|(node, _)| node.clone())
+    else {
         return false;
     };
-    let Some(removed) = candidates.remove(&largest) else {
+    let Some(removed) = candidates.remove(&weakest) else {
         return false;
     };
     *path_records = (*path_records).saturating_sub(removed.path.len());
@@ -1460,6 +1507,19 @@ mod tests {
             from_symbol: from.into(),
             to_name: to.into(),
             kind: EdgeKind::Calls,
+            confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+            confidence_tier: EdgeConfidenceTier::Inferred,
+        }
+    }
+
+    fn resolved_calls(file: &str, from: &str, to: &str) -> CodeEdge {
+        CodeEdge {
+            from_file: file.into(),
+            from_symbol: from.into(),
+            to_name: to.into(),
+            kind: EdgeKind::Calls,
+            confidence: EdgeConfidenceTier::RESOLVED_CONFIDENCE,
+            confidence_tier: EdgeConfidenceTier::Resolved,
         }
     }
 
@@ -1544,6 +1604,119 @@ mod tests {
         bounded.digest.clear();
         let error = finalize_impact_result(bounded, 128).unwrap_err();
         assert!(error.to_string().contains("serialized bytes"));
+    }
+
+    #[test]
+    fn equal_depth_cap_prefers_resolved_evidence_without_losing_reachability() {
+        let fixture = fixture(
+            &[
+                ("seed.rs", "fn seed() {}\n"),
+                ("weak.rs", "fn weak() {}\n"),
+                ("strong.rs", "fn strong() {}\n"),
+            ],
+            vec![
+                calls("weak.rs", "weak", "seed"),
+                resolved_calls("strong.rs", "strong", "seed"),
+            ],
+        );
+        let capped = impact_radius(
+            &fixture.conn,
+            &fixture.root,
+            &[ImpactSeed::symbol("seed.rs", "seed")],
+            ImpactOptions {
+                direction: ImpactDirection::Callers,
+                max_depth: 1,
+                max_nodes: 1,
+                allow_stale: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(capped.impacted_nodes.len(), 1);
+        assert_eq!(capped.impacted_nodes[0].node.symbol, "strong");
+        assert_eq!(
+            capped.impacted_nodes[0].path[0].confidence_tier,
+            EdgeConfidenceTier::Resolved
+        );
+        assert!(capped.truncated);
+
+        let uncapped = impact_radius(
+            &fixture.conn,
+            &fixture.root,
+            &[ImpactSeed::symbol("seed.rs", "seed")],
+            ImpactOptions {
+                direction: ImpactDirection::Callers,
+                max_depth: 1,
+                max_nodes: 2,
+                allow_stale: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(uncapped.impacted_nodes.len(), 2);
+        assert!(!uncapped.truncated);
+        assert!(
+            uncapped
+                .impacted_nodes
+                .iter()
+                .any(|node| node.node.symbol == "weak")
+        );
+    }
+
+    #[test]
+    fn uncapped_depth_ranking_stays_above_deeper_resolved_evidence() {
+        let fixture = fixture(
+            &[
+                ("seed.rs", "fn seed() {}\n"),
+                ("direct.rs", "fn direct() {}\n"),
+                ("middle.rs", "fn middle() {}\n"),
+                ("deep.rs", "fn deep() {}\n"),
+            ],
+            vec![
+                calls("direct.rs", "direct", "seed"),
+                resolved_calls("middle.rs", "middle", "seed"),
+                resolved_calls("deep.rs", "deep", "middle"),
+            ],
+        );
+        let result = impact_radius(
+            &fixture.conn,
+            &fixture.root,
+            &[ImpactSeed::symbol("seed.rs", "seed")],
+            ImpactOptions {
+                direction: ImpactDirection::Callers,
+                max_depth: 2,
+                max_nodes: 3,
+                allow_stale: false,
+            },
+        )
+        .unwrap();
+        assert!(!result.truncated);
+        let direct = result
+            .impacted_nodes
+            .iter()
+            .find(|node| node.node.symbol == "direct")
+            .unwrap();
+        let deep = result
+            .impacted_nodes
+            .iter()
+            .find(|node| node.node.symbol == "deep")
+            .unwrap();
+        assert_eq!(direct.distance, 1);
+        assert_eq!(deep.distance, 2);
+        assert!(direct.score > deep.score);
+        let direct_index = result
+            .impacted_nodes
+            .iter()
+            .position(|node| node.node.symbol == "direct")
+            .unwrap();
+        let deep_index = result
+            .impacted_nodes
+            .iter()
+            .position(|node| node.node.symbol == "deep")
+            .unwrap();
+        assert!(direct_index < deep_index);
+        assert_eq!(
+            deep.path.last().unwrap().confidence_tier,
+            EdgeConfidenceTier::Resolved
+        );
     }
 
     #[test]
@@ -1723,6 +1896,8 @@ mod tests {
         let edge = ResolvedEdge {
             caller: source,
             callee: target,
+            confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+            confidence_tier: EdgeConfidenceTier::Inferred,
         };
         let required = resolved_edge_allocation_upper_bound(&edge);
 
@@ -1785,18 +1960,26 @@ mod tests {
             ResolvedEdge {
                 caller: a.clone(),
                 callee: b,
+                confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: EdgeConfidenceTier::Inferred,
             },
             ResolvedEdge {
                 caller: node("b.rs", "b", 1),
                 callee: c,
+                confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: EdgeConfidenceTier::Inferred,
             },
             ResolvedEdge {
                 caller: node("c.rs", "c", 1),
                 callee: d,
+                confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: EdgeConfidenceTier::Inferred,
             },
             ResolvedEdge {
                 caller: node("d.rs", "d", 1),
                 callee: e,
+                confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: EdgeConfidenceTier::Inferred,
             },
         ]);
         let (forward, reverse) = build_adjacency(&resolved);
@@ -1826,6 +2009,8 @@ mod tests {
         let one_edge = ResolvedEdge {
             caller: source.clone(),
             callee: target.clone(),
+            confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+            confidence_tier: EdgeConfidenceTier::Inferred,
         };
         let (forward, reverse) = build_adjacency(&BTreeSet::from([one_edge.clone()]));
         let one_step_bytes = 128usize
@@ -1833,6 +2018,8 @@ mod tests {
             .saturating_add(impact_edge_wire_upper_bound(&ImpactEdgeEvidence {
                 caller: one_edge.caller,
                 callee: one_edge.callee,
+                confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: EdgeConfidenceTier::Inferred,
                 traversal: ImpactDirection::Callees,
             }));
         let (impacted, node_truncated, budget_truncated) = traverse_with_budget(
@@ -1864,6 +2051,8 @@ mod tests {
                     from_symbol: "a".into(),
                     to_name: "a".into(),
                     kind: EdgeKind::References,
+                    confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                    confidence_tier: EdgeConfidenceTier::Inferred,
                 },
             ],
         );

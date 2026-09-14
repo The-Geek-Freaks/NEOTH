@@ -1862,12 +1862,16 @@ mod tests {
                     from_symbol: "a".into(),
                     to_name: "b".into(),
                     kind: EdgeKind::Calls,
+                    confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                    confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
                 },
                 CodeEdge {
                     from_file: "src/b.rs".into(),
                     from_symbol: "b".into(),
                     to_name: "a".into(),
                     kind: EdgeKind::Calls,
+                    confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                    confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
                 },
             ],
         )
@@ -1928,18 +1932,24 @@ mod tests {
                 from_symbol: "alpha".into(),
                 to_name: "verify_token".into(),
                 kind: EdgeKind::Calls,
+                confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
             },
             CodeEdge {
                 from_file: "src/b.rs".into(),
                 from_symbol: "beta".into(),
                 to_name: "verify_token".into(),
                 kind: EdgeKind::Calls,
+                confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
             },
             CodeEdge {
                 from_file: "src/c.rs".into(),
                 from_symbol: "gamma".into(),
                 to_name: "verify_token".into(),
                 kind: EdgeKind::Calls,
+                confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
             },
         ]);
         let files = vec![
@@ -1995,18 +2005,24 @@ mod tests {
                 from_symbol: "same_name".into(),
                 to_name: "first_target".into(),
                 kind: EdgeKind::Calls,
+                confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
             },
             CodeEdge {
                 from_file: "src/a.rs".into(),
                 from_symbol: "same_name".into(),
                 to_name: "first_target".into(),
                 kind: EdgeKind::Calls,
+                confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
             },
             CodeEdge {
                 from_file: "src/b.rs".into(),
                 from_symbol: "other_name".into(),
                 to_name: "second_target".into(),
                 kind: EdgeKind::Calls,
+                confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
             },
         ]);
         let files = vec![
@@ -2076,6 +2092,8 @@ mod tests {
             from_symbol: "att\x07acker".into(),
             to_name: "verify_token".into(),
             kind: EdgeKind::Calls,
+            confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+            confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
         }]);
         let files = vec![RelevantFile {
             root: "/r".into(),

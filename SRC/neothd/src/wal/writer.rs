@@ -265,7 +265,7 @@ fn inject_segment_create_failure(
 }
 
 #[cfg(test)]
-fn fail_compaction_marker_write_for_test(path: &Path) {
+pub(crate) fn fail_compaction_marker_write_for_test(path: &Path) {
     let mut targets = TEST_FAIL_COMPACTION_MARKER_WRITE_AT
         .lock()
         .expect("compaction-marker test hook poisoned");

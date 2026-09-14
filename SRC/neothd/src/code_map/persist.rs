@@ -100,7 +100,9 @@ use super::walker::{Language, RepoFile, RepoMap, ScanReport};
 /// v8 adds nullable parser-certified inclusive symbol end lines. Existing
 /// regex-only and legacy rows remain `NULL`, which means unknown rather than
 /// an estimated declaration extent.
-pub const CODE_MAP_SCHEMA_VERSION: i64 = 8;
+/// v9 records the graph-edge provenance tier and its canonical ordinal
+/// confidence. Legacy heuristic rows are deliberately migrated as inferred.
+pub const CODE_MAP_SCHEMA_VERSION: i64 = 9;
 
 /// Hard ceiling for one filesystem freshness receipt. The count gate runs
 /// before row materialisation and every SELECT still carries `LIMIT cap + 1`
@@ -390,6 +392,21 @@ where
         .context("v7→v8: stamp schema_version=8")?;
     }
 
+    // v8 → v9: persist graph evidence provenance. Existing edges were built
+    // by the heuristic scanner, so endpoint uniqueness cannot upgrade them.
+    if v < 9 {
+        tx.execute_batch(
+            "ALTER TABLE code_map_edges ADD COLUMN confidence INTEGER NOT NULL DEFAULT 50; \
+             ALTER TABLE code_map_edges ADD COLUMN confidence_tier TEXT NOT NULL DEFAULT 'inferred';",
+        )
+        .context("v8→v9: add inferred graph-edge confidence columns")?;
+        tx.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '9')",
+            [],
+        )
+        .context("v8→v9: stamp schema_version=9")?;
+    }
+
     tx.commit().context("commit locked code-map migration")?;
     Ok(())
 }
@@ -569,6 +586,8 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             from_symbol TEXT NOT NULL,
             to_name     TEXT NOT NULL,
             kind        TEXT NOT NULL,
+            confidence  INTEGER NOT NULL DEFAULT 50,
+            confidence_tier TEXT NOT NULL DEFAULT 'inferred',
             FOREIGN KEY(root) REFERENCES code_map_roots(root) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_code_map_edges_to_name
@@ -822,12 +841,15 @@ pub(crate) fn enforce_incoming_edge_bounds(
     );
     let mut text_bytes = 0usize;
     for edge in edges {
+        edge.validate_confidence()?;
         let edge_row_bytes = edge
             .from_file
             .len()
             .checked_add(edge.from_symbol.len())
             .and_then(|bytes| bytes.checked_add(edge.to_name.len()))
             .and_then(|bytes| bytes.checked_add(edge.kind.as_str().len()))
+            .and_then(|bytes| bytes.checked_add(edge.confidence_tier.as_str().len()))
+            .and_then(|bytes| bytes.checked_add(edge.confidence.to_string().len()))
             .context("incoming code-map edge-row byte count overflow")?;
         ensure!(
             edge_row_bytes <= PERSIST_ROW_TEXT_BYTE_CAP,
@@ -856,6 +878,12 @@ pub(crate) fn enforce_incoming_edge_bounds(
             edge.kind.as_str().len(),
             PERSIST_PREPASS_TEXT_BYTE_CAP as usize,
             "edge kind",
+        )?;
+        add_incoming_text_bytes(
+            &mut text_bytes,
+            edge.confidence_tier.as_str().len(),
+            PERSIST_PREPASS_TEXT_BYTE_CAP as usize,
+            "edge confidence tier",
         )?;
     }
     Ok(())
@@ -1420,7 +1448,7 @@ where
         .with_context(|| format!("clear delta code-map edges for {source}"))?;
     }
     let (retained_count, retained_text_bytes): (i64, i64) = tx.query_row(
-        "SELECT COUNT(*), COALESCE(SUM(LENGTH(from_file) + LENGTH(from_symbol) + LENGTH(to_name) + LENGTH(kind)), 0) \
+        "SELECT COUNT(*), COALESCE(SUM(LENGTH(from_file) + LENGTH(from_symbol) + LENGTH(to_name) + LENGTH(kind) + LENGTH(confidence_tier) + LENGTH(CAST(confidence AS TEXT))), 0) \
          FROM code_map_edges WHERE root = ?1",
         rusqlite::params![&map.root],
         |row| Ok((row.get(0)?, row.get(1)?)),
@@ -1434,6 +1462,8 @@ where
             .checked_add(edge.from_symbol.len())
             .and_then(|bytes| bytes.checked_add(edge.to_name.len()))
             .and_then(|bytes| bytes.checked_add(edge.kind.as_str().len()))
+            .and_then(|bytes| bytes.checked_add(edge.confidence_tier.as_str().len()))
+            .and_then(|bytes| bytes.checked_add(edge.confidence.to_string().len()))
             .context("delta replacement edge text byte count overflow")?;
         let text = i64::try_from(text).context("convert delta replacement edge text bytes")?;
         total
@@ -1455,8 +1485,8 @@ where
     let mut inserted = 0usize;
     {
         let mut statement = tx.prepare(
-            "INSERT INTO code_map_edges (root, from_file, from_symbol, to_name, kind) \
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO code_map_edges (root, from_file, from_symbol, to_name, kind, confidence, confidence_tier) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )?;
         for edge in replacement_edges {
             statement.execute(rusqlite::params![
@@ -1465,6 +1495,8 @@ where
                 &edge.from_symbol,
                 &edge.to_name,
                 edge.kind.as_str(),
+                edge.confidence,
+                edge.confidence_tier.as_str(),
             ])?;
             inserted += 1;
         }
@@ -1552,8 +1584,8 @@ fn replace_edges_in_transaction(
     {
         let mut stmt = tx
             .prepare(
-                "INSERT INTO code_map_edges (root, from_file, from_symbol, to_name, kind) \
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO code_map_edges (root, from_file, from_symbol, to_name, kind, confidence, confidence_tier) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )
             .context("prepare edge insert")?;
         for edge in edges {
@@ -1563,6 +1595,8 @@ fn replace_edges_in_transaction(
                 edge.from_symbol,
                 edge.to_name,
                 edge.kind.as_str(),
+                edge.confidence,
+                edge.confidence_tier.as_str(),
             ])
             .context("insert edge row")?;
             inserted += 1;
@@ -1586,7 +1620,7 @@ fn replace_edges_in_transaction(
 pub fn load_edges(conn: &Connection, root: &str) -> Result<Vec<crate::code_map::graph::CodeEdge>> {
     let mut stmt = conn
         .prepare(
-            "SELECT from_file, from_symbol, to_name, kind FROM code_map_edges \
+            "SELECT from_file, from_symbol, to_name, kind, confidence, confidence_tier FROM code_map_edges \
              WHERE root = ?1 ORDER BY from_file, from_symbol, to_name",
         )
         .context("prepare load_edges stmt")?;
@@ -1597,18 +1631,23 @@ pub fn load_edges(conn: &Connection, root: &str) -> Result<Vec<crate::code_map::
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?,
             ))
         })
         .context("query edges")?;
     let mut out = Vec::new();
     for row in rows {
-        let (from_file, from_symbol, to_name, kind) = row.context("read edge row")?;
-        out.push(crate::code_map::graph::CodeEdge {
+        let (from_file, from_symbol, to_name, kind, confidence, confidence_tier) =
+            row.context("read edge row")?;
+        out.push(parse_persisted_edge(
             from_file,
             from_symbol,
             to_name,
-            kind: parse_persisted_edge_kind(&kind)?,
-        });
+            &kind,
+            confidence,
+            &confidence_tier,
+        )?);
     }
     Ok(out)
 }
@@ -1669,11 +1708,13 @@ pub(crate) fn load_edges_for_root_bounded_with_text_limit(
         .context("convert bounded edge-query limit to SQLite integer")?;
     let mut stmt = conn
         .prepare(
-            "SELECT from_file, from_symbol, to_name, kind, \
+            "SELECT from_file, from_symbol, to_name, kind, confidence, confidence_tier, \
                     length(CAST(from_file AS BLOB)) + \
                     length(CAST(from_symbol AS BLOB)) + \
                     length(CAST(to_name AS BLOB)) + \
-                    length(CAST(kind AS BLOB)) \
+                    length(CAST(kind AS BLOB)) + \
+                    length(CAST(confidence AS TEXT)) + \
+                    length(CAST(confidence_tier AS BLOB)) \
              FROM code_map_edges \
              WHERE root = ?1 ORDER BY from_file, from_symbol, to_name LIMIT ?2",
         )
@@ -1684,7 +1725,7 @@ pub(crate) fn load_edges_for_root_bounded_with_text_limit(
     let mut out = Vec::with_capacity(limit.min(4_096).saturating_add(1));
     let mut text_bytes = 0usize;
     while let Some(row) = rows.next().context("advance bounded edge row")? {
-        let row_bytes: i64 = row.get(4).context("read bounded edge text-byte count")?;
+        let row_bytes: i64 = row.get(6).context("read bounded edge text-byte count")?;
         let row_bytes = usize::try_from(row_bytes)
             .with_context(|| format!("invalid negative edge text-byte count {row_bytes}"))?;
         if row_bytes > MAX_EDGE_ROW_TEXT_BYTES {
@@ -1709,12 +1750,20 @@ pub(crate) fn load_edges_for_root_bounded_with_text_limit(
             .get::<_, String>(2)
             .context("read bounded edge target name")?;
         let kind = row.get::<_, String>(3).context("read bounded edge kind")?;
-        out.push(crate::code_map::graph::CodeEdge {
+        let confidence = row
+            .get::<_, i64>(4)
+            .context("read bounded edge confidence")?;
+        let confidence_tier = row
+            .get::<_, String>(5)
+            .context("read bounded edge confidence tier")?;
+        out.push(parse_persisted_edge(
             from_file,
             from_symbol,
             to_name,
-            kind: parse_persisted_edge_kind(&kind)?,
-        });
+            &kind,
+            confidence,
+            &confidence_tier,
+        )?);
     }
     let truncated = out.len() > limit;
     out.truncate(limit);
@@ -1727,11 +1776,11 @@ fn load_edges_filtered(
 ) -> Result<Vec<crate::code_map::graph::CodeEdge>> {
     let sql = match root {
         Some(_) => {
-            "SELECT from_file, from_symbol, to_name, kind FROM code_map_edges \
+            "SELECT from_file, from_symbol, to_name, kind, confidence, confidence_tier FROM code_map_edges \
              WHERE root = ?1 ORDER BY from_file, from_symbol, to_name"
         }
         None => {
-            "SELECT from_file, from_symbol, to_name, kind FROM code_map_edges \
+            "SELECT from_file, from_symbol, to_name, kind, confidence, confidence_tier FROM code_map_edges \
              ORDER BY from_file, from_symbol, to_name"
         }
     };
@@ -1744,20 +1793,62 @@ fn load_edges_filtered(
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?,
             ))
         })
         .context("query all edges")?;
     let mut out = Vec::new();
     for row in rows {
-        let (from_file, from_symbol, to_name, kind) = row.context("read edge row")?;
-        out.push(crate::code_map::graph::CodeEdge {
+        let (from_file, from_symbol, to_name, kind, confidence, confidence_tier) =
+            row.context("read edge row")?;
+        out.push(parse_persisted_edge(
             from_file,
             from_symbol,
             to_name,
-            kind: parse_persisted_edge_kind(&kind)?,
-        });
+            &kind,
+            confidence,
+            &confidence_tier,
+        )?);
     }
     Ok(out)
+}
+
+fn parse_persisted_edge(
+    from_file: String,
+    from_symbol: String,
+    to_name: String,
+    kind: &str,
+    confidence: i64,
+    confidence_tier: &str,
+) -> Result<crate::code_map::graph::CodeEdge> {
+    let confidence = u8::try_from(confidence)
+        .with_context(|| format!("invalid persisted code-map edge confidence {confidence}"))?;
+    let confidence_tier = parse_persisted_edge_confidence_tier(confidence_tier)?;
+    let edge = crate::code_map::graph::CodeEdge {
+        from_file,
+        from_symbol,
+        to_name,
+        kind: parse_persisted_edge_kind(kind)?,
+        confidence,
+        confidence_tier,
+    };
+    edge.validate_confidence().with_context(|| {
+        "invalid persisted code-map edge confidence/tier pair; rebuild the code map with this NEOTH version"
+    })?;
+    Ok(edge)
+}
+
+fn parse_persisted_edge_confidence_tier(
+    confidence_tier: &str,
+) -> Result<crate::code_map::graph::EdgeConfidenceTier> {
+    match confidence_tier {
+        "inferred" => Ok(crate::code_map::graph::EdgeConfidenceTier::Inferred),
+        "resolved" => Ok(crate::code_map::graph::EdgeConfidenceTier::Resolved),
+        other => bail!(
+            "unsupported persisted code-map edge confidence tier {other:?}; rebuild the code map with this NEOTH version"
+        ),
+    }
 }
 
 fn parse_persisted_edge_kind(kind: &str) -> Result<crate::code_map::graph::EdgeKind> {
@@ -2408,6 +2499,7 @@ fn symbol_kind_from_label(label: &str) -> Option<SymbolKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code_map::graph::{EdgeConfidenceTier, EdgeKind};
     use crate::code_map::walker::{RepoFile, RepoMap, ScanReport};
     use tempfile::tempdir;
 
@@ -2482,13 +2574,17 @@ mod tests {
                 from_file: "src/a.rs".into(),
                 from_symbol: "caller".into(),
                 to_name: "callee".into(),
-                kind: crate::code_map::graph::EdgeKind::Calls,
+                kind: EdgeKind::Calls,
+                confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: EdgeConfidenceTier::Inferred,
             },
             crate::code_map::graph::CodeEdge {
                 from_file: "src/b.rs".into(),
                 from_symbol: "other".into(),
                 to_name: "callee".into(),
-                kind: crate::code_map::graph::EdgeKind::Calls,
+                kind: EdgeKind::Calls,
+                confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: EdgeConfidenceTier::Inferred,
             },
         ];
         let n = persist_edges(&mut conn, "/repo/a", &edges).unwrap();
@@ -2517,7 +2613,9 @@ mod tests {
             from_file: "src/main.rs".into(),
             from_symbol: "baseline".into(),
             to_name: "baseline_target".into(),
-            kind: crate::code_map::graph::EdgeKind::Calls,
+            kind: EdgeKind::Calls,
+            confidence: EdgeConfidenceTier::RESOLVED_CONFIDENCE,
+            confidence_tier: EdgeConfidenceTier::Resolved,
         };
         persist_map_and_edges(&mut setup, &baseline, &[baseline_edge]).unwrap();
         drop(setup);
@@ -2529,7 +2627,9 @@ mod tests {
             from_file: "src/main.rs".into(),
             from_symbol: "writer_a".into(),
             to_name: "target_a".into(),
-            kind: crate::code_map::graph::EdgeKind::Calls,
+            kind: EdgeKind::Calls,
+            confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+            confidence_tier: EdgeConfidenceTier::Inferred,
         };
         let mut map_b = sample_map(root);
         map_b.files[0].sha256 = "writer-b".into();
@@ -2538,7 +2638,9 @@ mod tests {
             from_file: "src/main.rs".into(),
             from_symbol: "writer_b".into(),
             to_name: "target_b".into(),
-            kind: crate::code_map::graph::EdgeKind::Calls,
+            kind: EdgeKind::Calls,
+            confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+            confidence_tier: EdgeConfidenceTier::Inferred,
         };
 
         let mut writer_a = open(&path).unwrap();
@@ -2653,7 +2755,9 @@ mod tests {
             from_file: "src/main.rs".into(),
             from_symbol: "baseline".into(),
             to_name: "baseline_target".into(),
-            kind: crate::code_map::graph::EdgeKind::Calls,
+            kind: EdgeKind::Calls,
+            confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+            confidence_tier: EdgeConfidenceTier::Inferred,
         };
         persist_map_and_edges(&mut conn, &baseline, &[baseline_edge]).unwrap();
         conn.execute_batch(
@@ -2672,13 +2776,17 @@ mod tests {
                 from_file: "src/main.rs".into(),
                 from_symbol: "candidate".into(),
                 to_name: "new_target".into(),
-                kind: crate::code_map::graph::EdgeKind::Calls,
+                kind: EdgeKind::Calls,
+                confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: EdgeConfidenceTier::Inferred,
             },
             crate::code_map::graph::CodeEdge {
                 from_file: "src/main.rs".into(),
                 from_symbol: "candidate".into(),
                 to_name: "boom".into(),
-                kind: crate::code_map::graph::EdgeKind::Calls,
+                kind: EdgeKind::Calls,
+                confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: EdgeConfidenceTier::Inferred,
             },
         ];
 
@@ -2737,7 +2845,9 @@ mod tests {
             from_file: "src/main.rs".into(),
             from_symbol: "main".into(),
             to_name: "target".into(),
-            kind: crate::code_map::graph::EdgeKind::Calls,
+            kind: EdgeKind::Calls,
+            confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+            confidence_tier: EdgeConfidenceTier::Inferred,
         };
         persist_edges(&mut conn, "/repo/a", std::slice::from_ref(&baseline_edge)).unwrap();
         let oversized = crate::code_map::graph::CodeEdge {
@@ -2761,7 +2871,9 @@ mod tests {
                 from_file: "src/main.rs".into(),
                 from_symbol: "main".into(),
                 to_name: format!("target_{index}"),
-                kind: crate::code_map::graph::EdgeKind::Calls,
+                kind: EdgeKind::Calls,
+                confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: EdgeConfidenceTier::Inferred,
             })
             .collect();
         persist_edges(&mut conn, "/repo/a", &edges).unwrap();
@@ -2784,13 +2896,16 @@ mod tests {
             from_file: "x.rs".into(),
             from_symbol: "a".into(),
             to_name: "b".into(),
-            kind: crate::code_map::graph::EdgeKind::Calls,
+            kind: EdgeKind::Calls,
+            confidence: EdgeConfidenceTier::RESOLVED_CONFIDENCE,
+            confidence_tier: EdgeConfidenceTier::Resolved,
         }];
         persist_edges(&mut conn, "/repo/a", &edges).unwrap();
         // Second run replaces — still 1 row.
         persist_edges(&mut conn, "/repo/a", &edges).unwrap();
         let loaded = load_edges(&conn, "/repo/a").unwrap();
         assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded, edges);
     }
 
     #[test]
@@ -2802,7 +2917,9 @@ mod tests {
             from_file: "src/main.rs".into(),
             from_symbol: "main".into(),
             to_name: "old_target".into(),
-            kind: crate::code_map::graph::EdgeKind::Calls,
+            kind: EdgeKind::Calls,
+            confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+            confidence_tier: EdgeConfidenceTier::Inferred,
         };
         persist_edges(&mut conn, "/repo/a", std::slice::from_ref(&prior)).unwrap();
 
@@ -2821,13 +2938,17 @@ mod tests {
                 from_file: "src/main.rs".into(),
                 from_symbol: "main".into(),
                 to_name: "new_target".into(),
-                kind: crate::code_map::graph::EdgeKind::Calls,
+                kind: EdgeKind::Calls,
+                confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: EdgeConfidenceTier::Inferred,
             },
             crate::code_map::graph::CodeEdge {
                 from_file: "src/main.rs".into(),
                 from_symbol: "main".into(),
                 to_name: "boom".into(),
-                kind: crate::code_map::graph::EdgeKind::Calls,
+                kind: EdgeKind::Calls,
+                confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: EdgeConfidenceTier::Inferred,
             },
         ];
 
@@ -2871,13 +2992,30 @@ mod tests {
     }
 
     #[test]
+    fn invalid_persisted_confidence_pair_fails_closed() {
+        let (_dir, mut conn) = temp_db();
+        persist_map(&mut conn, &sample_map("/repo/a")).unwrap();
+        conn.execute(
+            "INSERT INTO code_map_edges \
+             (root, from_file, from_symbol, to_name, kind, confidence, confidence_tier) \
+             VALUES ('/repo/a', 'a.rs', 'a', 'b', 'calls', 100, 'inferred')",
+            [],
+        )
+        .unwrap();
+        let error = load_edges(&conn, "/repo/a").unwrap_err();
+        assert!(format!("{error:#}").contains("confidence 100 does not match inferred tier"));
+    }
+
+    #[test]
     fn persist_edges_rejects_unknown_root_without_writing_rows() {
         let (_dir, mut conn) = temp_db();
         let edge = crate::code_map::graph::CodeEdge {
             from_file: "src/a.rs".into(),
             from_symbol: "a".into(),
             to_name: "b".into(),
-            kind: crate::code_map::graph::EdgeKind::Calls,
+            kind: EdgeKind::Calls,
+            confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+            confidence_tier: EdgeConfidenceTier::Inferred,
         };
 
         let error = persist_edges(&mut conn, "/never/seen", &[edge]).unwrap_err();
@@ -3548,7 +3686,9 @@ mod tests {
             from_file: "lib.rs".into(),
             from_symbol: "first".into(),
             to_name: "target".into(),
-            kind: crate::code_map::graph::EdgeKind::Calls,
+            kind: EdgeKind::Calls,
+            confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+            confidence_tier: EdgeConfidenceTier::Inferred,
         }];
         persist_map_and_edges_bound(&mut conn, &map, &old_edges, &root).unwrap();
         let before_index = root_index_generation(&conn, root.display()).unwrap();
@@ -3992,11 +4132,14 @@ mod tests {
                      INSERT INTO code_map_symbols_fts(rowid, name, kind)
                      VALUES (new.id, new.name, new.kind);
                  END;
-                  INSERT INTO code_map_roots
-                      (root, scanned_at, total_files, total_bytes, total_loc,
-                       oversize_skipped, truncated_at, index_generation)
+                 INSERT INTO code_map_roots
+                     (root, scanned_at, total_files, total_bytes, total_loc,
+                      oversize_skipped, truncated_at, index_generation)
                   VALUES ('/legacy', 0, 0, 0, 0, 0, NULL, 0);
-                  PRAGMA journal_mode=WAL;",
+                 INSERT INTO code_map_edges
+                     (root, from_file, from_symbol, to_name, kind)
+                  VALUES ('/legacy', 'legacy.rs', 'legacy_symbol', 'legacy_target', 'calls');
+                 PRAGMA journal_mode=WAL;",
             )
             .unwrap();
         }
@@ -4062,8 +4205,9 @@ mod tests {
             .expect("first migration opener failed");
 
         // Release that same stale-v3 opener only after A committed. It must
-        // acquire IMMEDIATE, re-read v8 under the lock, and skip a duplicate
-        // ALTER TABLE rather than relying on a fresh outer version read.
+        // acquire IMMEDIATE, re-read completed v9 under the lock, and skip
+        // duplicate ALTER TABLE work rather than relying on a fresh outer
+        // version read.
         allow_b_tx.send(()).unwrap();
         b_locked_rx
             .recv()
@@ -4079,7 +4223,35 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "8");
+        assert_eq!(version, "9");
+        let confidence_columns: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('code_map_edges') \
+                 WHERE name = 'confidence'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(confidence_columns, 1);
+        let confidence_tier_columns: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('code_map_edges') \
+                 WHERE name = 'confidence_tier'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(confidence_tier_columns, 1);
+        let (legacy_confidence, legacy_confidence_tier): (i64, String) = conn
+            .query_row(
+                "SELECT confidence, confidence_tier FROM code_map_edges \
+                 WHERE root = '/legacy' AND from_symbol = 'legacy_symbol'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(legacy_confidence, 50);
+        assert_eq!(legacy_confidence_tier, "inferred");
         let graph_columns: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM pragma_table_info('code_map_roots') \
@@ -4313,12 +4485,18 @@ mod tests {
                 [],
             )
             .unwrap();
+            conn.execute(
+                "INSERT INTO code_map_edges (root, from_file, from_symbol, to_name, kind) \
+                 VALUES (?1, 'x.rs', 'x', 'target', 'calls')",
+                rusqlite::params![&root],
+            )
+            .unwrap();
         }
 
         // Open via the public API — should trigger v1→v2 migration.
         let mut conn = open(&path).expect("open must succeed on a v1 DB");
 
-        // schema_version must now be "8" (v1→v2→v3→v4→v5→v6→v7→v8 chain).
+        // schema_version must now be "9" (v1→…→v8→v9 chain).
         let version: String = conn
             .query_row(
                 "SELECT value FROM meta WHERE key='schema_version'",
@@ -4327,8 +4505,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            version, "8",
-            "schema_version must advance to 8 after migration"
+            version, "9",
+            "schema_version must advance to 9 after migration"
         );
 
         // v3 column: code_map_roots.index_generation exists, and the migrated
@@ -4352,6 +4530,23 @@ mod tests {
             root_cols.iter().any(|c| c == "root_identity"),
             "v5 must add root_identity to code_map_roots; got {root_cols:?}"
         );
+        let edge_cols: Vec<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(code_map_edges)").unwrap();
+            stmt.query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        assert!(edge_cols.iter().any(|c| c == "confidence"));
+        assert!(edge_cols.iter().any(|c| c == "confidence_tier"));
+        let (confidence, tier): (i64, String) = conn
+            .query_row(
+                "SELECT confidence, confidence_tier FROM code_map_edges LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((confidence, tier.as_str()), (50, "inferred"));
         assert_eq!(
             root_index_generation(&conn, &root).unwrap(),
             Some(0),

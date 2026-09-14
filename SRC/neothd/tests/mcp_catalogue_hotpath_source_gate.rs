@@ -1,6 +1,7 @@
 //! Source tripwire for bounded MCP catalogue prompt assembly.
 
 const CHAT: &str = include_str!("../src/cli/chat.rs");
+const CHAT_TURN_PIPELINE: &str = include_str!("../src/cli/chat_turn_pipeline.rs");
 const SERVE_PIPELINE: &str = include_str!("../src/cli/serve_pipeline.rs");
 const CATALOGUE: &str = include_str!("../src/mcp/catalogue.rs");
 const LOOP_ENGINE: &str = include_str!("../src/loop_engine/engine.rs");
@@ -26,7 +27,7 @@ fn compact_function_region(source: &str, function: &str, next_function: &str) ->
 #[test]
 fn catalogue_prompt_assembly_is_bound_to_the_exact_mcp_route() {
     let chat_catalogue = compact_region(
-        CHAT,
+        CHAT_TURN_PIPELINE,
         "// ── Route-bound MCP catalogue (CLI path)",
         "let route_cap =",
     );
@@ -44,7 +45,18 @@ fn catalogue_prompt_assembly_is_bound_to_the_exact_mcp_route() {
         !channel_catalogue.contains(".enabled()"),
         "channel prompt assembly must delegate empty detection and bounded selection to the catalogue"
     );
-    assert_eq!(CHAT.matches("assemble_catalogue_for_prompt(").count(), 1);
+    assert_eq!(
+        CHAT.matches("assemble_catalogue_for_prompt(").count(),
+        0,
+        "the CLI adapter must not add a second catalogue assembly beside the typed turn engine"
+    );
+    assert_eq!(
+        CHAT_TURN_PIPELINE
+            .matches("assemble_catalogue_for_prompt(")
+            .count(),
+        1,
+        "the typed turn engine must retain the sole CLI catalogue assembly"
+    );
     assert_eq!(
         SERVE_PIPELINE
             .matches("assemble_catalogue_for_prompt(")
@@ -72,13 +84,13 @@ fn catalogue_prompt_assembly_is_bound_to_the_exact_mcp_route() {
     assert!(chat_catalogue.contains("slot.insert(&mutbudget_items,catalogue)"));
     assert!(channel_catalogue.contains("slot.insert(&mutchannel_budget_items,catalogue)"));
 
-    let chat_route = CHAT
+    let chat_route = CHAT_TURN_PIPELINE
         .find("let TurnRouteResolution {")
         .expect("CLI typed route resolution");
-    let chat_assemble = CHAT
+    let chat_assemble = CHAT_TURN_PIPELINE
         .find("assemble_catalogue_for_prompt(")
         .expect("CLI catalogue await");
-    let chat_route_region = CHAT
+    let chat_route_region = CHAT_TURN_PIPELINE
         .get(chat_route..chat_assemble)
         .expect("CLI typed route must precede catalogue assembly");
     assert!(
@@ -86,7 +98,7 @@ fn catalogue_prompt_assembly_is_bound_to_the_exact_mcp_route() {
             && chat_route_region.contains("= resolve_chat_turn_route("),
         "CLI must bind the exact typed route before catalogue assembly"
     );
-    let chat_finalize = CHAT[chat_assemble..]
+    let chat_finalize = CHAT_TURN_PIPELINE[chat_assemble..]
         .find("finalize_provider_request(")
         .map(|offset| chat_assemble + offset)
         .expect("CLI final budget");
@@ -146,6 +158,32 @@ fn dispatch_consumes_the_preselected_route_without_recomputing_admission() {
     assert!(
         !chat_dispatch.contains("select_turn_dispatch_route("),
         "CLI dispatch must not replace the route already selected by its resolver"
+    );
+
+    let chat_pipeline = compact_region(
+        CHAT_TURN_PIPELINE,
+        "let TurnRouteResolution {",
+        "let post_reply_result = run_post_reply_pipelines(",
+    );
+    assert_eq!(
+        chat_pipeline.matches("resolve_chat_turn_route(").count(),
+        1,
+        "the typed CLI turn engine must resolve one route before dispatch"
+    );
+    assert_eq!(
+        chat_pipeline.matches("dispatch_provider(").count(),
+        1,
+        "the typed CLI turn engine must dispatch once through the shared route consumer"
+    );
+    let pipeline_route = chat_pipeline
+        .find("resolve_chat_turn_route(")
+        .expect("typed CLI route call");
+    let pipeline_dispatch = chat_pipeline
+        .find("dispatch_provider(")
+        .expect("typed CLI dispatch call");
+    assert!(
+        pipeline_route < pipeline_dispatch && chat_pipeline.contains("chat_route,"),
+        "the typed CLI turn engine must pass its preselected route to dispatch without recomputing admission"
     );
 
     // Start immediately after the resolver result is bound. This data-flow

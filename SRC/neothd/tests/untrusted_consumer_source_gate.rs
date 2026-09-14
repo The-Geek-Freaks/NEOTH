@@ -15,6 +15,7 @@ const CRON: &str = include_str!("../src/cron/runner.rs");
 const COMPACTION: &str = include_str!("../src/context/compaction.rs");
 const LOOP_ENGINE: &str = include_str!("../src/loop_engine/engine.rs");
 const CHAT: &str = include_str!("../src/cli/chat.rs");
+const CHAT_TURN_PIPELINE: &str = include_str!("../src/cli/chat_turn_pipeline.rs");
 const LOOP_CMD: &str = include_str!("../src/cli/loop_cmd.rs");
 const SERVE_PIPELINE: &str = include_str!("../src/cli/serve_pipeline.rs");
 const BUDGET: &str = include_str!("../src/tokens/budget.rs");
@@ -52,7 +53,10 @@ fn mcp_catalogue_cannot_collapse_back_to_a_raw_string_contract() {
         CRON.contains("catalogue.render_system_block()"),
         "Cron must use the same typed Header plus Envelope renderer"
     );
-    assert!(CHAT.contains("let mcp_catalogue: Option<crate::mcp::catalogue::McpPromptCatalogue>"));
+    assert!(
+        CHAT_TURN_PIPELINE
+            .contains("let mcp_catalogue: Option<crate::mcp::catalogue::McpPromptCatalogue>")
+    );
     assert!(
         SERVE_PIPELINE.contains(
             "let channel_mcp_catalogue: Option<crate::mcp::catalogue::McpPromptCatalogue>"

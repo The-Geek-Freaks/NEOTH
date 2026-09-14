@@ -3,21 +3,39 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-14
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
-> **Wave 37 CI cadence — SOURCE ADMITTED; FULL CI ACCEPTANCE OUTSTANDING
-> 2026-09-14:** two reviewed workflow files preserve the existing coverage,
-> single test thread, lock, and profile while separating native compile/runtime
-> budgets: macOS has 100-minute compile, 30-minute runtime, and 140-minute job
-> limits; Windows has 50-minute compile, 30-minute runtime, and 90-minute job
-> limits. The workflows clear cached JUnit before compile and fail a no-test run.
-> Fifteen local static tests and YAML parsing pass. A new full CI run will follow
-> the push; no new CI pass is claimed.
+> **Waves 35, 36 and 38 typed chat pipeline, caller-neutral seam, and CodeMap
+> edge confidence — LOCALLY VERIFIED; PUBLICATION PENDING 2026-09-14:** sixteen
+> source files share a 197-input union. Final evidence is in
+> `docs/gold-wave35-38-verification.md` and
+> `docs/verification/gold-wave35-38-{source-manifest,test-matrix}.json`.
+> Clippy08 passed2m57/min219.92/peak6.59; TestBuild03 passed3m41/min216.10/
+> peak10.45; 14,501 catalog entries and ten filters selected888/0/0 in70.46s;
+> Contract13 passed157/0/0; compilation took2m39; GUI check passed6m25/min215.04/peak11.29
+> without a GUI link, retaining 13 existing `trusted_probe_supervisor` warnings;
+> Python19+11+8 passed. This is local evidence only; publication and a new macOS
+> CI run remain required. ADOPT31-E1 is locally verified; P2-26, P1-16, P1-17,
+> and R3-18B remain open. W39 rebased05 is the next unadmitted proposal; W40
+> repair is in progress and not admitted. Counts are 1324/1012/310/2 (312 raw;
+> 311 pre-tag).
+>
+> **Wave 37 CI cadence — PUBLISHED `ff101c05`; FULL CI ACCEPTANCE OUTSTANDING
+> 2026-09-14:** two reviewed workflow files retain their coverage, lock, and
+> profile while separating native compile/runtime budgets: macOS runs four test
+> threads and Windows runs one; macOS has 100-minute compile, 30-minute runtime,
+> and 140-minute job limits, while Windows has 50-minute compile, 30-minute
+> runtime, and 90-minute job limits. The workflows clear cached JUnit before
+> compile and fail a no-test run. Fifteen local static tests and YAML parsing
+> pass. Full CI `34820034751` failed two known macOS deadline-fixture cases;
+> their locally reviewed repair requires a new macOS CI run. No full-CI pass is
+> claimed. The earlier manual run `34819483593` was cancelled because of
+> concurrency and is not evidence.
 >
 > **Waves 30, 32 and 34 SelfStage, mapped-account retirement, and legacy
 > provenance — PUBLISHED `66f90e5ffd00739e296681974cda8d58c20921bd`:** local
 > verification recorded 1327 selected unit passes, 157 account-config contract
 > passes, 38 Python checks, and the no-GUI-link GUI check. Git history carries
-> the commit identity and evidence receipts. W35/36/38 remain a reviewed
-> 11-source proposal, not admitted. W32/P1-16, W34/P1-17, and R3-18B remain
+> the commit identity and evidence receipts. W35/36/38 are now source admitted
+> and awaiting validation. W32/P1-16, W34/P1-17, and R3-18B remain
 > OPEN; counts 1324/1011/311/2 (313 raw; 312 pre-tag). W29–31 full CI
 > `34803269509` remains an incomplete macOS failure boundary, not a green
 > platform receipt.

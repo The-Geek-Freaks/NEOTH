@@ -12,13 +12,148 @@ use clap::Args;
 use tracing::{info, warn};
 use zeroize::Zeroizing;
 
+use crate::cli::chat_turn_pipeline::{self, ChatOutput, ChatTurnEvent, ChatTurnEventSink};
 use crate::config::{FreedomConfig, InstancePaths};
+
+/// The direct command's presentation adapter.  Turn code may only emit the
+/// typed records below; this is the one place that owns process stdout/stderr
+/// and the authenticated stream renderer.
+struct CliChatOutput;
+
+impl ChatTurnEventSink for CliChatOutput {
+    fn emit(&mut self, event: ChatTurnEvent) -> Result<()> {
+        use std::io::Write as _;
+
+        let ChatTurnEvent::Output(output) = event else {
+            // Terminal and durable metadata are consumed by future transports.
+            // The direct CLI has no additional bytes for them.
+            return Ok(());
+        };
+        match output {
+            ChatOutput::HumanStdout { text } => {
+                let stdout = std::io::stdout();
+                let mut stdout = stdout.lock();
+                writeln!(stdout, "{text}")?;
+                stdout.flush()?;
+            }
+            ChatOutput::HumanStderr { text } => {
+                let stderr = std::io::stderr();
+                let mut stderr = stderr.lock();
+                writeln!(stderr, "{text}")?;
+                stderr.flush()?;
+            }
+            ChatOutput::Notice { stream, text } => {
+                write_chat_notice(stream, text)?;
+            }
+            ChatOutput::ProviderDelta {
+                sequence,
+                text,
+                stream_control_token,
+            } => {
+                if let Some(token) = stream_control_token.as_deref() {
+                    write_provider_stream_delta(
+                        std::io::stdout().lock(),
+                        Some(token),
+                        sequence,
+                        &text,
+                    )?;
+                } else {
+                    print!("{text}");
+                    let _ = std::io::stdout().flush();
+                }
+            }
+            ChatOutput::StreamDone {
+                control_token,
+                line,
+            } => {
+                emit_deferred_stream_done_to(
+                    std::io::stdout().lock(),
+                    control_token.as_deref(),
+                    &line,
+                )?;
+            }
+            ChatOutput::StreamFrames { frames } => {
+                let stdout = std::io::stdout();
+                let mut stdout = stdout.lock();
+                stdout.write_all(frames.as_bytes())?;
+                stdout.flush()?;
+            }
+            ChatOutput::StreamFinalizationError {
+                control_token,
+                message,
+            } => {
+                emit_stream_finalization_error_to(
+                    std::io::stdout().lock(),
+                    &control_token,
+                    &message,
+                )?;
+            }
+            ChatOutput::StreamNotice {
+                control_token,
+                kind,
+                id,
+                text,
+                durable,
+            } => {
+                write_authenticated_stream_notice(
+                    std::io::stdout().lock(),
+                    &control_token,
+                    &kind,
+                    &id,
+                    &text,
+                    durable,
+                )?;
+            }
+            ChatOutput::LocalStreamCompletion {
+                control_token,
+                chunk_count,
+            } => {
+                write_local_stream_completion_to(
+                    std::io::stdout().lock(),
+                    control_token.as_deref(),
+                    chunk_count,
+                )?;
+            }
+            ChatOutput::SkillRoute {
+                control_token,
+                report_json,
+            } => {
+                write_stream_control_line(
+                    std::io::stdout().lock(),
+                    Some(&control_token),
+                    &report_json,
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn emit_chat_output(sink: &mut dyn ChatTurnEventSink, output: ChatOutput) -> Result<()> {
+    chat_turn_pipeline::emit_output(sink, output)
+}
+
+/// All turn-path notices cross the same typed presentation boundary as
+/// provider output. Only `CliChatOutput` converts the record to stdout.
+pub(super) fn emit_chat_notice(
+    sink: &mut dyn ChatTurnEventSink,
+    stream: bool,
+    message: impl std::fmt::Display,
+) -> Result<()> {
+    emit_chat_output(
+        sink,
+        ChatOutput::Notice {
+            stream,
+            text: message.to_string(),
+        },
+    )
+}
 
 /// Opaque capability minted only by this local-interactive CLI boundary.
 pub(crate) struct LocalChatCommunicationSubject(());
 
 impl LocalChatCommunicationSubject {
-    fn mint() -> Self {
+    pub(crate) fn mint() -> Self {
         Self(())
     }
 
@@ -28,9 +163,10 @@ impl LocalChatCommunicationSubject {
     }
 }
 use crate::providers::{self, CompletionChunk, Provider, Request};
+#[cfg(test)]
+use crate::wal::events::EVENT_TYPE_RAW_TEXT;
 use crate::wal::events::{
-    EVENT_TYPE_AUTO_SKILL_EXTRACTED, EVENT_TYPE_BUDGET_EXCEEDED, EVENT_TYPE_INCOGNITO_TURN,
-    EVENT_TYPE_RAW_TEXT, EVENT_TYPE_SKILL_INJECT_SKIPPED,
+    EVENT_TYPE_AUTO_SKILL_EXTRACTED, EVENT_TYPE_BUDGET_EXCEEDED, EVENT_TYPE_SKILL_INJECT_SKIPPED,
 };
 #[cfg(test)]
 use crate::wal::spawn as wal_spawn;
@@ -302,7 +438,8 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
     }
 
     admit_incognito_turn_before_runtime(&mut args).await?;
-    if !args.incognito && dispatch_pre_runtime_local_action(&mut args).await? {
+    let mut output = CliChatOutput;
+    if !args.incognito && dispatch_pre_runtime_local_action(&mut args, &mut output).await? {
         return Ok(());
     }
 
@@ -386,6 +523,7 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
         provider.as_ref(),
         ephemeral_consent,
         stream_control_token,
+        crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
     )
     .await
 }
@@ -403,52 +541,52 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
 /// Audit emissions remain best-effort, but an unreadable configured moral core
 /// fails the turn before a provider call. `config`/`prompt`/`home` are threaded
 /// back out because the later phases still consume them.
-struct PromptBundle {
-    combined_system: Option<String>,
-    context_preload_notice: Option<ContextPreloadNotice>,
+pub(super) struct PromptBundle {
+    pub(super) combined_system: Option<String>,
+    pub(super) context_preload_notice: Option<ContextPreloadNotice>,
     /// Owning authority capability retained until this turn's dispatch
     /// finishes. Derived strings alone are not execution authority.
-    skill_route_guard: Option<crate::skills::resolver::ResolvedSkillRoute>,
+    pub(super) skill_route_guard: Option<crate::skills::resolver::ResolvedSkillRoute>,
     /// Cross-surface, JSON-ready explanation of the exact routing decision.
-    skill_route_report: crate::skills::resolver::SkillRouteReport,
+    pub(super) skill_route_report: crate::skills::resolver::SkillRouteReport,
     /// Exact typed A-E/Conductor representation of `combined_system` plus the
     /// single user-message E block.  This survives hooks, slash/agent routing
     /// and output-preset assembly until the final provider Request is built.
-    budget_items: Vec<crate::tokens::budget::BlockItem>,
+    pub(super) budget_items: Vec<crate::tokens::budget::BlockItem>,
     /// Typed insertion point for the optional MCP protocol + catalogue pair.
     /// It is captured from the MCP-free enriched request and adjusted across
     /// agent/slash rewrites so late route-bound injection cannot guess from
     /// rendered strings.
-    mcp_catalogue_slot: McpCatalogueSlot,
-    skill_tool_allowlist: Option<Vec<String>>,
+    pub(super) mcp_catalogue_slot: McpCatalogueSlot,
+    pub(super) skill_tool_allowlist: Option<Vec<String>>,
     /// GOLD-ADAPT-PWF-01: SHA-256 hex of `task_plan.md` at injection time,
     /// or `None` when no plan file was present or the active skill is not
     /// in `plan_attestation::APPLICABLE_SKILLS`. Threaded to
     /// `enforce_preflight` which re-reads the file and bails if tampered.
-    plan_attest_hash: Option<String>,
+    pub(super) plan_attest_hash: Option<String>,
     /// GOLD-ADAPT-OH-13 — raw enrichment layers carried from
     /// `build_prompt_bundle` to `enforce_preflight` so the agent-dispatch
     /// block can selectively rebuild the system prompt per-agent without
     /// re-running all the async I/O.
-    agent_raw_layers: AgentRawLayers,
+    pub(super) agent_raw_layers: AgentRawLayers,
     /// GOLD-CCPARITY-MODEL-02 — model resolved from the matched skill's
     /// `manifest.model` field, or `None` when no skill matched / the
     /// matched skill carries no per-skill model override.
     /// Priority chain: Dispatch.model > skill.manifest.model > args.model.
-    resolved_model: Option<String>,
+    pub(super) resolved_model: Option<String>,
     /// GOLD-CCPARITY-EFFORT-03 — per-skill effort/reasoning-budget resolved
     /// from the matched skill's `manifest.effort` field. `None` = provider
     /// default (10 000 tokens). Threaded to `dispatch_provider` which maps
     /// it to `req.thinking_budget` before the provider spawn.
-    resolved_effort: Option<crate::providers::effort_override::EffortBudget>,
+    pub(super) resolved_effort: Option<crate::providers::effort_override::EffortBudget>,
     /// Exact matched-skill contract. This survives preflight so a
     /// `loop: true` skill cannot silently degrade to a single CLI provider
     /// call after hooks, slash handling, or route resolution.
-    skill_loop_trigger: bool,
+    pub(super) skill_loop_trigger: bool,
     /// Resolved code-map evidence is audited only after final token budgeting
     /// proves the exact block survived into the provider request.
-    repo_recall_audit: Option<RepoContextRecall>,
-    architecture_recall_audit: Option<ArchitectureRecall>,
+    pub(super) repo_recall_audit: Option<RepoContextRecall>,
+    pub(super) architecture_recall_audit: Option<ArchitectureRecall>,
 }
 
 /// Typed reason why a non-Council turn must enter the loop engine.
@@ -504,15 +642,15 @@ pub(crate) enum TurnDispatchRoute {
 }
 
 #[derive(Debug)]
-struct CouncilSkipAudit {
+pub(super) struct CouncilSkipAudit {
     prompt_hash: u64,
     reason: String,
 }
 
 #[derive(Debug)]
-struct TurnRouteResolution {
-    route: TurnDispatchRoute,
-    council_skip: Option<CouncilSkipAudit>,
+pub(super) struct TurnRouteResolution {
+    pub(super) route: TurnDispatchRoute,
+    pub(super) council_skip: Option<CouncilSkipAudit>,
 }
 
 impl TurnDispatchRoute {
@@ -668,7 +806,7 @@ fn mint_chat_session_canary()
 ///
 /// `Block::A` is non-degradable by policy; required retention additionally
 /// makes a future policy broadening fail closed at the final budget boundary.
-fn insert_chat_canary(
+pub(super) fn insert_chat_canary(
     items: &mut Vec<crate::tokens::budget::BlockItem>,
     mcp_catalogue_slot: Option<McpCatalogueSlot>,
     canary: &crate::security::injection_tracker::CanaryToken,
@@ -790,7 +928,10 @@ fn log_chat_post_mint_failure<E: std::fmt::Display + ?Sized>(phase: &'static str
     );
 }
 
-fn opaque_chat_post_mint_failure(phase: &'static str, error: &anyhow::Error) -> anyhow::Error {
+pub(super) fn opaque_chat_post_mint_failure(
+    phase: &'static str,
+    error: &anyhow::Error,
+) -> anyhow::Error {
     log_chat_post_mint_failure(phase, error);
     anyhow::anyhow!("chat post-mint provider/orchestration failure at {phase}; content quarantined")
 }
@@ -1090,21 +1231,33 @@ async fn emit_verified_stream_delta(
     defer_provider_output: bool,
     stream_control_token: Option<&str>,
     md_buf: &mut crate::cli::streaming_buffer::MarkdownBuffer,
+    output: &mut dyn ChatTurnEventSink,
 ) -> Result<()> {
     if delta.is_empty() {
         return Ok(());
     }
     let next_sequence = chunk_count.saturating_add(1);
     if !defer_provider_output {
-        use std::io::Write as _;
-
-        if stream_control_token.is_some() {
-            let stdout = std::io::stdout();
-            write_provider_stream_delta(stdout.lock(), stream_control_token, next_sequence, &delta)
-                .context("write authenticated provider stream delta")?;
+        if let Some(token) = stream_control_token {
+            emit_chat_output(
+                output,
+                ChatOutput::ProviderDelta {
+                    sequence: next_sequence,
+                    text: delta.clone(),
+                    stream_control_token: Some(token.to_owned()),
+                },
+            )?;
         } else if let Some(safe) = md_buf.push(&delta) {
-            print!("{safe}");
-            let _ = std::io::stdout().flush();
+            // The Markdown buffer has already applied the historic terminal
+            // formatting. The CLI adapter preserves its byte-for-byte write.
+            emit_chat_output(
+                output,
+                ChatOutput::ProviderDelta {
+                    sequence: next_sequence,
+                    text: safe,
+                    stream_control_token: None,
+                },
+            )?;
         }
     }
     if let Some(journal) = journal.as_mut() {
@@ -1200,7 +1353,10 @@ fn pre_config_chat_action(
 /// Execute the only review-only slash action before chat setup.  Both public
 /// chat entry points call this exact dispatcher; it is the sole place that
 /// owns usage output and invokes the document-review handler.
-async fn dispatch_pre_runtime_local_action(args: &mut ChatArgs) -> Result<bool> {
+async fn dispatch_pre_runtime_local_action(
+    args: &mut ChatArgs,
+    output: &mut dyn ChatTurnEventSink,
+) -> Result<bool> {
     // Resolve non-argv sources before home/config/consent/provider/WAL work so
     // argv, stdin, and editor prompts have one identical local-action seam.
     let pre_resolved_prompt = if args.message.is_none() || args.edit {
@@ -1221,7 +1377,12 @@ async fn dispatch_pre_runtime_local_action(args: &mut ChatArgs) -> Result<bool> 
         return Ok(false);
     };
     if source.is_empty() {
-        println!("Usage: /skill-from-doc <path>");
+        emit_chat_output(
+            output,
+            ChatOutput::HumanStdout {
+                text: "Usage: /skill-from-doc <path>".to_owned(),
+            },
+        )?;
         return Ok(true);
     }
     crate::cli::skills::run_document_review(
@@ -1773,7 +1934,7 @@ fn restrict_mcp_servers_to_checkpoint(
 /// `AgentOmitFlags`). MCP retains its typed trusted/data split rather than
 /// degrading back to a raw string. Also carries `skill_delegate_to` for Part B
 /// skill-to-agent auto-synthesis.
-struct AgentRawLayers {
+pub(super) struct AgentRawLayers {
     operator_context: Option<String>,
     preset_addendum: Option<String>,
     explicit_system: Option<String>,
@@ -1894,25 +2055,26 @@ fn build_agent_system_from_layers(
 
 /// Turn-scoped resources shared by prompt assembly. Grouping them keeps the
 /// builder boundary explicit without changing ownership of chat inputs.
-struct PromptBuildContext<'a> {
-    args: &'a ChatArgs,
-    prompt_bundle_hash: &'a str,
-    writer: &'a crate::wal::writer::WalWriterHandle,
-    current_path: &'a std::path::Path,
-    attachment_contexts: Option<&'a crate::pipeline::AttachmentContextBatch>,
-    session_recall: Option<(
+pub(super) struct PromptBuildContext<'a> {
+    pub(super) args: &'a ChatArgs,
+    pub(super) prompt_bundle_hash: &'a str,
+    pub(super) writer: &'a crate::wal::writer::WalWriterHandle,
+    pub(super) current_path: &'a std::path::Path,
+    pub(super) attachment_contexts: Option<&'a crate::pipeline::AttachmentContextBatch>,
+    pub(super) output: &'a mut dyn ChatTurnEventSink,
+    pub(super) session_recall: Option<(
         crate::memory::session_start_recall::SessionStartRecallPreload,
         &'a str,
     )>,
 }
 
 /// Optional prompt-routing decisions resolved before prompt assembly starts.
-struct PromptBuildOptions {
-    slash_skill_name: Option<String>,
-    persona_override_from_tweaks: Option<String>,
+pub(super) struct PromptBuildOptions {
+    pub(super) slash_skill_name: Option<String>,
+    pub(super) persona_override_from_tweaks: Option<String>,
 }
 
-async fn build_prompt_bundle(
+pub(super) async fn build_prompt_bundle(
     config: FreedomConfig,
     prompt: String,
     home: std::path::PathBuf,
@@ -1925,6 +2087,7 @@ async fn build_prompt_bundle(
         writer,
         current_path,
         attachment_contexts,
+        output,
         session_recall,
     } = context;
     let PromptBuildOptions {
@@ -2433,7 +2596,12 @@ async fn build_prompt_bundle(
                 persona_override.as_deref(),
             );
             if let Some(aug) = augmented {
-                eprintln!("[neoth:mds-tone] intensity={intensity:?} modifier={aug:?}");
+                emit_chat_output(
+                    output,
+                    ChatOutput::HumanStderr {
+                        text: format!("[neoth:mds-tone] intensity={intensity:?} modifier={aug:?}"),
+                    },
+                )?;
                 Some(aug)
             } else {
                 persona_override
@@ -2493,10 +2661,9 @@ async fn build_prompt_bundle(
                 architecture_snapshot = ?context.snapshot,
                 "discarding architecture recall from a different code-map generation"
             );
-            eprintln!(
-                "[neoth:code-map] architecture context changed while recall was assembled; \
-                 rebuild/retry before injecting mixed generations"
-            );
+            emit_chat_output(output, ChatOutput::HumanStderr {
+                text: "[neoth:code-map] architecture context changed while recall was assembled; rebuild/retry before injecting mixed generations".to_owned(),
+            })?;
         } else {
             let findings = &context.findings;
             info!(
@@ -2506,11 +2673,15 @@ async fn build_prompt_bundle(
                 truncated = findings.truncated,
                 "GRAPH-02: automatic architecture cycle findings injected"
             );
-            eprintln!(
-                "[neoth:code-map] architecture workflow: {} call cycle(s) injected \
-             ({} edges across {} root(s))",
-                findings.cycles_injected, findings.edges_scanned, findings.roots_scanned
-            );
+            emit_chat_output(
+                output,
+                ChatOutput::HumanStderr {
+                    text: format!(
+                        "[neoth:code-map] architecture workflow: {} call cycle(s) injected ({} edges across {} root(s))",
+                        findings.cycles_injected, findings.edges_scanned, findings.roots_scanned,
+                    ),
+                },
+            )?;
             repo_context_block = append_architecture_findings(repo_context_block, &context);
             architecture_recall = Some(context);
         }
@@ -2712,17 +2883,16 @@ async fn build_prompt_bundle(
 /// GOLD-ARCH-02 phase 2 — pre-flight gates for one chat turn: provider-quota
 /// 429 backoff, sub-agent +
 /// slash-command dispatch, and the PrePipeline/PreProviderCall TOML hooks.
-/// Owns the WAL writer + its join handle so every abort path can drain them
-/// exactly as before; on success it threads them back to the caller. A typed
-/// slash action that handles the turn returns `Done` (the caller returns Ok).
+/// Borrows a turn-owned WAL handle. The direct CLI adapter remains the only
+/// owner of the writer task and drains it after this turn returns on every
+/// success, refusal, local action, and error path.
 #[allow(clippy::large_enum_variant)]
-enum PreflightOutcome {
+pub(super) enum PreflightOutcome {
     /// A slash action handled the turn — the caller returns `Ok(())`.
     Done,
     /// Proceed to the provider call with these resolved values.
     Continue {
         writer: crate::wal::writer::WalWriterHandle,
-        writer_join: tokio::task::JoinHandle<()>,
         review_context: Option<(String, String)>,
         final_prompt: String,
         final_system: Option<String>,
@@ -2761,33 +2931,21 @@ enum PreflightOutcome {
     },
 }
 
-async fn drain_preflight_action_writer(
-    writer: crate::wal::writer::WalWriterHandle,
-    writer_join: tokio::task::JoinHandle<()>,
-) -> Result<()> {
+async fn drain_preflight_action_writer(writer: crate::wal::writer::WalWriterHandle) -> Result<()> {
     drop(writer);
-    writer_join
-        .await
-        .context("WAL writer task failed after a local preflight action")
+    Ok(())
 }
 
-async fn preserve_code_map_audit_and_writer_failure(
+pub(super) async fn preserve_code_map_audit_and_writer_failure(
     audit_error: anyhow::Error,
-    writer_join: tokio::task::JoinHandle<()>,
 ) -> anyhow::Error {
-    match writer_join.await {
-        Ok(()) => audit_error,
-        Err(join_error) => audit_error.context(format!(
-            "WAL writer join also failed while draining the refused code-map audit: {join_error}"
-        )),
-    }
+    audit_error
 }
 
 async fn finish_preflight_action(
     writer: crate::wal::writer::WalWriterHandle,
-    writer_join: tokio::task::JoinHandle<()>,
 ) -> Result<PreflightOutcome> {
-    drain_preflight_action_writer(writer, writer_join).await?;
+    drain_preflight_action_writer(writer).await?;
     Ok(PreflightOutcome::Done)
 }
 
@@ -2819,7 +2977,7 @@ pub(super) fn resolve_provider_call_wire_model(
 // GOLD-ADAPT-OH-13 adds `agent_raw_layers` as a 10th. Suppress the lint
 // rather than refactoring into a context struct (separate concern).
 #[allow(clippy::too_many_arguments)]
-async fn enforce_preflight(
+pub(super) async fn enforce_preflight(
     combined_system: Option<String>,
     budget_items: Vec<crate::tokens::budget::BlockItem>,
     mcp_catalogue_slot: McpCatalogueSlot,
@@ -2828,7 +2986,6 @@ async fn enforce_preflight(
     args: &ChatArgs,
     config: &FreedomConfig,
     writer: crate::wal::writer::WalWriterHandle,
-    writer_join: tokio::task::JoinHandle<()>,
     home: &std::path::Path,
     // GOLD-ADAPT-PWF-01: SHA-256 of `task_plan.md` captured at injection
     // time by `build_prompt_bundle`. `None` means no plan was injected.
@@ -2853,6 +3010,7 @@ async fn enforce_preflight(
     once_guard: &crate::hooks::SessionOnceGuard,
     ephemeral_consent: &crate::consent::EphemeralConsent,
     session_canary: &std::sync::Arc<crate::security::injection_tracker::CanaryToken>,
+    output: &mut dyn ChatTurnEventSink,
 ) -> Result<PreflightOutcome> {
     // Resolve sub-agent dispatch once and reuse it for prompt + model routing.
     // The PaidProviderCall decision now happens at each real provider leaf,
@@ -2912,7 +3070,6 @@ async fn enforce_preflight(
             Ok(tracker) => tracker,
             Err(error) => {
                 drop(writer);
-                let _ = writer_join.await;
                 return Err(error).with_context(|| {
                     format!("load provider quota state {}", quota_path.display())
                 });
@@ -2925,7 +3082,6 @@ async fn enforce_preflight(
         {
             let remaining = state.backoff_remaining_secs(now);
             drop(writer);
-            let _ = writer_join.await;
             anyhow::bail!(
                 "{provider_name}: backoff active ({remaining}s remaining). \
                      Wait for the window to clear, switch providers via `neoth init`, \
@@ -3018,7 +3174,7 @@ async fn enforce_preflight(
                     // Refuse any bypass rather than producing a review after a
                     // chat WAL/config/provider-adjacent path has begun.
                     if skill_from_doc_path(&prompt).is_some() {
-                        drain_preflight_action_writer(writer, writer_join).await?;
+                        drain_preflight_action_writer(writer).await?;
                         anyhow::bail!(
                             "/skill-from-doc must be dispatched before chat runtime initialization"
                         );
@@ -3032,12 +3188,6 @@ async fn enforce_preflight(
                     if name == "research" {
                         if agent_raw_layers.attachment_contexts.is_some() {
                             drop(writer);
-                            if let Err(join_error) = writer_join.await {
-                                warn!(
-                                    error = %join_error,
-                                    "WAL writer join failed while refusing /research attachments"
-                                );
-                            }
                             anyhow::bail!(
                                 "/research does not consume attachments; remove --attach or use \
                                  a provider-backed command that accepts attachment context"
@@ -3045,14 +3195,19 @@ async fn enforce_preflight(
                         }
                         let topic = cmd_args.trim();
                         if topic.is_empty() {
-                            println!("Usage: /research <topic>");
-                            return finish_preflight_action(writer, writer_join).await;
+                            emit_chat_output(
+                                output,
+                                ChatOutput::HumanStdout {
+                                    text: "Usage: /research <topic>".to_owned(),
+                                },
+                            )?;
+                            return finish_preflight_action(writer).await;
                         }
                         let search_provider =
                             crate::tools::deep_research::resolve_search_provider();
                         match crate::tools::deep_research::resolve_search_key(search_provider) {
                             Err(e) => {
-                                drain_preflight_action_writer(writer, writer_join).await?;
+                                drain_preflight_action_writer(writer).await?;
                                 return Err(e)
                                     .context("deep-research search credential unavailable");
                             }
@@ -3114,20 +3269,40 @@ async fn enforce_preflight(
                                     Err(error) => {
                                         drop(research_provider);
                                         drop(http);
-                                        drain_preflight_action_writer(writer, writer_join).await?;
+                                        drain_preflight_action_writer(writer).await?;
                                         return Err(error).context("deep-research action failed");
                                     }
                                 };
-                                println!("{}\n", report.article);
+                                emit_chat_output(
+                                    output,
+                                    ChatOutput::HumanStdout {
+                                        text: format!("{}\n", report.article),
+                                    },
+                                )?;
                                 if !report.citations.is_empty() {
-                                    println!("---\nSources:");
+                                    emit_chat_output(
+                                        output,
+                                        ChatOutput::HumanStdout {
+                                            text: "---\nSources:".to_owned(),
+                                        },
+                                    )?;
                                     for (i, c) in report.citations.iter().enumerate() {
-                                        println!("[{}] {} — {}", i + 1, c.title, c.url);
+                                        emit_chat_output(
+                                            output,
+                                            ChatOutput::HumanStdout {
+                                                text: format!(
+                                                    "[{}] {} — {}",
+                                                    i + 1,
+                                                    c.title,
+                                                    c.url
+                                                ),
+                                            },
+                                        )?;
                                     }
                                 }
                             }
                         }
-                        return finish_preflight_action(writer, writer_join).await;
+                        return finish_preflight_action(writer).await;
                     }
 
                     // ── HERMES-02: `/background <prompt>` / `/btw <prompt>` ───
@@ -3136,12 +3311,17 @@ async fn enforce_preflight(
                     // the durable job and survives after this command exits.
                     if name == "background" || name == "btw" {
                         if let Err(error) = ensure_background_session_mode(&name, args.incognito) {
-                            drain_preflight_action_writer(writer, writer_join).await?;
+                            drain_preflight_action_writer(writer).await?;
                             return Err(error);
                         }
                         let prompt_body = cmd_args.trim().to_string();
                         if prompt_body.is_empty() {
-                            println!("Usage: /{name} <prompt>");
+                            emit_chat_output(
+                                output,
+                                ChatOutput::HumanStdout {
+                                    text: format!("Usage: /{name} <prompt>"),
+                                },
+                            )?;
                         } else {
                             let selected_config_path = args
                                 .config
@@ -3206,16 +3386,20 @@ async fn enforce_preflight(
                             }
                             .await;
                             if let Err(error) = queue_result {
-                                drain_preflight_action_writer(writer, writer_join).await?;
+                                drain_preflight_action_writer(writer).await?;
                                 return Err(error)
                                     .with_context(|| format!("/{name}: queue failed"));
                             }
-                            println!(
-                                "[neoth] /{name}: background session queued — \
-                                 result at next idle"
-                            );
+                            emit_chat_output(
+                                output,
+                                ChatOutput::HumanStdout {
+                                    text: format!(
+                                        "[neoth] /{name}: background session queued — result at next idle"
+                                    ),
+                                },
+                            )?;
                         }
-                        return finish_preflight_action(writer, writer_join).await;
+                        return finish_preflight_action(writer).await;
                     }
 
                     let slash_dir = home.join("commands");
@@ -3223,12 +3407,6 @@ async fn enforce_preflight(
                         Ok(commands) => commands,
                         Err(error) => {
                             drop(writer);
-                            if let Err(join_error) = writer_join.await {
-                                warn!(
-                                    error = %join_error,
-                                    "WAL writer join failed while refusing an invalid slash-command set"
-                                );
-                            }
                             return Err(error).with_context(|| {
                             format!(
                                 "operator slash commands at {} are invalid; refusing partial dispatch",
@@ -3246,12 +3424,6 @@ async fn enforce_preflight(
                         if let Some(action) = cmd.action {
                             if agent_raw_layers.attachment_contexts.is_some() {
                                 drop(writer);
-                                if let Err(join_error) = writer_join.await {
-                                    warn!(
-                                        error = %join_error,
-                                        "WAL writer join failed while refusing local-action attachments"
-                                    );
-                                }
                                 anyhow::bail!(
                                     "/{name} is a local action and does not consume attachments; \
                                      remove --attach or use a provider-backed command"
@@ -3275,19 +3447,34 @@ async fn enforce_preflight(
                             if outcome.is_failure() {
                                 let failure = outcome.text().to_string();
                                 if args.stream {
-                                    eprintln!("{failure}");
+                                    emit_chat_output(
+                                        output,
+                                        ChatOutput::HumanStderr {
+                                            text: failure.clone(),
+                                        },
+                                    )?;
                                 } else {
-                                    println!("{failure}");
+                                    emit_chat_output(
+                                        output,
+                                        ChatOutput::HumanStdout {
+                                            text: failure.clone(),
+                                        },
+                                    )?;
                                 }
-                                drain_preflight_action_writer(writer, writer_join).await?;
+                                drain_preflight_action_writer(writer).await?;
                                 anyhow::bail!("local slash action `/{name}` failed: {failure}");
                             }
-                            println!("{}", outcome.text());
+                            emit_chat_output(
+                                output,
+                                ChatOutput::HumanStdout {
+                                    text: outcome.text().to_owned(),
+                                },
+                            )?;
                             if outcome.should_exit() {
-                                return finish_preflight_action(writer, writer_join).await;
+                                return finish_preflight_action(writer).await;
                             }
                             // Action handled — no LLM call needed for this turn.
-                            return finish_preflight_action(writer, writer_join).await;
+                            return finish_preflight_action(writer).await;
                         }
                         let rendered = cmd.render(&cmd_args, config.operator_id.as_deref());
                         info!(slash_command = %name, "slash dispatch");
@@ -3377,7 +3564,6 @@ async fn enforce_preflight(
             }
         }
         drop(writer);
-        let _ = writer_join.await;
         anyhow::bail!(
             "[PLAN TAMPERED] task_plan.md was modified after plan injection — aborting turn"
         );
@@ -3422,12 +3608,6 @@ async fn enforce_preflight(
                     ),
                 }
                 drop(writer);
-                if let Err(join_error) = writer_join.await {
-                    warn!(
-                        error = %join_error,
-                        "WAL writer join failed while refusing an invalid hook set"
-                    );
-                }
                 return Err(error).with_context(|| {
                     format!(
                         "operator hooks at {} are invalid; provider dispatch refused",
@@ -3451,7 +3631,6 @@ async fn enforce_preflight(
         HookOutcome::Continue(body, _blocks) => body,
         HookOutcome::Blocked { name, reason } => {
             drop(writer);
-            let _ = writer_join.await;
             anyhow::bail!("hook `{name}` blocked the turn at pre_pipeline: {reason}");
         }
     };
@@ -3499,7 +3678,6 @@ async fn enforce_preflight(
         HookOutcome::Continue(body, blocks) => (body, blocks),
         HookOutcome::Blocked { name, reason } => {
             drop(writer);
-            let _ = writer_join.await;
             anyhow::bail!("hook `{name}` blocked the turn at pre_provider_call: {reason}");
         }
     };
@@ -3524,7 +3702,6 @@ async fn enforce_preflight(
 
     Ok(PreflightOutcome::Continue {
         writer,
-        writer_join,
         review_context,
         final_prompt,
         final_system,
@@ -3547,60 +3724,59 @@ async fn enforce_preflight(
 /// already budgeted final Request bytes, emit the AP-2 local-inference
 /// trace pair, dispatch via the stream / council / MCP-tool-loop / direct-complete
 /// branch, release the cluster in-flight gauge, and bump the provider quota on
-/// success. Owns the WAL writer + join handle so every error path drains them
-/// byte-for-byte; returns the reply + token/model + the (prompt, system)
+/// success. Borrows a clone of the adapter-owned WAL writer; returns the
+/// reply + token/model + the (prompt, system)
 /// pair the post-reply refusal-recovery path reissues.
-struct DispatchOutput {
+pub(super) struct DispatchOutput {
     /// Route output may enter turn orchestration only after passing the shared
     /// stream-framing seam.
-    framed: FramedProviderDispatch,
-    writer: crate::wal::writer::WalWriterHandle,
-    writer_join: tokio::task::JoinHandle<()>,
+    pub(super) framed: FramedProviderDispatch,
+    pub(super) writer: crate::wal::writer::WalWriterHandle,
     /// Exact provider request used for this turn, including sampling and
     /// thinking controls. Recovery may rewrite prompt/system only.
-    recovery_request: Request,
+    pub(super) recovery_request: Request,
     /// F4/D21 — the in-flight turn journal, opened in `dispatch_provider`, closed
     /// (+ 0x06 anchor) by `run_post_reply_pipelines` after the response is
     /// recorded. `None` when the journal failed to open (non-fatal).
-    turn_journal: Option<crate::recovery::turn_journal::TurnJournal>,
+    pub(super) turn_journal: Option<crate::recovery::turn_journal::TurnJournal>,
     /// GOLD-ADAPT-ODY-20 — number of successful MCP tool-calls in this turn.
     /// Populated from `LoopOutcome.successful_calls` in the MCP-dispatch branch;
     /// `0` in the single-provider (no-loop) branch. Used by
     /// `run_post_reply_pipelines` to gate auto-skill extraction.
-    mcp_tool_calls: u32,
+    pub(super) mcp_tool_calls: u32,
     /// REVFIX-EXCERPTS-01 — structured per-call records from the dispatch loop.
     /// Fed to `maybe_extract_skill` so the distiller sees tool names + args +
     /// outcomes instead of a blind 512-char response prefix.
     /// Empty on the stream / single-provider (no-loop) branches.
-    mcp_tool_records: Vec<crate::mcp::dispatch_loop::ToolCallRecord>,
+    pub(super) mcp_tool_records: Vec<crate::mcp::dispatch_loop::ToolCallRecord>,
 }
 
-struct ProviderDispatchResult {
+pub(super) struct ProviderDispatchResult {
     /// Preserve the provider's complete response envelope across dispatch,
     /// framing and refusal recovery. Flattening this value used to discard
     /// latency, cache accounting and decorator-route identity.
-    completion: crate::providers::Completion,
+    pub(super) completion: crate::providers::Completion,
     /// Number of reply chunks visible to a stream consumer. True provider
     /// streaming overwrites this with the measured delta count; composed and
     /// direct routes expose their complete reply as one logical chunk.
-    stream_chunk_count: u32,
+    pub(super) stream_chunk_count: u32,
     /// True only when the exact user-visible reply has already crossed stdout.
     /// Post-provider hooks force this false so Block/Replace runs before any
     /// provider bytes can reach the operator.
     stream_output_emitted: bool,
 }
 
-struct FramedProviderDispatch {
-    dispatch: ProviderDispatchResult,
+pub(super) struct FramedProviderDispatch {
+    pub(super) dispatch: ProviderDispatchResult,
     /// Serialized authenticated completion marker for a streaming turn.
     /// Emission is deliberately deferred until every post-reply pipeline has
     /// succeeded so this remains the final non-empty stdout line.
-    stream_done_line: Option<String>,
+    pub(super) stream_done_line: Option<String>,
     /// A configured PostProviderCall hook owns the content gate. In that case
     /// the accepted/replaced body plus both completion frames are emitted only
     /// after the hook returns Continue.
-    stream_output_deferred: bool,
-    stream_limit_tokens: u32,
+    pub(super) stream_output_deferred: bool,
+    pub(super) stream_limit_tokens: u32,
 }
 
 impl ProviderDispatchResult {
@@ -3854,7 +4030,7 @@ fn write_stream_control_line(
     output.flush()
 }
 
-fn skill_route_frame_line(
+pub(super) fn skill_route_frame_line(
     control_token: &str,
     report: &crate::skills::resolver::SkillRouteReport,
 ) -> std::io::Result<String> {
@@ -3875,15 +4051,6 @@ fn skill_route_frame_line(
         report,
     })
     .map_err(std::io::Error::other)
-}
-
-fn write_skill_route_frame(
-    mut output: impl std::io::Write,
-    control_token: &str,
-    report: &crate::skills::resolver::SkillRouteReport,
-) -> std::io::Result<()> {
-    let frame = skill_route_frame_line(control_token, report)?;
-    write_stream_control_line(&mut output, Some(control_token), &frame)
 }
 
 fn write_authenticated_stream_notice(
@@ -3921,7 +4088,7 @@ fn write_authenticated_stream_notice(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ContextPreloadNotice {
+pub(crate) enum ContextPreloadNotice {
     Loading,
     Ready,
     NoData,
@@ -3968,24 +4135,38 @@ fn write_authenticated_context_preload_notice(
     )
 }
 
-fn write_context_preload_notice(
+pub(super) fn emit_context_preload_notice(
+    output: &mut dyn ChatTurnEventSink,
     stream: bool,
     control_token: Option<&str>,
     session_binding: &str,
     state: ContextPreloadNotice,
-) -> std::io::Result<()> {
-    match control_token {
-        Some(token) => write_authenticated_context_preload_notice(
-            std::io::stdout().lock(),
-            token,
-            session_binding,
-            state,
-        ),
-        None => write_chat_notice(stream, format_args!("[neoth:context] {}", state.text())),
+) -> Result<()> {
+    if let Some(token) = control_token {
+        let mut frames = Vec::new();
+        write_authenticated_context_preload_notice(&mut frames, token, session_binding, state)?;
+        emit_chat_output(
+            output,
+            ChatOutput::StreamFrames {
+                frames: String::from_utf8(frames)
+                    .expect("context-preload protocol formatter emits UTF-8 frames"),
+            },
+        )
+    } else {
+        emit_chat_output(
+            output,
+            ChatOutput::Notice {
+                stream,
+                text: format!("[neoth:context] {}", state.text()),
+            },
+        )
     }
 }
 
-fn context_preload_session_binding(operator_id: Option<&str>, session_id: &str) -> String {
+pub(super) fn context_preload_session_binding(
+    operator_id: Option<&str>,
+    session_id: &str,
+) -> String {
     use sha2::{Digest, Sha256};
 
     let mut hash = Sha256::new();
@@ -4000,24 +4181,24 @@ fn context_preload_session_binding(operator_id: Option<&str>, session_id: &str) 
 }
 
 struct StreamDoneMetadata<'a> {
-    control_token: Option<&'a str>,
+    pub(super) control_token: Option<&'a str>,
     incognito: bool,
     chunk_count: u32,
     input_tokens: Option<u32>,
     output_tokens: Option<u32>,
-    limit_tokens: u32,
+    pub(super) limit_tokens: u32,
     elapsed_ms: u64,
     model: &'a str,
     response_text: &'a str,
     termination: &'a crate::providers::ProviderTermination,
 }
 
-struct PostReplyStreamPlan<'a> {
-    control_token: Option<&'a str>,
-    done_line: Option<String>,
-    output_deferred: bool,
-    provider_chunk_count: u32,
-    limit_tokens: u32,
+pub(super) struct PostReplyStreamPlan<'a> {
+    pub(super) control_token: Option<&'a str>,
+    pub(super) done_line: Option<String>,
+    pub(super) output_deferred: bool,
+    pub(super) provider_chunk_count: u32,
+    pub(super) limit_tokens: u32,
 }
 
 /// The two artifacts the deferred post-provider stream path is allowed to
@@ -4257,15 +4438,6 @@ fn finalize_dispatch_stream_to(
 /// provider path uses. The provider boundary remains token-authenticated for
 /// GUI callers; ordinary `--stream` CLI callers retain the documented terminal
 /// `done` sentinel with a null control token.
-fn write_local_stream_completion(
-    control_token: Option<&str>,
-    chunk_count: u32,
-) -> std::io::Result<()> {
-    let stdout = std::io::stdout();
-    let stdout_lock = stdout.lock();
-    write_local_stream_completion_to(stdout_lock, control_token, chunk_count)
-}
-
 fn write_local_stream_completion_to(
     mut output: impl std::io::Write,
     control_token: Option<&str>,
@@ -4394,7 +4566,7 @@ pub(crate) async fn emit_terminal_goal_outcome(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn resolve_chat_turn_route(
+pub(super) async fn resolve_chat_turn_route(
     args: &ChatArgs,
     config: &FreedomConfig,
     base_req: &Request,
@@ -4587,7 +4759,7 @@ async fn resolve_chat_turn_route(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn dispatch_provider(
+pub(super) async fn dispatch_provider(
     final_prompt: String,
     final_system: Option<String>,
     args: &ChatArgs,
@@ -4595,7 +4767,6 @@ async fn dispatch_provider(
     config: &FreedomConfig,
     home: &std::path::Path,
     writer: crate::wal::writer::WalWriterHandle,
-    writer_join: tokio::task::JoinHandle<()>,
     quota_path: std::path::PathBuf,
     quota_tracker: Option<crate::providers::quota::QuotaTracker>,
     request_token_cap: u32,
@@ -4620,6 +4791,8 @@ async fn dispatch_provider(
     stream_control_token: Option<&str>,
     defer_provider_output: bool,
     session_canary: &std::sync::Arc<crate::security::injection_tracker::CanaryToken>,
+    cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    output: &mut dyn ChatTurnEventSink,
 ) -> Result<DispatchOutput> {
     // Consent is revalidated by ProviderCallAuthorizer immediately before
     // every concrete provider leaf. That gate checks the current durable
@@ -4880,7 +5053,6 @@ async fn dispatch_provider(
             let mut saw_done_chunk = false;
 
             use futures_util::stream::StreamExt;
-            use std::io::Write as _;
             // GOLD-ADOPT-24 — safe-flush markdown buffer runs only after the
             // canary pre-egress quarantine.  `acc` retains raw provider bytes
             // in RAM for the final detector; stdout and per-chunk journals see
@@ -4946,6 +5118,7 @@ async fn dispatch_provider(
                                 defer_provider_output,
                                 stream_control_token,
                                 &mut md_buf,
+                                output,
                             )
                             .await
                             {
@@ -4979,6 +5152,7 @@ async fn dispatch_provider(
                                 defer_provider_output,
                                 stream_control_token,
                                 &mut md_buf,
+                                output,
                             )
                             .await
                             {
@@ -4992,8 +5166,11 @@ async fn dispatch_provider(
                             if !defer_provider_output && stream_control_token.is_none() {
                                 let rest = md_buf.flush();
                                 if !rest.is_empty() {
-                                    print!("{rest}");
-                                    let _ = std::io::stdout().flush();
+                                    emit_chat_output(output, ChatOutput::ProviderDelta {
+                                        sequence: chunk_count.saturating_add(1),
+                                        text: rest,
+                                        stream_control_token: None,
+                                    })?;
                                 }
                             }
                             input_tokens = chunk.input_tokens;
@@ -5115,6 +5292,7 @@ async fn dispatch_provider(
                     &tool_scope,
                     args.incognito,
                     Some(std::sync::Arc::clone(session_canary)),
+                    output,
                 )
                 .await
                 {
@@ -5219,6 +5397,7 @@ async fn dispatch_provider(
                 // a bare single dispatch. The loop engine internally calls
                 // `run_mcp_dispatch_loop` per round and handles WAL + record write.
                 let loop_engage = loop_trigger.is_active();
+                cancellation.check_open("MCP tool dispatch")?;
                 let outcome = if loop_engage {
                     let max_rounds = args
                         .iterations
@@ -5499,7 +5678,6 @@ async fn dispatch_provider(
             drop(authorized_provider);
             drop(call_authorizer);
             drop(writer);
-            let _ = writer_join.await;
             return Err(opaque_chat_post_mint_failure("dispatch_outer", &error));
         }
     };
@@ -5516,7 +5694,6 @@ async fn dispatch_provider(
         drop(authorized_provider);
         drop(call_authorizer);
         drop(writer);
-        let _ = writer_join.await;
         return Err(opaque_chat_post_mint_failure(
             "initial_output_guard",
             &error,
@@ -5529,19 +5706,17 @@ async fn dispatch_provider(
     // The actual streaming route already emitted its deltas above.
     if args.stream && !defer_provider_output && !dispatch_result.stream_output_emitted {
         let chunk_count = u32::from(!dispatch_result.completion.text.is_empty());
-        let stdout = std::io::stdout();
-        if let Err(error) = write_provider_stream_delta(
-            stdout.lock(),
-            stream_control_token,
-            chunk_count,
-            &dispatch_result.completion.text,
-        )
-        .context("write authenticated composed provider reply")
-        {
+        if let Err(error) = emit_chat_output(
+            output,
+            ChatOutput::ProviderDelta {
+                sequence: chunk_count,
+                text: dispatch_result.completion.text.clone(),
+                stream_control_token: stream_control_token.map(str::to_owned),
+            },
+        ) {
             drop(authorized_provider);
             drop(call_authorizer);
             drop(writer);
-            let _ = writer_join.await;
             return Err(opaque_chat_post_mint_failure("stream_egress", &error));
         }
         dispatch_result.stream_chunk_count = chunk_count;
@@ -5557,10 +5732,11 @@ async fn dispatch_provider(
         &dispatch_result.completion.identity.wire_model,
         config.tokens.max_per_request,
     );
-    let stdout = std::io::stdout();
-    let stdout_lock = stdout.lock();
+    // Preserve the formatter's exact RS/sentinel bytes, but hand them to the
+    // CLI sink as a typed stream-frame record instead of writing here.
+    let mut stream_frames = Vec::new();
     let framed = match finalize_dispatch_stream_to(
-        stdout_lock,
+        &mut stream_frames,
         args.stream,
         stream_control_token,
         args.incognito,
@@ -5568,14 +5744,13 @@ async fn dispatch_provider(
         defer_provider_output,
         dispatch_result,
     )
-    .context("write authenticated provider completion marker")
+    .context("build authenticated provider completion marker")
     {
         Ok(framed) => framed,
         Err(error) => {
             drop(authorized_provider);
             drop(call_authorizer);
             drop(writer);
-            let _ = writer_join.await;
             return Err(opaque_chat_post_mint_failure("stream_finalize", &error));
         }
     };
@@ -5629,7 +5804,6 @@ async fn dispatch_provider(
             drop(authorized_provider);
             drop(call_authorizer);
             drop(writer);
-            let _ = writer_join.await;
             return Err(opaque_chat_post_mint_failure("quota_accounting", &error));
         }
         if let Err(e) = crate::providers::quota::QuotaTracker::update_at(&quota_path, |tracker| {
@@ -5648,10 +5822,14 @@ async fn dispatch_provider(
     // that phase closes it (+ emits the 0x06 anchor) after recording the
     // response. A crash anywhere before that leaves the sidecar on disk for
     // `neoth recover`.
+    if !stream_frames.is_empty() {
+        let frames = String::from_utf8(stream_frames)
+            .expect("stream protocol formatter emits UTF-8 control frames");
+        emit_chat_output(output, ChatOutput::StreamFrames { frames })?;
+    }
     Ok(DispatchOutput {
         framed,
         writer,
-        writer_join,
         recovery_request,
         turn_journal: journal,
         // GOLD-ADAPT-ODY-20 — 0 on stream/single-provider paths; populated from
@@ -5672,10 +5850,9 @@ async fn dispatch_provider(
 /// drains them at the end; returns `Ok(())` (the chat turn result) or bails
 /// if the PostProviderCall hook blocks the reply.
 #[allow(clippy::too_many_arguments)]
-async fn run_post_reply_pipelines(
+pub(super) async fn run_post_reply_pipelines(
     mut completion: crate::providers::Completion,
     writer: crate::wal::writer::WalWriterHandle,
-    writer_join: tokio::task::JoinHandle<()>,
     config: FreedomConfig,
     provider: &dyn crate::providers::Provider,
     args: ChatArgs,
@@ -5718,8 +5895,10 @@ async fn run_post_reply_pipelines(
     pending_block_restorations: Vec<crate::hooks::block_filter::FilteredBlock>,
     ephemeral_consent: &crate::consent::EphemeralConsent,
     canary_token: std::sync::Arc<crate::security::injection_tracker::CanaryToken>,
+    cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
     mut stream_plan: PostReplyStreamPlan<'_>,
-) -> Result<()> {
+    output: &mut dyn ChatTurnEventSink,
+) -> Result<Option<String>> {
     let first_tour_home = instance_paths.home.clone();
     // Defensive second boundary: callers other than `enforce_preflight` must
     // not be able to make a private turn run retained PostProviderCall hooks.
@@ -5832,7 +6011,6 @@ async fn run_post_reply_pipelines(
             drop(authorized_post_provider);
             drop(call_authorizer);
             drop(writer);
-            let _ = writer_join.await;
             anyhow::bail!("hook `{name}` blocked the reply at post_provider_call: {reason}");
         }
     };
@@ -6040,6 +6218,7 @@ async fn run_post_reply_pipelines(
             ),
             ..recovery_request.clone()
         };
+        cancellation.check_open("refusal recovery")?;
         match crate::security::refusal_recovery::try_recover_completion_multi(
             provider,
             &recovery_req,
@@ -6165,6 +6344,7 @@ async fn run_post_reply_pipelines(
             crate::security::refusal_recovery::observe_completion_refusal(&refusal_completion)
         && crate::security::refusal_abliterated::should_route_to_abliterated(&t3_observation.cause)
     {
+        cancellation.check_open("abliterated fallback")?;
         match crate::security::refusal_abliterated::try_abliterated_fallback(
             provider,
             &call_authorizer,
@@ -6272,6 +6452,7 @@ async fn run_post_reply_pipelines(
         && crate::providers::is_local_provider(&provider_used)
         && config.refusal_recovery.teacher_escalation_enabled
     {
+        cancellation.check_open("teacher recovery")?;
         match crate::skills::teacher::try_teacher_escalation(
             &refusal_completion,
             operator_origin,
@@ -6400,9 +6581,9 @@ async fn run_post_reply_pipelines(
         // body as one logical delta, then publish a boundary bound to exactly
         // those bytes. A later durability/review failure leaves provider_done
         // without done and is surfaced as a typed finalization_error event.
-        let stdout = std::io::stdout();
+        let mut stream_frames = Vec::new();
         let emitted = emit_deferred_post_provider_stream_with_incognito_to(
-            stdout.lock(),
+            &mut stream_frames,
             stream_plan.control_token,
             args.incognito,
             stream_plan.limit_tokens,
@@ -6410,10 +6591,22 @@ async fn run_post_reply_pipelines(
             &response_text,
         )
         .context("write post-provider-gated reply and completion boundary")?;
+        emit_chat_output(
+            output,
+            ChatOutput::StreamFrames {
+                frames: String::from_utf8(stream_frames)
+                    .expect("stream protocol formatter emits UTF-8 control frames"),
+            },
+        )?;
         stream_plan.provider_chunk_count = emitted.chunk_count;
         stream_plan.done_line = Some(emitted.done_line);
     } else if !args.stream {
-        println!("{response_text}");
+        emit_chat_output(
+            output,
+            ChatOutput::HumanStdout {
+                text: response_text.clone(),
+            },
+        )?;
     }
 
     // ── ADR extraction (Phase 31 R-21 ADR-1) ─────────────────────────────
@@ -6706,7 +6899,12 @@ async fn run_post_reply_pipelines(
             Ok(verdicts) => {
                 let typed_gui_stream = args.stream && stream_plan.control_token.is_some();
                 if !typed_gui_stream {
-                    println!("\n── review gate ──");
+                    emit_chat_output(
+                        output,
+                        ChatOutput::HumanStdout {
+                            text: "\n── review gate ──".to_owned(),
+                        },
+                    )?;
                 }
                 for (index, v) in verdicts.iter().enumerate() {
                     let mark = if v.passed { "PASS" } else { "FAIL" };
@@ -6722,18 +6920,23 @@ async fn run_post_reply_pipelines(
                         let notice_key = format!("{raw_event_id}:{}:{index}", v.stage.as_str());
                         let notice_id =
                             format!("{:016x}", xxhash_rust::xxh3::xxh3_64(notice_key.as_bytes()));
-                        let stdout = std::io::stdout();
-                        write_authenticated_stream_notice(
-                            stdout.lock(),
-                            control_token,
-                            "review_result",
-                            &notice_id,
-                            &text,
-                            false,
-                        )
-                        .context("write authenticated review-result stream event")?;
+                        emit_chat_output(
+                            output,
+                            ChatOutput::StreamNotice {
+                                control_token: control_token.to_owned(),
+                                kind: "review_result".to_owned(),
+                                id: notice_id,
+                                text,
+                                durable: false,
+                            },
+                        )?;
                     } else {
-                        println!("  {}: {}", v.stage.as_str(), mark);
+                        emit_chat_output(
+                            output,
+                            ChatOutput::HumanStdout {
+                                text: format!("  {}: {}", v.stage.as_str(), mark),
+                            },
+                        )?;
                     }
                     // One WAL frame per stage. Body is hashed, not stored,
                     // to keep the WAL small per the event-type doc.
@@ -6760,7 +6963,12 @@ async fn run_post_reply_pipelines(
                         if v.feedback.is_empty() {
                             continue;
                         }
-                        println!("\n[{}]\n{}", v.stage.as_str(), v.feedback);
+                        emit_chat_output(
+                            output,
+                            ChatOutput::HumanStdout {
+                                text: format!("\n[{}]\n{}", v.stage.as_str(), v.feedback),
+                            },
+                        )?;
                     }
                 }
             }
@@ -6850,19 +7058,21 @@ async fn run_post_reply_pipelines(
             .unwrap_or(prompt_token_estimate)
             .saturating_add(final_output_tokens.unwrap_or(0));
         if let Some(bar) = crate::cli::chat_display::render_context_bar(used, resolved_cap) {
-            eprintln!("{bar}");
+            emit_chat_output(output, ChatOutput::HumanStderr { text: bar })?;
         }
         // THEME-TWEAKS-GOLD — configured statusline is a real terminal sink.
         // It stays on STDERR so the assistant response on STDOUT remains pipe-safe.
         if tweaks.statusline.is_some() {
-            eprintln!(
-                "{}",
-                tweaks.render_statusline(
-                    config.operator_id.as_deref(),
-                    Some(&model_used),
-                    Some(config.autonomy.as_str()),
-                )
-            );
+            emit_chat_output(
+                output,
+                ChatOutput::HumanStderr {
+                    text: tweaks.render_statusline(
+                        config.operator_id.as_deref(),
+                        Some(&model_used),
+                        Some(config.autonomy.as_str()),
+                    ),
+                },
+            )?;
         }
         // GOLD-ADAPT-LOWKEY-05 — ONTOLOGY adversarial self-challenge: flag any
         // speculative/unsupported claims in the final answer (STDERR, never
@@ -6870,7 +7080,7 @@ async fn run_post_reply_pipelines(
         // well-grounded reply prints nothing extra.
         if let Some(note) = crate::council::self_challenge::challenge_answer(&response_text).note()
         {
-            eprintln!("{note}");
+            emit_chat_output(output, ChatOutput::HumanStderr { text: note })?;
         }
 
         // GOLD-ADAPT-ODY-20 — auto-skill extraction (post-turn, MCP turns only).
@@ -6922,14 +7132,16 @@ async fn run_post_reply_pipelines(
     } else if tweaks.statusline.is_some() {
         // Streaming keeps the done-sentinel on STDOUT; the human statusline
         // remains an independent STDERR surface (GUI consumers discard it).
-        eprintln!(
-            "{}",
-            tweaks.render_statusline(
-                config.operator_id.as_deref(),
-                Some(&model_used),
-                Some(config.autonomy.as_str()),
-            )
-        );
+        emit_chat_output(
+            output,
+            ChatOutput::HumanStderr {
+                text: tweaks.render_statusline(
+                    config.operator_id.as_deref(),
+                    Some(&model_used),
+                    Some(config.autonomy.as_str()),
+                ),
+            },
+        )?;
     }
 
     // GOLD-ADAPT-OH-11: flip chat_onboarding_completed = true on first successful
@@ -6947,15 +7159,7 @@ async fn run_post_reply_pipelines(
     drop(authorized_post_provider);
     drop(call_authorizer);
     drop(writer);
-    writer_join
-        .await
-        .context("WAL writer task failed after post-reply pipelines")?;
-    if let Some(stream_done_line) = stream_plan.done_line {
-        let stdout = std::io::stdout();
-        emit_deferred_stream_done_to(stdout.lock(), stream_plan.control_token, &stream_done_line)
-            .context("write authenticated stream completion marker")?;
-    }
-    Ok(())
+    Ok(stream_plan.done_line)
 }
 
 pub async fn run_chat_with(
@@ -6966,7 +7170,10 @@ pub async fn run_chat_with(
     // Public alternate ingress: use the same terminal local-action dispatcher
     // before this helper can create a WAL writer or call the supplied provider.
     admit_incognito_turn_before_runtime(&mut args).await?;
-    if !args.incognito && dispatch_pre_runtime_local_action(&mut args).await? {
+    let mut pre_runtime_output = CliChatOutput;
+    if !args.incognito
+        && dispatch_pre_runtime_local_action(&mut args, &mut pre_runtime_output).await?
+    {
         return Ok(());
     }
     run_chat_with_consent(
@@ -6975,6 +7182,7 @@ pub async fn run_chat_with(
         provider,
         crate::consent::EphemeralConsent::default(),
         None,
+        crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
     )
     .await
 }
@@ -7015,12 +7223,107 @@ fn chat_auto_code_args(prompt: String, repository_root: PathBuf) -> crate::cli::
 }
 
 async fn run_chat_with_consent(
+    args: ChatArgs,
+    config: FreedomConfig,
+    provider: &dyn crate::providers::Provider,
+    ephemeral_consent: crate::consent::EphemeralConsent,
+    stream_control_token: Option<Zeroizing<String>>,
+    cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+) -> Result<()> {
+    let mut output = CliChatOutput;
+    let wal_segment = args.wal_segment.clone(); // direct CLI custody; never enters prepared engine
+    let chat_turn_pipeline::ChatPreparationOutcome::Ready(mut prepared) = prepare_cli_chat_turn(
+        args,
+        config,
+        provider,
+        ephemeral_consent,
+        stream_control_token,
+        cancellation,
+        &mut output,
+    )
+    .await?
+    else {
+        return Ok(());
+    };
+    let wal_dir = prepared.preparation.first_tour_home.join("wal");
+    let segment_path = wal_segment
+        .unwrap_or_else(|| crate::wal::writer::unique_standalone_segment_path(&wal_dir, "chat"));
+    if let Some(parent) = segment_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create WAL dir {}", parent.display()))?;
+    }
+    let (writer, writer_completion) = crate::wal::writer::spawn_for_home_with_completion(
+        segment_path.clone(),
+        prepared.preparation.first_tour_home.clone(),
+    )
+    .context("spawn home-bound WAL writer")?;
+    let result = chat_turn_pipeline::run_prepared_chat_turn(
+        &mut prepared,
+        provider,
+        &writer,
+        &segment_path,
+        &mut output,
+    )
+    .await;
+    prepared.preparation.cancellation.close();
+    drop(writer);
+    let drained = writer_completion
+        .wait()
+        .await
+        .context("WAL writer failed after chat turn");
+    finish_cli_chat_turn(
+        result,
+        drained,
+        &mut prepared.deferred_failure_output,
+        &mut prepared.deferred_terminal,
+        &mut output,
+    )
+}
+
+/// The direct adapter's one post-WAL terminal boundary. It is intentionally
+/// small so lifecycle tests exercise the same error and sink ordering as the
+/// production CLI path.
+fn finish_cli_chat_turn(
+    result: Result<Option<ChatOutput>>,
+    drained: Result<()>,
+    deferred_failure_output: &mut Option<ChatOutput>,
+    deferred_terminal: &mut Option<chat_turn_pipeline::ChatTurnTerminal>,
+    output: &mut dyn ChatTurnEventSink,
+) -> Result<()> {
+    match result {
+        Ok(deferred) => {
+            drained?;
+            if let Some(deferred) = deferred {
+                emit_chat_output(output, deferred)?;
+            }
+            if let Some(terminal) = deferred_terminal.take() {
+                chat_turn_pipeline::emit_terminal(output, terminal)?;
+            }
+        }
+        Err(error) => {
+            if let Err(join_error) = drained {
+                return Err(error.context(format!(
+                    "WAL writer join also failed after chat-turn failure: {join_error}"
+                )));
+            }
+            if let Some(deferred) = deferred_failure_output.take() {
+                emit_chat_output(output, deferred)?;
+            }
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+async fn prepare_cli_chat_turn(
     mut args: ChatArgs,
     config: FreedomConfig,
     provider: &dyn crate::providers::Provider,
     ephemeral_consent: crate::consent::EphemeralConsent,
     stream_control_token: Option<Zeroizing<String>>,
-) -> Result<()> {
+    cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    output: &mut dyn ChatTurnEventSink,
+) -> Result<chat_turn_pipeline::ChatPreparationOutcome> {
     admit_incognito_turn_before_runtime(&mut args).await?;
     info!(provider = provider.name(), "neoth chat");
     // The runtime owns one marker for its complete interactive session.  Every
@@ -7051,7 +7354,7 @@ async fn run_chat_with_consent(
     if !args.incognito
         && let Some(greeting) = crate::cli::init::consume_first_tour_marker(&first_tour_home)
     {
-        write_chat_notice(args.stream, format_args!("[neoth] {greeting}"))
+        emit_chat_notice(output, args.stream, format_args!("[neoth] {greeting}"))
             .context("write first-tour chat notice")?;
     }
 
@@ -7060,7 +7363,8 @@ async fn run_chat_with_consent(
     // for existing operators (default_true serde default) and after the first
     // successful turn (run_post_reply_pipelines flips it true).
     if !args.incognito && !config.chat_onboarding_completed {
-        write_chat_notice(
+        emit_chat_notice(
+            output,
             args.stream,
             "[neoth] First chat! Run `neoth doctor` to check system status, \
              or `neoth recall --help` to explore your memory.",
@@ -7119,17 +7423,16 @@ async fn run_chat_with_consent(
                 None => false,
             };
             if let Some(control_token) = stream_control_token.as_ref().map(|token| token.as_str()) {
-                let stdout = std::io::stdout();
-                let stdout_lock = stdout.lock();
-                write_authenticated_stream_notice(
-                    stdout_lock,
-                    control_token,
-                    "background_result",
-                    result.job_id(),
-                    result.text(),
-                    durable,
-                )
-                .context("write authenticated background-result stream notice")?;
+                emit_chat_output(
+                    output,
+                    ChatOutput::StreamNotice {
+                        control_token: control_token.to_owned(),
+                        kind: "background_result".to_owned(),
+                        id: result.job_id().to_owned(),
+                        text: result.text().to_owned(),
+                        durable,
+                    },
+                )?;
                 // The GUI first materialises the authenticated notice in its
                 // canonical conversation, then commits this private claim via
                 // `acknowledge_bg_result_delivery`. The producer deliberately
@@ -7137,8 +7440,13 @@ async fn run_chat_with_consent(
                 // materialisation must leave the result recoverable. The stable
                 // job id makes retries idempotent.
             } else {
-                write_chat_notice(args.stream, format_args!("[btw] {}", result.text()))
-                    .context("write completed background result")?;
+                emit_chat_output(
+                    output,
+                    ChatOutput::Notice {
+                        stream: args.stream,
+                        text: format!("[btw] {}", result.text()),
+                    },
+                )?;
                 if durable {
                     result
                         .acknowledge()
@@ -7161,11 +7469,11 @@ async fn run_chat_with_consent(
         let hydration =
             hydrate_resume_context(&first_tour_home, &hash_prefix, args.system.as_deref())
                 .map_err(|why| anyhow::anyhow!("resume-from `{hash_prefix}` failed: {why}"))?;
-        write_chat_notice(args.stream, &hydration.banner)
+        emit_chat_notice(output, args.stream, &hydration.banner)
             .context("write resume hydration notice")?;
         // PWF-02: print catchup line when something happened since the checkpoint.
         if !hydration.catchup.is_empty() {
-            write_chat_notice(
+            emit_chat_notice(output,
                 args.stream,
                 format_args!(
                     "[neoth] catchup: {} provider turns, {} tool calls, {} compactions since checkpoint",
@@ -7244,7 +7552,8 @@ async fn run_chat_with_consent(
     ) {
         let intent = crate::coding::intent::detect_coding_intent(&prompt)
             .expect("should_auto_dispatch returned true so detect must return Some");
-        write_chat_notice(
+        emit_chat_notice(
+            output,
             args.stream,
             crate::coding::intent::format_dispatch_banner(&intent),
         )
@@ -7256,13 +7565,15 @@ async fn run_chat_with_consent(
         let code_args = chat_auto_code_args(prompt.clone(), repository_root);
         let result = crate::cli::code::run_code(code_args).await;
         if result.is_ok() && args.stream {
-            write_local_stream_completion(
-                stream_control_token.as_ref().map(|token| token.as_str()),
-                1,
-            )
-            .context("write coding auto-dispatch stream completion markers")?;
+            emit_chat_output(
+                output,
+                ChatOutput::LocalStreamCompletion {
+                    control_token: stream_control_token.as_ref().map(|token| token.to_string()),
+                    chunk_count: 1,
+                },
+            )?;
         }
-        return result;
+        return result.map(|_| chat_turn_pipeline::ChatPreparationOutcome::Completed);
     } else if !args.incognito
         && !explicit_route_requested
         && !has_attachments
@@ -7305,7 +7616,7 @@ async fn run_chat_with_consent(
                     .collect::<String>(),
             )
         };
-        write_chat_notice(args.stream, offer).context("write coding intent notice")?;
+        emit_chat_notice(output, args.stream, offer).context("write coding intent notice")?;
     }
 
     // OP-02 (Session 25) — next-session seed banner. Read the
@@ -7330,7 +7641,7 @@ async fn run_chat_with_consent(
         crate::memory::hindsight::next_session_seed_banner(&first_tour_home, &current_session_id)
     };
     if !seed_banner.is_empty() {
-        write_chat_notice(args.stream, &seed_banner).context("write session seed notice")?;
+        emit_chat_notice(output, args.stream, &seed_banner).context("write session seed notice")?;
     }
 
     // UX-02 — "memory is working" session-start signal. One line telling
@@ -7340,7 +7651,7 @@ async fn run_chat_with_consent(
     if !args.incognito
         && let Some(line) = session_memory_signal(&first_tour_home)
     {
-        write_chat_notice(args.stream, &line).context("write session memory notice")?;
+        emit_chat_notice(output, args.stream, &line).context("write session memory notice")?;
     }
 
     // UX-05 — Day-30 "unlock moment": once, after 30+ days, nudge the
@@ -7351,7 +7662,7 @@ async fn run_chat_with_consent(
         && let Some(banner) =
             crate::cli::unlock_moment::maybe_unlock_banner(&first_tour_home, &config)
     {
-        write_chat_notice(args.stream, &banner).context("write unlock notice")?;
+        emit_chat_notice(output, args.stream, &banner).context("write unlock notice")?;
     }
 
     // GOLD-ADAPT-SKILL-10 — session-start skill-catalog banner (stdout only,
@@ -7375,739 +7686,53 @@ async fn run_chat_with_consent(
         let catalog_block =
             maybe_skill_catalog_block(loaded.snapshot_owned_for_epoch(accepted_epoch).as_slice());
         if let Some(block) = catalog_block {
-            write_chat_notice(args.stream, &block).context("write skill catalog notice")?;
+            emit_chat_notice(output, args.stream, &block).context("write skill catalog notice")?;
         }
     }
 
-    let wal_dir = first_tour_home.join("wal");
-    let segment_path = args
-        .wal_segment
-        .clone()
-        .unwrap_or_else(|| crate::wal::writer::unique_standalone_segment_path(&wal_dir, "chat"));
-    if let Some(parent) = segment_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create WAL dir {}", parent.display()))?;
-    }
-    let (writer, writer_join) =
-        crate::wal::writer::spawn_for_home(segment_path.clone(), first_tour_home.clone())
-            .context("spawn home-bound WAL writer")?;
-
-    // ── PWF-02: SessionStart MODE_CHECKPOINT (0x9A) ───────────────────────
-    // Emit a session-start checkpoint immediately after the WAL writer
-    // opens so that `neoth chat --resume-from <hash>` can recover this
-    // session's provider / council configuration even if the process
-    // crashes before completing a turn. Best-effort: a WAL append failure
-    // MUST NOT fail the chat turn.
-    //
-    // Provider name at this point: the live Provider hasn't been
-    // constructed yet (it's passed in via the `provider` argument) but
-    // its name() is available from the &dyn Provider reference.
-    if !args.incognito {
-        use crate::recall::reconstruct::ModeCheckpoint;
-        use crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT;
-        // GOLD-ADAPT-G-01: three-way label: single > off > enabled.
-        let council_mode_str = if config.council.mode.is_single() {
-            "single".to_string()
-        } else if config.council.disabled.unwrap_or(false) {
-            "off".to_string()
-        } else {
-            "enabled".to_string()
-        };
-        let mut cp = ModeCheckpoint {
-            checkpoint_hash: String::new(),
-            session_id: current_session_id.clone(),
-            mode: "chat".to_string(),
-            provider_target: provider.name().to_string(),
-            council_mode: council_mode_str,
-            scoped_mcp_servers: scoped_mcp_servers.clone(),
-            mcp_scope_recorded: true,
-            phase: "chat:session-start".to_string(),
-            ts_unix: chat_ts_unix,
-        };
-        cp.stamp_hash();
-        let payload = serde_json::to_vec(&cp).context("serialize session-start checkpoint")?;
-        let hdr = crate::wal::make_header(EVENT_TYPE_MODE_CHECKPOINT, &payload);
-        writer
-            .append(hdr, payload)
-            .await
-            .context("persist session-start checkpoint")?;
-        write_chat_notice(
-            args.stream,
-            format_args!("[neoth] checkpoint: {}", cp.checkpoint_hash),
-        )
-        .context("write session checkpoint notice")?;
-    }
-
-    // Attachment decoding may download a local model and audio/video may enter
-    // STT. Start it only after the turn WAL exists so every side effect uses the
-    // same durable writer as the eventual provider request. Extraction failures
-    // drain the writer before returning.
-    let attachment_contexts =
-        match extract_attachment_contexts(&args.attach, &config, &first_tour_home, writer.clone())
-            .await
-        {
-            Ok(contexts) => contexts,
-            Err(error) => {
-                drop(writer);
-                if let Err(join_error) = writer_join.await {
-                    warn!(
-                        error = %join_error,
-                        "WAL writer join failed after attachment extraction refusal"
-                    );
-                }
-                return Err(error);
-            }
-        };
-
-    // G-03 self-correction signal. Record behavioral evidence only after every
-    // requested attachment passed admission and extraction. A rejected turn
-    // must not mutate the learned operator profile. The audit stores only a
-    // prompt hash (no message-content leak); sustained correction pressure is
-    // consumed by the profile-adapt cron.
-    if !args.incognito {
-        let _ = crate::feedback::record_operator_correction(&first_tour_home, &prompt).await;
-    }
-
-    // ── RAW_TEXT (the actual prompt, for recall) ──────────────────────────
-    // Stored before dispatch so `neoth recall "..."` can find what the
-    // operator typed.  PROVIDER_REQUEST WAL frame follows later, after the
-    // full 6-tier dispatch-model resolution in run_chat_with (post
-    // enforce_preflight).  WAL is mode-0600 / DACL-restricted, so raw
-    // prompts at rest match the existing trust boundary.
-    // ODY-09: incognito turns skip RAW_TEXT entirely — no prompt content in WAL.
-    // An INCOGNITO_TURN (0xF7) audit anchor is written instead.
-    let mut operator_transcript_persisted = false;
-    let raw_event_id = if args.incognito {
-        // ODY-09: no prompt stored; raw_event_id=0 signals "no anchor" to the
-        // profile-learning pipeline (extract_window gates on valid non-zero ids).
-        // This is deliberately metadata-only.  Never add prompt, reply,
-        // session, profile, or provider-body fields to the privacy anchor.
-        let payload = serde_json::to_vec(&serde_json::json!({
-            "ts_unix": now_unix(),
-            "incognito": true,
-        }))
-        .context("serialize incognito audit anchor")?;
-        let hdr = crate::wal::make_header(EVENT_TYPE_INCOGNITO_TURN, &payload);
-        writer
-            .append(hdr, payload)
-            .await
-            .context("persist incognito audit anchor")?;
-        0i64
-    } else if let Some(retention) = config.memory.transcript_mining_retention {
-        let subject = LocalChatCommunicationSubject::mint();
-        let persisted = crate::memory::transcript_mining_runtime::persist_local_operator_turn(
-            &subject,
-            &first_tour_home,
-            &writer,
-            retention,
-            &current_session_id,
-            &prompt,
-            chat_ts_unix,
-        )
-        .await;
-        match persisted {
-            Ok(event_id) => {
-                operator_transcript_persisted = true;
-                event_id
-            }
-            Err(error) => {
-                drop(writer);
-                let _ = writer_join.await;
-                return Err(error.context("persist opted-in operator transcript provenance"));
-            }
-        }
-    } else {
-        let raw_header = crate::wal::make_header(EVENT_TYPE_RAW_TEXT, prompt.as_bytes());
-        // Capture the event_id before the header moves into `append` — the
-        // post-reply profile-learning pipeline (B-Konsens 2026-05-17 below)
-        // uses this as the trigger anchor for `extract_window`.
-        let raw_event_id = raw_header.event_id.0 as i64;
-        writer
-            .append(raw_header, prompt.as_bytes().to_vec())
-            .await
-            .context("write RAW_TEXT WAL frame")?;
-        raw_event_id
-    };
-
-    // ── P-08 briefing-gate marker (Workstream C, Session 22) ──────────────
-    // Update the operator-activity timestamp so the cron task's
-    // `should_emit_for_briefing` check sees a fresh "operator engaged"
-    // signal without re-scanning the WAL. Best-effort: a permission
-    // failure on the marker file MUST NOT fail the chat — recording is
-    // an audit signal, not a chat-correctness invariant.
-    if !args.incognito
-        && let Err(error) =
-            crate::profile::briefing_gate::record_last_active(&first_tour_home, now_unix() as i64)
-    {
-        tracing::warn!(error = %error, "operator activity marker was not persisted");
-    }
-
-    // ── GOLD-WIRE-02: conversational-recall short-circuit ─────────────────
-    // "Weißt du noch als wir über X geredet haben?" / "do you remember when
-    // we talked about X?" is answered straight from the local idx_episode
-    // store WITHOUT an LLM call — so NO PROVIDER_REQUEST / PROVIDER_RESPONSE
-    // frame is written for this turn. The RAW_TEXT frame above still records
-    // the question so it stays recallable later. The helper is best-effort on
-    // the DB (a recall miss yields a localized "nothing found" reply, never
-    // an error), and returns `None` for any non-recall prompt — which falls
-    // through to the normal provider path below unchanged.
-    // GR-039: gated on `memory.recall_shortcut` (default true) so operators
-    // can route recall-looking prompts to the provider like any other turn.
-    if !args.incognito
-        && !explicit_route_requested
-        && attachment_contexts.is_none()
-        && config.memory.recall_shortcut
-        && let Some(reply) = crate::cli::recall::answer_conversational_recall(
-            &prompt,
-            &first_tour_home.join("views.db"),
-        )
-        .await
-    {
-        println!("{reply}");
-        // Local recall has no provider/post-reply pipeline, but stream consumers
-        // still need the same authenticated provider_done -> done terminal
-        // lifecycle as every other successful GUI turn.
-        // The terminal pair is emitted only after the local turn's WAL writer
-        // has drained successfully. A failed writer task leaves stream
-        // consumers without a false `done` proof.
-        drop(writer);
-        writer_join
-            .await
-            .context("WAL writer task failed after conversational recall")?;
-        if args.stream {
-            write_local_stream_completion(
-                stream_control_token.as_ref().map(|token| token.as_str()),
-                1,
-            )
-            .context("write local-recall stream completion markers")?;
-        }
-        return Ok(());
-    }
-
-    // ── Early intent hash for pre-assembly skill audit ────────────────────
-    //
-    // Skill-suppression events can fire while the full bundle is still being
-    // assembled, so they receive this A+E intent hash.  The provider request
-    // and BUDGET_EXCEEDED event use a second hash computed from the complete,
-    // final typed bundle at the budget boundary below.
-    let mut bundle_entries: Vec<crate::skills::versioning::BundleBlockEntry<'_>> = Vec::new();
-    if let Some(sys) = args.system.as_deref().filter(|s| !s.is_empty()) {
-        bundle_entries.push(crate::skills::versioning::BundleBlockEntry {
-            block: crate::skills::versioning::BundleBlock::A,
-            content: sys,
-        });
-    }
-    bundle_entries.push(crate::skills::versioning::BundleBlockEntry {
-        block: crate::skills::versioning::BundleBlock::E,
-        content: &prompt,
-    });
-    let intent_bundle_hash = crate::skills::versioning::prompt_bundle_hash_hex(&bundle_entries);
-
-    // Start after this turn's authenticated transcript delivery has committed,
-    // so that delivery cannot invalidate our own SQLite snapshot. Incognito
-    // never constructs a preloader or reads the existing recall store.
-    let recall_binding =
-        context_preload_session_binding(config.operator_id.as_deref(), &current_session_id);
-    let session_recall = if args.incognito {
-        None
-    } else {
-        write_context_preload_notice(
-            args.stream,
-            stream_control_token.as_ref().map(|token| token.as_str()),
-            &recall_binding,
-            ContextPreloadNotice::Loading,
-        )?;
-        Some((
-            crate::memory::session_start_recall::start_session_recall_preload(
-                &LocalChatCommunicationSubject::mint(),
-                first_tour_home.clone(),
-                &recall_binding,
-                &prompt,
-            ),
-            recall_binding.as_str(),
-        ))
-    };
-
-    // ── Operator context + skills load — K-Perf-4 parallel resource load ──
-    // Both reads hit the filesystem and are mutually independent: operator_md
-    // assembles ~/.neoth/NEOTH.md + project + rules + memory, skills walks
-    // `<home>/skills/`. Running them sequentially was ~2× the wall time on
-    // cold caches (each ~5-20ms). tokio::join! drives them concurrently
-    // through the same runtime worker — the FS reads pipeline OS-side
-    // without extra threads. Per Performance agent's K-Perf-4 pick.
-    //
-    // The skill router (line below) consumes installed_skills, so loading
-    // it BEFORE the system-prompt assembly is mandatory — the parallel
-    // load just shaves the serial cost off the front edge.
-    let home = first_tour_home.clone();
-    let prompt_current_path = std::env::current_dir()
-        .context("resolve current working directory for repository-aware prompt assembly")?;
-    // GOLD-CCPARITY-SKILLVIS-01 — determine slash-invocation BEFORE calling
-    // build_prompt_bundle so the visibility pre-filter can gate NameOnly /
-    // UserInvocableOnly skills. We parse the invocation here (before the slash
-    // command dispatch in enforce_preflight) and check whether the name matches
-    // a skill id. The full slash-command dispatch still runs in enforce_preflight
-    // as before — this is a read-only pre-check for the visibility gate only.
-    let (
-        PromptBundle {
-            combined_system,
-            context_preload_notice,
-            skill_route_guard: _skill_route_guard,
-            skill_route_report,
-            budget_items,
-            mcp_catalogue_slot,
-            skill_tool_allowlist,
-            plan_attest_hash,
-            agent_raw_layers,
-            resolved_model: skill_model,
-            // GOLD-CCPARITY-EFFORT-03: per-skill effort resolved in build_prompt_bundle.
-            resolved_effort: skill_effort,
-            skill_loop_trigger,
-            repo_recall_audit,
-            architecture_recall_audit,
-        },
-        config,
-        prompt,
-        home,
-    ) = build_prompt_bundle(
-        config,
-        prompt,
-        home,
-        PromptBuildContext {
-            args: &args,
-            prompt_bundle_hash: &intent_bundle_hash,
-            writer: &writer,
-            current_path: &prompt_current_path,
-            attachment_contexts: attachment_contexts.as_ref(),
-            session_recall,
-        },
-        PromptBuildOptions {
-            slash_skill_name,
-            // B22-TWEAKS-MODEL-01 — pre-loaded fail-loud at the chat boundary.
-            persona_override_from_tweaks: tweaks.persona_override.clone(),
-        },
-    )
-    .await?;
-
-    if let Some(state) = context_preload_notice {
-        write_context_preload_notice(
-            args.stream,
-            stream_control_token.as_ref().map(|token| token.as_str()),
-            &recall_binding,
-            state,
-        )?;
-    }
-
-    // Authenticated GUI/Buddy consumers receive the exact shared typed route
-    // report once, before any local action or provider delta. Terminal streams
-    // stay raw text and therefore never receive this JSON control frame.
-    if let Some(control_token) = stream_control_token.as_ref().map(|token| token.as_str()) {
-        let stdout = std::io::stdout();
-        if let Err(error) =
-            write_skill_route_frame(stdout.lock(), control_token, &skill_route_report)
-        {
-            drop(writer);
-            writer_join
-                .await
-                .context("WAL writer task failed after Skill route-frame failure")?;
-            return Err(error).context("write authenticated Skill route frame");
-        }
-    }
-
-    let route_failure = match skill_route_report.outcome {
-        crate::skills::resolver::SkillRouteOutcome::Conflict => {
-            let candidates = skill_route_report
-                .candidates
-                .iter()
-                .map(|candidate| match &candidate.mode_id {
-                    Some(mode) => format!("{}/{}", candidate.skill_id, mode),
-                    None => candidate.skill_id.clone(),
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            Some(anyhow::anyhow!(
-                "Skill routing conflict at {:?}: {candidates}. Select one explicitly with --skill <id> or /skill-id.",
-                skill_route_report.stage
-            ))
-        }
-        crate::skills::resolver::SkillRouteOutcome::Rejected => Some(anyhow::anyhow!(
-            "Explicit Skill selection rejected: {:?}",
-            skill_route_report.rejection
-        )),
-        crate::skills::resolver::SkillRouteOutcome::Match
-        | crate::skills::resolver::SkillRouteOutcome::NoMatch => None,
-    };
-    if let Some(error) = route_failure {
-        drop(writer);
-        writer_join
-            .await
-            .context("WAL writer task failed after rejected Skill route")?;
-        return Err(error);
-    }
-
-    // GOLD-CCPARITY-ONCE: session-scoped once-guard. One run_chat_with call =
-    // one CLI session. Created here before enforce_preflight so the same guard
-    // is shared across PrePipeline, PreProviderCall, and PostProviderCall
-    // within the single turn (and the same guard is reused across multi-turn
-    // batch sessions if run_chat_with is called in a loop). For the CLI path
-    // this function is called once per invocation, so the guard lives exactly
-    // as long as the session.
-    let once_guard = crate::hooks::SessionOnceGuard::new();
-
-    let (
-        writer,
-        writer_join,
-        review_context,
-        final_prompt,
-        final_system,
-        route_system,
-        prompt,
-        quota_path,
-        quota_tracker,
-        hooks,
-        effective_model,
-        model_source,
-        agent_tool_policy,
-        pending_block_restorations,
-        budget_items,
-        mcp_catalogue_slot,
-        canary_token,
-    ) = match enforce_preflight(
-        combined_system,
-        budget_items,
-        mcp_catalogue_slot,
-        prompt,
-        provider,
-        &args,
-        &config,
-        writer,
-        writer_join,
-        &home,
-        plan_attest_hash,
-        agent_raw_layers,
-        skill_model,
-        skill_effort,
-        // B22-TWEAKS-MODEL-01 — tweaks loaded fail-loud above; propagate here.
-        tweaks.model_default.clone(),
-        &once_guard,
-        &ephemeral_consent,
-        &session_canary,
-    )
-    .await?
-    {
-        PreflightOutcome::Done => {
-            // Typed slash actions and local commands complete before provider
-            // dispatch. Their output is already on stdout, so close the same
-            // request-bound stream protocol here instead of leaving the GUI
-            // waiting for a provider marker that can never arrive.
-            if args.stream {
-                write_local_stream_completion(
-                    stream_control_token.as_ref().map(|token| token.as_str()),
-                    1,
-                )
-                .context("write local-action stream completion markers")?;
-            }
-            return Ok(());
-        }
-        PreflightOutcome::Continue {
-            writer,
-            writer_join,
-            review_context,
-            final_prompt,
-            final_system,
-            route_system,
-            prompt,
-            quota_path,
-            quota_tracker,
-            hooks,
-            effective_model,
-            model_source,
-            agent_tool_policy,
-            pending_block_restorations,
-            budget_items,
-            mcp_catalogue_slot,
-            canary_token,
-        } => (
-            writer,
-            writer_join,
-            review_context,
-            final_prompt,
-            final_system,
-            route_system,
-            prompt,
-            quota_path,
-            quota_tracker,
-            hooks,
-            effective_model,
-            model_source,
-            agent_tool_policy,
-            pending_block_restorations,
-            budget_items,
-            mcp_catalogue_slot,
-            canary_token,
-        ),
-    };
-
-    let mut mcp_tool_scope = crate::mcp::McpToolScope::from_skill_allowlist(skill_tool_allowlist);
-    if let Some((allowed, disallowed)) = agent_tool_policy {
-        mcp_tool_scope = mcp_tool_scope.with_agent(allowed, disallowed);
-    }
-    // Every complete-body post-provider mutator owns the same user-output
-    // boundary. Hooks may Block/Replace; block restoration and refusal
-    // recovery may replace bytes. Keep the stream internal until all enabled
-    // mutators settle, otherwise visible output and the durable body diverge.
-    let defer_provider_output = hooks.iter().any(|hook| {
-        hook.stage == crate::hooks::HookStage::PostProviderCall && hook.enabled.unwrap_or(true)
-    }) || !pending_block_restorations.is_empty()
-        || (!args.incognito
-            && (config.refusal_recovery.enabled
-                || config.refusal_recovery.abliterated_fallback_enabled
-                || (config.refusal_recovery.teacher_escalation_enabled
-                    && crate::providers::is_local_provider(provider.name()))));
-
-    let route_thinking_budget = skill_effort
-        .filter(|_| provider.request_controls().supports_thinking_budget())
-        .map(crate::providers::effort_override::effort_to_tokens);
-    let base_route_request = Request {
-        prompt: final_prompt.clone(),
-        system: route_system,
-        model: effective_model.clone(),
-        temperature: args.temperature,
-        top_p: args.top_p,
-        sampling_seed: args.sampling_seed,
-        stop_sequences: Vec::new(),
-        thinking_budget: route_thinking_budget,
-        max_output_tokens: None,
-    };
-    let TurnRouteResolution {
-        route: chat_route,
-        council_skip,
-    } = resolve_chat_turn_route(
-        &args,
-        &config,
-        &base_route_request,
-        &prompt,
-        &home,
-        &mcp_servers,
-        skill_loop_trigger,
-        mcp_catalogue_slot.is_some(),
-    )
-    .await;
-    let recovery_route_eligible = chat_route.supports_single_leaf_recovery();
-
-    let mut budget_items = budget_items;
-    let mut final_system = final_system;
-    // ── Route-bound MCP catalogue (CLI path) ──────────────────────────────
-    // Exact route is fixed above. No Council/MIF/stream/direct turn reaches
-    // this await, and dispatch_provider consumes the same route value below.
-    let mcp_catalogue: Option<crate::mcp::catalogue::McpPromptCatalogue> =
-        if chat_route.uses_mcp_catalogue() && mcp_catalogue_slot.is_some() {
-            crate::mcp::catalogue::assemble_catalogue_for_prompt(&mcp_servers, &final_prompt).await
-        } else {
-            None
-        };
-    if let (Some(slot), Some(catalogue)) = (mcp_catalogue_slot, mcp_catalogue.as_ref()) {
-        info!(
-            data_bytes = catalogue.data().as_str().len(),
-            source_id = catalogue.source_id().as_str(),
-            "MCP tool catalogue injected into system prompt"
-        );
-        slot.insert(&mut budget_items, catalogue)?;
-        let (typed_prompt, typed_system) =
-            crate::tokens::budget::render_request(&budget_items).map_err(anyhow::Error::msg)?;
-        anyhow::ensure!(
-            typed_prompt == final_prompt,
-            "route-bound MCP injection changed the user message"
-        );
-        final_system = typed_system;
-    }
-
-    let route_cap =
-        routing_safe_effective_cap_at(&config, provider.name(), effective_model.as_deref(), &home);
-    let budgeted = match finalize_provider_request(
-        budget_items,
-        &final_prompt,
-        final_system.as_deref(),
-        ProviderRequestBoundary {
-            config: &config,
-            home: &home,
-            provider_name: provider.name(),
-            effective_model: effective_model.as_deref(),
-            route_cap: Some(route_cap),
-            writer: &writer,
-        },
-    )
-    .await
-    {
-        Ok(request) => request,
-        Err(error) => {
-            drop(writer);
-            let _ = writer_join.await;
-            return Err(error);
-        }
-    };
-    let BudgetedProviderRequest {
-        prompt: final_prompt,
-        system: final_system,
-        prompt_bundle_hash,
-        prompt_token_estimate,
-        effective_cap: request_token_cap,
-    } = budgeted;
-    if let Err(error) = emit_retained_code_map_audits(
-        &writer,
-        repo_recall_audit.as_ref(),
-        architecture_recall_audit.as_ref(),
-        &prompt,
-        final_system.as_deref(),
-        "cli",
-    )
-    .await
-    {
-        drop(writer);
-        let audit_error =
-            error.context("code-map context audit failed; provider dispatch refused before egress");
-        return Err(preserve_code_map_audit_and_writer_failure(audit_error, writer_join).await);
-    }
-    // The actual 0x20 intent is emitted centrally for every concrete leaf,
-    // after cost/permission approval and immediately before transport dispatch.
-    // Carry the old turn-level business fields into those request-bound frames.
-    let turn_id = format!("{raw_event_id:016x}");
-    let provider_audit_context = crate::providers::cost_authorization::ProviderCallAuditContext {
-        source: Some("chat"),
-        call_type: Some("chat_provider_round"),
-        request_id: Some(turn_id.clone()),
-        operator_id: config.operator_id.clone(),
-        session_id: Some(current_session_id.clone()),
-        target: Some(crate::profile::runner::extract_target_label(provider.name()).to_owned()),
-        model_source: Some(model_source),
-        cost_estimate_model: Some(
-            effective_model
-                .clone()
-                .unwrap_or_else(|| "provider_default".to_owned()),
-        ),
-        prompt_bundle_hash: Some(prompt_bundle_hash.clone()),
-        prompt_token_estimate: Some(prompt_token_estimate),
-        incognito: args.incognito,
-        ..Default::default()
-    };
-
-    let DispatchOutput {
-        framed:
-            FramedProviderDispatch {
-                dispatch:
-                    ProviderDispatchResult {
-                        completion,
-                        stream_chunk_count,
-                        ..
-                    },
-                stream_done_line,
-                stream_output_deferred,
-                stream_limit_tokens,
+    Ok(chat_turn_pipeline::ChatPreparationOutcome::Ready(
+        chat_turn_pipeline::PreparedChatTurn {
+            input: chat_turn_pipeline::ChatTurnInput {
+                message: args.message,
+                model: args.model,
+                skill: args.skill,
+                system: args.system,
+                attach: args.attach,
+                repository_root: args.repository_root,
+                edit: args.edit,
+                resume_from: args.resume_from,
+                incognito: args.incognito,
+                loop_mode: args.loop_mode,
+                iterations: args.iterations,
+                until: args.until,
+                stream: args.stream,
+                temperature: args.temperature,
+                top_p: args.top_p,
+                sampling_seed: args.sampling_seed,
             },
-        writer,
-        writer_join,
-        recovery_request,
-        turn_journal,
-        mcp_tool_calls,
-        mcp_tool_records,
-    } = dispatch_provider(
-        final_prompt,
-        final_system,
-        &args,
-        provider,
-        &config,
-        &home,
-        writer,
-        writer_join,
-        quota_path,
-        quota_tracker,
-        request_token_cap,
-        &mcp_servers,
-        mcp_tool_scope,
-        // F4/D21 — turn id = the WAL event id, hex; filesystem-safe + unique/turn.
-        &turn_id,
-        effective_model,
-        // GOLD-CCPARITY-EFFORT-03: per-skill reasoning-budget (None = provider default).
-        skill_effort,
-        model_source,
-        provider_audit_context,
-        &ephemeral_consent,
-        chat_route,
-        council_skip,
-        stream_control_token.as_ref().map(|token| token.as_str()),
-        defer_provider_output,
-        &canary_token,
-    )
-    .await?;
-
-    let stream_control_token_ref = stream_control_token.as_ref().map(|token| token.as_str());
-    let post_reply_result = run_post_reply_pipelines(
-        completion,
-        writer,
-        writer_join,
-        config,
-        provider,
-        args,
-        prompt,
-        recovery_request,
-        recovery_route_eligible,
-        review_context,
-        hooks,
-        segment_path,
-        raw_event_id,
-        instance_paths,
-        profile_extensions,
-        chat_ts_unix,
-        current_session_id,
-        operator_transcript_persisted,
-        prompt_token_estimate,
-        turn_journal,
-        &once_guard,
-        // GOLD-ADAPT-ODY-20 — thread through for auto-skill extraction gate.
-        mcp_tool_calls,
-        // REVFIX-EXCERPTS-01 — structured call records for digest-based extraction.
-        mcp_tool_records,
-        // B22-TWEAKS-MODEL-01 — thread tweaks model for ODY-16 token cap inside pipelines.
-        tweaks.model_default.clone(),
-        // THEME-TWEAKS-GOLD — render from the same once-loaded snapshot.
-        &tweaks,
-        // GOLD-ADAPT-SKILL-09 — blocks redacted at PreProviderCall by BlockFilter
-        // hooks; restored inside run_post_reply_pipelines after PostProviderCall
-        // hook stage so WAL/recall never see placeholders.
-        pending_block_restorations,
-        &ephemeral_consent,
-        canary_token,
-        PostReplyStreamPlan {
-            control_token: stream_control_token_ref,
-            done_line: stream_done_line,
-            output_deferred: stream_output_deferred,
-            provider_chunk_count: stream_chunk_count,
-            limit_tokens: stream_limit_tokens,
+            preparation: chat_turn_pipeline::ChatTurnPreparation {
+                config,
+                ephemeral_consent,
+                stream_control_token,
+                cancellation,
+                session_canary,
+                instance_paths,
+                first_tour_home,
+                selected_config_path,
+                prompt,
+                current_session_id,
+                chat_ts_unix,
+                mcp_servers,
+                scoped_mcp_servers,
+                tweaks,
+                profile_extensions,
+                slash_skill_name,
+                explicit_route_requested,
+            },
+            deferred_failure_output: None,
+            deferred_terminal: None,
         },
-    )
-    .await;
-    if let Err(error) = post_reply_result {
-        let error = opaque_chat_post_mint_failure("post_reply_pipeline", &error);
-        if let Some(control_token) = stream_control_token_ref {
-            // `error` is already content-free. Keep the protocol's terminal
-            // event equally opaque; it must not surface a recovery/provider
-            // chain after the session canary was minted.
-            let message = error.to_string();
-            let stdout = std::io::stdout();
-            if let Err(write_error) =
-                emit_stream_finalization_error_to(stdout.lock(), control_token, &message)
-            {
-                tracing::warn!(
-                    phase = "stream_finalization_error_emit",
-                    error_digest = %chat_post_mint_error_digest(&write_error),
-                    "authenticated finalization-error event could not be written"
-                );
-            }
-        }
-        return Err(error);
-    }
-
-    Ok(())
+    ))
 }
 
 /// GOLD-ADOPT-21 — best-effort LLM title for the just-completed session, stored
@@ -8533,7 +8158,7 @@ const ATTACHMENT_ONLY_PROMPT: &str = "Analyze the attached file(s).";
 
 #[derive(Debug)]
 struct ResolvedTurnInput {
-    prompt: String,
+    pub(super) prompt: String,
     has_attachments: bool,
 }
 
@@ -8872,7 +8497,7 @@ fn read_admitted_attachment(attachment: AdmittedChatAttachment) -> Result<Loaded
     })
 }
 
-async fn extract_attachment_contexts(
+pub(super) async fn extract_attachment_contexts(
     paths: &[PathBuf],
     config: &FreedomConfig,
     neoth_home: &std::path::Path,
@@ -11190,6 +10815,7 @@ pub(crate) async fn emit_council_diversity_warning_if_needed(
     writer: &crate::wal::writer::WalWriterHandle,
     prompt_hash: u64,
     config: &FreedomConfig,
+    output: &mut dyn ChatTurnEventSink,
 ) -> Result<()> {
     let verdict = crate::council::classify_council_diversity(&config.inference);
     if !verdict.needs_warning() {
@@ -11199,7 +10825,12 @@ pub(crate) async fn emit_council_diversity_warning_if_needed(
     // session (or per daemon lifetime). The WAL frame still emits
     // every council pass so audit reconstruction stays complete.
     if crate::council::diversity::claim_warning_emission_slot() {
-        eprintln!("[neoth council] WARNING: {}", verdict.render_short());
+        emit_chat_output(
+            output,
+            ChatOutput::HumanStderr {
+                text: format!("[neoth council] WARNING: {}", verdict.render_short()),
+            },
+        )?;
     }
     let verdict_payload = serde_json::to_value(&verdict).context("serialize DiversityVerdict")?;
     let mut payload_value = serde_json::json!({
@@ -11567,12 +11198,22 @@ pub(crate) async fn dispatch_council_with_recovery(
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
     tool_scope: &crate::mcp::McpToolScope,
 ) -> Result<String> {
+    let mut output = CliChatOutput;
     dispatch_council_with_recovery_for_turn(
-        req, config, neoth_home, writer, authorizer, tool_scope, false, None,
+        req,
+        config,
+        neoth_home,
+        writer,
+        authorizer,
+        tool_scope,
+        false,
+        None,
+        &mut output,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_council_with_recovery_for_turn(
     req: &crate::providers::Request,
     config: &FreedomConfig,
@@ -11584,13 +11225,14 @@ async fn dispatch_council_with_recovery_for_turn(
     // CLI sessions supply their in-RAM canary; channel callers have no
     // canary contract and keep this `None`.
     session_canary: Option<std::sync::Arc<crate::security::injection_tracker::CanaryToken>>,
+    output: &mut dyn ChatTurnEventSink,
 ) -> Result<String> {
     // Pick #8 F8 (Session 14 Pick #20) — channel-path pre-flight
     // diversity audit. Mirrors the CLI-path emission in `run_chat_with`
     // so the WAL audit trail records misconfigured topologies
     // regardless of ingress channel.
     let prompt_hash_pre = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
-    let _ = emit_council_diversity_warning_if_needed(writer, prompt_hash_pre, config).await;
+    let _ = emit_council_diversity_warning_if_needed(writer, prompt_hash_pre, config, output).await;
     // GOLD-ADAPT-LOWKEY-04 — MIF motive pre-step (opt-in). Classify operator
     // intent BEFORE the hemisphere fan-out: a Conflicted prompt is NOT debated
     // (would only produce a confused answer) — surface a disambiguation request
@@ -11616,6 +11258,7 @@ async fn dispatch_council_with_recovery_for_turn(
         !incognito,
         council_budget.clone(),
         session_canary.clone(),
+        output,
     )
     .await?;
     // KF-01 (COR-17): persist verbatim hemisphere transcripts (opt-in) so
@@ -11843,15 +11486,20 @@ async fn dispatch_council_with_recovery_for_turn(
                     self_score.composite()
                 );
             } else if below {
-                eprintln!(
-                    "[neoth:self-score] composite {:.2} below threshold — answer may lack evidence or completeness{}",
-                    self_score.composite(),
-                    if redos > 0 {
-                        format!(" (after {redos} redo pass(es))")
-                    } else {
-                        String::new()
-                    }
-                );
+                emit_chat_output(
+                    output,
+                    ChatOutput::HumanStderr {
+                        text: format!(
+                            "[neoth:self-score] composite {:.2} below threshold — answer may lack evidence or completeness{}",
+                            self_score.composite(),
+                            if redos > 0 {
+                                format!(" (after {redos} redo pass(es))")
+                            } else {
+                                String::new()
+                            }
+                        ),
+                    },
+                )?;
             }
         }
         // SP-4: record acceptance signal so future debates on the
@@ -12142,7 +11790,10 @@ pub(crate) fn fan_out_advisory_line(config: &FreedomConfig) -> Option<String> {
 /// process short-circuit. Test-friendly: pure function gated by a
 /// static AtomicBool — tests reset by re-importing the static is
 /// awkward, so we test `fan_out_advisory_line` directly instead.
-fn maybe_fire_fan_out_advisory(config: &FreedomConfig) {
+fn maybe_fire_fan_out_advisory(
+    config: &FreedomConfig,
+    output: &mut dyn ChatTurnEventSink,
+) -> Result<()> {
     if FAN_OUT_ADVISORY_FIRED
         .compare_exchange(
             false,
@@ -12153,8 +11804,9 @@ fn maybe_fire_fan_out_advisory(config: &FreedomConfig) {
         .is_ok()
         && let Some(line) = fan_out_advisory_line(config)
     {
-        eprintln!("{line}");
+        emit_chat_output(output, ChatOutput::HumanStderr { text: line })?;
     }
+    Ok(())
 }
 
 /// GOLD-G02-COUNCIL-01 — fetch up to `limit` VERIFIED groundtruth rows and
@@ -12204,12 +11856,13 @@ async fn run_council_debate(
     allow_persistent_context: bool,
     budget: crate::council::BudgetToken,
     session_canary: Option<std::sync::Arc<crate::security::injection_tracker::CanaryToken>>,
+    output: &mut dyn ChatTurnEventSink,
 ) -> Result<crate::council::CouncilDebate> {
     use crate::config::inference::HemisphereRole;
     // Finding 2: once-per-process advisory when council topology
     // spans ≥2 cloud providers. Per-provider consent already gated
     // via V03-08 + A-2; this surfaces the JOINT fan-out picture.
-    maybe_fire_fan_out_advisory(config);
+    maybe_fire_fan_out_advisory(config, output)?;
     // E-2 Phase 2 (Session 13): outer-council hemispheres carry a
     // config Arc so `ask_with_depth` can recurse when the operator's
     // `hemisphere_council_depth > 1`. The Arc is shared across all
@@ -12440,7 +12093,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
     .await
 }
 
-fn now_unix() -> u64 {
+pub(super) fn now_unix() -> u64 {
     crate::time::now_unix_secs()
 }
 
@@ -12532,7 +12185,7 @@ fn maybe_skill_catalog_block<S: crate::skills::schema::RuntimeSkillView>(
 /// PWF-02: authoritative resume state reconstructed from one checkpoint.
 struct ResumeHydration {
     banner: String,
-    combined_system: String,
+    pub(super) combined_system: String,
     catchup: crate::recall::reconstruct::CatchupSummary,
     scoped_mcp_servers: Vec<String>,
 }
@@ -13144,7 +12797,7 @@ mod tests {
         let provider = NeverCalledProvider::default();
 
         assert!(
-            dispatch_pre_runtime_local_action(&mut args)
+            dispatch_pre_runtime_local_action(&mut args, &mut CliChatOutput)
                 .await
                 .expect("terminal action dispatcher")
         );
@@ -13415,7 +13068,7 @@ mod tests {
     }
 
     #[test]
-    fn context_preload_session_binding_separates_subject_and_session() {
+    pub(super) fn context_preload_session_binding_separates_subject_and_session() {
         let values = [
             context_preload_session_binding(None, "session"),
             context_preload_session_binding(Some(""), "session"),
@@ -13734,9 +13387,14 @@ mod tests {
             rejection: None,
             degraded_reason: None,
         };
-        let error =
-            write_skill_route_frame(RejectWrites, "0123456789abcdef0123456789abcdef", &report)
-                .unwrap_err();
+        let frame = skill_route_frame_line("0123456789abcdef0123456789abcdef", &report)
+            .expect("serialize Skill route frame");
+        let error = write_stream_control_line(
+            RejectWrites,
+            Some("0123456789abcdef0123456789abcdef"),
+            &frame,
+        )
+        .unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
     }
 
@@ -18544,6 +18202,7 @@ modes:
                 writer: &writer,
                 current_path: &repo,
                 attachment_contexts: None,
+                output: &mut CliChatOutput,
                 session_recall: None,
             },
             PromptBuildOptions {
@@ -18608,6 +18267,7 @@ modes:
                 writer: &writer,
                 current_path: dir.path(),
                 attachment_contexts: None,
+                output: &mut CliChatOutput,
                 session_recall: None,
             },
             PromptBuildOptions {
@@ -18701,12 +18361,17 @@ modes:
     #[test]
     fn incognito_turn_boundary_is_central_and_production_only() {
         let source = include_str!("chat.rs");
+        let engine = include_str!("chat_turn_pipeline.rs");
         let production = source
             .split("#[cfg(test)]\nmod tests")
             .next()
             .expect("production source before tests");
+        let engine_production = engine
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .expect("production engine source before tests");
         let boundary = production
-            .split("async fn build_prompt_bundle")
+            .split("pub(super) async fn build_prompt_bundle")
             .nth(1)
             .and_then(|tail| tail.split("let cwd = current_path.to_path_buf();").next())
             .expect("central Incognito prompt boundary");
@@ -18726,31 +18391,37 @@ modes:
             );
         }
         assert!(production.contains("!(args.incognito && args.resume_from.is_some())"));
-        assert!(production.contains(concat!(
+        assert!(engine_production.contains(concat!(
             "if !args.incognito {\n",
             "        let _ = crate::feedback::record_operator_correction"
         )));
-        assert!(production.contains("if !args.incognito\n        && let Err(error) ="));
+        assert!(engine_production.contains("if !args.incognito\n        && let Err(error) ="));
         assert!(production.contains(concat!(
             "if !args.incognito\n",
             "        && !config.chat_onboarding_completed"
         )));
         assert!(production.contains("let hooks = if args.incognito {"));
         assert!(production.contains("let mut journal = if args.incognito {"));
-        assert!(production.contains("!args.incognito && config.refusal_recovery.enabled"));
+        assert!(
+            engine_production
+                .contains("|| (!args.incognito\n            && (config.refusal_recovery.enabled")
+        );
         let alternate_ingress = production
             .split("pub async fn run_chat_with(")
             .nth(1)
             .and_then(|tail| tail.split("run_chat_with_consent(").next())
-            .expect("alternate public chat ingress");
+            .expect("alternate public chat ingress")
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
         let admission = alternate_ingress
-            .find("admit_incognito_turn_before_runtime(&mut args).await?;")
+            .find("admit_incognito_turn_before_runtime(&mutargs).await?;")
             .expect("Incognito argument admission");
         let dispatcher = alternate_ingress
-            .find("!args.incognito && dispatch_pre_runtime_local_action")
+            .find("!args.incognito&&dispatch_pre_runtime_local_action")
             .expect("Incognito-skipped local action dispatcher");
         assert!(admission < dispatcher);
-        let anchor = production
+        let anchor = engine_production
             .split("let raw_event_id = if args.incognito")
             .nth(1)
             .and_then(|tail| tail.split("} else {").next())
@@ -18842,11 +18513,13 @@ modes:
         let writer_join = tokio::spawn(async {
             panic!("intentional writer panic for combined-error regression");
         });
-        let error = preserve_code_map_audit_and_writer_failure(
-            anyhow::anyhow!("repository recall audit append failed"),
-            writer_join,
-        )
-        .await;
+        let audit_error = anyhow::anyhow!("repository recall audit append failed");
+        let join_error = writer_join
+            .await
+            .expect_err("intentional writer panic must surface at the CLI owner");
+        let error = audit_error.context(format!(
+            "WAL writer join also failed while draining the refused code-map audit: {join_error}"
+        ));
         let rendered = format!("{error:#}");
         assert!(rendered.contains("repository recall audit append failed"));
         assert!(rendered.contains("WAL writer join also failed"));
@@ -19010,12 +18683,16 @@ modes:
                     from_symbol: "a".into(),
                     to_name: "b".into(),
                     kind: EdgeKind::Calls,
+                    confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                    confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
                 },
                 CodeEdge {
                     from_file: "src/b.rs".into(),
                     from_symbol: "b".into(),
                     to_name: "a".into(),
                     kind: EdgeKind::Calls,
+                    confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                    confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
                 },
             ],
         )
@@ -19223,6 +18900,7 @@ modes:
                 writer: &writer,
                 current_path: dir.path(),
                 attachment_contexts: None,
+                output: &mut CliChatOutput,
                 session_recall: Some((prepared_recall, &recall_binding)),
             },
             PromptBuildOptions {
@@ -19885,7 +19563,6 @@ modes:
             &config,
             dir.path(),
             writer,
-            writer_join,
             quota_path.clone(),
             Some(
                 crate::providers::quota::QuotaTracker::load_from(&quota_path)
@@ -19906,14 +19583,12 @@ modes:
             None,
             false,
             &canary,
+            &crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
+            &mut CliChatOutput,
         )
         .await;
 
-        let DispatchOutput {
-            writer,
-            writer_join,
-            ..
-        } = result?;
+        let DispatchOutput { writer, .. } = result?;
         drop(writer);
         writer_join.await?;
         let captured = seen
@@ -19981,7 +19656,7 @@ modes:
     }
 
     #[tokio::test]
-    async fn dispatch_provider_authorization_failure_drains_wal_without_deadlock() {
+    pub(super) async fn dispatch_provider_authorization_failure_drains_wal_without_deadlock() {
         let dir = tempfile::tempdir().unwrap();
         let quota_path = dir.path().join("quota.json");
         let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -20019,6 +19694,8 @@ modes:
             crate::security::injection_tracker::CanaryToken::generate().unwrap(),
         );
 
+        let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
+        let mut output = CliChatOutput;
         let dispatch = dispatch_provider(
             "blocked prompt".to_string(),
             None,
@@ -20027,7 +19704,6 @@ modes:
             &config,
             dir.path(),
             writer,
-            writer_join,
             quota_path.clone(),
             Some(
                 crate::providers::quota::QuotaTracker::load_from(&quota_path)
@@ -20047,11 +19723,16 @@ modes:
             None,
             false,
             &canary,
+            &cancellation,
+            &mut output,
         );
 
         let result = tokio::time::timeout(Duration::from_secs(2), dispatch)
             .await
             .expect("authorization failure must drain the WAL writer without hanging");
+        writer_join
+            .await
+            .expect("outer test adapter must drain the refused writer");
         let error = match result {
             Ok(_) => panic!("strict policy must block the unknown paid provider"),
             Err(error) => error,
@@ -20162,7 +19843,6 @@ modes:
             &config,
             dir.path(),
             writer,
-            writer_join,
             quota_path.clone(),
             Some(
                 crate::providers::quota::QuotaTracker::load_from(&quota_path)
@@ -20182,14 +19862,12 @@ modes:
             None,
             false,
             &canary,
+            &crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
+            &mut CliChatOutput,
         )
         .await;
 
-        let DispatchOutput {
-            writer,
-            writer_join,
-            ..
-        } = result?;
+        let DispatchOutput { writer, .. } = result?;
         drop(writer);
         writer_join.await?;
         let captured = seen
@@ -20722,6 +20400,182 @@ modes:
 
 // GOLD-R3-14 — bounded, typed attachment ingress.
 #[cfg(test)]
+mod wave35_adapter_lifecycle_tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct CollectingSink(Vec<ChatTurnEvent>);
+
+    impl ChatTurnEventSink for CollectingSink {
+        fn emit(&mut self, event: ChatTurnEvent) -> Result<()> {
+            self.0.push(event);
+            Ok(())
+        }
+    }
+
+    fn done() -> ChatOutput {
+        ChatOutput::StreamDone {
+            control_token: Some("cap".into()),
+            line: "done".into(),
+        }
+    }
+
+    #[test]
+    fn adapter_finalizer_emits_deferred_success_only_after_a_clean_drain() {
+        let mut sink = CollectingSink::default();
+        let mut failure = None;
+        let mut terminal = Some(chat_turn_pipeline::ChatTurnTerminal::Complete {
+            provider: "actual-provider".into(),
+            model: "actual-model".into(),
+            session_id: Some("actual-session".into()),
+        });
+        finish_cli_chat_turn(
+            Ok(Some(done())),
+            Ok(()),
+            &mut failure,
+            &mut terminal,
+            &mut sink,
+        )
+        .unwrap();
+        assert!(
+            matches!(sink.0.as_slice(), [ChatTurnEvent::Output(ChatOutput::StreamDone { .. }), ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete { provider, model, session_id: Some(session_id) })] if provider == "actual-provider" && model == "actual-model" && session_id == "actual-session")
+        );
+    }
+
+    #[test]
+    fn adapter_finalizer_suppresses_deferred_success_for_inner_wal_failure() {
+        let mut sink = CollectingSink::default();
+        let mut failure = None;
+        let mut terminal = Some(chat_turn_pipeline::ChatTurnTerminal::Complete {
+            provider: "actual-provider".into(),
+            model: "actual-model".into(),
+            session_id: Some("actual-session".into()),
+        });
+        let error = finish_cli_chat_turn(
+            Ok(Some(done())),
+            Err(anyhow::anyhow!("writer returned Err")),
+            &mut failure,
+            &mut terminal,
+            &mut sink,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("writer returned Err"));
+        assert!(sink.0.is_empty());
+    }
+
+    #[tokio::test]
+    async fn adapter_finalizer_suppresses_deferred_success_for_real_wal_shutdown_failure() {
+        let home = tempfile::tempdir().expect("temporary home");
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir(&wal_dir).expect("create WAL directory");
+        let segment =
+            crate::wal::writer::unique_standalone_segment_path(&wal_dir, "chat-finalizer");
+        let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(
+            segment.clone(),
+            home.path().to_path_buf(),
+        )
+        .expect("spawn completion-aware chat writer");
+        writer
+            .append(
+                crate::wal::make_header(crate::wal::events::EVENT_TYPE_RAW_TEXT, b"fixture"),
+                b"fixture".to_vec(),
+            )
+            .await
+            .expect("append fixture frame");
+        crate::wal::writer::fail_compaction_marker_write_for_test(&segment);
+        drop(writer);
+        let drained = completion
+            .wait()
+            .await
+            .context("WAL writer failed after chat turn");
+
+        let mut sink = CollectingSink::default();
+        let mut failure = None;
+        let mut terminal = Some(chat_turn_pipeline::ChatTurnTerminal::Complete {
+            provider: "must-not-emit".into(),
+            model: "must-not-emit".into(),
+            session_id: Some("must-not-emit".into()),
+        });
+        let error = finish_cli_chat_turn(
+            Ok(Some(done())),
+            drained,
+            &mut failure,
+            &mut terminal,
+            &mut sink,
+        )
+        .expect_err("mandatory shutdown failure suppresses success output");
+        assert!(format!("{error:#}").contains("injected compaction marker write failure"));
+        assert!(
+            sink.0.is_empty(),
+            "done and terminal must not cross a failed drain"
+        );
+        assert!(
+            terminal.is_some(),
+            "failed drain retains the deferred terminal"
+        );
+    }
+
+    #[test]
+    fn adapter_finalizer_preserves_engine_error_when_drain_also_fails() {
+        let mut sink = CollectingSink::default();
+        let mut failure = Some(ChatOutput::StreamFinalizationError {
+            control_token: "cap".into(),
+            message: "opaque".into(),
+        });
+        let mut terminal = Some(chat_turn_pipeline::ChatTurnTerminal::Complete {
+            provider: "must-not-emit".into(),
+            model: "must-not-emit".into(),
+            session_id: Some("must-not-emit".into()),
+        });
+        let error = finish_cli_chat_turn(
+            Err(anyhow::anyhow!("engine refused")),
+            Err(anyhow::anyhow!("writer join failed")),
+            &mut failure,
+            &mut terminal,
+            &mut sink,
+        )
+        .unwrap_err();
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("engine refused"));
+        assert!(rendered.contains("writer join failed"));
+        assert!(sink.0.is_empty());
+    }
+
+    #[test]
+    fn adapter_finalizer_emits_deferred_failure_after_clean_drain() {
+        let mut sink = CollectingSink::default();
+        let mut failure = Some(ChatOutput::StreamFinalizationError {
+            control_token: "cap".into(),
+            message: "opaque".into(),
+        });
+        let mut terminal = Some(chat_turn_pipeline::ChatTurnTerminal::Complete {
+            provider: "must-not-emit".into(),
+            model: "must-not-emit".into(),
+            session_id: Some("must-not-emit".into()),
+        });
+        let error = finish_cli_chat_turn(
+            Err(anyhow::anyhow!("engine refused")),
+            Ok(()),
+            &mut failure,
+            &mut terminal,
+            &mut sink,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("engine refused"));
+        assert!(matches!(
+            sink.0.as_slice(),
+            [ChatTurnEvent::Output(
+                ChatOutput::StreamFinalizationError { .. }
+            )]
+        ));
+        assert!(
+            terminal.is_some(),
+            "failed engine paths must suppress terminal state"
+        );
+    }
+}
+
+#[cfg(test)]
 mod attach_tests {
     use super::*;
 
@@ -20865,7 +20719,11 @@ mod attach_tests {
 
     #[test]
     fn attachment_diagnostics_are_single_line_bounded_and_sanitized() {
-        let raw = format!("\u{1b}[31msecret\r\n\u{202e}{}.txt", "x".repeat(400));
+        let raw = format!(
+            "\u{1b}[31msecret
+\u{202e}{}.txt",
+            "x".repeat(400)
+        );
         let safe = safe_attachment_diagnostic(&raw);
         assert!(!safe.contains('\u{1b}'));
         assert!(!safe.contains('\n'));

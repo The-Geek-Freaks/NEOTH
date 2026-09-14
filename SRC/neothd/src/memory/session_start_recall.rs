@@ -106,9 +106,13 @@ struct WorkerControl {
 
 impl WorkerControl {
     fn new() -> Self {
+        Self::with_budget(RECALL_DEADLINE)
+    }
+
+    fn with_budget(budget: Duration) -> Self {
         Self {
             cancelled: AtomicBool::new(false),
-            deadline: std::time::Instant::now() + RECALL_DEADLINE,
+            deadline: std::time::Instant::now() + budget,
             interrupt: Mutex::new(None),
         }
     }
@@ -194,6 +198,25 @@ pub(crate) fn start_session_recall_preload(
     session_binding: &str,
     prompt: &str,
 ) -> SessionStartRecallPreload {
+    start_session_recall_preload_with_budget(
+        subject,
+        home,
+        session_binding,
+        prompt,
+        RECALL_DEADLINE,
+    )
+}
+
+/// Internal constructor with an explicit budget for deterministic fixtures.
+/// All production callers enter through `start_session_recall_preload` and
+/// retain the fixed `RECALL_DEADLINE` budget.
+fn start_session_recall_preload_with_budget(
+    subject: &crate::cli::chat::LocalChatCommunicationSubject,
+    home: PathBuf,
+    session_binding: &str,
+    prompt: &str,
+    budget: Duration,
+) -> SessionStartRecallPreload {
     let binding_fingerprint = match binding_fingerprint(subject, session_binding) {
         Ok(value) => value,
         Err(_) => {
@@ -233,11 +256,11 @@ pub(crate) fn start_session_recall_preload(
             SessionStartRecallOutcome::Failed(RecallPreloadFailure::Capacity),
         );
     };
-    let control = Arc::new(WorkerControl::new());
+    let control = Arc::new(WorkerControl::with_budget(budget));
     let worker_home = home.clone();
     let worker_prompt = prompt.to_owned();
     let worker_control = Arc::clone(&control);
-    let deadline = tokio::time::Instant::now() + RECALL_DEADLINE;
+    let deadline = tokio::time::Instant::now() + budget;
     let watchdog_control = Arc::clone(&control);
     let watchdog = tokio::spawn(async move {
         tokio::time::sleep_until(deadline).await;
@@ -751,6 +774,8 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    const FIXTURE_RECALL_BUDGET: Duration = Duration::from_secs(5);
+
     fn preload_test_gate() -> &'static tokio::sync::Mutex<()> {
         static GATE: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
         GATE.get_or_init(|| tokio::sync::Mutex::new(()))
@@ -882,8 +907,13 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let home = root.path().join("missing-home");
         let local = subject();
-        let mut preload =
-            start_session_recall_preload(&local, home.clone(), "operator\0session-1", "rust");
+        let mut preload = start_session_recall_preload_with_budget(
+            &local,
+            home.clone(),
+            "operator\0session-1",
+            "rust",
+            FIXTURE_RECALL_BUDGET,
+        );
         let wrong_home = home.join("other-home");
         assert!(matches!(
             preload
@@ -991,11 +1021,12 @@ mod tests {
         writer.execute("DROP TABLE idx_groundtruth", []).unwrap();
         drop(writer);
         let local = subject();
-        let mut preload = start_session_recall_preload(
+        let mut preload = start_session_recall_preload_with_budget(
             &local,
             home.path().to_path_buf(),
             "operator\0session-1",
             "rust",
+            FIXTURE_RECALL_BUDGET,
         );
         let outcome = preload
             .consume(&local, home.path(), "operator\0session-1", "rust")

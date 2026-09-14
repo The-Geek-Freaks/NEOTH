@@ -1735,7 +1735,7 @@ fn error_result(message: String) -> ToolCallResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code_map::graph::CallGraph;
+    use crate::code_map::graph::{CallGraph, EdgeKind};
     use crate::code_map::walker::Language;
     use tempfile::tempdir;
 
@@ -2275,7 +2275,9 @@ fn root() { alpha(); beta(); }
                 from_file: "caller.rs".into(),
                 from_symbol: "caller".into(),
                 to_name: "changed".into(),
-                kind: crate::code_map::graph::EdgeKind::Calls,
+                kind: EdgeKind::Calls,
+                confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
             }],
         )
         .unwrap();
@@ -2331,7 +2333,9 @@ fn root() { alpha(); beta(); }
                 from_file: "caller.rs".into(),
                 from_symbol: "caller".into(),
                 to_name: "changed".into(),
-                kind: crate::code_map::graph::EdgeKind::Calls,
+                kind: EdgeKind::Calls,
+                confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
             }],
         )
         .unwrap();

@@ -213,7 +213,7 @@ fn file_matches_name(file_path: &str, to_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code_map::graph::{CallGraph, CodeEdge, EdgeKind};
+    use crate::code_map::graph::{CallGraph, CodeEdge, EdgeConfidenceTier, EdgeKind};
     use std::process::Command;
     use tempfile::tempdir;
 
@@ -285,6 +285,8 @@ mod tests {
             from_symbol: "foo".to_string(),
             to_name: to_name.to_string(),
             kind: EdgeKind::Calls,
+            confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
+            confidence_tier: EdgeConfidenceTier::Inferred,
         }])
     }
 

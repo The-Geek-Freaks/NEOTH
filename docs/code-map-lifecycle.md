@@ -51,6 +51,26 @@ Ctrl-C requests cooperative cancellation and waits for the blocking refresh to
 finish before the command returns. A cancelled or failed refresh does not claim
 that a new generation was published.
 
+## Edge confidence
+
+Each graph edge retains an evidence tier and its corresponding ordinal:
+
+| Evidence tier | Confidence ordinal |
+| --- | --- |
+| `inferred` | 50 |
+| `resolved` | 100 |
+
+These ordinals express evidence strength, not statistical probabilities. The
+schema-8-to-9 migration assigns existing edges `inferred` / 50. Resolving a
+regex-derived edge's endpoint does not upgrade its evidence tier. An invalid
+stored tier/ordinal pair is rejected before traversal.
+
+Impact traversal preserves shortest-hop ordering and the existing depth-only
+score. A path's confidence is its weakest edge. When a bounded same-depth
+frontier must choose between paths, stronger evidence takes precedence and
+existing deterministic ties remain stable. A deeper resolved path cannot
+outrank a nearer inferred path merely because of its confidence.
+
 ## Corrupt database recovery
 
 Neither `status` nor a normal refresh alters a corrupt database. Preserve the

@@ -1297,6 +1297,7 @@ fn validate_apply_has_dispatch_path(apply: bool, dispatch: bool, run_pending: bo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code_map::graph::EdgeKind;
     use tempfile::tempdir;
 
     fn real_code_map_fixture() -> (tempfile::TempDir, PathBuf, Connection) {
@@ -1987,7 +1988,9 @@ mod tests {
                     from_file: format!("src/caller_{target:02}_{caller:02}.rs"),
                     from_symbol: format!("caller_{target:02}_{caller:02}"),
                     to_name: format!("target_{target:02}"),
-                    kind: crate::code_map::graph::EdgeKind::Calls,
+                    kind: EdgeKind::Calls,
+                    confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
+                    confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
                 })
             })
             .collect::<Vec<_>>();
