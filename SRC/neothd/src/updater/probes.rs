@@ -222,17 +222,9 @@ fn native_cli_launch_form(
     }
     #[cfg(target_os = "macos")]
     {
-        return matches!(
-            header[..count].get(..4),
-            Some(
-                [0xfe, 0xed, 0xfa, 0xce]
-                    | [0xce, 0xfa, 0xed, 0xfe]
-                    | [0xfe, 0xed, 0xfa, 0xcf]
-                    | [0xcf, 0xfa, 0xed, 0xfe]
-            )
-        )
-        .then_some(())
-        .ok_or(NativeCliProbeError::UnsupportedLaunchForm);
+        return native_macos_image_magic(&header[..count])
+            .then_some(())
+            .ok_or(NativeCliProbeError::UnsupportedLaunchForm);
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -242,6 +234,26 @@ fn native_cli_launch_form(
     }
     #[allow(unreachable_code)]
     Err(NativeCliProbeError::UnsupportedLaunchForm)
+}
+
+// Universal Mach-O files are native executables too. This is only format
+// classification; the existing size, executable-bit and identity checks still
+// apply to the complete image, and process creation validates loadability.
+#[cfg(any(target_os = "macos", test))]
+fn native_macos_image_magic(header: &[u8]) -> bool {
+    matches!(
+        header.get(..4),
+        Some(
+            [0xfe, 0xed, 0xfa, 0xce]
+                | [0xce, 0xfa, 0xed, 0xfe]
+                | [0xfe, 0xed, 0xfa, 0xcf]
+                | [0xcf, 0xfa, 0xed, 0xfe]
+                | [0xca, 0xfe, 0xba, 0xbe]
+                | [0xbe, 0xba, 0xfe, 0xca]
+                | [0xca, 0xfe, 0xba, 0xbf]
+                | [0xbf, 0xba, 0xfe, 0xca]
+        )
+    )
 }
 
 #[cfg(windows)]
@@ -3141,6 +3153,26 @@ mod tests {
 #[cfg(test)]
 mod native_cli_version_tests {
     use super::*;
+
+    #[test]
+    fn macos_native_format_classifier_accepts_thin_and_universal_images() {
+        for magic in [
+            [0xfe, 0xed, 0xfa, 0xce],
+            [0xce, 0xfa, 0xed, 0xfe],
+            [0xfe, 0xed, 0xfa, 0xcf],
+            [0xcf, 0xfa, 0xed, 0xfe],
+            [0xca, 0xfe, 0xba, 0xbe],
+            [0xbe, 0xba, 0xfe, 0xca],
+            [0xca, 0xfe, 0xba, 0xbf],
+            [0xbf, 0xba, 0xfe, 0xca],
+        ] {
+            assert!(native_macos_image_magic(&magic));
+            assert!(!native_macos_image_magic(&magic[..3]));
+        }
+        for other in [b"#!/b", b"MZ00", b"\x7fELF", b"text"] {
+            assert!(!native_macos_image_magic(other));
+        }
+    }
 
     #[test]
     fn version_parser_accepts_bounded_ascii_token_only() {

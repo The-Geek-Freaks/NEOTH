@@ -87,6 +87,12 @@ pub mod export;
 /// transaction. Per-claim `dedup_key` in the item itself caps re-enqueue noise;
 /// the cron stays out of the LLM extractor's way (Stage 3 deferred).
 pub mod g02_surfacing_cron;
+/// W41 public Main/Buddy facade; the implementation reuses the authenticated audit-RPC listener.
+pub mod gui_chat_bridge;
+/// W41 sealed wire/runtime contract. Never import this from `neothd-gui`.
+pub(crate) mod gui_chat_protocol;
+/// W41 daemon-owned GUI v1 state/consent/attachment runtime (implemented by runtime owner).
+pub(crate) mod gui_chat_runtime;
 pub mod hardware;
 pub mod installer_audit_sidecar;
 /// GOLD-ADAPT-HERMES-08 — SSE endpoint for live kanban events (task events,

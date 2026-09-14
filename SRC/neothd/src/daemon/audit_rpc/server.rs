@@ -16,6 +16,7 @@ use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinHandle;
 
+use crate::daemon::gui_chat_protocol as gui;
 use crate::n8n_api::auth::AuthCooldown;
 use crate::n8n_api::{constant_time_token_eq, extract_bearer_token};
 use crate::wal::events::{
@@ -466,6 +467,9 @@ pub struct AuditRpcState {
     /// owned runtime. `None` keeps focused audit-only listeners fail-closed for
     /// chat instead of constructing a provider or a second listener here.
     pub(crate) chat_runtime: Option<Arc<crate::daemon::chat_runtime::DaemonChatRuntime>>,
+    /// W41 v1 route runtime. It owns staged attachment/ticket/grant state and
+    /// shares the existing daemon provider admission; this listener owns no provider.
+    pub(crate) gui_chat_runtime: Option<Arc<dyn gui::GuiChatRuntime>>,
 }
 
 /// Bind the OS-authenticated same-user endpoint for one daemon incarnation.
@@ -490,6 +494,10 @@ async fn run_accept_loop(
     home: std::path::PathBuf,
 ) -> Result<()> {
     let sem = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNS));
+    // Held `/chat/v1/attach` streams are not ordinary request work. They get a
+    // separate bounded admission budget and never consume a W39/v1 provider
+    // admission; the GUI runtime still shares the provider permit at start.
+    let attach_sem = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNS));
     let mut connections = tokio::task::JoinSet::new();
     loop {
         let accepted = tokio::select! {
@@ -512,8 +520,8 @@ async fn run_accept_loop(
                 };
                 let state = state.clone();
                 let home = home.clone();
+                let attach_sem = Arc::clone(&attach_sem);
                 connections.spawn(async move {
-                    let _permit = permit; // released when this task ends
                     match tokio::time::timeout(
                         std::time::Duration::from_secs(CONNECTION_TIMEOUT_SECS),
                         handle_one_pre_admission(stream, &state, &home),
@@ -521,10 +529,40 @@ async fn run_accept_loop(
                     .await
                     {
                         Ok(Ok(ConnectionOutcome::Complete)) => {}
+                        Ok(Ok(ConnectionOutcome::GuiChatAttachAdmitted {
+                            mut stream,
+                            request,
+                        })) => {
+                            drop(permit);
+                            let Ok(_attach_permit) = attach_sem.try_acquire_owned() else {
+                                let _ = stream
+                                    .write_all(
+                                        http_response(503, "gui chat attach capacity reached")
+                                            .as_bytes(),
+                                    )
+                                    .await;
+                                let _ = stream.shutdown().await;
+                                return;
+                            };
+                            let Some(runtime) = state.gui_chat_runtime.as_ref().cloned() else {
+                                let _ = stream
+                                    .write_all(
+                                        http_response(503, "gui chat runtime unavailable")
+                                            .as_bytes(),
+                                    )
+                                    .await;
+                                let _ = stream.shutdown().await;
+                                return;
+                            };
+                            if let Err(error) = runtime.attach(stream, request).await {
+                                tracing::warn!(?error, "audit-RPC GUI attach failed");
+                            }
+                        }
                         Ok(Ok(ConnectionOutcome::ChatAdmitted {
                             mut stream,
                             request,
                         })) => {
+                            let _permit = permit;
                             let Some(runtime) = state.chat_runtime.as_ref().cloned() else {
                                 let _ = stream
                                     .write_all(
@@ -572,6 +610,10 @@ struct Parsed {
 /// stream directly to the daemon runtime.
 enum ConnectionOutcome {
     Complete,
+    GuiChatAttachAdmitted {
+        stream: super::transport::AuditStream,
+        request: gui::GuiChatAttachRequest,
+    },
     ChatAdmitted {
         stream: super::transport::AuditStream,
         request: super::DaemonPlainChatRequest,
@@ -686,6 +728,17 @@ async fn handle_one_pre_admission(
     // Chat accepts no query component so the exact sealed path cannot become a
     // carrier for later parser controls.
     let chat_route = req.path == "/chat/turn";
+    let gui_chat_route = matches!(
+        req.path.as_str(),
+        gui::GUI_CHAT_V1_CONSENT_PREFLIGHT_PATH
+            | gui::GUI_CHAT_V1_CONSENT_DECIDE_PATH
+            | gui::GUI_CHAT_V1_START_PATH
+            | gui::GUI_CHAT_V1_ATTACH_EXCHANGE_PATH
+            | gui::GUI_CHAT_V1_ATTACH_PATH
+            | gui::GUI_CHAT_V1_CANCEL_PATH
+            | gui::GUI_CHAT_V1_STATUS_PATH
+            | gui::GUI_CHAT_V1_ACTIVE_PATH
+    );
     #[cfg(feature = "cluster")]
     let membership_route = matches!(
         req_path.as_str(),
@@ -715,7 +768,7 @@ async fn handle_one_pre_admission(
     if req.method != "POST"
         || !(membership_route
             || internal_route
-            || state.audit_routes_enabled && (audit_route || chat_route))
+            || state.audit_routes_enabled && (audit_route || chat_route || gui_chat_route))
     {
         let _ = stream
             .write_all(http_response(404, "not found").as_bytes())
@@ -750,6 +803,10 @@ async fn handle_one_pre_admission(
             .await;
         let _ = stream.shutdown().await;
         return Ok(ConnectionOutcome::Complete);
+    }
+
+    if gui_chat_route {
+        return handle_gui_chat_route(stream, state, req.path.as_str(), &req.body).await;
     }
 
     if chat_route {
@@ -1271,6 +1328,141 @@ async fn emit_accept(state: &AuditRpcState, forwarded_event_type: u8, forwarded_
     }
 }
 
+/// W41 sealed v1 dispatch. Parsing, bearer auth and request cap happened under
+/// the listener's ordinary five-second pre-admission deadline. Each route
+/// validates after `deny_unknown_fields` decoding and again validates its
+/// response before it crosses the bridge client boundary. Attach alone hands
+/// the authenticated stream to the runtime after the basic cursor shape check;
+/// its capability-record upper bound is checked by the runtime before replay.
+async fn handle_gui_chat_route(
+    mut stream: super::transport::AuditStream,
+    state: &AuditRpcState,
+    path: &str,
+    body: &[u8],
+) -> Result<ConnectionOutcome> {
+    let Some(runtime) = state.gui_chat_runtime.as_ref().cloned() else {
+        let _ = stream
+            .write_all(http_response(503, "gui chat runtime unavailable").as_bytes())
+            .await;
+        let _ = stream.shutdown().await;
+        return Ok(ConnectionOutcome::Complete);
+    };
+    macro_rules! response {
+        ($request:ty, $parse:path, $call:ident, $validate:path) => {{
+            let request = match serde_json::from_slice::<$request>(body) {
+                Ok(request) => request,
+                Err(_) => {
+                    let _ = stream
+                        .write_all(http_response(422, "invalid_gui_chat_request").as_bytes())
+                        .await;
+                    let _ = stream.shutdown().await;
+                    return Ok(ConnectionOutcome::Complete);
+                }
+            };
+            if $parse(&request).is_err() {
+                let _ = stream
+                    .write_all(http_response(422, "invalid_gui_chat_request").as_bytes())
+                    .await;
+                let _ = stream.shutdown().await;
+                return Ok(ConnectionOutcome::Complete);
+            }
+            match runtime.$call(request).await {
+                Ok(reply) if $validate(&reply).is_ok() => {
+                    let body = serde_json::to_string(&reply).context("encode GUI chat reply")?;
+                    let _ = stream
+                        .write_all(http_response_json(200, &body).as_bytes())
+                        .await;
+                }
+                Ok(_) => {
+                    let _ = stream
+                        .write_all(http_response(500, "invalid_gui_chat_response").as_bytes())
+                        .await;
+                }
+                Err(error) => {
+                    tracing::warn!(?error, "GUI chat route refused");
+                    let _ = stream
+                        .write_all(http_response(503, "gui_chat_unavailable").as_bytes())
+                        .await;
+                }
+            }
+            let _ = stream.shutdown().await;
+            Ok(ConnectionOutcome::Complete)
+        }};
+    }
+    match path {
+        gui::GUI_CHAT_V1_CONSENT_PREFLIGHT_PATH => response!(
+            gui::GuiChatPreflightRequest,
+            gui::validate_preflight_request,
+            preflight,
+            gui::validate_preflight_response
+        ),
+        gui::GUI_CHAT_V1_CONSENT_DECIDE_PATH => response!(
+            gui::GuiChatConsentDecisionRequest,
+            gui::validate_decide_request,
+            decide,
+            gui::validate_decide_response
+        ),
+        gui::GUI_CHAT_V1_START_PATH => response!(
+            gui::GuiChatStartRequest,
+            gui::validate_start_request,
+            start,
+            gui::validate_start_response
+        ),
+        gui::GUI_CHAT_V1_ATTACH_EXCHANGE_PATH => response!(
+            gui::GuiChatAttachExchangeRequest,
+            gui::validate_attach_exchange_request,
+            exchange_attach,
+            gui::validate_attach_exchange_response
+        ),
+        gui::GUI_CHAT_V1_CANCEL_PATH => response!(
+            gui::GuiChatCancelRequest,
+            gui::validate_cancel_request,
+            cancel,
+            gui::validate_cancel_response
+        ),
+        gui::GUI_CHAT_V1_STATUS_PATH => response!(
+            gui::GuiChatStatusRequest,
+            gui::validate_status_request,
+            status,
+            gui::validate_status_response
+        ),
+        gui::GUI_CHAT_V1_ACTIVE_PATH => response!(
+            gui::GuiChatActiveRequest,
+            gui::validate_active_request,
+            active,
+            gui::validate_active_response
+        ),
+        gui::GUI_CHAT_V1_ATTACH_PATH => {
+            let request = match serde_json::from_slice::<gui::GuiChatAttachRequest>(body) {
+                Ok(request) => request,
+                Err(_) => {
+                    let _ = stream
+                        .write_all(http_response(422, "invalid_gui_chat_attach").as_bytes())
+                        .await;
+                    let _ = stream.shutdown().await;
+                    return Ok(ConnectionOutcome::Complete);
+                }
+            };
+            // The runtime owns the authenticated capability registry and uses
+            // its stored high-water mark as the real cursor bound.
+            if gui::validate_attach_request(&request, u64::MAX).is_err() {
+                let _ = stream
+                    .write_all(http_response(422, "invalid_gui_chat_attach").as_bytes())
+                    .await;
+                let _ = stream.shutdown().await;
+                return Ok(ConnectionOutcome::Complete);
+            }
+            Ok(ConnectionOutcome::GuiChatAttachAdmitted { stream, request })
+        }
+        _ => {
+            let _ = stream
+                .write_all(http_response(404, "not found").as_bytes())
+                .await;
+            let _ = stream.shutdown().await;
+            Ok(ConnectionOutcome::Complete)
+        }
+    }
+}
 async fn emit_reject(state: &AuditRpcState, reason: &str) {
     let payload = serde_json::to_vec(&serde_json::json!({ "reason": reason }))
         .expect("audit-RPC reject payload contains only infallible JSON values");

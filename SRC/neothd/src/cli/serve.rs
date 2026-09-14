@@ -511,12 +511,25 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         Arc::clone(&reload_controller),
         writer.clone(),
     ));
+    // W41 shares the exact PID/sidecar-attested instance commitment with the
+    // GUI bridge. This is a fresh daemon boot binding, never the endpoint nonce
+    // itself and never a value recovered from disk.
+    let gui_chat_boot_id =
+        crate::daemon::audit_rpc::instance_commitment_for_nonce(&audit_endpoint_nonce);
+    let gui_chat_runtime: Arc<dyn crate::daemon::gui_chat_protocol::GuiChatRuntime> =
+        Arc::new(crate::daemon::gui_chat_runtime::DaemonGuiChatRuntime::new(
+            Arc::clone(&chat_runtime),
+            neoth_home.clone(),
+            config_path.clone(),
+            gui_chat_boot_id.0,
+        ));
     #[cfg(feature = "cluster")]
     let (audit_rpc_task, mut audit_rpc_guard) = crate::cli::serve_tasks::spawn_audit_rpc(
         &config,
         &neoth_home,
         &writer,
         Arc::clone(&chat_runtime),
+        Arc::clone(&gui_chat_runtime),
         daemon_pid_guard,
         &audit_endpoint_nonce,
         std::sync::Arc::clone(&membership_controller),
@@ -529,6 +542,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         &neoth_home,
         &writer,
         Arc::clone(&chat_runtime),
+        Arc::clone(&gui_chat_runtime),
         daemon_pid_guard,
         &audit_endpoint_nonce,
     )
@@ -2614,6 +2628,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // to own cancellation and its response stream; runtime admission is
     // closed before the listener is finally aborted below.
     crate::daemon::audit_rpc::remove_sidecar(&neoth_home);
+    crate::daemon::gui_chat_protocol::GuiChatRuntime::close_and_drain(gui_chat_runtime.as_ref())
+        .await;
     chat_runtime.close_and_drain().await;
     audit_rpc_guard.take();
     connector_control_rpc_guard.take();
@@ -2627,6 +2643,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // This root owns a global writer clone and may retain the published
     // provider.  Drop it before `shutdown_background_tasks` reaches its sole
     // writer close/drain boundary; the listener task is joined there.
+    drop(gui_chat_runtime);
     drop(chat_runtime);
     // Linearize generation-bound effect shutdown at the signal/fatal-boundary
     // decision, before breaker persistence and operator hooks can extend

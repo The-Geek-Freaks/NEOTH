@@ -23,8 +23,8 @@ use super::quota::{QuotaError, parse_retry_after};
 use super::response_bounds;
 use super::termination::{ObservedUpstreamEvidence, ProviderTermination, RefusalOrigin};
 use super::{
-    ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements, Provider,
-    ProviderDispatchPermit, ProviderRequestControls, Request,
+    ChatTurnEffectKind, ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements,
+    Provider, ProviderDispatchPermit, ProviderRequestControls, Request,
 };
 use crate::config::inference::OpenAiCompatibleProfile;
 use crate::secret::SecretString;
@@ -37,6 +37,31 @@ const SUCCESS_BODY_EVIDENCE_DOMAIN: &[u8] = b"openai-compatible-success-body/v1"
 const SSE_FRAME_EVIDENCE_DOMAIN: &[u8] = b"openai-compatible-sse-frame/v1";
 const SSE_TRANSPORT_EVIDENCE_DOMAIN: &[u8] = b"openai-compatible-sse-transport/v1";
 const REFUSAL_EVIDENCE_DOMAIN: &[u8] = b"openai-compatible-refusal/v1";
+
+async fn send_with_effect(
+    permit: &ProviderDispatchPermit,
+    kind: ChatTurnEffectKind,
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::Response> {
+    let Some(effect) = permit.prepare_effect(kind).await? else {
+        return request.send().await.context("HTTP response-head open");
+    };
+    let lease = effect.begin_start().await?;
+    match tokio::time::timeout_at(lease.deadline(), request.send()).await {
+        Ok(Ok(response)) => {
+            lease.started().await?;
+            Ok(response)
+        }
+        Ok(Err(error)) => {
+            lease.indeterminate().await?;
+            Err(error).context("HTTP transport entered without a response head")
+        }
+        Err(_) => {
+            lease.indeterminate().await?;
+            anyhow::bail!("HTTP response-head handshake timed out")
+        }
+    }
+}
 
 struct BoundedProviderErrorBody {
     text: String,
@@ -405,6 +430,14 @@ impl Provider for OpenAiAdapter {
         self.name
     }
 
+    #[expect(
+        private_interfaces,
+        reason = "the private W41 probe seals this hook to reviewed in-crate adapters"
+    )]
+    fn w41_effect_start_adapter(&self, _: super::W41EffectStartProbe) -> bool {
+        true
+    }
+
     fn request_controls(&self) -> ProviderRequestControls {
         ProviderRequestControls::SAMPLING.with_output_token_limit()
     }
@@ -471,11 +504,17 @@ impl Provider for OpenAiAdapter {
             if self.openrouter_metadata {
                 request = request.header("X-OpenRouter-Metadata", "enabled");
             }
-            let response = request
-                .json(&body)
-                .send()
-                .await
-                .with_context(|| format!("POST {url}"))?;
+            let request = request.json(&body);
+            let response = send_with_effect(
+                permit,
+                ChatTurnEffectKind::Provider {
+                    call_scope: "openai_api.complete_raw",
+                    streaming: false,
+                },
+                request,
+            )
+            .await
+            .with_context(|| format!("POST {url}"))?;
 
             let status = response.status();
             if !status.is_success() {
@@ -741,11 +780,17 @@ impl Provider for OpenAiAdapter {
             if self.openrouter_metadata {
                 request = request.header("X-OpenRouter-Metadata", "enabled");
             }
-            let response = request
-                .json(&body)
-                .send()
-                .await
-                .with_context(|| format!("POST {url} (stream)"))?;
+            let request = request.json(&body);
+            let response = send_with_effect(
+                permit,
+                ChatTurnEffectKind::Provider {
+                    call_scope: "openai_api.stream_raw",
+                    streaming: true,
+                },
+                request,
+            )
+            .await
+            .with_context(|| format!("POST {url} (stream)"))?;
 
             let status = response.status();
             if !status.is_success() {
@@ -1481,7 +1526,155 @@ struct SseUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::Provider;
+    use crate::permissions::AutonomyLevel;
+    use crate::providers::cost_authorization::ProviderCallAuthorizer;
+    use crate::providers::{
+        ChatTurnEffectGate, ChatTurnEffectKind, EffectOwnerRegistration, EffectStartAuthority,
+        EffectStartLease, EffectStartLeaseLifecycle, PreparingEffect, PreparingEffectLifecycle,
+        Provider, TurnEffectOwner,
+    };
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use tokio::io::AsyncWriteExt;
+    use tokio::sync::oneshot;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum RecordedEffectState {
+        Preparing,
+        Handshaking,
+        Started,
+        Aborted,
+        Indeterminate,
+    }
+
+    struct RecordingGate {
+        state: Arc<Mutex<RecordedEffectState>>,
+        intents: Arc<Mutex<Vec<(ChatTurnEffectKind, String)>>>,
+        handshake_deadline: std::time::Duration,
+        closed: Arc<AtomicBool>,
+    }
+
+    struct RecordingPreparing {
+        state: Arc<Mutex<RecordedEffectState>>,
+        handshake_deadline: std::time::Duration,
+        closed: Arc<AtomicBool>,
+    }
+
+    struct RecordingLease {
+        state: Arc<Mutex<RecordedEffectState>>,
+        deadline: tokio::time::Instant,
+        closed: Arc<AtomicBool>,
+    }
+
+    impl RecordingGate {
+        fn new(handshake_deadline: std::time::Duration) -> Arc<Self> {
+            Arc::new(Self {
+                state: Arc::new(Mutex::new(RecordedEffectState::Preparing)),
+                intents: Arc::new(Mutex::new(Vec::new())),
+                handshake_deadline,
+                closed: Arc::new(AtomicBool::new(false)),
+            })
+        }
+
+        fn state(&self) -> RecordedEffectState {
+            *self.state.lock().expect("recording gate state")
+        }
+    }
+
+    #[async_trait]
+    impl ChatTurnEffectGate for RecordingGate {
+        async fn intent(
+            &self,
+            kind: ChatTurnEffectKind,
+            binding: &str,
+        ) -> anyhow::Result<PreparingEffect> {
+            if self.closed.load(Ordering::Acquire)
+                || self.state() == RecordedEffectState::Indeterminate
+            {
+                anyhow::bail!("recording gate is closed after indeterminate transport");
+            }
+            self.intents
+                .lock()
+                .expect("recording gate intents")
+                .push((kind, binding.to_owned()));
+            *self.state.lock().expect("recording gate state") = RecordedEffectState::Preparing;
+            Ok(PreparingEffect::new(Box::new(RecordingPreparing {
+                state: Arc::clone(&self.state),
+                handshake_deadline: self.handshake_deadline,
+                closed: Arc::clone(&self.closed),
+            })))
+        }
+
+        fn register_owner(&self, owner: TurnEffectOwner) -> EffectOwnerRegistration {
+            EffectOwnerRegistration::Untransferred {
+                error: anyhow::anyhow!("recording effect gate does not own daemon cleanup tasks"),
+                owner,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl PreparingEffectLifecycle for RecordingPreparing {
+        async fn begin_start(
+            self: Box<Self>,
+            authority: Option<&dyn EffectStartAuthority>,
+        ) -> anyhow::Result<EffectStartLease> {
+            if let Some(authority) = authority
+                && let Err(error) = authority.recheck()
+            {
+                // Mirror the daemon runtime's known pre-start settlement: a
+                // rejected live-consent callback never yields a lease or
+                // reaches the HTTP response-head send.
+                *self.state.lock().expect("recording gate state") = RecordedEffectState::Aborted;
+                self.closed.store(true, Ordering::Release);
+                return Err(error);
+            }
+            *self.state.lock().expect("recording gate state") = RecordedEffectState::Handshaking;
+            Ok(EffectStartLease::new(Box::new(RecordingLease {
+                state: self.state,
+                deadline: tokio::time::Instant::now() + self.handshake_deadline,
+                closed: self.closed,
+            })))
+        }
+
+        fn abandon(self: Box<Self>) {
+            *self.state.lock().expect("recording gate state") = RecordedEffectState::Aborted;
+            self.closed.store(true, Ordering::Release);
+        }
+    }
+
+    #[async_trait]
+    impl EffectStartLeaseLifecycle for RecordingLease {
+        fn deadline(&self) -> tokio::time::Instant {
+            self.deadline
+        }
+
+        async fn settle_started(self: Box<Self>) -> anyhow::Result<()> {
+            *self.state.lock().expect("recording gate state") = RecordedEffectState::Started;
+            Ok(())
+        }
+
+        async fn settle_aborted_proven_pre_start(self: Box<Self>) -> anyhow::Result<()> {
+            *self.state.lock().expect("recording gate state") = RecordedEffectState::Aborted;
+            Ok(())
+        }
+
+        async fn settle_indeterminate(self: Box<Self>) -> anyhow::Result<()> {
+            *self.state.lock().expect("recording gate state") = RecordedEffectState::Indeterminate;
+            self.closed.store(true, Ordering::Release);
+            Ok(())
+        }
+
+        fn abandon(self: Box<Self>) {
+            *self.state.lock().expect("recording gate state") = RecordedEffectState::Indeterminate;
+            self.closed.store(true, Ordering::Release);
+        }
+    }
+
+    fn authorizer_with_gate(gate: Arc<RecordingGate>) -> ProviderCallAuthorizer {
+        ProviderCallAuthorizer::test_only(AutonomyLevel::Full).with_turn_effect_gate(Some(gate))
+    }
 
     /// We don't run a live HTTP server in unit tests — that lives in an
     /// integration test once mockito/wiremock is added. Here we just verify
@@ -2024,6 +2217,168 @@ mod tests {
             "local-llama".to_string(),
         )
         .expect("compat adapter constructs against mock URI")
+    }
+
+    #[tokio::test]
+    async fn effect_handshake_marks_started_at_response_head_before_stream_body() {
+        use futures_util::StreamExt;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind response-head fixture");
+        let address = listener.local_addr().expect("fixture address");
+        let (head_written_tx, head_written_rx) = oneshot::channel();
+        let (release_body_tx, release_body_rx) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept request");
+            let mut request = [0_u8; 4096];
+            let _ = socket.read(&mut request).await.expect("read request");
+            let body = "data: [DONE]\n\n";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            socket
+                .write_all(head.as_bytes())
+                .await
+                .expect("write response head");
+            head_written_tx.send(()).expect("head observer alive");
+            release_body_rx.await.expect("body release");
+            socket
+                .write_all(body.as_bytes())
+                .await
+                .expect("write response body");
+            socket.shutdown().await.expect("close response");
+        });
+
+        let gate = RecordingGate::new(std::time::Duration::from_secs(1));
+        let authorizer = authorizer_with_gate(Arc::clone(&gate));
+        let adapter = build_adapter_against(&format!("http://{address}"));
+        let mut stream = adapter
+            .stream_authorized(
+                Request {
+                    prompt: "response-head fixture".into(),
+                    ..Default::default()
+                },
+                &authorizer,
+                "test.w41.response_head",
+            )
+            .await
+            .expect("stream opens after response head");
+
+        head_written_rx
+            .await
+            .expect("server wrote only the response head");
+        assert_eq!(gate.state(), RecordedEffectState::Started);
+        assert_eq!(gate.intents.lock().expect("intents").len(), 1);
+
+        release_body_tx
+            .send(())
+            .expect("server still waits for release");
+        while let Some(item) = stream.next().await {
+            item.expect("SSE body remains valid after Started");
+        }
+        server.await.expect("bounded response-head fixture joins");
+    }
+
+    #[tokio::test]
+    async fn delayed_response_head_is_indeterminate_and_blocks_later_authorized_retry() {
+        use tokio::io::AsyncReadExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind delayed-head fixture");
+        let address = listener.local_addr().expect("fixture address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept first request");
+            let mut request = [0_u8; 4096];
+            let _ = socket.read(&mut request).await.expect("read first request");
+            tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+            let _ = socket.shutdown().await;
+            tokio::time::timeout(std::time::Duration::from_millis(120), listener.accept())
+                .await
+                .is_err()
+        });
+
+        let gate = RecordingGate::new(std::time::Duration::from_millis(30));
+        let authorizer = authorizer_with_gate(Arc::clone(&gate));
+        let adapter = build_adapter_against(&format!("http://{address}"));
+        let request = Request {
+            prompt: "delayed head".into(),
+            ..Default::default()
+        };
+        let first = adapter
+            .stream_authorized(request.clone(), &authorizer, "test.w41.delayed_head")
+            .await
+            .err()
+            .expect("response-head deadline is transport-indeterminate");
+        assert!(
+            first.chain().any(|cause| cause
+                .to_string()
+                .contains("HTTP response-head handshake timed out")),
+            "unexpected delayed response-head error chain: {first:#}"
+        );
+        assert_eq!(gate.state(), RecordedEffectState::Indeterminate);
+
+        let retry = adapter
+            .stream_authorized(request, &authorizer, "test.w41.delayed_head.retry")
+            .await
+            .err()
+            .expect("closed effect gate rejects retry before another send");
+        assert!(
+            retry
+                .chain()
+                .any(|cause| cause.to_string().contains("closed after indeterminate")),
+            "unexpected rejected retry error chain: {retry:#}"
+        );
+        assert_eq!(gate.intents.lock().expect("intents").len(), 1);
+        assert!(
+            server.await.expect("delayed-head fixture joins"),
+            "no retry reached HTTP listener"
+        );
+    }
+
+    #[tokio::test]
+    async fn ungated_stream_preserves_legacy_direct_transport_behavior() {
+        use futures_util::StreamExt;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind ungated fixture");
+        let address = listener.local_addr().expect("fixture address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept ungated request");
+            let mut request = [0_u8; 4096];
+            let _ = socket
+                .read(&mut request)
+                .await
+                .expect("read ungated request");
+            let body = "data: [DONE]\n\n";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write ungated response");
+            socket.shutdown().await.expect("close ungated response");
+        });
+
+        let adapter = build_adapter_against(&format!("http://{address}"));
+        let mut stream = adapter
+            .stream(Request {
+                prompt: "ungated transport".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("transport-only stream remains available without an effect gate");
+        while let Some(item) = stream.next().await {
+            item.expect("ungated SSE body succeeds");
+        }
+        server.await.expect("bounded ungated fixture joins");
     }
 
     #[tokio::test]

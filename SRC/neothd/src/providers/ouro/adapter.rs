@@ -31,8 +31,8 @@ use crate::providers::local_qwen::{
     sample_token,
 };
 use crate::providers::{
-    ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements, Provider,
-    ProviderDispatchPermit, ProviderRequestControls, Request,
+    ChatTurnEffectKind, ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements,
+    EffectStartLease, Provider, ProviderDispatchPermit, ProviderRequestControls, Request,
 };
 
 use super::artifacts::{self, OuroLoadLease, OuroLoadReceipt};
@@ -51,6 +51,26 @@ pub const DEFAULT_MAX_NEW_TOKENS: u32 = 256;
 /// is ~2.8 GB; budget 4 GiB to leave headroom for tokenizer + config
 /// + hf-hub's intermediate cache copy.
 pub const OURO_DOWNLOAD_MIN_FREE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+async fn settle_ouro_generation_start(
+    lease: Option<EffectStartLease>,
+    started: tokio::sync::oneshot::Receiver<()>,
+) -> Result<()> {
+    let Some(lease) = lease else {
+        return Ok(());
+    };
+    match tokio::time::timeout_at(lease.deadline(), started).await {
+        Ok(Ok(())) => lease.started().await,
+        Ok(Err(_)) => {
+            lease.aborted_proven_pre_start().await?;
+            anyhow::bail!("Ouro worker stopped before generation started");
+        }
+        Err(_) => {
+            lease.indeterminate().await?;
+            anyhow::bail!("Ouro generation-start handshake timed out");
+        }
+    }
+}
 
 /// Lazy-loaded model state cached behind a mutex (same pattern as
 /// `local_qwen::LoadedModel`).
@@ -1004,6 +1024,14 @@ impl Provider for LocalOuroAdapter {
         "local_ouro"
     }
 
+    #[expect(
+        private_interfaces,
+        reason = "the private W41 probe seals this hook to reviewed in-crate adapters"
+    )]
+    fn w41_effect_start_adapter(&self, _: crate::providers::W41EffectStartProbe) -> bool {
+        true
+    }
+
     fn request_controls(&self) -> ProviderRequestControls {
         ProviderRequestControls::SAMPLING_WITHOUT_STOPS.with_output_token_limit()
     }
@@ -1019,7 +1047,7 @@ impl Provider for LocalOuroAdapter {
     async fn complete_raw(
         &self,
         req: Request,
-        _permit: &ProviderDispatchPermit,
+        permit: &ProviderDispatchPermit,
     ) -> Result<Completion> {
         // GR-04: circuit breaker — same local-inference rationale
         // as `local_qwen` (mmap / candle / OOM failure isolation).
@@ -1037,7 +1065,19 @@ impl Provider for LocalOuroAdapter {
                 cache_dir: self.cache_dir.clone(),
             };
             let req_clone = req;
-            tokio::task::spawn_blocking(move || {
+            let effect = permit
+                .prepare_effect(ChatTurnEffectKind::Provider {
+                    call_scope: "local_ouro.generation",
+                    streaming: false,
+                })
+                .await?;
+            let lease = match effect {
+                Some(effect) => Some(effect.begin_start().await?),
+                None => None,
+            };
+            let (start_tx, start_rx) = tokio::sync::oneshot::channel();
+            let generation = tokio::task::spawn_blocking(move || {
+                let _ = start_tx.send(());
                 let adapter = LocalOuroAdapter {
                     repo: adapter_handle.repo,
                     cache_dir: adapter_handle.cache_dir,
@@ -1051,9 +1091,9 @@ impl Provider for LocalOuroAdapter {
                     loaded: adapter_handle.loaded,
                 };
                 run_ouro_forward(&adapter, &req_clone)
-            })
-            .await
-            .context("Ouro: spawn_blocking join")?
+            });
+            settle_ouro_generation_start(lease, start_rx).await?;
+            generation.await.context("Ouro: spawn_blocking join")?
         })
         .await
     }
@@ -1061,7 +1101,7 @@ impl Provider for LocalOuroAdapter {
     async fn stream_raw(
         &self,
         req: Request,
-        _permit: &ProviderDispatchPermit,
+        permit: &ProviderDispatchPermit,
     ) -> Result<ChunkStream> {
         // GR-04 stream-wrap: same circuit-breaker semantics as `complete`.
         // Each public surface ({complete, stream}) takes its own permit so
@@ -1084,11 +1124,23 @@ impl Provider for LocalOuroAdapter {
                 cache_dir: self.cache_dir.clone(),
             };
             let req_clone = req.clone();
+            let effect = permit
+                .prepare_effect(ChatTurnEffectKind::Provider {
+                    call_scope: "local_ouro.generation",
+                    streaming: true,
+                })
+                .await?;
+            let lease = match effect {
+                Some(effect) => Some(effect.begin_start().await?),
+                None => None,
+            };
 
             // Bounded channel — 64 chunks of buffering without unbounded growth.
             let (tx, rx) = tokio::sync::mpsc::channel::<Result<CompletionChunk>>(64);
+            let (start_tx, start_rx) = tokio::sync::oneshot::channel();
 
             tokio::task::spawn_blocking(move || {
+                let _ = start_tx.send(());
                 let adapter = LocalOuroAdapter {
                     repo: adapter_handle.repo,
                     cache_dir: adapter_handle.cache_dir,
@@ -1105,6 +1157,7 @@ impl Provider for LocalOuroAdapter {
                     let _ = tx.blocking_send(Err(e));
                 }
             });
+            settle_ouro_generation_start(lease, start_rx).await?;
 
             use tokio_stream::wrappers::ReceiverStream;
             let stream = ReceiverStream::new(rx);

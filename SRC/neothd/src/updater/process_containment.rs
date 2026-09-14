@@ -718,13 +718,21 @@ fn configure_process_tree(command: &mut tokio::process::Command) {
 }
 
 #[cfg(unix)]
-struct UnixProcessGroup {
+pub(crate) struct UnixProcessGroup {
     process_group_id: i32,
     armed: bool,
 }
 
 #[cfg(unix)]
 impl UnixProcessGroup {
+    pub(crate) fn from_spawned_pid(pid: u32) -> Result<Self> {
+        Ok(Self {
+            process_group_id: pid
+                .try_into()
+                .context("contained process-group id does not fit i32")?,
+            armed: true,
+        })
+    }
     fn from_child(child: &tokio::process::Child) -> Result<Self> {
         let process_group_id = child
             .id()
@@ -737,7 +745,7 @@ impl UnixProcessGroup {
         })
     }
 
-    fn terminate(&mut self) -> Result<()> {
+    pub(crate) fn terminate(&mut self) -> Result<()> {
         if !self.armed {
             return Ok(());
         }
@@ -771,7 +779,7 @@ impl Drop for UnixProcessGroup {
 }
 
 #[cfg(windows)]
-struct WindowsProcessJob {
+pub(crate) struct WindowsProcessJob {
     handle: std::os::windows::io::OwnedHandle,
 }
 
@@ -783,7 +791,7 @@ unsafe extern "system" {
 
 #[cfg(windows)]
 impl WindowsProcessJob {
-    fn create() -> Result<Self> {
+    pub(crate) fn create() -> Result<Self> {
         use std::os::windows::io::FromRawHandle as _;
         use windows_sys::Win32::System::JobObjects::{
             CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
@@ -840,6 +848,12 @@ impl WindowsProcessJob {
         Ok(())
     }
 
+    #[cfg_attr(not(feature = "recursive-mas"), allow(dead_code))]
+    pub(crate) fn assign_std_child(&self, child: &std::process::Child) -> Result<()> {
+        use std::os::windows::io::AsRawHandle as _;
+        self.assign_raw(child.as_raw_handle().cast())
+    }
+
     fn resume(&self, child: &tokio::process::Child) -> Result<()> {
         let child_handle = child
             .raw_handle()
@@ -854,7 +868,36 @@ impl WindowsProcessJob {
         Ok(())
     }
 
-    fn terminate(&self) -> Result<()> {
+    #[cfg_attr(not(feature = "recursive-mas"), allow(dead_code))]
+    pub(crate) fn resume_std_child(&self, child: &std::process::Child) -> Result<()> {
+        use std::os::windows::io::AsRawHandle as _;
+        self.resume_raw(child.as_raw_handle().cast())
+    }
+
+    #[cfg_attr(not(feature = "recursive-mas"), allow(dead_code))]
+    fn assign_raw(&self, child_handle: windows_sys::Win32::Foundation::HANDLE) -> Result<()> {
+        use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
+        if unsafe { AssignProcessToJobObject(Self::raw_handle(&self.handle), child_handle) } == 0 {
+            anyhow::bail!(
+                "assign updater helper Job Object: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg_attr(not(feature = "recursive-mas"), allow(dead_code))]
+    fn resume_raw(&self, child_handle: windows_sys::Win32::Foundation::HANDLE) -> Result<()> {
+        let status = unsafe { NtResumeProcess(child_handle) };
+        if status < 0 {
+            anyhow::bail!(
+                "resume updater helper after Job Object assignment: NTSTATUS {status:#x}"
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn terminate(&self) -> Result<()> {
         use windows_sys::Win32::System::JobObjects::TerminateJobObject;
         // SAFETY: the owned job handle is live. Failure is surfaced because a
         // caller cannot assume the process tree vanished.

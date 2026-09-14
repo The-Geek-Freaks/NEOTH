@@ -79,3 +79,7 @@ slint-build = "1.8"
 
 [dev-dependencies]
 tempfile = "3"
+# W41 RPC06's separate-crate GUI facade imports only synthetic bridge fixtures.
+# This test-only edge keeps the core's default/runtime feature set unchanged;
+# the normal dependency above continues to supply the effective `cluster` feature.
+neothd = { package = "neoth", path = "../neothd", version = "=1.0.0", default-features = false, features = ["gui-bridge-test-support"] }

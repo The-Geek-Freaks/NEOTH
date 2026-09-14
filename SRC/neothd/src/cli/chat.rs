@@ -4861,6 +4861,7 @@ pub(super) async fn dispatch_provider(
     defer_provider_output: bool,
     session_canary: &std::sync::Arc<crate::security::injection_tracker::CanaryToken>,
     cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    turn_effect_gate: Option<std::sync::Arc<dyn crate::providers::ChatTurnEffectGate>>,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<DispatchOutput> {
     // Consent is revalidated by ProviderCallAuthorizer immediately before
@@ -4942,6 +4943,7 @@ pub(super) async fn dispatch_provider(
             config.tokens.max_per_request,
         )
         .with_usage_home(home.to_path_buf())
+        .with_turn_effect_gate(turn_effect_gate.clone())
         .with_ephemeral_consent(ephemeral_consent.clone())
         .with_audit_context(provider_audit_context);
     let authorized_provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
@@ -5579,6 +5581,7 @@ pub(super) async fn dispatch_provider(
                         &mut compaction_budget,
                         // Ordinary chat has no outer multi-round tool budget.
                         None,
+                        turn_effect_gate.clone(),
                         home,
                     )
                     .await
@@ -5965,6 +5968,7 @@ pub(super) async fn run_post_reply_pipelines(
     ephemeral_consent: &crate::consent::EphemeralConsent,
     canary_token: std::sync::Arc<crate::security::injection_tracker::CanaryToken>,
     cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    turn_effect_gate: Option<std::sync::Arc<dyn crate::providers::ChatTurnEffectGate>>,
     mut stream_plan: PostReplyStreamPlan<'_>,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<Option<String>> {
@@ -6024,6 +6028,7 @@ pub(super) async fn run_post_reply_pipelines(
             config.tokens.max_per_request,
         )
         .with_usage_home(first_tour_home.clone())
+        .with_turn_effect_gate(turn_effect_gate.clone())
         .with_ephemeral_consent(ephemeral_consent.clone())
         .with_audit_context(
             crate::providers::cost_authorization::ProviderCallAuditContext {
@@ -6795,6 +6800,7 @@ pub(super) async fn run_post_reply_pipelines(
                         config.tokens.max_per_request,
                     )
                     .with_usage_home(first_tour_home.clone())
+                    .with_turn_effect_gate(turn_effect_gate.clone())
                     .with_ephemeral_consent(ephemeral_consent.clone()),
                     None,
                     "profile_learning_round",
@@ -7112,6 +7118,7 @@ pub(super) async fn run_post_reply_pipelines(
             &current_session_id,
             &prompt,
             ephemeral_consent,
+            turn_effect_gate.clone(),
         )
         .await;
     }
@@ -7434,6 +7441,68 @@ pub(crate) async fn prepare_daemon_plain_chat_turn(
         selected_config,
         provider,
         crate::consent::EphemeralConsent::default(),
+        None,
+        cancellation,
+        output,
+    )
+    .await?;
+    emit_local_coding_intent_offer(&input, output)?;
+    finish_chat_turn_preparation(input, output).await
+}
+
+/// W41's typed GUI producer entry. The caller has already sealed the
+/// descriptor, staged attachments into daemon-private files, and verified its
+/// final start capability. It intentionally accepts no `ChatArgs`, raw ticket,
+/// consent value, home/config path, sampling control, resume or loop option.
+#[allow(clippy::too_many_arguments)] // Typed daemon entry preserves GUI/runtime boundary.
+pub(crate) async fn prepare_daemon_gui_chat_turn(
+    message: String,
+    model: Option<String>,
+    skill: Option<String>,
+    incognito: bool,
+    staged_attachments: Vec<PathBuf>,
+    ephemeral_consent: crate::consent::EphemeralConsent,
+    selected_config: FreedomConfig,
+    selected_config_path: PathBuf,
+    selected_home: PathBuf,
+    provider: &dyn crate::providers::Provider,
+    cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    output: &mut dyn ChatTurnEventSink,
+) -> Result<chat_turn_pipeline::ChatPreparationOutcome> {
+    anyhow::ensure!(
+        crate::daemon::audit_rpc::is_daemon_plain_chat_message(&message),
+        "daemon GUI chat rejects slash command syntax; local actions stay on the local CLI"
+    );
+    let args = ChatArgs {
+        message: Some(message),
+        model,
+        skill,
+        system: None,
+        attach: staged_attachments,
+        repository_root: None,
+        edit: false,
+        config: Some(selected_config_path),
+        wal_segment: None,
+        stream: true,
+        gui_consent_token_stdin: false,
+        temperature: None,
+        top_p: None,
+        sampling_seed: None,
+        resume_from: None,
+        incognito,
+        loop_mode: false,
+        iterations: None,
+        until: Vec::new(),
+    };
+    anyhow::ensure!(
+        chat_neoth_home(args.config.as_deref()) == selected_home,
+        "daemon selected home does not match its selected configuration"
+    );
+    let input = prepare_chat_turn_input(
+        args,
+        selected_config,
+        provider,
+        ephemeral_consent,
         None,
         cancellation,
         output,
@@ -8019,6 +8088,7 @@ async fn name_session_best_effort(
     session_id: &str,
     opening: &str,
     ephemeral_consent: &crate::consent::EphemeralConsent,
+    turn_effect_gate: Option<std::sync::Arc<dyn crate::providers::ChatTurnEffectGate>>,
 ) {
     let prompt = match build_session_naming_prompt(opening) {
         Ok(prompt) => prompt,
@@ -8048,6 +8118,7 @@ async fn name_session_best_effort(
             config.tokens.max_per_request,
         )
         .with_usage_home(home.to_path_buf())
+        .with_turn_effect_gate(turn_effect_gate)
         .with_ephemeral_consent(ephemeral_consent.clone())
         .with_audit_context(
             crate::providers::cost_authorization::ProviderCallAuditContext {
@@ -8429,6 +8500,15 @@ struct LoadedChatAttachment {
     bytes: Vec<u8>,
 }
 
+/// Bytes admitted through the existing no-follow, regular-file, bounded-read
+/// path for W41's daemon-private GUI staging boundary. This is deliberately
+/// not a GUI ticket and exposes neither a source path nor display name.
+pub(crate) struct DaemonGuiStagedAttachment {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) byte_len: u64,
+    pub(crate) media_kind: String,
+}
+
 struct ExtractedChatAttachment {
     display_name: String,
     kind: crate::pipeline::AttachmentContentKind,
@@ -8742,6 +8822,34 @@ fn read_admitted_attachment(attachment: AdmittedChatAttachment) -> Result<Loaded
         kind: attachment.kind,
         bytes,
     })
+}
+
+/// Reuse the direct CLI attachment admission exactly once before W41 copies
+/// bytes to its daemon-owner-only stage. The GUI never receives this value and
+/// start later accepts only staged ticket bindings, never caller paths.
+pub(crate) async fn stage_daemon_gui_attachments(
+    paths: &[PathBuf],
+) -> Result<Vec<DaemonGuiStagedAttachment>> {
+    let admission_paths = paths.to_vec();
+    tokio::task::spawn_blocking(move || {
+        admit_chat_attachments(&admission_paths)?
+            .into_iter()
+            .map(read_admitted_attachment)
+            .map(|loaded| {
+                let loaded = loaded?;
+                Ok(DaemonGuiStagedAttachment {
+                    byte_len: loaded.bytes.len() as u64,
+                    media_kind: match loaded.kind {
+                        Some(kind) => format!("{kind:?}").to_ascii_lowercase(),
+                        None => "other".into(),
+                    },
+                    bytes: loaded.bytes,
+                })
+            })
+            .collect()
+    })
+    .await
+    .context("GUI attachment admission worker failed")?
 }
 
 pub(super) async fn extract_attachment_contexts(
@@ -12234,6 +12342,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
     // Optional exact tool-call ceiling for the outer loop engine. Ordinary
     // chat/channel callers pass None; full-autonomy passes the remaining budget.
     max_tool_calls: Option<u64>,
+    turn_effect_gate: Option<std::sync::Arc<dyn crate::providers::ChatTurnEffectGate>>,
     // Exact instance root that owns leases, risk confirmations and traces.
     instance_home: &std::path::Path,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
@@ -12335,6 +12444,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         harness_cfg,
         compaction_budget,
         max_tool_calls,
+        turn_effect_gate,
         instance_home,
     )
     .await
@@ -19888,6 +19998,7 @@ modes:
             false,
             &canary,
             &crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
+            None,
             &mut CliChatOutput,
         )
         .await;
@@ -20028,6 +20139,7 @@ modes:
             false,
             &canary,
             &cancellation,
+            None,
             &mut output,
         );
 
@@ -20167,6 +20279,7 @@ modes:
             false,
             &canary,
             &crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
+            None,
             &mut CliChatOutput,
         )
         .await;

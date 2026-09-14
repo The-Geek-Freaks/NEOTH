@@ -66,8 +66,10 @@ pub mod tmux_sweeper_task;
 pub mod token_cap;
 pub mod whisper;
 
+use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -95,6 +97,289 @@ pub struct CompletionIdentity {
     /// instead of asking routing decorators to select a provider again.
     #[doc(hidden)]
     pub(crate) dispatch_route: Vec<u16>,
+}
+
+/// Small crate-visible W41 harness for adapter and MCP tests.  Production
+/// code cannot construct a lease; tests use this to force a held handshake,
+/// observe its settlement, and prove that Indeterminate closes later starts.
+#[cfg(test)]
+pub(crate) mod effect_test_support {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tokio::sync::Notify;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum RecordedPhase {
+        Open,
+        Preparing,
+        Handshaking,
+        Started,
+        Aborted,
+        Indeterminate,
+        Closed,
+    }
+
+    #[derive(Clone)]
+    pub struct RecordingEffectGate {
+        state: Arc<Mutex<RecordedPhase>>,
+        entered: Arc<Notify>,
+        release: Arc<Notify>,
+        hold: Arc<AtomicBool>,
+        deadline: tokio::time::Instant,
+    }
+
+    impl RecordingEffectGate {
+        pub fn new(deadline: Duration) -> Self {
+            Self {
+                state: Arc::new(Mutex::new(RecordedPhase::Open)),
+                entered: Arc::new(Notify::new()),
+                release: Arc::new(Notify::new()),
+                hold: Arc::new(AtomicBool::new(false)),
+                deadline: tokio::time::Instant::now() + deadline,
+            }
+        }
+        pub fn phase(&self) -> RecordedPhase {
+            *self.state.lock().expect("recording effect state")
+        }
+        pub fn close(&self) {
+            *self.state.lock().expect("recording effect state") = RecordedPhase::Closed;
+            self.release.notify_waiters();
+        }
+        pub fn hold_handshake(&self) {
+            self.hold.store(true, Ordering::Release);
+        }
+        pub async fn wait_for_handshake(&self) {
+            loop {
+                if self.phase() == RecordedPhase::Handshaking {
+                    return;
+                }
+                self.entered.notified().await;
+            }
+        }
+        pub fn release_handshake(&self) {
+            self.hold.store(false, Ordering::Release);
+            self.release.notify_waiters();
+        }
+    }
+
+    struct RecordingPreparing {
+        gate: RecordingEffectGate,
+    }
+    struct RecordingLease {
+        gate: RecordingEffectGate,
+    }
+
+    #[async_trait]
+    impl ChatTurnEffectGate for RecordingEffectGate {
+        async fn intent(
+            &self,
+            _kind: ChatTurnEffectKind,
+            _binding: &str,
+        ) -> Result<PreparingEffect> {
+            let mut state = self.state.lock().expect("recording effect state");
+            anyhow::ensure!(
+                !matches!(*state, RecordedPhase::Closed | RecordedPhase::Indeterminate),
+                "recording effect gate closed"
+            );
+            *state = RecordedPhase::Preparing;
+            Ok(PreparingEffect::new(Box::new(RecordingPreparing {
+                gate: self.clone(),
+            })))
+        }
+
+        fn register_owner(&self, owner: TurnEffectOwner) -> EffectOwnerRegistration {
+            EffectOwnerRegistration::Untransferred {
+                error: anyhow::anyhow!("recording effect gate does not own daemon cleanup tasks"),
+                owner,
+            }
+        }
+    }
+    #[async_trait]
+    impl PreparingEffectLifecycle for RecordingPreparing {
+        async fn begin_start(
+            self: Box<Self>,
+            authority: Option<&dyn EffectStartAuthority>,
+        ) -> Result<EffectStartLease> {
+            if let Some(authority) = authority
+                && let Err(error) = authority.recheck()
+            {
+                *self.gate.state.lock().expect("recording effect state") = RecordedPhase::Aborted;
+                self.gate.release.notify_waiters();
+                return Err(error);
+            }
+            {
+                let mut state = self.gate.state.lock().expect("recording effect state");
+                anyhow::ensure!(
+                    matches!(*state, RecordedPhase::Preparing),
+                    "recording effect is not preparing"
+                );
+                *state = RecordedPhase::Handshaking;
+            }
+            self.gate.entered.notify_waiters();
+            while self.gate.hold.load(Ordering::Acquire) {
+                let notified = self.gate.release.notified();
+                if !self.gate.hold.load(Ordering::Acquire) {
+                    break;
+                }
+                notified.await;
+            }
+            anyhow::ensure!(
+                self.gate.phase() != RecordedPhase::Closed,
+                "recording effect gate closed during handshake"
+            );
+            Ok(EffectStartLease::new(Box::new(RecordingLease {
+                gate: self.gate.clone(),
+            })))
+        }
+
+        fn abandon(self: Box<Self>) {
+            *self.gate.state.lock().expect("recording effect state") = RecordedPhase::Aborted;
+            self.gate.release.notify_waiters();
+        }
+    }
+    #[async_trait]
+    impl EffectStartLeaseLifecycle for RecordingLease {
+        fn deadline(&self) -> tokio::time::Instant {
+            self.gate.deadline
+        }
+        async fn settle_started(self: Box<Self>) -> Result<()> {
+            *self.gate.state.lock().expect("recording effect state") = RecordedPhase::Started;
+            Ok(())
+        }
+        async fn settle_aborted_proven_pre_start(self: Box<Self>) -> Result<()> {
+            *self.gate.state.lock().expect("recording effect state") = RecordedPhase::Aborted;
+            Ok(())
+        }
+        async fn settle_indeterminate(self: Box<Self>) -> Result<()> {
+            *self.gate.state.lock().expect("recording effect state") = RecordedPhase::Indeterminate;
+            Ok(())
+        }
+
+        fn abandon(self: Box<Self>) {
+            *self.gate.state.lock().expect("recording effect state") = RecordedPhase::Indeterminate;
+            self.gate.release.notify_waiters();
+        }
+    }
+
+    #[tokio::test]
+    async fn closed_gate_refuses_before_any_effect_reservation() {
+        let gate = RecordingEffectGate::new(Duration::from_secs(1));
+        gate.close();
+        assert!(
+            gate.intent(ChatTurnEffectKind::McpToolInvoke, "binding")
+                .await
+                .is_err()
+        );
+        assert_eq!(gate.phase(), RecordedPhase::Closed);
+    }
+
+    #[tokio::test]
+    async fn indeterminate_handshake_closes_later_admission() {
+        let gate = RecordingEffectGate::new(Duration::from_secs(1));
+        let pending = gate
+            .intent(ChatTurnEffectKind::McpClientStart, "binding-a")
+            .await
+            .expect("reserve effect");
+        let lease = pending.begin_start().await.expect("enter handshake");
+        assert_eq!(gate.phase(), RecordedPhase::Handshaking);
+        lease
+            .indeterminate()
+            .await
+            .expect("durably classify unknown start");
+        assert_eq!(gate.phase(), RecordedPhase::Indeterminate);
+        assert!(
+            gate.intent(ChatTurnEffectKind::McpToolInvoke, "binding-b")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn held_handshake_stays_owned_until_cancel_can_classify_it() {
+        let gate = RecordingEffectGate::new(Duration::from_secs(1));
+        gate.hold_handshake();
+        let pending = gate
+            .intent(ChatTurnEffectKind::McpClientStart, "binding")
+            .await
+            .expect("reserve held effect");
+        let task = tokio::spawn(async move { pending.begin_start().await });
+        gate.wait_for_handshake().await;
+        assert!(!task.is_finished(), "a held start handshake remains owned");
+        gate.close();
+        gate.release_handshake();
+        assert!(
+            task.await.expect("join held handshake").is_err(),
+            "closed handshake does not produce a start lease"
+        );
+        assert_eq!(gate.phase(), RecordedPhase::Closed);
+    }
+
+    #[tokio::test]
+    async fn started_is_visible_before_later_body_work() {
+        let gate = RecordingEffectGate::new(Duration::from_secs(1));
+        let pending = gate
+            .intent(
+                ChatTurnEffectKind::Provider {
+                    call_scope: "fixture",
+                    streaming: true,
+                },
+                "binding",
+            )
+            .await
+            .expect("reserve response-head effect");
+        let lease = pending
+            .begin_start()
+            .await
+            .expect("enter response-head handshake");
+        lease.started().await.expect("ack response head");
+        assert_eq!(gate.phase(), RecordedPhase::Started);
+    }
+
+    #[tokio::test]
+    async fn dropped_reservation_and_lease_have_explicit_terminal_ownership() {
+        let gate = RecordingEffectGate::new(Duration::from_secs(1));
+        let reservation = gate
+            .intent(
+                ChatTurnEffectKind::Provider {
+                    call_scope: "drop-fixture",
+                    streaming: false,
+                },
+                "binding-a",
+            )
+            .await
+            .expect("reserve effect");
+        drop(reservation);
+        assert_eq!(
+            gate.phase(),
+            RecordedPhase::Aborted,
+            "a dropped pre-start reservation is proven not started"
+        );
+
+        let reservation = gate
+            .intent(
+                ChatTurnEffectKind::Provider {
+                    call_scope: "drop-fixture",
+                    streaming: false,
+                },
+                "binding-b",
+            )
+            .await
+            .expect("reserve second effect");
+        let lease = reservation.begin_start().await.expect("enter handshake");
+        drop(lease);
+        assert_eq!(
+            gate.phase(),
+            RecordedPhase::Indeterminate,
+            "a dropped entered handshake closes later admission"
+        );
+        assert!(
+            gate.intent(ChatTurnEffectKind::McpToolInvoke, "binding-c")
+                .await
+                .is_err()
+        );
+    }
 }
 
 impl CompletionIdentity {
@@ -901,6 +1186,47 @@ struct ProviderRetryAuthorization {
     output_token_ceiling: Option<u32>,
 }
 
+/// Exact live-consent context retained across the audit guard's transition to
+/// TransportOnly. Its cloned authorizer still shares EphemeralConsent, so the
+/// existing `ensure_live_consent` remains the only AllowOnce spend point.
+#[derive(Clone)]
+struct ProviderLiveConsent {
+    authorizer: cost_authorization::ProviderCallAuthorizer,
+    consent_route: Option<crate::consent::ConsentRoute>,
+}
+
+impl EffectStartAuthority for ProviderLiveConsent {
+    fn recheck(&self) -> Result<()> {
+        self.authorizer
+            .ensure_live_consent(self.consent_route.as_ref())
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_live_consent_start_authority(
+    authorizer: cost_authorization::ProviderCallAuthorizer,
+    consent_route: crate::consent::ConsentRoute,
+) -> Arc<dyn EffectStartAuthority> {
+    Arc::new(ProviderLiveConsent {
+        authorizer,
+        consent_route: Some(consent_route),
+    })
+}
+
+/// Sealed probe supplied only by the default authorization boundary to a
+/// reviewed concrete transport. The private constructor makes this a
+/// core-minted capability: a provider outside this crate cannot advertise a
+/// W41 response-head hook by matching a display name or profile alias.
+pub(crate) struct W41EffectStartProbe {
+    _private: (),
+}
+
+impl W41EffectStartProbe {
+    fn new() -> Self {
+        Self { _private: () }
+    }
+}
+
 enum ProviderDispatchAuditState {
     Active(Box<cost_authorization::ProviderCallAuditGuard>),
     BetweenAttempts,
@@ -928,15 +1254,271 @@ impl ProviderRetryReason {
     }
 }
 
+/// W41 identifies a real outbound action, not an enclosing provider route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChatTurnEffectKind {
+    Provider {
+        call_scope: &'static str,
+        streaming: bool,
+    },
+    McpClientStart,
+    McpToolInvoke,
+}
+
+/// Per-turn W41 capability.  Only the daemon GUI runtime supplies this; the
+/// optional path leaves direct CLI and existing callers unchanged.
+#[async_trait]
+pub(crate) trait ChatTurnEffectGate: Send + Sync {
+    async fn intent(
+        &self,
+        kind: ChatTurnEffectKind,
+        request_binding_sha256: &str,
+    ) -> Result<PreparingEffect>;
+
+    /// Register an adapter-owned child/worker drain before the adapter starts
+    /// that child. The GUI runtime owns this future in its JoinSet and invokes
+    /// `cancel` under the same admission lock that closes future starts.
+    #[cfg_attr(not(any(test, feature = "recursive-mas")), allow(dead_code))]
+    fn register_owner(&self, owner: TurnEffectOwner) -> EffectOwnerRegistration;
+}
+
+/// A daemon-owned cleanup contract for a concrete adapter worker. `drain` must
+/// join the worker and any adapter-specific safe-drain path; `cancel` must make
+/// a not-yet-started worker refuse to spawn and kill/unblock a started child.
+/// The adapter supplies this *before* beginning the blocking work.
+#[cfg_attr(not(any(test, feature = "recursive-mas")), allow(dead_code))]
+pub(crate) struct TurnEffectOwner {
+    drain: Pin<Box<dyn Future<Output = ()> + Send>>,
+    cancellation: EffectOwnerCancellation,
+}
+
+/// The result of handing a cleanup owner to the optional GUI effect gate.
+/// `Untransferred` keeps the untouched owner with the adapter; it must cancel
+/// and drain it locally before returning its error. `Transferred` reports a
+/// rejection only after the runtime has synchronously scheduled the drain.
+#[cfg_attr(not(feature = "recursive-mas"), allow(dead_code))]
+pub(crate) enum EffectOwnerRegistration {
+    /// No GUI turn owns this direct caller, so it retains the drain locally.
+    Local(TurnEffectOwner),
+    /// The GUI runtime synchronously adopted the owner into its JoinSet.
+    Registered,
+    /// The GUI runtime adopted, cancelled, and scheduled the owner before
+    /// reporting that the turn has already closed.
+    Transferred { error: anyhow::Error },
+    /// Admission failed before transfer. The caller still owns this exact
+    /// cleanup future and must retain it through its cancellation/drain path.
+    Untransferred {
+        error: anyhow::Error,
+        owner: TurnEffectOwner,
+    },
+}
+
+/// Shared adapter/daemon cancellation handle. Its closure must be idempotent:
+/// the adapter can call it for a local timeout while the GUI turn can call the
+/// same handle during cancellation or shutdown.
+#[derive(Clone)]
+#[cfg_attr(not(any(test, feature = "recursive-mas")), allow(dead_code))]
+pub(crate) struct EffectOwnerCancellation(std::sync::Arc<dyn Fn() + Send + Sync>);
+
+#[cfg_attr(not(any(test, feature = "recursive-mas")), allow(dead_code))]
+impl EffectOwnerCancellation {
+    pub(crate) fn new(cancel: impl Fn() + Send + Sync + 'static) -> Self {
+        Self(std::sync::Arc::new(cancel))
+    }
+
+    pub(crate) fn cancel(&self) {
+        (self.0)();
+    }
+}
+
+#[cfg_attr(not(any(test, feature = "recursive-mas")), allow(dead_code))]
+impl TurnEffectOwner {
+    pub(crate) fn new(
+        drain: Pin<Box<dyn Future<Output = ()> + Send>>,
+        cancellation: EffectOwnerCancellation,
+    ) -> Self {
+        Self {
+            drain,
+            cancellation,
+        }
+    }
+
+    /// Direct/non-GUI caller path: retain this future and await it locally.
+    #[cfg_attr(not(feature = "recursive-mas"), allow(dead_code))]
+    pub(crate) async fn drain(self) {
+        self.drain.await;
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        Pin<Box<dyn Future<Output = ()> + Send>>,
+        EffectOwnerCancellation,
+    ) {
+        (self.drain, self.cancellation)
+    }
+}
+
+/// Backend owned by one non-cloneable effect reservation.
+#[async_trait]
+pub(crate) trait PreparingEffectLifecycle: Send {
+    /// The optional authority is private to a W41 reservation. Implementations
+    /// invoke it after their own cancellation/epoch checks and immediately
+    /// before publishing the concrete Handshaking phase.
+    async fn begin_start(
+        self: Box<Self>,
+        authority: Option<&dyn EffectStartAuthority>,
+    ) -> Result<EffectStartLease>;
+
+    /// The reservation owner was dropped before a transport handshake began.
+    /// Implementations must retain ownership of an asynchronous durable abort
+    /// settlement; it is not safe to leave a bare Intent in the admission map.
+    fn abandon(self: Box<Self>);
+}
+
+/// Synchronous per-reservation authority recheck captured only after durable
+/// Intent ACK. Concrete adapters receive neither consent routes nor authorizers.
+pub(crate) trait EffectStartAuthority: Send + Sync {
+    fn recheck(&self) -> Result<()>;
+}
+
+/// Backend owned by one in-progress bounded transport handshake.
+#[async_trait]
+pub(crate) trait EffectStartLeaseLifecycle: Send {
+    fn deadline(&self) -> tokio::time::Instant;
+    async fn settle_started(self: Box<Self>) -> Result<()>;
+    async fn settle_aborted_proven_pre_start(self: Box<Self>) -> Result<()>;
+    async fn settle_indeterminate(self: Box<Self>) -> Result<()>;
+
+    /// The future that owned an entered transport handshake was cancelled or
+    /// dropped.  Its outcome is unknown until the daemon-owned owner settles
+    /// it, so later effect admission must remain closed.
+    fn abandon(self: Box<Self>);
+}
+
+/// Opaque per-effect reservation.  This deliberately has no Clone impl.
+pub(crate) struct PreparingEffect {
+    lifecycle: Option<Box<dyn PreparingEffectLifecycle>>,
+    start_authority: Option<Arc<dyn EffectStartAuthority>>,
+}
+
+impl PreparingEffect {
+    pub(crate) fn new(lifecycle: Box<dyn PreparingEffectLifecycle>) -> Self {
+        Self {
+            lifecycle: Some(lifecycle),
+            start_authority: None,
+        }
+    }
+
+    /// Attach the exact post-Intent authority before the reservation reaches
+    /// the concrete adapter.
+    pub(crate) fn with_start_authority(mut self, authority: Arc<dyn EffectStartAuthority>) -> Self {
+        self.start_authority = Some(authority);
+        self
+    }
+
+    pub(crate) async fn begin_start(mut self) -> Result<EffectStartLease> {
+        let authority = self.start_authority.as_deref();
+        self.lifecycle
+            .take()
+            .expect("PreparingEffect lifecycle is present until begin_start")
+            .begin_start(authority)
+            .await
+    }
+}
+
+impl Drop for PreparingEffect {
+    fn drop(&mut self) {
+        if let Some(lifecycle) = self.lifecycle.take() {
+            lifecycle.abandon();
+        }
+    }
+}
+
+/// Opaque and non-cloneable lease held only while a concrete adapter performs
+/// its finite send/open/spawn handshake.
+pub(crate) struct EffectStartLease {
+    lifecycle: Option<Box<dyn EffectStartLeaseLifecycle>>,
+}
+
+impl EffectStartLease {
+    pub(crate) fn new(lifecycle: Box<dyn EffectStartLeaseLifecycle>) -> Self {
+        Self {
+            lifecycle: Some(lifecycle),
+        }
+    }
+
+    pub(crate) fn deadline(&self) -> tokio::time::Instant {
+        self.lifecycle
+            .as_ref()
+            .expect("EffectStartLease lifecycle is present until settlement")
+            .deadline()
+    }
+
+    pub(crate) async fn started(mut self) -> Result<()> {
+        self.lifecycle
+            .take()
+            .expect("EffectStartLease lifecycle is present until settlement")
+            .settle_started()
+            .await
+    }
+
+    pub(crate) async fn aborted_proven_pre_start(mut self) -> Result<()> {
+        self.lifecycle
+            .take()
+            .expect("EffectStartLease lifecycle is present until settlement")
+            .settle_aborted_proven_pre_start()
+            .await
+    }
+
+    pub(crate) async fn indeterminate(mut self) -> Result<()> {
+        self.lifecycle
+            .take()
+            .expect("EffectStartLease lifecycle is present until settlement")
+            .settle_indeterminate()
+            .await
+    }
+}
+
+impl Drop for EffectStartLease {
+    fn drop(&mut self) {
+        if let Some(lifecycle) = self.lifecycle.take() {
+            lifecycle.abandon();
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ProviderEffectContext {
+    gate: std::sync::Arc<dyn ChatTurnEffectGate>,
+    request_binding_sha256: String,
+}
+
+impl ProviderEffectContext {
+    pub(crate) fn new(
+        gate: std::sync::Arc<dyn ChatTurnEffectGate>,
+        request_binding_sha256: String,
+    ) -> Self {
+        Self {
+            gate,
+            request_binding_sha256,
+        }
+    }
+}
+
 pub struct ProviderDispatchPermit {
     retry: Option<ProviderRetryAuthorization>,
+    live_consent: Option<ProviderLiveConsent>,
+    effect_start_adapter: bool,
     provider_subject:
         std::sync::Mutex<Option<crate::security::provider_subject::ProviderSubjectIdentifier>>,
     audit: tokio::sync::Mutex<ProviderDispatchAuditState>,
+    effect: std::sync::Mutex<Option<ProviderEffectContext>>,
     _private: (),
 }
 
 impl ProviderDispatchPermit {
+    #[allow(clippy::too_many_arguments)] // Constructor keeps audit, consent, and effect inputs explicit.
     fn authorized(
         audit: cost_authorization::ProviderCallAuditGuard,
         authorizer: cost_authorization::ProviderCallAuthorizer,
@@ -946,7 +1528,13 @@ impl ProviderDispatchPermit {
         call_scope: &'static str,
         output_token_ceiling: Option<u32>,
         provider_subject: Option<crate::security::provider_subject::ProviderSubjectIdentifier>,
+        effect: Option<ProviderEffectContext>,
+        effect_start_adapter: bool,
     ) -> Self {
+        let live_consent = ProviderLiveConsent {
+            authorizer: authorizer.clone(),
+            consent_route: consent_route.clone(),
+        };
         Self {
             retry: Some(ProviderRetryAuthorization {
                 authorizer,
@@ -956,21 +1544,73 @@ impl ProviderDispatchPermit {
                 call_scope,
                 output_token_ceiling,
             }),
+            live_consent: Some(live_consent),
+            effect_start_adapter,
             provider_subject: std::sync::Mutex::new(provider_subject),
             audit: tokio::sync::Mutex::new(ProviderDispatchAuditState::Active(Box::new(audit))),
+            effect: std::sync::Mutex::new(effect),
             _private: (),
         }
     }
 
     fn transport_only(
         provider_subject: Option<crate::security::provider_subject::ProviderSubjectIdentifier>,
+        effect: Option<ProviderEffectContext>,
+        live_consent: Option<ProviderLiveConsent>,
+        effect_start_adapter: bool,
     ) -> Self {
         Self {
             retry: None,
+            live_consent,
+            effect_start_adapter,
             provider_subject: std::sync::Mutex::new(provider_subject),
             audit: tokio::sync::Mutex::new(ProviderDispatchAuditState::TransportOnly),
+            effect: std::sync::Mutex::new(effect),
             _private: (),
         }
+    }
+
+    /// Reserve exactly one real external-start handshake after the existing
+    /// leaf audit/consent boundary.  No caller can fabricate its binding.
+    pub(crate) async fn prepare_effect(
+        &self,
+        kind: ChatTurnEffectKind,
+    ) -> Result<Option<PreparingEffect>> {
+        let effect = self
+            .effect
+            .lock()
+            .map_err(|_| anyhow::anyhow!("provider effect dispatch state is poisoned"))?
+            .clone();
+        let Some(effect) = effect else {
+            return Ok(None);
+        };
+        let preparing = effect
+            .gate
+            .intent(kind, &effect.request_binding_sha256)
+            .await?;
+        Ok(Some(preparing.with_start_authority(Arc::new(
+            self.live_consent_context()?,
+        ))))
+    }
+
+    /// Hand a concrete child/worker cleanup owner to the daemon GUI turn. For
+    /// ordinary CLI callers no turn gate exists, so the caller receives the
+    /// owner back and must retain/drain it locally instead of dropping it.
+    #[cfg_attr(not(feature = "recursive-mas"), allow(dead_code))]
+    pub(crate) fn register_effect_owner(&self, owner: TurnEffectOwner) -> EffectOwnerRegistration {
+        let effect = match self.effect.lock() {
+            Ok(effect) => effect.clone(),
+            Err(_) => {
+                return EffectOwnerRegistration::Untransferred {
+                    error: anyhow::anyhow!("provider effect dispatch state is poisoned"),
+                    owner,
+                };
+            }
+        };
+        let Some(effect) = effect else {
+            return EffectOwnerRegistration::Local(owner);
+        };
+        effect.gate.register_owner(owner)
     }
 
     /// Private wire metadata minted before request-binding authorization.
@@ -1036,6 +1676,33 @@ impl ProviderDispatchPermit {
         Ok(())
     }
 
+    fn live_consent_context(&self) -> Result<ProviderLiveConsent> {
+        self.live_consent.clone().ok_or_else(|| {
+            anyhow::anyhow!("gated provider dispatch lacks live-consent start authority")
+        })
+    }
+
+    fn has_effect_context(&self) -> Result<bool> {
+        self.effect
+            .lock()
+            .map(|effect| effect.is_some())
+            .map_err(|_| anyhow::anyhow!("provider effect dispatch state is poisoned"))
+    }
+
+    async fn require_composed_effect_start_adapter(&self) -> Result<()> {
+        if !self.has_effect_context()? || self.effect_start_adapter {
+            return Ok(());
+        }
+        let error =
+            anyhow::anyhow!("GUI-gated provider has no verified W41 concrete effect-start adapter");
+        if let Err(audit_error) = self.failure("provider_effect_start_unsupported").await {
+            return Err(anyhow::anyhow!(
+                "unsupported GUI-gated provider and terminal audit failed: {audit_error}; provider error: {error}"
+            ));
+        }
+        Err(error)
+    }
+
     /// Close the current leaf before any retry backoff or session repair. A
     /// cancellation while waiting therefore leaves one paired lifecycle and
     /// no phantom authorization for an attempt that never sent.
@@ -1082,6 +1749,8 @@ impl ProviderDispatchPermit {
             )
             .await?;
         let provider_subject = authorized.take_provider_subject();
+        let effect = authorized.effect_context();
+        let gated_effect = effect.is_some();
         let audit = authorized.begin_dispatch().await?;
 
         let mut state = self.audit.lock().await;
@@ -1095,9 +1764,17 @@ impl ProviderDispatchPermit {
             .lock()
             .map_err(|_| anyhow::anyhow!("provider-subject retry state is poisoned"))? =
             provider_subject;
+        *self
+            .effect
+            .lock()
+            .map_err(|_| anyhow::anyhow!("provider effect retry state is poisoned"))? = effect;
         *state = ProviderDispatchAuditState::Active(Box::new(audit));
         drop(state);
-        self.ensure_consent_before_send().await
+        if gated_effect {
+            self.require_composed_effect_start_adapter().await
+        } else {
+            self.ensure_consent_before_send().await
+        }
     }
 }
 
@@ -1213,6 +1890,18 @@ fn stamp_stream_identity(
 pub trait Provider: Send + Sync {
     /// Short identifier for logs + WAL events: "claude_cli", "openai_api", ...
     fn name(&self) -> &'static str;
+
+    /// Reviewed concrete transports override this private-probe method after
+    /// their raw response-head hook has been composed. The default is fail
+    /// closed; a display name or factory profile does not grant this right.
+    #[doc(hidden)]
+    #[expect(
+        private_interfaces,
+        reason = "the crate-private probe deliberately seals the reviewed W41 adapter capability"
+    )]
+    fn w41_effect_start_adapter(&self, _: W41EffectStartProbe) -> bool {
+        false
+    }
 
     /// Controls this concrete provider leaf implements. Decorators delegate or
     /// return the intersection of every leaf they may select.
@@ -1347,6 +2036,8 @@ pub trait Provider: Send + Sync {
             .authorize_leaf(self.name(), &req, call_scope, false, output_token_ceiling)
             .await?;
         let provider_subject = authorized.take_provider_subject();
+        let effect = authorized.effect_context();
+        let gated_effect = effect.is_some();
         let audit = authorized.begin_dispatch().await?;
         let permit = ProviderDispatchPermit::authorized(
             audit,
@@ -1357,8 +2048,16 @@ pub trait Provider: Send + Sync {
             call_scope,
             output_token_ceiling,
             provider_subject,
+            effect,
+            self.w41_effect_start_adapter(W41EffectStartProbe::new()),
         );
-        permit.ensure_consent_before_send().await?;
+        if gated_effect {
+            permit.require_composed_effect_start_adapter().await?;
+        } else {
+            // Legacy CLI/test/raw paths have no concrete W41 reservation, so
+            // keep their old immediately-before-transport live-consent check.
+            permit.ensure_consent_before_send().await?;
+        }
         match self.complete_raw(req, &permit).await {
             Ok(mut completion) => {
                 stamp_completion_identity(
@@ -1403,8 +2102,24 @@ pub trait Provider: Send + Sync {
             )
             .await?;
         let provider_subject = authorized.take_provider_subject();
+        let effect = authorized.effect_context();
+        let gated_effect = effect.is_some();
         let mut audit = authorized.begin_dispatch().await?;
-        if let Err(error) = authorizer.ensure_live_consent(self.consent_route().as_ref()) {
+        let effect_start_adapter = self.w41_effect_start_adapter(W41EffectStartProbe::new());
+        if gated_effect && !effect_start_adapter {
+            let error = anyhow::anyhow!(
+                "GUI-gated provider has no verified W41 concrete effect-start adapter"
+            );
+            if let Err(audit_error) = audit.failure("provider_effect_start_unsupported").await {
+                return Err(anyhow::anyhow!(
+                    "unsupported GUI-gated provider and terminal audit failed: {audit_error}; provider error: {error}"
+                ));
+            }
+            return Err(error);
+        }
+        if !gated_effect
+            && let Err(error) = authorizer.ensure_live_consent(self.consent_route().as_ref())
+        {
             if let Err(audit_error) = audit.failure("provider_consent_revoked").await {
                 return Err(anyhow::anyhow!(
                     "provider stream consent was revoked and terminal audit failed: {audit_error}; consent error: {error}"
@@ -1412,7 +2127,15 @@ pub trait Provider: Send + Sync {
             }
             return Err(error);
         }
-        let permit = ProviderDispatchPermit::transport_only(provider_subject);
+        let permit = ProviderDispatchPermit::transport_only(
+            provider_subject,
+            effect,
+            Some(ProviderLiveConsent {
+                authorizer: authorizer.clone(),
+                consent_route: self.consent_route(),
+            }),
+            effect_start_adapter,
+        );
         match self.stream_raw(req, &permit).await {
             Ok(stream) => Ok(audit.wrap_stream(stamp_stream_identity(
                 stream,
@@ -1451,7 +2174,7 @@ pub trait Provider: Send + Sync {
             let mut req = req;
             self.validate_request_controls(&req)?;
             let identity = bind_wire_identity(self, &mut req)?;
-            let permit = ProviderDispatchPermit::transport_only(None);
+            let permit = ProviderDispatchPermit::transport_only(None, None, None, false);
             let mut completion = self.complete_raw(req, &permit).await?;
             stamp_completion_identity(&mut completion, &identity, false);
             return Ok(completion);
@@ -1532,7 +2255,7 @@ pub trait Provider: Send + Sync {
             let mut req = req;
             self.validate_request_controls(&req)?;
             let identity = bind_wire_identity(self, &mut req)?;
-            let permit = ProviderDispatchPermit::transport_only(None);
+            let permit = ProviderDispatchPermit::transport_only(None, None, None, false);
             let stream = self.stream_raw(req, &permit).await?;
             return Ok(stamp_stream_identity(stream, identity, false));
         }
@@ -2648,6 +3371,32 @@ mod tests {
         calls: AtomicUsize,
     }
 
+    /// Same public display name as the OpenAI adapter, but no reviewed raw
+    /// response-head hook. The private probe must reject it before raw work.
+    struct OpenAiNameSpoofProvider {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for OpenAiNameSpoofProvider {
+        fn name(&self) -> &'static str {
+            "openai_api"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("spoof-model")
+        }
+
+        async fn complete_raw(
+            &self,
+            _req: Request,
+            _permit: &ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Completion::default())
+        }
+    }
+
     struct OutputCapProvider {
         ceiling: Option<u32>,
     }
@@ -2702,6 +3451,217 @@ mod tests {
         assert!(error.to_string().contains("provider `no_controls`"));
         assert!(error.to_string().contains("temperature"));
         assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn w41_effect_hook_identity_rejects_custom_provider_with_approved_name() {
+        let spoof = OpenAiNameSpoofProvider {
+            calls: AtomicUsize::new(0),
+        };
+        assert!(
+            !spoof.w41_effect_start_adapter(W41EffectStartProbe::new()),
+            "a display-name match cannot mint the private concrete-adapter capability"
+        );
+        let actual = openai_api::OpenAiAdapter::new_openai(
+            "https://api.openai.com/v1".into(),
+            SecretString::from("sk-test"),
+            "model".into(),
+        )
+        .expect("construct reviewed OpenAI adapter");
+        assert!(
+            actual.w41_effect_start_adapter(W41EffectStartProbe::new()),
+            "the composed concrete OpenAI adapter mints the reviewed hook capability"
+        );
+    }
+
+    #[tokio::test]
+    async fn gui_gated_custom_provider_with_approved_name_never_reaches_raw_transport() {
+        let home = tempfile::tempdir().expect("spoof provider home");
+        let provider = OpenAiNameSpoofProvider {
+            calls: AtomicUsize::new(0),
+        };
+        let gate = Arc::new(effect_test_support::RecordingEffectGate::new(
+            Duration::from_secs(1),
+        ));
+        let authorizer = cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .with_usage_home(home.path().to_path_buf())
+        .with_turn_effect_gate(Some(gate));
+
+        let error = provider
+            .complete_authorized(
+                Request {
+                    prompt: "must not start spoof raw transport".into(),
+                    ..Request::default()
+                },
+                &authorizer,
+                "w41-custom-name-spoof",
+            )
+            .await
+            .expect_err("unreviewed GUI-gated provider must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("no verified W41 concrete effect-start adapter")
+        );
+        assert_eq!(
+            provider.calls.load(Ordering::SeqCst),
+            0,
+            "custom raw transport is never entered"
+        );
+    }
+
+    #[tokio::test]
+    async fn abandoned_post_intent_reservation_does_not_spend_allow_once() {
+        let home = tempfile::tempdir().expect("one-shot fixture home");
+        let route = crate::consent::ConsentRoute::new(
+            ProviderKind::OpenaiApi,
+            Some("https://api.openai.com"),
+        );
+        let mut ephemeral = crate::consent::EphemeralConsent::default();
+        ephemeral.allow_route(&route).expect("exact one-shot route");
+        let live = ProviderLiveConsent {
+            authorizer: cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            )
+            .with_usage_home(home.path().to_path_buf())
+            .with_ephemeral_consent(ephemeral),
+            consent_route: Some(route),
+        };
+        let gate = effect_test_support::RecordingEffectGate::new(Duration::from_secs(1));
+        let reservation = gate
+            .intent(
+                ChatTurnEffectKind::Provider {
+                    call_scope: "w41-allow-once-abandoned-intent",
+                    streaming: false,
+                },
+                "binding",
+            )
+            .await
+            .expect("Intent reservation is not a consent spend");
+
+        // A cancellation/drop after durable Intent but before begin_start must
+        // not touch the private callback. The following recheck is therefore
+        // the one and only successful AllowOnce spend.
+        drop(reservation.with_start_authority(Arc::new(live.clone())));
+        assert_eq!(gate.phase(), effect_test_support::RecordedPhase::Aborted);
+        live.recheck()
+            .expect("abandoned Intent leaves exact AllowOnce available");
+        assert!(
+            live.recheck().is_err(),
+            "the successful concrete start check spends AllowOnce once"
+        );
+    }
+
+    #[tokio::test]
+    async fn real_transport_only_permit_rechecks_outbox_after_intent_without_spending_allow_once() {
+        let home = tempfile::tempdir().expect("live-consent fixture home");
+        let route = crate::consent::ConsentRoute::new(
+            ProviderKind::OpenaiApi,
+            Some("https://api.openai.com"),
+        );
+        let mut ephemeral = crate::consent::EphemeralConsent::default();
+        ephemeral.allow_route(&route).expect("exact one-shot route");
+        let authorizer = cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .with_usage_home(home.path().to_path_buf())
+        .with_ephemeral_consent(ephemeral);
+        let gate = Arc::new(effect_test_support::RecordingEffectGate::new(
+            Duration::from_secs(1),
+        ));
+        let permit = ProviderDispatchPermit::transport_only(
+            None,
+            Some(ProviderEffectContext::new(gate.clone(), "binding".into())),
+            Some(ProviderLiveConsent {
+                authorizer: authorizer.clone(),
+                consent_route: Some(route.clone()),
+            }),
+            true,
+        );
+
+        // This is the production stream handoff shape: `TransportOnly` retains
+        // the private live context, and `prepare_effect` first reaches the real
+        // gate before the outbox changes.
+        let reservation = permit
+            .prepare_effect(ChatTurnEffectKind::Provider {
+                call_scope: "w41-live-consent-transport-only",
+                streaming: true,
+            })
+            .await
+            .expect("real permit obtains Intent")
+            .expect("gated permit returns a reservation");
+        assert_eq!(gate.phase(), effect_test_support::RecordedPhase::Preparing);
+
+        let update =
+            crate::consent::prepare_grant_routes(home.path(), std::slice::from_ref(&route))
+                .expect("prepare exact outbox mutation");
+        let pending = crate::cli::consent_outbox::begin(
+            home.path(),
+            &update,
+            crate::cli::consent_outbox::ConsentMutationAction::Grant,
+            crate::cli::consent_outbox::ConsentMutationSource::Gui,
+            vec!["https://api.openai.com".into()],
+            true,
+        )
+        .await
+        .expect("write blocking prepared outbox after Intent");
+        assert!(
+            reservation.begin_start().await.is_err(),
+            "prepared outbox after Intent blocks the actual private live-consent callback"
+        );
+        assert_eq!(gate.phase(), effect_test_support::RecordedPhase::Aborted);
+        drop(pending);
+        std::fs::remove_file(crate::cli::consent_outbox::journal_path(home.path()))
+            .expect("remove temporary prepared outbox after its blocking assertion");
+
+        // The rejected start did not consume the shared one-shot capability.
+        // A later valid start check gets exactly one successful spend.
+        authorizer
+            .ensure_live_consent(Some(&route))
+            .expect("blocked post-Intent start leaves AllowOnce unspent");
+        assert!(authorizer.ensure_live_consent(Some(&route)).is_err());
+    }
+
+    #[tokio::test]
+    async fn rejected_intent_through_real_permit_leaves_allow_once_for_one_later_start() {
+        let home = tempfile::tempdir().expect("rejected-intent fixture home");
+        let route = crate::consent::ConsentRoute::new(
+            ProviderKind::OpenaiApi,
+            Some("https://api.openai.com"),
+        );
+        let mut ephemeral = crate::consent::EphemeralConsent::default();
+        ephemeral.allow_route(&route).expect("exact one-shot route");
+        let authorizer = cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .with_usage_home(home.path().to_path_buf())
+        .with_ephemeral_consent(ephemeral);
+        let gate = Arc::new(effect_test_support::RecordingEffectGate::new(
+            Duration::from_secs(1),
+        ));
+        gate.close();
+        let permit = ProviderDispatchPermit::transport_only(
+            None,
+            Some(ProviderEffectContext::new(gate, "binding".into())),
+            Some(ProviderLiveConsent {
+                authorizer: authorizer.clone(),
+                consent_route: Some(route.clone()),
+            }),
+            true,
+        );
+
+        assert!(
+            permit
+                .prepare_effect(ChatTurnEffectKind::McpToolInvoke)
+                .await
+                .is_err()
+        );
+        authorizer
+            .ensure_live_consent(Some(&route))
+            .expect("rejected Intent cannot consume AllowOnce");
+        assert!(authorizer.ensure_live_consent(Some(&route)).is_err());
     }
 
     #[tokio::test]
@@ -3111,6 +4071,47 @@ mod tests {
         let identity = bind_wire_identity(provider.as_ref(), &mut request).unwrap();
         assert_eq!(identity.provider, "deepseek_api");
         assert_eq!(identity.wire_model, "deepseek-v4-pro");
+    }
+
+    #[tokio::test]
+    async fn all_supported_openai_compatible_factory_profiles_keep_http_effect_identity() {
+        for (profile, endpoint, expected_name) in [
+            (
+                OpenAiCompatibleProfile::OpenRouter,
+                "https://openrouter.ai/api/v1",
+                "openrouter_api",
+            ),
+            (
+                OpenAiCompatibleProfile::DeepSeek,
+                "https://api.deepseek.com",
+                "deepseek_api",
+            ),
+            (
+                OpenAiCompatibleProfile::MoonshotKimi,
+                "https://api.moonshot.ai/v1",
+                "moonshot_kimi_api",
+            ),
+            (
+                OpenAiCompatibleProfile::QwenChat,
+                "https://workspace.eu-central-1.maas.aliyuncs.com/compatible-mode/v1",
+                "qwen_chat_api",
+            ),
+        ] {
+            let mut config = base_config();
+            config.provider_kind = Some(ProviderKind::OpenaiCompat);
+            config.provider_endpoint = Some(endpoint.into());
+            config.provider_model = Some("profile-model".into());
+            config.provider_key = Some(SecretString::from("sk-test"));
+            config.inference.openai_compat_profile = Some(profile);
+            let provider = from_config(&config)
+                .await
+                .expect("supported profile factory");
+            assert_eq!(provider.name(), expected_name);
+            assert!(
+                provider.w41_effect_start_adapter(W41EffectStartProbe::new()),
+                "{expected_name} is the reviewed OpenAiAdapter response-head path"
+            );
+        }
     }
 
     #[tokio::test]

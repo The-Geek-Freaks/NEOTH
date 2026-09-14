@@ -35,7 +35,7 @@ use super::quota::{QuotaError, parse_retry_after};
 use super::response_bounds;
 use super::termination::{ProviderTermination, RefusalOrigin, Retryability};
 use super::{
-    Completion, CompletionUsageMeasurements, Provider, ProviderDispatchPermit,
+    ChatTurnEffectKind, Completion, CompletionUsageMeasurements, Provider, ProviderDispatchPermit,
     ProviderRequestControls, Request,
 };
 use crate::secret::SecretString;
@@ -47,6 +47,31 @@ const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 const MAX_SUCCESS_BODY_BYTES: usize = response_bounds::MAX_SUCCESS_JSON_BODY_BYTES;
 const ERROR_BODY_EVIDENCE_DOMAIN: &[u8] = b"anthropic-http-error-body/v1";
 const SUCCESS_BODY_EVIDENCE_DOMAIN: &[u8] = b"anthropic-success-body/v1";
+
+async fn send_with_effect(
+    permit: &ProviderDispatchPermit,
+    kind: ChatTurnEffectKind,
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::Response> {
+    let Some(effect) = permit.prepare_effect(kind).await? else {
+        return request.send().await.context("HTTP response-head open");
+    };
+    let lease = effect.begin_start().await?;
+    match tokio::time::timeout_at(lease.deadline(), request.send()).await {
+        Ok(Ok(response)) => {
+            lease.started().await?;
+            Ok(response)
+        }
+        Ok(Err(error)) => {
+            lease.indeterminate().await?;
+            Err(error).context("HTTP transport entered without a response head")
+        }
+        Err(_) => {
+            lease.indeterminate().await?;
+            anyhow::bail!("HTTP response-head handshake timed out")
+        }
+    }
+}
 
 /// Pinned Anthropic API version. Required on every request; bumping it is
 /// a deliberate, reviewed change (a new version can alter the wire shape).
@@ -151,6 +176,14 @@ impl Provider for AnthropicAdapter {
         "anthropic_api"
     }
 
+    #[expect(
+        private_interfaces,
+        reason = "the private W41 probe seals this hook to reviewed in-crate adapters"
+    )]
+    fn w41_effect_start_adapter(&self, _: super::W41EffectStartProbe) -> bool {
+        true
+    }
+
     fn request_controls(&self) -> ProviderRequestControls {
         ProviderRequestControls::SAMPLING_WITHOUT_SEED.with_output_token_limit()
     }
@@ -172,7 +205,7 @@ impl Provider for AnthropicAdapter {
     async fn complete_raw(
         &self,
         req: Request,
-        _permit: &ProviderDispatchPermit,
+        permit: &ProviderDispatchPermit,
     ) -> Result<Completion> {
         // GR-04: same circuit-breaker wrap as the other cloud adapters so a
         // persistent Anthropic outage trips to a fast local error.
@@ -208,13 +241,17 @@ impl Provider for AnthropicAdapter {
             };
 
             let url = format!("{}/messages", self.endpoint);
-            let response = self
+            let request = self
                 .http
                 .post(&url)
                 .header("x-api-key", self.api_key.expose())
                 .header("anthropic-version", ANTHROPIC_VERSION)
-                .json(&body)
-                .send()
+                .json(&body);
+            let response = send_with_effect(
+                permit,
+                ChatTurnEffectKind::Provider { call_scope: "anthropic_api.complete_raw", streaming: false },
+                request,
+            )
                 .await
                 .with_context(|| format!("POST {url}"))?;
 

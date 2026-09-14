@@ -39,7 +39,10 @@ use tokio::sync::Mutex;
 use tracing::debug;
 
 use super::openai_api::OpenAiAdapter;
-use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
+use super::{
+    ChatTurnEffectKind, Completion, Provider, ProviderDispatchPermit, ProviderRequestControls,
+    Request,
+};
 use crate::secret::SecretString;
 
 /// The token endpoint answers with a small JSON envelope; chat itself runs
@@ -49,6 +52,31 @@ use crate::secret::SecretString;
 const MAX_TOKEN_BODY_BYTES: usize = 64 * 1024;
 const TOKEN_ERROR_EVIDENCE_DOMAIN: &[u8] = b"copilot-token-error-body/v1";
 const TOKEN_SUCCESS_EVIDENCE_DOMAIN: &[u8] = b"copilot-token-success-body/v1";
+
+async fn send_with_effect(
+    permit: &ProviderDispatchPermit,
+    kind: ChatTurnEffectKind,
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::Response> {
+    let Some(effect) = permit.prepare_effect(kind).await? else {
+        return request.send().await.context("HTTP response-head open");
+    };
+    let lease = effect.begin_start().await?;
+    match tokio::time::timeout_at(lease.deadline(), request.send()).await {
+        Ok(Ok(response)) => {
+            lease.started().await?;
+            Ok(response)
+        }
+        Ok(Err(error)) => {
+            lease.indeterminate().await?;
+            Err(error).context("HTTP transport entered without a response head")
+        }
+        Err(_) => {
+            lease.indeterminate().await?;
+            anyhow::bail!("HTTP response-head handshake timed out")
+        }
+    }
+}
 
 /// Cached short-lived Copilot session token + the instant at which it expires
 /// (already reduced by a 60-second safety buffer).
@@ -117,7 +145,10 @@ impl CopilotAdapter {
     /// host and GitHub's servers plus the propagation delay of a token endpoint
     /// call (~200 ms typical). Without the buffer a token could expire mid-
     /// completions-call.
-    async fn fetch_or_refresh_token(&self) -> Result<SecretString> {
+    async fn fetch_or_refresh_token(
+        &self,
+        permit: &ProviderDispatchPermit,
+    ) -> Result<SecretString> {
         const BUFFER: Duration = Duration::from_secs(60);
 
         {
@@ -133,14 +164,21 @@ impl CopilotAdapter {
         // Cache miss or stale — fetch a fresh token.
         debug!("copilot_api: fetching new session token from github");
         let url = self.token_endpoint.as_str();
-        let response = self
+        let request = self
             .http
             .get(url)
             .bearer_auth(self.pat.expose())
-            .header("User-Agent", "neoth/0.1")
-            .send()
-            .await
-            .with_context(|| format!("GET {url}"))?;
+            .header("User-Agent", "neoth/0.1");
+        let response = send_with_effect(
+            permit,
+            ChatTurnEffectKind::Provider {
+                call_scope: "copilot_api.session_token",
+                streaming: false,
+            },
+            request,
+        )
+        .await
+        .with_context(|| format!("GET {url}"))?;
 
         let status = response.status();
         if !status.is_success() {
@@ -204,6 +242,14 @@ impl Provider for CopilotAdapter {
         "copilot_api"
     }
 
+    #[expect(
+        private_interfaces,
+        reason = "the private W41 probe seals this hook to reviewed in-crate adapters"
+    )]
+    fn w41_effect_start_adapter(&self, _: super::W41EffectStartProbe) -> bool {
+        true
+    }
+
     fn request_controls(&self) -> ProviderRequestControls {
         // `complete_raw` and `stream_raw` delegate to OpenAiAdapter. Keep the
         // public capability in lockstep with that exact leaf so a requested
@@ -228,7 +274,7 @@ impl Provider for CopilotAdapter {
         req: Request,
         permit: &ProviderDispatchPermit,
     ) -> Result<Completion> {
-        let token = self.fetch_or_refresh_token().await?;
+        let token = self.fetch_or_refresh_token(permit).await?;
         let inner = self.make_inner(token)?;
         inner.complete_raw(req, permit).await
     }
@@ -238,7 +284,7 @@ impl Provider for CopilotAdapter {
         req: Request,
         permit: &ProviderDispatchPermit,
     ) -> Result<super::ChunkStream> {
-        let token = self.fetch_or_refresh_token().await?;
+        let token = self.fetch_or_refresh_token(permit).await?;
         let inner = self.make_inner(token)?;
         inner.stream_raw(req, permit).await
     }
@@ -476,7 +522,9 @@ mod tests {
         .await;
 
         let token = build_adapter_against(&token_url(&mock))
-            .fetch_or_refresh_token()
+            .fetch_or_refresh_token(&ProviderDispatchPermit::transport_only(
+                None, None, None, false,
+            ))
             .await
             .expect("token refresh must succeed");
         assert_eq!(token.expose(), "tid=mock;exp=1");
@@ -497,7 +545,9 @@ mod tests {
         .await;
 
         let message = build_adapter_against(&token_url(&mock))
-            .fetch_or_refresh_token()
+            .fetch_or_refresh_token(&ProviderDispatchPermit::transport_only(
+                None, None, None, false,
+            ))
             .await
             .expect_err("oversized token body must fail before JSON parsing")
             .to_string();
@@ -519,7 +569,9 @@ mod tests {
         .await;
 
         let message = build_adapter_against(&token_url(&mock))
-            .fetch_or_refresh_token()
+            .fetch_or_refresh_token(&ProviderDispatchPermit::transport_only(
+                None, None, None, false,
+            ))
             .await
             .expect_err("403 must fail")
             .to_string();

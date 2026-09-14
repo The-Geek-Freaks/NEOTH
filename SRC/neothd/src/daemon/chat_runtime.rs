@@ -52,6 +52,15 @@ struct PublishedProvider {
     accepted_epoch: u64,
 }
 
+/// Content-free identity of the authority accepted for a GUI effect.  The GUI
+/// owner stores this with Intent and compares it again at the concrete start
+/// boundary; it never reconstructs a provider from configuration.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GuiEffectAuthority {
+    pub(crate) config_epoch: u64,
+    pub(crate) provider_identity: String,
+}
+
 struct ActiveTurn {
     id: u64,
     cancellation: chat_turn_pipeline::ChatTurnCancellation,
@@ -132,6 +141,138 @@ impl DaemonChatRuntime {
             accepted_epoch,
         });
         Ok(())
+    }
+
+    /// The GUI registry binds its sealed descriptor to this exact accepted
+    /// epoch. It exposes neither configuration bytes nor a reload authority.
+    pub(crate) fn accepted_config_epoch(&self) -> Result<u64> {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let published = state
+            .provider
+            .as_ref()
+            .context("daemon chat provider is unavailable")?;
+        let accepted = self.reload_controller.accepted_snapshot();
+        anyhow::ensure!(
+            accepted.epoch() == published.accepted_epoch,
+            "daemon chat provider epoch changed"
+        );
+        Ok(published.accepted_epoch)
+    }
+
+    /// Concrete W41 start boundary recheck using the already-published W39
+    /// provider/home/epoch authority. It intentionally has no factory path.
+    pub(crate) fn recheck_gui_effect_authority(&self) -> Result<GuiEffectAuthority> {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let published = state
+            .provider
+            .as_ref()
+            .context("daemon chat provider is unavailable")?;
+        let accepted = self.reload_controller.accepted_snapshot();
+        anyhow::ensure!(
+            accepted.epoch() == published.accepted_epoch,
+            "daemon chat provider epoch changed"
+        );
+        Ok(GuiEffectAuthority {
+            config_epoch: published.accepted_epoch,
+            provider_identity: published.provider.name().to_owned(),
+        })
+    }
+
+    /// Content-free W41 lifecycle ACK. This is intentionally owned beside the
+    /// shared writer: GUI transport cannot create a second WAL owner or accept
+    /// a terminal ahead of its durable receipt.
+    pub(crate) async fn append_gui_lifecycle(&self, payload: Vec<u8>) -> Result<()> {
+        let header =
+            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+                .event_subtype(crate::wal::events::ExtendedSubtype::GuiChatLifecycle as u8)
+                .build();
+        self.writer
+            .append(header, payload)
+            .await
+            .context("append GUI chat lifecycle WAL record")
+            .map(|_| ())
+    }
+
+    /// Execute the W41 GUI producer using the exact W39 provider permit,
+    /// accepted config snapshot, writer and segment. The GUI runtime owns
+    /// tickets/replay/ledger; this core accepts only daemon-staged paths.
+    #[allow(clippy::too_many_arguments)] // Keeps typed W41 producer boundary explicit.
+    pub(crate) async fn execute_gui_stream_turn(
+        &self,
+        message: String,
+        model: Option<String>,
+        skill: Option<String>,
+        incognito: bool,
+        staged_attachments: Vec<PathBuf>,
+        ephemeral_consent: crate::consent::EphemeralConsent,
+        cancellation: chat_turn_pipeline::ChatTurnCancellation,
+        sink: &mut dyn ChatTurnEventSink,
+        effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
+    ) -> Result<ChatTurnTerminal> {
+        let admission = self
+            .admit_with_cancellation(cancellation.clone())
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "GUI admission failed: {}",
+                    match error {
+                        AdmissionError::Closing => "closing",
+                        AdmissionError::Busy => "busy",
+                        AdmissionError::ProviderUnavailable => "provider unavailable",
+                        AdmissionError::ProviderConfigChanged => "provider epoch changed",
+                    }
+                )
+            })?;
+        let _active = ActiveOperationGuard {
+            runtime: self,
+            id: admission.id,
+        };
+        let config = admission.accepted.config();
+        // Do not perform a whole-config durable-consent rejection here. An
+        // AllowOnce capability deliberately has no durable marker. The exact
+        // leaf authorizer consumes/rechecks that one-shot route immediately
+        // before its real transport start, after the W41 authority recheck.
+        let prepared = crate::cli::chat::prepare_daemon_gui_chat_turn(
+            message,
+            model,
+            skill,
+            incognito,
+            staged_attachments,
+            ephemeral_consent,
+            (*config).clone(),
+            self.selected_config_path.clone(),
+            self.selected_home.clone(),
+            admission.provider.as_ref(),
+            cancellation.clone(),
+            sink,
+        )
+        .await?;
+        let chat_turn_pipeline::ChatPreparationOutcome::Ready(mut prepared) = prepared else {
+            anyhow::bail!("daemon GUI chat completed before provider admission")
+        };
+        let deferred = chat_turn_pipeline::run_prepared_chat_turn_with_effect_gate(
+            &mut prepared,
+            admission.provider.as_ref(),
+            &self.writer,
+            &self.active_segment_path,
+            sink,
+            effect_gate,
+        )
+        .await?;
+        cancellation.close();
+        if let Some(output) = deferred {
+            sink.emit(ChatTurnEvent::Output(output))?;
+        }
+        prepared
+            .deferred_terminal
+            .take()
+            .context("daemon GUI chat engine returned without terminal")
     }
 
     /// Stop new admissions, cancel the one admitted operation, and wait for
@@ -264,6 +405,14 @@ impl DaemonChatRuntime {
     }
 
     async fn admit(&self) -> std::result::Result<Admission, AdmissionError> {
+        self.admit_with_cancellation(chat_turn_pipeline::ChatTurnCancellation::default())
+            .await
+    }
+
+    async fn admit_with_cancellation(
+        &self,
+        cancellation: chat_turn_pipeline::ChatTurnCancellation,
+    ) -> std::result::Result<Admission, AdmissionError> {
         let mut state = self
             .state
             .lock()
@@ -284,7 +433,6 @@ impl DaemonChatRuntime {
         let provider = Arc::clone(&published.provider);
         let id = state.next_turn_id;
         state.next_turn_id = state.next_turn_id.wrapping_add(1);
-        let cancellation = chat_turn_pipeline::ChatTurnCancellation::default();
         state.active = Some(ActiveTurn {
             id,
             cancellation: cancellation.clone(),

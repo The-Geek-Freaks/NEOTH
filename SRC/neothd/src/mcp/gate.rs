@@ -30,6 +30,7 @@
 use anyhow::Context as _;
 use serde::Serialize;
 use serde_json::Value;
+use std::sync::Arc;
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::mcp::client::{McpClient, McpError, McpTool, ToolCallResult};
@@ -393,6 +394,14 @@ pub(crate) struct AuthorizedMcpInvocation {
     server_id: String,
     tool: String,
     request_binding_sha256: Option<String>,
+}
+
+impl AuthorizedMcpInvocation {
+    /// Content-free binding already committed by preflight.  W41 reuses this
+    /// exact digest for both the MCP child and the subsequent JSON-RPC write.
+    pub(crate) fn request_binding_sha256(&self) -> &str {
+        self.request_binding_sha256.as_deref().unwrap_or("")
+    }
 }
 
 impl AuthorizedMcpInvocation {
@@ -766,8 +775,10 @@ pub(crate) async fn authorize_preflight_with_audit_sink(
 /// dispatcher. SmartApprove passes the retained client that supplied the
 /// grant; ordinary Allow/lease paths may pass an ephemeral client. No policy
 /// decision is repeated here.
+/// The optional effect gate binds chat-owned calls; direct CLI calls pass
+/// `None` and retain their existing admission behavior.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn invoke_authorized_with_audit(
+pub(crate) async fn invoke_authorized_with_audit_effect_gate(
     client: &mut McpClient,
     cfg: &McpServerConfig,
     tool: &str,
@@ -776,8 +787,9 @@ pub(crate) async fn invoke_authorized_with_audit(
     writer: Option<&WalWriterHandle>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     now_unix: i64,
+    effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
 ) -> Result<ToolCallResult, GateError> {
-    invoke_authorized_with_audit_sink(
+    invoke_authorized_with_audit_sink_effect_gate(
         client,
         cfg,
         tool,
@@ -787,6 +799,7 @@ pub(crate) async fn invoke_authorized_with_audit(
         rollback_policy,
         now_unix,
         None,
+        effect_gate,
     )
     .await
 }
@@ -805,6 +818,34 @@ pub(crate) async fn invoke_authorized_with_audit_sink(
     rollback_policy: Option<&crate::config::RollbackConfig>,
     now_unix: i64,
     request_binding_sha256: Option<&str>,
+) -> Result<ToolCallResult, GateError> {
+    invoke_authorized_with_audit_sink_effect_gate(
+        client,
+        cfg,
+        tool,
+        arguments,
+        authorized,
+        sink,
+        rollback_policy,
+        now_unix,
+        request_binding_sha256,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn invoke_authorized_with_audit_sink_effect_gate(
+    client: &mut McpClient,
+    cfg: &McpServerConfig,
+    tool: &str,
+    arguments: Value,
+    authorized: AuthorizedMcpInvocation,
+    sink: McpAuditSink<'_>,
+    rollback_policy: Option<&crate::config::RollbackConfig>,
+    now_unix: i64,
+    request_binding_sha256: Option<&str>,
+    effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
 ) -> Result<ToolCallResult, GateError> {
     if !authorized.matches(cfg, tool, request_binding_sha256) {
         return Err(GateError::PermissionDenied {
@@ -852,10 +893,13 @@ pub(crate) async fn invoke_authorized_with_audit_sink(
         &arguments_hash,
         sink,
         now_unix,
+        effect_gate,
+        authorized.request_binding_sha256.as_deref(),
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)] // Effect binding remains explicit at this audit boundary.
 async fn call_tool_with_success_audit(
     client: &mut McpClient,
     cfg: &McpServerConfig,
@@ -864,8 +908,17 @@ async fn call_tool_with_success_audit(
     arguments_hash: &str,
     sink: McpAuditSink<'_>,
     now_unix: i64,
+    effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
+    request_binding_sha256: Option<&str>,
 ) -> Result<ToolCallResult, GateError> {
-    let mut result = client.call_tool(tool, arguments).await?;
+    let mut result = client
+        .call_tool_with_effect(
+            tool,
+            arguments,
+            effect_gate.as_ref(),
+            request_binding_sha256.unwrap_or(""),
+        )
+        .await?;
     if sink.is_present() {
         let content_bytes: usize = result
             .content

@@ -40,7 +40,7 @@ use super::quota::{QuotaError, parse_retry_after};
 use super::response_bounds;
 use super::termination::{ProviderTermination, RefusalOrigin};
 use super::{
-    Completion, CompletionUsageMeasurements, Provider, ProviderDispatchPermit,
+    ChatTurnEffectKind, Completion, CompletionUsageMeasurements, Provider, ProviderDispatchPermit,
     ProviderRequestControls, Request,
 };
 use crate::secret::SecretString;
@@ -53,6 +53,31 @@ const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 const MAX_SUCCESS_BODY_BYTES: usize = response_bounds::MAX_SUCCESS_JSON_BODY_BYTES;
 const ERROR_BODY_EVIDENCE_DOMAIN: &[u8] = b"azure-openai-http-error-body/v1";
 const SUCCESS_BODY_EVIDENCE_DOMAIN: &[u8] = b"azure-openai-success-body/v1";
+
+async fn send_with_effect(
+    permit: &ProviderDispatchPermit,
+    kind: ChatTurnEffectKind,
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::Response> {
+    let Some(effect) = permit.prepare_effect(kind).await? else {
+        return request.send().await.context("HTTP response-head open");
+    };
+    let lease = effect.begin_start().await?;
+    match tokio::time::timeout_at(lease.deadline(), request.send()).await {
+        Ok(Ok(response)) => {
+            lease.started().await?;
+            Ok(response)
+        }
+        Ok(Err(error)) => {
+            lease.indeterminate().await?;
+            Err(error).context("HTTP transport entered without a response head")
+        }
+        Err(_) => {
+            lease.indeterminate().await?;
+            anyhow::bail!("HTTP response-head handshake timed out")
+        }
+    }
+}
 
 /// Latest GA api-version as of 2026-05-18. Operators wanting newer
 /// (`2025-04-01-preview`) override via `freedom.yaml::provider_api_version`
@@ -169,6 +194,14 @@ impl Provider for AzureOpenAiAdapter {
         "azure_openai"
     }
 
+    #[expect(
+        private_interfaces,
+        reason = "the private W41 probe seals this hook to reviewed in-crate adapters"
+    )]
+    fn w41_effect_start_adapter(&self, _: super::W41EffectStartProbe) -> bool {
+        true
+    }
+
     fn request_controls(&self) -> ProviderRequestControls {
         ProviderRequestControls::SAMPLING.with_output_token_limit()
     }
@@ -191,7 +224,7 @@ impl Provider for AzureOpenAiAdapter {
     async fn complete_raw(
         &self,
         req: Request,
-        _permit: &ProviderDispatchPermit,
+        permit: &ProviderDispatchPermit,
     ) -> Result<Completion> {
         // GR-04: circuit breaker — same pattern as openai_api.
         crate::providers::circuit_breaker::run_with_breaker("azure_openai", async {
@@ -237,15 +270,22 @@ impl Provider for AzureOpenAiAdapter {
             };
 
             let url = self.url(&deployment);
-            let response = self
+            let request = self
                 .http
                 .post(&url)
                 .header("content-type", "application/json")
                 .header("api-key", self.api_key.expose())
-                .json(&body)
-                .send()
-                .await
-                .with_context(|| format!("POST {url}"))?;
+                .json(&body);
+            let response = send_with_effect(
+                permit,
+                ChatTurnEffectKind::Provider {
+                    call_scope: "azure_openai.complete_raw",
+                    streaming: false,
+                },
+                request,
+            )
+            .await
+            .with_context(|| format!("POST {url}"))?;
 
             let status = response.status();
             if !status.is_success() {

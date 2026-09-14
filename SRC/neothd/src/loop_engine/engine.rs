@@ -598,6 +598,7 @@ pub async fn run_loop(
             config
                 .tool_call_budget
                 .map(|budget| budget.saturating_sub(state.accumulated_tool_calls)),
+            authorizer.turn_effect_gate(),
             &config.neoth_home,
         )
         .await?;

@@ -3967,6 +3967,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         // Channel turns are bounded by max_turns; no outer
                         // multi-round full-autonomy budget wraps this call.
                         None,
+                        None,
                         &instance_paths.home,
                     )
                     .await

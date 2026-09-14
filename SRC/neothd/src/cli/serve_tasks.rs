@@ -4103,6 +4103,7 @@ pub(crate) async fn spawn_audit_rpc(
     home: &std::path::Path,
     writer: &WalWriterHandle,
     chat_runtime: std::sync::Arc<crate::daemon::chat_runtime::DaemonChatRuntime>,
+    gui_chat_runtime: std::sync::Arc<dyn crate::daemon::gui_chat_protocol::GuiChatRuntime>,
     pid_guard: &mut crate::daemon::pidfile::PidGuard,
     endpoint_nonce: &str,
     #[cfg(feature = "cluster")] membership: std::sync::Arc<
@@ -4124,6 +4125,7 @@ pub(crate) async fn spawn_audit_rpc(
         token: token.clone(),
         writer: writer.clone(),
         chat_runtime: Some(chat_runtime),
+        gui_chat_runtime: Some(gui_chat_runtime),
         cooldown: std::sync::Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
         // GR-RESID-D34 — FULL-AUTO single-use token store for the GUI bypass.
         fullauto: std::sync::Arc::new(crate::daemon::audit_rpc::FullAutoTokenStore::new()),

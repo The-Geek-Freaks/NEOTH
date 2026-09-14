@@ -11,13 +11,14 @@
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::time::Instant;
 
@@ -296,6 +297,66 @@ fn configure_child_process(cmd: &mut tokio::process::Command, child_env: &[(OsSt
         .kill_on_drop(true);
 }
 
+/// Perform the one finite JSON-RPC write-side start handshake.  Kept outside
+/// `McpClient` so a bounded duplex fixture can exercise the same write path
+/// that production uses with a child stdin pipe.
+async fn write_framed_with_effect<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    framed: &[u8],
+    server_id: &str,
+    timeout: Duration,
+    effect_gate: Option<&Arc<dyn crate::providers::ChatTurnEffectGate>>,
+    request_binding_sha256: &str,
+) -> Result<Instant, McpError> {
+    let mut deadline = Instant::now() + timeout;
+    let effect = match effect_gate {
+        Some(gate) => {
+            let lease = gate
+                .intent(
+                    crate::providers::ChatTurnEffectKind::McpToolInvoke,
+                    request_binding_sha256,
+                )
+                .await
+                .map_err(|error| McpError::Protocol(server_id.to_string(), error.to_string()))?
+                .begin_start()
+                .await
+                .map_err(|error| McpError::Protocol(server_id.to_string(), error.to_string()))?;
+            deadline = deadline.min(lease.deadline());
+            Some(lease)
+        }
+        None => None,
+    };
+
+    let write_result = async {
+        tokio::time::timeout_at(deadline, writer.write_all(framed))
+            .await
+            .map_err(|_| McpError::Timeout(server_id.to_string(), timeout))?
+            .map_err(|error| McpError::Io(server_id.to_string(), error.to_string()))?;
+        tokio::time::timeout_at(deadline, writer.flush())
+            .await
+            .map_err(|_| McpError::Timeout(server_id.to_string(), timeout))
+            .and_then(|result| {
+                result.map_err(|error| McpError::Io(server_id.to_string(), error.to_string()))
+            })
+    }
+    .await;
+    match (effect, write_result) {
+        (Some(lease), Ok(())) => lease
+            .started()
+            .await
+            .map_err(|error| McpError::Protocol(server_id.to_string(), error.to_string()))?,
+        (Some(lease), Err(error)) => {
+            lease.indeterminate().await.map_err(|settlement| {
+                McpError::Protocol(server_id.to_string(), settlement.to_string())
+            })?;
+            return Err(error);
+        }
+        (None, Ok(())) => {}
+        (None, Err(error)) => return Err(error),
+    }
+    Ok(deadline)
+}
+
 impl McpClient {
     /// Spawn the configured MCP server + complete the `initialize`
     /// handshake. Returns once the server has acknowledged.
@@ -308,6 +369,17 @@ impl McpClient {
     pub async fn spawn_with_timeout(
         config: &McpServerConfig,
         request_timeout: Duration,
+    ) -> Result<Self, McpError> {
+        Self::spawn_with_timeout_effect_gate(config, request_timeout, None, "").await
+    }
+
+    /// Spawn with the W41 per-turn effect gate at the concrete child creation
+    /// boundary. `None` is deliberately byte-for-byte the ordinary MCP path.
+    pub(crate) async fn spawn_with_timeout_effect_gate(
+        config: &McpServerConfig,
+        request_timeout: Duration,
+        effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
+        request_binding_sha256: &str,
     ) -> Result<Self, McpError> {
         // Every production MCP caller converges here. Validate before env
         // resolution or process creation so unpinned runtime fetches and
@@ -325,9 +397,45 @@ impl McpClient {
         let mut cmd = tokio::process::Command::new(&config.command);
         cmd.args(&config.args);
         configure_child_process(&mut cmd, &child_env);
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| McpError::Spawn(config.id.clone(), e.to_string()))?;
+        // Intent is durable before the concrete start.  `Command::spawn` is
+        // the commit point: a successful child exists independently of this
+        // task, while an error proves no child was created.
+        let effect = match effect_gate {
+            Some(gate) => Some(
+                gate.intent(
+                    crate::providers::ChatTurnEffectKind::McpClientStart,
+                    request_binding_sha256,
+                )
+                .await
+                .map_err(|error| McpError::Spawn(config.id.clone(), error.to_string()))?
+                .begin_start()
+                .await
+                .map_err(|error| McpError::Spawn(config.id.clone(), error.to_string()))?,
+            ),
+            None => None,
+        };
+        let mut child = match cmd.spawn() {
+            Ok(child) => {
+                if let Some(lease) = effect {
+                    lease
+                        .started()
+                        .await
+                        .map_err(|error| McpError::Spawn(config.id.clone(), error.to_string()))?;
+                }
+                child
+            }
+            Err(error) => {
+                if let Some(lease) = effect {
+                    lease
+                        .aborted_proven_pre_start()
+                        .await
+                        .map_err(|settlement| {
+                            McpError::Spawn(config.id.clone(), settlement.to_string())
+                        })?;
+                }
+                return Err(McpError::Spawn(config.id.clone(), error.to_string()));
+            }
+        };
         let stdin = child
             .stdin
             .take()
@@ -414,6 +522,19 @@ impl McpClient {
         method: &str,
         params: P,
     ) -> Result<serde_json::Value, McpError> {
+        self.request_with_effect(method, params, None, "").await
+    }
+
+    /// Write-side JSON-RPC start classification.  A successful write+flush is
+    /// the MCP request commit point; every error after entering that boundary
+    /// is indeterminate because the peer may have received a prefix/frame.
+    async fn request_with_effect<P: Serialize>(
+        &mut self,
+        method: &str,
+        params: P,
+        effect_gate: Option<&Arc<dyn crate::providers::ChatTurnEffectGate>>,
+        request_binding_sha256: &str,
+    ) -> Result<serde_json::Value, McpError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let req = JsonRpcRequest::new(id, method, params);
         let body = serde_json::to_vec(&req)
@@ -424,18 +545,15 @@ impl McpClient {
         // per-read timeout would reset on every frame, so a server that
         // dribbles notification frames forever could pin the caller
         // indefinitely; `timeout_at` bounds the total wall-clock instead.
-        let deadline = Instant::now() + timeout;
-
-        // Write request — bounded by the deadline so a stuck server cannot
-        // hold the calling task forever.
-        tokio::time::timeout_at(deadline, self.stdin.write_all(&framed))
-            .await
-            .map_err(|_| McpError::Timeout(self.server_id.clone(), timeout))?
-            .map_err(|e| McpError::Io(self.server_id.clone(), e.to_string()))?;
-        tokio::time::timeout_at(deadline, self.stdin.flush())
-            .await
-            .map_err(|_| McpError::Timeout(self.server_id.clone(), timeout))?
-            .map_err(|e| McpError::Io(self.server_id.clone(), e.to_string()))?;
+        let deadline = write_framed_with_effect(
+            &mut self.stdin,
+            &framed,
+            &self.server_id,
+            timeout,
+            effect_gate,
+            request_binding_sha256,
+        )
+        .await?;
 
         // Read newline-delimited responses until we see the one whose id matches our
         // request. Notifications (no id) and responses for other in-flight
@@ -511,6 +629,7 @@ impl McpClient {
 
     /// Invoke a tool by name. `arguments` is the JSON object passed
     /// straight through to the server.
+    #[allow(dead_code)] // Retained legacy direct-call API; effect-aware path is production.
     pub(super) async fn call_tool(
         &mut self,
         name: &str,
@@ -523,6 +642,27 @@ impl McpClient {
                     "name": name,
                     "arguments": arguments,
                 }),
+            )
+            .await?;
+        let parsed: ToolCallResult = serde_json::from_value(result)
+            .map_err(|e| McpError::Protocol(self.server_id.clone(), e.to_string()))?;
+        parsed.validate_external_output(&self.server_id)?;
+        Ok(parsed)
+    }
+
+    pub(super) async fn call_tool_with_effect(
+        &mut self,
+        name: &str,
+        arguments: serde_json::Value,
+        effect_gate: Option<&Arc<dyn crate::providers::ChatTurnEffectGate>>,
+        request_binding_sha256: &str,
+    ) -> Result<ToolCallResult, McpError> {
+        let result = self
+            .request_with_effect(
+                "tools/call",
+                serde_json::json!({ "name": name, "arguments": arguments }),
+                effect_gate,
+                request_binding_sha256,
             )
             .await?;
         let parsed: ToolCallResult = serde_json::from_value(result)
@@ -581,6 +721,94 @@ fn classify_frame(body: &[u8], id: u64, server_id: &str) -> Result<FrameMatch, M
 mod tests {
     use super::*;
     use crate::mcp::config::McpServerConfig;
+    use crate::providers::ChatTurnEffectGate;
+    use crate::providers::effect_test_support::{RecordedPhase, RecordingEffectGate};
+    use std::sync::Arc;
+
+    fn bad_command_config() -> McpServerConfig {
+        McpServerConfig {
+            id: "test".into(),
+            description: None,
+            command: "definitely-not-a-real-binary-xyz".into(),
+            args: vec![],
+            env: std::collections::HashMap::new(),
+            enabled: true,
+            allow_tools: None,
+            trust_all_tools: false,
+            smart_approve: false,
+            autonomy_gate: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn effect_gate_closed_before_spawn_never_reaches_child_creation() {
+        let gate = Arc::new(RecordingEffectGate::new(Duration::from_millis(200)));
+        gate.close();
+        let result = McpClient::spawn_with_timeout_effect_gate(
+            &bad_command_config(),
+            Duration::from_millis(200),
+            Some(gate.clone()),
+            "binding",
+        )
+        .await;
+        let error = match result {
+            Ok(_) => panic!("closed W41 gate must reject before command spawn"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, McpError::Spawn(_, _)));
+        assert_eq!(gate.phase(), RecordedPhase::Closed);
+    }
+
+    #[tokio::test]
+    async fn failed_command_spawn_is_proven_pre_start_abort() {
+        let gate = Arc::new(RecordingEffectGate::new(Duration::from_millis(200)));
+        let result = McpClient::spawn_with_timeout_effect_gate(
+            &bad_command_config(),
+            Duration::from_millis(200),
+            Some(gate.clone()),
+            "binding",
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "nonexistent command must fail before a child exists"
+        );
+        assert_eq!(gate.phase(), RecordedPhase::Aborted);
+    }
+
+    #[tokio::test]
+    async fn partial_duplex_write_becomes_indeterminate_and_blocks_later_invoke() {
+        // A one-byte duplex with its peer deliberately held models a partial
+        // stdin frame: the first byte may already be visible to the server,
+        // but the complete request commit cannot be proven.  The real helper
+        // must settle Indeterminate and the same gate must deny a later write.
+        let gate = Arc::new(RecordingEffectGate::new(Duration::from_millis(25)));
+        let effect_gate: Arc<dyn ChatTurnEffectGate> = gate.clone();
+        let (mut writer, _held_server_reader) = tokio::io::duplex(1);
+        let first = write_framed_with_effect(
+            &mut writer,
+            b"{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\"}\n",
+            "duplex",
+            Duration::from_millis(200),
+            Some(&effect_gate),
+            "binding",
+        )
+        .await;
+        assert!(matches!(first, Err(McpError::Timeout(_, _))));
+        assert_eq!(gate.phase(), RecordedPhase::Indeterminate);
+
+        let second = write_framed_with_effect(
+            &mut writer,
+            b"later-invoke-must-not-write",
+            "duplex",
+            Duration::from_millis(200),
+            Some(&effect_gate),
+            "binding",
+        )
+        .await;
+        assert!(matches!(second, Err(McpError::Protocol(_, _))));
+        assert_eq!(gate.phase(), RecordedPhase::Indeterminate);
+    }
 
     /// Subprocess fixture for the environment/stderr policy regression below.
     /// In an ordinary test run the marker is absent and this is a no-op. The

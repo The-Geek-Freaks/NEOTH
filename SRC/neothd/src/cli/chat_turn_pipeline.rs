@@ -116,6 +116,9 @@ pub(crate) trait ChatTurnEventSink: Send {
     fn emit(&mut self, event: ChatTurnEvent) -> Result<()>;
 }
 
+// W41 effect admission is implemented only at concrete provider/MCP start
+// points. This pipeline must not recreate a broad route-level gate.
+
 pub(crate) fn emit_output(sink: &mut dyn ChatTurnEventSink, output: ChatOutput) -> Result<()> {
     sink.emit(ChatTurnEvent::Output(output))
         .context("emit typed chat output")
@@ -198,6 +201,18 @@ pub(crate) async fn run_prepared_chat_turn(
     writer: &crate::wal::writer::WalWriterHandle,
     segment_path: &Path,
     output: &mut dyn ChatTurnEventSink,
+) -> Result<Option<ChatOutput>> {
+    run_prepared_chat_turn_with_effect_gate(prepared, provider, writer, segment_path, output, None)
+        .await
+}
+
+pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
+    prepared: &mut PreparedChatTurn,
+    provider: &dyn crate::providers::Provider,
+    writer: &crate::wal::writer::WalWriterHandle,
+    segment_path: &Path,
+    output: &mut dyn ChatTurnEventSink,
+    turn_effect_gate: Option<std::sync::Arc<dyn crate::providers::ChatTurnEffectGate>>,
 ) -> Result<Option<ChatOutput>> {
     let PreparedChatTurn {
         input,
@@ -853,12 +868,16 @@ pub(crate) async fn run_prepared_chat_turn(
         defer_provider_output,
         &canary_token,
         cancellation,
+        turn_effect_gate.clone(),
         output,
     )
     .await
     {
         Ok(output) => output,
         Err(error) => {
+            // The adapter returned after a transport attempt. Its exact commit
+            // cannot be disproven here, so recovery classifies it indeterminate
+            // and blocks every fallback/new external leaf for this turn.
             return Err(error);
         }
     };
@@ -926,6 +945,7 @@ pub(crate) async fn run_prepared_chat_turn(
         ephemeral_consent,
         canary_token,
         cancellation,
+        turn_effect_gate.clone(),
         PostReplyStreamPlan {
             control_token: stream_control_token_ref,
             done_line: stream_done_line,

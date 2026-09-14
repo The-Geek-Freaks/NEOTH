@@ -141,6 +141,7 @@ async fn durable_trust_rpc_reconciles_once_and_rejects_generic_bypass() {
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
@@ -222,6 +223,7 @@ async fn durable_trust_rpc_is_authenticated_and_available_when_optional_audit_is
         membership: None,
         audit_routes_enabled: false,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let descriptor = durable_trust_descriptor(&"4".repeat(64), &"5".repeat(64)).await;
@@ -303,6 +305,7 @@ async fn durable_trust_rpc_reuses_receipt_after_response_is_not_consumed() {
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let descriptor = durable_trust_descriptor(&"6".repeat(64), &"7".repeat(64)).await;
@@ -676,6 +679,7 @@ async fn aborting_listener_aborts_idle_connection_before_wal_drain() {
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -718,6 +722,7 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -783,6 +788,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
         membership: Some(Arc::clone(&controller)),
         audit_routes_enabled: false,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -973,6 +979,7 @@ async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -1041,6 +1048,7 @@ async fn internal_skill_mutation_route_stays_live_when_public_audit_routes_are_d
         membership: None,
         audit_routes_enabled: false,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1109,6 +1117,7 @@ async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -1204,6 +1213,7 @@ async fn unauthenticated_authority_ingress_cannot_poison_unrelated_skill_scans()
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (address, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1619,6 +1629,7 @@ async fn wrong_token_is_401_and_writes_no_frame() {
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -1660,6 +1671,7 @@ async fn valid_bearer_bypasses_and_resets_shared_ipc_cooldown() {
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -1694,6 +1706,7 @@ async fn blocked_event_type_is_422_and_emits_reject() {
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -1731,6 +1744,7 @@ async fn client_round_trips_against_a_live_listener() {
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1778,6 +1792,7 @@ async fn jobs_run_token_client_is_request_bound_and_single_use() {
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1837,6 +1852,7 @@ async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1870,6 +1886,7 @@ async fn subtype_client_round_trips_against_a_live_listener() {
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1942,6 +1959,7 @@ async fn listener_serves_more_than_one_connection() {
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1985,6 +2003,7 @@ async fn daemon_plain_chat_keeps_preauth_at_five_seconds_and_hands_off_only_afte
         membership: None,
         audit_routes_enabled: true,
         chat_runtime: None,
+        gui_chat_runtime: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
@@ -2077,4 +2096,247 @@ async fn daemon_plain_chat_eof_after_request_write_is_indeterminate_without_retr
         1,
         "no retry or standalone fallback may issue another daemon request"
     );
+}
+
+/// Attach is deliberately held and close-delimited: delivery of the first
+/// verified frame must not wait for the later terminal frame.
+#[tokio::test]
+async fn gui_attach_delivers_ndjson_incrementally_before_terminal() {
+    use crate::daemon::gui_chat_protocol as gui;
+
+    let home = tempdir().unwrap();
+    let nonce = test_endpoint_nonce();
+    let _token = init_rpc_token(home.path()).unwrap();
+    let (mut listener, endpoint) = super::transport::bind(home.path(), &nonce).await.unwrap();
+    let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
+    let boot = super::client::instance_commitment_for_nonce(&nonce).0;
+    let turn = gui::GuiChatTurnId(uuid::Uuid::now_v7());
+    let request = gui::GuiChatAttachRequest {
+        schema_version: 1,
+        expected_boot_id: boot.clone(),
+        turn_id: turn.clone(),
+        session_id: "session".into(),
+        surface: gui::GuiChatSurface::Main,
+        subscription_generation: 1,
+        attach_capability: gui::GuiChatOpaqueCapability("capability".into()),
+        after_sequence: 0,
+    };
+    let boot_server = boot.clone();
+    let turn_server = turn.clone();
+    let (release_terminal, first_delivered) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let mut stream = listener.accept().await.unwrap();
+        let mut request_bytes = [0_u8; 4096];
+        let _ = stream.read(&mut request_bytes).await.unwrap();
+        let accepted = gui::GuiChatStreamFrame {
+            schema_version: 1,
+            boot_id: boot_server.clone(),
+            turn_id: turn_server.clone(),
+            subscription: gui::GuiChatSubscription {
+                session_id: "session".into(),
+                surface: gui::GuiChatSurface::Main,
+                generation: 1,
+            },
+            sequence: 1,
+            payload: gui::GuiChatFramePayload::Accepted,
+        };
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\n\r\n").await.unwrap();
+        stream
+            .write_all(format!("{}\n", serde_json::to_string(&accepted).unwrap()).as_bytes())
+            .await
+            .unwrap();
+        let _ = first_delivered.await;
+        let terminal = gui::GuiChatStreamFrame {
+            schema_version: 1,
+            boot_id: boot_server,
+            turn_id: turn_server,
+            subscription: gui::GuiChatSubscription {
+                session_id: "session".into(),
+                surface: gui::GuiChatSurface::Main,
+                generation: 1,
+            },
+            sequence: 2,
+            payload: gui::GuiChatFramePayload::Terminal {
+                terminal: gui::GuiChatTerminal {
+                    state: gui::GuiChatTerminalState::Complete,
+                    response_digest: gui::GuiChatDigest("0".repeat(64)),
+                    provider: "provider".into(),
+                    model: "model".into(),
+                    usage: gui::GuiChatUsage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        elapsed_ms: 0,
+                    },
+                    lifecycle_receipt_id: gui::GuiChatDigest("1".repeat(64)),
+                },
+            },
+        };
+        stream
+            .write_all(format!("{}\n", serde_json::to_string(&terminal).unwrap()).as_bytes())
+            .await
+            .unwrap();
+    });
+    let mut observed = Vec::new();
+    let mut release_terminal = Some(release_terminal);
+    let mut callback = |frame: gui::GuiChatStreamFrame| {
+        observed.push(frame.sequence);
+        if observed.len() == 1 {
+            release_terminal.take().unwrap().send(()).unwrap();
+        }
+        Ok(())
+    };
+    super::client::gui_chat_attach(home.path(), &request, &mut callback)
+        .await
+        .unwrap();
+    assert_eq!(observed, vec![1, 2]);
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn gui_attach_eof_after_write_is_indeterminate_without_reconnect() {
+    use crate::daemon::gui_chat_protocol as gui;
+
+    let home = tempdir().unwrap();
+    let nonce = test_endpoint_nonce();
+    let _token = init_rpc_token(home.path()).unwrap();
+    let (mut listener, endpoint) = super::transport::bind(home.path(), &nonce).await.unwrap();
+    let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
+    let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let accepted_server = Arc::clone(&accepted);
+    let server = tokio::spawn(async move {
+        let mut stream = listener.accept().await.unwrap();
+        let mut first = [0_u8; 1];
+        stream.read_exact(&mut first).await.unwrap();
+        accepted_server.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
+    let request = gui::GuiChatAttachRequest {
+        schema_version: 1,
+        expected_boot_id: super::client::instance_commitment_for_nonce(&nonce).0,
+        turn_id: gui::GuiChatTurnId(uuid::Uuid::now_v7()),
+        session_id: "session".into(),
+        surface: gui::GuiChatSurface::Main,
+        subscription_generation: 1,
+        attach_capability: gui::GuiChatOpaqueCapability("capability".into()),
+        after_sequence: 0,
+    };
+    let mut callback = |_| Ok(());
+    let error = super::client::gui_chat_attach(home.path(), &request, &mut callback)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        super::client::GuiChatClientError::Indeterminate(_)
+    ));
+    server.await.unwrap();
+    assert_eq!(
+        accepted.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "post-write EOF must not reconnect"
+    );
+}
+
+#[tokio::test]
+async fn gui_attach_rejects_rotated_boot_before_delivering_a_frame() {
+    use crate::daemon::gui_chat_protocol as gui;
+
+    let home = tempdir().unwrap();
+    let nonce = test_endpoint_nonce();
+    let _token = init_rpc_token(home.path()).unwrap();
+    let (mut listener, endpoint) = super::transport::bind(home.path(), &nonce).await.unwrap();
+    let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
+    let request = gui::GuiChatAttachRequest {
+        schema_version: 1,
+        expected_boot_id: super::client::instance_commitment_for_nonce(&nonce).0,
+        turn_id: gui::GuiChatTurnId(uuid::Uuid::now_v7()),
+        session_id: "session".into(),
+        surface: gui::GuiChatSurface::Main,
+        subscription_generation: 1,
+        attach_capability: gui::GuiChatOpaqueCapability("capability".into()),
+        after_sequence: 0,
+    };
+    let turn = request.turn_id.clone();
+    let server = tokio::spawn(async move {
+        let mut stream = listener.accept().await.unwrap();
+        let mut buffer = [0_u8; 4096];
+        let _ = stream.read(&mut buffer).await.unwrap();
+        let frame = gui::GuiChatStreamFrame {
+            schema_version: 1,
+            boot_id: "rotated-boot".into(),
+            turn_id: turn,
+            subscription: gui::GuiChatSubscription {
+                session_id: "session".into(),
+                surface: gui::GuiChatSurface::Main,
+                generation: 1,
+            },
+            sequence: 1,
+            payload: gui::GuiChatFramePayload::Accepted,
+        };
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        stream
+            .write_all(format!("{}\n", serde_json::to_string(&frame).unwrap()).as_bytes())
+            .await
+            .unwrap();
+    });
+    let mut delivered = false;
+    let mut callback = |_| {
+        delivered = true;
+        Ok(())
+    };
+    let error = super::client::gui_chat_attach(home.path(), &request, &mut callback)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, super::client::GuiChatClientError::Indeterminate(ref detail) if detail.contains("rotation"))
+    );
+    assert!(
+        !delivered,
+        "a rotated boot frame must not reach the GUI sink"
+    );
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn gui_attach_rejects_an_oversized_close_delimited_frame() {
+    use crate::daemon::gui_chat_protocol as gui;
+
+    let home = tempdir().unwrap();
+    let nonce = test_endpoint_nonce();
+    let _token = init_rpc_token(home.path()).unwrap();
+    let (mut listener, endpoint) = super::transport::bind(home.path(), &nonce).await.unwrap();
+    let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
+    let request = gui::GuiChatAttachRequest {
+        schema_version: 1,
+        expected_boot_id: super::client::instance_commitment_for_nonce(&nonce).0,
+        turn_id: gui::GuiChatTurnId(uuid::Uuid::now_v7()),
+        session_id: "session".into(),
+        surface: gui::GuiChatSurface::Main,
+        subscription_generation: 1,
+        attach_capability: gui::GuiChatOpaqueCapability("capability".into()),
+        after_sequence: 0,
+    };
+    let server = tokio::spawn(async move {
+        let mut stream = listener.accept().await.unwrap();
+        let mut buffer = [0_u8; 4096];
+        let _ = stream.read(&mut buffer).await.unwrap();
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        stream
+            .write_all(&vec![b'x'; gui::GUI_CHAT_FRAME_MAX_BYTES + 1])
+            .await
+            .unwrap();
+        stream.write_all(b"\n").await.unwrap();
+    });
+    let mut callback = |_| Ok(());
+    let error = super::client::gui_chat_attach(home.path(), &request, &mut callback)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, super::client::GuiChatClientError::Indeterminate(ref detail) if detail.contains("frame too large"))
+    );
+    server.await.unwrap();
 }

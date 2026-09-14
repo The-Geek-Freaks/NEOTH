@@ -29,8 +29,8 @@ use tracing::debug;
 use super::response_bounds;
 use super::termination::ProviderTermination;
 use super::{
-    ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements, Provider,
-    ProviderDispatchPermit, ProviderRequestControls, Request,
+    ChatTurnEffectKind, ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements,
+    Provider, ProviderDispatchPermit, ProviderRequestControls, Request,
 };
 
 /// Default Ollama base URL when the operator hasn't overridden it.
@@ -42,6 +42,31 @@ pub const DEFAULT_MODEL: &str = "llama3.2";
 /// proxies model-controlled output and a remote endpoint is fully hostile.
 /// These caps bound allocation before any parse.
 const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+
+async fn send_with_effect(
+    permit: &ProviderDispatchPermit,
+    kind: ChatTurnEffectKind,
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::Response> {
+    let Some(effect) = permit.prepare_effect(kind).await? else {
+        return request.send().await.context("HTTP response-head open");
+    };
+    let lease = effect.begin_start().await?;
+    match tokio::time::timeout_at(lease.deadline(), request.send()).await {
+        Ok(Ok(response)) => {
+            lease.started().await?;
+            Ok(response)
+        }
+        Ok(Err(error)) => {
+            lease.indeterminate().await?;
+            Err(error).context("HTTP transport entered without a response head")
+        }
+        Err(_) => {
+            lease.indeterminate().await?;
+            anyhow::bail!("HTTP response-head handshake timed out")
+        }
+    }
+}
 const MAX_SUCCESS_BODY_BYTES: usize = response_bounds::MAX_SUCCESS_JSON_BODY_BYTES;
 const MAX_NDJSON_FRAME_BYTES: usize = response_bounds::MAX_SSE_FRAME_BYTES;
 const ERROR_BODY_EVIDENCE_DOMAIN: &[u8] = b"ollama-http-error-body/v1";
@@ -105,6 +130,14 @@ impl Provider for OllamaAdapter {
         }
     }
 
+    #[expect(
+        private_interfaces,
+        reason = "the private W41 probe seals this hook to reviewed in-crate adapters"
+    )]
+    fn w41_effect_start_adapter(&self, _: super::W41EffectStartProbe) -> bool {
+        true
+    }
+
     fn request_controls(&self) -> ProviderRequestControls {
         ProviderRequestControls::SAMPLING.with_output_token_limit()
     }
@@ -132,7 +165,7 @@ impl Provider for OllamaAdapter {
     async fn complete_raw(
         &self,
         req: Request,
-        _permit: &ProviderDispatchPermit,
+        permit: &ProviderDispatchPermit,
     ) -> Result<Completion> {
         let provider_name = self.name();
         crate::providers::circuit_breaker::run_with_breaker(provider_name, async {
@@ -142,13 +175,17 @@ impl Provider for OllamaAdapter {
             let body = build_request(&model, &req, false, self.is_loopback_endpoint);
             let url = format!("{}/api/chat", self.base_url);
 
-            let response = self
-                .http
-                .post(&url)
-                .json(&body)
-                .send()
-                .await
-                .with_context(|| format!("POST {url}"))?;
+            let request = self.http.post(&url).json(&body);
+            let response = send_with_effect(
+                permit,
+                ChatTurnEffectKind::Provider {
+                    call_scope: "ollama_api.complete_raw",
+                    streaming: false,
+                },
+                request,
+            )
+            .await
+            .with_context(|| format!("POST {url}"))?;
 
             let status = response.status();
             if !status.is_success() {
@@ -221,7 +258,7 @@ impl Provider for OllamaAdapter {
     async fn stream_raw(
         &self,
         req: Request,
-        _permit: &ProviderDispatchPermit,
+        permit: &ProviderDispatchPermit,
     ) -> Result<ChunkStream> {
         let provider_name = self.name();
         crate::providers::circuit_breaker_stream::run_stream_with_breaker(provider_name, async {
@@ -230,13 +267,17 @@ impl Provider for OllamaAdapter {
             let body = build_request(&model, &req, true, self.is_loopback_endpoint);
             let url = format!("{}/api/chat", self.base_url);
 
-            let response = self
-                .http
-                .post(&url)
-                .json(&body)
-                .send()
-                .await
-                .with_context(|| format!("POST {url} (stream)"))?;
+            let request = self.http.post(&url).json(&body);
+            let response = send_with_effect(
+                permit,
+                ChatTurnEffectKind::Provider {
+                    call_scope: "ollama_api.stream_raw",
+                    streaming: true,
+                },
+                request,
+            )
+            .await
+            .with_context(|| format!("POST {url} (stream)"))?;
 
             let status = response.status();
             if !status.is_success() {

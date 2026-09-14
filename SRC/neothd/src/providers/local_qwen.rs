@@ -22,8 +22,8 @@ use async_trait::async_trait;
 use tracing::info;
 
 use super::{
-    ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements, Provider,
-    ProviderDispatchPermit, ProviderRequestControls, Request,
+    ChatTurnEffectKind, ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements,
+    EffectStartLease, Provider, ProviderDispatchPermit, ProviderRequestControls, Request,
 };
 
 use crate::daemon::accelerator::Accelerator;
@@ -59,7 +59,19 @@ impl Drop for CancelBlockingGenerationOnDrop {
     }
 }
 
-async fn spawn_cancellable_generation<F, T>(work: F) -> Result<T>
+#[cfg(test)]
+fn spawn_cancellable_generation<F, T>(work: F) -> impl std::future::Future<Output = Result<T>>
+where
+    F: FnOnce(&std::sync::atomic::AtomicBool) -> Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    spawn_cancellable_generation_with_start_signal(work, None)
+}
+
+fn spawn_cancellable_generation_with_start_signal<F, T>(
+    work: F,
+    started: Option<tokio::sync::oneshot::Sender<()>>,
+) -> impl std::future::Future<Output = Result<T>>
 where
     F: FnOnce(&std::sync::atomic::AtomicBool) -> Result<T> + Send + 'static,
     T: Send + 'static,
@@ -67,11 +79,37 @@ where
     let signal = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let worker_signal = Arc::clone(&signal);
     let mut cancellation = CancelBlockingGenerationOnDrop::new(signal);
-    let result = tokio::task::spawn_blocking(move || work(worker_signal.as_ref()))
-        .await
-        .context("local_qwen forward task join error")?;
-    cancellation.disarm();
-    result
+    let result = tokio::task::spawn_blocking(move || {
+        if let Some(started) = started {
+            let _ = started.send(());
+        }
+        work(worker_signal.as_ref())
+    });
+    async move {
+        let result = result.await.context("local_qwen forward task join error")?;
+        cancellation.disarm();
+        result
+    }
+}
+
+async fn settle_local_generation_start(
+    lease: Option<EffectStartLease>,
+    started: tokio::sync::oneshot::Receiver<()>,
+) -> Result<()> {
+    let Some(lease) = lease else {
+        return Ok(());
+    };
+    match tokio::time::timeout_at(lease.deadline(), started).await {
+        Ok(Ok(())) => lease.started().await,
+        Ok(Err(_)) => {
+            lease.aborted_proven_pre_start().await?;
+            anyhow::bail!("local Qwen worker stopped before generation started");
+        }
+        Err(_) => {
+            lease.indeterminate().await?;
+            anyhow::bail!("local Qwen generation-start handshake timed out");
+        }
+    }
 }
 
 fn ensure_generation_active(signal: &std::sync::atomic::AtomicBool) -> Result<()> {
@@ -471,6 +509,14 @@ impl Provider for LocalQwenAdapter {
         "local_qwen"
     }
 
+    #[expect(
+        private_interfaces,
+        reason = "the private W41 probe seals this hook to reviewed in-crate adapters"
+    )]
+    fn w41_effect_start_adapter(&self, _: super::W41EffectStartProbe) -> bool {
+        true
+    }
+
     fn request_controls(&self) -> ProviderRequestControls {
         ProviderRequestControls::SAMPLING.with_output_token_limit()
     }
@@ -486,7 +532,7 @@ impl Provider for LocalQwenAdapter {
     async fn complete_raw(
         &self,
         req: Request,
-        _permit: &ProviderDispatchPermit,
+        permit: &ProviderDispatchPermit,
     ) -> Result<Completion> {
         // GR-04: circuit breaker. For local inference the breaker
         // mainly catches model-load / weights-mmap / candle runtime
@@ -501,23 +547,38 @@ impl Provider for LocalQwenAdapter {
             let accelerator = self.accelerator;
             let sampling = self.sampling;
             let max_new_tokens = effective_max_new_tokens(self.max_new_tokens, &req);
+            let effect = permit
+                .prepare_effect(ChatTurnEffectKind::Provider {
+                    call_scope: "local_qwen.generation",
+                    streaming: false,
+                })
+                .await?;
+            let lease = match effect {
+                Some(effect) => Some(effect.begin_start().await?),
+                None => None,
+            };
+            let (start_tx, start_rx) = tokio::sync::oneshot::channel();
             // Everything below is CPU/GPU-bound + blocking (mmap + tensor ops);
             // run it on a blocking thread so we don't stall tokio's reactor.
-            spawn_cancellable_generation(move |cancellation| -> Result<Completion> {
-                run_forward(
-                    loaded,
-                    &tokenizer_path,
-                    &config_path,
-                    &weights_path,
-                    accelerator,
-                    sampling,
-                    max_new_tokens,
-                    &repo,
-                    &req,
-                    cancellation,
-                )
-            })
-            .await
+            let generation = spawn_cancellable_generation_with_start_signal(
+                move |cancellation| -> Result<Completion> {
+                    run_forward(
+                        loaded,
+                        &tokenizer_path,
+                        &config_path,
+                        &weights_path,
+                        accelerator,
+                        sampling,
+                        max_new_tokens,
+                        &repo,
+                        &req,
+                        cancellation,
+                    )
+                },
+                Some(start_tx),
+            );
+            settle_local_generation_start(lease, start_rx).await?;
+            generation.await
         })
         .await
     }
@@ -525,7 +586,7 @@ impl Provider for LocalQwenAdapter {
     async fn stream_raw(
         &self,
         req: Request,
-        _permit: &ProviderDispatchPermit,
+        permit: &ProviderDispatchPermit,
     ) -> Result<ChunkStream> {
         // GR-04 stream-wrap: same circuit-breaker semantics as `complete`.
         crate::providers::circuit_breaker_stream::run_stream_with_breaker("local_qwen", async {
@@ -543,14 +604,26 @@ impl Provider for LocalQwenAdapter {
             let accelerator = self.accelerator;
             let sampling = self.sampling;
             let max_new_tokens = effective_max_new_tokens(self.max_new_tokens, &req);
+            let effect = permit
+                .prepare_effect(ChatTurnEffectKind::Provider {
+                    call_scope: "local_qwen.generation",
+                    streaming: true,
+                })
+                .await?;
+            let lease = match effect {
+                Some(effect) => Some(effect.begin_start().await?),
+                None => None,
+            };
 
             // Bounded channel. 64 chunks of buffering is plenty for the
             // typical "model produces tokens faster than consumer drains"
             // case without unbounded memory growth.
             let (tx, rx) = tokio::sync::mpsc::channel::<Result<CompletionChunk>>(64);
+            let (start_tx, start_rx) = tokio::sync::oneshot::channel();
             let req = req.clone();
 
             tokio::task::spawn_blocking(move || {
+                let _ = start_tx.send(());
                 if let Err(e) = run_stream(
                     loaded,
                     &tokenizer_path,
@@ -568,6 +641,7 @@ impl Provider for LocalQwenAdapter {
                     let _ = tx.blocking_send(Err(e));
                 }
             });
+            settle_local_generation_start(lease, start_rx).await?;
 
             use tokio_stream::wrappers::ReceiverStream;
             let stream = ReceiverStream::new(rx);
@@ -1441,6 +1515,102 @@ pub(crate) fn cache_dir_at(neoth_home: &Path, repo: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn w41_worker_entry_is_started_before_the_owned_generation_join() {
+        use crate::providers::ChatTurnEffectGate;
+        use crate::providers::effect_test_support::{RecordedPhase, RecordingEffectGate};
+
+        let gate = RecordingEffectGate::new(Duration::from_secs(1));
+        let pending = gate
+            .intent(
+                ChatTurnEffectKind::Provider {
+                    call_scope: "local_qwen.generation",
+                    streaming: false,
+                },
+                "fixture-binding",
+            )
+            .await
+            .expect("reserve generation effect");
+        let lease = pending.begin_start().await.expect("enter worker handshake");
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let generation = spawn_cancellable_generation_with_start_signal(
+            move |_| -> Result<()> {
+                release_rx.recv().expect("test releases owned worker");
+                Ok(())
+            },
+            Some(started_tx),
+        );
+
+        settle_local_generation_start(Some(lease), started_rx)
+            .await
+            .expect("worker entry acknowledges Started");
+        assert_eq!(gate.phase(), RecordedPhase::Started);
+        release_tx.send(()).expect("release owned worker");
+        generation.await.expect("owned worker joins");
+    }
+
+    #[tokio::test]
+    async fn w41_unknown_worker_entry_is_indeterminate_and_refuses_next_start() {
+        use crate::providers::ChatTurnEffectGate;
+        use crate::providers::effect_test_support::{RecordedPhase, RecordingEffectGate};
+
+        let gate = RecordingEffectGate::new(Duration::from_millis(1));
+        let pending = gate
+            .intent(
+                ChatTurnEffectKind::Provider {
+                    call_scope: "local_qwen.generation",
+                    streaming: false,
+                },
+                "fixture-binding-a",
+            )
+            .await
+            .expect("reserve generation effect");
+        let lease = pending.begin_start().await.expect("enter worker handshake");
+        let (_held_start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
+
+        assert!(
+            settle_local_generation_start(Some(lease), start_rx)
+                .await
+                .is_err()
+        );
+        assert_eq!(gate.phase(), RecordedPhase::Indeterminate);
+        assert!(
+            gate.intent(
+                ChatTurnEffectKind::Provider {
+                    call_scope: "local_qwen.generation",
+                    streaming: false,
+                },
+                "fixture-binding-b",
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn w41_closed_before_worker_start_runs_no_child_fixture() {
+        use crate::providers::ChatTurnEffectGate;
+        use crate::providers::effect_test_support::{RecordedPhase, RecordingEffectGate};
+
+        let gate = RecordingEffectGate::new(Duration::from_secs(1));
+        gate.close();
+        let child_starts = std::sync::atomic::AtomicUsize::new(0);
+        assert!(
+            gate.intent(
+                ChatTurnEffectKind::Provider {
+                    call_scope: "local_qwen.generation",
+                    streaming: false,
+                },
+                "fixture-binding",
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(child_starts.load(std::sync::atomic::Ordering::Acquire), 0);
+        assert_eq!(gate.phase(), RecordedPhase::Closed);
+    }
 
     #[tokio::test]
     async fn dropping_generation_future_cooperatively_stops_blocking_worker() {

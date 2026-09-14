@@ -42,7 +42,7 @@ use super::response_bounds;
 use super::termination::{ProviderTermination, RefusalOrigin};
 
 use super::{
-    Completion, CompletionUsageMeasurements, Provider, ProviderDispatchPermit,
+    ChatTurnEffectKind, Completion, CompletionUsageMeasurements, Provider, ProviderDispatchPermit,
     ProviderRequestControls, Request,
 };
 
@@ -53,6 +53,31 @@ const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 const MAX_SUCCESS_BODY_BYTES: usize = response_bounds::MAX_SUCCESS_JSON_BODY_BYTES;
 const ERROR_BODY_EVIDENCE_DOMAIN: &[u8] = b"aws-bedrock-http-error-body/v1";
 const SUCCESS_BODY_EVIDENCE_DOMAIN: &[u8] = b"aws-bedrock-success-body/v1";
+
+async fn send_with_effect(
+    permit: &ProviderDispatchPermit,
+    kind: ChatTurnEffectKind,
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::Response> {
+    let Some(effect) = permit.prepare_effect(kind).await? else {
+        return request.send().await.context("HTTP response-head open");
+    };
+    let lease = effect.begin_start().await?;
+    match tokio::time::timeout_at(lease.deadline(), request.send()).await {
+        Ok(Ok(response)) => {
+            lease.started().await?;
+            Ok(response)
+        }
+        Ok(Err(error)) => {
+            lease.indeterminate().await?;
+            Err(error).context("HTTP transport entered without a response head")
+        }
+        Err(_) => {
+            lease.indeterminate().await?;
+            anyhow::bail!("HTTP response-head handshake timed out")
+        }
+    }
+}
 
 /// AWS service name used in the SigV4 credential scope. **Not**
 /// `bedrock-runtime` — the runtime data plane signs under `bedrock`.
@@ -208,6 +233,14 @@ impl Provider for AwsBedrockAdapter {
         "aws_bedrock"
     }
 
+    #[expect(
+        private_interfaces,
+        reason = "the private W41 probe seals this hook to reviewed in-crate adapters"
+    )]
+    fn w41_effect_start_adapter(&self, _: super::W41EffectStartProbe) -> bool {
+        true
+    }
+
     fn request_controls(&self) -> ProviderRequestControls {
         ProviderRequestControls::SAMPLING_WITHOUT_SEED.with_output_token_limit()
     }
@@ -230,7 +263,7 @@ impl Provider for AwsBedrockAdapter {
     async fn complete_raw(
         &self,
         req: Request,
-        _permit: &ProviderDispatchPermit,
+        permit: &ProviderDispatchPermit,
     ) -> Result<Completion> {
         // GR-04: circuit breaker — same pattern as openai_api.
         crate::providers::circuit_breaker::run_with_breaker("aws_bedrock", async {
@@ -266,7 +299,7 @@ impl Provider for AwsBedrockAdapter {
                 crate::time::utc_now(),
             );
 
-            let response = self
+            let request = self
                 .http
                 .post(parsed_url.clone())
                 .header("content-type", "application/json")
@@ -277,10 +310,17 @@ impl Provider for AwsBedrockAdapter {
                 .pipe_if(signed.x_amz_security_token.as_ref(), |req, token| {
                     req.header("x-amz-security-token", token)
                 })
-                .body(body_bytes)
-                .send()
-                .await
-                .with_context(|| format!("POST {url_str}"))?;
+                .body(body_bytes);
+            let response = send_with_effect(
+                permit,
+                ChatTurnEffectKind::Provider {
+                    call_scope: "aws_bedrock.complete_raw",
+                    streaming: false,
+                },
+                request,
+            )
+            .await
+            .with_context(|| format!("POST {url_str}"))?;
 
             let status = response.status();
             if !status.is_success() {

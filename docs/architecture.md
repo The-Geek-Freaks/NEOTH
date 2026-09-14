@@ -86,7 +86,10 @@ in [the Waves 35–38 receipt](gold-wave35-38-verification.md).
 
 ## Proposed daemon chat and native CLI probe boundaries
 
-Waves 39 and 40 are source admitted and await combined validation. The daemon
+Waves 39 and 40 are published at `e4b4a117f258df401467b5c10c17e6ef1d266b2c`.
+Its full CI `34857514849` completed with Linux 16,174/5, Windows 16,111/1, and
+macOS 16,164/5 from the same updater causes; it is not green acceptance evidence.
+The daemon
 plain-chat route accepts only a sealed same-user request. It rejects command
 forms before capacity admission and before provider, configuration, local
 action, or WAL work. The daemon keeps all turn resources and the CLI only falls
@@ -106,6 +109,36 @@ CI remain pending.
 
 Neither boundary establishes daemon replay/status/cancel APIs, native GUI
 behavior, live-provider behavior, or cross-platform acceptance.
+
+## W41 Main and Buddy daemon chat
+
+W41 routes both the Main chat surface and Buddy through one
+daemon-owned stream. The GUI is a presentation consumer: it cannot mint a
+capability, consent proof, route, endpoint, or transport identity. The daemon
+owns admission, provider/configuration selection, turn/WAL custody, and the
+authority that converts a request-bound decision into an effect.
+
+The preflight presents either Ready or a bounded safe-route
+ConfirmationRequired prompt. Main and Buddy retain the three visible outcomes
+Deny, AllowOnce, and AllowAlways; prompt text, attachment paths/names,
+capabilities, grants, and bearers stay out of that prompt. Deny clears staged
+state before provider effect. Stream frames carry bounded lifecycle/content
+updates with per-handoff generations; Stop addresses the current handoff, and
+reopen settles only the still-current Main/Buddy projection so an older detached
+Buddy error cannot clear a newer Main turn.
+
+Attachments remain typed untrusted data in the existing bounded envelope. The
+operator caption stays separate, and required attachment material fails visibly
+when it cannot fit the effective provider budget. Native validation now covers
+the selected daemon core (2,108 passing tests) and six contract targets (29
+passing tests). Python19+11+8, final GUIClippy02 and the Wasm feature check passed.
+The public source and test receipts retain 230 inputs and seven executable hashes.
+Exactly three GUI implementation modules are outside the core unit snapshot
+(227 inputs) and covered by the final GUI snapshot (230 inputs); core-embedded
+GUI parity text remains unchanged. This proves the recorded local admission,
+effect-start, cancellation and lifecycle fixtures. Native GUI interaction,
+live-provider delivery and full cross-platform CI acceptance remain separate
+gates; no parent roadmap item closes from this batch alone.
 
 ## WAL source of truth
 

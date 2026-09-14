@@ -32,7 +32,11 @@ impl OwnedChatChild {
     ) -> Result<Self, String> {
         let setup = PlatformContainmentSetup::configure(request_id, command)?;
         let mut child = command.spawn().map_err(format_contained_spawn_error)?;
-        let containment = match setup.activate(&mut child) {
+        #[cfg(unix)]
+        let activation = setup.activate(&mut child);
+        #[cfg(windows)]
+        let activation = setup.activate(&child);
+        let containment = match activation {
             Ok(containment) => containment,
             Err(error) => {
                 let kill_error = child.kill().err();

@@ -82,6 +82,9 @@ pub(crate) use client::{
     DaemonInstanceProof, InstanceCommitment, authenticated_live_instance,
     instance_commitment_for_nonce,
 };
+pub(crate) use client::{
+    GuiChatClientError, attested_gui_chat_boot_id, gui_chat_attach, gui_chat_post,
+};
 #[cfg(feature = "cluster")]
 pub use client::{
     membership_confirm, membership_invite, membership_legacy_pending, membership_revocation_status,

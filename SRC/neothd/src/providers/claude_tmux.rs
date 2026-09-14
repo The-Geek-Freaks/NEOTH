@@ -53,6 +53,8 @@ use thiserror::Error;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
+use super::EffectStartLease;
+
 use super::tmux_session::TmuxSession;
 
 /// B-6 Item 4: per-session tmux options NEOTH applies after creating a
@@ -321,12 +323,46 @@ pub async fn send_and_wait_with_timeouts(
     idle_timeout: Duration,
     hard_timeout: Duration,
 ) -> std::result::Result<String, ClaudeTmuxError> {
+    send_and_wait_with_timeouts_and_effect(session, prompt, idle_timeout, hard_timeout, None).await
+}
+
+/// Send one warm-session prompt.  The optional lease is held only across the
+/// literal write and Enter handshake; pane polling and response extraction run
+/// after `Started` has durably settled.
+pub(super) async fn send_and_wait_with_timeouts_and_effect(
+    session: &TmuxSession,
+    prompt: &str,
+    idle_timeout: Duration,
+    hard_timeout: Duration,
+    effect: Option<EffectStartLease>,
+) -> std::result::Result<String, ClaudeTmuxError> {
     // Send the prompt. v0.1 uses TmuxSession's send_text + send_enter
     // (literal-mode send-keys). load-buffer/paste-buffer is the
     // bridge.py path for >2KB prompts; deferred (see module doc).
-    session.send_text(prompt).await?;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    session.send_enter().await?;
+    if let Some(lease) = effect {
+        if tokio::time::Instant::now() >= lease.deadline() {
+            lease.indeterminate().await.map_err(ClaudeTmuxError::Tmux)?;
+            return Err(ClaudeTmuxError::Tmux(anyhow::anyhow!(
+                "claude tmux start lease expired before prompt write"
+            )));
+        }
+        if let Err(error) = session.send_text(prompt).await {
+            // A failed tmux command cannot establish whether a pane consumed
+            // the literal payload, so keep admission closed for reconciliation.
+            lease.indeterminate().await.map_err(ClaudeTmuxError::Tmux)?;
+            return Err(ClaudeTmuxError::Tmux(error));
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        if let Err(error) = session.send_enter().await {
+            lease.indeterminate().await.map_err(ClaudeTmuxError::Tmux)?;
+            return Err(ClaudeTmuxError::Tmux(error));
+        }
+        lease.started().await.map_err(ClaudeTmuxError::Tmux)?;
+    } else {
+        session.send_text(prompt).await?;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        session.send_enter().await?;
+    }
 
     tokio::time::sleep(Duration::from_millis(INITIAL_GRACE_MS)).await;
 

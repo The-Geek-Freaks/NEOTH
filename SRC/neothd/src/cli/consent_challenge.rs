@@ -222,6 +222,24 @@ struct PreflightResult {
     expires_unix: Option<u64>,
 }
 
+/// Daemon-only projection of the existing durable consent preflight.  The
+/// confirmation token is the actual challenge record's `id.secret`, never a
+/// daemon-generated substitute; only display-safe route data leaves this
+/// module with it.
+pub(crate) struct CoreGuiChatConsentRoute {
+    pub(crate) provider: String,
+    pub(crate) endpoint_origin: Option<String>,
+}
+
+pub(crate) enum CoreGuiChatConsentPreflight {
+    Ready,
+    ConfirmationRequired {
+        challenge_token: Zeroizing<String>,
+        routes: Vec<CoreGuiChatConsentRoute>,
+        expires_at_unix_ms: u64,
+    },
+}
+
 #[derive(Debug)]
 struct DecisionResult {
     status: DecisionStatus,
@@ -758,6 +776,40 @@ fn create_preflight_at(home: &Path, now: u64) -> Result<PreflightResult> {
     })
 }
 
+/// Core-facing preflight for the daemon GUI runtime. It exposes only a
+/// display-safe route summary and, when confirmation is necessary, the real
+/// short-lived challenge token that `decide_at` will consume. `Ready` means
+/// every current route marker was already durable at this instant; it creates
+/// neither a challenge nor new authority.
+pub(crate) fn create_core_gui_chat_consent_preflight(
+    home: &Path,
+    now: u64,
+) -> Result<CoreGuiChatConsentPreflight> {
+    let preflight = create_preflight_at(home, now)?;
+    let Some(challenge_id) = preflight.challenge_id else {
+        return Ok(CoreGuiChatConsentPreflight::Ready);
+    };
+    let secret = preflight
+        .challenge_secret
+        .ok_or_else(|| anyhow::anyhow!("challenge record missing its secret"))?;
+    let expires_unix = preflight
+        .expires_unix
+        .ok_or_else(|| anyhow::anyhow!("challenge record missing its expiry"))?;
+    let routes = preflight
+        .missing_routes
+        .into_iter()
+        .map(|route| CoreGuiChatConsentRoute {
+            provider: consent::slug(route.provider).to_owned(),
+            endpoint_origin: route.endpoint_origin,
+        })
+        .collect();
+    Ok(CoreGuiChatConsentPreflight::ConfirmationRequired {
+        challenge_token: Zeroizing::new(format!("{challenge_id}.{}", secret.as_str())),
+        routes,
+        expires_at_unix_ms: expires_unix.saturating_mul(1_000),
+    })
+}
+
 pub(crate) async fn render_preflight_chat(
     home: &Path,
     source: ConsentCommandSource,
@@ -1291,6 +1343,221 @@ pub(crate) fn consume_chat_token_value(
     consume_token_at(home, config_path, token, crate::time::now_unix_secs())
 }
 
+/// W41 core-only token record. It adds descriptor/challenge/session bindings to
+/// the existing consumed-once route/config token semantics; no raw proof is
+/// persisted, logged, or exposed to the GUI facade.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RequestBoundGuiChatTokenRecord {
+    version: u32,
+    token_id: String,
+    secret_sha256: String,
+    descriptor_digest: String,
+    challenge_sha256: String,
+    session_id: String,
+    config_sha256: String,
+    route_set_sha256: String,
+    routes: Vec<RouteBinding>,
+    created_unix: u64,
+    expires_unix: u64,
+}
+fn request_bound_token_path(home: &Path, id: &str) -> Result<PathBuf> {
+    Ok(store_dir(home)
+        .join("request-bound-tokens")
+        .join(format!("{}.json", canonical_uuid(id)?)))
+}
+
+/// Convert the existing verified one-time token into a narrower W41 proof.
+/// The source token is consumed while locked before the new record is emitted,
+/// so neither form can replay. The caller obtained `source_token` solely from
+/// the existing verified challenge decision path.
+pub(crate) fn mint_request_bound_gui_chat_consent(
+    home: &Path,
+    source_token: &str,
+    descriptor_digest: &str,
+    challenge: &str,
+    session_id: &str,
+    now: u64,
+) -> Result<Zeroizing<String>> {
+    validate_digest(descriptor_digest, "GUI chat descriptor digest")?;
+    anyhow::ensure!(
+        !challenge.is_empty() && challenge.len() <= 512,
+        "GUI chat challenge invalid"
+    );
+    anyhow::ensure!(
+        !session_id.is_empty() && session_id.len() <= 128,
+        "GUI chat session invalid"
+    );
+    let (source_id, source_secret) = split_one_time_token(source_token)?;
+    let source_path = token_path(home, source_id)?;
+    let source_lock = crate::util::locked_file::lock_file_blocking(
+        &lock_path(&source_path),
+        "GUI one-time consent",
+    )?;
+    let source: OneTimeTokenRecord = read_record(home, &source_path)?;
+    anyhow::ensure!(
+        now <= source.expires_unix && secrets_equal(source_secret, &source.secret_sha256),
+        "GUI source consent token invalid or expired"
+    );
+    let token_id = uuid::Uuid::now_v7().to_string();
+    let secret = random_secret()?;
+    let record = RequestBoundGuiChatTokenRecord {
+        version: RECORD_VERSION,
+        token_id: token_id.clone(),
+        secret_sha256: sha256(secret.as_bytes()),
+        descriptor_digest: descriptor_digest.into(),
+        challenge_sha256: sha256(challenge.as_bytes()),
+        session_id: session_id.into(),
+        config_sha256: source.config_sha256.clone(),
+        route_set_sha256: source.route_set_sha256.clone(),
+        routes: source.routes.clone(),
+        created_unix: now,
+        expires_unix: source.expires_unix,
+    };
+    consume_record(&source_path)?;
+    drop(source_lock);
+    remove_consumed_lock(&source_path);
+    write_record(&request_bound_token_path(home, &token_id)?, &record)?;
+    Ok(Zeroizing::new(format!("{token_id}.{}", secret.as_str())))
+}
+
+/// Core bridge decision path. `challenge_token` is never a GUI capability: it
+/// arrives in the sealed daemon preflight receipt, is verified by the existing
+/// challenge record, and is immediately narrowed into the request-bound proof.
+pub(crate) async fn decide_request_bound_gui_chat_consent(
+    home: &Path,
+    challenge_token: &str,
+    descriptor_digest: &str,
+    session_id: &str,
+    decision: ChatConsentDecision,
+) -> Result<Option<Zeroizing<String>>> {
+    let (challenge_id, secret) = split_one_time_token(challenge_token)?;
+    let result = decide_at(
+        home,
+        challenge_id,
+        secret,
+        decision,
+        crate::time::now_unix_secs(),
+    )
+    .await?;
+    let Some(source_token) = result.one_time_token else {
+        return Ok(None);
+    };
+    let proof = mint_request_bound_gui_chat_consent(
+        home,
+        source_token.as_str(),
+        descriptor_digest,
+        challenge_token,
+        session_id,
+        crate::time::now_unix_secs(),
+    )?;
+    Ok(Some(proof))
+}
+/// Ready-path proof for a descriptor whose complete current route set is already
+/// durably granted. It rechecks the no-follow config snapshot, outbox and every
+/// marker before minting the same short-lived request-bound record; it never
+/// invokes a grant mutation or a GUI decision.
+pub(crate) fn mint_ready_request_bound_gui_chat_consent(
+    home: &Path,
+    descriptor_digest: &str,
+    daemon_challenge: &str,
+    session_id: &str,
+    now: u64,
+) -> Result<Zeroizing<String>> {
+    validate_digest(descriptor_digest, "ready GUI chat descriptor digest")?;
+    anyhow::ensure!(
+        !daemon_challenge.is_empty()
+            && daemon_challenge.len() <= 512
+            && !session_id.is_empty()
+            && session_id.len() <= 128,
+        "ready GUI chat binding invalid"
+    );
+    let config_path = home.join("freedom.yaml");
+    let snapshot = config_snapshot(&config_path)?;
+    ensure_routes_not_blocked_by_outbox(home, &snapshot.routes)?;
+    anyhow::ensure!(
+        snapshot
+            .routes
+            .iter()
+            .all(|route| consent::is_route_granted(home, &route.to_route())),
+        "ready GUI chat route no longer granted"
+    );
+    let token_id = uuid::Uuid::now_v7().to_string();
+    let secret = random_secret()?;
+    let record = RequestBoundGuiChatTokenRecord {
+        version: RECORD_VERSION,
+        token_id: token_id.clone(),
+        secret_sha256: sha256(secret.as_bytes()),
+        descriptor_digest: descriptor_digest.into(),
+        challenge_sha256: sha256(daemon_challenge.as_bytes()),
+        session_id: session_id.into(),
+        config_sha256: snapshot.config_sha256,
+        route_set_sha256: snapshot.route_set_sha256,
+        routes: snapshot.routes,
+        created_unix: now,
+        expires_unix: now.saturating_add(TOKEN_TTL_SECS),
+    };
+    write_record(&request_bound_token_path(home, &token_id)?, &record)?;
+    Ok(Zeroizing::new(format!("{token_id}.{}", secret.as_str())))
+}
+/// Runtime-only consume operation. It validates every binding under the same
+/// private record lock before deletion and reconstructs only EphemeralConsent.
+pub(crate) fn consume_request_bound_gui_chat_consent(
+    home: &Path,
+    config_path: &Path,
+    proof: &str,
+    expected_descriptor_digest: &str,
+    expected_challenge: &str,
+    expected_session_id: &str,
+    now: u64,
+) -> Result<ConsumedChatConsent> {
+    validate_digest(
+        expected_descriptor_digest,
+        "expected GUI chat descriptor digest",
+    )?;
+    let (token_id, secret) = split_one_time_token(proof)
+        .context("invalid request-bound GUI chat one-time consent token")?;
+    let path = request_bound_token_path(home, token_id)?;
+    let lock = crate::util::locked_file::lock_file_blocking(
+        &lock_path(&path),
+        "request-bound GUI chat consent",
+    )?;
+    let record: RequestBoundGuiChatTokenRecord = read_record(home, &path)?;
+    anyhow::ensure!(
+        record.version == RECORD_VERSION
+            && record.token_id == token_id
+            && now <= record.expires_unix,
+        "request-bound GUI chat consent expired or mismatched"
+    );
+    anyhow::ensure!(
+        secrets_equal(secret, &record.secret_sha256)
+            && record.descriptor_digest == expected_descriptor_digest
+            && secrets_equal(expected_challenge, &record.challenge_sha256)
+            && record.session_id == expected_session_id,
+        "request-bound GUI chat consent binding rejected"
+    );
+    let snapshot = config_snapshot(config_path)?;
+    anyhow::ensure!(
+        snapshot.config_sha256 == record.config_sha256
+            && snapshot.route_set_sha256 == record.route_set_sha256
+            && record
+                .routes
+                .iter()
+                .all(|route| snapshot.routes.contains(route)),
+        "request-bound GUI chat consent config/routes changed"
+    );
+    consume_record(&path)?;
+    drop(lock);
+    remove_consumed_lock(&path);
+    let mut ephemeral = EphemeralConsent::default();
+    for route in &record.routes {
+        ephemeral.allow_route(&route.to_route())?;
+    }
+    Ok(ConsumedChatConsent {
+        config: snapshot.config,
+        ephemeral,
+    })
+}
 pub(crate) fn verify_gui_mutation_binding(
     home: &Path,
     expected_config_sha256: &str,
@@ -1521,6 +1788,46 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("GUI consent record")
+        );
+    }
+
+    #[tokio::test]
+    async fn core_preflight_uses_the_existing_challenge_record_for_deny() {
+        let home = TempDir::new().unwrap();
+        write_config(
+            home.path(),
+            &remote_ollama_config("http://ollama-a.example:11434/v1"),
+        );
+        let CoreGuiChatConsentPreflight::ConfirmationRequired {
+            challenge_token,
+            routes,
+            expires_at_unix_ms,
+        } = create_core_gui_chat_consent_preflight(home.path(), 9_000).unwrap()
+        else {
+            panic!("missing route must require the durable challenge record");
+        };
+        assert_eq!(routes.len(), 1);
+        assert!(expires_at_unix_ms > 9_000_000);
+        let (id, secret) = split_one_time_token(challenge_token.as_str()).unwrap();
+        let denied = decide_at(home.path(), id, secret, ChatConsentDecision::Deny, 9_001)
+            .await
+            .unwrap();
+        assert!(
+            denied.one_time_token.is_none(),
+            "deny must not mint a provider token"
+        );
+        assert!(!consent::is_route_granted(
+            home.path(),
+            &ConsentRoute::new(
+                ProviderKind::LocalOllama,
+                Some("http://ollama-a.example:11434")
+            )
+        ));
+        assert!(
+            decide_at(home.path(), id, secret, ChatConsentDecision::Deny, 9_002)
+                .await
+                .is_err(),
+            "the exact challenge token is consumed once"
         );
     }
 
@@ -1915,5 +2222,32 @@ mod tests {
         let error = write_record(&path, &record).unwrap_err();
         assert!(error.to_string().contains("safety ceiling"));
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn request_bound_gui_chat_consume_rejects_unparseable_proof_before_config_or_effect() {
+        let home = tempfile::tempdir().unwrap();
+        let error = consume_request_bound_gui_chat_consent(
+            home.path(),
+            &home.path().join("freedom.yaml"),
+            "not-a-token",
+            &"a".repeat(64),
+            "challenge",
+            "session",
+            crate::time::now_unix_secs(),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("one-time consent token"),
+            "unexpected malformed request-bound proof error: {error:#}"
+        );
+        assert!(
+            !home
+                .path()
+                .join("consent")
+                .join(".gui-chat")
+                .join("request-bound-tokens")
+                .exists()
+        );
     }
 }

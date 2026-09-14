@@ -32,7 +32,9 @@ and executable evidence is recorded in
 inputs and 14 executables. The earlier hang and 636/3/1 run were repaired before
 the final run; they are not pass evidence. Exact-head full CI
 [`34857514849`](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34857514849)
-is running; its Preflight [`34857493885`](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34857493885)
+completed with the same updater failures on all three OS: Linux 16,174/5,
+Windows 16,111/1, and macOS 16,164/5. Its Preflight
+[`34857493885`](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34857493885)
 and CodeQL/quality [`34857493659`](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34857493659)
 succeeded. No closure or
 native GUI claim is made; R3-18B, P2-26, P1-16, and P1-17 remain open. Counts
@@ -45,25 +47,49 @@ Its exact-head full CI `34836363982` has Windows and macOS successes. Linux's
 known audit-RPC fixture-race repair now passes locally and is included in this changeset.
 This is not a full-CI or cross-platform acceptance claim.
 
-**Waves 41 and 42 — W41 PROPOSAL; W42 LOCAL VALIDATION COMPLETE:** W41 has 45
-proposed source mirrors; B4 identity/real-consent tests and repair15 remain
-pending. Wave 42 admits a typed v5 proactive-health reader and keeps
-Telegram/default and Slack/default transport evidence isolated even when their
-account-id text is the same. It changes no outbound behavior. W42 Clippy02
-passed in 2m41s (221.51 GiB minimum free, 7.01 GiB peak), TestBuild01 passed in
-3m34s (217.27 GiB minimum free, 10.99 GiB peak), and four focused filters
-passed **266 / 0 / 0** in 17.79s. The fresh unit executable is
-`5EFA85E946A6B7026D4F1229992E92FB5B64BD315C6FAE5C32BFEB874768DF91`
-(284,851,712 bytes) from the 14,531-test catalog. The two contract targets
-passed **373 / 0 / 0** (gui_channel_status 353 plus proactive_egress source gate
-20) in 2m17s, with 220.74 GiB minimum free and 7.52 GiB peak. Python19+11+8
-passed in 1.130s/0.111s/0.002s. The public source manifest and test matrix at
-`docs/verification/gold-wave42-{source-manifest,test-matrix}.json` record 204
-inputs, three binaries, catalog 14,531, unit 266, and contracts 373. No GUI
-source changed, so the W39 GUI check is historical evidence only and no W42
-GUI-check rerun is required. No W42 commit, push, or exact-head CI claim is
-made. P1-17 remains partial, P1-14/P1-16 remain open, and neither wave changes
-counts or obligations.
+**Wave 42 typed channel-health evidence — PUBLISHED
+`cb717ee54e40f9e27583a8534b8bc25130e773e4`:** its local evidence contains 266
+unit outcomes, 373 contract outcomes, and Python19+11+8. It keeps typed v5
+proactive health separate by exact channel reference, including Telegram/default
+and Slack/default with equal account-id text, without changing outbound
+behavior. P1-17 remains partial and P1-14/P1-16 remain open.
+
+**Wave 41 daemon Main/Buddy — LOCALLY VERIFIED (2026-09-14):** NativeTestBuild02
+**PASS** in 3m51s (210.30 GiB minimum free, 10.62 GiB peak). Its 14,586-test
+catalog selected 2,120 outcomes: **2,108 pass / 0 fail / 12 ignored** in 73.85s.
+The fresh native binary is 289,073,152 bytes, SHA-256
+`BEBDDED1D810A55277165AFF8BE43CC6C38D56C022CDA2A37D6CDB36C18F61DC`.
+NativeClippy01 **PASS** in 7m08s (208.44 GiB minimum free, 10.05 GiB peak), and
+six final contract targets passed **29 / 0** (5m39s; 209.66 GiB minimum free,
+8.62 GiB peak). Python19+11+8 **PASS**. Final GUIClippy02 **PASS** in 4m47s
+(212.12 GiB minimum free, 6.41 GiB peak), with the five changed-scope lint
+diagnostics repaired; only 13 existing Windows GUI dead-code warnings and the
+vendor warning remain. No local GUI link or native-GUI acceptance is claimed.
+The public `docs/verification/gold-wave41-44-{source-manifest,test-matrix}.json`
+records 230 inputs and seven executable hashes. The native unit snapshot
+matches 227 inputs; exactly three GUI implementation modules are checked by
+the final 230-input GUI snapshot. Other GUI text embedded by core parity tests
+remains included and unchanged. The 12 ignored outcomes are one subprocess
+helper exercised by its parent and 11 tests requiring local model weights.
+No roadmap parent or checkbox closes; full CI remains a separate gate.
+
+**Wave 44 dependency repair — LOCALLY VERIFIED (2026-09-14):** Cargo.lock, license snapshots and
+THIRD_PARTY_LICENSES are updated. Audit, deny, notice generation/check and
+independent review passed. Final-source WasmCheck02 passed in 1m52s (minimum
+free 210.44 GiB, peak 7.85 GiB). Wasmtime/Cranelift/Pulley, der and wnaf were
+updated narrowly; no advisory or yanked-package exception was added.
+
+**W43/W45, W46 and W47 — WORK-ONLY:** W43/45 composed01 is **APPROVE**
+work-only across 19 paths. W47's real SQLite tests and review identified a
+bounded-loader `target_file` gap; repair is in progress. W46's real MCP stdio
+tests and hook-policy integration are in review, with three call-site type
+repairs pending. These are neither admitted nor runtime validation evidence.
+
+**W39–40 exact-head CI boundary:** CI `34857514849` at published `e4b4a117`
+completed with Linux **16,174 pass / 5 fail**, Windows **16,111 pass / 1 fail**,
+and macOS **16,164 pass / 5 fail** from the same updater causes. The current
+updater selection passed. This remains a historical CI-failure boundary, not
+cross-platform acceptance. Counts remain **1324 / 1012 / 310 / 2**.
 
 **Wave 37 CI cadence — PUBLISHED `ff101c05`; FULL CI ACCEPTANCE OUTSTANDING
 (2026-09-14):** two reviewed workflow files retain their coverage, lock, and

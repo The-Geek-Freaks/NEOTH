@@ -1459,9 +1459,10 @@ async fn append_recovered_owned_stage_success(
 mod tests {
     use super::*;
     use crate::updater::authority::{
-        UpdaterAuthorityComponent, UpdaterAuthorityLane, UpdaterAuthorityTask, UpdaterHttpMethod,
-        UpdaterLeafAuthorizer, UpdaterLeafEffect, UpdaterLeafOutcomeCode, UpdaterLeafRequest,
-        UpdaterLeafSuccess, UpdaterProgram, serialize_updater_leaf_intent_payload,
+        NativeCliExecutableBinding, UpdaterAuthorityComponent, UpdaterAuthorityLane,
+        UpdaterAuthorityTask, UpdaterHttpMethod, UpdaterLeafAuthorizer, UpdaterLeafEffect,
+        UpdaterLeafOutcomeCode, UpdaterLeafRequest, UpdaterLeafSuccess,
+        serialize_updater_leaf_intent_payload,
     };
     use crate::updater::budget::UpdaterRunBudgets;
     use crate::wal::payloads_u04::{
@@ -1520,18 +1521,15 @@ mod tests {
     }
 
     fn process_request(operation: &str, request: &str) -> UpdaterLeafRequest {
-        UpdaterLeafRequest::process(
+        UpdaterLeafRequest::native_cli_process(
             operation,
             request,
             7,
-            UpdaterAuthorityTask::CliVersions,
-            UpdaterAuthorityLane::CliVersionProbe,
             UpdaterAuthorityComponent::ClaudeCli,
-            UpdaterLeafEffect::CliInstalledVersionProbe,
-            UpdaterProgram::ManagedCli,
             &["--version".to_string()],
-            &[],
             64 * 1024,
+            NativeCliExecutableBinding::new("01".repeat(32), "02".repeat(32), "03".repeat(32), 4)
+                .unwrap(),
         )
         .unwrap()
     }

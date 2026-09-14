@@ -40,6 +40,9 @@ passthrough = [
 
 [features]
 default = ["wizard", "cluster", "keychain"]
+# W41 sealed-handle fixtures are test-only and remain disabled in every
+# default/distribution feature set. They contain no live capability material.
+gui-bridge-test-support = []
 # Named distribution bundles are the single source of truth for shipped and
 # source-installed capability sets. Keep target-specific workflow logic on
 # these bundles instead of repeating individual feature lists.

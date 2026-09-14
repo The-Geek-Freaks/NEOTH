@@ -41,6 +41,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
+use super::EffectStartLease;
 use super::response_bounds;
 use super::tmux_socket::{TmuxSocket, socket_args};
 
@@ -222,6 +223,19 @@ impl TmuxSession {
         command: &str,
         socket: TmuxSocket,
     ) -> Result<Self> {
+        Self::new_with_socket_and_effect(name, command, socket, None).await
+    }
+
+    /// Create the detached warm session under a distinct W41 effect lease.
+    /// This is separate from the later pane prompt submission: a cold tmux
+    /// launch can create the interactive Claude child before any `send-keys`.
+    #[allow(private_interfaces)]
+    pub async fn new_with_socket_and_effect(
+        name: impl Into<String>,
+        command: &str,
+        socket: TmuxSocket,
+        effect: Option<EffectStartLease>,
+    ) -> Result<Self> {
         let name = name.into();
         validate_session_name(&name)?;
 
@@ -238,7 +252,38 @@ impl TmuxSession {
         for arg in socket_args(socket.name()) {
             cmd.arg(arg);
         }
-        let status = cmd
+        if effect.is_none() {
+            let status = cmd
+                .arg("new-session")
+                .arg("-d")
+                .arg("-s")
+                .arg(&name)
+                .arg(command)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .status()
+                .await
+                .context("spawn `tmux new-session`")?;
+            if !status.success() {
+                anyhow::bail!(
+                    "tmux new-session -s {name} `{command}` exited with {:?}",
+                    status.code(),
+                );
+            }
+            return Ok(Self {
+                name,
+                socket,
+                killed: false,
+            });
+        }
+
+        let lease = effect.expect("effect checked above");
+        if tokio::time::Instant::now() >= lease.deadline() {
+            lease.indeterminate().await?;
+            anyhow::bail!("tmux cold-session start lease expired before launch");
+        }
+        let mut child = match cmd
             .arg("new-session")
             .arg("-d")
             .arg("-s")
@@ -247,20 +292,59 @@ impl TmuxSession {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
-            .status()
-            .await
-            .context("spawn `tmux new-session`")?;
-        if !status.success() {
-            anyhow::bail!(
-                "tmux new-session -s {name} `{command}` exited with {:?}",
-                status.code(),
-            );
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) => {
+                lease.aborted_proven_pre_start().await?;
+                return Err(error).context("spawn `tmux new-session`");
+            }
+        };
+        match tokio::time::timeout_at(lease.deadline(), child.wait()).await {
+            Ok(Ok(status)) if status.success() => {
+                lease.started().await?;
+                Ok(Self {
+                    name,
+                    socket,
+                    killed: false,
+                })
+            }
+            Ok(Ok(status)) => {
+                lease.indeterminate().await?;
+                anyhow::bail!(
+                    "tmux new-session -s {name} `{command}` exited with {:?}",
+                    status.code(),
+                );
+            }
+            Ok(Err(error)) => {
+                lease.indeterminate().await?;
+                Err(error).context("wait for `tmux new-session`")
+            }
+            Err(_) => {
+                // The invocation may have reached tmux even though its result
+                // is unknown. Reap the command and kill a late-created named
+                // session before returning the indeterminate settlement.
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                let mut cleanup = Command::new("tmux");
+                for arg in socket_args(socket.name()) {
+                    cleanup.arg(arg);
+                }
+                let _ = cleanup
+                    .arg("kill-session")
+                    .arg("-t")
+                    .arg(&name)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .await;
+                lease.indeterminate().await?;
+                anyhow::bail!(
+                    "tmux cold-session start handshake timed out; owned command reaped and late session cleanup attempted"
+                );
+            }
         }
-        Ok(Self {
-            name,
-            socket,
-            killed: false,
-        })
     }
 
     /// Borrow the socket the session was created on. Exposed so the
@@ -699,6 +783,42 @@ mod tests {
         let r = TmuxSession::new_with_socket("bad;name", "cat", TmuxSocket::neoth()).await;
         assert!(r.is_err());
         assert!(r.unwrap_err().to_string().contains("invalid char"));
+    }
+
+    #[tokio::test]
+    async fn w41_cold_session_child_is_started_after_confirmed_new_session() {
+        use crate::providers::ChatTurnEffectGate;
+        use crate::providers::effect_test_support::{RecordedPhase, RecordingEffectGate};
+
+        if !TmuxSession::is_available().await {
+            return;
+        }
+        let gate = RecordingEffectGate::new(Duration::from_secs(5));
+        let pending = gate
+            .intent(
+                crate::providers::ChatTurnEffectKind::Provider {
+                    call_scope: "claude_cli.tmux_cold_session",
+                    streaming: false,
+                },
+                "cold-session-fixture",
+            )
+            .await
+            .expect("reserve cold session effect");
+        let lease = pending
+            .begin_start()
+            .await
+            .expect("start cold session handshake");
+        let name = format!("neoth-w41-cold-{}", std::process::id());
+        let mut session = TmuxSession::new_with_socket_and_effect(
+            &name,
+            "cat",
+            TmuxSocket::shared(),
+            Some(lease),
+        )
+        .await
+        .expect("create bounded cold session");
+        assert_eq!(gate.phase(), RecordedPhase::Started);
+        session.kill().await.expect("cleanup cold session fixture");
     }
 
     /// B-6 4c contract pin: a session constructed via the

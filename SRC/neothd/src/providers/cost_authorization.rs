@@ -17,8 +17,8 @@ use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 
 use super::{
-    ChunkStream, Completion, CompletionIdentity, Provider, ProviderDispatchPermit,
-    ProviderRequestControls, Request,
+    ChatTurnEffectGate, ChunkStream, Completion, CompletionIdentity, Provider,
+    ProviderDispatchPermit, ProviderEffectContext, ProviderRequestControls, Request,
 };
 #[cfg(test)]
 use crate::permissions::AutonomyLevel;
@@ -761,6 +761,8 @@ enum ProviderCallTerminal {
 pub(crate) struct AuthorizedLeafCall {
     ticket: ProviderCallAuditTicket,
     provider_subject: Option<ProviderSubjectIdentifier>,
+    effect_gate: Option<Arc<dyn ChatTurnEffectGate>>,
+    request_binding_sha256: String,
 }
 
 /// Roll back an admitted daily-budget reservation unless ownership is moved
@@ -990,6 +992,12 @@ impl Drop for ProviderIntentLifecycle {
 impl AuthorizedLeafCall {
     pub(crate) fn take_provider_subject(&mut self) -> Option<ProviderSubjectIdentifier> {
         self.provider_subject.take()
+    }
+
+    pub(crate) fn effect_context(&self) -> Option<ProviderEffectContext> {
+        self.effect_gate
+            .clone()
+            .map(|gate| ProviderEffectContext::new(gate, self.request_binding_sha256.clone()))
     }
 
     pub(crate) async fn begin_dispatch(mut self) -> Result<ProviderCallAuditGuard> {
@@ -1233,6 +1241,7 @@ pub struct ProviderCallAuthorizer {
     usage_automated: bool,
     council_daily_budget: Option<crate::council::daily_budget::DailyBudgetPolicy>,
     ephemeral_consent: crate::consent::EphemeralConsent,
+    turn_effect_gate: Option<Arc<dyn ChatTurnEffectGate>>,
     #[cfg(test)]
     allow_missing_writer: bool,
     #[cfg(test)]
@@ -1344,6 +1353,21 @@ fn validate_spent_ephemeral_after_durable_miss(
 }
 
 impl ProviderCallAuthorizer {
+    /// Thread a daemon-owned W41 turn gate through the existing exact-leaf
+    /// authorization spine. `None` is the unchanged CLI/default path.
+    pub(crate) fn with_turn_effect_gate(
+        mut self,
+        gate: Option<Arc<dyn ChatTurnEffectGate>>,
+    ) -> Self {
+        self.turn_effect_gate = gate;
+        self
+    }
+
+    /// Preserve W41 capability ownership when this authorizer is cloned into
+    /// a loop-engine/provider boundary that may create later MCP leaves.
+    pub(crate) fn turn_effect_gate(&self) -> Option<Arc<dyn ChatTurnEffectGate>> {
+        self.turn_effect_gate.clone()
+    }
     /// Current operator input-token ceiling. Reload-backed authorizers resolve
     /// this at the call boundary so leaf-side optional-context degradation and
     /// the final authorization gate use the same live policy generation.
@@ -1496,6 +1520,7 @@ impl ProviderCallAuthorizer {
             usage_automated: false,
             council_daily_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
+            turn_effect_gate: None,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -1520,6 +1545,7 @@ impl ProviderCallAuthorizer {
             usage_automated: true,
             council_daily_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
+            turn_effect_gate: None,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -1548,6 +1574,7 @@ impl ProviderCallAuthorizer {
             usage_automated: true,
             council_daily_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
+            turn_effect_gate: None,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -1573,6 +1600,7 @@ impl ProviderCallAuthorizer {
             usage_automated: true,
             council_daily_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
+            turn_effect_gate: None,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -1603,6 +1631,7 @@ impl ProviderCallAuthorizer {
             usage_automated: true,
             council_daily_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
+            turn_effect_gate: None,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -1629,6 +1658,7 @@ impl ProviderCallAuthorizer {
             usage_automated: true,
             council_daily_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
+            turn_effect_gate: None,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -1654,6 +1684,7 @@ impl ProviderCallAuthorizer {
             usage_automated: false,
             council_daily_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
+            turn_effect_gate: None,
             allow_missing_writer: true,
             allow_unproven_ceiling: true,
         }
@@ -1670,6 +1701,7 @@ impl ProviderCallAuthorizer {
             usage_automated: false,
             council_daily_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
+            turn_effect_gate: None,
             allow_missing_writer: true,
             allow_unproven_ceiling: true,
         }
@@ -1915,6 +1947,7 @@ impl ProviderCallAuthorizer {
             provider_subject.as_ref(),
         );
         let invocation_id = new_authorization_id(&request_binding_sha256);
+        let effect_gate = self.turn_effect_gate.clone();
 
         let system_hash =
             xxhash_rust::xxh3::xxh3_64(req.system.as_deref().unwrap_or("").as_bytes());
@@ -1946,6 +1979,8 @@ impl ProviderCallAuthorizer {
         if super::is_local_provider(provider) {
             return Ok(AuthorizedLeafCall {
                 provider_subject,
+                effect_gate,
+                request_binding_sha256: request_binding_sha256.clone(),
                 ticket: ProviderCallAuditTicket {
                     audit_sink,
                     invocation_id,
@@ -2120,6 +2155,8 @@ impl ProviderCallAuthorizer {
         })?;
         Ok(AuthorizedLeafCall {
             provider_subject,
+            effect_gate,
+            request_binding_sha256: request_binding_sha256.clone(),
             ticket: ProviderCallAuditTicket {
                 audit_sink,
                 invocation_id,
@@ -6152,6 +6189,57 @@ mod tests {
         assert_eq!(
             actual, expected,
             "raw complete/stream callsite digest changed: classify and centrally wire the concrete receiver/arguments before deliberately updating this reviewed signature"
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_turn_effect_gate_reaches_a_real_leaf_authorizer() {
+        let gate: Arc<dyn ChatTurnEffectGate> = Arc::new(
+            crate::providers::effect_test_support::RecordingEffectGate::new(
+                std::time::Duration::from_secs(1),
+            ),
+        );
+        let request = Request {
+            prompt: "effect propagation fixture".into(),
+            model: Some("fixture-model".into()),
+            ..Default::default()
+        };
+        let leaf = ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+            .with_turn_effect_gate(Some(gate))
+            .authorize_leaf("local_qwen", &request, "w41_fixture", false, Some(1))
+            .await
+            .expect("scoped local leaf authorizes");
+        assert!(
+            leaf.effect_context().is_some(),
+            "scope must reach exact leaf"
+        );
+    }
+
+    #[tokio::test]
+    async fn cloned_authorizer_keeps_turn_effect_gate_across_tokio_spawn() {
+        let gate: Arc<dyn ChatTurnEffectGate> = Arc::new(
+            crate::providers::effect_test_support::RecordingEffectGate::new(
+                std::time::Duration::from_secs(1),
+            ),
+        );
+        let authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+            .with_turn_effect_gate(Some(gate));
+        let request = Request {
+            prompt: "spawned effect fixture".into(),
+            model: Some("fixture-model".into()),
+            ..Default::default()
+        };
+        let leaf = tokio::spawn(async move {
+            authorizer
+                .authorize_leaf("local_qwen", &request, "w41_spawn_fixture", false, Some(1))
+                .await
+        })
+        .await
+        .expect("join spawned authorizer")
+        .expect("spawned leaf authorizes");
+        assert!(
+            leaf.effect_context().is_some(),
+            "cloned authorizer retains gate after spawn"
         );
     }
 }

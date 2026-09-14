@@ -174,6 +174,15 @@ pub(crate) fn verified_daemon_endpoint_nonce(home: &Path) -> Result<String> {
     Ok(sidecar.endpoint_nonce)
 }
 
+/// Core-only bridge discovery. The returned commitment is the authenticated
+/// daemon-instance boot binding used by the W41 runtime; no GUI caller can
+/// provide or override it.
+pub(crate) fn attested_gui_chat_boot_id(home: &Path) -> Result<String> {
+    authenticated_live_instance(home)
+        .map(|proof| proof.instance_commitment.0)
+        .map_err(|error| anyhow::anyhow!("attest GUI chat instance: {error}"))
+}
+
 /// AUDIT-RPC-01 #1 — fail-closed pre-flight for one-shot PERMISSION actions.
 ///
 /// When `required` is set by the caller (either its configured compliance
@@ -482,6 +491,268 @@ pub(crate) async fn try_daemon_plain_chat_turn(
     Ok(response)
 }
 
+/// W41 GUI bridge errors keep pre-write discovery distinct from an exchanged request.
+#[allow(dead_code)] // Private diagnostics stay available without exposing raw details in GUI errors.
+#[derive(Debug)]
+pub(crate) enum GuiChatClientError {
+    PreWriteUnavailable(String),
+    Indeterminate(String),
+    Refused(u16, String),
+}
+
+pub(crate) async fn gui_chat_post<T, R>(
+    home: &Path,
+    path: &str,
+    request: &T,
+) -> Result<R, GuiChatClientError>
+where
+    T: serde::Serialize,
+    R: serde::de::DeserializeOwned,
+{
+    let body = serde_json::to_string(request)
+        .map_err(|e| GuiChatClientError::PreWriteUnavailable(format!("serialize: {e}")))?;
+    if body.len() > super::DAEMON_PLAIN_CHAT_TRANSPORT_BODY_MAX_BYTES {
+        return Err(GuiChatClientError::PreWriteUnavailable(
+            "GUI request exceeds transport cap".into(),
+        ));
+    }
+    let sidecar = read_sidecar(home)
+        .map_err(|e| GuiChatClientError::PreWriteUnavailable(format!("sidecar: {e}")))?;
+    if !exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce) {
+        return Err(GuiChatClientError::PreWriteUnavailable(
+            "stale audit-RPC sidecar".into(),
+        ));
+    }
+    let token = read_rpc_token(home)
+        .map_err(|e| GuiChatClientError::PreWriteUnavailable(format!("token: {e}")))?;
+    let wire = format!(
+        "POST {path} HTTP/1.1\r\nHost: neoth-local\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let endpoint = sidecar.endpoint;
+    let mut stream =
+        tokio::time::timeout(RPC_EXCHANGE_TIMEOUT, super::transport::connect(&endpoint))
+            .await
+            .map_err(|_| GuiChatClientError::PreWriteUnavailable("connect deadline".into()))
+            .and_then(|result| {
+                result.map_err(|e| GuiChatClientError::PreWriteUnavailable(format!("connect: {e}")))
+            })?;
+    let (status, raw) = tokio::time::timeout(super::CHAT_TURN_RESPONSE_TIMEOUT, async {
+        stream
+            .write_all(wire.as_bytes())
+            .await
+            .map_err(|e| format!("write: {e}"))?;
+        read_rpc_response_with_limit(
+            &mut stream,
+            super::DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES.saturating_add(4096),
+        )
+        .await
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|_| GuiChatClientError::Indeterminate("GUI response deadline".into()))?
+    .map_err(GuiChatClientError::Indeterminate)?;
+    let body = raw
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .ok_or_else(|| GuiChatClientError::Indeterminate("missing response boundary".into()))?;
+    if status != 200 {
+        return Err(GuiChatClientError::Refused(status, body.into()));
+    }
+    serde_json::from_str(body)
+        .map_err(|_| GuiChatClientError::Indeterminate("malformed sealed GUI response".into()))
+}
+
+#[allow(dead_code)]
+async fn gui_chat_post_raw<T: serde::Serialize>(
+    home: &Path,
+    path: &str,
+    request: &T,
+) -> Result<String, GuiChatClientError> {
+    let body = serde_json::to_string(request)
+        .map_err(|e| GuiChatClientError::PreWriteUnavailable(format!("serialize: {e}")))?;
+    let sidecar = read_sidecar(home)
+        .map_err(|e| GuiChatClientError::PreWriteUnavailable(format!("sidecar: {e}")))?;
+    if !exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce) {
+        return Err(GuiChatClientError::PreWriteUnavailable(
+            "stale audit-RPC sidecar".into(),
+        ));
+    }
+    let token = read_rpc_token(home)
+        .map_err(|e| GuiChatClientError::PreWriteUnavailable(format!("token: {e}")))?;
+    let wire = format!(
+        "POST {path} HTTP/1.1\r\nHost: neoth-local\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let mut stream = tokio::time::timeout(
+        RPC_EXCHANGE_TIMEOUT,
+        super::transport::connect(&sidecar.endpoint),
+    )
+    .await
+    .map_err(|_| GuiChatClientError::PreWriteUnavailable("connect deadline".into()))
+    .and_then(|r| {
+        r.map_err(|e| GuiChatClientError::PreWriteUnavailable(format!("connect: {e}")))
+    })?;
+    let (status, raw) = tokio::time::timeout(super::CHAT_TURN_RESPONSE_TIMEOUT, async {
+        stream
+            .write_all(wire.as_bytes())
+            .await
+            .map_err(|e| format!("write: {e}"))?;
+        read_rpc_response_with_limit(
+            &mut stream,
+            super::DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES.saturating_add(4096),
+        )
+        .await
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|_| GuiChatClientError::Indeterminate("GUI response deadline".into()))?
+    .map_err(GuiChatClientError::Indeterminate)?;
+    let body = raw
+        .split_once("\r\n\r\n")
+        .map(|(_, b)| b.to_string())
+        .ok_or_else(|| GuiChatClientError::Indeterminate("missing response boundary".into()))?;
+    if status != 200 {
+        return Err(GuiChatClientError::Refused(status, body));
+    }
+    Ok(body)
+}
+/// Held GUI attach transport. It writes once, then verifies and delivers each
+/// close-delimited NDJSON frame. Any later fault is indeterminate and cannot
+/// cause a provider retry.
+pub(crate) async fn gui_chat_attach(
+    home: &Path,
+    request: &crate::daemon::gui_chat_protocol::GuiChatAttachRequest,
+    on_frame: &mut (
+             dyn FnMut(
+        crate::daemon::gui_chat_protocol::GuiChatStreamFrame,
+    ) -> Result<(), GuiChatClientError>
+                 + Send
+         ),
+) -> Result<(), GuiChatClientError> {
+    let body = serde_json::to_string(request)
+        .map_err(|e| GuiChatClientError::PreWriteUnavailable(format!("serialize attach: {e}")))?;
+    let sidecar = read_sidecar(home)
+        .map_err(|e| GuiChatClientError::PreWriteUnavailable(format!("sidecar: {e}")))?;
+    if !exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce) {
+        return Err(GuiChatClientError::PreWriteUnavailable(
+            "stale audit-RPC sidecar".into(),
+        ));
+    }
+    let token = read_rpc_token(home)
+        .map_err(|e| GuiChatClientError::PreWriteUnavailable(format!("token: {e}")))?;
+    let wire = format!(
+        "POST {} HTTP/1.1\r\nHost: neoth-local\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        crate::daemon::gui_chat_protocol::GUI_CHAT_V1_ATTACH_PATH,
+        body.len()
+    );
+    let mut stream = tokio::time::timeout(
+        RPC_EXCHANGE_TIMEOUT,
+        super::transport::connect(&sidecar.endpoint),
+    )
+    .await
+    .map_err(|_| GuiChatClientError::PreWriteUnavailable("attach connect deadline".into()))
+    .and_then(|r| {
+        r.map_err(|e| GuiChatClientError::PreWriteUnavailable(format!("attach connect: {e}")))
+    })?;
+    stream
+        .write_all(wire.as_bytes())
+        .await
+        .map_err(|e| GuiChatClientError::Indeterminate(format!("attach write: {e}")))?;
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let mut header = false;
+    let mut expected = request.after_sequence.saturating_add(1);
+    loop {
+        let n = tokio::time::timeout(std::time::Duration::from_secs(30), stream.read(&mut chunk))
+            .await
+            .map_err(|_| GuiChatClientError::Indeterminate("attach frame deadline".into()))?
+            .map_err(|e| GuiChatClientError::Indeterminate(format!("attach read: {e}")))?;
+        if n == 0 {
+            return Err(GuiChatClientError::Indeterminate(
+                "attach EOF before terminal".into(),
+            ));
+        }
+        bytes.extend_from_slice(&chunk[..n]);
+        if !header {
+            let Some(pos) = bytes.windows(4).position(|w| w == b"\r\n\r\n") else {
+                if bytes.len() > 8192 {
+                    return Err(GuiChatClientError::Indeterminate(
+                        "attach headers too large".into(),
+                    ));
+                };
+                continue;
+            };
+            let head = std::str::from_utf8(&bytes[..pos])
+                .map_err(|_| GuiChatClientError::Indeterminate("attach headers utf8".into()))?;
+            let mut lines = head.split("\r\n");
+            if lines.next() != Some("HTTP/1.1 200 OK") {
+                return Err(GuiChatClientError::Indeterminate(
+                    "attach refused after write".into(),
+                ));
+            }
+            for line in lines {
+                let (name, _) = line.split_once(':').ok_or_else(|| {
+                    GuiChatClientError::Indeterminate("malformed attach header".into())
+                })?;
+                if name.eq_ignore_ascii_case("content-length")
+                    || name.eq_ignore_ascii_case("transfer-encoding")
+                {
+                    return Err(GuiChatClientError::Indeterminate(
+                        "attach must be close-delimited NDJSON".into(),
+                    ));
+                }
+            }
+            bytes.drain(..pos + 4);
+            header = true;
+        }
+        while let Some(pos) = bytes.iter().position(|b| *b == b'\n') {
+            let line: Vec<u8> = bytes.drain(..=pos).collect();
+            if line.len() > crate::daemon::gui_chat_protocol::GUI_CHAT_FRAME_MAX_BYTES {
+                return Err(GuiChatClientError::Indeterminate(
+                    "attach frame too large".into(),
+                ));
+            };
+            let text = std::str::from_utf8(&line)
+                .map_err(|_| GuiChatClientError::Indeterminate("attach frame utf8".into()))?
+                .trim();
+            if text.is_empty() {
+                continue;
+            };
+            let frame: crate::daemon::gui_chat_protocol::GuiChatStreamFrame =
+                serde_json::from_str(text).map_err(|_| {
+                    GuiChatClientError::Indeterminate("malformed NDJSON frame".into())
+                })?;
+            crate::daemon::gui_chat_protocol::validate_stream_frame(&frame)
+                .map_err(|r| GuiChatClientError::Indeterminate(r.to_string()))?;
+            if frame.boot_id != request.expected_boot_id
+                || frame.sequence != expected
+                || frame.turn_id != request.turn_id
+                || frame.subscription.session_id != request.session_id
+                || frame.subscription.surface != request.surface
+                || frame.subscription.generation != request.subscription_generation
+            {
+                return Err(GuiChatClientError::Indeterminate(
+                    "attach rotation or sequence mismatch".into(),
+                ));
+            };
+            expected = expected.saturating_add(1);
+            let terminal = matches!(
+                &frame.payload,
+                crate::daemon::gui_chat_protocol::GuiChatFramePayload::Terminal { .. }
+            );
+            on_frame(frame)?;
+            if terminal {
+                return Ok(());
+            }
+        }
+        if bytes.len() > crate::daemon::gui_chat_protocol::GUI_CHAT_FRAME_MAX_BYTES {
+            return Err(GuiChatClientError::Indeterminate(
+                "unterminated attach frame too large".into(),
+            ));
+        }
+    }
+}
 /// Shared same-user IPC POST to the daemon's audit-RPC listener (same
 /// sidecar + bearer-token auth + staleness guard as [`try_post_audit_frame`]).
 /// Returns `(status, full_response)`. Used by the D34 FULL-AUTO token verbs.

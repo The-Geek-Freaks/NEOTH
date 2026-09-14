@@ -50,8 +50,8 @@ const COMPACTION_MARKER: &str = "Memory was condensed";
 use super::response_bounds;
 use super::termination::{ProviderTermination, RefusalOrigin, Retryability};
 use super::{
-    ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements, Provider,
-    ProviderDispatchPermit, ProviderRequestControls, Request,
+    ChatTurnEffectKind, ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements,
+    Provider, ProviderDispatchPermit, ProviderRequestControls, Request,
 };
 
 /// The `claude` CLI is a governed local subprocess, but its stdout carries
@@ -525,6 +525,46 @@ fn spawn_claude_with_env(
         Err(error) => {
             let _ = child.start_kill();
             Err(error)
+        }
+    }
+}
+
+/// Reserve the W41 effect at the only subprocess boundary.  A successful
+/// `Command::spawn` is the local child start; stdin/body handling is owned by
+/// the caller and must never rewrite that settlement after the fact.
+async fn spawn_claude_for_effect<F>(
+    permit: &ProviderDispatchPermit,
+    streaming: bool,
+    start: F,
+) -> Result<ManagedClaudeChild>
+where
+    F: FnOnce() -> std::io::Result<ManagedClaudeChild>,
+{
+    let Some(effect) = permit
+        .prepare_effect(ChatTurnEffectKind::Provider {
+            call_scope: "claude_cli",
+            streaming,
+        })
+        .await?
+    else {
+        return start().map_err(Into::into);
+    };
+
+    let lease = effect.begin_start().await?;
+    if tokio::time::Instant::now() >= lease.deadline() {
+        lease.indeterminate().await?;
+        anyhow::bail!("claude CLI start lease expired before subprocess spawn");
+    }
+    match start() {
+        Ok(child) => {
+            lease.started().await?;
+            Ok(child)
+        }
+        Err(error) => {
+            // `Command::spawn` did not return a child, which proves that this
+            // adapter has not started the local CLI process.
+            lease.aborted_proven_pre_start().await?;
+            Err(error.into())
         }
     }
 }
@@ -1004,6 +1044,14 @@ impl Provider for ClaudeCliAdapter {
         "claude_cli"
     }
 
+    #[expect(
+        private_interfaces,
+        reason = "the private W41 probe seals this hook to reviewed in-crate adapters"
+    )]
+    fn w41_effect_start_adapter(&self, _: super::W41EffectStartProbe) -> bool {
+        true
+    }
+
     fn request_controls(&self) -> ProviderRequestControls {
         ProviderRequestControls::THINKING_BUDGET
     }
@@ -1077,6 +1125,7 @@ impl Provider for ClaudeCliAdapter {
                                 &binary,
                                 &model_default,
                                 req,
+                                permit,
                                 resume_session_id.clone(),
                                 hard_timeout_secs,
                             )
@@ -1105,7 +1154,7 @@ impl Provider for ClaudeCliAdapter {
     async fn stream_raw(
         &self,
         mut req: Request,
-        _permit: &ProviderDispatchPermit,
+        permit: &ProviderDispatchPermit,
     ) -> Result<ChunkStream> {
         self.canonicalize_request_model(&mut req);
         // GR-04 stream-wrap: same circuit-breaker semantics as
@@ -1130,13 +1179,16 @@ impl Provider for ClaudeCliAdapter {
             // as complete_uncached — use spawn_claude_with_extra_env when the
             // request carries a thinking_budget, plain spawn_claude otherwise.
             let mut child = if let Some(budget) = req.thinking_budget {
-                spawn_claude_with_extra_env(
-                    &self.binary,
-                    &args,
-                    &[("MAX_THINKING_TOKENS", budget.to_string())],
-                )
+                spawn_claude_for_effect(permit, true, || {
+                    spawn_claude_with_extra_env(
+                        &self.binary,
+                        &args,
+                        &[("MAX_THINKING_TOKENS", budget.to_string())],
+                    )
+                })
+                .await
             } else {
-                spawn_claude(&self.binary, &args)
+                spawn_claude_for_effect(permit, true, || spawn_claude(&self.binary, &args)).await
             }
             .with_context(|| {
                 format!(
@@ -1275,6 +1327,7 @@ async fn complete_uncached(
     binary: &str,
     model_default: &str,
     req: Request,
+    permit: &ProviderDispatchPermit,
     resume_session_id: Option<String>,
     hard_timeout_secs: u64,
 ) -> Result<Completion> {
@@ -1299,13 +1352,16 @@ async fn complete_uncached(
     // (10 000). We use `spawn_claude_with_extra_env` rather than mutating the
     // `OnceLock`-cached env (which is immutable post-startup by contract).
     let mut child = if let Some(budget) = req.thinking_budget {
-        spawn_claude_with_extra_env(
-            binary,
-            &args,
-            &[("MAX_THINKING_TOKENS", budget.to_string())],
-        )
+        spawn_claude_for_effect(permit, false, || {
+            spawn_claude_with_extra_env(
+                binary,
+                &args,
+                &[("MAX_THINKING_TOKENS", budget.to_string())],
+            )
+        })
+        .await
     } else {
-        spawn_claude(binary, &args)
+        spawn_claude_for_effect(permit, false, || spawn_claude(binary, &args)).await
     }
     .with_context(|| {
         format!(
@@ -1614,14 +1670,29 @@ async fn complete_tmux_uncached(
             // guard as the subprocess path.
             let resume_args = build_claude_spawn_args(&["--model", &model], &resume_session_id);
             let cmd = format!("{binary} {}", join_args_for_shell(&resume_args));
-            let session = super::tmux_session::TmuxSession::new(&name, &cmd)
-                .await
-                .with_context(|| {
-                    format!(
-                        "spawn warm `claude` tmux session `{name}`. \
+            let cold_effect = match permit
+                .prepare_effect(ChatTurnEffectKind::Provider {
+                    call_scope: "claude_cli.tmux_cold_session",
+                    streaming: false,
+                })
+                .await?
+            {
+                Some(effect) => Some(effect.begin_start().await?),
+                None => None,
+            };
+            let session = super::tmux_session::TmuxSession::new_with_socket_and_effect(
+                &name,
+                &cmd,
+                super::tmux_socket::TmuxSocket::shared(),
+                cold_effect,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "spawn warm `claude` tmux session `{name}`. \
                          Is tmux installed and is `{binary}` on PATH?"
-                    )
-                })?;
+                )
+            })?;
             // B-6 Item 4: apply bridge.py-derived per-session tmux
             // options. Best-effort: failures log at WARN and the rest
             // still apply; quality-of-life only, not correctness.
@@ -1647,16 +1718,29 @@ async fn complete_tmux_uncached(
 
         let send_result = {
             let session = guard.as_ref().expect("session populated above");
+            // A warm pane is already running; its real provider start is the
+            // prompt submission, not creation of the long-lived tmux session.
+            let effect = match permit
+                .prepare_effect(ChatTurnEffectKind::Provider {
+                    call_scope: "claude_cli.tmux",
+                    streaming: false,
+                })
+                .await?
+            {
+                Some(effect) => Some(effect.begin_start().await?),
+                None => None,
+            };
             // Pick #35 (Session 14, B-6 gap-fix): use the operator-tunable
             // timeouts threaded through from freedom.yaml::claude_cli.tmux,
             // not the module-level constants. `send_and_wait` is now a
             // legacy entry kept only for tests + callers that haven't
             // adopted the timeout knobs.
-            super::claude_tmux::send_and_wait_with_timeouts(
+            super::claude_tmux::send_and_wait_with_timeouts_and_effect(
                 session,
                 &payload,
                 std::time::Duration::from_secs(idle_timeout_secs),
                 std::time::Duration::from_secs(hard_timeout_secs),
+                effect,
             )
             .await
         };

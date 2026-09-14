@@ -2279,7 +2279,7 @@ mod tests {
         home: &std::path::Path,
     ) -> crate::updater::probes::NativeCliProbeTarget {
         // The ordinary Rust test executable can exceed the production 256 MiB
-        // native-image cap. Copy a small installed native PE into this exact
+        // native-image cap. Copy a small installed native image into this exact
         // home instead, so the same descriptor classifier, size bound and
         // identity check protect the actual process under test.
         #[cfg(windows)]
@@ -2289,7 +2289,7 @@ mod tests {
         .join("System32")
         .join("PING.EXE");
         #[cfg(not(windows))]
-        let source = std::env::current_exe().expect("test executable path");
+        let source = std::path::PathBuf::from("/bin/sleep");
         let program = home.join(if cfg!(windows) {
             "native-cli-fixture.exe"
         } else {
@@ -2324,7 +2324,8 @@ mod tests {
 
     fn native_cli_fixture_containment_argv() -> Vec<OsString> {
         // Production always supplies `--version`. On Windows this exact
-        // registered fixture instead uses the copied, loopback-only PING.EXE
+        // registered fixture uses the copied, loopback-only PING.EXE; Unix
+        // uses the copied sleep executable with a finite duration. Both
         // to keep a real native child live until the production cancellation or
         // deadline select reaps it. The selection cannot affect other paths.
         #[cfg(windows)]
@@ -2333,7 +2334,7 @@ mod tests {
         }
         #[cfg(not(windows))]
         {
-            vec![OsString::from("--version")]
+            vec![OsString::from("30")]
         }
     }
 
@@ -4580,7 +4581,7 @@ mod tests {
             let target = native_cli_fixture_target(&home);
             let first_launches = Arc::new(AtomicUsize::new(0));
             let launch_observed = Arc::new(tokio::sync::Notify::new());
-            // This selection applies only to the exact copied PING.EXE fixture.
+            // This selection applies only to the exact copied native fixture.
             // The counter and signal are advanced within
             // ContainedChild::spawn_native_cli_version immediately before its
             // real spawn path, after the final descriptor verification.

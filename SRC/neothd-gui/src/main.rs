@@ -1110,6 +1110,7 @@ mod chat_stream_phase;
 mod code_map_controller;
 mod coding_controller;
 mod gui_action;
+mod gui_chat_bridge_controller;
 mod gui_stream;
 mod panel_logic;
 mod tray;
@@ -1770,6 +1771,10 @@ fn main() -> Result<()> {
         .is_some_and(|handoff| handoff.parent_commit);
 
     let window = MainWindow::new()?;
+    // W41 owns the daemon chat path.  Construction resolves the attested
+    // current instance inside core; the GUI has no endpoint/token fallback.
+    // The installer replaces the legacy Main/Buddy child-chat callback owners
+    // later in this function, once both Slint surfaces exist.
     // GOLD-LF-P1-22 — seed onboarding before any best-effort subprocess panel
     // refresh. A missing or old sibling CLI may never resurrect the stale
     // Hermes/OpenClaw list or leave the first-run provider picker empty.
@@ -14516,21 +14521,6 @@ fn main() -> Result<()> {
             }
         });
 
-        // Persist the overlay's dragged position so the next minimize
-        // reopens it where the operator left it. Best-effort — a failed
-        // write just means the default position next time.
-        fn save_overlay_pos(ov: &MiniOverlay) {
-            use slint::winit_030::WinitWindowAccessor;
-            ov.window().with_winit_window(|w| {
-                if let Ok(pos) = w.outer_position() {
-                    let _ = std::fs::write(
-                        default_neoth_home().join(".overlay-pos"),
-                        format!("{},{}", pos.x, pos.y),
-                    );
-                }
-            });
-        }
-
         // overlay drag — pointer-down on the title strip hands the move to
         // the OS compositor. drag_window() runs the whole native move loop.
         let overlay_weak_for_drag = overlay.as_weak();
@@ -15646,6 +15636,39 @@ fn main() -> Result<()> {
             window.on_buddy_chat_send_approved(buddy_chat_send_approved);
         }
     } // end companion overlay wiring
+
+    // W41 replaces only chat transport callbacks after both Main and Buddy
+    // surfaces have registered their ordinary UI actions. The core factory is
+    // attested and has no GUI-supplied endpoint/token/provider fallback.
+    let _daemon_gui_chat = match gui_chat_bridge_controller::GuiChatBridgeController::install(
+        &window,
+        &overlay,
+        "neothd-gui".into(),
+        std::sync::Arc::clone(&chat_attachments),
+    ) {
+        Ok(controller) => Some(controller),
+        Err(error) => {
+            window.set_status_line(format!("Daemon chat unavailable: {error}").into());
+            window.set_chat_send_enabled(false);
+            let unavailable = window.as_weak();
+            window.on_chat_send_clicked(move |_, _| {
+                if let Some(window) = unavailable.upgrade() {
+                    window.set_status_line(
+                        "Daemon chat is unavailable; no local child fallback was started.".into(),
+                    );
+                }
+            });
+            let unavailable = window.as_weak();
+            overlay.on_send_clicked(move |_, _| {
+                if let Some(window) = unavailable.upgrade() {
+                    window.set_status_line(
+                        "Daemon chat is unavailable; no local child fallback was started.".into(),
+                    );
+                }
+            });
+            None
+        }
+    };
 
     let gui_ready_failure = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
     if gui_parent_handoff.is_some() || direct_gui_commit {
@@ -22970,6 +22993,22 @@ fn settle_live_chat_request(
     set_live_chat_messages(window, rows);
     recompute_live_chat_preview(window);
     true
+}
+
+/// Persist the overlay's dragged position best-effort so every transition
+/// that hides Buddy, including controller-installed transport handoffs,
+/// preserves the ordinary next-minimize placement.
+fn save_overlay_pos(ov: &MiniOverlay) {
+    use slint::winit_030::WinitWindowAccessor;
+
+    ov.window().with_winit_window(|w| {
+        if let Ok(pos) = w.outer_position() {
+            let _ = std::fs::write(
+                default_neoth_home().join(".overlay-pos"),
+                format!("{},{}", pos.x, pos.y),
+            );
+        }
+    });
 }
 
 fn resize_companion_overlay(overlay: &MiniOverlay) {

@@ -22,6 +22,7 @@
 //! the loop against a mock provider.
 
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -222,6 +223,7 @@ where
         harness_cfg,
         &mut compaction_budget,
         None,
+        None,
         instance_home,
     )
     .await
@@ -279,6 +281,9 @@ pub(crate) async fn run_tool_loop_with_budget<D, P>(
     // Optional hard ceiling on parsed/blocked/dispatched tool calls in this
     // invocation. Checked before every call, including iteration one.
     max_tool_calls: Option<u64>,
+    // W41 daemon-owned turn capability. `None` preserves every existing
+    // CLI/test path and is the only valid state outside a sealed GUI turn.
+    turn_effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
     // Instance root for leases, risk-confirm consumption and harness traces.
     // This is an authorization namespace, not a cosmetic storage location.
     instance_home: &std::path::Path,
@@ -1079,6 +1084,7 @@ where
                 smart_session.as_mut(),
                 // GOLD-ADAPT-AWE-CODE-01 — thread the caller identity down.
                 subject.as_deref(),
+                turn_effect_gate.clone(),
                 instance_home,
             )
             .await
@@ -1967,6 +1973,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
     // GOLD-ADAPT-AWE-CODE-01 — pre-authenticated caller identity for
     // McpTool lease-backed consent upgrade. See the MCP gate docs.
     subject: Option<&str>,
+    turn_effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
     instance_home: &std::path::Path,
 ) -> std::result::Result<DispatchedToolResult, String> {
     let Some(cfg) = servers.get_enabled(&call.server) else {
@@ -2008,7 +2015,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
             .await
             {
                 Ok(authorized) => {
-                    crate::mcp::gate::invoke_authorized_with_audit(
+                    crate::mcp::gate::invoke_authorized_with_audit_effect_gate(
                         client,
                         cfg,
                         &call.tool,
@@ -2017,6 +2024,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
                         writer,
                         rollback_policy,
                         now_unix,
+                        turn_effect_gate.clone(),
                     )
                     .await
                 }
@@ -2054,13 +2062,15 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
     )
     .await
     .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
-    let mut client = crate::mcp::client::McpClient::spawn_with_timeout(
+    let mut client = crate::mcp::client::McpClient::spawn_with_timeout_effect_gate(
         cfg,
         Duration::from_secs(crate::mcp::client::DEFAULT_REQUEST_TIMEOUT.as_secs()),
+        turn_effect_gate.clone(),
+        authorized.request_binding_sha256(),
     )
     .await
     .map_err(|error| format!("spawn MCP server `{}`: {error}", call.server))?;
-    let result = crate::mcp::gate::invoke_authorized_with_audit(
+    let result = crate::mcp::gate::invoke_authorized_with_audit_effect_gate(
         &mut client,
         cfg,
         &call.tool,
@@ -2069,6 +2079,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
         writer,
         rollback_policy,
         now_unix,
+        turn_effect_gate,
     )
     .await
     .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
@@ -2736,6 +2747,7 @@ mod tests {
             None,
             Some(&mut session),
             None,
+            None,
             instance_home.path(),
         )
         .await
@@ -2778,6 +2790,7 @@ mod tests {
             None,
             Some(&mut session),
             None,
+            None,
             instance_home.path(),
         )
         .await
@@ -2796,6 +2809,7 @@ mod tests {
             None,
             None,
             Some(&mut session),
+            None,
             None,
             instance_home.path(),
         )
@@ -2825,6 +2839,7 @@ mod tests {
             None,
             Some(&mut session),
             None,
+            None,
             instance_home.path(),
         )
         .await
@@ -2847,6 +2862,7 @@ mod tests {
                 None,
                 None,
                 Some(&mut session),
+                None,
                 None,
                 instance_home.path(),
             )
@@ -2927,6 +2943,7 @@ mod tests {
             None, // rollback_policy
             Some(&mut session),
             None, // subject
+            None, // W41 turn gate
             instance_home.path(),
         )
         .await
@@ -4272,6 +4289,7 @@ mod tests {
             &crate::config::tools::McpHarnessConfig::default(),
             &mut compaction_budget,
             Some(1),
+            None,
             instance_home.path(),
         )
         .await

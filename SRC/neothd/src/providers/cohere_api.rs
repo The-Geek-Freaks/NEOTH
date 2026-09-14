@@ -31,7 +31,7 @@ use super::quota::{QuotaError, parse_retry_after};
 use super::response_bounds;
 use super::termination::ProviderTermination;
 use super::{
-    Completion, CompletionUsageMeasurements, Provider, ProviderDispatchPermit,
+    ChatTurnEffectKind, Completion, CompletionUsageMeasurements, Provider, ProviderDispatchPermit,
     ProviderRequestControls, Request,
 };
 use crate::secret::SecretString;
@@ -43,6 +43,31 @@ use crate::secret::SecretString;
 const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 const MAX_SUCCESS_BODY_BYTES: usize = response_bounds::MAX_SUCCESS_JSON_BODY_BYTES;
 const ERROR_BODY_EVIDENCE_DOMAIN: &[u8] = b"cohere-http-error-body/v1";
+
+async fn send_with_effect(
+    permit: &ProviderDispatchPermit,
+    kind: ChatTurnEffectKind,
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::Response> {
+    let Some(effect) = permit.prepare_effect(kind).await? else {
+        return request.send().await.context("HTTP response-head open");
+    };
+    let lease = effect.begin_start().await?;
+    match tokio::time::timeout_at(lease.deadline(), request.send()).await {
+        Ok(Ok(response)) => {
+            lease.started().await?;
+            Ok(response)
+        }
+        Ok(Err(error)) => {
+            lease.indeterminate().await?;
+            Err(error).context("HTTP transport entered without a response head")
+        }
+        Err(_) => {
+            lease.indeterminate().await?;
+            anyhow::bail!("HTTP response-head handshake timed out")
+        }
+    }
+}
 const SUCCESS_BODY_EVIDENCE_DOMAIN: &[u8] = b"cohere-success-body/v1";
 
 /// Output-token cap sent as `max_tokens` (Cohere makes it optional, but a
@@ -107,6 +132,14 @@ impl Provider for CohereAdapter {
         "cohere_api"
     }
 
+    #[expect(
+        private_interfaces,
+        reason = "the private W41 probe seals this hook to reviewed in-crate adapters"
+    )]
+    fn w41_effect_start_adapter(&self, _: super::W41EffectStartProbe) -> bool {
+        true
+    }
+
     fn request_controls(&self) -> ProviderRequestControls {
         ProviderRequestControls::SAMPLING_MAX_ONE.with_output_token_limit()
     }
@@ -122,7 +155,7 @@ impl Provider for CohereAdapter {
     async fn complete_raw(
         &self,
         req: Request,
-        _permit: &ProviderDispatchPermit,
+        permit: &ProviderDispatchPermit,
     ) -> Result<Completion> {
         crate::providers::circuit_breaker::run_with_breaker("cohere_api", async {
             let started = Instant::now();
@@ -158,14 +191,21 @@ impl Provider for CohereAdapter {
             };
 
             let url = format!("{}/chat", self.endpoint);
-            let response = self
+            let request = self
                 .http
                 .post(&url)
                 .bearer_auth(self.api_key.expose())
-                .json(&body)
-                .send()
-                .await
-                .with_context(|| format!("POST {url}"))?;
+                .json(&body);
+            let response = send_with_effect(
+                permit,
+                ChatTurnEffectKind::Provider {
+                    call_scope: "cohere_api.complete_raw",
+                    streaming: false,
+                },
+                request,
+            )
+            .await
+            .with_context(|| format!("POST {url}"))?;
 
             let status = response.status();
             if !status.is_success() {
