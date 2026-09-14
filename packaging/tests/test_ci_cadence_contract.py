@@ -422,6 +422,91 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertIn('-f head_sha="$RELEASE_SHA"', RELEASE_TEXT)
         self.assertIn('and .conclusion == "success"', RELEASE_TEXT)
 
+    def test_platform_test_compilation_and_execution_have_separate_budgets(self) -> None:
+        platform_tests = workflow_jobs(CI_TEXT)["platform-tests"]
+        self.assertIn("timeout-minutes: ${{ matrix.job_timeout_minutes }}", platform_tests)
+        self.assertNotIn("nextest_timeout_minutes", platform_tests)
+        self.assertIn(
+            "\n".join(
+                [
+                    "          - os: macos-14",
+                    "            test_threads: 4",
+                    "            junit_name: macos",
+                    "            test_build_timeout_minutes: 100",
+                    "            test_execution_timeout_minutes: 30",
+                    "            # Compile + execute bounds plus checkout/toolchain/cache/setup.",
+                    "            job_timeout_minutes: 140",
+                ]
+            ),
+            platform_tests,
+        )
+        self.assertIn(
+            "\n".join(
+                [
+                    "          - os: windows-2022",
+                    "            # Localhost port-binding tests race on Windows under parallel",
+                    "            # process execution; serial execution preserves the real contract.",
+                    "            test_threads: 1",
+                    "            junit_name: windows",
+                    "            test_build_timeout_minutes: 50",
+                    "            test_execution_timeout_minutes: 30",
+                    "            # Compile + execute bounds plus checkout/toolchain/cache/setup.",
+                    "            job_timeout_minutes: 90",
+                ]
+            ),
+            platform_tests,
+        )
+
+        steps = workflow_steps(platform_tests)
+        build = steps["Compile nextest workspace test binaries"]
+        execute = steps["Run nextest workspace tests"]
+        self.assertEqual(
+            direct_mapping_keys(build, 8),
+            ["timeout-minutes", "shell", "working-directory", "run"],
+        )
+        self.assertEqual(
+            direct_mapping_keys(execute, 8),
+            ["timeout-minutes", "shell", "working-directory", "run"],
+        )
+        self.assertIn(
+            "timeout-minutes: ${{ matrix.test_build_timeout_minutes }}", build
+        )
+        self.assertIn(
+            "timeout-minutes: ${{ matrix.test_execution_timeout_minutes }}", execute
+        )
+        self.assertEqual(
+            step_run_command(build),
+            "\n".join(
+                [
+                    "rm -f target/nextest/ci/junit.xml",
+                    "cargo nextest run --workspace --locked --profile ci --no-run",
+                ]
+            ),
+        )
+        self.assertEqual(
+            step_run_command(execute),
+            "cargo nextest run --workspace --locked --profile ci --test-threads ${{ matrix.test_threads }} --no-tests=fail",
+        )
+        self.assertNotIn("--no-run", step_run_command(execute))
+        self.assertNotIn("junit.xml", step_run_command(execute))
+        compile_step = platform_tests.index("Compile nextest workspace test binaries")
+        junit_cleanup = platform_tests.index("rm -f target/nextest/ci/junit.xml")
+        compile_command = platform_tests.index(
+            "cargo nextest run --workspace --locked --profile ci --no-run"
+        )
+        runtime_step = platform_tests.index("Run nextest workspace tests")
+        runtime_command = platform_tests.index(
+            "cargo nextest run --workspace --locked --profile ci --test-threads ${{ matrix.test_threads }} --no-tests=fail"
+        )
+        self.assertLess(compile_step, junit_cleanup)
+        self.assertLess(junit_cleanup, compile_command)
+        self.assertLess(compile_command, runtime_step)
+        self.assertLess(runtime_step, runtime_command)
+
+        junit = steps["Upload JUnit report"]
+        self.assertIn("if: always()", junit)
+        self.assertIn("path: SRC/target/nextest/ci/junit.xml", junit)
+
 
 if __name__ == "__main__":
     unittest.main()

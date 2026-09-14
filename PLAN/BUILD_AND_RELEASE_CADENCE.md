@@ -62,6 +62,34 @@ cross-process authority change is a milestone and may justify an immediate
 manual full run. A documentation-only or isolated static-contract commit does
 not.
 
+## Native workspace test phases
+
+The macOS and Windows CI jobs compile the locked workspace test profile with
+`cargo nextest run --workspace --locked --profile ci --no-run`, then execute
+the complete suite in a separate step against the same checkout and target
+cache. The execution step retains the platform's test-thread setting and adds
+`--no-tests=fail`, so an empty selection cannot satisfy the gate.
+
+| Platform | Compile limit | Execution limit | Whole-job limit |
+| --- | --- | --- | --- |
+| macOS | 100 minutes | 30 minutes | 140 minutes |
+| Windows | 50 minutes | 30 minutes | 90 minutes |
+
+Windows retains four Cargo build jobs and one test thread. Both platforms keep
+the existing pinned toolchain, locked dependency graph, `ci` profile, and full
+workspace coverage. The second invocation still checks Cargo freshness and
+reuses the artifacts from the compile phase.
+
+The job removes `target/nextest/ci/junit.xml` before compilation and retains
+the unconditional JUnit upload. A failed compile therefore cannot publish a
+successful report left in the cache by an older run.
+
+This split addresses the observed cold-cache macOS boundary in CI run
+`34803269509`: compilation and startup consumed 83m59s, and the former combined
+90-minute step timed out before the suite finished. That run also reported a
+fixture failure and remains failed evidence. The new cadence requires a fresh,
+complete CI run; changing these limits does not establish a passing result.
+
 ## Final Gold verification
 
 After every mandatory checkbox in `PLAN/ROAD_TO_1_0_GOLD.md` is complete, freeze

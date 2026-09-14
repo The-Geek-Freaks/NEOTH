@@ -3,26 +3,24 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-14
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Wave 37 CI cadence — SOURCE ADMITTED; FULL CI ACCEPTANCE OUTSTANDING
+> 2026-09-14:** two reviewed workflow files preserve the existing coverage,
+> single test thread, lock, and profile while separating native compile/runtime
+> budgets: macOS has 100-minute compile, 30-minute runtime, and 140-minute job
+> limits; Windows has 50-minute compile, 30-minute runtime, and 90-minute job
+> limits. The workflows clear cached JUnit before compile and fail a no-test run.
+> Fifteen local static tests and YAML parsing pass. A new full CI run will follow
+> the push; no new CI pass is claimed.
+>
 > **Waves 30, 32 and 34 SelfStage, mapped-account retirement, and legacy
-> provenance — LOCALLY VERIFIED; COMMIT/PUSH PENDING 2026-09-14:**
-> the repaired shared W30 production/fixture post-verification helper is
-> independently reviewed and admitted. It records intent before the private
-> operation, retains the prepared receipt and generation lease through the
-> contained helper, and permits public publication only from that helper. The
-> 41-source/49-path scope is locally verified: final Clippy13 **PASS** in3.05s,
-> TestBuild05 **PASS** in3m31s, and fullSelected06 **1327/0/0** in59.20s from
-> catalogue14488/29 filters. All 13 account-config targets pass **157/0/0**;
-> the no-GUI-link GUI check passes in6m11 with 13 unchanged trusted-probe
-> warnings; Python19+11+8 passes. The manifest and matrix record 188 inputs and
-> 14 executables. The standalone post-unit/GUI contract delta was rechecked by
-> strict Clippy and all 13 contract targets; unit/GUI production inputs stayed
-> unchanged. Local verification awaits the Git commit containing this receipt
-> and push. W37 is approved but not admitted; W35/36/38 remain a reviewed
-> proposal. W32/P1-16, W34/P1-17, and R3-18B remain OPEN; counts
-> 1324/1011/311/2 (313 raw; 312 pre-tag). W29–31 published
-> `abb39e12aa0f0889083e08d8041910a22994018f`
-> full CI `34803269509` remains an incomplete macOS failure boundary, not a
-> green platform receipt.
+> provenance — PUBLISHED `66f90e5ffd00739e296681974cda8d58c20921bd`:** local
+> verification recorded 1327 selected unit passes, 157 account-config contract
+> passes, 38 Python checks, and the no-GUI-link GUI check. Git history carries
+> the commit identity and evidence receipts. W35/36/38 remain a reviewed
+> 11-source proposal, not admitted. W32/P1-16, W34/P1-17, and R3-18B remain
+> OPEN; counts 1324/1011/311/2 (313 raw; 312 pre-tag). W29–31 full CI
+> `34803269509` remains an incomplete macOS failure boundary, not a green
+> platform receipt.
 >
 > **Waves 21–23 named Telegram account onboarding and macOS SQLite-path repair —
 > LOCALLY VALIDATED 2026-09-14:** eleven frozen Rust/Slint source files build

@@ -283,19 +283,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Wave15 CI 34770336792: macOS spent 74m30 compiling, leaving only ~30s for tests under the old 75m step limit.
+          # Run 34803269509 was cold-cache: macOS needed 83m40 to compile
+          # the complete test profile, then reached test 6867/16065 before
+          # the former combined 90m step was killed.  Keep compilation and
+          # execution independently bounded so a cold compile cannot consume
+          # the suite's runtime budget.
           - os: macos-14
             test_threads: 4
             junit_name: macos
-            job_timeout_minutes: 105
-            nextest_timeout_minutes: 90
+            test_build_timeout_minutes: 100
+            test_execution_timeout_minutes: 30
+            # Compile + execute bounds plus checkout/toolchain/cache/setup.
+            job_timeout_minutes: 140
           - os: windows-2022
             # Localhost port-binding tests race on Windows under parallel
             # process execution; serial execution preserves the real contract.
             test_threads: 1
             junit_name: windows
+            test_build_timeout_minutes: 50
+            test_execution_timeout_minutes: 30
+            # Compile + execute bounds plus checkout/toolchain/cache/setup.
             job_timeout_minutes: 90
-            nextest_timeout_minutes: 50
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -335,13 +343,23 @@ jobs:
         with:
           tool: cargo-nextest@0.9.134
 
-      - name: cargo nextest workspace
-        timeout-minutes: ${{ matrix.nextest_timeout_minutes }}
+      # `--no-run` compiles every workspace test binary into the same cached
+      # target directory.  The following run retains Cargo's normal freshness
+      # check but has no substantive compilation when this phase succeeds.
+      - name: Compile nextest workspace test binaries
+        timeout-minutes: ${{ matrix.test_build_timeout_minutes }}
         shell: bash
         working-directory: SRC
         run: |
           rm -f target/nextest/ci/junit.xml
-          cargo nextest run --workspace --locked --profile ci --test-threads ${{ matrix.test_threads }}
+          cargo nextest run --workspace --locked --profile ci --no-run
+
+      - name: Run nextest workspace tests
+        timeout-minutes: ${{ matrix.test_execution_timeout_minutes }}
+        shell: bash
+        working-directory: SRC
+        run: |
+          cargo nextest run --workspace --locked --profile ci --test-threads ${{ matrix.test_threads }} --no-tests=fail
 
       - name: Upload JUnit report
         if: always()
