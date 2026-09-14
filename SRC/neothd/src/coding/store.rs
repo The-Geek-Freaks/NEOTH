@@ -1152,6 +1152,7 @@ mod tests {
                 stale: false,
                 selection_truncated: false,
                 metadata_redacted: false,
+                diff_impact: None,
                 selected_files: vec![CodeMapSelectedFile {
                     path: "src/lib.rs".to_owned(),
                     symbols: vec!["entrypoint".to_owned()],
@@ -1193,6 +1194,7 @@ mod tests {
             stale: false,
             selection_truncated: false,
             metadata_redacted: false,
+            diff_impact: None,
             selected_files: vec![CodeMapSelectedFile {
                 path: "src/lib.rs".to_owned(),
                 symbols: Vec::new(),

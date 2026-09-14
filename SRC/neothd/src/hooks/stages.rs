@@ -16,7 +16,7 @@
 //! | omc JSON event       | NEOTH `HookStage`        |
 //! |----------------------|---------------------------|
 //! | `UserPromptSubmit`   | `PreChannelIngress`       |
-//! | `PreToolUse`         | `PreProviderCall`         |
+//! | `PreToolUse`         | `PreToolUse`              |
 //! | `PostToolUse`        | `PostProviderCall`        |
 //! | `SessionStart`       | `OnSessionStart`          |
 //! | `Stop`               | `OnShutdown`              |
@@ -44,14 +44,12 @@ pub enum HookStage {
     /// After ingress/sanitize, before the provider HTTP request is built.
     /// Equivalent to the SDK's `PrePipeline`.
     PrePipeline,
-    /// Right before `provider.complete()`. Last chance to mutate the
-    /// outbound payload.
-    ///
-    /// Maps to Claude Code's `PreToolUse` event (omc cross-pollination Q-6).
-    /// A `Block` outcome here (**exit-2 equivalent**) aborts the tool call
-    /// before it reaches the provider — `enforce_preflight` in `cli/chat.rs`
-    /// bails the turn when `run_hook_stage` returns `HookOutcome::Blocked`.
+    /// Right before `provider.complete()`. Last chance to mutate the outbound
+    /// provider payload. This is intentionally distinct from `PreToolUse`.
     PreProviderCall,
+    /// Per-MCP-tool boundary after scope admission and authorization, before
+    /// the external tool call. Its dispatcher receives typed, bounded metadata.
+    PreToolUse,
     /// Immediately after `provider.complete()` returns. Sees the reply
     /// text; can replace, block, or pass through.
     PostProviderCall,
@@ -80,6 +78,7 @@ impl HookStage {
             HookStage::PreChannelIngress => "pre_channel_ingress",
             HookStage::PrePipeline => "pre_pipeline",
             HookStage::PreProviderCall => "pre_provider_call",
+            HookStage::PreToolUse => "pre_tool_use",
             HookStage::PostProviderCall => "post_provider_call",
             HookStage::PreEgress => "pre_egress",
             HookStage::JobFired => "job_fired",
@@ -96,12 +95,13 @@ impl HookStage {
     pub fn omc_event(self) -> Option<&'static str> {
         match self {
             HookStage::PreChannelIngress => Some("UserPromptSubmit"),
-            HookStage::PreProviderCall => Some("PreToolUse"),
+            HookStage::PreToolUse => Some("PreToolUse"),
             HookStage::PostProviderCall => Some("PostToolUse"),
             HookStage::OnSessionStart => Some("SessionStart"),
             HookStage::OnShutdown => Some("Stop"),
             // NEOTH-specific stages with no omc analogue.
             HookStage::PrePipeline
+            | HookStage::PreProviderCall
             | HookStage::PreEgress
             | HookStage::JobFired
             | HookStage::JobDone => None,
@@ -119,6 +119,7 @@ mod tests {
             HookStage::PreChannelIngress,
             HookStage::PrePipeline,
             HookStage::PreProviderCall,
+            HookStage::PreToolUse,
             HookStage::PostProviderCall,
             HookStage::PreEgress,
             HookStage::JobFired,
@@ -146,7 +147,7 @@ mod tests {
             HookStage::PreChannelIngress.omc_event(),
             Some("UserPromptSubmit")
         );
-        assert_eq!(HookStage::PreProviderCall.omc_event(), Some("PreToolUse"));
+        assert_eq!(HookStage::PreToolUse.omc_event(), Some("PreToolUse"));
         assert_eq!(HookStage::PostProviderCall.omc_event(), Some("PostToolUse"));
         assert_eq!(HookStage::OnSessionStart.omc_event(), Some("SessionStart"));
         assert_eq!(HookStage::OnShutdown.omc_event(), Some("Stop"));
@@ -154,12 +155,13 @@ mod tests {
 
     #[test]
     fn q6_neoth_specific_stages_have_no_omc_event() {
-        // PrePipeline / PreEgress / JobFired / JobDone exist for
+        // PrePipeline / PreProviderCall / PreEgress / JobFired / JobDone exist for
         // NEOTH-specific surfaces (intermediate dispatch / per-
         // messenger formatting / cron) that omc doesn't have.
         // Return None so ports tooling skips them rather than
         // mapping to a wrong event name.
         assert_eq!(HookStage::PrePipeline.omc_event(), None);
+        assert_eq!(HookStage::PreProviderCall.omc_event(), None);
         assert_eq!(HookStage::PreEgress.omc_event(), None);
         assert_eq!(HookStage::JobFired.omc_event(), None);
         assert_eq!(HookStage::JobDone.omc_event(), None);

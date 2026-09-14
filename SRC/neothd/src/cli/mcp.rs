@@ -14,7 +14,6 @@
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
-use sha2::{Digest, Sha256};
 
 use crate::cli::{OutputFormat, permission_audit::RequiredPermissionAudit};
 use crate::config::FreedomConfig;
@@ -803,6 +802,11 @@ async fn run_call(
                 "MCP `{server_id}::{tool}` blocked by sub-agent disallowedTools denylist"
             );
         }
+        Err(GateError::PreToolUseBlocked { .. })
+        | Err(GateError::PreToolUseContext(_))
+        | Err(GateError::PreToolUsePermitMismatch { .. }) => {
+            anyhow::bail!("MCP `{server_id}::{tool}` blocked by PreToolUse authorization")
+        }
         Err(GateError::Mcp(e)) => return Err(e.into()),
         Err(GateError::Wal(e)) => return Err(e),
     };
@@ -917,7 +921,7 @@ where
     F: FnOnce(crate::mcp::McpServerConfig) -> Fut,
     Fut: std::future::Future<Output = Result<McpClient, McpError>>,
 {
-    let request_binding_sha256 = cli_mcp_request_binding(cfg, tool, &arguments)?;
+    let request_binding_sha256 = crate::mcp::gate::mcp_request_binding(cfg, tool, &arguments)?;
     let preflight = crate::mcp::gate::preflight_with_audit_sink(
         cfg,
         tool,
@@ -939,6 +943,29 @@ where
         instance_home,
     )
     .await?;
+    // Direct `neoth mcp call` owns no chat cancellation token. It does load
+    // the configured TOML set from the exact instance root, then runs the
+    // same bounded typed boundary as provider-emitted calls.
+    let hooks = crate::hooks::load_all_strict(&instance_home.join("hooks"))
+        .await
+        .map_err(|error| GateError::PreToolUseBlocked {
+            server: cfg.id.clone(),
+            tool: tool.to_owned(),
+            reason: format!("cannot load configured PreToolUse hooks: {error}"),
+        })?;
+    let once_guard = crate::hooks::SessionOnceGuard::new();
+    let pre_tool_use = crate::mcp::gate::admit_pre_tool_use(
+        crate::hooks::PreToolUseOrigin::DirectCliMcp,
+        cfg,
+        tool,
+        &arguments,
+        instance_home,
+        &request_binding_sha256,
+        crate::hooks::PreToolUseHookPolicy::Configured(&hooks),
+        &once_guard,
+        crate::hooks::PreToolUseCancellation::unbound(),
+        crate::hooks::PreToolUseReplay::direct_request(),
+    )?;
     let mut client = spawn(cfg.clone()).await?;
     crate::mcp::gate::invoke_authorized_with_audit_sink(
         &mut client,
@@ -950,6 +977,7 @@ where
         None,
         now_unix,
         Some(&request_binding_sha256),
+        pre_tool_use,
     )
     .await
 }
@@ -957,35 +985,13 @@ where
 /// SHA-256 commitment to the exact operator request. Object keys are sorted
 /// recursively before serialization, while arrays retain their semantic order.
 /// The WAL receives this digest only, never the tool arguments themselves.
+#[cfg(test)]
 fn cli_mcp_request_binding(
     cfg: &crate::mcp::McpServerConfig,
     tool: &str,
     arguments: &serde_json::Value,
 ) -> Result<String, GateError> {
-    let request = serde_json::json!({
-        "server_id": cfg.id,
-        "tool": tool,
-        "arguments": canonicalize_json(arguments),
-    });
-    let bytes = serde_json::to_vec(&canonicalize_json(&request))
-        .map_err(|error| GateError::Mcp(McpError::Protocol(cfg.id.clone(), error.to_string())))?;
-    Ok(hex::encode(Sha256::digest(bytes)))
-}
-
-fn canonicalize_json(value: &serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Array(values) => {
-            serde_json::Value::Array(values.iter().map(canonicalize_json).collect())
-        }
-        serde_json::Value::Object(values) => {
-            let mut ordered = std::collections::BTreeMap::new();
-            for (key, value) in values {
-                ordered.insert(key.clone(), canonicalize_json(value));
-            }
-            serde_json::to_value(ordered).expect("canonical JSON map is serializable")
-        }
-        scalar => scalar.clone(),
-    }
+    crate::mcp::gate::mcp_request_binding(cfg, tool, arguments)
 }
 
 #[cfg(test)]
@@ -1117,6 +1123,75 @@ mod tests {
             event.request_binding_sha256.as_deref(),
             Some(binding.as_str())
         );
+    }
+
+    #[tokio::test]
+    async fn configured_pre_tool_block_reaches_the_real_cli_spawner_seam_zero_times() {
+        let home = tempfile::tempdir().expect("temporary instance home");
+        let hooks_dir = home.path().join("hooks");
+        std::fs::create_dir_all(&hooks_dir).expect("hook directory");
+        std::fs::write(
+            hooks_dir.join("block.toml"),
+            r#"
+name = "deny-real-cli-call"
+stage = "pre_tool_use"
+[action]
+kind = "block"
+reason = "test block before external call"
+"#,
+        )
+        .expect("configured hook");
+        let config = callable_server();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&attempts);
+        let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .unwrap();
+
+        let error = invoke_cli_call_with_spawner_and_audit_sink(
+            &config,
+            "read",
+            serde_json::json!({"exact": true}),
+            policy,
+            1_700_000_000,
+            crate::mcp::gate::McpAuditSink::None,
+            home.path(),
+            move |_| {
+                count.fetch_add(1, Ordering::SeqCst);
+                async { panic!("configured PreToolUse block reached the real CLI spawn seam") }
+            },
+        )
+        .await
+        .expect_err("configured block must stop the real CLI route");
+
+        assert!(matches!(error, GateError::PreToolUseBlocked { .. }));
+        assert_eq!(attempts.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn real_cli_fixture_route_executes_exactly_one_tools_call() {
+        let home = tempfile::tempdir().unwrap();
+        let counter = home.path().join("tools-call-count.txt");
+        let config = crate::mcp::client::stdio_fixture_config(&counter);
+        let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .unwrap();
+        let result = invoke_cli_call_with_spawner_and_audit_sink(
+            &config,
+            "read",
+            serde_json::json!({"exact": "cli"}),
+            policy,
+            1,
+            crate::mcp::gate::McpAuditSink::None,
+            home.path(),
+            |fixture| async move { McpClient::spawn(&fixture).await },
+        )
+        .await
+        .expect("real CLI core uses fixture client");
+        assert!(!result.is_error);
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
     }
 
     #[tokio::test]

@@ -42,6 +42,10 @@ pub struct CodeEdge {
     pub from_file: String,
     pub from_symbol: String,
     pub to_name: String,
+    /// Canonical repo-relative declaration file when the target was resolved
+    /// exactly. Calls and references remain name-only heuristic evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_file: Option<String>,
     pub kind: EdgeKind,
     /// Ordinal evidence strength, not a calibrated probability. Only the
     /// canonical values selected by `confidence_tier` are valid.
@@ -88,9 +92,27 @@ impl CodeEdge {
             from_file: from_file.into(),
             from_symbol: from_symbol.into(),
             to_name: to_name.into(),
+            target_file: None,
             kind: EdgeKind::Calls,
             confidence: EdgeConfidenceTier::Inferred.confidence(),
             confidence_tier: EdgeConfidenceTier::Inferred,
+        }
+    }
+
+    pub fn resolved_tested_by(
+        test_file: impl Into<String>,
+        test_symbol: impl Into<String>,
+        production_name: impl Into<String>,
+        production_file: impl Into<String>,
+    ) -> Self {
+        Self {
+            from_file: test_file.into(),
+            from_symbol: test_symbol.into(),
+            to_name: production_name.into(),
+            target_file: Some(production_file.into()),
+            kind: EdgeKind::TestedBy,
+            confidence: EdgeConfidenceTier::Resolved.confidence(),
+            confidence_tier: EdgeConfidenceTier::Resolved,
         }
     }
 
@@ -119,6 +141,9 @@ pub enum EdgeKind {
     /// `from` mentions `to_name` in its body without the trailing
     /// `(`. Phase 2 — reserved.
     References,
+    /// A supported framework-marked test declaration directly invokes one
+    /// uniquely resolved production declaration in the same indexed root.
+    TestedBy,
 }
 
 impl EdgeKind {
@@ -126,8 +151,74 @@ impl EdgeKind {
         match self {
             EdgeKind::Calls => "calls",
             EdgeKind::References => "references",
+            EdgeKind::TestedBy => "tested_by",
         }
     }
+}
+
+/// Build only exact test evidence. A conventional test path alone is never
+/// enough: the declaration must also carry a supported Rust/Python framework
+/// marker and its called production name must resolve to one file.
+pub(crate) fn build_tested_by_edges(
+    files: &[FileInput],
+    all_symbols: impl Iterator<Item = (String, Symbol)>,
+    max_edges: usize,
+    cancellation: &super::walker::ScanCancellation,
+) -> Result<Vec<CodeEdge>> {
+    let mut defs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (file, symbol) in all_symbols {
+        if super::symbols::is_supported_production_declaration(&file, &symbol) {
+            defs.entry(symbol.name).or_default().insert(file);
+        }
+    }
+    let names: BTreeSet<String> = defs.keys().cloned().collect();
+    let mut edges = Vec::new();
+    for file in files {
+        cancellation.checkpoint()?;
+        let supported_tests =
+            super::symbols::supported_test_declarations(&file.file_path, &file.source);
+        let stripped = match file.comment_family {
+            CommentFamily::CFamily => strip_comments_and_strings_c_family(&file.source),
+            CommentFamily::HashFamily => strip_comments_and_strings_hash_family(&file.source),
+        };
+        let offsets = line_start_offsets(&stripped);
+        let mut symbols = file.symbols.clone();
+        symbols.sort_by_key(|symbol| symbol.line);
+        let line_count = stripped.lines().count();
+        for (index, symbol) in symbols.iter().enumerate() {
+            cancellation.checkpoint()?;
+            if !supported_tests.contains(&(symbol.name.clone(), symbol.line)) {
+                continue;
+            }
+            let end_line = symbols
+                .get(index + 1)
+                .map(|next| next.line as usize)
+                .unwrap_or(line_count + 1);
+            let body = file_slice(&stripped, &offsets, symbol.line as usize, end_line);
+            for name in called_symbol_names(body, &names) {
+                let Some(targets) = defs.get(&name) else {
+                    continue;
+                };
+                if targets.len() != 1 {
+                    continue;
+                }
+                let target_file = targets.first().expect("one target");
+                if target_file == &file.file_path || name == symbol.name {
+                    continue;
+                }
+                if edges.len() >= max_edges {
+                    bail!("native tested-by graph exceeds bounded {max_edges}-edge work budget");
+                }
+                edges.push(CodeEdge::resolved_tested_by(
+                    file.file_path.clone(),
+                    symbol.name.clone(),
+                    name,
+                    target_file.clone(),
+                ));
+            }
+        }
+    }
+    Ok(edges)
 }
 
 /// Comment family the strip pre-pass should apply. Default = C-family
@@ -987,6 +1078,78 @@ mod tests {
     fn edge_kind_as_str_pinned() {
         assert_eq!(EdgeKind::Calls.as_str(), "calls");
         assert_eq!(EdgeKind::References.as_str(), "references");
+        assert_eq!(EdgeKind::TestedBy.as_str(), "tested_by");
+    }
+
+    #[test]
+    fn framework_marked_test_resolves_only_a_unique_production_target() {
+        let production = rust_file("src/work.rs", "fn work() {}\n");
+        let test = rust_file(
+            "tests/work_test.rs",
+            "#[test]\nfn checks_work() { work(); }\n",
+        );
+        let edges = build_tested_by_edges(
+            &[production.clone(), test],
+            production
+                .symbols
+                .into_iter()
+                .map(|symbol| ("src/work.rs".into(), symbol)),
+            8,
+            &crate::code_map::walker::ScanCancellation::default(),
+        )
+        .unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].kind, EdgeKind::TestedBy);
+        assert_eq!(edges[0].target_file.as_deref(), Some("src/work.rs"));
+        assert_eq!(edges[0].confidence_tier, EdgeConfidenceTier::Resolved);
+    }
+
+    #[test]
+    fn tested_by_rejects_test_helpers_fixtures_generated_and_duplicate_targets() {
+        let test = rust_file(
+            "tests/case_test.rs",
+            "#[test]\nfn checks() { helper(); duplicated(); }\n",
+        );
+        let helper = rust_file("tests/helpers/support.rs", "fn helper() {}\n");
+        let left = rust_file("src/left.rs", "fn duplicated() {}\n");
+        let right = rust_file("src/right.rs", "fn duplicated() {}\n");
+        let all = [helper, left, right].into_iter().flat_map(|file| {
+            let path = file.file_path.clone();
+            file.symbols
+                .into_iter()
+                .map(move |symbol| (path.clone(), symbol))
+        });
+        let edges = build_tested_by_edges(
+            &[test],
+            all,
+            8,
+            &crate::code_map::walker::ScanCancellation::default(),
+        )
+        .unwrap();
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn pytest_marker_can_resolve_one_python_production_function() {
+        let production = python_file("src/work.py", "def work():\n    pass\n");
+        let test = python_file(
+            "tests/test_work.py",
+            "@pytest.mark.unit\ndef test_work():\n    work()\n",
+        );
+        let all = production
+            .symbols
+            .clone()
+            .into_iter()
+            .map(|symbol| ("src/work.py".into(), symbol));
+        let edges = build_tested_by_edges(
+            &[production, test],
+            all,
+            8,
+            &crate::code_map::walker::ScanCancellation::default(),
+        )
+        .unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].target_file.as_deref(), Some("src/work.py"));
     }
 
     #[test]

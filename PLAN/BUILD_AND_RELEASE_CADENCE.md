@@ -75,7 +75,9 @@ cache. The execution step retains the platform's test-thread setting and adds
 | macOS | 100 minutes | 30 minutes | 140 minutes |
 | Windows | 50 minutes | 30 minutes | 90 minutes |
 
-Windows retains four Cargo build jobs and one test thread. Both platforms keep
+Windows uses one Cargo build job and one test thread after the four-job build
+in CI `34881450745` exhausted the runner's memory before tests could start.
+macOS retains four Cargo build jobs and four test threads. Both platforms keep
 the existing pinned toolchain, locked dependency graph, `ci` profile, and full
 workspace coverage. The second invocation still checks Cargo freshness and
 reuses the artifacts from the compile phase.

@@ -202,7 +202,9 @@ where
     D: CompletionDriver + Send,
     P: PolicyArgument + Copy + Send + Sync,
 {
+    let pre_tool_hooks = crate::hooks::load_all_strict(&instance_home.join("hooks")).await?;
     let mut compaction_budget = CompactionBudget::default();
+    let pre_tool_once_guard = crate::hooks::SessionOnceGuard::new();
     run_tool_loop_with_budget(
         driver,
         initial_prompt,
@@ -225,6 +227,9 @@ where
         None,
         None,
         instance_home,
+        crate::hooks::PreToolUseHookPolicy::Configured(&pre_tool_hooks),
+        &pre_tool_once_guard,
+        crate::hooks::PreToolUseCancellation::unbound(),
     )
     .await
 }
@@ -287,6 +292,12 @@ pub(crate) async fn run_tool_loop_with_budget<D, P>(
     // Instance root for leases, risk-confirm consumption and harness traces.
     // This is an authorization namespace, not a cosmetic storage location.
     instance_home: &std::path::Path,
+    // W46: configured hooks and their session-scoped once ownership are
+    // supplied by the live chat/channel caller. Convenience wrappers use an
+    // explicit empty set, never a hidden global registry.
+    pre_tool_hook_policy: crate::hooks::PreToolUseHookPolicy<'_>,
+    pre_tool_once_guard: &crate::hooks::SessionOnceGuard,
+    pre_tool_cancellation: crate::hooks::PreToolUseCancellation,
 ) -> Result<LoopOutcome>
 where
     D: CompletionDriver + Send,
@@ -362,6 +373,7 @@ where
     let mut harness_leaked_retry_used = false;
     loop {
         iterations += 1;
+        let mut response_was_harness_replay = false;
         // GOLD-ADOPT-19 — compact the accumulated history before the next
         // completion if it crossed the threshold. Iteration 1 is the operator's
         // own prompt (never compact that); only the grown prompt (2+) qualifies.
@@ -427,6 +439,7 @@ where
             );
             current_text = driver.complete(&nudge_prompt).await?;
             extraction = extract_tool_calls(&current_text);
+            response_was_harness_replay = true;
         }
         // In the normal MCP iteration branches below, raw model output remains
         // available only to the tool-call parser and final operator response;
@@ -1086,6 +1099,13 @@ where
                 subject.as_deref(),
                 turn_effect_gate.clone(),
                 instance_home,
+                pre_tool_hook_policy,
+                pre_tool_once_guard,
+                pre_tool_cancellation.clone(),
+                crate::hooks::PreToolUseReplay {
+                    attempt: iterations,
+                    replayed: response_was_harness_replay,
+                },
             )
             .await
             {
@@ -1975,6 +1995,10 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
     subject: Option<&str>,
     turn_effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
     instance_home: &std::path::Path,
+    pre_tool_hook_policy: crate::hooks::PreToolUseHookPolicy<'_>,
+    pre_tool_once_guard: &crate::hooks::SessionOnceGuard,
+    pre_tool_cancellation: crate::hooks::PreToolUseCancellation,
+    pre_tool_replay: crate::hooks::PreToolUseReplay,
 ) -> std::result::Result<DispatchedToolResult, String> {
     let Some(cfg) = servers.get_enabled(&call.server) else {
         return Err(format!(
@@ -1984,13 +2008,42 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
         ));
     };
     let now_unix = crate::time::now_unix_i64();
+    let request_binding_sha256 =
+        crate::mcp::gate::mcp_request_binding(cfg, &call.tool, &call.arguments)
+            .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
     // Run every static policy layer before starting or querying a process.
     // Only a genuine Confirm can justify SmartApprove's tools/list snapshot;
     // Allow uses the ordinary call path and every rejection returns here.
-    let preflight =
-        crate::mcp::gate::preflight_with_audit(cfg, &call.tool, policy, writer, now_unix)
-            .await
-            .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
+    let preflight = crate::mcp::gate::preflight_with_audit_sink(
+        cfg,
+        &call.tool,
+        policy,
+        crate::mcp::gate::McpAuditSink::from_writer(writer),
+        now_unix,
+        subject,
+        Some(&request_binding_sha256),
+    )
+    .await
+    .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
+
+    // This must precede SmartApprove's metadata process as well as the
+    // eventual tools/call. A configured block therefore cannot trigger a
+    // catalogue spawn merely to discover that the caller rejected the tool.
+    // The opaque permit remains single-use and is consumed only by the
+    // subsequently authorized invocation below.
+    let pre_tool_use = crate::mcp::gate::admit_pre_tool_use(
+        crate::hooks::PreToolUseOrigin::ProviderEmittedMcp,
+        cfg,
+        &call.tool,
+        &call.arguments,
+        instance_home,
+        &request_binding_sha256,
+        pre_tool_hook_policy,
+        pre_tool_once_guard,
+        pre_tool_cancellation.clone(),
+        pre_tool_replay,
+    )
+    .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
 
     if preflight.requires_confirmation()
         && cfg.smart_approve
@@ -2002,11 +2055,11 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
         // process; transport/protocol failures do, with no same-call retry.
         let result = {
             let (client, grant) = bound.parts();
-            match crate::mcp::gate::authorize_preflight_with_audit(
+            match crate::mcp::gate::authorize_preflight_with_audit_sink(
                 preflight,
                 cfg,
                 &call.tool,
-                writer,
+                crate::mcp::gate::McpAuditSink::from_writer(writer),
                 grant,
                 now_unix,
                 subject,
@@ -2025,6 +2078,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
                         rollback_policy,
                         now_unix,
                         turn_effect_gate.clone(),
+                        pre_tool_use,
                     )
                     .await
                 }
@@ -2050,11 +2104,11 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
     // a possible subject lease) before ordinary spawn; a failed initialization,
     // duplicate id, config drift or poisoned retained client therefore remains
     // fail-closed and cannot cause a second metadata query.
-    let authorized = crate::mcp::gate::authorize_preflight_with_audit(
+    let authorized = crate::mcp::gate::authorize_preflight_with_audit_sink(
         preflight,
         cfg,
         &call.tool,
-        writer,
+        crate::mcp::gate::McpAuditSink::from_writer(writer),
         None,
         now_unix,
         subject,
@@ -2080,6 +2134,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
         rollback_policy,
         now_unix,
         turn_effect_gate,
+        pre_tool_use,
     )
     .await
     .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
@@ -2104,7 +2159,7 @@ fn smart_approve_error_poisoned_connection(error: &crate::mcp::gate::GateError) 
 /// Account for a response that reached the MCP server. `isError:true` is a
 /// failed tool call, not progress, even though its content remains valuable
 /// model feedback and is durably audited by the gate split
-/// (preflight_with_audit -> authorize_preflight_with_audit -> invoke_authorized_with_audit).
+/// (preflight_with_audit_sink -> authorize_preflight_with_audit_sink -> invoke_authorized_with_audit).
 ///
 /// Returns true when the caller must thread the error content into another
 /// model turn instead of taking the generic all-dispatches-failed fast exit.
@@ -2734,6 +2789,301 @@ mod tests {
         tempfile::tempdir().expect("create isolated NEOTH instance home")
     }
 
+    /// A private home whose HMAC identity lets SmartApprove verify and pin the
+    /// real stdio fixture's declared tool contract.
+    fn smart_approve_fixture_home() -> crate::test_env::CanonicalTempDir {
+        let home =
+            crate::test_env::canonical_tempdir().expect("create private SmartApprove fixture home");
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).expect("create SmartApprove fixture WAL directory");
+        std::fs::write(wal.join("hmac.key"), [9_u8; 32])
+            .expect("seed SmartApprove fixture HMAC identity");
+        home
+    }
+
+    fn configured_pre_tool_block() -> crate::hooks::schema::HookDef {
+        crate::hooks::schema::HookDef {
+            name: "block-real-provider-route".into(),
+            stage: crate::hooks::HookStage::PreToolUse,
+            enabled: Some(true),
+            priority: None,
+            matcher: None,
+            action: crate::hooks::schema::HookAction::Block {
+                reason: "test configured block".into(),
+            },
+            status_message: None,
+            once: false,
+            fail_fast: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn configured_block_stops_real_normal_provider_route_before_w41_or_spawn() {
+        use crate::providers::effect_test_support::{RecordedPhase, RecordingEffectGate};
+
+        let instance_home = test_instance_home();
+        let (servers, call) = smart_approve_preflight_fixture(vec!["read_graph"]);
+        let gate = Arc::new(RecordingEffectGate::new(Duration::from_secs(1)));
+        let effect_gate: Arc<dyn crate::providers::ChatTurnEffectGate> = gate.clone();
+        let hooks = [configured_pre_tool_block()];
+        let once_guard = crate::hooks::SessionOnceGuard::new();
+
+        let error = dispatch_one(
+            &call,
+            &servers,
+            crate::permissions::AutonomyLevel::Full,
+            None,
+            None,
+            None,
+            None,
+            Some(effect_gate),
+            instance_home.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&hooks),
+            &once_guard,
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .await
+        .err()
+        .expect("configured block must stop the shared normal provider route");
+
+        assert!(error.contains("blocked by PreToolUse"));
+        assert_eq!(
+            gate.phase(),
+            RecordedPhase::Open,
+            "no W41 Intent/Started phase means the real route never reached client spawn"
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_block_stops_real_smart_approve_before_catalogue_spawn_or_w41() {
+        use crate::providers::effect_test_support::{RecordedPhase, RecordingEffectGate};
+
+        let home = test_instance_home();
+        let counter = home.path().join("tools-call-count.txt");
+        let cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        let servers = McpServers {
+            servers: vec![cfg.clone()],
+            smart_loading: true,
+        };
+        let call = ParsedToolCall {
+            server: cfg.id.clone(),
+            tool: "read".into(),
+            arguments: serde_json::json!({"blocked": true}),
+        };
+        let mut session = crate::mcp::smart_approve::SmartApproveSession::new(&servers);
+        let gate = Arc::new(RecordingEffectGate::new(Duration::from_secs(1)));
+        let effect_gate: Arc<dyn crate::providers::ChatTurnEffectGate> = gate.clone();
+        let hooks = [configured_pre_tool_block()];
+
+        let error = dispatch_one(
+            &call,
+            &servers,
+            crate::permissions::AutonomyLevel::Standard,
+            None,
+            None,
+            Some(&mut session),
+            None,
+            Some(effect_gate),
+            home.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&hooks),
+            &crate::hooks::SessionOnceGuard::new(),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .await
+        .err()
+        .expect("configured block must precede SmartApprove catalogue spawn");
+
+        assert!(error.contains("blocked by PreToolUse"));
+        assert_eq!(session.initialization_attempts(), 0);
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 0);
+        assert_eq!(gate.phase(), RecordedPhase::Open);
+    }
+
+    #[tokio::test]
+    async fn actual_incognito_route_keeps_cancellation_boundary_before_fixture_spawn() {
+        use crate::providers::effect_test_support::{RecordedPhase, RecordingEffectGate};
+
+        let home = test_instance_home();
+        let counter = home.path().join("tools-call-count.txt");
+        let cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        let servers = McpServers {
+            servers: vec![cfg.clone()],
+            smart_loading: true,
+        };
+        let call = ParsedToolCall {
+            server: cfg.id.clone(),
+            tool: "read".into(),
+            arguments: serde_json::json!({"incognito": true}),
+        };
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let gate = Arc::new(RecordingEffectGate::new(Duration::from_secs(1)));
+        let effect_gate: Arc<dyn crate::providers::ChatTurnEffectGate> = gate.clone();
+
+        let error = dispatch_one(
+            &call,
+            &servers,
+            crate::permissions::AutonomyLevel::Full,
+            None,
+            None,
+            None,
+            None,
+            Some(effect_gate),
+            home.path(),
+            crate::hooks::PreToolUseHookPolicy::DisabledByIncognito,
+            &crate::hooks::SessionOnceGuard::new(),
+            crate::hooks::PreToolUseCancellation::from_chat_turn(cancelled),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .await
+        .err()
+        .expect("incognito never disables the typed cancellation boundary");
+
+        assert!(error.contains("cancelled"));
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 0);
+        assert_eq!(gate.phase(), RecordedPhase::Open);
+    }
+
+    #[tokio::test]
+    async fn real_smart_approve_fixture_retains_one_client_and_executes_two_calls() {
+        let home = smart_approve_fixture_home();
+        let counter = home.path().join("tools-call-count.txt");
+        let cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        let servers = McpServers {
+            servers: vec![cfg.clone()],
+            smart_loading: true,
+        };
+        let call = ParsedToolCall {
+            server: cfg.id.clone(),
+            tool: "read".into(),
+            arguments: serde_json::json!({"exact": 7}),
+        };
+        let mut session = crate::mcp::smart_approve::SmartApproveSession::new(&servers)
+            .with_home(home.path().to_path_buf());
+        let once = crate::hooks::SessionOnceGuard::new();
+        for _ in 0..2 {
+            let result = dispatch_one(
+                &call,
+                &servers,
+                crate::permissions::AutonomyLevel::Standard,
+                None,
+                None,
+                Some(&mut session),
+                None,
+                None,
+                home.path(),
+                crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+                &once,
+                crate::hooks::PreToolUseCancellation::unbound(),
+                crate::hooks::PreToolUseReplay::direct_request(),
+            )
+            .await
+            .expect("SmartApprove retained fixture call");
+            assert!(!result.is_error);
+        }
+        assert_eq!(
+            session.initialization_attempts(),
+            1,
+            "second call reuses retained tools/list client"
+        );
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 2);
+        assert!(
+            home.path().join("mcp_tool_pins.json").is_file(),
+            "real SmartApprove fixture call must verify and persist its tool pin"
+        );
+    }
+
+    #[tokio::test]
+    async fn real_normal_fixture_executes_exactly_one_tools_call() {
+        let home = test_instance_home();
+        let counter = home.path().join("tools-call-count.txt");
+        let cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        let servers = McpServers {
+            servers: vec![cfg.clone()],
+            smart_loading: true,
+        };
+        let call = ParsedToolCall {
+            server: cfg.id.clone(),
+            tool: "read".into(),
+            arguments: serde_json::json!({"exact": 1}),
+        };
+        let result = dispatch_one(
+            &call,
+            &servers,
+            crate::permissions::AutonomyLevel::Full,
+            None,
+            None,
+            None,
+            None,
+            None,
+            home.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &crate::hooks::SessionOnceGuard::new(),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .await
+        .expect("normal fixture call");
+        assert!(!result.is_error);
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
+    }
+
+    #[tokio::test]
+    async fn actual_route_once_hook_deduplicates_then_allows_one_later_call() {
+        let home = test_instance_home();
+        let counter = home.path().join("tools-call-count.txt");
+        let cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        let servers = McpServers {
+            servers: vec![cfg.clone()],
+            smart_loading: true,
+        };
+        let call = ParsedToolCall {
+            server: cfg.id.clone(),
+            tool: "read".into(),
+            arguments: serde_json::json!({}),
+        };
+        let mut once_block = configured_pre_tool_block();
+        once_block.once = true;
+        let hooks = [once_block];
+        let once = crate::hooks::SessionOnceGuard::new();
+        let first = dispatch_one(
+            &call,
+            &servers,
+            crate::permissions::AutonomyLevel::Full,
+            None,
+            None,
+            None,
+            None,
+            None,
+            home.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&hooks),
+            &once,
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .await;
+        assert!(first.is_err());
+        let second = dispatch_one(
+            &call,
+            &servers,
+            crate::permissions::AutonomyLevel::Full,
+            None,
+            None,
+            None,
+            None,
+            None,
+            home.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&hooks),
+            &once,
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .await;
+        assert!(second.is_ok());
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
+    }
+
     #[tokio::test]
     async fn smart_approve_allow_decision_skips_snapshot_initialization() {
         let instance_home = test_instance_home();
@@ -2749,6 +3099,10 @@ mod tests {
             None,
             None,
             instance_home.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &crate::hooks::SessionOnceGuard::new(),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
         )
         .await
         .err()
@@ -2792,6 +3146,10 @@ mod tests {
             None,
             None,
             instance_home.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &crate::hooks::SessionOnceGuard::new(),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
         )
         .await
         .err()
@@ -2812,6 +3170,10 @@ mod tests {
             None,
             None,
             instance_home.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &crate::hooks::SessionOnceGuard::new(),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
         )
         .await
         .err()
@@ -2841,6 +3203,10 @@ mod tests {
             None,
             None,
             instance_home.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &crate::hooks::SessionOnceGuard::new(),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
         )
         .await
         .err()
@@ -2865,6 +3231,10 @@ mod tests {
                 None,
                 None,
                 instance_home.path(),
+                crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+                &crate::hooks::SessionOnceGuard::new(),
+                crate::hooks::PreToolUseCancellation::unbound(),
+                crate::hooks::PreToolUseReplay::direct_request(),
             )
             .await
             .err()
@@ -2895,7 +3265,7 @@ mod tests {
     /// (4) The *next* `dispatch_one` call for the same (server, tool) pair
     ///     does NOT reuse the retained client, does NOT issue a fresh
     ///     `tools/list` query, and does NOT silently Allow — it falls to
-    ///     `authorize_preflight_with_audit(…, grant = None)` which, for
+    ///     `authorize_preflight_with_audit_sink(…, grant = None)` which, for
     ///     Standard autonomy, yields the normal Confirm path.
     ///
     /// The transport-error ↦ poison causal link (point 2) is intentionally
@@ -2945,6 +3315,10 @@ mod tests {
             None, // subject
             None, // W41 turn gate
             instance_home.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &crate::hooks::SessionOnceGuard::new(),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
         )
         .await
         .err()
@@ -4266,6 +4640,7 @@ mod tests {
         ```"#;
         let mut driver = ScriptedDriver::new(vec![reply]);
         let mut compaction_budget = CompactionBudget::default();
+        let pre_tool_once_guard = crate::hooks::SessionOnceGuard::new();
         let outcome = run_tool_loop_with_budget(
             &mut driver,
             "bounded".into(),
@@ -4291,6 +4666,9 @@ mod tests {
             Some(1),
             None,
             instance_home.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &pre_tool_once_guard,
+            crate::hooks::PreToolUseCancellation::unbound(),
         )
         .await
         .unwrap();
@@ -5572,7 +5950,7 @@ mod tests {
     //
     // We cannot do a true "call succeeded" test without a live MCP server.
     // Instead we prove the wire: run_tool_loop_with_cap → dispatch_one →
-    // preflight_with_audit → Gate::check. The "no server" failure proves the
+    // preflight_with_audit_sink → Gate::check. The "no server" failure proves the
     // lease upgrade ran PAST the Confirm gate (else it would return a
     // ConfirmRequired error before even trying to spawn a server).
 
@@ -5582,7 +5960,7 @@ mod tests {
     async fn mcp_tool_lease_absent_stays_confirm_blocked() {
         // Standard autonomy → McpToolInvocation evaluates to Confirm.
         // No lease written → Gate::check with FailClosed → Denied →
-        // preflight_with_audit returns ConfirmRequired → dispatch_one fails.
+        // preflight_with_audit_sink returns ConfirmRequired → dispatch_one fails.
         use crate::permissions::lease::LeaseStore;
         let dir = tempfile::tempdir().unwrap();
         let _env = crate::test_env::lock();

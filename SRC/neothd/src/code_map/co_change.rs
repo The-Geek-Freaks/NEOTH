@@ -284,6 +284,7 @@ mod tests {
             from_file: from_file.to_string(),
             from_symbol: "foo".to_string(),
             to_name: to_name.to_string(),
+            target_file: None,
             kind: EdgeKind::Calls,
             confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
             confidence_tier: EdgeConfidenceTier::Inferred,

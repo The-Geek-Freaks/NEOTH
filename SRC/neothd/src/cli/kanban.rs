@@ -1429,6 +1429,7 @@ mod tests {
             stale: false,
             selection_truncated: false,
             metadata_redacted: false,
+            diff_impact: None,
             selected_files: vec![CodeMapSelectedFile {
                 path: format!("src/{sensitive_name}.rs"),
                 symbols: vec!["verify_token".into()],

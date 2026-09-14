@@ -112,6 +112,12 @@ behavior, live-provider behavior, or cross-platform acceptance.
 
 ## W41 Main and Buddy daemon chat
 
+Wave 42 typed channel health is published at
+`cb717ee54e40f9e27583a8534b8bc25130e773e4`. Its v5 proactive health reader
+keeps exact channel references distinct even where Telegram/default and
+Slack/default account-id text is equal, without changing outbound behavior.
+That publication leaves P1-14 and P1-16 open and P1-17 partial.
+
 W41 routes both the Main chat surface and Buddy through one
 daemon-owned stream. The GUI is a presentation consumer: it cannot mint a
 capability, consent proof, route, endpoint, or transport identity. The daemon
@@ -139,6 +145,25 @@ GUI parity text remains unchanged. This proves the recorded local admission,
 effect-start, cancellation and lifecycle fixtures. Native GUI interaction,
 live-provider delivery and full cross-platform CI acceptance remain separate
 gates; no parent roadmap item closes from this batch alone.
+
+## W43–47 coding-graph composition boundary
+
+W43/W45 composed01 is approved across 19 paths. W47 repair06 is approved across
+three target overlays. W46 repair06 is approved across 13 paths. The independently
+reviewed 31-path composition is admitted and awaiting native gates. Its MCP, provider and
+direct-CLI coverage is a bounded boundary, not a claim that every native surface
+has a consumer. CRG-04 now has an implementation kernel, but its test evidence
+is pending; CRG-03 and CRG-05 remain open. No runtime validation or roadmap leaf
+closure follows until root-owned gates are green.
+
+W46 adds the `pre_tool_use` hook boundary for configured MCP calls emitted by a
+provider or requested through direct CLI MCP use. It validates bounded typed
+metadata before invocation; each permit binds the same arguments, and invocation
+still requires authorization. Incognito disables configured hook evaluation
+while admission, cancellation and deadline checks remain active. Only bounded
+allow, result-enrichment, and block outcomes are accepted; unsupported actions
+fail closed and cannot rewrite tool arguments. This does not extend hook
+coverage to every native surface.
 
 ## WAL source of truth
 

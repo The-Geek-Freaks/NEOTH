@@ -19,6 +19,8 @@
 pub mod co_change;
 pub mod diff;
 pub mod diff_git;
+// Compose with W43's proposal; that mirror supplies the module source.
+pub mod diff_impact;
 pub mod graph;
 pub mod impact;
 mod incremental;
@@ -38,11 +40,17 @@ pub mod risk;
 pub mod root_identity;
 pub mod snapshot;
 pub mod symbols;
+pub mod test_coverage;
 pub mod walker;
 
 // Re-exports kept under `allow(unused_imports)` because the CLI
 // subcommand currently uses only a subset — future Phase 2/3 picks
 // will consume `RepoFile` + `ScanReport` directly.
+#[allow(unused_imports)]
+pub use diff_impact::{
+    DiffImpactInput, DiffImpactReceipt, DiffImpactRequest, DiffImpactSeedReceipt,
+    DiffImpactSourceDescriptor, analyze_diff_impact,
+};
 #[allow(unused_imports)]
 pub use impact::{
     ImpactDirection, ImpactEdgeEvidence, ImpactNodeId, ImpactOptions, ImpactResult, ImpactSeed,
@@ -93,5 +101,12 @@ pub use snapshot::{
 };
 #[allow(unused_imports)]
 pub use symbols::{Symbol, SymbolKind, extract_symbols};
+#[allow(unused_imports)]
+pub use test_coverage::{
+    ImpactTestGapIdentity, ImpactTestGapInputProvenance, ImpactTestGapNodeResult,
+    ImpactTestGapOutcome, ImpactTestGapRejection, ImpactTestGapResult, ImpactTestGapWorkBudget,
+    ObservedTest, TestCoverageNode, TestCoverageOptions, TestCoverageProvenance,
+    TestCoverageResult, TestCoverageUncertainty, test_coverage_for, test_gap_for_impact,
+};
 #[allow(unused_imports)]
 pub use walker::{Language, RepoFile, RepoMap, RepoMapBuilder, ScanReport};

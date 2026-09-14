@@ -54,36 +54,45 @@ proactive health separate by exact channel reference, including Telegram/default
 and Slack/default with equal account-id text, without changing outbound
 behavior. P1-17 remains partial and P1-14/P1-16 remain open.
 
-**Wave 41 daemon Main/Buddy — LOCALLY VERIFIED (2026-09-14):** NativeTestBuild02
-**PASS** in 3m51s (210.30 GiB minimum free, 10.62 GiB peak). Its 14,586-test
-catalog selected 2,120 outcomes: **2,108 pass / 0 fail / 12 ignored** in 73.85s.
-The fresh native binary is 289,073,152 bytes, SHA-256
-`BEBDDED1D810A55277165AFF8BE43CC6C38D56C022CDA2A37D6CDB36C18F61DC`.
-NativeClippy01 **PASS** in 7m08s (208.44 GiB minimum free, 10.05 GiB peak), and
-six final contract targets passed **29 / 0** (5m39s; 209.66 GiB minimum free,
-8.62 GiB peak). Python19+11+8 **PASS**. Final GUIClippy02 **PASS** in 4m47s
-(212.12 GiB minimum free, 6.41 GiB peak), with the five changed-scope lint
-diagnostics repaired; only 13 existing Windows GUI dead-code warnings and the
-vendor warning remain. No local GUI link or native-GUI acceptance is claimed.
-The public `docs/verification/gold-wave41-44-{source-manifest,test-matrix}.json`
-records 230 inputs and seven executable hashes. The native unit snapshot
-matches 227 inputs; exactly three GUI implementation modules are checked by
-the final 230-input GUI snapshot. Other GUI text embedded by core parity tests
-remains included and unchanged. The 12 ignored outcomes are one subprocess
-helper exercised by its parent and 11 tests requiring local model weights.
-No roadmap parent or checkbox closes; full CI remains a separate gate.
+**W41/W44 Main/Buddy and dependency repair — PUBLISHED
+`2bf6c0fe298cdd1e1146a7c8279ab68fd92c25bb` (direct main, 56 verified paths):**
+the 230-input source receipt records the W41 native unit selection **2,108 / 0 /
+12**, six contracts **29 / 0**, Python **38**, GUIClippy02 and WasmCheck02
+passing. The W44 lock, license snapshot and dependency repair are included in the
+same published batch. This is local evidence, not native GUI interaction,
+live-provider delivery, cross-platform CI, release, or parent-roadmap closure.
 
-**Wave 44 dependency repair — LOCALLY VERIFIED (2026-09-14):** Cargo.lock, license snapshots and
-THIRD_PARTY_LICENSES are updated. Audit, deny, notice generation/check and
-independent review passed. Final-source WasmCheck02 passed in 1m52s (minimum
-free 210.44 GiB, peak 7.85 GiB). Wasmtime/Cranelift/Pulley, der and wnaf were
-updated narrowly; no advisory or yanked-package exception was added.
+**W43/W45, W46 and W47 — LOCALLY VERIFIED:** W43/45 composed01 is
+**APPROVE** across 19 paths. W47 repair06 is **APPROVE** across three target
+overlays. W46 repair06 is **APPROVE** across 13 paths. Independent review approved
+the exact 31-path composition, now admitted and formatted. Integration repairs
+include the existing Kanban receipt fixture and removal of unused wrappers.
+NativeTestBuild04 passed in 4m07; cached TestBuild05 confirmed the final 247
+frozen inputs. Selected runtime04 passed 1,913 / 0 / 0 in104.17s. Strict Clippy05
+and CLI docgen passed; four contracts15/0, Python45, CI matrix, audit/deny and
+notices passed. The retained union has 248 inputs and five executables across
+46 publication paths; see `docs/gold-wave43-47-verification.md`. Only the first
+two CRG-04 kernel leaves close: counts1324/1014/308/2, raw310/pre-tag309.
+W46 covers MCP, provider and direct-CLI execution; other native surfaces remain
+open. The generated CLI reference is included after its dedicated docgen gate.
 
-**W43/W45, W46 and W47 — WORK-ONLY:** W43/45 composed01 is **APPROVE**
-work-only across 19 paths. W47's real SQLite tests and review identified a
-bounded-loader `target_file` gap; repair is in progress. W46's real MCP stdio
-tests and hook-policy integration are in review, with three call-site type
-repairs pending. These are neither admitted nor runtime validation evidence.
+**Current W41/W44 CI boundary:** full CI
+[`34881450745`](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34881450745)
+completed with Linux quality and Windows/macOS compilation failures; the macOS
+compile step hit its 100-minute deadline without a compiler/OOM error or test
+result. Its limits stay unchanged. Security [`34881453920`](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34881453920)
+completed with the two Rustls failures below; both CodeQL languages and the
+unresolved-high/critical gate passed. Preflight [`34881430046`](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34881430046)
+and Quality [`34881430782`](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34881430782)
+succeeded. Security's cargo-audit and cargo-deny jobs failed on the newly
+published RUSTSEC-2026-0285 (`rustls 0.23.40`). The current worktree upgrades
+rustls to 0.23.45 and its required AWS-LC/WebPKI closure; notices, fresh local
+audit and deny passed. Audit used the same advisory DB commit as the failing
+CI and found zero vulnerabilities. Local compilation passed; new-head CI
+remains outstanding, with no release or cross-platform result implied. Linux quality
+also failed on a feature-gated Unix helper, now corrected. Windows exhausted
+runner memory before tests at four compiler jobs; the worktree now uses one
+Windows build job and retains four on macOS, with unchanged tests and timeouts.
 
 **W39–40 exact-head CI boundary:** CI `34857514849` at published `e4b4a117`
 completed with Linux **16,174 pass / 5 fail**, Windows **16,111 pass / 1 fail**,
@@ -469,18 +478,18 @@ whose current OPEN column sums to **242**
 (`1 + 6 + 14 + 110 + 28 + 64 + 12 + 7`). The release workflow uses a different and stricter
 contract: `packaging/roadmap_release_gate.py` counts every Markdown task outside
 fenced code, including mandatory child contracts. Its current whole-file result
-is **1,324 total / 1,012 done / 310 open / 2 partial = 312 raw blockers**
-(mechanically recomputed 2026-09-14 after verified ADOPT31-E1 closure).
-A release tag therefore has **311
+is **1,324 total / 1,014 done / 308 open / 2 partial = 310 raw blockers**
+(mechanically recomputed 2026-09-14 after the first two CRG-04 kernel leaves).
+A release tag therefore has **309
 pre-tag blockers**, because only the single
 `GOLD-RELEASE-ARTIFACTS` task may remain open while that workflow creates its
-evidence. The values 242, 312 and 311 answer different questions and must not be
+evidence. The values 242, 310 and 309 answer different questions and must not be
 substituted for one another in release-readiness claims. The two partials are deliberate
 honesty states and still block release; notably A6 has a tested VAD primitive but no live
 Playback-Cancel consumer until A2/A7 exist. `ADOPT31-C3` uses the canonical open state
 instead of the invalid historical `[?]`, so the release gate can parse every task again.
 
-<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1324 complete=1012 open=310 partial=2 raw_blockers=312 release_tag_blockers=311 release_generated_items=1 -->
+<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1324 complete=1014 open=308 partial=2 raw_blockers=310 release_tag_blockers=309 release_generated_items=1 -->
 
 _¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique bold GOLD-ids per workstream). WS-V's 44 residual findings are tracked in the gitignored `REVIEWS/_gold_audit/` triage file, not as in-plan checkboxes. WS-I figures differ from earlier hand-curated totals due to dedup of repeated deep-read batch listings + the bold-id method, not lost work. **WS-I recomputed 2026-06-21** (dedup by unique `GOLD-ADAPT-` id, an id is DONE if any entry is `[x]`): **304 total / 130 open / 174 done** — reflects the parallel-loop ships + this session's wirings (LOWKEY-04/07, SPEAKR-01, OH-09, AWE-AIDER-01) since the 2026-06-19 recompute. **Re-recomputed 2026-06-21 (partials loop): 304/122/182** — + ODY-27/ODY-19/ODY-13 wired + parallel ships. **Re-recomputed 2026-06-22 (followups loop): 299/118/181** — KB-02 re-UPGRADED [~]→[x] (wired into self-improve execute stop gate); total drift 304→299 = parallel-instance dedup of repeated batch listings, not lost work. **Re-recomputed 2026-06-22 (followups loop B): 299/112/187** — CBM-02 re-UPGRADED [~]→[x] (verify-then-register), + ~5 parallel-instance WS-I closures since the last recompute. Non-WS-I ships this loop: ODY-23b (`neoth fetch --goal`), ODY-07b parts 1+2, FEAT-07b 0xDF audit, HERMES-03b channel clarification, FEAT-08b jailbreak retry. **Re-recomputed 2026-06-22 (SPEAKR-02b/c + NN-MEM-05 followup): 298/106/192** — mechanical re-count (`uv run` script over all `**GOLD-ADAPT-<id>**` checkboxes, an id DONE if any entry `[x]`): SPEAKR-02 confirmed DONE (matcher SPEAKR-02 + stt_dispatch wire SPEAKR-02b both shipped; stale duplicate `[ ]` at the WS-I-tail flipped to `[x]`), NN-MEM-05 confirmed DONE; total 299→298 = one more dedup of a repeated batch listing, done 187→192 = +5 parallel-instance WS-I closures + this loop, open 112→106. Non-WS-I ship this followup: forget-cascade-txn (atomic erasure). In progress: SPEAKR-02c (candle speaker-embedding encoder filling the `utterance_embeddings()` seam). **Re-recomputed 2026-07-03 (B3 session)**: section-checkbox count for WS-A..H (WS-E 24/1/23 — the open box is the GOLD-ARCH-07 rest line; WS-F 26/5/21 — the 6 GOLD-LOOP ids live physically in the WS-I batch-2 listing and count there; WS-G incl. Batch C 28/1/27 — open = GOLD-ADOPT-25; WS-H 19/3/16 — open = PROG-06 + operator-parked PROG-13/15), WS-DELTA row added (16/16 complete 2026-07-02), WS-I unique-`GOLD-ADAPT-` id dedup **299 total / 37 open / 262 done**. Raw file truth at recompute: 70 open boxes / 0 partial / 743 done (the 70 includes repeated batch listings + the 11 Definition-of-GOLD roll-up boxes in §5). **Re-recomputed 2026-07-03b (post B3/B4/B5 + error-hunt #1):** raw 58 open; WS-E COMPLETE (ARCH-07b), WS-H 19/2/17 (PROG-06 shipped; rest = operator-parked PROG-13/15), WS-I unique-id 299/32/267 (GRILL-02/04, ODY-26, PRO-08, HR-06, G-02+QUEUE-01, SPEAKR-01-dup, LOOP-02/04/05/06/07 flipped; +G02-COUNCIL-01/G02-CLUSTER-01 new). **Re-recomputed 2026-07-10 (ChatGPT-R3 gold-tag-blocker session, `8892255f`), mechanical raw checkbox scan over the whole file: 901 `[x]` / 3 `[ ]` / 1 `[~]` = 905 total.** The 3 open `[ ]` are all operator/v1.1, NOT code-blockers: GOLD-HR-00 (operator-machine headroom install), signed-release-artifacts (operator runs the signed release build — no longer blocked on PROG-13 provisioning, which is done), OMI-MULTIMODAL-01 (v1.1 multi-week). The 1 `[~]` is DES-13 (mesh-failover, weitgehend geschlossen; only the foreign→recall auto-merge-restore is honestly deferred). This session flipped `[~]`→`[x]`: SELF-IMPROVE-SAFETY-01 (both residuals closed) + FEAT-06 (real swarm resource values), and `[ ]`→`[x]`: the stale DES-11 GUI duplicate. No `[~]` remain except DES-13; the earlier "no partials" header claim is now nearly true (1 honest partial). **Re-recomputed 2026-07-11 (B17-B25 audit wave + ChatGPT-review follow-up), mechanical raw whole-file scan: `910 [x] / 3 [ ] / 1 [~]` = 914 total.** The header-row "226/8/218" at line 75 is the WS-A..H+DELTA section subtotal (per footnote ¹), NOT the whole-file raw count — do not read it as the global total. Deltas since the 901/3/1 recount: +9 raw `[x]` (B17-B25 audit residuals all shipped across W0 `116d8921` / W1 `44d61cb1` / W2 `17135237` / W3 `25c6702c`, +B19 cross-process follow-up `c7d32de4`; **B07 CHANNEL-CREDENTIAL-ATOMICITY-01 flipped `[~]`→`[x]`** — its startup-fail-open residual was batched into B17 and is verified closed: `serve.rs:666-676` is now fail-closed `load_or_default(…).with_context(…)?`). The lone remaining `[~]` is DES-13 (mesh-failover foreign→recall auto-merge, honestly deferred). **Forensic adoption-completeness re-audit 2026-07-11** (workflow `wf_4f848c23-f2b`, 9 find→classify pipelines over the REAL Hermes/OpenClaw/OpenHuman sources vs the old deep-reads → adversarial verify; full data `REVIEWS/_gold_audit/forensic_adoption_completeness_2026-07-11.md`): **VERDICT — adoptions are COMPLETE, nothing high-value missed.** The workflow's ~90 raw `confirmed_gap` items are ~90% false-positive (its verify layer couldn't tell "absent under this exact name" from "genuinely missing"); every high-plausibility hit was hand-verified as already-built (15/15 channels shipped; Signal rate-limiter `signal.rs:114-124` + `channels/rate_limit.rs`; Discord gateway heartbeat/identify/resume; Nostr/Matrix dedup+E2EE), an intentional FEAT-10 SKIP (msteams/feishu/google-meet/tlon/twilio/simplex/ntfy), or a **documented** low-marginal Matrix/Signal follow-up already superseded by a NEOTH equivalent (sender-allowlist ≥ `MATRIX_IGNORE_USER_PATTERNS`; always-on-E2EE ≥ `E2EE_MODE`). Building the raw list would be bloat, not completeness — no adoption build is required for v1.0. The 3 `[ ]` are unchanged and all genuinely not-agent-performable: HR-00 (reroutes operator's live `ANTHROPIC_BASE_URL`), signed-release (CI complete — only the operator `v*` tag push materializes the public artifacts), OMI-MULTIMODAL-01 (v1.1 multi-week, heavy live-capture dep + new consent-boundary system — half-building it would be a degrade). **Re-recomputed 2026-07-12 (ChatGPT-9.89-review follow-up session), mechanical raw whole-file scan: `911 [x] / 3 [ ] / 0 [~]` — ZERO partials.** The stale DES-13 `[~]` was resolved (its deferred remainder shipped 2026-07-10 as DES-13-AUTO-RESTORE-01, whose own entry states „DES-13 damit KOMPLETT"), so the §0 „No `[~]`" governance rule is mechanically true again. Per-section mechanical recount same date: WS-A..H, WS-DELTA, WS-DES, WS-ZF, WS-V all **0 open**; **WS-I unique-`GOLD-ADAPT-` id dedup 308 total / 0 open / 308 done — WS-I COMPLETE** (370 raw section entries incl. repeated batch listings, every one `[x]`). Dashboard rows above updated to these mechanical values; the only 3 open boxes in the entire file are the operator/v1.1 trio (WS-HR line ~1345, §5 line ~1446, §6 line ~1578)._
 
@@ -633,7 +642,7 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   | CRG-01 prompt-targeted coding context | **ADOPTED / WIRED-PARTIAL** | `SRC/neothd/src/cli/code.rs`, `SRC/neothd/src/coding/decomposer.rs`, `SRC/neothd/src/code_map/recall.rs` | **OPEN:** CLI coding, Chat and Channel have consumers; lifecycle, explicit failure/staleness, configuration, GUI and Buddy parity are incomplete. |
   | CRG-02 structural blast radius | **NATIVE SERVICE + CLI/MCP WIRED / PRODUCT CONSUMERS PARTIAL** | `SRC/neothd/src/code_map/impact.rs`, `SRC/neothd/src/cli/code_map.rs`, `SRC/neothd/src/mcp/codegraph_server.rs`, `SRC/neothd/src/code_map/persist.rs` | **OPEN:** the generation-bound typed service, `neoth code-map impact` and seventh MCP tool are real; review/apply/decomposer/risk, config/reload, Doctor, GUI, Buddy and packaged clean-machine consumers remain. |
   | CRG-03 diff hunks to symbols | **RESEARCHED / FILE-LEVEL SUBSTRATE ONLY** | `SRC/neothd/src/code_map/risk.rs`, `SRC/neothd/src/code_map/symbols.rs`, `SRC/neothd/src/code_map/persist.rs` | **OPEN:** changed filenames exist; exact hunk ranges and durable symbol extents/intersection do not. |
-  | CRG-04 `TestedBy` and test gaps | **RESEARCHED / UNIMPLEMENTED** | `SRC/neothd/src/code_map/graph.rs`, `SRC/neothd/src/code_map/persist.rs` | **OPEN:** neither edge type, test-node evidence, transitive query nor risk/prompt consumer exists. |
+  | CRG-04 `TestedBy` and test gaps | **FIRST TWO LEAVES VERIFIED** | `SRC/neothd/src/code_map/graph.rs`, `SRC/neothd/src/code_map/persist.rs` | **OPEN parent:** stable identities/migration and bounded impact-bound test discovery have root-owned green tests; consumers and product surfaces remain open. |
   | CRG-05 tool-use enrichment | **GENERAL HOOK SUBSTRATE ADOPTED / LEAF UNWIRED** | `SRC/neothd/src/hooks/stages.rs`, `SRC/neothd/src/cli/chat.rs`, `SRC/neothd/src/mcp/codegraph_server.rs` | **OPEN:** `PreProviderCall` is not a per-tool `PreToolUse` boundary and no CRG enrichment result is consumed. |
 
   **Shared native substrate and package boundary (real, but insufficient for
@@ -891,32 +900,26 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
       unchanged-index races.
 
   - [ ] **CRG-04 — `TestedBy` edge and transitive test-gap detection:
-    RESEARCHED / UNIMPLEMENTED / OPEN for v1.0.**
+    FIRST TWO LEAVES VERIFIED / CONSUMERS AND SURFACES OPEN for v1.0.**
 
-    - **Ingestion/index:** `EdgeKind` currently has only `Calls` and
-      `References` (`SRC/neothd/src/code_map/graph.rs:39-56`); neither walker nor
-      persistence identifies test nodes or emits a `TestedBy` edge. There is no
-      provenance/confidence rule distinguishing a real test from a filename,
-      macro, annotation or helper that merely looks like one.
-    - **Retrieval:** there is no native equivalent of CRG
-      `graph.py::get_transitive_tests` (direct production-node tests plus tests
-      of callers/callees according to a documented traversal contract), no
-      test-gap query and no generation-aware result.
-    - **Prompt/citation consumer:** risk ranking currently uses ownership/churn
-      and patch filenames; it does not raise risk because a changed impacted
-      node lacks tests. Review/apply/decomposer, CLI, MCP, Channel and Buddy
-      consume no direct/transitive test evidence.
-    - **Config/lifecycle/surfaces/package:** no detection policy, confidence
-      threshold, traversal/cap knob, migration, rebuild state, Doctor check,
-      CLI/MCP command, GUI test-gap display, Buddy explanation or packaged
-      clean-install proof exists.
-    - [ ] Define stable test-node identity and evidence for supported languages
-      (path/module conventions plus framework syntax where available), emit
-      root-scoped deterministic `TestedBy` edges with source/provenance and
-      migrate old DBs without misreading unknown edge kinds.
-    - [ ] Implement direct + transitive test discovery and a bounded test-gap
-      query over CRG-02 impacted nodes, with explicit confidence, unresolved
-      cases, depth/node caps and generation/truncation metadata.
+    - **Kernel boundary:** W43–47 NativeTestBuild04/05, strict Clippy05 and
+      the 1,913/0/0 selected runtime04 validate supported Rust/Python framework
+      identities, unique root-scoped `TestedBy` targets and schema-v10 migration.
+      Helpers, fixtures, generated/ambiguous targets and unknown edge kinds do
+      not become exact call/test evidence. The retained source/test matrix is
+      linked from `docs/gold-wave43-47-verification.md`.
+    - **Retrieval boundary:** real indexed CRG-02 fixtures prove full impacted
+      identity, direct/transitive observations, physical-root/generation/stale
+      rejection and visible depth/node/global-work caps. Legacy/inferred edges
+      remain uncertain; a missing result is not proof that no test exists.
+    - **Verified kernel leaves:**
+      - [x] Define stable test-node identity and evidence for supported languages
+        (path/module conventions plus framework syntax where available), emit
+        root-scoped deterministic `TestedBy` edges with source/provenance and
+        migrate old DBs without misreading unknown edge kinds.
+      - [x] Implement direct + transitive test discovery and a bounded test-gap
+        query over CRG-02 impacted nodes, with explicit confidence, unresolved
+        cases, depth/node caps and generation/truncation metadata.
     - [ ] Wire the same service into risk/review/apply/decomposer prompt and
       citation receipts, expose CLI/MCP, and make “no test found” a calibrated
       evidence state rather than proof that no test exists.
@@ -929,26 +932,24 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
       stale/partial indexes and deterministic tie/order behavior.
 
   - [ ] **CRG-05 — per-tool codegraph enrichment:
-    GENERAL HOOK SUBSTRATE ADOPTED / LEAF UNWIRED / OPEN for v1.0.**
+    TYPED MCP/PROVIDER/CLI BOUNDARY IMPLEMENTED / ENRICHMENT OPEN for v1.0.**
 
-    - **Trigger ingestion:** NEOTH loads general TOML hooks, but
-      `HookStage::PreProviderCall` is defined as immediately before
-      `provider.complete()` (`SRC/neothd/src/hooks/stages.rs:47-54`) and the
-      production Chat caller invokes that stage at
-      `SRC/neothd/src/cli/chat.rs:2718-2750`. Its nominal
-      `omc_event() -> "PreToolUse"` mapping (`hooks/stages.rs:92-100`) is
-      documentation/import vocabulary, not a typed boundary around each
-      Read/Grep/Glob/Bash/native/MCP invocation.
+    - **Trigger ingestion:** W46 adds a distinct `HookStage::PreToolUse`
+      and typed context/permit for MCP, provider-emitted and direct-CLI MCP
+      execution. Configured hooks can allow, enrich or block before invocation;
+      the permit binds the same arguments and authorization identity. The
+      SmartApprove path runs the hook before catalog-process creation and still
+      requires subsequent authorization. `PreProviderCall` remains separate.
+      Coverage of every relevant native Read/Grep/Glob/Bash path remains open.
     - **Index -> enrichment retrieval:** codegraph read tools exist, but no
       dispatcher captures a tool name + typed `tool_input.pattern/path/command`
       + bound cwd/root, calls callers/callees/relevance/tests, and returns a
       bounded enrichment object.
-    - **Prompt/citation consumer:** no parser or call site consumes CRG
-      `enrich.py`'s
-      `hookSpecificOutput.hookEventName/additionalContext` contract. Therefore
-      no tool loop injects codegraph context before execution, no trust fence
-      distinguishes enrichment from instructions, and no receipt binds it to
-      the tool call or index generation.
+    - **Prompt/citation consumer:** W46 bounds and frames general hook
+      enrichment without rewriting tool arguments. Native codegraph retrieval
+      and a canonical result bound to the tool call, root and index generation
+      remain unimplemented; general hook output does not establish CRG
+      `enrich.py` contract parity or codegraph enrichment coverage.
     - **Config/lifecycle/surfaces/package:** the GUI has general hook inventory,
       but no codegraph-enrichment enablement/status/error view; CLI, Buddy and
       Doctor lack a leaf-specific contract. No default hook/script is staged.

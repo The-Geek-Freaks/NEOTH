@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use sha2::{Digest, Sha256};
 
 use super::diff::{DiffChange, DiffFile, DiffRange, MAX_DIFF_BYTES, parse_unified_diff};
 use super::impact::ImpactSeed;
@@ -54,6 +55,9 @@ pub enum GitDiffSource {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AcquiredDiff {
     pub source: GitDiffSource,
+    /// SHA-256 of the bounded unified-diff bytes. The bytes themselves stay
+    /// transient and are never carried into a receipt or debug output.
+    pub diff_sha256: String,
     pub files: Vec<DiffFile>,
 }
 
@@ -102,17 +106,23 @@ pub fn acquire_git_diff(repo_root: &Path, source: GitDiffSource) -> Result<Acqui
     }
     args.push("--".into());
     let text = run_git_bounded(&args)?;
-    Ok(AcquiredDiff {
-        source,
-        files: parse_unified_diff(&text).map_err(anyhow::Error::from)?,
-    })
+    acquired_diff_from_bounded_text(source, &text)
 }
 
 /// Parse an already captured unified diff under the same bounded parser
 /// contract as Git-acquired text.
 pub fn parse_stdin_diff(input: &str) -> Result<AcquiredDiff> {
+    acquired_diff_from_bounded_text(GitDiffSource::Stdin, input)
+}
+
+/// Bind the exact bounded bytes before parsing. Both Git and stdin callers use
+/// this single seam so semantically equivalent parser output cannot erase byte
+/// provenance such as newline style or trailing records.
+fn acquired_diff_from_bounded_text(source: GitDiffSource, input: &str) -> Result<AcquiredDiff> {
+    let diff_sha256 = format!("{:x}", Sha256::digest(input.as_bytes()));
     Ok(AcquiredDiff {
-        source: GitDiffSource::Stdin,
+        source,
+        diff_sha256,
         files: parse_unified_diff(input).map_err(anyhow::Error::from)?,
     })
 }
@@ -533,6 +543,39 @@ mod tests {
                 "-m",
                 message,
             ],
+        );
+    }
+
+    #[test]
+    fn acquired_diff_hash_binds_raw_bytes_before_normalized_parsing() {
+        let lf = concat!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n",
+            "--- a/src/lib.rs\n",
+            "+++ b/src/lib.rs\n",
+            "@@ -1 +1 @@\n",
+            "-fn old() {}\n",
+            "+fn new() {}\n",
+        );
+        let crlf = lf.replace('\n', "\r\n");
+        let git_shaped = acquired_diff_from_bounded_text(GitDiffSource::WorkingTree, lf).unwrap();
+        let stdin = parse_stdin_diff(lf).unwrap();
+        let newline_variant = parse_stdin_diff(&crlf).unwrap();
+
+        assert_eq!(
+            git_shaped.files, stdin.files,
+            "same acquired bytes parse identically"
+        );
+        assert_eq!(
+            git_shaped.diff_sha256, stdin.diff_sha256,
+            "Git/stdin shared bytes share one commitment"
+        );
+        assert_eq!(
+            stdin.files, newline_variant.files,
+            "CRLF changes no parsed hunk structure"
+        );
+        assert_ne!(
+            stdin.diff_sha256, newline_variant.diff_sha256,
+            "raw acquisition provenance survives parser normalization"
         );
     }
 

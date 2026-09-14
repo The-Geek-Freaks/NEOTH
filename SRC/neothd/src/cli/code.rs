@@ -20,7 +20,7 @@ use crate::cli::OutputFormat;
 use crate::coding::classifier::{Complexity, classify_heuristic};
 use crate::coding::code_map_receipt::{
     CodeMapCaller, CodeMapContextKind, CodeMapContextSource, CodeMapSelectedFile,
-    MAX_CODE_MAP_SOURCE_BYTES, PreparedCodeMapContext,
+    DiffImpactCitation, MAX_CODE_MAP_SOURCE_BYTES, PreparedCodeMapContext,
 };
 #[cfg(test)]
 use crate::coding::decomposer::{
@@ -51,6 +51,24 @@ pub struct CodeArgs {
     /// invocations.
     #[arg(long = "repo-root", value_name = "REPO_ROOT")]
     pub repository_root: Option<PathBuf>,
+    /// Add one explicitly selected Git/stdin diff-impact receipt to the coding
+    /// context.  Every source mode below is opt-in; absence preserves the
+    /// existing recall/repo-summary-only coding behavior.
+    #[arg(long)]
+    pub diff_impact_working_tree: bool,
+    /// Use the explicit staged Git diff as the optional diff-impact input.
+    #[arg(long)]
+    pub diff_impact_staged: bool,
+    /// Committed diff base. Requires `--diff-impact-target`.
+    #[arg(long, value_name = "REF")]
+    pub diff_impact_base: Option<String>,
+    /// Committed diff target. Requires `--diff-impact-base`.
+    #[arg(long, value_name = "REF")]
+    pub diff_impact_target: Option<String>,
+    /// Read one bounded unified diff from stdin for optional diff-impact
+    /// context. It is held transiently and never persisted.
+    #[arg(long)]
+    pub diff_impact_stdin: bool,
     /// Source channel label for the kanban session (`cli` / `chat` /
     /// `telegram` / `discord` / ...). Defaults to `cli`.
     #[arg(long, default_value = "cli")]
@@ -95,6 +113,56 @@ pub struct CodeArgs {
     /// Inherited from the global `--output` flag.
     #[arg(skip)]
     pub output: OutputFormat,
+}
+
+fn explicit_diff_impact_input(
+    args: &CodeArgs,
+) -> Result<Option<crate::code_map::diff_impact::DiffImpactInput>> {
+    let source_count = usize::from(args.diff_impact_working_tree)
+        + usize::from(args.diff_impact_staged)
+        + usize::from(args.diff_impact_stdin)
+        + usize::from(args.diff_impact_base.is_some() || args.diff_impact_target.is_some());
+    if source_count == 0 {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        source_count == 1,
+        "choose exactly one optional diff-impact source: --diff-impact-working-tree, --diff-impact-staged, --diff-impact-base/--diff-impact-target, or --diff-impact-stdin"
+    );
+    if args.diff_impact_working_tree {
+        return Ok(Some(
+            crate::code_map::diff_impact::DiffImpactInput::working_tree(),
+        ));
+    }
+    if args.diff_impact_staged {
+        return Ok(Some(crate::code_map::diff_impact::DiffImpactInput::staged()));
+    }
+    if args.diff_impact_stdin {
+        use std::io::Read as _;
+        let mut bytes = Vec::new();
+        std::io::stdin()
+            .take((crate::code_map::diff::MAX_DIFF_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .context("read bounded --diff-impact-stdin input")?;
+        anyhow::ensure!(
+            bytes.len() <= crate::code_map::diff::MAX_DIFF_BYTES,
+            "--diff-impact-stdin exceeds {} bytes",
+            crate::code_map::diff::MAX_DIFF_BYTES
+        );
+        let diff = String::from_utf8(bytes).context("--diff-impact-stdin must be UTF-8")?;
+        return Ok(Some(crate::code_map::diff_impact::DiffImpactInput::stdin(
+            diff,
+        )));
+    }
+    let (Some(base), Some(target)) = (
+        args.diff_impact_base.clone(),
+        args.diff_impact_target.clone(),
+    ) else {
+        anyhow::bail!("--diff-impact-base and --diff-impact-target must be provided together");
+    };
+    Ok(Some(
+        crate::code_map::diff_impact::DiffImpactInput::committed(base, target),
+    ))
 }
 
 #[derive(Clone, Debug)]
@@ -574,6 +642,7 @@ fn source_from_snapshot(
         stale: false,
         selection_truncated,
         metadata_redacted: false,
+        diff_impact: None,
         selected_files,
         callers,
     }
@@ -594,8 +663,9 @@ fn source_fits_receipt(source: &mut CodeMapContextSource) -> Result<bool> {
 fn assemble_code_map_context(
     recall: Option<BoundCodeMapContext>,
     repo: Option<BoundCodeMapContext>,
+    diff_impact: Option<BoundCodeMapContext>,
 ) -> Result<Option<PreparedCodeMapContext>> {
-    let (text, sources) = match (recall, repo) {
+    let (mut text, mut sources) = match (recall, repo) {
         (Some(recall), Some(repo)) if recall.snapshot == repo.snapshot => (
             format!("{}\n\n{}", recall.text, repo.text),
             vec![recall.source, repo.source],
@@ -609,8 +679,27 @@ fn assemble_code_map_context(
         }
         (Some(recall), None) => (recall.text, vec![recall.source]),
         (None, Some(repo)) => (repo.text, vec![repo.source]),
-        (None, None) => return Ok(None),
+        (None, None) => (String::new(), Vec::new()),
     };
+    if let Some(diff_impact) = diff_impact {
+        if let Some(existing) = sources.first() {
+            anyhow::ensure!(
+                existing.root == diff_impact.source.root
+                    && existing.root_identity == diff_impact.source.root_identity
+                    && existing.index_generation == diff_impact.source.index_generation
+                    && existing.graph_generation == diff_impact.source.graph_generation,
+                "explicit diff-impact receipt does not match the prepared code-map root snapshot"
+            );
+        }
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(&diff_impact.text);
+        sources.push(diff_impact.source);
+    }
+    if sources.is_empty() {
+        return Ok(None);
+    }
     anyhow::ensure!(
         text.len() <= MAX_PREPARED_CODE_MAP_CONTEXT_BYTES,
         "assembled code-map context exceeds {} bytes",
@@ -619,19 +708,88 @@ fn assemble_code_map_context(
     PreparedCodeMapContext::new(text, sources).map(Some)
 }
 
-/// Build the exact bounded coding context for an explicit repository root.
-///
-/// This is deliberately shared by the CLI adapter and the native coding
-/// service.  Neither consumer may resolve process CWD: the physical root is
-/// part of the run request and binds both recall and repo-map provenance.
-pub(crate) fn prepare_code_map_context_for_root(
+fn diff_impact_context_at(
+    conn: &Connection,
+    root: &std::path::Path,
+    input: &crate::code_map::diff_impact::DiffImpactInput,
+) -> Result<BoundCodeMapContext> {
+    let receipt = crate::code_map::diff_impact::analyze_diff_impact(
+        conn,
+        &crate::code_map::diff_impact::DiffImpactRequest {
+            repo_root: root.to_path_buf(),
+            input: input.clone(),
+            // Coding context never requests display-only stale analysis.
+            options: crate::code_map::ImpactOptions::default(),
+        },
+    )?;
+    receipt.require_prompt_admissible()?;
+    let snapshot = receipt.snapshot();
+    let (citation, metadata_redacted) = DiffImpactCitation::from_receipt(&receipt)?;
+    let exact = citation.exact_symbol_seeds.len();
+    let fallback = citation.file_fallback_seeds.len();
+    let selected = citation.affected_identities.len();
+    let structural_projection = citation.render_prompt_projection();
+    let text = format!(
+        "Diff-impact advisory context (explicit source):\n\
+         diff_sha256: {}\n\
+         impact_digest: {}\n\
+         exact_symbol_seeds: {exact}; file_fallback_seeds: {fallback}\n\
+         affected_identities: {selected}; unresolved_seeds: {}; unresolved_edges: {}\n\
+         partial_flags: traversal={}, budget={}, evidence={}, citation_nodes={}\n\n\
+         {structural_projection}",
+        citation.diff_sha256,
+        citation.impact_digest,
+        citation.unresolved_seed_count,
+        citation.unresolved_edge_count,
+        citation.impact_truncated,
+        citation.budget_truncated,
+        citation.evidence_truncated,
+        citation.affected_identities_truncated,
+    );
+    anyhow::ensure!(
+        text.len() <= MAX_PREPARED_CODE_MAP_CONTEXT_BYTES,
+        "bounded diff-impact context exceeded prepared context budget"
+    );
+    let mut selected_files = citation.exact_symbol_seeds.clone();
+    selected_files.extend(citation.file_fallback_seeds.iter().cloned());
+    let mut source = CodeMapContextSource {
+        kind: CodeMapContextKind::DiffImpact,
+        root: snapshot.root.display().to_owned(),
+        root_identity: snapshot.root.identity().as_str().to_owned(),
+        index_generation: snapshot.index_generation,
+        graph_generation: snapshot.graph_generation,
+        stale: false,
+        selection_truncated: citation.impact_truncated
+            || citation.budget_truncated
+            || citation.evidence_truncated
+            || citation.affected_identities_truncated,
+        metadata_redacted,
+        diff_impact: Some(citation),
+        selected_files,
+        callers: Vec::new(),
+    };
+    anyhow::ensure!(
+        source_fits_receipt(&mut source)?,
+        "bounded diff-impact citation exceeds coding receipt source budget"
+    );
+    Ok(BoundCodeMapContext {
+        text,
+        snapshot,
+        source,
+    })
+}
+
+/// Build bounded context for the shared coding-service admission path using
+/// its explicit database and physical repository root, without resolving CWD.
+pub(crate) fn prepare_code_map_context_for_root_at_database(
     prompt: &str,
     repository_root: &std::path::Path,
     config: &crate::config::CodeMapConfig,
+    diff_impact_input: Option<&crate::code_map::diff_impact::DiffImpactInput>,
+    db_path: &std::path::Path,
 ) -> Result<Option<PreparedCodeMapContext>> {
     config.validate()?;
-    let db_path = crate::code_map::persist::default_path();
-    let conn = crate::code_map::persist::open(&db_path)
+    let conn = crate::code_map::persist::open(db_path)
         .with_context(|| format!("open code-map database at {}", db_path.display()))?;
     let recall = prompt_recall_context_at_bounded(
         &conn,
@@ -654,7 +812,11 @@ pub(crate) fn prepare_code_map_context_for_root(
         repo_map_context_at_bounded(&conn, repository_root, config, remaining_repo_bytes)
             .context("resolve repo-map context")?
     };
-    assemble_code_map_context(recall, repo)
+    let diff_impact = diff_impact_input
+        .map(|input| diff_impact_context_at(&conn, repository_root, input))
+        .transpose()
+        .context("resolve explicit diff-impact coding context")?;
+    assemble_code_map_context(recall, repo, diff_impact)
 }
 
 /// Start one fresh coding run through the shared native service.  The CLI has
@@ -664,11 +826,22 @@ pub(crate) fn prepare_code_map_context_for_root(
 pub async fn run_code(args: CodeArgs) -> Result<()> {
     validate_apply_has_dispatch_path(args.apply.is_some(), args.dispatch, args.run_pending)?;
     if args.run_pending {
+        anyhow::ensure!(
+            !args.diff_impact_working_tree
+                && !args.diff_impact_staged
+                && args.diff_impact_base.is_none()
+                && args.diff_impact_target.is_none()
+                && !args.diff_impact_stdin,
+            "optional diff-impact context is only supported for a fresh `neoth code` run"
+        );
         return run_pending_phase(&args).await;
     }
     if args.prompt.trim().is_empty() {
         anyhow::bail!("neoth code: prompt is empty — nothing to decompose");
     }
+    // Consume an explicit diff before any optional brainstorm stdin dialogue.
+    // No source option means no diff context and preserves the existing run.
+    let diff_impact_input = explicit_diff_impact_input(&args)?;
     let cfg = FreedomConfig::load_from_default_path()
         .context("load freedom.yaml — run `neoth init` first")?;
     let (prompt, spec) = if cfg.coding.brainstorm_gate {
@@ -703,7 +876,8 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
         args.dispatch,
         args.apply.is_some(),
     )?
-    .with_brainstorm_spec(spec.map(|spec| *spec));
+    .with_brainstorm_spec(spec.map(|spec| *spec))
+    .with_diff_impact_input(diff_impact_input);
     // This is the actual local Clap command boundary.  The display-only
     // `--source-channel` option intentionally has no bearing on this proof.
     if args.apply.is_some() {
@@ -1298,6 +1472,7 @@ fn validate_apply_has_dispatch_path(apply: bool, dispatch: bool, run_pending: bo
 mod tests {
     use super::*;
     use crate::code_map::graph::EdgeKind;
+    use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
 
     fn real_code_map_fixture() -> (tempfile::TempDir, PathBuf, Connection) {
@@ -1322,6 +1497,135 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn explicit_indexed_diff_projects_same_citation_into_both_provider_attempts_and_receipts()
+    {
+        struct CapturingLlm {
+            prompts: Arc<Mutex<Vec<String>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl DecomposerLlm for CapturingLlm {
+            async fn complete(&self, prompt: &str) -> Result<String> {
+                self.prompts.lock().unwrap().push(prompt.to_owned());
+                Ok("not valid decomposition JSON".to_owned())
+            }
+        }
+
+        let (dir, repo, code_map) = real_code_map_fixture();
+        std::fs::write(
+            repo.join("src/fallback.rs"),
+            "// indexed file without a symbol\n",
+        )
+        .unwrap();
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        crate::code_map::rebuild_snapshot(
+            &root,
+            &dir.path().join("code_map.db"),
+            Default::default(),
+        )
+        .unwrap();
+
+        let raw_diff = concat!(
+            "diff --git a/src/auth.rs b/src/auth.rs\n",
+            "--- a/src/auth.rs\n",
+            "+++ b/src/auth.rs\n",
+            "@@ -1 +1 @@\n",
+            "-pub fn verify_token() -> bool { true }\n",
+            "+pub fn verify_token() -> bool { false }\n",
+            "diff --git a/src/fallback.rs b/src/fallback.rs\n",
+            "--- a/src/fallback.rs\n",
+            "+++ b/src/fallback.rs\n",
+            "@@ -1 +1 @@\n",
+            "-// indexed file without a symbol\n",
+            "+// changed file without a symbol\n",
+        );
+        let diff = diff_impact_context_at(
+            &code_map,
+            &repo,
+            &crate::code_map::diff_impact::DiffImpactInput::stdin(raw_diff.to_owned()),
+        )
+        .unwrap();
+        let prepared = assemble_code_map_context(None, None, Some(diff))
+            .unwrap()
+            .unwrap();
+        assert_eq!(prepared.sources().len(), 1);
+        let source = &prepared.sources()[0];
+        assert_eq!(source.kind, CodeMapContextKind::DiffImpact);
+        let citation = source.diff_impact.as_ref().unwrap();
+        assert!(citation.exact_symbol_seeds.iter().any(|seed| {
+            seed.path == "src/auth.rs" && seed.symbols == vec!["verify_token".to_owned()]
+        }));
+        assert!(
+            citation
+                .file_fallback_seeds
+                .iter()
+                .any(|seed| seed.path == "src/fallback.rs" && seed.symbols.is_empty())
+        );
+        // CRG-02 separates the changed seed from its downstream impacted caller.
+        assert_eq!(
+            citation.affected_identities,
+            vec![
+                crate::coding::code_map_receipt::DiffImpactAffectedIdentity {
+                    path: "src/routes.rs".to_owned(),
+                    symbol: "handle_request".to_owned(),
+                    line: 1,
+                    kind: "function".to_owned(),
+                }
+            ]
+        );
+
+        let views = memstore::open(&dir.path().join("views.db")).unwrap();
+        store::ensure_schema(&views).unwrap();
+        let session =
+            store::insert_session(&views, 1, "repair token validation", "h", "cli", None).unwrap();
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let result = decompose_with_code_map_context(
+            &CapturingLlm {
+                prompts: Arc::clone(&prompts),
+            },
+            &views,
+            session,
+            "repair token validation",
+            Some(&prepared),
+            2,
+        )
+        .await
+        .unwrap();
+        assert!(result.clarifying_question.is_some());
+
+        let prompts = prompts.lock().unwrap().clone();
+        assert_eq!(
+            prompts.len(),
+            2,
+            "malformed output must use one repair attempt"
+        );
+        for prompt in &prompts {
+            assert!(prompt.contains("exact: src/auth.rs :: verify_token"));
+            assert!(prompt.contains("fallback_file: src/fallback.rs"));
+            for identity in &citation.affected_identities {
+                assert!(prompt.contains(&format!(
+                    "affected: {} :: {} @{} ({})",
+                    identity.path, identity.symbol, identity.line, identity.kind
+                )));
+            }
+            assert!(!prompt.contains(raw_diff));
+        }
+
+        let receipts = store::load_code_map_receipts(&views, session).unwrap();
+        assert_eq!(receipts.len(), 2);
+        for (attempt, receipt) in receipts.iter().enumerate() {
+            assert_eq!(receipt.attempt, (attempt + 1) as u8);
+            assert_eq!(receipt.sources.as_slice(), prepared.sources());
+            assert_eq!(receipt.sources[0].root_identity, source.root_identity);
+            assert_eq!(receipt.sources[0].index_generation, source.index_generation);
+            assert_eq!(receipt.sources[0].graph_generation, source.graph_generation);
+            assert_eq!(receipt.sources[0].diff_impact, source.diff_impact);
+        }
+        let persisted = serde_json::to_string(&receipts).unwrap();
+        assert!(!persisted.contains(raw_diff));
+    }
+
+    #[tokio::test]
     async fn coding_code_map_selection_survives_decomposition_and_plan_inspection() {
         struct PlanLlm;
         #[async_trait::async_trait]
@@ -1341,7 +1645,7 @@ mod tests {
             .unwrap();
         let selected = recall.source.clone();
         let summary = repo_map_context_at(&code_map, &repo, &config).unwrap();
-        let prepared = assemble_code_map_context(Some(recall), summary)
+        let prepared = assemble_code_map_context(Some(recall), summary, None)
             .unwrap()
             .unwrap();
         assert_eq!(prepared.sources()[0], selected);
@@ -1409,7 +1713,7 @@ mod tests {
             .find(|file| file.path == "src/many.rs")
             .unwrap();
         assert_eq!(selected.symbols.len(), 129);
-        let prepared = assemble_code_map_context(None, Some(summary))
+        let prepared = assemble_code_map_context(None, Some(summary), None)
             .unwrap()
             .unwrap();
         let receipt = prepared
@@ -1460,7 +1764,9 @@ mod tests {
         let config = crate::config::CodeMapConfig::default();
         let recall = prompt_recall_context_at(&conn, &repo, "verify_token", &config).unwrap();
         let summary = repo_map_context_at(&conn, &repo, &config).unwrap();
-        let prepared = assemble_code_map_context(recall, summary).unwrap().unwrap();
+        let prepared = assemble_code_map_context(recall, summary, None)
+            .unwrap()
+            .unwrap();
         assert!(!prepared.text().contains(secret));
         assert!(
             prepared
@@ -1546,12 +1852,16 @@ mod tests {
         .unwrap();
         let summary = repo_map_context_at(&conn, &repo, &config).unwrap().unwrap();
         assert_ne!(summary.snapshot, recall.snapshot);
-        let prepared = assemble_code_map_context(Some(recall), Some(summary))
+        let prepared = assemble_code_map_context(Some(recall), Some(summary), None)
             .unwrap()
             .unwrap();
         assert_eq!(prepared.sources(), &[previous_source]);
         assert!(!prepared.text().contains("new_generation_only"));
-        assert!(assemble_code_map_context(None, None).unwrap().is_none());
+        assert!(
+            assemble_code_map_context(None, None, None)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1988,6 +2298,7 @@ mod tests {
                     from_file: format!("src/caller_{target:02}_{caller:02}.rs"),
                     from_symbol: format!("caller_{target:02}_{caller:02}"),
                     to_name: format!("target_{target:02}"),
+                    target_file: None,
                     kind: EdgeKind::Calls,
                     confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
                     confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
@@ -2083,7 +2394,7 @@ mod tests {
         };
         let summary = repo_map_context_at(&conn, &repo, &config).unwrap().unwrap();
         assert!(summary.source.selected_files.len() > 128);
-        let prepared = assemble_code_map_context(None, Some(summary))
+        let prepared = assemble_code_map_context(None, Some(summary), None)
             .unwrap()
             .unwrap();
         assert!(prepared.text().len() <= MAX_PREPARED_CODE_MAP_CONTEXT_BYTES);
@@ -2124,7 +2435,7 @@ mod tests {
             snapshot: seed.snapshot.clone(),
             source: repo_source.clone(),
         };
-        let prepared = assemble_code_map_context(Some(recall), Some(repo))
+        let prepared = assemble_code_map_context(Some(recall), Some(repo), None)
             .unwrap()
             .unwrap();
         assert_eq!(prepared.text().len(), MAX_PREPARED_CODE_MAP_CONTEXT_BYTES);
@@ -2145,6 +2456,8 @@ mod tests {
             snapshot: seed.snapshot,
             source: repo_source,
         };
-        assert!(assemble_code_map_context(Some(overflow_recall), Some(overflow_repo)).is_err());
+        assert!(
+            assemble_code_map_context(Some(overflow_recall), Some(overflow_repo), None).is_err()
+        );
     }
 }

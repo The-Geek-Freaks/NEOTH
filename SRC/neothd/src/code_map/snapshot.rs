@@ -491,7 +491,7 @@ pub(crate) fn rebuild_snapshot_delta_cancellable(
         };
         inputs.push(input);
     }
-    let replacement_edges = CallGraph::build_selected_bounded(
+    let mut replacement_edges = CallGraph::build_selected_bounded(
         &inputs,
         prepared
             .map
@@ -501,6 +501,18 @@ pub(crate) fn rebuild_snapshot_delta_cancellable(
         DEFAULT_MAX_GRAPH_EDGES,
         cancellation,
     )?;
+    let remaining = DEFAULT_MAX_GRAPH_EDGES.saturating_sub(replacement_edges.len());
+    replacement_edges.extend(super::graph::build_tested_by_edges(
+        &inputs,
+        prepared.map.files.iter().flat_map(|file| {
+            file.symbols
+                .clone()
+                .into_iter()
+                .map(move |symbol| (file.path.clone(), symbol))
+        }),
+        remaining,
+        cancellation,
+    )?);
     let mut all_edges = prepared.retained_edges.clone();
     all_edges.extend(replacement_edges.iter().cloned());
     super::persist::enforce_incoming_edge_bounds(&prepared.map.root, &all_edges)?;
@@ -947,7 +959,22 @@ where
         inputs.push(input);
     }
     cancellation.checkpoint()?;
-    CallGraph::build_bounded(&inputs, DEFAULT_MAX_GRAPH_EDGES)
+    let graph = CallGraph::build_bounded(&inputs, DEFAULT_MAX_GRAPH_EDGES)?;
+    let remaining = DEFAULT_MAX_GRAPH_EDGES.saturating_sub(graph.edges().len());
+    let test_edges = super::graph::build_tested_by_edges(
+        &inputs,
+        map.files.iter().flat_map(|file| {
+            file.symbols
+                .clone()
+                .into_iter()
+                .map(move |symbol| (file.path.clone(), symbol))
+        }),
+        remaining,
+        cancellation,
+    )?;
+    let mut edges = graph.edges().to_vec();
+    edges.extend(test_edges);
+    Ok(CallGraph::from_edges(edges))
 }
 
 fn validate_scan_fingerprint<F>(map: &RepoMap, mut read_file: F) -> Result<()>

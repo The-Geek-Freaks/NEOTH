@@ -25,11 +25,15 @@ pub const MAX_CODE_MAP_RECEIPT_BYTES: usize = 128 * 1024;
 /// source copy.
 pub(crate) const MAX_CODE_MAP_SOURCE_BYTES: usize = 56 * 1024;
 const MAX_CONTEXT_BYTES: usize = 64 * 1024;
-const MAX_SOURCES: usize = 2;
+const MAX_SOURCES: usize = 3;
 const MAX_ROOT_BYTES: usize = 4 * 1024;
 const MAX_ROOT_IDENTITY_BYTES: usize = 4 * 1024;
 const MAX_PATH_BYTES: usize = 4 * 1024;
 const MAX_SYMBOL_BYTES: usize = 512;
+const MAX_DIFF_IMPACT_SEEDS: usize = 256;
+const MAX_DIFF_IMPACT_AFFECTED_IDENTITIES: usize = 96;
+const MAX_DIFF_IMPACT_KIND_BYTES: usize = 128;
+const MAX_DIFF_IMPACT_PROMPT_PROJECTION_BYTES: usize = 16 * 1024;
 
 /// Why a code-map selection was included in the original assembled context.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +41,220 @@ const MAX_SYMBOL_BYTES: usize = 512;
 pub enum CodeMapContextKind {
     TargetedRecall,
     RepoMapSummary,
+    DiffImpact,
+}
+
+/// A bounded node identity from an advisory diff-impact traversal.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiffImpactAffectedIdentity {
+    pub path: String,
+    pub symbol: String,
+    pub line: u32,
+    pub kind: String,
+}
+
+/// Typed evidence carried from an explicit diff-impact analysis into the
+/// pre-provider receipt. It intentionally has no unified-diff or source-text
+/// field; the SHA-256 commits the acquisition without retaining its bytes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiffImpactCitation {
+    pub source: crate::code_map::diff_impact::DiffImpactSourceDescriptor,
+    pub diff_sha256: String,
+    pub impact_digest: String,
+    pub exact_symbol_seeds: Vec<CodeMapSelectedFile>,
+    pub file_fallback_seeds: Vec<CodeMapSelectedFile>,
+    pub affected_identities: Vec<DiffImpactAffectedIdentity>,
+    /// The citation projection is bounded independently of the impact result.
+    /// This marker prevents a prompt from mistaking the retained identities for
+    /// the whole traversal result.
+    pub affected_identities_truncated: bool,
+    pub unresolved_seed_count: usize,
+    pub unresolved_edge_count: usize,
+    pub impact_truncated: bool,
+    pub budget_truncated: bool,
+    pub evidence_truncated: bool,
+    pub root_snapshot_complete: bool,
+    pub allow_stale: bool,
+}
+
+impl DiffImpactCitation {
+    /// Render the actionable, bounded structural projection supplied to the
+    /// provider. This consumes the same already-sanitized citation persisted
+    /// in the pre-provider receipt; raw diff/source text cannot enter here.
+    pub(crate) fn render_prompt_projection(&self) -> String {
+        let mut out = String::from("diff-impact structural identities:\n");
+        append_projection_line(&mut out, "source", &render_diff_source(&self.source));
+        append_projection_line(&mut out, "exact_symbol_seeds", "");
+        for seed in &self.exact_symbol_seeds {
+            let symbol = seed
+                .symbols
+                .first()
+                .map(String::as_str)
+                .unwrap_or("<invalid-missing-symbol>");
+            append_projection_line(&mut out, "  exact", &format!("{} :: {}", seed.path, symbol));
+        }
+        append_projection_line(&mut out, "file_fallback_seeds", "");
+        for seed in &self.file_fallback_seeds {
+            append_projection_line(&mut out, "  fallback_file", &seed.path);
+        }
+        append_projection_line(&mut out, "affected_identities", "");
+        for identity in &self.affected_identities {
+            append_projection_line(
+                &mut out,
+                "  affected",
+                &format!(
+                    "{} :: {} @{} ({})",
+                    identity.path, identity.symbol, identity.line, identity.kind
+                ),
+            );
+        }
+        append_projection_line(
+            &mut out,
+            "uncertainty",
+            &format!(
+                "unresolved_seeds={}; unresolved_edges={}; traversal_truncated={}; budget_truncated={}; evidence_truncated={}; projection_truncated={}",
+                self.unresolved_seed_count,
+                self.unresolved_edge_count,
+                self.impact_truncated,
+                self.budget_truncated,
+                self.evidence_truncated,
+                self.affected_identities_truncated,
+            ),
+        );
+        out
+    }
+    pub(crate) fn from_receipt(
+        receipt: &crate::code_map::diff_impact::DiffImpactReceipt,
+    ) -> Result<(Self, bool)> {
+        receipt.require_prompt_admissible()?;
+        let mut metadata_redacted = false;
+        let mut source = receipt.source.clone();
+        sanitize_diff_source(&mut source, &mut metadata_redacted);
+        let exact_symbol_seeds =
+            sanitize_diff_seeds(&receipt.exact_symbol_seeds, &mut metadata_redacted);
+        let file_fallback_seeds =
+            sanitize_diff_seeds(&receipt.file_fallback_seeds, &mut metadata_redacted);
+        let mut affected_identities = Vec::new();
+        let mut affected_identities_truncated =
+            receipt.impact.impacted_nodes.len() > MAX_DIFF_IMPACT_AFFECTED_IDENTITIES;
+        for node in receipt
+            .impact
+            .impacted_nodes
+            .iter()
+            .take(MAX_DIFF_IMPACT_AFFECTED_IDENTITIES)
+        {
+            let mut path = node.node.file.clone();
+            let mut symbol = node.node.symbol.clone();
+            let mut kind = node.node.kind.clone();
+            sanitize_metadata_field(&mut path, &mut metadata_redacted);
+            sanitize_metadata_field(&mut symbol, &mut metadata_redacted);
+            sanitize_metadata_field(&mut kind, &mut metadata_redacted);
+            affected_identities.push(DiffImpactAffectedIdentity {
+                path,
+                symbol,
+                line: node.node.line,
+                kind,
+            });
+        }
+        // The retained list may be shorter after a future producer applies an
+        // independent cap; make that condition visible too.
+        affected_identities_truncated |=
+            receipt.impact.impacted_nodes.len() > affected_identities.len();
+        let citation = Self {
+            source,
+            diff_sha256: receipt.diff_sha256.clone(),
+            impact_digest: receipt.impact.digest.clone(),
+            exact_symbol_seeds,
+            file_fallback_seeds,
+            affected_identities,
+            affected_identities_truncated,
+            unresolved_seed_count: receipt.impact.unresolved_seeds.len(),
+            unresolved_edge_count: receipt.impact.unresolved_edges.len(),
+            impact_truncated: receipt.impact.truncated,
+            budget_truncated: receipt.impact.budget_truncated,
+            evidence_truncated: receipt.impact.evidence_truncated,
+            root_snapshot_complete: receipt.root_snapshot_complete,
+            allow_stale: receipt.allow_stale,
+        };
+        citation.validate()?;
+        Ok((citation, metadata_redacted))
+    }
+
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            is_lowercase_sha256(&self.diff_sha256),
+            "diff-impact diff digest is not lowercase SHA-256"
+        );
+        ensure!(
+            is_lowercase_sha256(&self.impact_digest),
+            "diff-impact impact digest is not lowercase SHA-256"
+        );
+        ensure!(
+            self.root_snapshot_complete,
+            "partial code-map scan cannot enter coding diff-impact citation"
+        );
+        ensure!(
+            !self.allow_stale,
+            "allow-stale diff-impact output cannot enter coding citation"
+        );
+        validate_diff_source(&self.source)?;
+        validate_diff_seed_files("exact diff-impact seeds", &self.exact_symbol_seeds)?;
+        validate_diff_seed_files("fallback diff-impact seeds", &self.file_fallback_seeds)?;
+        ensure!(
+            self.exact_symbol_seeds.len() + self.file_fallback_seeds.len() <= MAX_DIFF_IMPACT_SEEDS,
+            "diff-impact seed metadata exceeds bounded citation limit"
+        );
+        ensure!(
+            self.affected_identities.len() <= MAX_DIFF_IMPACT_AFFECTED_IDENTITIES,
+            "diff-impact affected identities exceed bounded citation limit"
+        );
+        for identity in &self.affected_identities {
+            relative_contained_path("diff-impact affected path", &identity.path)?;
+            bounded_nonempty(
+                "diff-impact affected symbol",
+                &identity.symbol,
+                MAX_SYMBOL_BYTES,
+            )?;
+            bounded_nonempty(
+                "diff-impact affected kind",
+                &identity.kind,
+                MAX_DIFF_IMPACT_KIND_BYTES,
+            )?;
+            ensure!(
+                identity.line > 0,
+                "diff-impact affected identity line must be positive"
+            );
+        }
+        Ok(())
+    }
+}
+
+fn render_diff_source(source: &crate::code_map::diff_impact::DiffImpactSourceDescriptor) -> String {
+    match source {
+        crate::code_map::diff_impact::DiffImpactSourceDescriptor::WorkingTree => {
+            "working_tree".to_owned()
+        }
+        crate::code_map::diff_impact::DiffImpactSourceDescriptor::Staged => "staged".to_owned(),
+        crate::code_map::diff_impact::DiffImpactSourceDescriptor::Stdin => "stdin".to_owned(),
+        crate::code_map::diff_impact::DiffImpactSourceDescriptor::Committed { base, target } => {
+            format!("committed base={base} target={target}")
+        }
+    }
+}
+
+fn append_projection_line(out: &mut String, label: &str, value: &str) {
+    let line = if value.is_empty() {
+        format!("{label}:\n")
+    } else {
+        format!("{label}: {value}\n")
+    };
+    if out.len().saturating_add(line.len()) <= MAX_DIFF_IMPACT_PROMPT_PROJECTION_BYTES {
+        out.push_str(&line);
+    } else if !out.ends_with("prompt_projection_truncated: true\n") {
+        out.push_str("prompt_projection_truncated: true\n");
+    }
 }
 
 /// Symbols selected from one repository-relative file.
@@ -75,6 +293,9 @@ pub struct CodeMapContextSource {
     /// never accepted merely because this field is absent.
     #[serde(default)]
     pub metadata_redacted: bool,
+    /// Present only for an explicit, prompt-admissible diff-impact input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_impact: Option<DiffImpactCitation>,
     pub selected_files: Vec<CodeMapSelectedFile>,
     pub callers: Vec<CodeMapCaller>,
 }
@@ -127,6 +348,12 @@ impl CodeMapContextSource {
             sanitize_metadata_field(&mut caller.caller_symbol, &mut metadata_redacted);
             sanitize_metadata_field(&mut caller.caller_path, &mut metadata_redacted);
         }
+        if let Some(citation) = &mut self.diff_impact {
+            // Its constructor pre-sanitizes every displayed field. A later
+            // decode cannot silently turn a malformed/stale citation into
+            // prompt authority, so validation below is deliberately strict.
+            citation.validate()?;
+        }
         self.metadata_redacted = metadata_redacted;
         self.validate_shape()?;
         Ok(())
@@ -149,6 +376,16 @@ impl CodeMapContextSource {
             !self.stale,
             "stale code-map sources must not be used for coding context"
         );
+        match (&self.kind, &self.diff_impact) {
+            (CodeMapContextKind::DiffImpact, Some(citation)) => citation.validate()?,
+            (CodeMapContextKind::DiffImpact, None) => {
+                anyhow::bail!("diff-impact code-map source requires a typed citation")
+            }
+            (_, Some(_)) => {
+                anyhow::bail!("only a diff-impact source may carry a diff-impact citation")
+            }
+            (_, None) => {}
+        }
         for file in &self.selected_files {
             relative_contained_path("code-map selected-file path", &file.path)?;
             for symbol in &file.symbols {
@@ -427,6 +664,10 @@ fn source_contains_redaction_marker(source: &CodeMapContextSource) -> bool {
                 || caller.caller_symbol.contains("[REDACTED:")
                 || caller.caller_path.contains("[REDACTED:")
         })
+        || source
+            .diff_impact
+            .as_ref()
+            .is_some_and(diff_impact_contains_redaction_marker)
 }
 
 fn source_metadata_is_sanitized(source: &CodeMapContextSource) -> bool {
@@ -442,6 +683,123 @@ fn source_metadata_is_sanitized(source: &CodeMapContextSource) -> bool {
             sanitize_metadata_value(&caller.target_symbol) == caller.target_symbol.as_str()
                 && sanitize_metadata_value(&caller.caller_symbol) == caller.caller_symbol.as_str()
                 && sanitize_metadata_value(&caller.caller_path) == caller.caller_path.as_str()
+        })
+        && source
+            .diff_impact
+            .as_ref()
+            .is_none_or(diff_impact_metadata_is_sanitized)
+}
+
+fn sanitize_diff_source(
+    source: &mut crate::code_map::diff_impact::DiffImpactSourceDescriptor,
+    metadata_redacted: &mut bool,
+) {
+    if let crate::code_map::diff_impact::DiffImpactSourceDescriptor::Committed { base, target } =
+        source
+    {
+        sanitize_metadata_field(base, metadata_redacted);
+        sanitize_metadata_field(target, metadata_redacted);
+    }
+}
+
+fn validate_diff_source(
+    source: &crate::code_map::diff_impact::DiffImpactSourceDescriptor,
+) -> Result<()> {
+    use crate::code_map::diff_impact::DiffImpactSourceDescriptor;
+    if let DiffImpactSourceDescriptor::Committed { base, target } = source {
+        bounded_nonempty("diff-impact base ref", base, MAX_SYMBOL_BYTES)?;
+        bounded_nonempty("diff-impact target ref", target, MAX_SYMBOL_BYTES)?;
+        ensure!(
+            sanitize_metadata_value(base) == *base && sanitize_metadata_value(target) == *target,
+            "diff-impact committed ref contains unsanitized metadata"
+        );
+    }
+    Ok(())
+}
+
+fn sanitize_diff_seeds(
+    seeds: &[crate::code_map::diff_impact::DiffImpactSeedReceipt],
+    metadata_redacted: &mut bool,
+) -> Vec<CodeMapSelectedFile> {
+    seeds
+        .iter()
+        .map(|seed| {
+            let mut path = seed.file.clone();
+            sanitize_metadata_field(&mut path, metadata_redacted);
+            let mut symbols = Vec::new();
+            if let Some(symbol) = &seed.symbol {
+                let mut symbol = symbol.clone();
+                sanitize_metadata_field(&mut symbol, metadata_redacted);
+                symbols.push(symbol);
+            }
+            CodeMapSelectedFile { path, symbols }
+        })
+        .collect()
+}
+
+fn validate_diff_seed_files(name: &str, seeds: &[CodeMapSelectedFile]) -> Result<()> {
+    for seed in seeds {
+        relative_contained_path(name, &seed.path)?;
+        ensure!(
+            seed.symbols.len() <= 1,
+            "{name} must retain at most one exact symbol per seed"
+        );
+        for symbol in &seed.symbols {
+            bounded_nonempty(name, symbol, MAX_SYMBOL_BYTES)?;
+        }
+    }
+    Ok(())
+}
+
+fn diff_impact_contains_redaction_marker(citation: &DiffImpactCitation) -> bool {
+    let source = match &citation.source {
+        crate::code_map::diff_impact::DiffImpactSourceDescriptor::Committed { base, target } => {
+            base.contains("[REDACTED:") || target.contains("[REDACTED:")
+        }
+        _ => false,
+    };
+    source
+        || citation
+            .exact_symbol_seeds
+            .iter()
+            .chain(&citation.file_fallback_seeds)
+            .any(|seed| {
+                seed.path.contains("[REDACTED:")
+                    || seed
+                        .symbols
+                        .iter()
+                        .any(|symbol| symbol.contains("[REDACTED:"))
+            })
+        || citation.affected_identities.iter().any(|identity| {
+            identity.path.contains("[REDACTED:")
+                || identity.symbol.contains("[REDACTED:")
+                || identity.kind.contains("[REDACTED:")
+        })
+}
+
+fn diff_impact_metadata_is_sanitized(citation: &DiffImpactCitation) -> bool {
+    let source = match &citation.source {
+        crate::code_map::diff_impact::DiffImpactSourceDescriptor::Committed { base, target } => {
+            sanitize_metadata_value(base) == *base && sanitize_metadata_value(target) == *target
+        }
+        _ => true,
+    };
+    source
+        && citation
+            .exact_symbol_seeds
+            .iter()
+            .chain(&citation.file_fallback_seeds)
+            .all(|seed| {
+                sanitize_metadata_value(&seed.path) == seed.path
+                    && seed
+                        .symbols
+                        .iter()
+                        .all(|symbol| sanitize_metadata_value(symbol) == *symbol)
+            })
+        && citation.affected_identities.iter().all(|identity| {
+            sanitize_metadata_value(&identity.path) == identity.path
+                && sanitize_metadata_value(&identity.symbol) == identity.symbol
+                && sanitize_metadata_value(&identity.kind) == identity.kind
         })
 }
 
@@ -497,6 +855,7 @@ mod tests {
             stale: false,
             selection_truncated: false,
             metadata_redacted: false,
+            diff_impact: None,
             selected_files: vec![CodeMapSelectedFile {
                 path: "src/lib.rs".to_owned(),
                 symbols: vec!["entrypoint".to_owned()],
@@ -507,6 +866,84 @@ mod tests {
                 caller_path: "src/main.rs".to_owned(),
             }],
         }
+    }
+
+    fn diff_citation() -> DiffImpactCitation {
+        DiffImpactCitation {
+            source: crate::code_map::diff_impact::DiffImpactSourceDescriptor::WorkingTree,
+            diff_sha256: "a".repeat(64),
+            impact_digest: "b".repeat(64),
+            exact_symbol_seeds: vec![CodeMapSelectedFile {
+                path: "src/lib.rs".to_owned(),
+                symbols: vec!["changed".to_owned()],
+            }],
+            file_fallback_seeds: vec![CodeMapSelectedFile {
+                path: "src/fallback.rs".to_owned(),
+                symbols: Vec::new(),
+            }],
+            affected_identities: vec![DiffImpactAffectedIdentity {
+                path: "src/lib.rs".to_owned(),
+                symbol: "changed".to_owned(),
+                line: 7,
+                kind: "function".to_owned(),
+            }],
+            affected_identities_truncated: false,
+            unresolved_seed_count: 0,
+            unresolved_edge_count: 0,
+            impact_truncated: false,
+            budget_truncated: false,
+            evidence_truncated: false,
+            root_snapshot_complete: true,
+            allow_stale: false,
+        }
+    }
+
+    #[test]
+    fn diff_impact_source_refuses_missing_stale_or_partial_citation() {
+        let missing = source(CodeMapContextKind::DiffImpact);
+        assert!(
+            missing.validate().is_err(),
+            "typed diff-impact provenance is mandatory"
+        );
+
+        let mut partial = source(CodeMapContextKind::DiffImpact);
+        let mut citation = diff_citation();
+        citation.root_snapshot_complete = false;
+        partial.diff_impact = Some(citation);
+        assert!(
+            partial.validate().is_err(),
+            "partial map scan cannot reach a coding receipt"
+        );
+
+        let mut stale = source(CodeMapContextKind::DiffImpact);
+        let mut citation = diff_citation();
+        citation.allow_stale = true;
+        stale.diff_impact = Some(citation);
+        assert!(
+            stale.validate().is_err(),
+            "allow-stale analysis cannot reach a coding receipt"
+        );
+
+        let mut admissible = source(CodeMapContextKind::DiffImpact);
+        admissible.diff_impact = Some(diff_citation());
+        assert!(
+            admissible.validate().is_ok(),
+            "fresh complete typed citation remains receiptable"
+        );
+    }
+
+    #[test]
+    fn diff_impact_prompt_projection_uses_the_receipted_structural_identities() {
+        let mut citation = diff_citation();
+        citation.unresolved_seed_count = 1;
+        citation.budget_truncated = true;
+        let projection = citation.render_prompt_projection();
+        assert!(projection.contains("exact: src/lib.rs :: changed"));
+        assert!(projection.contains("fallback_file: src/fallback.rs"));
+        assert!(projection.contains("affected: src/lib.rs :: changed @7 (function)"));
+        assert!(projection.contains("unresolved_seeds=1"));
+        assert!(projection.contains("budget_truncated=true"));
+        assert!(!projection.contains("diff --git"));
     }
 
     #[test]

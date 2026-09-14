@@ -1032,6 +1032,7 @@ mod tests {
                 stale: false,
                 selection_truncated: false,
                 metadata_redacted: false,
+                diff_impact: None,
                 selected_files: vec![CodeMapSelectedFile {
                     path: "src/lib.rs".to_string(),
                     symbols: vec!["entrypoint".to_string()],
@@ -1041,6 +1042,62 @@ mod tests {
                     caller_symbol: "main".to_string(),
                     caller_path: "src/main.rs".to_string(),
                 }],
+            }],
+        )
+        .unwrap()
+    }
+
+    fn prepared_diff_impact_context() -> super::super::code_map_receipt::PreparedCodeMapContext {
+        use super::super::code_map_receipt::{
+            CodeMapContextKind, CodeMapContextSource, CodeMapSelectedFile,
+            DiffImpactAffectedIdentity, DiffImpactCitation, PreparedCodeMapContext,
+        };
+
+        let citation = DiffImpactCitation {
+            source: crate::code_map::diff_impact::DiffImpactSourceDescriptor::Stdin,
+            diff_sha256: "d".repeat(64),
+            impact_digest: "b".repeat(64),
+            exact_symbol_seeds: vec![CodeMapSelectedFile {
+                path: "src/auth.rs".to_owned(),
+                symbols: vec!["verify_token".to_owned()],
+            }],
+            file_fallback_seeds: vec![CodeMapSelectedFile {
+                path: "src/fallback.rs".to_owned(),
+                symbols: Vec::new(),
+            }],
+            affected_identities: vec![DiffImpactAffectedIdentity {
+                path: "src/auth.rs".to_owned(),
+                symbol: "verify_token".to_owned(),
+                line: 1,
+                kind: "function".to_owned(),
+            }],
+            affected_identities_truncated: false,
+            unresolved_seed_count: 0,
+            unresolved_edge_count: 0,
+            impact_truncated: false,
+            budget_truncated: false,
+            evidence_truncated: false,
+            root_snapshot_complete: true,
+            allow_stale: false,
+        };
+        let text = format!(
+            "Diff-impact advisory context (explicit source):\n{}",
+            citation.render_prompt_projection()
+        );
+        PreparedCodeMapContext::new(
+            text,
+            vec![CodeMapContextSource {
+                kind: CodeMapContextKind::DiffImpact,
+                root: "C:/repo".to_owned(),
+                root_identity: "volume-serial:repo-id".to_owned(),
+                index_generation: 7,
+                graph_generation: 7,
+                stale: false,
+                selection_truncated: false,
+                metadata_redacted: false,
+                diff_impact: Some(citation),
+                selected_files: Vec::new(),
+                callers: Vec::new(),
             }],
         )
         .unwrap()
@@ -1352,6 +1409,46 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM idx_kanban_task", [], |row| row.get(0))
             .unwrap();
         assert_eq!(task_count, 0, "malformed attempts must not create tasks");
+    }
+
+    #[tokio::test]
+    async fn diff_projection_is_provider_visible_and_receipt_identical_across_repair() {
+        let (conn, session_id) = prepared_session();
+        let prepared = prepared_diff_impact_context();
+        let llm = CapturingLlm::new(vec!["not JSON".to_owned(), "still not JSON".to_owned()]);
+        let result = decompose_with_code_map_context(
+            &llm,
+            &conn,
+            session_id,
+            "repair token validation",
+            Some(&prepared),
+            42,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.clarifying_question.is_some());
+        let prompts = llm.captured_prompts();
+        assert_eq!(prompts.len(), 2);
+        for prompt in &prompts {
+            assert!(prompt.contains("exact: src/auth.rs :: verify_token"));
+            assert!(prompt.contains("fallback_file: src/fallback.rs"));
+            assert!(prompt.contains("affected: src/auth.rs :: verify_token @1 (function)"));
+        }
+
+        let receipts = crate::coding::store::load_code_map_receipts(&conn, session_id).unwrap();
+        assert_eq!(receipts.len(), 2);
+        for receipt in &receipts {
+            assert_eq!(receipt.sources.as_slice(), prepared.sources());
+            let citation = receipt.sources[0].diff_impact.as_ref().unwrap();
+            assert_eq!(citation.diff_sha256, "d".repeat(64));
+            assert_eq!(citation.impact_digest, "b".repeat(64));
+            assert_eq!(
+                citation.exact_symbol_seeds[0].symbols,
+                vec!["verify_token".to_owned()]
+            );
+            assert!(citation.file_fallback_seeds[0].symbols.is_empty());
+        }
     }
 
     #[tokio::test]

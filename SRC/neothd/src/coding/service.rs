@@ -365,6 +365,9 @@ pub struct CodingStartRequest {
     /// the explicit root immediately before session/provider work and retains
     /// it only until the decomposer records hash-only evidence.
     prepared_code_map_context: Option<PreparedCodeMapContext>,
+    /// Optional CLI-selected diff source. It remains transient until the
+    /// shared code-map preparation path validates and receipts it.
+    diff_impact_input: Option<crate::code_map::diff_impact::DiffImpactInput>,
     brainstorm_spec: Option<crate::coding::brainstorm::BrainstormSpec>,
 }
 
@@ -388,6 +391,7 @@ impl CodingStartRequest {
             apply,
             apply_confirmation: ApplyConfirmation::Unattended,
             prepared_code_map_context: None,
+            diff_impact_input: None,
             brainstorm_spec: None,
         };
         request.validate()?;
@@ -414,6 +418,14 @@ impl CodingStartRequest {
         prepared_code_map_context: Option<PreparedCodeMapContext>,
     ) -> Self {
         self.prepared_code_map_context = prepared_code_map_context;
+        self
+    }
+
+    pub(crate) fn with_diff_impact_input(
+        mut self,
+        diff_impact_input: Option<crate::code_map::diff_impact::DiffImpactInput>,
+    ) -> Self {
+        self.diff_impact_input = diff_impact_input;
         self
     }
 
@@ -2573,9 +2585,47 @@ async fn runtime_command_loop(
 async fn start_runtime_run(
     service: &LocalCodingService,
     config: &CodingServiceConfig,
-    mut request: CodingStartRequest,
+    request: CodingStartRequest,
     control: Arc<ServiceControl>,
 ) -> Result<CodingRunHandle> {
+    let code_map_database_path = crate::code_map::persist::default_path();
+    let neoth_home = config.neoth_home.clone();
+    let database_path = config.database_path.clone();
+    let local = start_runtime_run_with_worker_factory(
+        service,
+        config,
+        request,
+        &code_map_database_path,
+        move |run_config, dispatch_plan| async move {
+            let worker =
+                build_audited_worker(&run_config, &neoth_home, database_path, dispatch_plan)
+                    .await?;
+            Ok(Arc::new(worker) as Arc<dyn CodingRunWorker>)
+        },
+    )
+    .await?;
+    Ok(CodingRunHandle {
+        run_id: local.run_id,
+        events: local.state.events.clone(),
+        terminal: local.terminal.clone(),
+        service: CodingService { control },
+    })
+}
+
+/// One service admission order shared by the production provider factory and
+/// isolated-database fixtures. Preparation must finish before dispatch or any
+/// worker/provider factory is invoked.
+async fn start_runtime_run_with_worker_factory<F, Fut>(
+    service: &LocalCodingService,
+    config: &CodingServiceConfig,
+    mut request: CodingStartRequest,
+    code_map_database_path: &std::path::Path,
+    worker_factory: F,
+) -> Result<LocalCodingRunHandle>
+where
+    F: FnOnce(crate::config::FreedomConfig, Option<CodingDispatchPlan>) -> Fut,
+    Fut: std::future::Future<Output = Result<Arc<dyn CodingRunWorker>>>,
+{
     request.validate()?;
     // A service can live longer than a GUI settings view. Reload precisely at
     // this admission boundary and fail closed on unreadable/invalid changes;
@@ -2599,10 +2649,12 @@ async fn start_runtime_run(
     );
     // Freeze the typed original selection before a session, provider audit, or
     // dispatch worker exists.  It uses this explicit root, never process CWD.
-    let prepared_context = crate::cli::code::prepare_code_map_context_for_root(
+    let prepared_context = prepare_runtime_code_map_context_at_database(
         &request.prompt,
         &repository_root,
         &run_config.code_map,
+        request.diff_impact_input.as_ref(),
+        code_map_database_path,
     )?;
     request.repository_root = repository_root;
     request = request.with_prepared_code_map_context(prepared_context);
@@ -2611,20 +2663,24 @@ async fn start_runtime_run(
     } else {
         None
     };
-    let worker = build_audited_worker(
-        &run_config,
-        &config.neoth_home,
-        config.database_path.clone(),
-        dispatch_plan,
+    let worker = worker_factory(run_config, dispatch_plan).await?;
+    service.start_local(request, worker).await
+}
+
+fn prepare_runtime_code_map_context_at_database(
+    prompt: &str,
+    repository_root: &std::path::Path,
+    config: &crate::config::CodeMapConfig,
+    diff_impact_input: Option<&crate::code_map::diff_impact::DiffImpactInput>,
+    database_path: &std::path::Path,
+) -> Result<Option<PreparedCodeMapContext>> {
+    crate::cli::code::prepare_code_map_context_for_root_at_database(
+        prompt,
+        repository_root,
+        config,
+        diff_impact_input,
+        database_path,
     )
-    .await?;
-    let local = service.start_local(request, Arc::new(worker)).await?;
-    Ok(CodingRunHandle {
-        run_id: local.run_id,
-        events: local.state.events.clone(),
-        terminal: local.terminal.clone(),
-        service: CodingService { control },
-    })
 }
 
 /// Observer handle. It contains no JoinHandle and cannot detach the run.
@@ -2765,6 +2821,202 @@ mod tests {
         CodeMapContextKind, CodeMapContextSource, CodeMapSelectedFile,
     };
     use std::sync::atomic::AtomicUsize;
+
+    fn service_code_map_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, CodingServiceConfig) {
+        let dir = tempfile::tempdir().unwrap();
+        let repository_root = dir.path().join("repo");
+        std::fs::create_dir_all(repository_root.join("src")).unwrap();
+        std::fs::write(
+            repository_root.join("src/auth.rs"),
+            "pub fn verify_token() -> bool { true }\n",
+        )
+        .unwrap();
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repository_root).unwrap();
+        let code_map_database_path = dir.path().join("code-map.db");
+        crate::code_map::rebuild_snapshot(&root, &code_map_database_path, Default::default())
+            .unwrap();
+        let freedom_config_path = dir.path().join("freedom.yaml");
+        std::fs::write(&freedom_config_path, "operator_id: fixture\n").unwrap();
+        let neoth_home = dir.path().join("neoth-home");
+        std::fs::create_dir_all(&neoth_home).unwrap();
+        let config = CodingServiceConfig {
+            database_path: dir.path().join("views.db"),
+            neoth_home,
+            freedom_config_path,
+            freedom_config: crate::config::FreedomConfig::default(),
+        };
+        (dir, repository_root, code_map_database_path, config)
+    }
+
+    fn explicit_auth_stdin_diff() -> crate::code_map::diff_impact::DiffImpactInput {
+        crate::code_map::diff_impact::DiffImpactInput::stdin(
+            concat!(
+                "diff --git a/src/auth.rs b/src/auth.rs\n",
+                "--- a/src/auth.rs\n",
+                "+++ b/src/auth.rs\n",
+                "@@ -1 +1 @@\n",
+                "-pub fn verify_token() -> bool { true }\n",
+                "+pub fn verify_token() -> bool { false }\n",
+            )
+            .to_owned(),
+        )
+    }
+
+    struct RuntimeCountingDecomposer(Arc<AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl DecomposerLlm for RuntimeCountingDecomposer {
+        async fn complete(&self, _: &str) -> Result<String> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(
+                    r#"{"tasks":[{"title":"Add tests for token verification","task_type":"tests","depends_on":[]}],"clarifying_question":null,"estimated_session_complexity":"fast"}"#
+                    .to_owned(),
+            )
+        }
+    }
+
+    async fn start_fixture_runtime(
+        service: &LocalCodingService,
+        config: &CodingServiceConfig,
+        repository_root: &std::path::Path,
+        code_map_database_path: &std::path::Path,
+        factory_calls: Arc<AtomicUsize>,
+        llm_calls: Arc<AtomicUsize>,
+    ) -> Result<LocalCodingRunHandle> {
+        let views_database_path = config.database_path.clone();
+        let request =
+            request(repository_root).with_diff_impact_input(Some(explicit_auth_stdin_diff()));
+        start_runtime_run_with_worker_factory(
+            service,
+            config,
+            request,
+            code_map_database_path,
+            move |_run_config, dispatch_plan| async move {
+                assert!(dispatch_plan.is_none(), "fixture does not dispatch tasks");
+                factory_calls.fetch_add(1, Ordering::SeqCst);
+                let worker: Arc<dyn CodingRunWorker> = Arc::new(StoredDecompositionWorker::new(
+                    views_database_path,
+                    Some("fixture-operator".to_owned()),
+                    Arc::new(RuntimeCountingDecomposer(llm_calls)),
+                ));
+                Ok(worker)
+            },
+        )
+        .await
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shared_runtime_start_rejects_untrusted_maps_before_real_worker_factory_and_provider() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let service = LocalCodingService::new();
+                let (valid_dir, valid_root, valid_database, valid_config) =
+                    service_code_map_fixture();
+                let valid_factory_calls = Arc::new(AtomicUsize::new(0));
+                let valid_llm_calls = Arc::new(AtomicUsize::new(0));
+                let valid = start_fixture_runtime(
+                    &service,
+                    &valid_config,
+                    &valid_root,
+                    &valid_database,
+                    Arc::clone(&valid_factory_calls),
+                    Arc::clone(&valid_llm_calls),
+                )
+                .await
+                .expect("trusted fixture must reach the real worker factory");
+                let valid_terminal = valid.wait_terminal().await.unwrap();
+                assert!(matches!(valid_terminal, CodingRunResult::Completed { .. }));
+                assert_eq!(valid_factory_calls.load(Ordering::SeqCst), 1);
+                assert_eq!(valid_llm_calls.load(Ordering::SeqCst), 1);
+                drop(valid_dir);
+
+                let (_dir, repository_root, database_path, config) = service_code_map_fixture();
+                std::fs::write(
+                    repository_root.join("src/auth.rs"),
+                    "pub fn changed_token() -> bool { false }\n",
+                )
+                .unwrap();
+                let factory_calls = Arc::new(AtomicUsize::new(0));
+                let llm_calls = Arc::new(AtomicUsize::new(0));
+                let stale = start_fixture_runtime(
+                    &service,
+                    &config,
+                    &repository_root,
+                    &database_path,
+                    Arc::clone(&factory_calls),
+                    Arc::clone(&llm_calls),
+                )
+                .await
+                .err()
+                .expect("stale snapshot must reject runtime start");
+                assert!(
+                    !stale.to_string().is_empty(),
+                    "stale rejection remains visible"
+                );
+                assert_eq!(factory_calls.load(Ordering::SeqCst), 0);
+                assert_eq!(llm_calls.load(Ordering::SeqCst), 0);
+
+                let (_dir, repository_root, database_path, config) = service_code_map_fixture();
+                let root = crate::code_map::CanonicalRepoRoot::discover(&repository_root).unwrap();
+                let conn = crate::code_map::persist::open(&database_path).unwrap();
+                conn.execute(
+                    "UPDATE code_map_roots SET oversize_skipped = 1 WHERE root = ?1",
+                    rusqlite::params![root.display()],
+                )
+                .unwrap();
+                drop(conn);
+                let factory_calls = Arc::new(AtomicUsize::new(0));
+                let llm_calls = Arc::new(AtomicUsize::new(0));
+                let partial = start_fixture_runtime(
+                    &service,
+                    &config,
+                    &repository_root,
+                    &database_path,
+                    Arc::clone(&factory_calls),
+                    Arc::clone(&llm_calls),
+                )
+                .await
+                .err()
+                .expect("partial snapshot must reject runtime start");
+                let partial_text = format!("{partial:#}");
+                assert!(
+                    partial_text.contains("partial") || partial_text.contains("incomplete"),
+                    "partial capture rejection remains visible: {partial_text}"
+                );
+                assert_eq!(factory_calls.load(Ordering::SeqCst), 0);
+                assert_eq!(llm_calls.load(Ordering::SeqCst), 0);
+
+                let (dir, repository_root, database_path, config) = service_code_map_fixture();
+                std::fs::rename(&repository_root, dir.path().join("replaced-original")).unwrap();
+                std::fs::create_dir_all(repository_root.join("src")).unwrap();
+                std::fs::write(
+                    repository_root.join("src/auth.rs"),
+                    "pub fn verify_token() -> bool { true }\n",
+                )
+                .unwrap();
+                let factory_calls = Arc::new(AtomicUsize::new(0));
+                let llm_calls = Arc::new(AtomicUsize::new(0));
+                let replaced = start_fixture_runtime(
+                    &service,
+                    &config,
+                    &repository_root,
+                    &database_path,
+                    Arc::clone(&factory_calls),
+                    Arc::clone(&llm_calls),
+                )
+                .await
+                .err()
+                .expect("physical root replacement must reject runtime start");
+                let replaced_text = format!("{replaced:#}");
+                assert!(
+                    replaced_text.contains("no longer identifies the indexed directory"),
+                    "physical-root replacement rejection remains visible: {replaced_text}"
+                );
+                assert_eq!(factory_calls.load(Ordering::SeqCst), 0);
+                assert_eq!(llm_calls.load(Ordering::SeqCst), 0);
+            })
+            .await;
+    }
 
     fn approval_test_state() -> Arc<RunState> {
         let (events, _) = broadcast::channel(EVENT_SUBSCRIBER_CAPACITY);
@@ -3031,6 +3283,7 @@ mod tests {
             apply: false,
             apply_confirmation: ApplyConfirmation::Unattended,
             prepared_code_map_context: None,
+            diff_impact_input: None,
             brainstorm_spec: None,
         }
     }
@@ -3092,6 +3345,7 @@ mod tests {
                 stale: false,
                 selection_truncated: false,
                 metadata_redacted: false,
+                diff_impact: None,
                 selected_files: vec![CodeMapSelectedFile {
                     path: "src/lib.rs".to_owned(),
                     symbols: vec!["fixture".to_owned()],
@@ -3290,6 +3544,66 @@ mod tests {
                         .len(),
                     1
                 );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn native_worker_without_diff_keeps_legacy_provider_path_and_writes_no_code_map_receipt()
+    {
+        struct CountingDecomposer(Arc<AtomicUsize>);
+
+        #[async_trait::async_trait]
+        impl DecomposerLlm for CountingDecomposer {
+            async fn complete(&self, _: &str) -> Result<String> {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(
+                    r#"{"tasks":[{"title":"Add tests to preserve legacy request","task_type":"tests","depends_on":[]}],"clarifying_question":null,"estimated_session_complexity":"fast"}"#
+                        .to_owned(),
+                )
+            }
+        }
+
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let root = tempfile::tempdir().unwrap();
+                let db_path = root.path().join("views.db");
+                let calls = Arc::new(AtomicUsize::new(0));
+                let service = LocalCodingService::new();
+                let handle = service
+                    .start_local(
+                        request(root.path()),
+                        Arc::new(StoredDecompositionWorker::new(
+                            db_path.clone(),
+                            None,
+                            Arc::new(CountingDecomposer(Arc::clone(&calls))),
+                        )),
+                    )
+                    .await
+                    .unwrap();
+                let result = handle.wait_terminal().await.unwrap();
+                let session_id = match result {
+                    CodingRunResult::Completed {
+                        session_id,
+                        task_count,
+                        ..
+                    } => {
+                        assert_eq!(task_count, 1);
+                        session_id
+                    }
+                    other => panic!("expected legacy completion, got {other:?}"),
+                };
+                assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+                let conn = crate::memory::store::open(&db_path).unwrap();
+                assert!(
+                    store::load_code_map_receipts(&conn, session_id)
+                        .unwrap()
+                        .is_empty(),
+                    "the no-diff service path must retain its legacy no-receipt behavior"
+                );
+                let tasks = store::list_tasks_for_session(&conn, session_id).unwrap();
+                assert_eq!(tasks.len(), 1);
+                assert_eq!(tasks[0].hemisphere, crate::coding::types::Hemisphere::Left);
             })
             .await;
     }

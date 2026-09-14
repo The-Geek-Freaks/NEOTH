@@ -717,6 +717,44 @@ fn classify_frame(body: &[u8], id: u64, server_id: &str) -> Result<FrameMatch, M
     Ok(FrameMatch::Response(resp))
 }
 
+/// A real stdio MCP child used by cross-module W46 tests. The helper is test
+/// only, uses the checked-in Python-stdlib NDJSON responder, and gives every
+/// caller an explicit absolute counter path to prove exact `tools/call` count.
+#[cfg(test)]
+pub(crate) fn stdio_fixture_config(counter_path: &std::path::Path) -> McpServerConfig {
+    assert!(
+        counter_path.is_absolute(),
+        "fixture counter must be absolute"
+    );
+    let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("mcp_stdio_fixture.py");
+    McpServerConfig {
+        id: "w46-stdio-fixture".into(),
+        description: None,
+        command: if cfg!(windows) { "python" } else { "python3" }.into(),
+        args: vec![
+            script.to_string_lossy().into_owned(),
+            counter_path.to_string_lossy().into_owned(),
+        ],
+        env: std::collections::HashMap::new(),
+        enabled: true,
+        allow_tools: Some(vec!["read".into()]),
+        trust_all_tools: false,
+        smart_approve: true,
+        autonomy_gate: None,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn stdio_fixture_call_count(counter_path: &std::path::Path) -> usize {
+    std::fs::read_to_string(counter_path)
+        .ok()
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

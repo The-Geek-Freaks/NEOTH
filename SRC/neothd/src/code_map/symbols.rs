@@ -37,7 +37,7 @@
 //! matched this scan receive a separate single-pass AST extent certification;
 //! declarations the AST cannot prove retain an unknown extent.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
 use proc_macro2::Span;
@@ -102,6 +102,177 @@ pub struct Symbol {
     /// use a file-level fallback instead of estimating one from declarations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_end: Option<u32>,
+}
+
+/// Returns true only for the intentionally small Rust/Python test subset that
+/// has both a conventional test-file location and a framework marker. This is
+/// evidence classification, not test discovery: helpers, fixtures, generated
+/// files and unsupported languages remain unknown to callers.
+#[cfg(test)]
+pub(crate) fn is_supported_test_declaration(path: &str, source: &str, symbol: &Symbol) -> bool {
+    supported_test_declarations(path, source).contains(&(symbol.name.clone(), symbol.line))
+}
+
+/// Parse a source file once and return only declarations whose test framework
+/// marker is structurally attached to that declaration. Graph construction
+/// calls this once per file; the compatibility predicate above is for focused
+/// unit callers only.
+pub(crate) fn supported_test_declarations(path: &str, source: &str) -> BTreeSet<(String, u32)> {
+    let normalized = path.replace('\\', "/");
+    if normalized.contains("/fixtures/")
+        || normalized.contains("/generated/")
+        || normalized.contains("/helpers/")
+    {
+        return BTreeSet::new();
+    }
+    if normalized.ends_with(".rs") {
+        let conventional = normalized.starts_with("tests/")
+            || normalized.contains("/tests/")
+            || normalized.ends_with("_test.rs");
+        return if conventional {
+            rust_framework_tests(source)
+        } else {
+            BTreeSet::new()
+        };
+    }
+    if normalized.ends_with(".py") {
+        let filename = normalized.rsplit('/').next().unwrap_or_default();
+        let conventional = normalized.starts_with("tests/")
+            || normalized.contains("/tests/")
+            || (filename.starts_with("test_") && filename.ends_with(".py"))
+            || filename.ends_with("_test.py");
+        return if conventional {
+            python_framework_tests(source)
+        } else {
+            BTreeSet::new()
+        };
+    }
+    BTreeSet::new()
+}
+
+fn rust_framework_tests(source: &str) -> BTreeSet<(String, u32)> {
+    let Ok(file) = syn::parse_file(source) else {
+        return BTreeSet::new();
+    };
+    let mut collector = RustTestDeclarations::default();
+    collector.visit_file(&file);
+    collector.declarations
+}
+
+#[derive(Default)]
+struct RustTestDeclarations {
+    declarations: BTreeSet<(String, u32)>,
+}
+
+impl RustTestDeclarations {
+    fn record(&mut self, attrs: &[syn::Attribute], ident: &syn::Ident, fn_span: Span) {
+        if attrs.iter().any(|attr| attr.path().is_ident("test"))
+            && let Ok(line) = u32::try_from(fn_span.start().line)
+        {
+            self.declarations.insert((ident.to_string(), line));
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for RustTestDeclarations {
+    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        self.record(&item.attrs, &item.sig.ident, item.sig.fn_token.span);
+        syn::visit::visit_item_fn(self, item);
+    }
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        self.record(&item.attrs, &item.sig.ident, item.sig.fn_token.span);
+        syn::visit::visit_impl_item_fn(self, item);
+    }
+}
+
+fn python_framework_tests(source: &str) -> BTreeSet<(String, u32)> {
+    let stripped = super::graph::strip_comments_and_strings_hash_family(source);
+    let mut tests = BTreeSet::new();
+    let mut scopes: Vec<PythonScope> = Vec::new();
+    let mut decorators: Vec<(usize, String)> = Vec::new();
+    for (index, raw) in stripped.lines().enumerate() {
+        let indent = raw.len() - raw.trim_start().len();
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        while scopes.last().is_some_and(|scope| indent <= scope.indent()) {
+            scopes.pop();
+        }
+        if line.starts_with('@') {
+            decorators.push((indent, line.to_owned()));
+            continue;
+        }
+        if let Some(name) = python_class_name(line) {
+            let testcase = line.contains("unittest.TestCase");
+            scopes.push(PythonScope::Class { indent, testcase });
+            decorators.clear();
+            let _ = name;
+            continue;
+        }
+        if let Some(name) = python_def_name(line) {
+            let pytest = decorators.iter().any(|(decorator_indent, decorator)| {
+                *decorator_indent == indent && decorator.starts_with("@pytest.mark.")
+            });
+            let top_level_pytest = pytest && scopes.is_empty() && indent == 0;
+            let direct_unittest_method = matches!(
+                scopes.last(),
+                Some(PythonScope::Class { testcase: true, .. })
+            );
+            if name.starts_with("test_") && (top_level_pytest || direct_unittest_method) {
+                tests.insert((name.to_owned(), (index + 1) as u32));
+            }
+            scopes.push(PythonScope::Function { indent });
+            decorators.clear();
+            continue;
+        }
+        decorators.clear();
+    }
+    tests
+}
+
+enum PythonScope {
+    Class { indent: usize, testcase: bool },
+    Function { indent: usize },
+}
+
+impl PythonScope {
+    fn indent(&self) -> usize {
+        match self {
+            Self::Class { indent, .. } | Self::Function { indent } => *indent,
+        }
+    }
+}
+
+fn python_def_name(line: &str) -> Option<&str> {
+    let line = line.strip_prefix("async ").unwrap_or(line);
+    let rest = line.strip_prefix("def ")?;
+    let end = rest.find('(')?;
+    Some(&rest[..end])
+}
+
+fn python_class_name(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("class ")?;
+    let end = rest.find('(').or_else(|| rest.find(':'))?;
+    Some(&rest[..end])
+}
+
+/// A possible TestedBy target must be a supported-language declaration in a
+/// production source location. The inverse of test classification is not
+/// sufficient: helpers, fixtures and generated sources intentionally remain
+/// non-production/unknown rather than becoming exact evidence.
+pub(crate) fn is_supported_production_declaration(path: &str, symbol: &Symbol) -> bool {
+    let normalized = path.replace('\\', "/");
+    let excluded = normalized.starts_with("tests/")
+        || normalized.contains("/tests/")
+        || normalized.contains("/fixtures/")
+        || normalized.contains("/generated/")
+        || normalized.contains("/helpers/")
+        || normalized.ends_with("_test.rs")
+        || normalized.ends_with("_test.py");
+    !excluded
+        && matches!(symbol.kind, SymbolKind::Function | SymbolKind::Method)
+        && (normalized.ends_with(".rs") || normalized.ends_with(".py"))
 }
 
 /// Public entry — given source text + language, return all
@@ -708,5 +879,156 @@ impl Foo {
         let p1 = patterns_for(Language::Rust).as_ptr();
         let p2 = patterns_for(Language::Rust).as_ptr();
         assert_eq!(p1, p2, "patterns_for should return cached slice");
+    }
+
+    #[test]
+    fn test_classification_requires_conventional_path_and_framework_marker() {
+        let rust = extract_symbols("#[test]\nfn verifies() {}\n", Language::Rust);
+        assert!(is_supported_test_declaration(
+            "tests/unit_test.rs",
+            "#[test]\nfn verifies() {}\n",
+            &rust[0]
+        ));
+        assert!(!is_supported_test_declaration(
+            "src/helper.rs",
+            "#[test]\nfn verifies() {}\n",
+            &rust[0]
+        ));
+        assert!(!is_supported_test_declaration(
+            "tests/fixtures/unit_test.rs",
+            "#[test]\nfn verifies() {}\n",
+            &rust[0]
+        ));
+        let python = extract_symbols("@pytest.mark.unit\ndef test_ok(): pass\n", Language::Python);
+        assert!(is_supported_test_declaration(
+            "tests/test_ok.py",
+            "@pytest.mark.unit\ndef test_ok(): pass\n",
+            &python[0]
+        ));
+    }
+
+    #[test]
+    fn test_markers_in_comments_and_strings_are_not_evidence() {
+        let rust_source = "// #[test]\nfn looks_like_test() {}\n";
+        let rust = extract_symbols(rust_source, Language::Rust);
+        assert!(!is_supported_test_declaration(
+            "tests/looks_test.rs",
+            rust_source,
+            &rust[0]
+        ));
+        let python_source = "# @pytest.mark.unit\ndef test_comment_only(): pass\n";
+        let python = extract_symbols(python_source, Language::Python);
+        assert!(!is_supported_test_declaration(
+            "tests/test_comment.py",
+            python_source,
+            &python[0]
+        ));
+    }
+
+    #[test]
+    fn pytest_decorator_and_unittest_class_are_supported_code_markers() {
+        let pytest_source = "@pytest.mark.unit\ndef test_pytest(): pass\n";
+        let pytest = extract_symbols(pytest_source, Language::Python);
+        assert!(is_supported_test_declaration(
+            "tests/test_pytest.py",
+            pytest_source,
+            &pytest[0]
+        ));
+        let unittest_source =
+            "class Cases(unittest.TestCase):\n    def test_unittest(self): pass\n";
+        let unittest = extract_symbols(unittest_source, Language::Python);
+        let test = unittest
+            .iter()
+            .find(|symbol| symbol.name == "test_unittest")
+            .unwrap();
+        assert!(is_supported_test_declaration(
+            "tests/test_unittest.py",
+            unittest_source,
+            test
+        ));
+    }
+
+    #[test]
+    fn framework_markers_bind_only_to_their_own_declaration() {
+        let rust_source = "#[test]\nfn earlier() {}\nfn later() {}\n";
+        let rust = extract_symbols(rust_source, Language::Rust);
+        assert!(is_supported_test_declaration(
+            "tests/case_test.rs",
+            rust_source,
+            &rust[0]
+        ));
+        assert!(!is_supported_test_declaration(
+            "tests/case_test.rs",
+            rust_source,
+            &rust[1]
+        ));
+        let python_source = "@pytest.mark.unit\ndef helper(): pass\ndef test_later(): pass\n";
+        let python = extract_symbols(python_source, Language::Python);
+        let later = python
+            .iter()
+            .find(|symbol| symbol.name == "test_later")
+            .unwrap();
+        assert!(!is_supported_test_declaration(
+            "tests/test_case.py",
+            python_source,
+            later
+        ));
+    }
+
+    #[test]
+    fn unittest_scope_excludes_module_level_function_after_class() {
+        let source = "class Cases(unittest.TestCase):\n    def test_inside(self): pass\n\ndef test_outside(): pass\n";
+        let symbols = extract_symbols(source, Language::Python);
+        let inside = symbols
+            .iter()
+            .find(|symbol| symbol.name == "test_inside")
+            .unwrap();
+        let outside = symbols
+            .iter()
+            .find(|symbol| symbol.name == "test_outside")
+            .unwrap();
+        assert!(is_supported_test_declaration(
+            "tests/test_case.py",
+            source,
+            inside
+        ));
+        assert!(!is_supported_test_declaration(
+            "tests/test_case.py",
+            source,
+            outside
+        ));
+    }
+
+    #[test]
+    fn python_supported_tests_are_only_top_level_or_direct_testcase_methods() {
+        let source = concat!(
+            "class Cases(unittest.TestCase):\n",
+            "    def test_direct(self): pass\n",
+            "    def helper(self):\n",
+            "        def test_nested(self): pass\n",
+            "\n",
+            "@pytest.mark.unit\n",
+            "def test_top_level(): pass\n",
+            "def helper_pytest():\n",
+            "    @pytest.mark.unit\n",
+            "    def test_nested_pytest(): pass\n",
+        );
+        let symbols = extract_symbols(source, Language::Python);
+        for name in ["test_direct", "test_top_level"] {
+            let symbol = symbols.iter().find(|symbol| symbol.name == name).unwrap();
+            assert!(is_supported_test_declaration(
+                "tests/test_scopes.py",
+                source,
+                symbol
+            ));
+        }
+        for name in ["test_nested", "test_nested_pytest"] {
+            let symbol = symbols.iter().find(|symbol| symbol.name == name).unwrap();
+            assert!(!is_supported_test_declaration(
+                "tests/test_scopes.py",
+                source,
+                symbol
+            ));
+        }
     }
 }

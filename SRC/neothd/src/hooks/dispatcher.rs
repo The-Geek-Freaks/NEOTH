@@ -11,8 +11,190 @@ use anyhow::Result;
 use regex::Regex;
 
 use super::block_filter::{FilteredBlock, apply_block_filter};
+use super::pre_tool_use::{
+    MAX_PRE_TOOL_USE_ENRICHMENT_BYTES, MAX_PRE_TOOL_USE_IDENTIFIER_BYTES, PreToolUseContext,
+    PreToolUseEnrichment,
+};
 use super::schema::{HookAction, HookDef};
 use super::stages::HookStage;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PreToolUseDisposition {
+    Continue,
+    Enrich(PreToolUseEnrichment),
+    Block { reason: String },
+}
+
+/// The caller must name why configured PreToolUse hooks are unavailable.
+/// `DisabledByIncognito` preserves the existing privacy contract while still
+/// sending the typed context through cancellation/deadline admission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreToolUseHookPolicy<'a> {
+    Configured(&'a [HookDef]),
+    DisabledByIncognito,
+}
+
+const MAX_PRE_TOOL_USE_HOOKS: usize = 32;
+const MAX_PRE_TOOL_USE_MATCHER_BYTES: usize = 512;
+
+/// Execute configured TOML `pre_tool_use` hooks on the typed summary only.
+/// This boundary deliberately permits only the bounded non-blocking action
+/// subset: `allow`, `replace`, and `block`. Plugin and block-filter actions
+/// could run arbitrary or unbounded work, so they fail closed here instead of
+/// silently behaving as a regular provider hook. The argument JSON is never
+/// passed to this dispatcher and a `replace` becomes result enrichment after
+/// the actual MCP response; it cannot rewrite the invocation.
+pub fn run_pre_tool_use(
+    context: &PreToolUseContext,
+    policy: PreToolUseHookPolicy<'_>,
+    once_guard: &SessionOnceGuard,
+) -> PreToolUseDisposition {
+    if context.is_cancelled() {
+        return PreToolUseDisposition::Block {
+            reason: "chat turn cancelled before PreToolUse".to_owned(),
+        };
+    }
+    if context.deadline_elapsed() {
+        return PreToolUseDisposition::Block {
+            reason: "PreToolUse deadline elapsed".to_owned(),
+        };
+    }
+
+    if policy == PreToolUseHookPolicy::DisabledByIncognito {
+        return PreToolUseDisposition::Continue;
+    }
+    let PreToolUseHookPolicy::Configured(hooks) = policy else {
+        unreachable!()
+    };
+
+    let selected: Vec<HookDef> = hooks
+        .iter()
+        .filter(|hook| hook.stage == HookStage::PreToolUse && hook.is_enabled())
+        .cloned()
+        .collect();
+    if selected.len() > MAX_PRE_TOOL_USE_HOOKS {
+        return PreToolUseDisposition::Block {
+            reason: format!("PreToolUse hook count exceeds {MAX_PRE_TOOL_USE_HOOKS}"),
+        };
+    }
+    for hook in &selected {
+        if let Err(reason) = validate_pre_tool_use_hook(hook) {
+            return PreToolUseDisposition::Block { reason };
+        }
+    }
+
+    let stage = match run_stage_with_once_guard(
+        HookStage::PreToolUse,
+        context.arguments().summary(),
+        &selected,
+        None,
+        true,
+        once_guard,
+    ) {
+        Ok(stage) => stage,
+        Err(error) => {
+            return PreToolUseDisposition::Block {
+                reason: format!("PreToolUse dispatcher failed closed: {error}"),
+            };
+        }
+    };
+    if context.is_cancelled() {
+        return PreToolUseDisposition::Block {
+            reason: "chat turn cancelled during PreToolUse".to_owned(),
+        };
+    }
+    if context.deadline_elapsed() {
+        return PreToolUseDisposition::Block {
+            reason: "PreToolUse deadline elapsed".to_owned(),
+        };
+    }
+    match stage.outcome {
+        StageOutcome::Block { reason, .. } => PreToolUseDisposition::Block { reason },
+        StageOutcome::Continue { body, .. } if body == context.arguments().summary() => {
+            PreToolUseDisposition::Continue
+        }
+        StageOutcome::Continue { body, .. } => match PreToolUseEnrichment::new(body) {
+            Ok(enrichment) => PreToolUseDisposition::Enrich(enrichment),
+            Err(error) => PreToolUseDisposition::Block {
+                reason: error.to_string(),
+            },
+        },
+    }
+}
+
+fn validate_pre_tool_use_hook(hook: &HookDef) -> std::result::Result<(), String> {
+    if hook.name.is_empty() || hook.name.len() > MAX_PRE_TOOL_USE_IDENTIFIER_BYTES {
+        return Err(format!(
+            "PreToolUse hook name `{}` is out of bounds",
+            hook.name
+        ));
+    }
+    if hook
+        .matcher
+        .as_ref()
+        .is_some_and(|matcher| matcher.pattern.len() > MAX_PRE_TOOL_USE_MATCHER_BYTES)
+    {
+        return Err(format!(
+            "PreToolUse matcher `{}` exceeds {MAX_PRE_TOOL_USE_MATCHER_BYTES} bytes",
+            hook.name
+        ));
+    }
+    match &hook.action {
+        HookAction::Allow => Ok(()),
+        HookAction::Replace { template } if template.len() <= MAX_PRE_TOOL_USE_ENRICHMENT_BYTES => {
+            Ok(())
+        }
+        HookAction::Replace { .. } => Err(format!(
+            "PreToolUse replacement `{}` exceeds enrichment bound",
+            hook.name
+        )),
+        HookAction::Block { reason } if reason.len() <= MAX_PRE_TOOL_USE_ENRICHMENT_BYTES => Ok(()),
+        HookAction::Block { .. } => Err(format!(
+            "PreToolUse block reason `{}` exceeds enrichment bound",
+            hook.name
+        )),
+        HookAction::Plugin { .. } | HookAction::BlockFilter { .. } => Err(format!(
+            "PreToolUse hook `{}` uses an unsupported non-bounded action",
+            hook.name
+        )),
+    }
+}
+
+#[cfg(test)]
+mod pre_tool_use_tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    #[test]
+    fn incognito_disables_hook_evaluation_but_keeps_typed_admission() {
+        let root = tempfile::tempdir().expect("canonical root");
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let context = PreToolUseContext::admitted(
+            crate::hooks::PreToolUseOrigin::ProviderEmittedMcp,
+            "server",
+            "tool",
+            &serde_json::json!({"bound": true}),
+            root.path(),
+            root.path(),
+            Duration::from_secs(1),
+            crate::hooks::PreToolUseCancellation::from_chat_turn(Arc::clone(&cancellation)),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .expect("open boundary");
+        let once = SessionOnceGuard::new();
+        assert_eq!(
+            run_pre_tool_use(&context, PreToolUseHookPolicy::DisabledByIncognito, &once),
+            PreToolUseDisposition::Continue,
+        );
+        cancellation.store(true, std::sync::atomic::Ordering::Release);
+        assert!(matches!(
+            run_pre_tool_use(&context, PreToolUseHookPolicy::DisabledByIncognito, &once),
+            PreToolUseDisposition::Block { .. }
+        ));
+    }
+}
 
 /// Compile `pattern` to a [`Regex`], memoised process-wide by pattern string.
 ///

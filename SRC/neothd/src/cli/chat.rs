@@ -4861,6 +4861,8 @@ pub(super) async fn dispatch_provider(
     defer_provider_output: bool,
     session_canary: &std::sync::Arc<crate::security::injection_tracker::CanaryToken>,
     cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    hooks: &[crate::hooks::schema::HookDef],
+    once_guard: &crate::hooks::SessionOnceGuard,
     turn_effect_gate: Option<std::sync::Arc<dyn crate::providers::ChatTurnEffectGate>>,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<DispatchOutput> {
@@ -5583,6 +5585,13 @@ pub(super) async fn dispatch_provider(
                         None,
                         turn_effect_gate.clone(),
                         home,
+                        if args.incognito {
+                            crate::hooks::PreToolUseHookPolicy::DisabledByIncognito
+                        } else {
+                            crate::hooks::PreToolUseHookPolicy::Configured(hooks)
+                        },
+                        once_guard,
+                        cancellation.pre_tool_use_cancellation(),
                     )
                     .await
                     {
@@ -7289,6 +7298,11 @@ fn chat_auto_code_args(prompt: String, repository_root: PathBuf) -> crate::cli::
         prompt,
         db: None,
         repository_root: Some(repository_root),
+        diff_impact_working_tree: false,
+        diff_impact_staged: false,
+        diff_impact_base: None,
+        diff_impact_target: None,
+        diff_impact_stdin: false,
         source_channel: "chat".to_string(),
         no_assign: false,
         dispatch: false, // operator runs `neoth kanban` after to drive dispatch
@@ -12345,6 +12359,9 @@ pub(crate) async fn run_mcp_dispatch_loop(
     turn_effect_gate: Option<std::sync::Arc<dyn crate::providers::ChatTurnEffectGate>>,
     // Exact instance root that owns leases, risk confirmations and traces.
     instance_home: &std::path::Path,
+    pre_tool_hook_policy: crate::hooks::PreToolUseHookPolicy<'_>,
+    pre_tool_once_guard: &crate::hooks::SessionOnceGuard,
+    pre_tool_cancellation: crate::hooks::PreToolUseCancellation,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -12446,6 +12463,9 @@ pub(crate) async fn run_mcp_dispatch_loop(
         max_tool_calls,
         turn_effect_gate,
         instance_home,
+        pre_tool_hook_policy,
+        pre_tool_once_guard,
+        pre_tool_cancellation,
     )
     .await
 }
@@ -19096,6 +19116,7 @@ modes:
                     from_file: "src/a.rs".into(),
                     from_symbol: "a".into(),
                     to_name: "b".into(),
+                    target_file: None,
                     kind: EdgeKind::Calls,
                     confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
                     confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
@@ -19104,6 +19125,7 @@ modes:
                     from_file: "src/b.rs".into(),
                     from_symbol: "b".into(),
                     to_name: "a".into(),
+                    target_file: None,
                     kind: EdgeKind::Calls,
                     confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
                     confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,
@@ -19998,6 +20020,8 @@ modes:
             false,
             &canary,
             &crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
+            &[],
+            &crate::hooks::SessionOnceGuard::new(),
             None,
             &mut CliChatOutput,
         )
@@ -20110,6 +20134,7 @@ modes:
         );
 
         let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
+        let pre_tool_once_guard = crate::hooks::SessionOnceGuard::new();
         let mut output = CliChatOutput;
         let dispatch = dispatch_provider(
             "blocked prompt".to_string(),
@@ -20139,6 +20164,8 @@ modes:
             false,
             &canary,
             &cancellation,
+            &[],
+            &pre_tool_once_guard,
             None,
             &mut output,
         );
@@ -20279,6 +20306,8 @@ modes:
             false,
             &canary,
             &crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
+            &[],
+            &crate::hooks::SessionOnceGuard::new(),
             None,
             &mut CliChatOutput,
         )

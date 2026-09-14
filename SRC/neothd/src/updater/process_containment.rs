@@ -725,6 +725,7 @@ pub(crate) struct UnixProcessGroup {
 
 #[cfg(unix)]
 impl UnixProcessGroup {
+    #[cfg(feature = "recursive-mas")]
     pub(crate) fn from_spawned_pid(pid: u32) -> Result<Self> {
         Ok(Self {
             process_group_id: pid

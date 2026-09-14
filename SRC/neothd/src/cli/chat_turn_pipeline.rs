@@ -46,6 +46,10 @@ impl ChatTurnCancellation {
         );
         Ok(())
     }
+
+    pub(crate) fn pre_tool_use_cancellation(&self) -> crate::hooks::PreToolUseCancellation {
+        crate::hooks::PreToolUseCancellation::from_chat_turn(Arc::clone(&self.0))
+    }
 }
 
 /// Sanitized presentation events. Provider bytes reach this boundary only
@@ -868,6 +872,8 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         defer_provider_output,
         &canary_token,
         cancellation,
+        &hooks,
+        &once_guard,
         turn_effect_gate.clone(),
         output,
     )

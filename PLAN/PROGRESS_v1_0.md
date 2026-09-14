@@ -37,29 +37,37 @@
 > Slack/default accounts, with no outbound behavior change. P1-17 remains
 > partial; P1-14/P1-16 remain open.
 >
-> **Wave 41 daemon Main/Buddy — LOCALLY VERIFIED (2026-09-14):** NativeTestBuild02
-> PASS3m51/min210.30/peak10.62; catalog14586 selected2120: 2108 pass/0 fail/12
-> ignored in73.85s. Fresh native binary: 289073152 bytes,
-> BEBDDED1D810A55277165AFF8BE43CC6C38D56C022CDA2A37D6CDB36C18F61DC.
-> NativeClippy01 PASS7m08/min208.44/peak10.05; six final contracts 29/0,
-> 5m39/min209.66/peak8.62. Python19+11+8 PASS. Final GUIClippy02
-> PASS4m47/min212.12/peak6.41; five changed-scope diagnostics repaired, 13 existing
-> Windows GUI dead-code warnings and the vendor warning retained. No GUI link or
-> native-GUI acceptance claim. Public manifest/matrix: 230 inputs, seven binaries;
-> unit227 excludes exactly the three GUI implementation modules checked by GUI230.
-> Other GUI text embedded by parity remains included and unchanged. Ignored: one
-> subprocess helper exercised by its parent and 11 local-model-weight tests.
-> No closure; full CI remains a separate gate.
+> **W41/W44 Main/Buddy and dependency repair — PUBLISHED
+> `2bf6c0fe298cdd1e1146a7c8279ab68fd92c25bb` direct main, 56 verified paths:**
+> source230; native unit2108/0/12; contracts29/0; Python38; GUIClippy02 and
+> WasmCheck02 PASS. The W44 lock, license snapshot and dependency repair are in
+> the same batch. No native-GUI/live-provider/cross-platform/release/parent closure.
 >
-> **Wave 44 dependency repair — LOCALLY VERIFIED (2026-09-14):** Cargo.lock, license snapshots and
-> THIRD_PARTY_LICENSES are updated. Audit, deny, notice generation/check and
-> independent review passed. Final-source WasmCheck02 PASS1m52/min210.44/peak7.85.
-> Narrow Wasmtime/Cranelift/Pulley, der and wnaf updates; no new audit exceptions.
+> **W43/W45, W46 and W47 — LOCALLY VERIFIED:** W43/45 composed01
+> APPROVE19 paths; W47 repair06 APPROVE3 target overlays; W46 repair06 APPROVE13
+> paths. The reviewed 31-path union and integration repairs are admitted and
+> formatted. NativeTestBuild04 PASS4m07 and cached TestBuild05 PASS from 247
+> frozen inputs; selected runtime04 passed 1913/0/0 in104.17s. Strict Clippy05
+> and CLI docgen passed; four contracts15/0, Python45, CI matrix, audit/deny and
+> notices passed. Final source248, five executables, 46 publication paths;
+> see `docs/gold-wave43-47-verification.md`. Only the first two CRG-04 kernel
+> leaves close. Current counts1324/1014/308/2, raw310/pre-tag309.
+> W46 covers MCP/provider/direct-CLI; other native surfaces remain open.
 >
-> **W43/W45, W46 and W47 — WORK-ONLY:** composed01 APPROVE spans 19 paths. W47
-> has real SQLite tests and a bounded-loader target_file repair in progress.
-> W46 has real MCP stdio tests and three hook-policy call-site repairs in review.
-> No admission/runtime validation/parent closure.
+> **Current W41/W44 CI boundary:** CI34881450745 completed with Linux quality
+> and Windows/macOS compilation failures. macOS hit its 100-minute compile
+> deadline with no compiler/OOM error or test result; its limits stay unchanged.
+> Security34881453920 completed with the two Rustls failures. Both CodeQL
+> languages and the unresolved-high/critical gate passed.
+> Preflight34881430046 and Quality34881430782 SUCCESS. Security cargo-audit and
+> cargo-deny jobs failed on new RUSTSEC-2026-0285. Worktree rustls0.23.45 plus
+> required AWS-LC/WebPKI closure, notices and fresh audit/deny are complete.
+> Audit uses the same advisory DB as failed CI and finds zero vulnerabilities.
+> Local compilation passed; new-head CI remains pending, with no release or
+> cross-platform result implied.
+> Linux feature-cfg failure is corrected. Windows CI ran out of memory before
+> tests at four build jobs; current workflow uses Windows1/macOS4 build jobs,
+> preserving test coverage and timeouts. YAML/matrix checks passed locally.
 >
 > **W39–40 exact-head CI boundary:** CI34857514849 e4b4 completed Linux16174/5,
 > Windows16111/1, macOS16164/5 from same updater causes. Current updater selected

@@ -14,14 +14,21 @@
 pub mod block_filter;
 pub mod dispatcher;
 pub mod loader;
+pub mod pre_tool_use;
 pub mod schema;
 pub mod stages;
 
 pub use block_filter::restore_blocks;
 pub use dispatcher::{
-    SessionOnceGuard, StageOnceResult, StageOutcome, run_stage, run_stage_with_once_guard,
+    PreToolUseDisposition, PreToolUseHookPolicy, SessionOnceGuard, StageOnceResult, StageOutcome,
+    run_pre_tool_use, run_stage, run_stage_with_once_guard,
 };
 pub use loader::{load_all, load_all_strict};
+pub use pre_tool_use::{
+    PreToolUseArguments, PreToolUseCallId, PreToolUseCancellation, PreToolUseCancellationState,
+    PreToolUseContext, PreToolUseContextError, PreToolUseEnrichment, PreToolUseOrigin,
+    PreToolUseReplay,
+};
 pub use stages::HookStage;
 
 // Compiled-plugin trait surface — still available for advanced (Rust)

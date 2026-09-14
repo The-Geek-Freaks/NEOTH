@@ -3969,6 +3969,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         None,
                         None,
                         &instance_paths.home,
+                        crate::hooks::PreToolUseHookPolicy::Configured(&hooks),
+                        &session_fired_once,
+                        crate::hooks::PreToolUseCancellation::unbound(),
                     )
                     .await
                     {

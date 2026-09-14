@@ -513,6 +513,7 @@ mod tests {
             from_file: "src/shared.rs".into(),
             from_symbol: "same_caller".into(),
             to_name: target.into(),
+            target_file: None,
             kind: EdgeKind::Calls,
             confidence: crate::code_map::graph::EdgeConfidenceTier::INFERRED_CONFIDENCE,
             confidence_tier: crate::code_map::graph::EdgeConfidenceTier::Inferred,

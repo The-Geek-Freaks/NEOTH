@@ -14,7 +14,7 @@
 ///    `loop_config.enabled = true && loop_config.max_rounds > 1`.
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
@@ -518,6 +518,14 @@ pub async fn run_loop(
     // nested MCP loop below borrows the same value so max_rounds cannot
     // multiply paid compaction leaves.
     let mut compaction_budget = crate::mcp::dispatch_loop::CompactionBudget::default();
+    // The autonomous loop is a real provider-emitted MCP path. Load the same
+    // instance TOML hook set once for the operator turn and retain one once
+    // guard across all rounds; failure is an admission error, never an empty
+    // implicit configuration.
+    let pre_tool_hooks = crate::hooks::load_all_strict(&config.neoth_home.join("hooks"))
+        .await
+        .context("cannot load configured PreToolUse hooks for loop dispatch")?;
+    let pre_tool_once_guard = crate::hooks::SessionOnceGuard::new();
 
     // Common dispatch-loop arguments derived from freedom config.
     let rollback = &freedom.rollback;
@@ -600,6 +608,9 @@ pub async fn run_loop(
                 .map(|budget| budget.saturating_sub(state.accumulated_tool_calls)),
             authorizer.turn_effect_gate(),
             &config.neoth_home,
+            crate::hooks::PreToolUseHookPolicy::Configured(&pre_tool_hooks),
+            &pre_tool_once_guard,
+            crate::hooks::PreToolUseCancellation::unbound(),
         )
         .await?;
 

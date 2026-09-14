@@ -425,11 +425,13 @@ class CiCadenceContractTests(unittest.TestCase):
     def test_platform_test_compilation_and_execution_have_separate_budgets(self) -> None:
         platform_tests = workflow_jobs(CI_TEXT)["platform-tests"]
         self.assertIn("timeout-minutes: ${{ matrix.job_timeout_minutes }}", platform_tests)
+        self.assertIn("CARGO_BUILD_JOBS: ${{ matrix.build_jobs }}", platform_tests)
         self.assertNotIn("nextest_timeout_minutes", platform_tests)
         self.assertIn(
             "\n".join(
                 [
                     "          - os: macos-14",
+                    "            build_jobs: 4",
                     "            test_threads: 4",
                     "            junit_name: macos",
                     "            test_build_timeout_minutes: 100",
@@ -444,6 +446,8 @@ class CiCadenceContractTests(unittest.TestCase):
             "\n".join(
                 [
                     "          - os: windows-2022",
+                    "            # Run 34881450745: rustc-LLVM OOM while compiling at four jobs.",
+                    "            build_jobs: 1",
                     "            # Localhost port-binding tests race on Windows under parallel",
                     "            # process execution; serial execution preserves the real contract.",
                     "            test_threads: 1",

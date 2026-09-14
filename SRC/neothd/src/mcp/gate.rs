@@ -30,6 +30,7 @@
 use anyhow::Context as _;
 use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use xxhash_rust::xxh3::xxh3_64;
 
@@ -71,7 +72,7 @@ impl<'a> McpAuditSink<'a> {
         }
     }
 
-    fn from_writer(writer: Option<&'a WalWriterHandle>) -> Self {
+    pub(super) fn from_writer(writer: Option<&'a WalWriterHandle>) -> Self {
         writer.map(Self::Writer).unwrap_or(Self::None)
     }
 
@@ -165,6 +166,24 @@ pub enum GateError {
         tool: String,
         reason: String,
     },
+
+    /// A typed PreToolUse boundary rejected an already-authorized call before
+    /// any MCP client request or W41 start transition.
+    #[error("MCP `{server}::{tool}` blocked by PreToolUse: {reason}")]
+    PreToolUseBlocked {
+        server: String,
+        tool: String,
+        reason: String,
+    },
+
+    /// Typed PreToolUse context could not be formed from canonical local data.
+    #[error(transparent)]
+    PreToolUseContext(#[from] crate::hooks::PreToolUseContextError),
+
+    /// The one-use PreToolUse permit was presented for a different canonical
+    /// server/tool/arguments commitment than the authorization it followed.
+    #[error("MCP `{server}::{tool}` denied: PreToolUse permit identity mismatch")]
+    PreToolUsePermitMismatch { server: String, tool: String },
 
     /// Autonomy gate returned [`Decision::Confirm`]. Caller must collect
     /// operator approval and re-invoke. `Confirm` is not auto-passed by
@@ -367,7 +386,7 @@ fn load_lease_store_for_mcp(home: &std::path::Path) -> Option<LeaseStore> {
 /// Opaque result of the static MCP authorization layers. Dispatchers use the
 /// decision class only to decide whether a SmartApprove snapshot is relevant;
 /// the complete decision is consumed exactly once by
-/// [`authorize_preflight_with_audit`].
+/// [`authorize_preflight_with_audit_sink`].
 #[derive(Debug)]
 pub(crate) struct McpInvocationPreflight {
     server_id: String,
@@ -376,6 +395,29 @@ pub(crate) struct McpInvocationPreflight {
     decision: Decision,
     policy_snapshot: crate::permissions::AutonomyPolicySnapshot,
     request_binding_sha256: Option<String>,
+}
+
+/// Opaque proof that one already-authorized MCP call crossed PreToolUse. The
+/// invoke boundary consumes it, so current call sites cannot accidentally skip
+/// the typed hook between authorization and a cold client spawn.
+pub(crate) struct AdmittedPreToolUse {
+    enrichment: Option<crate::hooks::PreToolUseEnrichment>,
+    server_id: String,
+    tool: String,
+    request_binding_sha256: String,
+}
+
+impl AdmittedPreToolUse {
+    fn matches(
+        &self,
+        cfg: &McpServerConfig,
+        tool: &str,
+        request_binding_sha256: Option<&str>,
+    ) -> bool {
+        self.server_id == cfg.id
+            && self.tool == tool
+            && request_binding_sha256 == Some(self.request_binding_sha256.as_str())
+    }
 }
 
 impl McpInvocationPreflight {
@@ -417,31 +459,9 @@ impl AuthorizedMcpInvocation {
     }
 }
 
-/// Run every static layer before an MCP process is started or queried.
-/// Rejections are audited here exactly once. `Confirm` remains unresolved so
-/// the dispatcher can initialize SmartApprove only for calls whose policy
-/// decision could actually be upgraded by declared read-only metadata.
-pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
-    cfg: &McpServerConfig,
-    tool: &str,
-    policy: P,
-    writer: Option<&WalWriterHandle>,
-    now_unix: i64,
-) -> Result<McpInvocationPreflight, GateError> {
-    preflight_with_audit_sink(
-        cfg,
-        tool,
-        policy,
-        McpAuditSink::from_writer(writer),
-        now_unix,
-        None,
-        None,
-    )
-    .await
-}
-
 /// Generalized preflight that keeps MCP compatibility evidence and the typed
-/// decision on one local writer or daemon-owned audit RPC.
+/// decision on one local writer or daemon-owned audit RPC. Static `Deny`
+/// decisions are audited here; `Confirm` stays unresolved for SmartApprove.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn preflight_with_audit_sink<P: PolicyArgument + Copy>(
     cfg: &McpServerConfig,
@@ -589,36 +609,9 @@ pub(crate) async fn preflight_with_audit_sink<P: PolicyArgument + Copy>(
     })
 }
 
-/// Resolve one preflight decision without touching the MCP transport. A
-/// SmartApprove grant can only upgrade `Confirm`; `Allow` ignores it and a
-/// static `Deny` never reaches this function. Lease-backed confirmation is
-/// resolved here as well, so an uncovered confirmation fails before spawn.
-pub(crate) async fn authorize_preflight_with_audit(
-    preflight: McpInvocationPreflight,
-    cfg: &McpServerConfig,
-    tool: &str,
-    writer: Option<&WalWriterHandle>,
-    smart_approve: Option<&crate::mcp::smart_approve::SmartApproveGrant>,
-    now_unix: i64,
-    subject: Option<&str>,
-    instance_home: &std::path::Path,
-) -> Result<AuthorizedMcpInvocation, GateError> {
-    authorize_preflight_with_audit_sink(
-        preflight,
-        cfg,
-        tool,
-        McpAuditSink::from_writer(writer),
-        smart_approve,
-        now_unix,
-        subject,
-        instance_home,
-    )
-    .await
-}
-
-/// Resolve one preflight through its single MCP audit destination. Required
-/// callers use this entrypoint so no accepted decision can reach `spawn`
-/// without its matching typed record.
+/// Resolve one preflight through its single MCP audit destination without
+/// touching the MCP transport. Required callers use this entrypoint so no
+/// accepted decision can reach `spawn` without its matching typed record.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn authorize_preflight_with_audit_sink(
     preflight: McpInvocationPreflight,
@@ -655,7 +648,7 @@ pub(crate) async fn authorize_preflight_with_audit_sink(
             }
         }
         Decision::Deny(reason) => {
-            // `preflight_with_audit` consumes every Deny. Keep this branch
+            // `preflight_with_audit_sink` consumes every Deny. Keep this branch
             // fail-closed for forward compatibility without emitting a second
             // decision record.
             return Err(GateError::PermissionDenied {
@@ -788,7 +781,9 @@ pub(crate) async fn invoke_authorized_with_audit_effect_gate(
     rollback_policy: Option<&crate::config::RollbackConfig>,
     now_unix: i64,
     effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
+    pre_tool_use: AdmittedPreToolUse,
 ) -> Result<ToolCallResult, GateError> {
+    let request_binding_sha256 = mcp_request_binding(cfg, tool, &arguments)?;
     invoke_authorized_with_audit_sink_effect_gate(
         client,
         cfg,
@@ -798,8 +793,9 @@ pub(crate) async fn invoke_authorized_with_audit_effect_gate(
         McpAuditSink::from_writer(writer),
         rollback_policy,
         now_unix,
-        None,
+        Some(&request_binding_sha256),
         effect_gate,
+        pre_tool_use,
     )
     .await
 }
@@ -818,6 +814,7 @@ pub(crate) async fn invoke_authorized_with_audit_sink(
     rollback_policy: Option<&crate::config::RollbackConfig>,
     now_unix: i64,
     request_binding_sha256: Option<&str>,
+    pre_tool_use: AdmittedPreToolUse,
 ) -> Result<ToolCallResult, GateError> {
     invoke_authorized_with_audit_sink_effect_gate(
         client,
@@ -830,6 +827,7 @@ pub(crate) async fn invoke_authorized_with_audit_sink(
         now_unix,
         request_binding_sha256,
         None,
+        pre_tool_use,
     )
     .await
 }
@@ -846,12 +844,19 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
     now_unix: i64,
     request_binding_sha256: Option<&str>,
     effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
+    pre_tool_use: AdmittedPreToolUse,
 ) -> Result<ToolCallResult, GateError> {
     if !authorized.matches(cfg, tool, request_binding_sha256) {
         return Err(GateError::PermissionDenied {
             server: cfg.id.clone(),
             tool: tool.to_string(),
             reason: "internal MCP authorization binding mismatch".to_string(),
+        });
+    }
+    if !pre_tool_use.matches(cfg, tool, request_binding_sha256) {
+        return Err(GateError::PreToolUsePermitMismatch {
+            server: cfg.id.clone(),
+            tool: tool.to_owned(),
         });
     }
 
@@ -885,7 +890,9 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
         }
     }
 
-    call_tool_with_success_audit(
+    let enrichment = pre_tool_use.enrichment;
+
+    let mut result = call_tool_with_success_audit(
         client,
         cfg,
         tool,
@@ -896,7 +903,98 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
         effect_gate,
         authorized.request_binding_sha256.as_deref(),
     )
-    .await
+    .await?;
+    if let Some(enrichment) = enrichment {
+        result.content.push(crate::mcp::client::McpContent::Text {
+            text: enrichment.as_str().to_owned(),
+        });
+    }
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)] // Keep the typed invocation and authorization bindings explicit.
+pub(crate) fn admit_pre_tool_use(
+    origin: crate::hooks::PreToolUseOrigin,
+    cfg: &McpServerConfig,
+    tool: &str,
+    arguments: &Value,
+    instance_home: &std::path::Path,
+    request_binding_sha256: &str,
+    hook_policy: crate::hooks::PreToolUseHookPolicy<'_>,
+    once_guard: &crate::hooks::SessionOnceGuard,
+    cancellation: crate::hooks::PreToolUseCancellation,
+    replay: crate::hooks::PreToolUseReplay,
+) -> Result<AdmittedPreToolUse, GateError> {
+    let cwd = std::env::current_dir().map_err(|error| {
+        GateError::PreToolUseContext(crate::hooks::PreToolUseContextError::CanonicalPath {
+            label: "cwd",
+            reason: error.to_string(),
+        })
+    })?;
+    let context = crate::hooks::PreToolUseContext::admitted(
+        origin,
+        &cfg.id,
+        tool,
+        arguments,
+        instance_home,
+        &cwd,
+        crate::mcp::client::DEFAULT_REQUEST_TIMEOUT,
+        cancellation,
+        replay,
+    )?;
+    match crate::hooks::run_pre_tool_use(&context, hook_policy, once_guard) {
+        crate::hooks::PreToolUseDisposition::Continue => Ok(AdmittedPreToolUse {
+            enrichment: None,
+            server_id: cfg.id.clone(),
+            tool: tool.to_owned(),
+            request_binding_sha256: request_binding_sha256.to_owned(),
+        }),
+        crate::hooks::PreToolUseDisposition::Enrich(enrichment) => Ok(AdmittedPreToolUse {
+            enrichment: Some(enrichment),
+            server_id: cfg.id.clone(),
+            tool: tool.to_owned(),
+            request_binding_sha256: request_binding_sha256.to_owned(),
+        }),
+        crate::hooks::PreToolUseDisposition::Block { reason } => {
+            Err(GateError::PreToolUseBlocked {
+                server: cfg.id.clone(),
+                tool: tool.to_owned(),
+                reason,
+            })
+        }
+    }
+}
+
+/// SHA-256 commitment to the exact MCP request. Object keys are sorted
+/// recursively and arrays retain order. Both preflight authorization and the
+/// one-use PreToolUse permit consume this same commitment.
+pub(crate) fn mcp_request_binding(
+    cfg: &McpServerConfig,
+    tool: &str,
+    arguments: &Value,
+) -> Result<String, GateError> {
+    let request = serde_json::json!({
+        "server_id": cfg.id,
+        "tool": tool,
+        "arguments": canonicalize_json(arguments),
+    });
+    let bytes = serde_json::to_vec(&canonicalize_json(&request))
+        .map_err(|error| GateError::Mcp(McpError::Protocol(cfg.id.clone(), error.to_string())))?;
+    Ok(hex::encode(Sha256::digest(bytes)))
+}
+
+fn canonicalize_json(value: &Value) -> Value {
+    match value {
+        Value::Array(values) => Value::Array(values.iter().map(canonicalize_json).collect()),
+        Value::Object(values) => {
+            let mut ordered = std::collections::BTreeMap::new();
+            for (key, value) in values {
+                ordered.insert(key.clone(), canonicalize_json(value));
+            }
+            serde_json::to_value(ordered).expect("canonical JSON map is serializable")
+        }
+        scalar => scalar.clone(),
+    }
 }
 
 #[allow(clippy::too_many_arguments)] // Effect binding remains explicit at this audit boundary.
@@ -1027,7 +1125,7 @@ async fn emit_readonly_allow(
 /// in addition to the server-level `allow_tools`. Called from the
 /// dispatch loop (where the matched skill is in scope) BEFORE
 /// [`invoke_authorized_with_audit`].
-/// The server-level allowlist in `preflight_with_audit` still runs after
+/// The server-level allowlist in `preflight_with_audit_sink` still runs after
 /// this — both layers must pass. A rejection is audited via the same
 /// `MCP_TOOL_REJECTED` (0xC1) frame as every other gate denial, so the
 /// WAL replay shows skill-scoped blocks alongside server-scoped ones.
@@ -1250,6 +1348,199 @@ mod tests {
             smart_approve: false,
             autonomy_gate: None,
         }
+    }
+
+    #[test]
+    fn configured_pre_tool_boundary_blocks_each_origin_before_client_call() {
+        let home = tempfile::tempdir().expect("temporary canonical root");
+        let hooks = [crate::hooks::schema::HookDef {
+            name: "configured-deny".into(),
+            stage: crate::hooks::HookStage::PreToolUse,
+            enabled: Some(true),
+            priority: None,
+            matcher: None,
+            action: crate::hooks::schema::HookAction::Block {
+                reason: "typed test block".into(),
+            },
+            status_message: None,
+            once: false,
+            fail_fast: false,
+        }];
+        let once_guard = crate::hooks::SessionOnceGuard::new();
+        let arguments = serde_json::json!({
+            "body": "x".repeat(crate::hooks::pre_tool_use::MAX_PRE_TOOL_USE_ARGUMENT_SUMMARY_BYTES * 2)
+        });
+        for origin in [
+            crate::hooks::PreToolUseOrigin::ProviderEmittedMcp,
+            crate::hooks::PreToolUseOrigin::DirectCliMcp,
+        ] {
+            let error = admit_pre_tool_use(
+                origin,
+                &base_cfg(Some(vec!["read"])),
+                "read",
+                &arguments,
+                home.path(),
+                &mcp_request_binding(&base_cfg(Some(vec!["read"])), "read", &arguments).unwrap(),
+                crate::hooks::PreToolUseHookPolicy::Configured(&hooks),
+                &once_guard,
+                crate::hooks::PreToolUseCancellation::unbound(),
+                crate::hooks::PreToolUseReplay::direct_request(),
+            )
+            .err()
+            .expect("block returns before call_tool_with_success_audit");
+            assert!(matches!(error, GateError::PreToolUseBlocked { .. }));
+        }
+    }
+
+    fn pre_tool_replace(template: &str) -> crate::hooks::schema::HookDef {
+        crate::hooks::schema::HookDef {
+            name: "fixture-enrichment".into(),
+            stage: crate::hooks::HookStage::PreToolUse,
+            enabled: Some(true),
+            priority: None,
+            matcher: None,
+            action: crate::hooks::schema::HookAction::Replace {
+                template: template.into(),
+            },
+            status_message: None,
+            once: false,
+            fail_fast: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn actual_fixture_result_keeps_exact_arguments_and_receives_enrichment() {
+        let home = tempfile::tempdir().unwrap();
+        let counter = home.path().join("calls.txt");
+        let cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        let arguments = serde_json::json!({"z": 1, "a": true});
+        let binding = mcp_request_binding(&cfg, "read", &arguments).unwrap();
+        let preflight = preflight_with_audit_sink(
+            &cfg,
+            "read",
+            crate::permissions::AutonomyLevel::Full,
+            McpAuditSink::None,
+            1,
+            None,
+            Some(&binding),
+        )
+        .await
+        .unwrap();
+        let authorized = authorize_preflight_with_audit_sink(
+            preflight,
+            &cfg,
+            "read",
+            McpAuditSink::None,
+            None,
+            1,
+            None,
+            home.path(),
+        )
+        .await
+        .unwrap();
+        let hooks = [pre_tool_replace("trusted enrichment")];
+        let permit = admit_pre_tool_use(
+            crate::hooks::PreToolUseOrigin::DirectCliMcp,
+            &cfg,
+            "read",
+            &arguments,
+            home.path(),
+            &binding,
+            crate::hooks::PreToolUseHookPolicy::Configured(&hooks),
+            &crate::hooks::SessionOnceGuard::new(),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .unwrap();
+        let mut client = McpClient::spawn(&cfg).await.unwrap();
+        let result = invoke_authorized_with_audit_sink(
+            &mut client,
+            &cfg,
+            "read",
+            arguments,
+            authorized,
+            McpAuditSink::None,
+            None,
+            1,
+            Some(&binding),
+            permit,
+        )
+        .await
+        .unwrap();
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
+        assert!(
+            matches!(&result.content[0], crate::mcp::client::McpContent::Text { text } if text.contains("\"a\": true") && text.contains("\"z\": 1"))
+        );
+        assert!(
+            matches!(&result.content[1], crate::mcp::client::McpContent::Text { text } if text == "trusted enrichment")
+        );
+    }
+
+    #[tokio::test]
+    async fn fixture_permit_for_other_arguments_cannot_reach_tools_call() {
+        let home = tempfile::tempdir().unwrap();
+        let counter = home.path().join("calls.txt");
+        let cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        let admitted_args = serde_json::json!({"one": 1});
+        let other_args = serde_json::json!({"one": 2});
+        let admitted_binding = mcp_request_binding(&cfg, "read", &admitted_args).unwrap();
+        let other_binding = mcp_request_binding(&cfg, "read", &other_args).unwrap();
+        let preflight = preflight_with_audit_sink(
+            &cfg,
+            "read",
+            crate::permissions::AutonomyLevel::Full,
+            McpAuditSink::None,
+            1,
+            None,
+            Some(&admitted_binding),
+        )
+        .await
+        .unwrap();
+        let authorized = authorize_preflight_with_audit_sink(
+            preflight,
+            &cfg,
+            "read",
+            McpAuditSink::None,
+            None,
+            1,
+            None,
+            home.path(),
+        )
+        .await
+        .unwrap();
+        let permit = admit_pre_tool_use(
+            crate::hooks::PreToolUseOrigin::DirectCliMcp,
+            &cfg,
+            "read",
+            &admitted_args,
+            home.path(),
+            &admitted_binding,
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &crate::hooks::SessionOnceGuard::new(),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .unwrap();
+        let mut client = McpClient::spawn(&cfg).await.unwrap();
+        let error = invoke_authorized_with_audit_sink(
+            &mut client,
+            &cfg,
+            "read",
+            other_args,
+            authorized,
+            McpAuditSink::None,
+            None,
+            1,
+            Some(&other_binding),
+            permit,
+        )
+        .await
+        .expect_err("binding mismatch must precede fixture tools/call");
+        assert!(matches!(
+            error,
+            GateError::PermissionDenied { .. } | GateError::PreToolUsePermitMismatch { .. }
+        ));
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 0);
     }
 
     // ── CCS-02 per-server autonomy gate ────────────────────────────
@@ -1526,7 +1817,7 @@ mod tests {
         // Build a fake McpClient by sidestepping spawn — we cannot
         // construct one without a child process, so this test exercises
         // the public allowlist semantics via direct config inspection.
-        // The actual preflight_with_audit-allowlist path is covered by the
+        // The actual preflight_with_audit_sink allowlist path is covered by the
         // integration tests once a stub server lands. For now: verify
         // config carries the allowlist.
         assert_eq!(cfg.allow_tools.as_ref().unwrap().len(), 1);

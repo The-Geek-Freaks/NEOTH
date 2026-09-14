@@ -84,7 +84,7 @@ pub struct McpServerConfig {
     #[serde(default)]
     pub smart_approve: bool,
     /// GOLD-ADAPT-CCS-02 — per-server minimum autonomy floor. When set, the
-    /// gate (`mcp::gate::preflight_with_audit`) denies EVERY tool on this server
+    /// gate (`mcp::gate::preflight_with_audit_sink`) denies EVERY tool on this server
     /// unless the operator's current `FreedomConfig.autonomy` meets or exceeds
     /// it — e.g. an SSH / remote-edit server pinned to `elevated` so it stays
     /// inert under Strict/Standard. `None` (default) imposes no per-server floor.
@@ -860,7 +860,7 @@ pub fn hex_research_recommended_config() -> McpServerConfig {
 // before setting enabled: true.  The FNV checksum protocol is enforced by the
 // subprocess — NEOTH's gate (Layer 1b) blocks the whole server below Elevated.
 // The 0xC0/0xC1 WAL events are emitted generically by the gate split
-// (preflight_with_audit rejects, invoke_authorized_with_audit calls).
+// (preflight_with_audit_sink rejects, invoke_authorized_with_audit calls).
 pub fn hex_ssh_recommended_config() -> McpServerConfig {
     McpServerConfig {
         id: "hex-ssh".into(),
@@ -2109,7 +2109,7 @@ servers:
     #[test]
     fn hex_ssh_gate_predicate_blocks_strict_and_standard() {
         // Exercises the exact cfg.autonomy_gate -> meets_gate() path that
-        // preflight_with_audit uses at Layer 1b — proves the factory config
+        // preflight_with_audit_sink uses at Layer 1b — proves the factory config
         // connects correctly to the live gate enforcement.
         use crate::permissions::AutonomyLevel::*;
         let cfg = hex_ssh_recommended_config();

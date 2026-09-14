@@ -635,6 +635,11 @@ V11 coding workflow — autonomous software-engineering entry point
 - `<PROMPT>` — Free-text coding request. Wrapped in `<operator_request>` by the decomposer prompt — no further escaping needed. Optional only so `--run-pending` (which decomposes nothing) can run without one
 - `--db <PATH>` — Override `views.db` path. Defaults to `~/.neoth/views.db`
 - `--repo-root <REPO_ROOT>` — Repository used for code-map provenance and (when requested) dispatch worktrees. A fresh coding run never guesses process CWD; `--apply` remains an explicit repository root for backwards-compatible apply invocations
+- `--diff-impact-working-tree` — Add one explicitly selected Git/stdin diff-impact receipt to the coding context.  Every source mode below is opt-in; absence preserves the existing recall/repo-summary-only coding behavior
+- `--diff-impact-staged` — Use the explicit staged Git diff as the optional diff-impact input
+- `--diff-impact-base <REF>` — Committed diff base. Requires `--diff-impact-target`
+- `--diff-impact-target <REF>` — Committed diff target. Requires `--diff-impact-base`
+- `--diff-impact-stdin` — Read one bounded unified diff from stdin for optional diff-impact context. It is held transiently and never persisted
 - `--source-channel <SOURCE_CHANNEL>` — Source channel label for the kanban session (`cli` / `chat` / `telegram` / `discord` / ...). Defaults to `cli`
 - `--no-assign` — Skip the auto-classify + auto-assign step. Useful for operator-in-loop review of the decomposition before any hemisphere binding
 - `--dispatch` — Pick #6 Phase 3 (2026-05-20): after decomposition + assign, actually run the workers. Without this flag the command stops at "decomposed into N tasks" and the operator drives dispatch manually (`neoth kanban move …`). With `--dispatch`, we build a `HemisphereWorkerSet` from the freedom.yaml provider bindings and call `dispatch_session()` once. Q1 patch-safety placeholder applies — workers store patches, do not apply
