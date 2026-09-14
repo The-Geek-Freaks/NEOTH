@@ -31,12 +31,18 @@
 //!   its own intent and terminal result may that lane replace its explicit
 //!   denied gate with the live operator decision.
 
+use std::ffi::OsString;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::permissions::gate::ConfirmStrategy;
+use crate::updater::authority::{
+    UpdaterAuthorityComponent, UpdaterLeafAuthorizer, UpdaterLeafFailure, UpdaterLeafFailureKind,
+    UpdaterLeafOutcomeCode, UpdaterLeafRequest, UpdaterLeafSuccess,
+};
 use crate::updater::budget::{UpdaterDeadlinePhase, UpdaterRunClock, UpdaterRunLimits};
 #[cfg(test)]
 use crate::updater::pipeline::ComponentSpec;
@@ -57,6 +63,174 @@ use sha2::{Digest as _, Sha256};
 #[cfg(test)]
 static SAFE_OWNED_STAGE_HELPER_FIXTURE_HOMES: std::sync::Mutex<Vec<PathBuf>> =
     std::sync::Mutex::new(Vec::new());
+
+// The native CLI lane deliberately has a very small test-only seam.  It is
+// keyed by an exact temporary home, so a fixture cannot change any production
+// resolver or another concurrently running test.  The real pass still owns
+// outer FIRED/RESULT, request construction, authority validation and WAL
+// intent/result acknowledgements; only descriptor observations and the
+// contained runner outcome are controlled.
+#[cfg(test)]
+static NATIVE_CLI_PROBE_FIXTURES: std::sync::Mutex<Vec<NativeCliProbeFixture>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+#[derive(Clone)]
+struct NativeCliProbeFixture {
+    home: PathBuf,
+    limits: Option<UpdaterRunLimits>,
+    leaves: Vec<NativeCliProbeFixtureLeaf>,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct NativeCliProbeFixtureLeaf {
+    component: crate::updater::Component,
+    target: Result<
+        crate::updater::probes::NativeCliProbeTarget,
+        crate::updater::probes::NativeCliProbeError,
+    >,
+    after_intent: NativeCliProbeFixtureAfterIntent,
+    runner: NativeCliProbeFixtureRunner,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+enum NativeCliProbeFixtureAfterIntent {
+    None,
+    MutateBoundImage,
+}
+
+#[cfg(test)]
+type NativeCliProbeFixtureWriterCompletion =
+    Arc<tokio::sync::Mutex<Option<crate::wal::writer::WalWriterCompletion>>>;
+
+#[cfg(test)]
+#[derive(Clone)]
+enum NativeCliProbeFixtureRunner {
+    Success {
+        version: String,
+        spawns: Arc<std::sync::atomic::AtomicUsize>,
+    },
+    TerminalFailure {
+        terminal: NativeCliProbeFixtureTerminal,
+        spawns: Arc<std::sync::atomic::AtomicUsize>,
+    },
+    TerminalAckIndeterminate {
+        completion: NativeCliProbeFixtureWriterCompletion,
+        spawns: Arc<std::sync::atomic::AtomicUsize>,
+    },
+    RealContained,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum NativeCliProbeFixtureTerminal {
+    Process,
+}
+
+#[cfg(test)]
+struct NativeCliProbeFixtureGuard(PathBuf);
+
+#[cfg(test)]
+impl Drop for NativeCliProbeFixtureGuard {
+    fn drop(&mut self) {
+        let mut fixtures = NATIVE_CLI_PROBE_FIXTURES
+            .lock()
+            .expect("native CLI cron fixture registry");
+        fixtures.retain(|fixture| fixture.home != self.0);
+    }
+}
+
+#[cfg(test)]
+fn install_native_cli_probe_fixture(fixture: NativeCliProbeFixture) -> NativeCliProbeFixtureGuard {
+    let mut fixtures = NATIVE_CLI_PROBE_FIXTURES
+        .lock()
+        .expect("native CLI cron fixture registry");
+    assert!(
+        !fixtures
+            .iter()
+            .any(|registered| registered.home == fixture.home),
+        "native CLI cron fixture home is already registered"
+    );
+    let home = fixture.home.clone();
+    fixtures.push(fixture);
+    NativeCliProbeFixtureGuard(home)
+}
+
+#[cfg(test)]
+fn native_cli_probe_fixture_for(
+    home: &std::path::Path,
+    component: crate::updater::Component,
+) -> Option<NativeCliProbeFixtureLeaf> {
+    NATIVE_CLI_PROBE_FIXTURES
+        .lock()
+        .expect("native CLI cron fixture registry")
+        .iter()
+        .find(|fixture| fixture.home == home)
+        .and_then(|fixture| {
+            fixture
+                .leaves
+                .iter()
+                .find(|leaf| leaf.component == component)
+        })
+        .cloned()
+}
+
+#[cfg(test)]
+fn native_cli_probe_fixture_limits(home: &std::path::Path) -> Option<UpdaterRunLimits> {
+    NATIVE_CLI_PROBE_FIXTURES
+        .lock()
+        .expect("native CLI cron fixture registry")
+        .iter()
+        .find(|fixture| fixture.home == home)
+        .and_then(|fixture| fixture.limits)
+}
+
+#[cfg(test)]
+async fn run_native_cli_probe_fixture(
+    runner: NativeCliProbeFixtureRunner,
+) -> Option<Result<UpdaterLeafSuccess<String>, UpdaterLeafFailure>> {
+    use std::sync::atomic::Ordering;
+
+    match runner {
+        NativeCliProbeFixtureRunner::Success { version, spawns } => {
+            spawns.fetch_add(1, Ordering::SeqCst);
+            Some(Ok(UpdaterLeafSuccess::new(
+                version,
+                UpdaterLeafOutcomeCode::Completed,
+            )))
+        }
+        NativeCliProbeFixtureRunner::TerminalFailure { terminal, spawns } => {
+            spawns.fetch_add(1, Ordering::SeqCst);
+            let kind = match terminal {
+                NativeCliProbeFixtureTerminal::Process => UpdaterLeafFailureKind::Process,
+            };
+            Some(Err(UpdaterLeafFailure::new(
+                kind,
+                anyhow::anyhow!("controlled native CLI contained runner terminal"),
+            )))
+        }
+        NativeCliProbeFixtureRunner::TerminalAckIndeterminate { completion, spawns } => {
+            spawns.fetch_add(1, Ordering::SeqCst);
+            let completion = completion
+                .lock()
+                .await
+                .take()
+                .expect("controlled native CLI fixture writer must still be live");
+            completion.abort_handle().abort();
+            completion
+                .wait_bounded(Duration::from_secs(3))
+                .await
+                .expect_err("aborted real writer completion must report terminal loss");
+            Some(Err(UpdaterLeafFailure::new(
+                UpdaterLeafFailureKind::Process,
+                anyhow::anyhow!("controlled native CLI runner after terminal WAL loss"),
+            )))
+        }
+        NativeCliProbeFixtureRunner::RealContained => None,
+    }
+}
 
 #[cfg(test)]
 struct SafeOwnedStageHelperFixtureGuard(PathBuf);
@@ -388,13 +562,13 @@ fn recurring_egress_gate(lane: RecurringUpdateLane) -> crate::updater::pipeline:
         // and recovery gating before FIRED. Existing configuration/scheduling
         // opt-ins still decide whether this lane is ever scheduled.
         RecurringUpdateLane::SelfStage => crate::updater::pipeline::GateDecision::Allow,
-        // CLI/npm/Git/OSV/install leaves remain inert until their own exact
-        // request-bound authority wrappers land.
-        RecurringUpdateLane::CliVersionProbe
-        | RecurringUpdateLane::SkillPluginProbe
-        | RecurringUpdateLane::CliAutoApply => crate::updater::pipeline::GateDecision::Deny {
-            reason: UNAUDITED_RECURRING_EGRESS_DENIED.to_string(),
-        },
+        // W40 admits only the local contained installed-version leaf. Registry, Git and install leaves remain denied.
+        RecurringUpdateLane::CliVersionProbe => crate::updater::pipeline::GateDecision::Allow,
+        RecurringUpdateLane::SkillPluginProbe | RecurringUpdateLane::CliAutoApply => {
+            crate::updater::pipeline::GateDecision::Deny {
+                reason: UNAUDITED_RECURRING_EGRESS_DENIED.to_string(),
+            }
+        }
     }
 }
 
@@ -1110,6 +1284,37 @@ async fn run_production_lane_once(
             .await?;
             Ok(())
         }
+        RecurringUpdateLane::CliVersionProbe => {
+            if let crate::updater::pipeline::GateDecision::Deny { reason } = &gate {
+                let result = run_probe_pass_with_builder_at(
+                    pass_identity,
+                    UpdaterTaskKind::CliVersions,
+                    &writer,
+                    || async { Ok(denied_probe_specs(UpdaterTaskKind::CliVersions, reason)) },
+                )
+                .await?;
+                tracing::debug!(
+                    components = result.components.len(),
+                    epoch = snapshot.epoch(),
+                    "CLI version probe denied before leaf authority"
+                );
+                return Ok(());
+            }
+            let result = run_authorized_cli_version_probe(
+                pass_identity,
+                Arc::clone(&snapshot),
+                &home,
+                &writer,
+                control,
+            )
+            .await?;
+            tracing::debug!(
+                components = result.components.len(),
+                epoch = snapshot.epoch(),
+                "authorized local CLI version probe complete"
+            );
+            Ok(())
+        }
         RecurringUpdateLane::NeothSelfProbe => {
             if let crate::updater::pipeline::GateDecision::Deny { reason } = &gate {
                 let result = run_probe_pass_with_builder_at(
@@ -1672,6 +1877,215 @@ where
     Ok(result)
 }
 
+async fn run_authorized_cli_version_probe(
+    identity: UpdaterPassIdentity,
+    snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
+    home: &std::path::Path,
+    writer: &WalWriterHandle,
+    control: UpdaterPassControl,
+) -> Result<UpdaterTaskResultPayload, String> {
+    let task_kind = UpdaterTaskKind::CliVersions;
+    let fired_receipt_sha256 = append_updater_fired(&identity, task_kind, writer).await?;
+    let default_run_limits = UpdaterRunLimits::default_cli_installed_version_probe()
+        .map_err(|error| format!("configure bounded CLI version pass: {error}"))?;
+    #[cfg(test)]
+    let run_limits = native_cli_probe_fixture_limits(home).unwrap_or(default_run_limits);
+    #[cfg(not(test))]
+    let run_limits = default_run_limits;
+    let run_clock = UpdaterRunClock::start(run_limits)
+        .map_err(|error| format!("admit bounded CLI version pass: {error}"))?;
+    control
+        .admit(run_clock.clone())
+        .map_err(|error| format!("record CLI version pass clock: {error:#}"))?;
+    let effect_deadline = run_clock.deadline(UpdaterDeadlinePhase::Effect);
+    let pass_id = identity
+        .correlatable_pass_id_for(task_kind)
+        .ok_or_else(|| "authorized CLI probe requires a bound outer pass identity".to_string())?;
+    let authorizer = UpdaterLeafAuthorizer::for_snapshot(
+        writer.clone(),
+        Arc::clone(&snapshot),
+        ConfirmStrategy::FailClosed,
+    );
+    let started = std::time::Instant::now();
+    let mut components = Vec::new();
+    let mut terminal_receipts = Vec::new();
+    let mut outer_terminal_outcome = UpdaterTerminalOutcome::Completed;
+    for (ordinal, component) in crate::updater::Component::ALL.iter().copied().enumerate() {
+        let name = component.name();
+        #[cfg(test)]
+        let fixture = native_cli_probe_fixture_for(home, component);
+        #[cfg(test)]
+        let target = match fixture
+            .as_ref()
+            .map(|fixture| fixture.target.clone())
+            .unwrap_or_else(|| {
+                crate::updater::probes::resolve_native_cli_from_path(component.binary(), home)
+            }) {
+            Ok(target) => target,
+            Err(error) => {
+                components.push(ComponentOutcome::failed(
+                    name,
+                    "unobserved",
+                    format!("native CLI launch form unavailable: {error:?}"),
+                ));
+                continue;
+            }
+        };
+        #[cfg(not(test))]
+        let target =
+            match crate::updater::probes::resolve_native_cli_from_path(component.binary(), home) {
+                Ok(target) => target,
+                Err(error) => {
+                    components.push(ComponentOutcome::failed(
+                        name,
+                        "unobserved",
+                        format!("native CLI launch form unavailable: {error:?}"),
+                    ));
+                    continue;
+                }
+            };
+        let argv = vec!["--version".to_string()];
+        let request = UpdaterLeafRequest::native_cli_process(
+            pass_id.to_string(),
+            format!("cli-installed-{ordinal}"),
+            snapshot.epoch(),
+            UpdaterAuthorityComponent::cli(component),
+            &argv,
+            8 * 1024,
+            target.executable.clone(),
+        )
+        .and_then(|request| request.with_run_budgets(run_clock.budgets().clone()))
+        .map_err(|error| format!("build native CLI leaf request: {error:#}"))?;
+        let target_for_effect = target.clone();
+        let control_for_effect = control.clone();
+        let execution = authorizer.execute_native_cli_process_with_receipt(request, run_clock.clone(), &argv, 8 * 1024, &target.executable, move || async move {
+            #[cfg(test)]
+            if let Some(fixture) = fixture.as_ref()
+                && matches!(fixture.after_intent, NativeCliProbeFixtureAfterIntent::MutateBoundImage)
+            {
+                use std::io::Write as _;
+                std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&target_for_effect.program)
+                    .map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Integrity, anyhow::anyhow!("open fixture native CLI image for post-intent mutation: {error}")))?
+                    .write_all(b"\\0")
+                    .map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Integrity, anyhow::anyhow!("mutate fixture native CLI image after intent: {error}")))?;
+            }
+            crate::updater::probes::verify_native_cli_descriptor(&target_for_effect)
+                .map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Integrity, anyhow::anyhow!("native CLI descriptor changed before spawn: {error:?}")))?;
+            #[cfg(test)]
+            if let Some(fixture) = fixture.as_ref()
+                && let Some(result) = run_native_cli_probe_fixture(fixture.runner.clone()).await
+            {
+                return result;
+            }
+            let args = vec![OsString::from("--version")];
+            let mut child = crate::updater::process_containment::ContainedChild::spawn_native_cli_version(&target_for_effect.program, &args, &target_for_effect.working_directory, 8 * 1024).await
+                .map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Process, anyhow::anyhow!("spawn contained native CLI version probe: {error}")))?;
+            let output = tokio::select! {
+                biased;
+                _ = control_for_effect.cancelled() => {
+                    child.terminate_and_reap().await.map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Cancelled, anyhow::anyhow!("cancel/reap contained native CLI version probe: {error}")))?;
+                    return Err(UpdaterLeafFailure::new(UpdaterLeafFailureKind::Cancelled, anyhow::anyhow!("contained native CLI version probe cancelled after reap")));
+                },
+                result = child.wait_until(effect_deadline.into()) => match result {
+                    Ok(output) => output,
+                    Err(_) => {
+                        child.terminate_and_reap().await.map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Timeout, anyhow::anyhow!("reap contained native CLI version probe: {error}")))?;
+                        return Err(UpdaterLeafFailure::new(UpdaterLeafFailureKind::Timeout, anyhow::anyhow!("contained native CLI version probe timed out after reap")));
+                    },
+                },
+            };
+            if !output.status.success() { return Err(UpdaterLeafFailure::new(UpdaterLeafFailureKind::Process, anyhow::anyhow!("native CLI version process exited unsuccessfully"))); }
+            // Diagnostic only: the pre-spawn recapture above is the admission check.
+            if crate::updater::probes::verify_native_cli_descriptor(&target_for_effect).is_err() {
+                tracing::warn!("native CLI descriptor changed after contained execution");
+            }
+
+            let version = crate::updater::probes::parse_native_cli_version(&output.stdout).map_err(|error| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Protocol, anyhow::anyhow!("native CLI version output: {error:?}")))?;
+            Ok(UpdaterLeafSuccess::new(version, UpdaterLeafOutcomeCode::Completed))
+        }).await;
+        match execution {
+            Ok((version, receipt)) => {
+                components.push(ComponentOutcome::observed(name, version));
+                terminal_receipts.push(receipt);
+            }
+            Err(error) if error.is_policy_refusal() => {
+                if let Some(receipt) = error.terminal_receipt() {
+                    terminal_receipts.push(receipt);
+                }
+                components.push(ComponentOutcome::skipped_by_gate(
+                    name,
+                    "unobserved",
+                    REQUEST_BOUND_POLICY_REFUSED,
+                ));
+            }
+            Err(error) => {
+                if error.leaves_outer_terminal_indeterminate() {
+                    return Err("native CLI leaf terminal acknowledgement is indeterminate; outer RESULT withheld for recovery".to_string());
+                }
+                if matches!(
+                    &error,
+                    crate::updater::authority::UpdaterLeafExecutionError::Effect {
+                        kind: "cancelled",
+                        ..
+                    }
+                ) && control.is_cancelled()
+                {
+                    outer_terminal_outcome = UpdaterTerminalOutcome::Cancelled;
+                } else if matches!(
+                    &error,
+                    crate::updater::authority::UpdaterLeafExecutionError::Effect {
+                        kind: "timeout",
+                        ..
+                    }
+                ) {
+                    outer_terminal_outcome = UpdaterTerminalOutcome::TimedOut;
+                }
+                if let Some(receipt) = error.terminal_receipt() {
+                    terminal_receipts.push(receipt);
+                }
+                components.push(ComponentOutcome::failed(
+                    name,
+                    "unobserved",
+                    format!("native contained version probe failed: {error}"),
+                ));
+                if outer_terminal_outcome != UpdaterTerminalOutcome::Completed {
+                    break;
+                }
+            }
+        }
+    }
+    let failed = components
+        .iter()
+        .any(|component| component.status == crate::wal::payloads_u04::ComponentStatus::Failed);
+    let result = UpdaterTaskResultPayload {
+        identity,
+        task_kind,
+        ts_unix: crate::time::now_unix_secs(),
+        duration_ms: started.elapsed().as_millis().min(u32::MAX as u128) as u32,
+        terminal_outcome: Some(
+            if outer_terminal_outcome != UpdaterTerminalOutcome::Completed {
+                outer_terminal_outcome
+            } else if failed {
+                UpdaterTerminalOutcome::Failed
+            } else {
+                UpdaterTerminalOutcome::Completed
+            },
+        ),
+        fired_receipt_sha256: Some(fired_receipt_sha256),
+        leaf_receipt_binding: (!terminal_receipts.is_empty()).then_some(
+            UpdaterLeafReceiptBinding {
+                schema_version: UPDATER_LEAF_RECEIPT_BINDING_SCHEMA_VERSION,
+                budgets: run_clock.budgets().clone(),
+                terminal_receipts,
+            },
+        ),
+        components,
+    };
+    append_updater_result(&result, writer).await?;
+    Ok(result)
+}
 /// Build auditable denied rows without package scans, subprocesses or network.
 /// The inventory sentinel for Skill/Plugin is intentional: enumerating the
 /// installed tree is blocking work and must not happen before this generation's
@@ -1859,6 +2273,91 @@ mod tests {
             latest_version: latest.map(|s| s.to_string()).map_err(|s| s.to_string()),
             gate_decision: GateDecision::Allow,
         }
+    }
+
+    fn native_cli_fixture_target(
+        home: &std::path::Path,
+    ) -> crate::updater::probes::NativeCliProbeTarget {
+        // The ordinary Rust test executable can exceed the production 256 MiB
+        // native-image cap. Copy a small installed native PE into this exact
+        // home instead, so the same descriptor classifier, size bound and
+        // identity check protect the actual process under test.
+        #[cfg(windows)]
+        let source = std::path::PathBuf::from(
+            std::env::var_os("SystemRoot").expect("Windows SystemRoot for native fixture"),
+        )
+        .join("System32")
+        .join("PING.EXE");
+        #[cfg(not(windows))]
+        let source = std::env::current_exe().expect("test executable path");
+        let program = home.join(if cfg!(windows) {
+            "native-cli-fixture.exe"
+        } else {
+            "native-cli-fixture"
+        });
+        if !program.exists() {
+            std::fs::copy(&source, &program).expect("copy native test executable fixture");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                let mut permissions = std::fs::metadata(&program).unwrap().permissions();
+                permissions.set_mode(0o700);
+                std::fs::set_permissions(&program, permissions).unwrap();
+            }
+        }
+        crate::updater::probes::resolve_native_cli_probe(&program, home)
+            .expect("the copied bounded native executable is suitable for the controlled CLI seam")
+    }
+
+    fn native_cli_fixture_leaf(
+        home: &std::path::Path,
+        component: crate::updater::Component,
+        runner: NativeCliProbeFixtureRunner,
+    ) -> NativeCliProbeFixtureLeaf {
+        NativeCliProbeFixtureLeaf {
+            component,
+            target: Ok(native_cli_fixture_target(home)),
+            after_intent: NativeCliProbeFixtureAfterIntent::None,
+            runner,
+        }
+    }
+
+    fn native_cli_fixture_containment_argv() -> Vec<OsString> {
+        // Production always supplies `--version`. On Windows this exact
+        // registered fixture instead uses the copied, loopback-only PING.EXE
+        // to keep a real native child live until the production cancellation or
+        // deadline select reaps it. The selection cannot affect other paths.
+        #[cfg(windows)]
+        {
+            vec![OsString::from("-t"), OsString::from("127.0.0.1")]
+        }
+        #[cfg(not(windows))]
+        {
+            vec![OsString::from("--version")]
+        }
+    }
+
+    fn cli_fixture_snapshot(
+        home: &std::path::Path,
+    ) -> Arc<crate::config::reload::AcceptedConfigSnapshot> {
+        let mut config = crate::config::FreedomConfig::default();
+        config.autonomy = crate::permissions::AutonomyLevel::Full;
+        crate::config::reload::ReloadController::new(config, home.join("freedom.yaml"))
+            .accepted_snapshot()
+    }
+
+    fn cli_fixture_wal_events(segment: &std::path::Path) -> Vec<(u8, u8, serde_json::Value)> {
+        let bytes = std::fs::read(segment).expect("read CLI fixture WAL");
+        let mut offset = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut events = Vec::new();
+        while offset < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[offset..])
+                .expect("decode CLI fixture WAL frame");
+            let payload = serde_json::from_slice(frame.payload).unwrap_or(serde_json::Value::Null);
+            events.push((frame.header.event_type, frame.header.event_subtype, payload));
+            offset += frame.header.total_len as usize;
+        }
+        events
     }
 
     #[test]
@@ -2792,7 +3291,7 @@ mod tests {
     }
 
     #[test]
-    fn recurring_network_gate_admits_only_reviewed_self_lanes() {
+    fn recurring_gate_admits_reviewed_self_and_local_cli_lanes() {
         assert!(matches!(
             recurring_egress_gate(RecurringUpdateLane::NeothSelfProbe),
             GateDecision::Allow
@@ -2801,8 +3300,11 @@ mod tests {
             recurring_egress_gate(RecurringUpdateLane::SelfStage),
             GateDecision::Allow
         ));
+        assert!(matches!(
+            recurring_egress_gate(RecurringUpdateLane::CliVersionProbe),
+            GateDecision::Allow
+        ));
         for lane in [
-            RecurringUpdateLane::CliVersionProbe,
             RecurringUpdateLane::SkillPluginProbe,
             RecurringUpdateLane::CliAutoApply,
         ] {
@@ -2965,9 +3467,16 @@ mod tests {
             let release_epoch_zero = Arc::clone(&release_epoch_zero);
             let writer = writer.clone();
             Arc::new(move |lane, snapshot, gate, _control| {
-                assert!(matches!(gate, GateDecision::Deny { .. }));
-                if lane != RecurringUpdateLane::CliVersionProbe {
+                if lane != RecurringUpdateLane::SkillPluginProbe {
                     return Box::pin(async { Ok(()) });
+                }
+                match gate {
+                    GateDecision::Deny { reason } => {
+                        assert_eq!(reason, UNAUDITED_RECURRING_EGRESS_DENIED);
+                    }
+                    GateDecision::Allow => {
+                        panic!("SkillPluginProbe must retain its denied recurring egress policy")
+                    }
                 }
                 let active = Arc::clone(&active);
                 let max_active = Arc::clone(&max_active);
@@ -2979,7 +3488,7 @@ mod tests {
                     let deny_unknown =
                         snapshot.config().security.egress.mode == EgressMode::DenyUnknown;
                     run_probe_pass_with_builder(
-                        UpdaterTaskKind::CliVersions,
+                        UpdaterTaskKind::SkillPlugin,
                         &writer,
                         || async move {
                             let current = active.fetch_add(1, Ordering::SeqCst) + 1;
@@ -3001,7 +3510,7 @@ mod tests {
                             active.fetch_sub(1, Ordering::SeqCst);
                             events.send(WorkEvent::Finished { epoch }).unwrap();
                             Ok(denied_probe_specs(
-                                UpdaterTaskKind::CliVersions,
+                                UpdaterTaskKind::SkillPlugin,
                                 UNAUDITED_RECURRING_EGRESS_DENIED,
                             ))
                         },
@@ -3789,5 +4298,410 @@ mod tests {
             bound.result_receipt_sha256,
             crate::wal::payloads_u04::updater_leaf_result_receipt_sha256(&leaf_result_payload)
         );
+    }
+
+    #[tokio::test]
+    async fn native_cli_descriptor_mutation_after_intent_ack_never_reaches_controlled_spawn() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let wal = home.join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let segment = wal.join("000001.wal");
+        let (writer, writer_join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.clone()).unwrap();
+        ready.wait().await.unwrap();
+
+        let first = crate::updater::Component::ALL[0];
+        let spawns = Arc::new(AtomicUsize::new(0));
+        let target = native_cli_fixture_target(&home);
+        let _helper = crate::updater::process_containment::enable_native_cli_version_test_helper(
+            &target.program,
+            native_cli_fixture_containment_argv(),
+            Arc::clone(&spawns),
+            Arc::new(tokio::sync::Notify::new()),
+        );
+        let _fixture = install_native_cli_probe_fixture(NativeCliProbeFixture {
+            home: home.clone(),
+            limits: None,
+            leaves: crate::updater::Component::ALL
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(ordinal, component)| {
+                    if ordinal == 0 {
+                        let mut leaf = native_cli_fixture_leaf(
+                            &home,
+                            component,
+                            NativeCliProbeFixtureRunner::RealContained,
+                        );
+                        leaf.target = Ok(target.clone());
+                        leaf.after_intent = NativeCliProbeFixtureAfterIntent::MutateBoundImage;
+                        leaf
+                    } else {
+                        NativeCliProbeFixtureLeaf {
+                            component,
+                            target: Err(crate::updater::probes::NativeCliProbeError::Missing),
+                            after_intent: NativeCliProbeFixtureAfterIntent::None,
+                            runner: NativeCliProbeFixtureRunner::Success {
+                                version: "unused".to_string(),
+                                spawns: Arc::new(AtomicUsize::new(0)),
+                            },
+                        }
+                    }
+                })
+                .collect(),
+        });
+
+        let result = run_authorized_cli_version_probe(
+            UpdaterPassIdentity::new(UpdaterPassLane::CliVersionProbe, 0),
+            cli_fixture_snapshot(&home),
+            &home,
+            &writer,
+            UpdaterPassControl::new(Some(writer.clone())),
+        )
+        .await
+        .expect("descriptor mutation must terminalize the actual CLI pass");
+        assert_eq!(
+            result.terminal_outcome,
+            Some(UpdaterTerminalOutcome::Failed)
+        );
+        assert_eq!(
+            spawns.load(Ordering::SeqCst),
+            0,
+            "pre-spawn recapture must reject the mutated descriptor"
+        );
+        result.validate_leaf_receipt_binding().unwrap();
+        assert_eq!(
+            result
+                .leaf_receipt_binding
+                .as_ref()
+                .unwrap()
+                .terminal_receipts[0]
+                .request_id,
+            "cli-installed-0"
+        );
+        assert_eq!(result.components[0].name, first.name());
+        assert_eq!(
+            result.components[0].status,
+            crate::wal::payloads_u04::ComponentStatus::Failed
+        );
+
+        drop(writer);
+        writer_join.await.unwrap().unwrap();
+        let events = cli_fixture_wal_events(&segment);
+        let leaf_results: Vec<_> = events
+            .iter()
+            .filter(|(event, subtype, _)| {
+                *event == crate::wal::events::EVENT_TYPE_EXTENDED
+                    && *subtype == crate::wal::events::ExtendedSubtype::UpdaterLeafResult as u8
+            })
+            .collect();
+        assert_eq!(leaf_results.len(), 1);
+        assert_eq!(leaf_results[0].2["error_kind"], "integrity");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(event, _, _)| *event == EVENT_TYPE_UPDATER_TASK_RESULT)
+                .count(),
+            1,
+            "the failed terminal leaf must be aggregated into one outer RESULT"
+        );
+    }
+
+    #[tokio::test]
+    async fn native_cli_mixed_terminal_receipts_bind_the_exact_success_and_failure_request_ids() {
+        use std::sync::atomic::AtomicUsize;
+
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let wal = home.join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let segment = wal.join("000001.wal");
+        let (writer, writer_join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.clone()).unwrap();
+        ready.wait().await.unwrap();
+
+        let success_spawns = Arc::new(AtomicUsize::new(0));
+        let failure_spawns = Arc::new(AtomicUsize::new(0));
+        let first = crate::updater::Component::ALL[0];
+        let second = crate::updater::Component::ALL[1];
+        let third = crate::updater::Component::ALL[2];
+        let _fixture = install_native_cli_probe_fixture(NativeCliProbeFixture {
+            home: home.clone(),
+            limits: None,
+            leaves: vec![
+                native_cli_fixture_leaf(
+                    &home,
+                    first,
+                    NativeCliProbeFixtureRunner::Success {
+                        version: "1.2.3".to_string(),
+                        spawns: Arc::clone(&success_spawns),
+                    },
+                ),
+                native_cli_fixture_leaf(
+                    &home,
+                    second,
+                    NativeCliProbeFixtureRunner::TerminalFailure {
+                        terminal: NativeCliProbeFixtureTerminal::Process,
+                        spawns: Arc::clone(&failure_spawns),
+                    },
+                ),
+                NativeCliProbeFixtureLeaf {
+                    component: third,
+                    target: Err(crate::updater::probes::NativeCliProbeError::Missing),
+                    after_intent: NativeCliProbeFixtureAfterIntent::None,
+                    runner: NativeCliProbeFixtureRunner::Success {
+                        version: "unused".to_string(),
+                        spawns: Arc::new(AtomicUsize::new(0)),
+                    },
+                },
+            ],
+        });
+
+        let result = run_authorized_cli_version_probe(
+            UpdaterPassIdentity::new(UpdaterPassLane::CliVersionProbe, 0),
+            cli_fixture_snapshot(&home),
+            &home,
+            &writer,
+            UpdaterPassControl::new(Some(writer.clone())),
+        )
+        .await
+        .expect("mixed native CLI leaf terminals must commit the outer RESULT");
+        assert_eq!(
+            result.terminal_outcome,
+            Some(UpdaterTerminalOutcome::Failed)
+        );
+        result.validate_leaf_receipt_binding().unwrap();
+        let request_ids: Vec<_> = result
+            .leaf_receipt_binding
+            .as_ref()
+            .unwrap()
+            .terminal_receipts
+            .iter()
+            .map(|receipt| receipt.request_id.as_str())
+            .collect();
+        assert_eq!(request_ids, ["cli-installed-0", "cli-installed-1"]);
+        assert_eq!(success_spawns.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(failure_spawns.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        drop(writer);
+        writer_join.await.unwrap().unwrap();
+        let events = cli_fixture_wal_events(&segment);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(event, subtype, _)| {
+                    *event == crate::wal::events::EVENT_TYPE_EXTENDED
+                        && *subtype == crate::wal::events::ExtendedSubtype::UpdaterLeafResult as u8
+                })
+                .count(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn native_cli_terminal_ack_indeterminacy_withholds_the_outer_result() {
+        use std::sync::atomic::AtomicUsize;
+
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let wal = home.join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let segment = wal.join("000001.wal");
+        let (writer, completion, ready) =
+            crate::wal::writer::spawn_for_home_ready_with_completion(segment.clone(), home.clone())
+                .unwrap();
+        ready.wait().await.unwrap();
+        let completion = Arc::new(tokio::sync::Mutex::new(Some(completion)));
+        let spawns = Arc::new(AtomicUsize::new(0));
+        let _fixture = install_native_cli_probe_fixture(NativeCliProbeFixture {
+            home: home.clone(),
+            limits: None,
+            leaves: vec![native_cli_fixture_leaf(
+                &home,
+                crate::updater::Component::ALL[0],
+                NativeCliProbeFixtureRunner::TerminalAckIndeterminate {
+                    completion: Arc::clone(&completion),
+                    spawns: Arc::clone(&spawns),
+                },
+            )],
+        });
+
+        let error = run_authorized_cli_version_probe(
+            UpdaterPassIdentity::new(UpdaterPassLane::CliVersionProbe, 0),
+            cli_fixture_snapshot(&home),
+            &home,
+            &writer,
+            UpdaterPassControl::new(Some(writer.clone())),
+        )
+        .await
+        .expect_err("terminal leaf ACK loss must withhold the outer RESULT");
+        assert!(error.contains("outer RESULT withheld"));
+        assert_eq!(spawns.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        drop(writer);
+        let events = cli_fixture_wal_events(&segment);
+        assert!(
+            events
+                .iter()
+                .any(|(event, _, _)| *event == EVENT_TYPE_UPDATER_TASK_FIRED)
+        );
+        assert!(events.iter().any(|(event, subtype, _)| {
+            *event == crate::wal::events::EVENT_TYPE_EXTENDED
+                && *subtype == crate::wal::events::ExtendedSubtype::UpdaterLeafIntent as u8
+        }));
+        assert!(
+            !events
+                .iter()
+                .any(|(event, _, _)| *event == EVENT_TYPE_UPDATER_TASK_RESULT),
+            "no outer RESULT may be emitted after an indeterminate CLI terminal ACK"
+        );
+    }
+
+    #[tokio::test]
+    async fn native_cli_cancelled_and_timed_out_leaves_use_real_containment_before_terminal_receipts()
+     {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        for (cancelled, expected) in [
+            (true, UpdaterTerminalOutcome::Cancelled),
+            (false, UpdaterTerminalOutcome::TimedOut),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let home = root.path().join("home");
+            let wal = home.join("wal");
+            std::fs::create_dir_all(&wal).unwrap();
+            let segment = wal.join("000001.wal");
+            let (writer, writer_join, ready) =
+                crate::wal::writer::spawn_for_home_ready(segment.clone(), home.clone()).unwrap();
+            ready.wait().await.unwrap();
+            let target = native_cli_fixture_target(&home);
+            let first_launches = Arc::new(AtomicUsize::new(0));
+            let launch_observed = Arc::new(tokio::sync::Notify::new());
+            // This selection applies only to the exact copied PING.EXE fixture.
+            // The counter and signal are advanced within
+            // ContainedChild::spawn_native_cli_version immediately before its
+            // real spawn path, after the final descriptor verification.
+            let _helper =
+                crate::updater::process_containment::enable_native_cli_version_test_helper(
+                    &target.program,
+                    native_cli_fixture_containment_argv(),
+                    Arc::clone(&first_launches),
+                    Arc::clone(&launch_observed),
+                );
+            let later_spawns = Arc::new(AtomicUsize::new(0));
+            let first = crate::updater::Component::ALL[0];
+            let later = crate::updater::Component::ALL[1];
+            let mut first_leaf =
+                native_cli_fixture_leaf(&home, first, NativeCliProbeFixtureRunner::RealContained);
+            first_leaf.target = Ok(target);
+            let _fixture = install_native_cli_probe_fixture(NativeCliProbeFixture {
+                home: home.clone(),
+                limits: Some(if cancelled {
+                    UpdaterRunLimits::new(
+                        Duration::from_secs(2),
+                        Duration::from_secs(3),
+                        Duration::from_secs(4),
+                        Duration::from_secs(5),
+                    )
+                    .unwrap()
+                } else {
+                    UpdaterRunLimits::new(
+                        Duration::from_millis(40),
+                        Duration::from_millis(100),
+                        Duration::from_millis(200),
+                        Duration::from_millis(300),
+                    )
+                    .unwrap()
+                }),
+                leaves: vec![
+                    first_leaf,
+                    native_cli_fixture_leaf(
+                        &home,
+                        later,
+                        NativeCliProbeFixtureRunner::Success {
+                            version: "must-not-run".to_string(),
+                            spawns: Arc::clone(&later_spawns),
+                        },
+                    ),
+                ],
+            });
+
+            let control = UpdaterPassControl::new(Some(writer.clone()));
+            let task_control = control.clone();
+            let task_home = home.clone();
+            let task_writer = writer.clone();
+            let task_snapshot = cli_fixture_snapshot(&home);
+            let task = tokio::spawn(async move {
+                run_authorized_cli_version_probe(
+                    UpdaterPassIdentity::new(UpdaterPassLane::CliVersionProbe, 0),
+                    task_snapshot,
+                    &task_home,
+                    &task_writer,
+                    task_control,
+                )
+                .await
+            });
+            tokio::time::timeout(Duration::from_secs(2), launch_observed.notified())
+                .await
+                .expect(
+                    "real native contained launch was not reached after descriptor verification",
+                );
+            if cancelled {
+                control.cancel();
+            } else {
+                tokio::time::sleep(Duration::from_millis(80)).await;
+            }
+            let result = tokio::time::timeout(Duration::from_secs(3), task)
+                .await
+                .expect("real contained cancellation/timeout did not terminalize")
+                .unwrap()
+                .expect("real contained cancellation/timeout must write its outer result");
+            assert_eq!(result.terminal_outcome, Some(expected));
+            result.validate_leaf_receipt_binding().unwrap();
+            assert_eq!(first_launches.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                later_spawns.load(Ordering::SeqCst),
+                0,
+                "terminal cancellation/timeout must block every later contained spawn"
+            );
+
+            drop(control);
+            drop(writer);
+            tokio::time::timeout(Duration::from_secs(3), writer_join)
+                .await
+                .expect("fixture WAL writer did not drain after terminal control release")
+                .expect("fixture WAL writer task panicked")
+                .expect("fixture WAL writer failed");
+            let events = cli_fixture_wal_events(&segment);
+            let leaf_intents = events
+                .iter()
+                .filter(|(event, subtype, _)| {
+                    *event == crate::wal::events::EVENT_TYPE_EXTENDED
+                        && *subtype == crate::wal::events::ExtendedSubtype::UpdaterLeafIntent as u8
+                })
+                .count();
+            let leaf_result_index = events
+                .iter()
+                .position(|(event, subtype, _)| {
+                    *event == crate::wal::events::EVENT_TYPE_EXTENDED
+                        && *subtype == crate::wal::events::ExtendedSubtype::UpdaterLeafResult as u8
+                })
+                .expect("real contained runner must have an acknowledged leaf result");
+            let outer_result_index = events
+                .iter()
+                .position(|(event, _, _)| *event == EVENT_TYPE_UPDATER_TASK_RESULT)
+                .expect("terminal controlled runner must have an outer result");
+            assert_eq!(
+                leaf_intents, 1,
+                "no later component may receive an Intent after terminal cancellation/timeout"
+            );
+            assert!(
+                leaf_result_index < outer_result_index,
+                "the real ContainedChild cancellation/deadline branch reaps its leader and pipe tasks before the leaf terminal receipt, which precedes the outer result"
+            );
+        }
     }
 }

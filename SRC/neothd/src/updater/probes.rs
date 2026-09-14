@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::ReleaseChannel;
 use crate::skills::store::{open_bound_directory, open_real_child_dir, read_regular_file_bounded};
+use crate::updater::authority::NativeCliExecutableBinding;
 use crate::updater::pipeline::{ComponentSpec, GateDecision, cli_version_specs, neoth_self_specs};
 use crate::updater::self_update::{check_for_update_channel, current_version};
 
@@ -38,7 +39,282 @@ const MAX_PROBE_PLUGIN_WASM_TOTAL_BYTES: usize = 512 * 1024 * 1024;
 /// Canonical owner/repo for the public `neoth` binary lookup.
 pub const NEOTH_OWNER_REPO: &str = "The-Geek-Freaks/NEOTH";
 
-// ── U-01 neoth_self ──────────────────────────────────────────────────────────
+// W40: sealed native-only local executable descriptor. Wrapper/script forms
+// are refused before any contained child is spawned; npm is never consulted.
+const MAX_NATIVE_VERSION_OUTPUT_BYTES: usize = 8 * 1024;
+const MAX_NATIVE_VERSION_TEXT_BYTES: usize = 256;
+const MAX_NATIVE_CLI_IMAGE_BYTES: u64 = 256 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum NativeCliProbeError {
+    UnsupportedLaunchForm,
+    Missing,
+    InvalidVersionOutput,
+    IdentityChanged,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct NativeCliProbeTarget {
+    pub(crate) program: PathBuf,
+    pub(crate) working_directory: PathBuf,
+    pub(crate) executable: NativeCliExecutableBinding,
+}
+
+pub(crate) fn parse_native_cli_version(
+    stdout: &[u8],
+) -> std::result::Result<String, NativeCliProbeError> {
+    if stdout.len() > MAX_NATIVE_VERSION_OUTPUT_BYTES || !stdout.is_ascii() {
+        return Err(NativeCliProbeError::InvalidVersionOutput);
+    }
+    std::str::from_utf8(stdout)
+        .ok()
+        .and_then(|text| {
+            text.split_whitespace()
+                .find(|token| token.bytes().any(|b| b.is_ascii_digit()))
+        })
+        .map(|token| {
+            token
+                .trim_matches(|c: char| c == 'v' || c == 'V')
+                .to_owned()
+        })
+        .filter(|token| !token.is_empty() && token.len() <= MAX_NATIVE_VERSION_TEXT_BYTES)
+        .ok_or(NativeCliProbeError::InvalidVersionOutput)
+}
+
+/// Canonicalize before classifying: suffix-free symlinks cannot hide a wrapper.
+pub(crate) fn resolve_native_cli_probe(
+    candidate: &Path,
+    working_directory: &Path,
+) -> std::result::Result<NativeCliProbeTarget, NativeCliProbeError> {
+    let program = candidate
+        .canonicalize()
+        .map_err(|_| NativeCliProbeError::Missing)?;
+    let executable = native_cli_descriptor(&program)?;
+    Ok(NativeCliProbeTarget {
+        program,
+        working_directory: working_directory.to_path_buf(),
+        executable,
+    })
+}
+
+pub(crate) fn resolve_native_cli_from_path(
+    binary: &str,
+    working_directory: &Path,
+) -> std::result::Result<NativeCliProbeTarget, NativeCliProbeError> {
+    let search_path = std::env::var_os("PATH").ok_or(NativeCliProbeError::Missing)?;
+    for directory in std::env::split_paths(&search_path) {
+        for candidate in native_cli_path_candidates(&directory, binary) {
+            if candidate.is_file() {
+                return resolve_native_cli_probe(&candidate, working_directory);
+            }
+        }
+    }
+    Err(NativeCliProbeError::Missing)
+}
+
+fn native_cli_path_candidates(directory: &Path, binary: &str) -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        vec![
+            directory.join(binary),
+            directory.join(format!("{binary}.exe")),
+        ]
+    }
+    #[cfg(not(windows))]
+    {
+        vec![directory.join(binary)]
+    }
+}
+/// Recompute all individually bound descriptor fields directly before spawn.
+pub(crate) fn verify_native_cli_descriptor(
+    target: &NativeCliProbeTarget,
+) -> std::result::Result<(), NativeCliProbeError> {
+    if native_cli_descriptor(&target.program)? == target.executable {
+        Ok(())
+    } else {
+        Err(NativeCliProbeError::IdentityChanged)
+    }
+}
+
+pub(crate) fn native_cli_descriptor(
+    path: &Path,
+) -> std::result::Result<NativeCliExecutableBinding, NativeCliProbeError> {
+    use sha2::{Digest as _, Sha256};
+    let metadata = std::fs::metadata(path).map_err(|_| NativeCliProbeError::Missing)?;
+    // This metadata check precedes even format-header reads, so an oversized
+    // image cannot force a pre-admission file read.
+    if metadata.len() == 0 || metadata.len() > MAX_NATIVE_CLI_IMAGE_BYTES {
+        return Err(NativeCliProbeError::UnsupportedLaunchForm);
+    }
+    native_cli_launch_form(path, &metadata)?;
+    let bytes = read_native_cli_image_bounded(path, metadata.len())?;
+    let mut path_digest = Sha256::new();
+    path_digest.update(path.as_os_str().as_encoded_bytes());
+    let mut file_digest = Sha256::new();
+    file_digest.update(&bytes);
+    NativeCliExecutableBinding::new(
+        hex::encode(path_digest.finalize()),
+        native_cli_platform_identity(path, &metadata)?,
+        hex::encode(file_digest.finalize()),
+        metadata.len(),
+    )
+    .map_err(|_| NativeCliProbeError::UnsupportedLaunchForm)
+}
+
+fn read_native_cli_image_bounded(
+    path: &Path,
+    expected_size: u64,
+) -> std::result::Result<Vec<u8>, NativeCliProbeError> {
+    use std::io::Read as _;
+    let mut bytes = Vec::with_capacity(
+        usize::try_from(expected_size).map_err(|_| NativeCliProbeError::UnsupportedLaunchForm)?,
+    );
+    let max = MAX_NATIVE_CLI_IMAGE_BYTES
+        .checked_add(1)
+        .expect("fixed cap");
+    std::fs::File::open(path)
+        .map_err(|_| NativeCliProbeError::Missing)?
+        .take(max)
+        .read_to_end(&mut bytes)
+        .map_err(|_| NativeCliProbeError::Missing)?;
+    if u64::try_from(bytes.len()).ok() != Some(expected_size)
+        || bytes.len() as u64 > MAX_NATIVE_CLI_IMAGE_BYTES
+    {
+        return Err(NativeCliProbeError::IdentityChanged);
+    }
+    Ok(bytes)
+}
+
+fn native_cli_launch_form(
+    path: &Path,
+    metadata: &std::fs::Metadata,
+) -> std::result::Result<(), NativeCliProbeError> {
+    if !metadata.is_file() {
+        return Err(NativeCliProbeError::UnsupportedLaunchForm);
+    }
+    #[cfg(unix)]
+    if std::os::unix::fs::PermissionsExt::mode(&metadata.permissions()) & 0o111 == 0 {
+        return Err(NativeCliProbeError::UnsupportedLaunchForm);
+    }
+    let extension = path
+        .extension()
+        .and_then(OsStr::to_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if matches!(
+        extension.as_str(),
+        "cmd" | "bat" | "ps1" | "sh" | "py" | "js"
+    ) {
+        return Err(NativeCliProbeError::UnsupportedLaunchForm);
+    }
+    let mut header = [0_u8; 64];
+    use std::io::Read as _;
+    let count = std::fs::File::open(path)
+        .map_err(|_| NativeCliProbeError::Missing)?
+        .read(&mut header)
+        .map_err(|_| NativeCliProbeError::Missing)?;
+    if header[..count].starts_with(b"#!") {
+        return Err(NativeCliProbeError::UnsupportedLaunchForm);
+    }
+    #[cfg(windows)]
+    {
+        return native_windows_pe_image(path, &header[..count]);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return matches!(
+            header[..count].get(..4),
+            Some(
+                [0xfe, 0xed, 0xfa, 0xce]
+                    | [0xce, 0xfa, 0xed, 0xfe]
+                    | [0xfe, 0xed, 0xfa, 0xcf]
+                    | [0xcf, 0xfa, 0xed, 0xfe]
+            )
+        )
+        .then_some(())
+        .ok_or(NativeCliProbeError::UnsupportedLaunchForm);
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        return (header[..count].starts_with(b"\x7fELF"))
+            .then_some(())
+            .ok_or(NativeCliProbeError::UnsupportedLaunchForm);
+    }
+    #[allow(unreachable_code)]
+    Err(NativeCliProbeError::UnsupportedLaunchForm)
+}
+
+#[cfg(windows)]
+fn native_windows_pe_image(
+    path: &Path,
+    header: &[u8],
+) -> std::result::Result<(), NativeCliProbeError> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    if header.len() < 64 || &header[..2] != b"MZ" {
+        return Err(NativeCliProbeError::UnsupportedLaunchForm);
+    }
+    let offset = u64::from(u32::from_le_bytes(header[60..64].try_into().unwrap()));
+    if offset > MAX_NATIVE_CLI_IMAGE_BYTES.saturating_sub(4) {
+        return Err(NativeCliProbeError::UnsupportedLaunchForm);
+    }
+    let mut signature = [0_u8; 4];
+    let mut file = std::fs::File::open(path).map_err(|_| NativeCliProbeError::Missing)?;
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|_| NativeCliProbeError::Missing)?;
+    file.read_exact(&mut signature)
+        .map_err(|_| NativeCliProbeError::Missing)?;
+    (signature == *b"PE\0\0")
+        .then_some(())
+        .ok_or(NativeCliProbeError::UnsupportedLaunchForm)
+}
+
+#[cfg(windows)]
+fn native_cli_platform_identity(
+    path: &Path,
+    _metadata: &std::fs::Metadata,
+) -> std::result::Result<String, NativeCliProbeError> {
+    native_windows_file_identity(path).map_err(|_| NativeCliProbeError::UnsupportedLaunchForm)
+}
+
+#[cfg(not(windows))]
+fn native_cli_platform_identity(
+    _path: &Path,
+    metadata: &std::fs::Metadata,
+) -> std::result::Result<String, NativeCliProbeError> {
+    use sha2::{Digest as _, Sha256};
+
+    let mut digest = Sha256::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        digest.update(metadata.dev().to_le_bytes());
+        digest.update(metadata.ino().to_le_bytes());
+    }
+    #[cfg(not(unix))]
+    {
+        digest.update(metadata.len().to_le_bytes());
+    }
+    Ok(hex::encode(digest.finalize()))
+}
+
+#[cfg(windows)]
+fn native_windows_file_identity(path: &Path) -> std::io::Result<String> {
+    use std::os::windows::io::AsRawHandle as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+    let file = std::fs::File::open(path)?;
+    let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle().cast(), &mut information) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    use sha2::{Digest as _, Sha256};
+    let mut digest = Sha256::new();
+    digest.update(information.dwVolumeSerialNumber.to_le_bytes());
+    digest.update(information.nFileIndexHigh.to_le_bytes());
+    digest.update(information.nFileIndexLow.to_le_bytes());
+    Ok(hex::encode(digest.finalize()))
+} // ── U-01 neoth_self ──────────────────────────────────────────────────────────
 
 /// Probe `neoth` self-version. Returns a single-component spec
 /// list ready for `run_updater_pass(UpdaterTaskKind::NeothSelf, …)`.
@@ -2859,5 +3135,61 @@ mod tests {
 
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert!(result.unwrap_err().contains("revoked"));
+    }
+}
+
+#[cfg(test)]
+mod native_cli_version_tests {
+    use super::*;
+
+    #[test]
+    fn version_parser_accepts_bounded_ascii_token_only() {
+        assert_eq!(parse_native_cli_version(b"tool v1.2.3\n").unwrap(), "1.2.3");
+        assert_eq!(
+            parse_native_cli_version(&[0xff]).unwrap_err(),
+            NativeCliProbeError::InvalidVersionOutput
+        );
+    }
+
+    #[test]
+    fn arbitrary_and_wrapper_files_are_refused_before_spawn() {
+        let directory = tempfile::tempdir().unwrap();
+        let plain = directory.path().join("plain");
+        let wrapper = directory.path().join("tool.cmd");
+        std::fs::write(&plain, b"not an executable image").unwrap();
+        std::fs::write(&wrapper, b"MZ not a trusted wrapper").unwrap();
+        assert_eq!(
+            resolve_native_cli_probe(&plain, directory.path()).unwrap_err(),
+            NativeCliProbeError::UnsupportedLaunchForm
+        );
+        assert_eq!(
+            resolve_native_cli_probe(&wrapper, directory.path()).unwrap_err(),
+            NativeCliProbeError::UnsupportedLaunchForm
+        );
+    }
+    #[test]
+    fn max_plus_one_image_is_rejected_before_any_image_read() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        file.as_file()
+            .set_len(MAX_NATIVE_CLI_IMAGE_BYTES + 1)
+            .unwrap();
+        assert_eq!(
+            native_cli_descriptor(file.path()).unwrap_err(),
+            NativeCliProbeError::UnsupportedLaunchForm
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn suffix_free_symlink_to_wrapper_is_refused_after_canonicalization() {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        let wrapper = directory.path().join("tool.cmd");
+        let alias = directory.path().join("tool");
+        std::fs::write(&wrapper, b"MZ wrapper").unwrap();
+        symlink(&wrapper, &alias).unwrap();
+        assert_eq!(
+            resolve_native_cli_probe(&alias, directory.path()).unwrap_err(),
+            NativeCliProbeError::UnsupportedLaunchForm
+        );
     }
 }

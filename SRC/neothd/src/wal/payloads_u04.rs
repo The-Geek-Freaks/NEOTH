@@ -281,6 +281,8 @@ impl UpdaterTaskKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ComponentStatus {
+    /// A local installed-version probe completed; no upstream latest comparison ran.
+    Observed,
     /// Component is already at the latest version. No action taken.
     UpToDate,
     /// Component was upgraded. `new_version` populated.
@@ -306,6 +308,7 @@ pub enum ComponentStatus {
 impl ComponentStatus {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Observed => "observed",
             Self::UpToDate => "up_to_date",
             Self::Upgraded => "upgraded",
             Self::UpdateAvailable => "update_available",
@@ -334,6 +337,15 @@ pub struct ComponentOutcome {
 }
 
 impl ComponentOutcome {
+    pub fn observed(name: impl Into<String>, version: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            prior_version: version.into(),
+            new_version: None,
+            status: ComponentStatus::Observed,
+            note: "installed version observed; upstream latest check remains denied".to_string(),
+        }
+    }
     pub fn up_to_date(name: impl Into<String>, version: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -592,6 +604,7 @@ pub fn render_updater_status(results: &[UpdaterTaskResultPayload]) -> String {
         }
         for c in &r.components {
             let symbol = match c.status {
+                ComponentStatus::Observed => "·",
                 ComponentStatus::UpToDate => "·",
                 ComponentStatus::Upgraded => "↑",
                 ComponentStatus::UpdateAvailable => "!",
@@ -661,6 +674,7 @@ mod tests {
 
     #[test]
     fn component_status_as_str_pinned() {
+        assert_eq!(ComponentStatus::Observed.as_str(), "observed");
         assert_eq!(ComponentStatus::UpToDate.as_str(), "up_to_date");
         assert_eq!(ComponentStatus::Upgraded.as_str(), "upgraded");
         assert_eq!(
@@ -670,6 +684,18 @@ mod tests {
         assert_eq!(ComponentStatus::Staged.as_str(), "staged");
         assert_eq!(ComponentStatus::Failed.as_str(), "failed");
         assert_eq!(ComponentStatus::SkippedByGate.as_str(), "skipped_by_gate");
+    }
+
+    #[test]
+    fn observed_is_a_local_only_terminal_component() {
+        let component = ComponentOutcome::observed("claude_cli", "1.2.3");
+        assert_eq!(component.status, ComponentStatus::Observed);
+        assert!(component.new_version.is_none());
+        assert!(
+            component
+                .note
+                .contains("upstream latest check remains denied")
+        );
     }
 
     #[test]

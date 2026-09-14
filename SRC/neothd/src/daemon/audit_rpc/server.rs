@@ -111,7 +111,7 @@ pub const ALLOWED_CLIENT_EXTENDED_SUBTYPES: &[u8] = &[
 /// Max inbound request size (headers + body). Audit payloads are small.
 const MAX_REQUEST_BYTES: usize = 8 * 1024;
 /// Max body size accepted (tighter than the request cap).
-const MAX_BODY_BYTES: usize = 4096;
+const MAX_BODY_BYTES: usize = super::DAEMON_PLAIN_CHAT_TRANSPORT_BODY_MAX_BYTES;
 /// Per-connection wall-clock budget. A client that opens a connection and then
 /// stalls (slowloris) is dropped after this — bounds resource pinning.
 const CONNECTION_TIMEOUT_SECS: u64 = 5;
@@ -462,6 +462,10 @@ pub struct AuditRpcState {
     #[cfg(feature = "cluster")]
     pub membership: Option<Arc<crate::cluster::membership::MembershipController>>,
     pub audit_routes_enabled: bool,
+    /// W39 is installed by `run_serve` after the daemon has constructed its
+    /// owned runtime. `None` keeps focused audit-only listeners fail-closed for
+    /// chat instead of constructing a provider or a second listener here.
+    pub(crate) chat_runtime: Option<Arc<crate::daemon::chat_runtime::DaemonChatRuntime>>,
 }
 
 /// Bind the OS-authenticated same-user endpoint for one daemon incarnation.
@@ -512,11 +516,30 @@ async fn run_accept_loop(
                     let _permit = permit; // released when this task ends
                     match tokio::time::timeout(
                         std::time::Duration::from_secs(CONNECTION_TIMEOUT_SECS),
-                        handle_one(stream, &state, &home),
+                        handle_one_pre_admission(stream, &state, &home),
                     )
                     .await
                     {
-                        Ok(Ok(())) => {}
+                        Ok(Ok(ConnectionOutcome::Complete)) => {}
+                        Ok(Ok(ConnectionOutcome::ChatAdmitted {
+                            mut stream,
+                            request,
+                        })) => {
+                            let Some(runtime) = state.chat_runtime.as_ref().cloned() else {
+                                let _ = stream
+                                    .write_all(
+                                        http_response(503, "chat runtime unavailable").as_bytes(),
+                                    )
+                                    .await;
+                                let _ = stream.shutdown().await;
+                                return;
+                            };
+                            if let Err(error) =
+                                runtime.handle_authenticated_turn(stream, request).await
+                            {
+                                tracing::warn!(%error, "audit-RPC daemon chat operation failed");
+                            }
+                        }
                         Ok(Err(error)) => {
                             tracing::warn!(%error, "audit-RPC connection failed");
                         }
@@ -541,6 +564,18 @@ struct Parsed {
     path: String,
     bearer: Option<String>,
     body: Vec<u8>,
+}
+
+/// A five-second connection either completed an ordinary existing route or
+/// admitted exactly one sealed chat request. Only the latter escapes the
+/// slow-client deadline, carrying the already peer- and bearer-authenticated
+/// stream directly to the daemon runtime.
+enum ConnectionOutcome {
+    Complete,
+    ChatAdmitted {
+        stream: super::transport::AuditStream,
+        request: super::DaemonPlainChatRequest,
+    },
 }
 
 /// Read + parse a single HTTP request (request line + headers + Content-Length
@@ -629,11 +664,11 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-async fn handle_one(
+async fn handle_one_pre_admission(
     mut stream: super::transport::AuditStream,
     state: &AuditRpcState,
     home: &Path,
-) -> Result<()> {
+) -> Result<ConnectionOutcome> {
     // Layer 1 is enforced by `AuditListener::accept`: the peer's kernel token
     // (UID/SID) must exactly match the daemon user before this function runs.
     let source = "same-user-ipc";
@@ -643,11 +678,14 @@ async fn handle_one(
             .write_all(http_response(400, "malformed or oversized request").as_bytes())
             .await;
         let _ = stream.shutdown().await;
-        return Ok(());
+        return Ok(ConnectionOutcome::Complete);
     };
 
     // Only POST to a known endpoint (/audit or one of the approval-token verbs).
     let req_path = req.path.split('?').next().unwrap_or("").to_string();
+    // Chat accepts no query component so the exact sealed path cannot become a
+    // carrier for later parser controls.
+    let chat_route = req.path == "/chat/turn";
     #[cfg(feature = "cluster")]
     let membership_route = matches!(
         req_path.as_str(),
@@ -675,13 +713,15 @@ async fn handle_one(
         "/health" | "/skill-mutation-audit" | "/trust-decision-once"
     );
     if req.method != "POST"
-        || !(membership_route || internal_route || state.audit_routes_enabled && audit_route)
+        || !(membership_route
+            || internal_route
+            || state.audit_routes_enabled && (audit_route || chat_route))
     {
         let _ = stream
             .write_all(http_response(404, "not found").as_bytes())
             .await;
         let _ = stream.shutdown().await;
-        return Ok(());
+        return Ok(ConnectionOutcome::Complete);
     }
 
     // Layer 2 — constant-time bearer verification before applying the
@@ -702,14 +742,35 @@ async fn handle_one(
             .write_all(http_response(429, "auth cooldown active").as_bytes())
             .await;
         let _ = stream.shutdown().await;
-        return Ok(());
+        return Ok(ConnectionOutcome::Complete);
     } else {
         state.cooldown.record_failure(source, now);
         let _ = stream
             .write_all(http_response(401, "unauthorized").as_bytes())
             .await;
         let _ = stream.shutdown().await;
-        return Ok(());
+        return Ok(ConnectionOutcome::Complete);
+    }
+
+    if chat_route {
+        let request = match serde_json::from_slice::<super::DaemonPlainChatRequest>(&req.body) {
+            Ok(request) => request,
+            Err(_) => {
+                let _ = stream
+                    .write_all(http_response(422, "invalid_daemon_plain_chat_request").as_bytes())
+                    .await;
+                let _ = stream.shutdown().await;
+                return Ok(ConnectionOutcome::Complete);
+            }
+        };
+        if let Err(reason) = super::validate_daemon_plain_chat_request(&request) {
+            let _ = stream
+                .write_all(http_response(422, reason).as_bytes())
+                .await;
+            let _ = stream.shutdown().await;
+            return Ok(ConnectionOutcome::Complete);
+        }
+        return Ok(ConnectionOutcome::ChatAdmitted { stream, request });
     }
 
     if req_path == "/health" {
@@ -717,14 +778,14 @@ async fn handle_one(
             .write_all(http_response_json(200, "{\"ok\":true}").as_bytes())
             .await;
         let _ = stream.shutdown().await;
-        return Ok(());
+        return Ok(ConnectionOutcome::Complete);
     }
 
     if req_path == "/trust-decision-once" {
         let response = handle_trust_decision_once(state, home, &req.body).await;
         let _ = stream.write_all(response.as_bytes()).await;
         let _ = stream.shutdown().await;
-        return Ok(());
+        return Ok(ConnectionOutcome::Complete);
     }
 
     #[cfg(feature = "cluster")]
@@ -734,7 +795,7 @@ async fn handle_one(
                 .write_all(http_response(503, "membership authority unavailable").as_bytes())
                 .await;
             let _ = stream.shutdown().await;
-            return Ok(());
+            return Ok(ConnectionOutcome::Complete);
         };
         let membership_path = req_path.clone();
         let membership_body = req.body;
@@ -755,7 +816,7 @@ async fn handle_one(
             .write_all(http_response_json(status, &body).as_bytes())
             .await;
         let _ = stream.shutdown().await;
-        return Ok(());
+        return Ok(ConnectionOutcome::Complete);
     }
 
     // GR-RESID-D34 — FULL-AUTO single-use token endpoints (auth already passed).
@@ -769,7 +830,7 @@ async fn handle_one(
         };
         let _ = stream.write_all(resp.as_bytes()).await;
         let _ = stream.shutdown().await;
-        return Ok(());
+        return Ok(ConnectionOutcome::Complete);
     }
     if req_path == "/fullauto-token/consume" {
         let candidate = serde_json::from_slice::<serde_json::Value>(&req.body)
@@ -783,7 +844,7 @@ async fn handle_one(
             .write_all(http_response_json(status, &format!("{{\"ok\":{ok}}}")).as_bytes())
             .await;
         let _ = stream.shutdown().await;
-        return Ok(());
+        return Ok(ConnectionOutcome::Complete);
     }
     if req_path == "/jobs-run-token/mint" {
         let binding = serde_json::from_slice::<serde_json::Value>(&req.body)
@@ -843,7 +904,7 @@ async fn handle_one(
             .write_all(http_response_json(status, &body).as_bytes())
             .await;
         let _ = stream.shutdown().await;
-        return Ok(());
+        return Ok(ConnectionOutcome::Complete);
     }
     if req_path == "/jobs-run-token/consume" {
         let parsed = serde_json::from_slice::<serde_json::Value>(&req.body).ok();
@@ -865,7 +926,7 @@ async fn handle_one(
             .write_all(http_response_json(status, &format!("{{\"ok\":{ok}}}")).as_bytes())
             .await;
         let _ = stream.shutdown().await;
-        return Ok(());
+        return Ok(ConnectionOutcome::Complete);
     }
 
     // Body: {"event_type": u8, "event_subtype"?: u8,
@@ -903,7 +964,7 @@ async fn handle_one(
                 .write_all(http_response(400, reason).as_bytes())
                 .await;
             let _ = stream.shutdown().await;
-            return Ok(());
+            return Ok(ConnectionOutcome::Complete);
         }
     };
 
@@ -925,7 +986,7 @@ async fn handle_one(
             .write_all(http_response(422, "internal_skill_audit_identity_not_allowed").as_bytes())
             .await;
         let _ = stream.shutdown().await;
-        return Ok(());
+        return Ok(ConnectionOutcome::Complete);
     }
 
     // Layer 3 — compile-time event-type allowlist (anti-poisoning gate).
@@ -942,7 +1003,7 @@ async fn handle_one(
             .write_all(http_response(422, reason).as_bytes())
             .await;
         let _ = stream.shutdown().await;
-        return Ok(());
+        return Ok(ConnectionOutcome::Complete);
     }
 
     // Version-two decisions have a durable operation identity. Only the
@@ -961,7 +1022,7 @@ async fn handle_one(
                 )
                 .await;
             let _ = stream.shutdown().await;
-            return Ok(());
+            return Ok(ConnectionOutcome::Complete);
         }
     }
 
@@ -976,7 +1037,7 @@ async fn handle_one(
             .write_all(http_response(400, &format!("{error:#}")).as_bytes())
             .await;
         let _ = stream.shutdown().await;
-        return Ok(());
+        return Ok(ConnectionOutcome::Complete);
     }
 
     // Skill mutation intent/result payloads carry a deterministic audit id.
@@ -991,7 +1052,7 @@ async fn handle_one(
                 .write_all(http_response(400, &format!("{error:#}")).as_bytes())
                 .await;
             let _ = stream.shutdown().await;
-            return Ok(());
+            return Ok(ConnectionOutcome::Complete);
         }
     };
     if let Some((dedup_key, payload_sha256)) = skill_dedup {
@@ -1038,7 +1099,7 @@ async fn handle_one(
             }
         }
         let _ = stream.shutdown().await;
-        return Ok(());
+        return Ok(ConnectionOutcome::Complete);
     }
 
     // Forward the frame into the daemon's single writer.
@@ -1067,7 +1128,7 @@ async fn handle_one(
         }
     }
     let _ = stream.shutdown().await;
-    Ok(())
+    Ok(ConnectionOutcome::Complete)
 }
 
 #[cfg(feature = "cluster")]

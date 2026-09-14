@@ -444,6 +444,19 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
     }
 
     let neoth_home = chat_neoth_home(args.config.as_deref());
+    if daemon_plain_chat_eligible(&args, gui_launch.is_some()) {
+        let message = args
+            .message
+            .clone()
+            .expect("daemon plain chat eligibility requires an argv message");
+        match crate::daemon::audit_rpc::try_daemon_plain_chat_turn(&neoth_home, message).await {
+            Ok(response) => return render_daemon_plain_chat_response(response),
+            Err(error) if error.allows_standalone_fallback() => {
+                tracing::debug!(error = %error, "daemon plain chat unavailable before request write; using standalone chat");
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
     let config_path = args
         .config
         .clone()
@@ -526,6 +539,62 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
         crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
     )
     .await
+}
+
+fn daemon_plain_chat_eligible(args: &ChatArgs, gui_launch: bool) -> bool {
+    let message_is_eligible = args.message.as_deref().is_some_and(|message| {
+        !message.trim().is_empty()
+            && message.len() <= crate::daemon::audit_rpc::DAEMON_PLAIN_CHAT_MESSAGE_MAX_BYTES
+            && crate::daemon::audit_rpc::is_daemon_plain_chat_message(message)
+    });
+    message_is_eligible
+        && !gui_launch
+        && !args.incognito
+        && !args.stream
+        && args.config.is_none()
+        && args.wal_segment.is_none()
+        && args.model.is_none()
+        && args.skill.is_none()
+        && args.system.is_none()
+        && args.attach.is_empty()
+        && args.repository_root.is_none()
+        && !args.edit
+        && args.temperature.is_none()
+        && args.top_p.is_none()
+        && args.sampling_seed.is_none()
+        && args.resume_from.is_none()
+        && !args.loop_mode
+        && args.iterations.is_none()
+        && args.until.is_empty()
+}
+
+fn render_daemon_plain_chat_response(
+    response: crate::daemon::audit_rpc::DaemonPlainChatResponse,
+) -> Result<()> {
+    let mut output = CliChatOutput;
+    for record in response.records {
+        let rendered = match record.kind {
+            crate::daemon::audit_rpc::DaemonPlainChatRecordKind::Stdout => {
+                ChatOutput::HumanStdout { text: record.text }
+            }
+            crate::daemon::audit_rpc::DaemonPlainChatRecordKind::Stderr => {
+                ChatOutput::HumanStderr { text: record.text }
+            }
+            crate::daemon::audit_rpc::DaemonPlainChatRecordKind::Notice => ChatOutput::Notice {
+                stream: false,
+                text: record.text,
+            },
+        };
+        emit_chat_output(&mut output, rendered)?;
+    }
+    chat_turn_pipeline::emit_terminal(
+        &mut output,
+        chat_turn_pipeline::ChatTurnTerminal::Complete {
+            provider: response.terminal.provider,
+            model: response.terminal.model,
+            session_id: response.terminal.session_id,
+        },
+    )
 }
 
 /// Inner entry point that takes a pre-built `Provider`. Used by `run_chat`
@@ -7315,8 +7384,88 @@ fn finish_cli_chat_turn(
     Ok(())
 }
 
+/// Build the one intentionally narrow daemon-owned turn.  This is an
+/// in-process bridge: its caller owns the selected home, configuration,
+/// provider, WAL segment and cancellation gate.  In particular, it never
+/// accepts a `ChatArgs` reconstructed from an IPC request.
+pub(crate) async fn prepare_daemon_plain_chat_turn(
+    message: String,
+    selected_config: FreedomConfig,
+    selected_config_path: PathBuf,
+    selected_home: PathBuf,
+    provider: &dyn crate::providers::Provider,
+    cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    output: &mut dyn ChatTurnEventSink,
+) -> Result<chat_turn_pipeline::ChatPreparationOutcome> {
+    // Slash syntax selects local CLI command handling. A same-user IPC peer
+    // cannot reinterpret any command spelling as a daemon plain turn.
+    anyhow::ensure!(
+        crate::daemon::audit_rpc::is_daemon_plain_chat_message(&message),
+        "daemon plain chat rejects slash command syntax; run the command through the local CLI"
+    );
+
+    let args = ChatArgs {
+        message: Some(message),
+        model: None,
+        skill: None,
+        system: None,
+        attach: Vec::new(),
+        repository_root: None,
+        edit: false,
+        config: Some(selected_config_path),
+        wal_segment: None,
+        stream: false,
+        gui_consent_token_stdin: false,
+        temperature: None,
+        top_p: None,
+        sampling_seed: None,
+        resume_from: None,
+        incognito: false,
+        loop_mode: false,
+        iterations: None,
+        until: Vec::new(),
+    };
+    anyhow::ensure!(
+        chat_neoth_home(args.config.as_deref()) == selected_home,
+        "daemon selected home does not match its selected configuration"
+    );
+    let input = prepare_chat_turn_input(
+        args,
+        selected_config,
+        provider,
+        crate::consent::EphemeralConsent::default(),
+        None,
+        cancellation,
+        output,
+    )
+    .await?;
+    emit_local_coding_intent_offer(&input, output)?;
+    finish_chat_turn_preparation(input, output).await
+}
+
+struct ChatTurnPreparationInput {
+    args: ChatArgs,
+    config: FreedomConfig,
+    ephemeral_consent: crate::consent::EphemeralConsent,
+    stream_control_token: Option<Zeroizing<String>>,
+    cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    session_canary: std::sync::Arc<crate::security::injection_tracker::CanaryToken>,
+    instance_paths: InstancePaths,
+    first_tour_home: PathBuf,
+    selected_config_path: PathBuf,
+    prompt: String,
+    has_attachments: bool,
+    mcp_servers: crate::mcp::McpServers,
+    scoped_mcp_servers: Vec<String>,
+    tweaks: crate::tweaks::Tweaks,
+    profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry,
+    slash_skill_name: Option<String>,
+    explicit_route_requested: bool,
+    high_confidence_auto_dispatch: bool,
+}
+
 async fn prepare_cli_chat_turn(
-    mut args: ChatArgs,
+    args: ChatArgs,
     config: FreedomConfig,
     provider: &dyn crate::providers::Provider,
     ephemeral_consent: crate::consent::EphemeralConsent,
@@ -7324,6 +7473,31 @@ async fn prepare_cli_chat_turn(
     cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<chat_turn_pipeline::ChatPreparationOutcome> {
+    let input = prepare_chat_turn_input(
+        args,
+        config,
+        provider,
+        ephemeral_consent,
+        stream_control_token,
+        cancellation,
+        output,
+    )
+    .await?;
+    if handle_local_coding_intent(&input, output).await? {
+        return Ok(chat_turn_pipeline::ChatPreparationOutcome::Completed);
+    }
+    finish_chat_turn_preparation(input, output).await
+}
+
+async fn prepare_chat_turn_input(
+    mut args: ChatArgs,
+    config: FreedomConfig,
+    provider: &dyn crate::providers::Provider,
+    ephemeral_consent: crate::consent::EphemeralConsent,
+    stream_control_token: Option<Zeroizing<String>>,
+    cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    output: &mut dyn ChatTurnEventSink,
+) -> Result<ChatTurnPreparationInput> {
     admit_incognito_turn_before_runtime(&mut args).await?;
     info!(provider = provider.name(), "neoth chat");
     // The runtime owns one marker for its complete interactive session.  Every
@@ -7526,7 +7700,38 @@ async fn prepare_cli_chat_turn(
     // command, but neither kind may be pre-empted by coding/recall heuristics.
     let slash_skill_name = slash_invocation_name(&prompt);
     let explicit_route_requested = args.skill.is_some() || slash_skill_name.is_some();
+    let high_confidence_auto_dispatch = crate::coding::intent::should_auto_dispatch(&prompt);
 
+    Ok(ChatTurnPreparationInput {
+        args,
+        config,
+        ephemeral_consent,
+        stream_control_token,
+        cancellation,
+        session_canary,
+        instance_paths,
+        first_tour_home,
+        selected_config_path,
+        prompt,
+        has_attachments,
+        mcp_servers,
+        scoped_mcp_servers,
+        tweaks,
+        profile_extensions,
+        slash_skill_name,
+        explicit_route_requested,
+        high_confidence_auto_dispatch,
+    })
+}
+
+/// CLI-only routing remains outside the shared preparation future. The daemon
+/// invokes the shared continuation directly after its sealed plain-message
+/// validation, so local coding runs cannot make the daemon connection future
+/// depend on CLI-owned, non-Send SQLite execution.
+async fn handle_local_coding_intent(
+    input: &ChatTurnPreparationInput,
+    output: &mut dyn ChatTurnEventSink,
+) -> Result<bool> {
     // Round-3 v0.4 — coding-intent auto-dispatch. When the prompt
     // looks like a coding request (bilingual EN/DE heuristic: verb
     // at front + programming-noun anchor; see
@@ -7542,42 +7747,55 @@ async fn prepare_cli_chat_turn(
     // noun, not both) print an offer banner but still run the chat
     // turn — only High confidence auto-dispatches, and only after the
     // operator explicitly names the repository that owns the coding work.
-    let high_confidence_auto_dispatch = crate::coding::intent::should_auto_dispatch(&prompt);
     if admits_auto_code_route(
-        args.incognito,
-        explicit_route_requested,
-        has_attachments,
-        high_confidence_auto_dispatch,
-        args.repository_root.as_deref(),
+        input.args.incognito,
+        input.explicit_route_requested,
+        input.has_attachments,
+        input.high_confidence_auto_dispatch,
+        input.args.repository_root.as_deref(),
     ) {
-        let intent = crate::coding::intent::detect_coding_intent(&prompt)
+        let intent = crate::coding::intent::detect_coding_intent(&input.prompt)
             .expect("should_auto_dispatch returned true so detect must return Some");
         emit_chat_notice(
             output,
-            args.stream,
+            input.args.stream,
             crate::coding::intent::format_dispatch_banner(&intent),
         )
         .context("write coding auto-dispatch notice")?;
-        let repository_root = args
+        let repository_root = input
+            .args
             .repository_root
             .clone()
             .expect("admitted auto-code route requires an explicit repository root");
-        let code_args = chat_auto_code_args(prompt.clone(), repository_root);
+        let code_args = chat_auto_code_args(input.prompt.clone(), repository_root);
         let result = crate::cli::code::run_code(code_args).await;
-        if result.is_ok() && args.stream {
+        if result.is_ok() && input.args.stream {
             emit_chat_output(
                 output,
                 ChatOutput::LocalStreamCompletion {
-                    control_token: stream_control_token.as_ref().map(|token| token.to_string()),
+                    control_token: input
+                        .stream_control_token
+                        .as_ref()
+                        .map(|token| token.to_string()),
                     chunk_count: 1,
                 },
             )?;
         }
-        return result.map(|_| chat_turn_pipeline::ChatPreparationOutcome::Completed);
-    } else if !args.incognito
-        && !explicit_route_requested
-        && !has_attachments
-        && let Some(intent) = crate::coding::intent::detect_coding_intent(&prompt)
+        result?;
+        return Ok(true);
+    }
+    emit_local_coding_intent_offer(input, output)?;
+    Ok(false)
+}
+
+fn emit_local_coding_intent_offer(
+    input: &ChatTurnPreparationInput,
+    output: &mut dyn ChatTurnEventSink,
+) -> Result<()> {
+    if !input.args.incognito
+        && !input.explicit_route_requested
+        && !input.has_attachments
+        && let Some(intent) = crate::coding::intent::detect_coding_intent(&input.prompt)
     {
         // Offer the dedicated workflow but keep this as a normal chat turn.
         // A high-confidence request without an explicit root is deliberately
@@ -7586,17 +7804,18 @@ async fn prepare_cli_chat_turn(
         let offer = if matches!(
             intent.confidence,
             crate::coding::intent::IntentConfidence::High
-        ) && args.repository_root.is_none()
+        ) && input.args.repository_root.is_none()
         {
             format!(
                 "[neoth] high-confidence coding intent detected (verb={:?} noun={:?}), but auto-dispatch requires an explicit repository root. \
                  Try `neoth code --repo-root <PATH> \"{}\"` for the dedicated coding workflow.",
                 intent.matched_verb.as_deref().unwrap_or("?"),
                 intent.matched_noun.as_deref().unwrap_or("?"),
-                prompt
+                input
+                    .prompt
                     .lines()
                     .next()
-                    .unwrap_or(&prompt)
+                    .unwrap_or(&input.prompt)
                     .chars()
                     .take(60)
                     .collect::<String>(),
@@ -7607,17 +7826,45 @@ async fn prepare_cli_chat_turn(
                  Try `neoth code --repo-root <PATH> \"{}\"` for the dedicated coding workflow.",
                 intent.matched_verb.as_deref().unwrap_or("?"),
                 intent.matched_noun.as_deref().unwrap_or("?"),
-                prompt
+                input
+                    .prompt
                     .lines()
                     .next()
-                    .unwrap_or(&prompt)
+                    .unwrap_or(&input.prompt)
                     .chars()
                     .take(60)
                     .collect::<String>(),
             )
         };
-        emit_chat_notice(output, args.stream, offer).context("write coding intent notice")?;
+        emit_chat_notice(output, input.args.stream, offer).context("write coding intent notice")?;
     }
+    Ok(())
+}
+
+async fn finish_chat_turn_preparation(
+    input: ChatTurnPreparationInput,
+    output: &mut dyn ChatTurnEventSink,
+) -> Result<chat_turn_pipeline::ChatPreparationOutcome> {
+    let ChatTurnPreparationInput {
+        args,
+        config,
+        ephemeral_consent,
+        stream_control_token,
+        cancellation,
+        session_canary,
+        instance_paths,
+        first_tour_home,
+        selected_config_path,
+        prompt,
+        has_attachments: _,
+        mcp_servers,
+        scoped_mcp_servers,
+        tweaks,
+        profile_extensions,
+        slash_skill_name,
+        explicit_route_requested,
+        high_confidence_auto_dispatch: _,
+    } = input;
 
     // OP-02 (Session 25) — next-session seed banner. Read the
     // most-recent hindsight card + surface its `one_line_summary`
@@ -12294,6 +12541,43 @@ mod tests {
     }
 
     #[test]
+    fn daemon_plain_route_accepts_only_the_sealed_normal_cli_shape() {
+        let mut args = test_chat_args_default();
+        args.message = Some("ordinary daemon message".into());
+        assert!(daemon_plain_chat_eligible(&args, false));
+        for command in [
+            "/skill disable academic_research",
+            " \t/background worker",
+            "\n/custom-extension action",
+        ] {
+            args.message = Some(command.into());
+            assert!(
+                !daemon_plain_chat_eligible(&args, false),
+                "slash command must stay on the local CLI path: {command:?}"
+            );
+        }
+        args.message = Some("  ordinary daemon message".into());
+        assert!(daemon_plain_chat_eligible(&args, false));
+
+        args.message =
+            Some("x".repeat(crate::daemon::audit_rpc::DAEMON_PLAIN_CHAT_MESSAGE_MAX_BYTES + 1));
+        assert!(!daemon_plain_chat_eligible(&args, false));
+        args.message = Some("ordinary daemon message".into());
+        args.stream = true;
+        assert!(!daemon_plain_chat_eligible(&args, false));
+        args.stream = false;
+        args.config = Some(PathBuf::from("selected.yaml"));
+        assert!(!daemon_plain_chat_eligible(&args, false));
+        args.config = None;
+        args.attach.push(PathBuf::from("input.txt"));
+        assert!(!daemon_plain_chat_eligible(&args, false));
+        assert!(!daemon_plain_chat_eligible(
+            &test_chat_args_default(),
+            false
+        ));
+    }
+
+    #[test]
     fn chat_canary_renders_only_from_the_typed_system_bundle() {
         use crate::tokens::budget::{Block, BlockItem};
 
@@ -12328,6 +12612,26 @@ mod tests {
                 .join("\n\n"),
             "rendered system must be exactly the typed representation"
         );
+    }
+
+    #[test]
+    fn daemon_plain_preparation_future_stays_send() {
+        fn assert_send<T: Send>(_: T) {}
+
+        let provider = MockProvider {
+            reply: "unused".into(),
+        };
+        let mut output = CliChatOutput;
+        let home = PathBuf::from("daemon-plain-chat-send-fixture");
+        assert_send(prepare_daemon_plain_chat_turn(
+            "ordinary daemon message".into(),
+            FreedomConfig::default(),
+            home.join("freedom.yaml"),
+            home,
+            &provider,
+            chat_turn_pipeline::ChatTurnCancellation::default(),
+            &mut output,
+        ));
     }
 
     #[test]

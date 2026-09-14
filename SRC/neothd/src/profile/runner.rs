@@ -468,7 +468,7 @@ pub struct ApprovalGateContext<'a> {
     pub config: &'a crate::config::ProfileConfig,
     pub autonomy: crate::permissions::AutonomyLevel,
     pub is_tty: bool,
-    pub confirm_fn: Box<dyn FnOnce(&ProfileDelta) -> bool + 'a>,
+    pub confirm_fn: Box<dyn FnOnce(&ProfileDelta) -> bool + Send + 'a>,
 }
 
 /// Pull the active redacted field names from `idx_profile_redactions`.

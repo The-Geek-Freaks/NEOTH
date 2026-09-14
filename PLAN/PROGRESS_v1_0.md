@@ -3,20 +3,34 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-14
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
-> **Waves 35, 36 and 38 typed chat pipeline, caller-neutral seam, and CodeMap
-> edge confidence — LOCALLY VERIFIED; PUBLICATION PENDING 2026-09-14:** sixteen
-> source files share a 197-input union. Final evidence is in
-> `docs/gold-wave35-38-verification.md` and
-> `docs/verification/gold-wave35-38-{source-manifest,test-matrix}.json`.
-> Clippy08 passed2m57/min219.92/peak6.59; TestBuild03 passed3m41/min216.10/
-> peak10.45; 14,501 catalog entries and ten filters selected888/0/0 in70.46s;
-> Contract13 passed157/0/0; compilation took2m39; GUI check passed6m25/min215.04/peak11.29
-> without a GUI link, retaining 13 existing `trusted_probe_supervisor` warnings;
-> Python19+11+8 passed. This is local evidence only; publication and a new macOS
-> CI run remain required. ADOPT31-E1 is locally verified; P2-26, P1-16, P1-17,
-> and R3-18B remain open. W39 rebased05 is the next unadmitted proposal; W40
-> repair is in progress and not admitted. Counts are 1324/1012/310/2 (312 raw;
-> 311 pre-tag).
+> **Waves 39 and 40 sealed daemon chat and native CLI version probe — LOCAL
+> VALIDATION COMPLETE 2026-09-14:** eighteen source files
+> share a 204-input retained union based on W35–38 `20423301`. W39 retains daemon
+> custody of its sealed same-user plain-chat turn and permits CLI fallback only
+> before an RPC write. W40 is an authority-bound, version-only native CLI probe;
+> npm, Git, OSV, installers, and automatic SelfApply remain outside its lane.
+> Clippy07 passed 2m49/min218.03/peak6.72 and TestBuild03 passed
+> 3m44/min214.04/peak10.77. Final selected runtime: 639/0/1 in48.33s from the
+> 14528-test catalog; its ignored health-probe child listener is an explicit
+> helper exercised by its parent through a real OS subprocess. Contracts:
+> 157/0/0, 4m20 compilation, min213.89/peak11.05. GUI check passed 5m50 with no
+> GUI link or native-GUI claim; existing 13 GUI test dead-code/vendor warnings
+> remain. Python19+11+8 passed. Manifest/matrix record 204 inputs and 14
+> executables. Earlier hang and 636/3/1 runs were repaired before final validation.
+> Full CI for the published commit remains required. No closure or native
+> GUI claim; R3-18B/P2-26/P1-16/P1-17 remain open. Counts 1324/1012/310/2.
+>
+> **Waves 35–38 — PUBLISHED `20423301ffbfcf0b6bb7d9478b9749ac5716e5d0`:**
+> local evidence records 888 selected tests, 157 contracts, the no-GUI-link GUI
+> check, and Python19+11+8. Exact-head CI34836363982 has Windows and macOS
+> successes. Linux's known audit-RPC fixture-race repair now passes locally and
+> is included in this changeset. No full-CI claim.
+>
+> **Waves 41 and 42 — PROPOSALS ONLY:** Wave 41 B1 and GUI07 slices are approved,
+> but lifecycle/owned-cleanup integration and real tests remain pending; no source
+> is admitted. Its GUI/RPC/runtime, HTTP, MCP, and process-start gates remain
+> under review. Wave 42's approved three-file v5 channel-health proposal is not
+> admitted and its partial parent remains open.
 >
 > **Wave 37 CI cadence — PUBLISHED `ff101c05`; FULL CI ACCEPTANCE OUTSTANDING
 > 2026-09-14:** two reviewed workflow files retain their coverage, lock, and
@@ -34,8 +48,9 @@
 > provenance — PUBLISHED `66f90e5ffd00739e296681974cda8d58c20921bd`:** local
 > verification recorded 1327 selected unit passes, 157 account-config contract
 > passes, 38 Python checks, and the no-GUI-link GUI check. Git history carries
-> the commit identity and evidence receipts. W35/36/38 are now source admitted
-> and awaiting validation. W32/P1-16, W34/P1-17, and R3-18B remain
+> the commit identity and evidence receipts. W35/36/38 are published above;
+> their W39 successor is source admitted and pending validation. W32/P1-16,
+> W34/P1-17, and R3-18B remain
 > OPEN; counts 1324/1011/311/2 (313 raw; 312 pre-tag). W29–31 full CI
 > `34803269509` remains an incomplete macOS failure boundary, not a green
 > platform receipt.
@@ -77,7 +92,7 @@
 > capability gates and `append_authenticated`: `CHANNEL_SEND` precedes its
 > success/failure terminal marker, while unbound payload/order remains unchanged.
 > TestBuild02 **PASS** 4m07s/min183.27GiB/peak11.07; Selected02 **394/0/0** was
-> before that repair; Python19+11+8 and Clippy03 **PASS** 3m12s/min205.12GiB/
+> before that repair; Python19+11+8 and Clippy04 **PASS** 3m12s/min205.12GiB/
 > peak7.31. Final TestBuild03 **PASS** 3m49s/min202.66GiB/peak10.65; final
 > selected **397/0/0** in26.48s/catalogue14389; 13 integration targets
 > **157/0/0**/build4m27/min205.11GiB/peak10.82; fmt/GUI lint/self-test **PASS**.
@@ -97,7 +112,7 @@
 > connect views, invalid maps repair-only, legacy JSON preserved. Core **175/0/0**
 > and actual GUI parser/action **350/0/0** pass. TestBuild01 PASS5m26/min189.98GiB/
 > peak12.52; final GUI check PASS1m47/min195.19GiB/peak6.67 without monolith link;
-> Clippy02 PASS2m45/min193.00GiB/peak8.25. Format/GUI lint/self-test and generated
+> Clippy04 PASS2m45/min193.00GiB/peak8.25. Format/GUI lint/self-test and generated
 > CLI docs pass. Reviewed lint expectations stay in the headless harness only.
 > Exact 149-input/2-executable receipts: `docs/gold-wave18-19-verification.md`.
 > W17 full CI [34777552729](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34777552729)
@@ -145,7 +160,7 @@
 > **PASS** 1119/0/0 in 40.34s from catalogue 14324; fresh binary SHA-256
 > `092543A364567956CC48C8255E3FEAC4C255F2DEC603DF40A201FA1958FBD805`.
 > AccountConfigContracts (13 targets) **PASS** 156/0/0; build 5m14s, min 196.16
-> GiB, peak 10.80 GiB. Post-delta Clippy03 **PASS** 3m01s, min 199.45 GiB,
+> GiB, peak 10.80 GiB. Post-delta Clippy04 **PASS** 3m01s, min 199.45 GiB,
 > peak 6.49 GiB; final fmt/GUI lint/self-test pass. Earlier Core02 preceded the
 > test-only and Linux/GUI delta; fresh TestBuild+Clippy cover it. Independent
 > account/migration review is **APPROVE**; macOS, corrected Linux-three-site,

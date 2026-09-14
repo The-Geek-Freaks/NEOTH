@@ -29,6 +29,26 @@ pub enum AuditRpcClientError {
     Refused(u16),
 }
 
+/// W39 distinguishes the only fallback-safe phase from every outcome after a
+/// request could have reached the daemon.  A caller may use its standalone
+/// path only for [`PreWriteUnavailable`]; refusal, EOF, malformed replies,
+/// write failures and deadlines must never cause a second provider turn.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum DaemonPlainChatClientError {
+    #[error("daemon plain-chat unavailable before request write: {0}")]
+    PreWriteUnavailable(String),
+    #[error("daemon plain-chat refused the request: HTTP {0}")]
+    Refused(u16),
+    #[error("daemon plain-chat outcome is indeterminate after request write: {0}")]
+    Indeterminate(String),
+}
+
+impl DaemonPlainChatClientError {
+    pub(crate) fn allows_standalone_fallback(&self) -> bool {
+        matches!(self, Self::PreWriteUnavailable(_))
+    }
+}
+
 /// Fail-closed reason for a synchronous audit-RPC health probe. This is kept
 /// crate-visible so integration tests and operator-facing callers can retain
 /// the public boolean API while exposing the precise rejected security gate.
@@ -356,6 +376,112 @@ pub(super) fn parse_trust_decision_response(
     })
 }
 
+/// Submit one eligible ordinary plaintext turn to the live same-user daemon.
+/// This function intentionally has no `ChatArgs` input: CLI routing decides
+/// eligibility before calling it and a request carries no parser authority.
+pub(crate) async fn try_daemon_plain_chat_turn(
+    home: &Path,
+    message: String,
+) -> std::result::Result<super::DaemonPlainChatResponse, DaemonPlainChatClientError> {
+    let request = super::DaemonPlainChatRequest {
+        schema_version: super::DAEMON_PLAIN_CHAT_SCHEMA_VERSION,
+        message,
+    };
+    super::validate_daemon_plain_chat_request(&request)
+        .map_err(|reason| DaemonPlainChatClientError::PreWriteUnavailable(reason.into()))?;
+    let body = serde_json::to_string(&request).map_err(|error| {
+        DaemonPlainChatClientError::PreWriteUnavailable(format!(
+            "serialize sealed request: {error}"
+        ))
+    })?;
+    if body.len() > super::DAEMON_PLAIN_CHAT_TRANSPORT_BODY_MAX_BYTES {
+        return Err(DaemonPlainChatClientError::PreWriteUnavailable(
+            "sealed request exceeds the transport body cap".into(),
+        ));
+    }
+    let sidecar = read_sidecar(home).map_err(|error| {
+        DaemonPlainChatClientError::PreWriteUnavailable(format!("sidecar: {error}"))
+    })?;
+    if !exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce) {
+        return Err(DaemonPlainChatClientError::PreWriteUnavailable(format!(
+            "stale audit-RPC sidecar (daemon pid {} does not own the endpoint)",
+            sidecar.pid
+        )));
+    }
+    let token = read_rpc_token(home).map_err(|error| {
+        DaemonPlainChatClientError::PreWriteUnavailable(format!("token: {error}"))
+    })?;
+    let wire_request = [
+        "POST /chat/turn HTTP/1.1".to_string(),
+        "Host: neoth-local".to_string(),
+        format!("Authorization: Bearer {token}"),
+        "Content-Type: application/json".to_string(),
+        format!("Content-Length: {}", body.len()),
+        "Connection: close".to_string(),
+        String::new(),
+        body,
+    ]
+    .join("\r\n");
+
+    // A connection failure occurs before any request byte is attempted.  The
+    // subsequent write/read interval is deliberately one indeterminate phase:
+    // even a `write_all` error may follow a partial OS pipe write.
+    let endpoint = sidecar.endpoint;
+    let endpoint_label = format!("{endpoint:?}");
+    let mut stream =
+        tokio::time::timeout(RPC_EXCHANGE_TIMEOUT, super::transport::connect(&endpoint))
+            .await
+            .map_err(|_| {
+                DaemonPlainChatClientError::PreWriteUnavailable(format!(
+                    "connect {endpoint_label} exceeded the {}s deadline",
+                    RPC_EXCHANGE_TIMEOUT.as_secs()
+                ))
+            })?
+            .map_err(|error| {
+                DaemonPlainChatClientError::PreWriteUnavailable(format!(
+                    "connect {endpoint_label}: {error}"
+                ))
+            })?;
+    let (status, response) = tokio::time::timeout(super::CHAT_TURN_RESPONSE_TIMEOUT, async {
+        stream
+            .write_all(wire_request.as_bytes())
+            .await
+            .map_err(|error| format!("write: {error}"))?;
+        read_rpc_response_with_limit(
+            &mut stream,
+            super::DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES.saturating_add(4096),
+        )
+        .await
+        .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|_| {
+        DaemonPlainChatClientError::Indeterminate(format!(
+            "response exceeded the {}s chat deadline",
+            super::CHAT_TURN_RESPONSE_TIMEOUT.as_secs()
+        ))
+    })?
+    .map_err(DaemonPlainChatClientError::Indeterminate)?;
+    if status != 200 {
+        return Err(DaemonPlainChatClientError::Refused(status));
+    }
+    let response_body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .ok_or_else(|| {
+            DaemonPlainChatClientError::Indeterminate(
+                "parsed chat response lost its header boundary".into(),
+            )
+        })?;
+    let response: super::DaemonPlainChatResponse =
+        serde_json::from_str(response_body).map_err(|_| {
+            DaemonPlainChatClientError::Indeterminate("invalid sealed chat response".into())
+        })?;
+    super::validate_daemon_plain_chat_response(&response, response_body.len())
+        .map_err(|reason| DaemonPlainChatClientError::Indeterminate(reason.into()))?;
+    Ok(response)
+}
+
 /// Shared same-user IPC POST to the daemon's audit-RPC listener (same
 /// sidecar + bearer-token auth + staleness guard as [`try_post_audit_frame`]).
 /// Returns `(status, full_response)`. Used by the D34 FULL-AUTO token verbs.
@@ -415,6 +541,13 @@ async fn exchange_rpc(
 async fn read_rpc_response(
     stream: &mut super::transport::AuditStream,
 ) -> std::result::Result<(u16, String), AuditRpcClientError> {
+    read_rpc_response_with_limit(stream, MAX_RPC_RESPONSE_BYTES).await
+}
+
+async fn read_rpc_response_with_limit(
+    stream: &mut super::transport::AuditStream,
+    max_response_bytes: usize,
+) -> std::result::Result<(u16, String), AuditRpcClientError> {
     let mut bytes = Vec::with_capacity(1024);
     let mut chunk = [0u8; 4096];
     loop {
@@ -425,9 +558,9 @@ async fn read_rpc_response(
         if read == 0 {
             break;
         }
-        if bytes.len().saturating_add(read) > MAX_RPC_RESPONSE_BYTES {
+        if bytes.len().saturating_add(read) > max_response_bytes {
             return Err(AuditRpcClientError::Unavailable(format!(
-                "RPC response exceeds {MAX_RPC_RESPONSE_BYTES} byte limit"
+                "RPC response exceeds {max_response_bytes} byte limit"
             )));
         }
         bytes.extend_from_slice(&chunk[..read]);

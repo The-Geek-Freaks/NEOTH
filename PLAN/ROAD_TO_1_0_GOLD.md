@@ -8,23 +8,46 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
-**Waves 35, 36 and 38 typed chat pipeline, caller-neutral seam, and CodeMap
-edge confidence — LOCALLY VERIFIED; PUBLICATION PENDING (2026-09-14):** sixteen
-source files share a 197-input union. Final evidence is recorded in
-[`docs/gold-wave35-38-verification.md`](../docs/gold-wave35-38-verification.md),
-the [source manifest](../docs/verification/gold-wave35-38-source-manifest.json),
-and the [test matrix](../docs/verification/gold-wave35-38-test-matrix.json).
-Clippy08 passed in 2m57s (219.92 GiB minimum free, 6.59 GiB peak), TestBuild03
-passed in 3m41s (216.10 GiB minimum free, 10.45 GiB peak), and the 14,501-test
-catalog selected 888 passes, zero failures, and zero ignored in 70.46s across
-ten filters. Contract13 passed 157/0/0; compilation took 2m39s. GUI check passed in 6m25s
-(215.04 GiB minimum free, 11.29 GiB peak) without a GUI link; its 13 existing
-`trusted_probe_supervisor` warnings remain. Python checks 19+11+8 passed. This
-is local evidence only; publication and a new macOS CI run remain required.
-P2-26, P1-16, P1-17, and R3-18B remain open. W39 rebased05 is the next
-unadmitted proposal; W40 repair is in progress and not admitted. Counts
-are **1324 total / 1012 done / 310 open / 2 partial** (312 raw and 311 pre-tag
-blockers).
+**Waves 39 and 40 sealed daemon chat and native CLI version probe — LOCAL
+VALIDATION COMPLETE (2026-09-14):** eighteen source files
+share a 204-input retained union based on W35–38 `20423301`. W39's sealed,
+same-user plain-chat RPC keeps daemon custody of provider, configuration, home,
+segment, writer, capacity, and cancellation. It rejects commands before
+admission or side effects and permits CLI fallback only before an RPC write.
+W40 performs an explicit version-only native CLI probe with descriptor binding,
+pre-spawn recapture, contained execution, and durable authority receipts. It
+does not add npm, Git, OSV, installers, or automatic SelfApply; unsupported
+wrappers return typed outcomes.
+
+Clippy07 passed in 2m49s (218.03 GiB minimum free, 6.72 GiB peak) and
+TestBuild03 passed in 3m44s (214.04 GiB minimum free, 10.77 GiB peak). The
+final selected run passed **639 / 0 / 1** in 48.33s from a 14,528-test catalog;
+the ignored health-probe child-listener check is an explicit helper exercised by
+its parent through a real OS subprocess. The 13 contract targets passed
+**157 / 0 / 0** (4m20s compilation; 213.89 GiB minimum free, 11.05 GiB peak),
+GUI check passed in 5m50s (no GUI link or native-GUI claim; existing 13 GUI
+test dead-code and vendor warnings remain), and Python19+11+8 passed. Source
+and executable evidence is recorded in
+`docs/verification/gold-wave39-40-{source-manifest,test-matrix}.json` with 204
+inputs and 14 executables. The earlier hang and 636/3/1 run were repaired before
+the final run; they are not pass evidence. This is local validation only:
+a full CI run for the published commit remains required. No closure or
+native GUI claim is made; R3-18B, P2-26, P1-16, and P1-17 remain open. Counts
+remain **1324 / 1012 / 310 / 2**.
+
+**Waves 35–38 — PUBLISHED
+`20423301ffbfcf0b6bb7d9478b9749ac5716e5d0`:** local evidence records 888
+selected tests, 157 contracts, the no-GUI-link GUI check, and Python19+11+8.
+Its exact-head full CI `34836363982` has Windows and macOS successes. Linux's
+known audit-RPC fixture-race repair now passes locally and is included in this changeset.
+This is not a full-CI or cross-platform acceptance claim.
+
+**Waves 41 and 42 — PROPOSALS ONLY:** Wave 41 B1 and GUI07 slices are approved,
+but lifecycle/owned-cleanup integration and real tests remain pending; no source
+is admitted. Its GUI/RPC/runtime, HTTP, MCP, and process-start gates remain
+under review.
+Wave 42's three-file v5 channel-health proposal is approved but not admitted;
+its partial parent remains open. Neither changes counts or obligations.
 
 **Wave 37 CI cadence — PUBLISHED `ff101c05`; FULL CI ACCEPTANCE OUTSTANDING
 (2026-09-14):** two reviewed workflow files retain their coverage, lock, and
@@ -42,8 +65,9 @@ concurrency and is not evidence.
 provenance — PUBLISHED `66f90e5ffd00739e296681974cda8d58c20921bd`:** local
 verification recorded 1327 selected unit passes, 157 account-config contract
 passes, 38 Python checks, and the no-GUI-link GUI check. Git history carries
-the commit identity and evidence receipts. W35/36/38 are now source admitted
-and awaiting validation. W32/P1-16, W34/P1-17, and R3-18B remain open;
+the commit identity and evidence receipts. W35/36/38 are published above; their
+W39 successor is source admitted and pending validation. W32/P1-16, W34/P1-17,
+and R3-18B remain open;
 counts are unchanged. W29–31 full CI `34803269509` remains an incomplete macOS
 failure boundary, not a green platform receipt.
 
@@ -85,7 +109,7 @@ repair keeps opaque capability gates and the existing `append_authenticated`
 path: `CHANNEL_SEND` precedes its terminal marker on success/failure, with
 unbound payload/order unchanged. TestBuild02 **PASS** 4m07s/min183.27GiB/
 peak11.07; Selected02 **394/0/0** preceded that repair; Python19+11+8 and
-Clippy03 **PASS** 3m12s/min205.12GiB/peak7.31. Final TestBuild03 **PASS**
+Clippy04 **PASS** 3m12s/min205.12GiB/peak7.31. Final TestBuild03 **PASS**
 3m49s/min202.66GiB/peak10.65; final selected **397/0/0** in26.48s/catalogue
 14389; 13 integration targets **157/0/0**/build4m27/min205.11GiB/peak10.82;
 fmt/GUI lint/self-test **PASS**. Final binary SHA-256
@@ -108,7 +132,7 @@ and runtime observations and tests only an explicitly selected Telegram account.
 invalid maps stay repair-only and legacy detailed JSON keeps its shape.
 Core **175/0/0** and actual GUI parser/action **350/0/0** pass. TestBuild01
 PASS5m26/min189.98GiB/peak12.52; final GUI test-source check PASS1m47/min195.19GiB/
-peak6.67, with no GUI test-monolith link. Clippy02 PASS2m45/min193.00GiB/peak8.25;
+peak6.67, with no GUI test-monolith link. Clippy04 PASS2m45/min193.00GiB/peak8.25;
 format/GUI lint/self-test and generated CLI docs pass. Two reviewed expectations
 are restricted to artificial headless-module lint conditions; production APIs
 were not changed for them. Exact evidence: `docs/gold-wave18-19-verification.md`
@@ -165,7 +189,7 @@ reload, flat outbound/CLI legacy-mutation guards, macOS recall physical-parent
 40.34s from a 14,324-test catalogue; fresh binary SHA-256 is
 `092543A364567956CC48C8255E3FEAC4C255F2DEC603DF40A201FA1958FBD805`.
 AccountConfigContracts (13 targets) **PASS**: 156/0/0; build 5m14s, 196.16 GiB
-minimum free, 10.80 GiB peak. Post-delta Clippy03 **PASS**: 3m01s, 199.45 GiB
+minimum free, 10.80 GiB peak. Post-delta Clippy04 **PASS**: 3m01s, 199.45 GiB
 minimum free, 6.49 GiB peak. Final fmt, GUI lint and self-test pass.
 
 Core02's earlier 1m43s result preceded test-only fixture repairs and the final

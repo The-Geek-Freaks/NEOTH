@@ -140,6 +140,7 @@ async fn durable_trust_rpc_reconciles_once_and_rejects_generic_bypass() {
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: true,
+        chat_runtime: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
@@ -220,6 +221,7 @@ async fn durable_trust_rpc_is_authenticated_and_available_when_optional_audit_is
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: false,
+        chat_runtime: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let descriptor = durable_trust_descriptor(&"4".repeat(64), &"5".repeat(64)).await;
@@ -300,6 +302,7 @@ async fn durable_trust_rpc_reuses_receipt_after_response_is_not_consumed() {
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: true,
+        chat_runtime: None,
     };
     let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
     let descriptor = durable_trust_descriptor(&"6".repeat(64), &"7".repeat(64)).await;
@@ -672,6 +675,7 @@ async fn aborting_listener_aborts_idle_connection_before_wal_drain() {
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: true,
+        chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -713,6 +717,7 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: true,
+        chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -777,6 +782,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
         membership: Some(Arc::clone(&controller)),
         audit_routes_enabled: false,
+        chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -966,6 +972,7 @@ async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: true,
+        chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -1033,6 +1040,7 @@ async fn internal_skill_mutation_route_stays_live_when_public_audit_routes_are_d
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: false,
+        chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1100,6 +1108,7 @@ async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: true,
+        chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -1194,6 +1203,7 @@ async fn unauthenticated_authority_ingress_cannot_poison_unrelated_skill_scans()
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: true,
+        chat_runtime: None,
     };
     let (address, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1401,12 +1411,32 @@ async fn cancelled_pre_durability_rpc_append_retains_then_recovers_exact_journal
         .unwrap(),
         0
     );
-    let pending = crate::skills::mutation_lifecycle::reconcile_pending(
-        home.path(),
-        &skills_dir,
-        Some(&writer),
-    )
+    let pending = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            match crate::skills::mutation_lifecycle::reconcile_pending(
+                home.path(),
+                &skills_dir,
+                Some(&writer),
+            )
+            .await
+            {
+                Err(error)
+                    if error.to_string().contains(
+                        "WAL segment changed between authentication and callback passes",
+                    ) =>
+                {
+                    // The scanner correctly rejects a mutable two-pass snapshot.
+                    // Keep the writer gate closed so the exact Skill append cannot
+                    // become durable; retry only until the pre-existing WAL reaches
+                    // a stable authenticated snapshot.
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                outcome => break outcome,
+            }
+        }
+    })
     .await
+    .expect("blocked pre-ACK WAL must reach a stable authenticated snapshot")
     .expect_err("an in-flight same-process append must keep its journal");
     assert!(pending.to_string().contains("entered intent delivery"));
     assert!(skills_dir.join(".neoth-skill-mutation.json").exists());
@@ -1588,6 +1618,7 @@ async fn wrong_token_is_401_and_writes_no_frame() {
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: true,
+        chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -1628,6 +1659,7 @@ async fn valid_bearer_bypasses_and_resets_shared_ipc_cooldown() {
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: true,
+        chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -1661,6 +1693,7 @@ async fn blocked_event_type_is_422_and_emits_reject() {
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: true,
+        chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(segdir.path(), &endpoint_nonce, state)
         .await
@@ -1697,6 +1730,7 @@ async fn client_round_trips_against_a_live_listener() {
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: true,
+        chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1743,6 +1777,7 @@ async fn jobs_run_token_client_is_request_bound_and_single_use() {
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: true,
+        chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1801,6 +1836,7 @@ async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: true,
+        chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1833,6 +1869,7 @@ async fn subtype_client_round_trips_against_a_live_listener() {
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: true,
+        chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1904,6 +1941,7 @@ async fn listener_serves_more_than_one_connection() {
         #[cfg(feature = "cluster")]
         membership: None,
         audit_routes_enabled: true,
+        chat_runtime: None,
     };
     let (addr, task) = bind_and_serve(home.path(), &endpoint_nonce, state)
         .await
@@ -1925,4 +1963,118 @@ async fn listener_serves_more_than_one_connection() {
     task.abort();
     drop(writer);
     wal_join.await.ok();
+}
+
+/// W39 keeps the existing five-second slow-client guard only through request
+/// parsing/authentication. A complete authenticated sealed request reaches the
+/// runtime handoff, whose missing-runtime response is distinct from a 401.
+#[tokio::test]
+async fn daemon_plain_chat_keeps_preauth_at_five_seconds_and_hands_off_only_after_auth() {
+    let home = tempdir().unwrap();
+    let segment = canonical_test_wal(home.path(), "daemon-plain-chat-preauth");
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(segment, home.path().to_path_buf()).unwrap();
+    let token = init_rpc_token(home.path()).unwrap();
+    let nonce = test_endpoint_nonce();
+    let state = AuditRpcState {
+        token: token.clone(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
+        chat_runtime: None,
+    };
+    let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
+    let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
+
+    let mut slow = super::transport::connect(&endpoint).await.unwrap();
+    slow.write_all(
+        b"POST /chat/turn HTTP/1.1\r\nHost: x\r\nContent-Length: 640\r\nConnection: close\r\n\r\nx",
+    )
+    .await
+    .unwrap();
+    let mut timed_out_response = Vec::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(7),
+        slow.read_to_end(&mut timed_out_response),
+    )
+    .await
+    .expect("five-second pre-auth timeout must close a stalled chat request")
+    .unwrap();
+    assert!(
+        timed_out_response.is_empty(),
+        "the five-second task cancellation closes a stalled pre-auth request before any runtime response"
+    );
+
+    let body = r#"{"schema_version":1,"message":"hello"}"#;
+    assert_eq!(
+        raw_post_path(&endpoint, "/chat/turn", None, body).await.0,
+        401,
+        "unauthenticated peer must not receive a runtime handoff"
+    );
+    for body in [
+        r#"{"schema_version":1,"message":"/local-action"}"#,
+        r#"{"schema_version":1,"message":" \t /local-action"}"#,
+    ] {
+        let (status, response) = raw_post_path(&endpoint, "/chat/turn", Some(&token), body).await;
+        assert_eq!(status, 422);
+        assert_eq!(response, r#"{"error":"chat_local_action_not_allowed"}"#);
+    }
+    let (status, response) = raw_post_path(&endpoint, "/chat/turn", Some(&token), body).await;
+    assert_eq!(status, 503);
+    assert_eq!(response, r#"{"error":"chat runtime unavailable"}"#);
+    assert!(
+        CHAT_TURN_RESPONSE_TIMEOUT > std::time::Duration::from_secs(5),
+        "runtime owns a distinct post-admission deadline"
+    );
+
+    listener.abort();
+    let _ = listener.await;
+    drop(writer);
+    wal_join.await.unwrap();
+}
+
+/// Once the OS transport has accepted the first request byte, a peer that
+/// closes before a reply is an indeterminate daemon outcome. The production
+/// client itself is exercised against the real same-user transport rather than
+/// testing only its error enum; it makes no second connection or local call.
+#[tokio::test]
+async fn daemon_plain_chat_eof_after_request_write_is_indeterminate_without_retry() {
+    let home = tempdir().unwrap();
+    let nonce = test_endpoint_nonce();
+    let _token = init_rpc_token(home.path()).unwrap();
+    let (mut listener, endpoint) = super::transport::bind(home.path(), &nonce).await.unwrap();
+    let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
+    let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let accepted_server = Arc::clone(&accepted);
+    let server = tokio::spawn(async move {
+        let mut stream = listener.accept().await.unwrap();
+        let mut first = [0u8; 1];
+        stream.read_exact(&mut first).await.unwrap();
+        accepted_server.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(first, [b'P']);
+        // Drop after a real client write but before any HTTP response.
+    });
+
+    let error = try_daemon_plain_chat_turn(home.path(), "hello".into())
+        .await
+        .expect_err("EOF after request write is not a fallback-safe outcome");
+    // A closed transport may report a read/write error or clean EOF followed
+    // by an empty HTTP response. All are the same post-write outcome.
+    assert!(
+        matches!(
+            error,
+            super::client::DaemonPlainChatClientError::Indeterminate(_)
+        ),
+        "post-write peer closure must be indeterminate: {error:?}"
+    );
+    assert!(!error.allows_standalone_fallback());
+    server.await.unwrap();
+    assert_eq!(
+        accepted.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "no retry or standalone fallback may issue another daemon request"
+    );
 }

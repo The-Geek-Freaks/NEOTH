@@ -77,6 +77,16 @@ impl UpdaterRunLimits {
         )
     }
 
+    /// Native local CLI version processes are short, but retain time to kill/reap and acknowledge their terminal receipt.
+    pub(crate) fn default_cli_installed_version_probe() -> Result<Self> {
+        Self::new(
+            Duration::from_secs(15),
+            Duration::from_secs(20),
+            Duration::from_secs(25),
+            Duration::from_secs(30),
+        )
+    }
+
     /// The contained SelfStage helper gets its own finite pass contract.  The
     /// extra effect time covers archive unpacking, while the later phases
     /// retain enough room to cancel, kill/reap and durably close its WAL edge.

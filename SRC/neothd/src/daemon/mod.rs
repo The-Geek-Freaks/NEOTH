@@ -42,6 +42,10 @@ pub mod channel_runtime_health;
 /// Read-only account-bound adapter attempt/result evidence from the
 /// authenticated complete home WAL.
 pub(crate) mod channel_transport_evidence;
+/// Capacity-one, daemon-owned execution for the sealed non-streaming chat
+/// request.  The transport stays in `audit_rpc`; this module owns no listener
+/// and accepts no caller-selected configuration or filesystem authority.
+pub(crate) mod chat_runtime;
 /// GOLD-ADAPT-HERMES-03 — Mid-run clarification gate. When a worker hits an
 /// ambiguity it calls [`clarify::ClarificationGate::park`], which parks the
 /// run in `Waiting` state and surfaces a [`clarify::ClarificationRequest`].

@@ -1270,7 +1270,12 @@ fn render_run(out: &mut String, run: &UpdaterRunStatus) {
         return;
     };
     out.push_str(&format!("  duration={}ms\n", result.duration_ms));
-    if result.is_uneventful() {
+    if result.is_uneventful()
+        && !result
+            .components
+            .iter()
+            .any(|component| component.status == ComponentStatus::Observed)
+    {
         out.push_str(&format!(
             "  all {} components up to date\n",
             result.up_to_date_count()
@@ -1279,7 +1284,7 @@ fn render_run(out: &mut String, run: &UpdaterRunStatus) {
     }
     for component in &result.components {
         let symbol = match component.status {
-            ComponentStatus::UpToDate => "·",
+            ComponentStatus::Observed | ComponentStatus::UpToDate => "·",
             ComponentStatus::Upgraded => "↑",
             ComponentStatus::UpdateAvailable => "!",
             ComponentStatus::Staged => "↓",
@@ -2233,6 +2238,32 @@ mod tests {
         assert_eq!(projection.latest.len(), 2);
         assert!(projection.latest.iter().any(|run| run.identity == probe));
         assert!(projection.latest.iter().any(|run| run.identity == stage));
+    }
+
+    #[test]
+    fn renderer_reports_local_observation_without_claiming_up_to_date() {
+        let identity = UpdaterPassIdentity::new(UpdaterPassLane::CliVersionProbe, 32);
+        let projection = project_updater_status(vec![
+            fired(&identity, UpdaterTaskKind::CliVersions, 320),
+            result(
+                &identity,
+                UpdaterTaskKind::CliVersions,
+                321,
+                ComponentOutcome::observed("codex", "1.2.3"),
+            ),
+        ])
+        .unwrap();
+
+        let rendered = render_updater_status(&projection);
+        assert!(rendered.contains("· codex 1.2.3 [observed]"), "{rendered}");
+        assert!(
+            !rendered.contains("all 0 components up to date"),
+            "observed installed versions are not upstream comparisons: {rendered}"
+        );
+        assert!(
+            !rendered.contains("→"),
+            "an observed installed version must not display an upstream comparison: {rendered}"
+        );
     }
 
     #[test]

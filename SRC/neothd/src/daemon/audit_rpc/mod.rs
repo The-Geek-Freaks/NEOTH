@@ -68,6 +68,7 @@ mod transport;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use client::try_daemon_plain_chat_turn;
 pub(crate) use client::try_post_skill_mutation_frame;
 pub(crate) use client::try_post_trust_decision_once;
 #[cfg(windows)]
@@ -99,9 +100,99 @@ pub use sidecar::{SidecarGuard, remove_sidecar, sidecar_path};
 pub use token::{init_rpc_token, read_rpc_token, rpc_token_path};
 #[cfg(test)]
 pub(crate) use transport::AuditEndpointV2;
+pub(crate) use transport::AuditStream;
 #[cfg(all(test, windows))]
 pub(crate) use transport::endpoint_for_home;
 pub(crate) use transport::homes_same_identity;
+
+/// W39's sealed same-user chat contract.  It deliberately carries only one
+/// ordinary plaintext message; all configuration, provider, consent, WAL and
+/// parser custody remains daemon-owned.
+pub(crate) const DAEMON_PLAIN_CHAT_SCHEMA_VERSION: u8 = 1;
+/// Each byte may need a six-byte JSON escape.  Keep the UTF-8 message cap
+/// inside the inherited 4-KiB body cap even for an all-control-byte message.
+pub(crate) const DAEMON_PLAIN_CHAT_MESSAGE_MAX_BYTES: usize = 640;
+pub(crate) const DAEMON_PLAIN_CHAT_TRANSPORT_BODY_MAX_BYTES: usize = 4 * 1024;
+pub(crate) const DAEMON_PLAIN_CHAT_MAX_RECORDS: usize = 64;
+pub(crate) const DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES: usize = 64 * 1024;
+pub(crate) const CHAT_TURN_RESPONSE_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(120);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DaemonPlainChatRequest {
+    pub(crate) schema_version: u8,
+    pub(crate) message: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DaemonPlainChatResponse {
+    pub(crate) records: Vec<DaemonPlainChatRecord>,
+    pub(crate) terminal: DaemonPlainChatTerminal,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DaemonPlainChatRecord {
+    pub(crate) kind: DaemonPlainChatRecordKind,
+    pub(crate) text: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DaemonPlainChatRecordKind {
+    Stdout,
+    Stderr,
+    Notice,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DaemonPlainChatTerminal {
+    pub(crate) provider: String,
+    pub(crate) model: String,
+    pub(crate) session_id: Option<String>,
+}
+
+pub(crate) fn validate_daemon_plain_chat_request(
+    request: &DaemonPlainChatRequest,
+) -> std::result::Result<(), &'static str> {
+    if request.schema_version != DAEMON_PLAIN_CHAT_SCHEMA_VERSION {
+        return Err("unsupported_chat_schema_version");
+    }
+    if request.message.is_empty() {
+        return Err("chat_message_empty");
+    }
+    if !is_daemon_plain_chat_message(&request.message) {
+        return Err("chat_local_action_not_allowed");
+    }
+    if request.message.len() > DAEMON_PLAIN_CHAT_MESSAGE_MAX_BYTES {
+        return Err("chat_message_too_large");
+    }
+    Ok(())
+}
+
+/// Slash forms are pre-runtime local actions in direct CLI chat. A same-user
+/// peer cannot use the sealed daemon message field to bypass that boundary.
+/// Leading whitespace is ignored only for identifying a command; ordinary
+/// text retains its original bytes and remains eligible.
+pub(crate) fn is_daemon_plain_chat_message(message: &str) -> bool {
+    !message.trim_start().starts_with('/')
+}
+
+pub(crate) fn validate_daemon_plain_chat_response(
+    response: &DaemonPlainChatResponse,
+    encoded_len: usize,
+) -> std::result::Result<(), &'static str> {
+    if response.records.len() > DAEMON_PLAIN_CHAT_MAX_RECORDS {
+        return Err("chat_response_too_many_records");
+    }
+    if encoded_len > DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES {
+        return Err("chat_response_too_large");
+    }
+    Ok(())
+}
 
 /// Closed same-user transport for a descriptor already resolved by Gate and
 /// durably retained by its caller. This carries no raw action/body/recipient
@@ -125,4 +216,108 @@ pub(super) struct TrustDecisionOnceResponse {
 pub(super) enum TrustDecisionOnceWireOutcome {
     ExistingExact,
     AppendedExact,
+}
+
+#[cfg(test)]
+mod daemon_plain_chat_contract_tests {
+    use super::*;
+
+    fn request(message: String) -> DaemonPlainChatRequest {
+        DaemonPlainChatRequest {
+            schema_version: DAEMON_PLAIN_CHAT_SCHEMA_VERSION,
+            message,
+        }
+    }
+
+    #[test]
+    fn sealed_request_rejects_unknown_fields_and_invalid_message_bounds() {
+        assert!(
+            serde_json::from_str::<DaemonPlainChatRequest>(
+                r#"{"schema_version":1,"message":"hello","config":"forbidden"}"#
+            )
+            .is_err()
+        );
+        assert_eq!(
+            validate_daemon_plain_chat_request(&request(String::new())),
+            Err("chat_message_empty")
+        );
+        assert_eq!(
+            validate_daemon_plain_chat_request(&request(
+                "x".repeat(DAEMON_PLAIN_CHAT_MESSAGE_MAX_BYTES + 1)
+            )),
+            Err("chat_message_too_large")
+        );
+        assert_eq!(
+            validate_daemon_plain_chat_request(&DaemonPlainChatRequest {
+                schema_version: DAEMON_PLAIN_CHAT_SCHEMA_VERSION + 1,
+                message: "hello".into(),
+            }),
+            Err("unsupported_chat_schema_version")
+        );
+        for message in ["/help", " \t /skill-from-doc no", "\n /any-local-action"] {
+            assert_eq!(
+                validate_daemon_plain_chat_request(&request(message.into())),
+                Err("chat_local_action_not_allowed"),
+                "sealed daemon ingress must reject every local slash form"
+            );
+        }
+        assert!(is_daemon_plain_chat_message("  ordinary text"));
+        assert!(is_daemon_plain_chat_message("\n\tordinary text"));
+    }
+
+    #[test]
+    fn sealed_response_rejects_unknown_shape_and_declared_bounds() {
+        assert!(serde_json::from_str::<DaemonPlainChatResponse>(
+            r#"{"records":[],"terminal":{"provider":"p","model":"m","session_id":null,"extra":true}}"#
+        )
+        .is_err());
+        let response = DaemonPlainChatResponse {
+            records: (0..=DAEMON_PLAIN_CHAT_MAX_RECORDS)
+                .map(|_| DaemonPlainChatRecord {
+                    kind: DaemonPlainChatRecordKind::Stdout,
+                    text: "x".into(),
+                })
+                .collect(),
+            terminal: DaemonPlainChatTerminal {
+                provider: "provider".into(),
+                model: "model".into(),
+                session_id: None,
+            },
+        };
+        assert_eq!(
+            validate_daemon_plain_chat_response(&response, 1),
+            Err("chat_response_too_many_records")
+        );
+        let response = DaemonPlainChatResponse {
+            records: Vec::new(),
+            terminal: response.terminal,
+        };
+        assert_eq!(
+            validate_daemon_plain_chat_response(
+                &response,
+                DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES + 1,
+            ),
+            Err("chat_response_too_large")
+        );
+    }
+
+    #[test]
+    fn only_proven_prewrite_unavailability_allows_standalone_fallback() {
+        assert!(
+            client::DaemonPlainChatClientError::PreWriteUnavailable("no daemon".into())
+                .allows_standalone_fallback()
+        );
+        for error in [
+            client::DaemonPlainChatClientError::Refused(503),
+            client::DaemonPlainChatClientError::Indeterminate("write failure".into()),
+            client::DaemonPlainChatClientError::Indeterminate("EOF after write".into()),
+            client::DaemonPlainChatClientError::Indeterminate("chat deadline".into()),
+            client::DaemonPlainChatClientError::Indeterminate("malformed reply".into()),
+        ] {
+            assert!(
+                !error.allows_standalone_fallback(),
+                "post-write or daemon refusal must never launch a local turn: {error}"
+            );
+        }
+    }
 }

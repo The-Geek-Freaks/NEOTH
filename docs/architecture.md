@@ -84,6 +84,29 @@ output sink. This seam does not itself provide daemon RPC, job persistence,
 replay, or GUI ownership. The focused verification and its limits are recorded
 in [the Waves 35–38 receipt](gold-wave35-38-verification.md).
 
+## Proposed daemon chat and native CLI probe boundaries
+
+Waves 39 and 40 are source admitted and await combined validation. The daemon
+plain-chat route accepts only a sealed same-user request. It rejects command
+forms before capacity admission and before provider, configuration, local
+action, or WAL work. The daemon keeps all turn resources and the CLI only falls
+back when an RPC failure occurs before a write begins. Completion guards and
+bounded response writes prevent a client from stalling shutdown.
+
+The native CLI version probe is a separate, authority-bound update lane. It
+binds the accepted descriptor, recaptures it immediately before contained
+execution, uses a fixed version-only command, and records durable intent and
+terminal receipts. Cancellation or timeout stops later component admission and
+reaps the contained child before its terminal classification. It deliberately
+does not cover npm, Git, OSV, installers, or automatic SelfApply. Unsupported
+wrappers are reported by typed outcomes rather than guessed or launched. The
+reviewed fixture-only repairs correct the earlier diagnostics and native-cancel
+writer-join hang. Local validation is complete; publication and a new-head full
+CI remain pending.
+
+Neither boundary establishes daemon replay/status/cancel APIs, native GUI
+behavior, live-provider behavior, or cross-platform acceptance.
+
 ## WAL source of truth
 
 The WAL is the durable event chain under NEOTH. Views can be rebuilt; the WAL is authoritative.

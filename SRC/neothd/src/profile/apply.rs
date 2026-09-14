@@ -166,119 +166,122 @@ pub async fn apply_delta(
     //
     // All branches commit atomically in one SQLite transaction so the
     // post-state is consistent — partial application is impossible.
-    let mut applied = 0usize;
-    let mut reinforced = 0usize;
-    let mut superseded = 0usize;
-    let mut redact_blocked = 0usize;
-    // We collect per-claim decisions inside the tx, then emit WAL
-    // frames AFTER the commit. That ordering means a tx-failure leaves
-    // the WAL untouched (no audit row for a write that never landed).
-    let mut to_emit: Vec<ClaimEvent> = Vec::with_capacity(delta.claims.len());
+    let (applied, reinforced, superseded, redact_blocked) = {
+        let mut applied = 0usize;
+        let mut reinforced = 0usize;
+        let mut superseded = 0usize;
+        let mut redact_blocked = 0usize;
+        // We collect per-claim decisions inside the tx, then emit WAL
+        // frames AFTER the commit. That ordering means a tx-failure leaves
+        // the WAL untouched (no audit row for a write that never landed).
+        let mut to_emit: Vec<ClaimEvent> = Vec::with_capacity(delta.claims.len());
 
-    let tx = conn.transaction().context("begin apply tx")?;
-    let active_redactions = crate::profile::redaction::list_active(&tx)
-        .context("load active redactions for apply-time recheck")?;
-    for claim in &delta.claims {
-        // ADV-04 (Session 28) — redaction recheck. The Stage-5 guard
-        // already filtered redacted fields, BUT a delta can sit in
-        // `idx_profile_pending` between approval-gate parking and
-        // operator-driven `neoth profile approve`; an operator who
-        // adds a redaction in that window expects the apply step to
-        // honour it. The active registry snapshot was loaded inside this
-        // transaction and covers exact fields plus forget-topic sentinels;
-        // drop the insert + emit a `PROFILE_REDACT_BLOCKED` audit frame
-        // post-commit when one matches. Idempotent: no row is written.
-        if let Some(redaction) = active_redactions.iter().find(|redaction| {
-            crate::memory::forget::redaction_blocks_claim(
-                &redaction.field,
-                &claim.field,
-                &claim.value_json,
-            )
-        }) {
-            redact_blocked += 1;
-            to_emit.push(ClaimEvent::RedactBlocked {
-                field: claim.field.clone(),
-                redaction_id: redaction.id,
-                asserted_by: redaction.asserted_by.clone(),
-            });
-            continue;
-        }
-        let prior = lookup_active_for_field(&tx, &claim.field)?;
-        let value_json = serde_json::to_string(&claim.value_json)
-            .expect("serde_json::Value is infallibly serializable");
-        match prior {
-            None => {
-                let event_id = insert_profile_row(
-                    &tx,
-                    &delta.extraction_id,
-                    claim,
-                    &delta.guard_version,
-                    now_unix,
-                )?;
-                applied += 1;
-                to_emit.push(ClaimEvent::Delta {
-                    claim: claim.clone(),
-                    event_id,
+        let tx = conn.transaction().context("begin apply tx")?;
+        let active_redactions = crate::profile::redaction::list_active(&tx)
+            .context("load active redactions for apply-time recheck")?;
+        for claim in &delta.claims {
+            // ADV-04 (Session 28) — redaction recheck. The Stage-5 guard
+            // already filtered redacted fields, BUT a delta can sit in
+            // `idx_profile_pending` between approval-gate parking and
+            // operator-driven `neoth profile approve`; an operator who
+            // adds a redaction in that window expects the apply step to
+            // honour it. The active registry snapshot was loaded inside this
+            // transaction and covers exact fields plus forget-topic sentinels;
+            // drop the insert + emit a `PROFILE_REDACT_BLOCKED` audit frame
+            // post-commit when one matches. Idempotent: no row is written.
+            if let Some(redaction) = active_redactions.iter().find(|redaction| {
+                crate::memory::forget::redaction_blocks_claim(
+                    &redaction.field,
+                    &claim.field,
+                    &claim.value_json,
+                )
+            }) {
+                redact_blocked += 1;
+                to_emit.push(ClaimEvent::RedactBlocked {
+                    field: claim.field.clone(),
+                    redaction_id: redaction.id,
+                    asserted_by: redaction.asserted_by.clone(),
                 });
+                continue;
             }
-            Some(p) if p.value_json == value_json => {
-                if claim.confidence > p.confidence as f32 {
-                    reinforce_profile_row(&tx, p.id, claim.confidence as f64, now_unix)?;
-                    reinforced += 1;
-                    to_emit.push(ClaimEvent::Reinforced {
-                        prior_event_id: p.event_id,
-                        field: claim.field.clone(),
-                        old_confidence: p.confidence as f32,
-                        new_confidence: claim.confidence,
+            let prior = lookup_active_for_field(&tx, &claim.field)?;
+            let value_json = serde_json::to_string(&claim.value_json)
+                .expect("serde_json::Value is infallibly serializable");
+            match prior {
+                None => {
+                    let event_id = insert_profile_row(
+                        &tx,
+                        &delta.extraction_id,
+                        claim,
+                        &delta.guard_version,
+                        now_unix,
+                    )?;
+                    applied += 1;
+                    to_emit.push(ClaimEvent::Delta {
+                        claim: claim.clone(),
+                        event_id,
                     });
                 }
-                // Equal-or-lower confidence repeat: silently drop.
-            }
-            Some(p) => {
-                supersede_profile_row(&tx, p.id, now_unix)?;
-                let event_id = insert_profile_row(
-                    &tx,
-                    &delta.extraction_id,
-                    claim,
-                    &delta.guard_version,
-                    now_unix,
-                )?;
-                applied += 1;
-                superseded += 1;
-                to_emit.push(ClaimEvent::Superseded {
-                    prior_event_id: p.event_id,
-                    field: claim.field.clone(),
-                    old_value_hash: xxhash_rust::xxh3::xxh3_64(p.value_json.as_bytes()),
-                    new_value_hash: xxhash_rust::xxh3::xxh3_64(value_json.as_bytes()),
-                });
-                to_emit.push(ClaimEvent::Delta {
-                    claim: claim.clone(),
-                    event_id,
-                });
+                Some(p) if p.value_json == value_json => {
+                    if claim.confidence > p.confidence as f32 {
+                        reinforce_profile_row(&tx, p.id, claim.confidence as f64, now_unix)?;
+                        reinforced += 1;
+                        to_emit.push(ClaimEvent::Reinforced {
+                            prior_event_id: p.event_id,
+                            field: claim.field.clone(),
+                            old_confidence: p.confidence as f32,
+                            new_confidence: claim.confidence,
+                        });
+                    }
+                    // Equal-or-lower confidence repeat: silently drop.
+                }
+                Some(p) => {
+                    supersede_profile_row(&tx, p.id, now_unix)?;
+                    let event_id = insert_profile_row(
+                        &tx,
+                        &delta.extraction_id,
+                        claim,
+                        &delta.guard_version,
+                        now_unix,
+                    )?;
+                    applied += 1;
+                    superseded += 1;
+                    to_emit.push(ClaimEvent::Superseded {
+                        prior_event_id: p.event_id,
+                        field: claim.field.clone(),
+                        old_value_hash: xxhash_rust::xxh3::xxh3_64(p.value_json.as_bytes()),
+                        new_value_hash: xxhash_rust::xxh3::xxh3_64(value_json.as_bytes()),
+                    });
+                    to_emit.push(ClaimEvent::Delta {
+                        claim: claim.clone(),
+                        event_id,
+                    });
+                }
             }
         }
-    }
 
-    // Pick #12 (Session 14, ADR-002 ratified) — Outbox pattern closes
-    // the post-commit / pre-WAL-emit consistency hole. Each pending
-    // ClaimEvent is serialised + inserted into `idx_profile_outbox`
-    // inside the SAME transaction as the idx_profile rows. After the
-    // tx commits, the drain loop emits WAL frames + deletes outbox
-    // rows on each successful ack. A crash between commit + drain
-    // leaves rows in the outbox; the next `apply_delta` invocation
-    // OR daemon startup replays them via `drain_outbox_all`.
-    for event in &to_emit {
-        let (event_type, payload) =
-            serialise_claim_event(&delta.extraction_id, &delta.guard_version, event, now_unix)?;
-        tx.execute(
-            "INSERT INTO idx_profile_outbox \
+        // Pick #12 (Session 14, ADR-002 ratified) — Outbox pattern closes
+        // the post-commit / pre-WAL-emit consistency hole. Each pending
+        // ClaimEvent is serialised + inserted into `idx_profile_outbox`
+        // inside the SAME transaction as the idx_profile rows. After the
+        // tx commits, the drain loop emits WAL frames + deletes outbox
+        // rows on each successful ack. A crash between commit + drain
+        // leaves rows in the outbox; the next `apply_delta` invocation
+        // OR daemon startup replays them via `drain_outbox_all`.
+        for event in &to_emit {
+            let (event_type, payload) =
+                serialise_claim_event(&delta.extraction_id, &delta.guard_version, event, now_unix)?;
+            tx.execute(
+                "INSERT INTO idx_profile_outbox \
              (extraction_id, event_type, payload, enqueued_at) \
              VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![&delta.extraction_id, event_type as i64, payload, now_unix],
-        )
-        .context("insert idx_profile_outbox row")?;
-    }
-    tx.commit().context("commit apply tx")?;
+                rusqlite::params![&delta.extraction_id, event_type as i64, payload, now_unix],
+            )
+            .context("insert idx_profile_outbox row")?;
+        }
+        tx.commit().context("commit apply tx")?;
+        (applied, reinforced, superseded, redact_blocked)
+    };
 
     // Drain the rows we just inserted (and any leftover rows from a
     // prior-run crash for this extraction). Best-effort — failure to
@@ -664,6 +667,17 @@ mod tests {
         let conn = store::open(&dir.path().join("views.db")).unwrap();
         let (writer, join) = spawn(dir.path().join("seg.wal")).unwrap();
         (dir, conn, writer, join)
+    }
+
+    #[tokio::test]
+    async fn apply_delta_future_stays_send_after_transaction_commit() {
+        fn assert_send<T: Send>(_: T) {}
+
+        let (_dir, mut conn, writer, join) = setup().await;
+        let delta = delta();
+        assert_send(apply_delta(&mut conn, &writer, &delta, 1));
+        drop(writer);
+        let _ = join.await;
     }
 
     #[tokio::test]

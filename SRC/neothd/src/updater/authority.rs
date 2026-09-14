@@ -478,6 +478,45 @@ impl HttpBinding {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct NativeCliExecutableBinding {
+    canonical_path_sha256: String,
+    platform_identity_sha256: String,
+    file_sha256: String,
+    file_size_bytes: u64,
+}
+
+impl NativeCliExecutableBinding {
+    pub(crate) fn new(
+        canonical_path_sha256: String,
+        platform_identity_sha256: String,
+        file_sha256: String,
+        file_size_bytes: u64,
+    ) -> Result<Self> {
+        let binding = Self {
+            canonical_path_sha256,
+            platform_identity_sha256,
+            file_sha256,
+            file_size_bytes,
+        };
+        binding.validate()?;
+        Ok(binding)
+    }
+
+    fn validate(&self) -> Result<()> {
+        validate_sha256(&self.canonical_path_sha256)
+            .context("invalid native CLI canonical path digest")?;
+        validate_sha256(&self.platform_identity_sha256)
+            .context("invalid native CLI platform identity digest")?;
+        validate_sha256(&self.file_sha256).context("invalid native CLI file digest")?;
+        anyhow::ensure!(
+            self.file_size_bytes > 0 && self.file_size_bytes <= 256 * 1024 * 1024,
+            "native CLI image size is outside the admitted bound"
+        );
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 struct ProcessBinding {
     program: UpdaterProgram,
     argv_sha256: String,
@@ -485,6 +524,8 @@ struct ProcessBinding {
     stdin_sha256: String,
     stdin_size_bytes: u64,
     max_output_bytes: u64,
+    #[serde(default)]
+    native_cli_executable: Option<NativeCliExecutableBinding>,
     #[serde(default)]
     owned_stage_slot: Option<OwnedStageSlotBinding>,
 }
@@ -542,6 +583,7 @@ impl ProcessBinding {
             stdin_sha256: sha256_hex(stdin),
             stdin_size_bytes,
             max_output_bytes,
+            native_cli_executable: None,
             owned_stage_slot: None,
         })
     }
@@ -549,6 +591,9 @@ impl ProcessBinding {
     fn validate(&self) -> Result<()> {
         validate_sha256(&self.argv_sha256)?;
         validate_sha256(&self.stdin_sha256)?;
+        if let Some(binding) = &self.native_cli_executable {
+            binding.validate()?;
+        }
         anyhow::ensure!(
             self.max_output_bytes > 0,
             "updater process output bound is zero"
@@ -712,6 +757,32 @@ impl UpdaterLeafRequest {
         )
     }
 
+    /// Exact local executable binding for the admitted installed-version leaf.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn native_cli_process(
+        operation_id: impl Into<String>,
+        request_id: impl Into<String>,
+        accepted_epoch: u64,
+        component: UpdaterAuthorityComponent,
+        argv: &[String],
+        max_output_bytes: u64,
+        executable: NativeCliExecutableBinding,
+    ) -> Result<Self> {
+        executable.validate()?;
+        let mut binding =
+            ProcessBinding::for_request(UpdaterProgram::ManagedCli, argv, &[], max_output_bytes)?;
+        binding.native_cli_executable = Some(executable);
+        Self::build(
+            operation_id.into(),
+            request_id.into(),
+            accepted_epoch,
+            UpdaterAuthorityTask::CliVersions,
+            UpdaterAuthorityLane::CliVersionProbe,
+            component,
+            UpdaterLeafEffect::CliInstalledVersionProbe,
+            UpdaterLeafTarget::Process(binding),
+        )
+    }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn owned_stage_helper(
         operation_id: impl Into<String>,
@@ -1088,6 +1159,17 @@ fn validate_process_binding(effect: UpdaterLeafEffect, target: &UpdaterLeafTarge
         effect.as_str(),
         process.program.as_str()
     );
+    if effect == UpdaterLeafEffect::CliInstalledVersionProbe {
+        anyhow::ensure!(
+            process.native_cli_executable.is_some(),
+            "native CLI installed-version request omitted its executable identity detector"
+        );
+    } else {
+        anyhow::ensure!(
+            process.native_cli_executable.is_none(),
+            "non-native CLI updater process carried an executable identity detector"
+        );
+    }
     if effect == UpdaterLeafEffect::SelfStageOwnedHelper {
         anyhow::ensure!(
             process.owned_stage_slot.is_some(),
@@ -2433,6 +2515,7 @@ impl UpdaterLeafAuthority {
         argv: &[String],
         stdin: &[u8],
         max_output_bytes: u64,
+        native_cli_executable: Option<&NativeCliExecutableBinding>,
     ) -> std::result::Result<(), UpdaterLeafFailure> {
         let effect = self.effect;
         let UpdaterLeafTarget::Process(binding) = self.target else {
@@ -2443,6 +2526,7 @@ impl UpdaterLeafAuthority {
         };
         let mut expected = ProcessBinding::for_request(program, argv, stdin, max_output_bytes)
             .map_err(|source| UpdaterLeafFailure::new(UpdaterLeafFailureKind::Protocol, source))?;
+        expected.native_cli_executable = native_cli_executable.cloned();
         expected.owned_stage_slot = binding
             .owned_stage_slot
             .as_ref()
@@ -2701,12 +2785,57 @@ impl UpdaterLeafAuthorizer {
             });
         }
         self.execute_lifecycle_with_clock(request, Some(&run_clock), move |authority| async move {
-            authority.validate_process(expected_effect, program, argv, stdin, max_output_bytes)?;
+            authority.validate_process(
+                expected_effect,
+                program,
+                argv,
+                stdin,
+                max_output_bytes,
+                None,
+            )?;
             run().await
         })
         .await
     }
 
+    /// Execute the narrow local installed-version probe with its resolved
+    /// executable descriptor included in the authenticated process binding.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_native_cli_process_with_receipt<F, Fut, T>(
+        &self,
+        request: UpdaterLeafRequest,
+        run_clock: UpdaterRunClock,
+        argv: &[String],
+        max_output_bytes: u64,
+        native_cli_executable: &NativeCliExecutableBinding,
+        run: F,
+    ) -> std::result::Result<(T, UpdaterLeafTerminalReceipt), UpdaterLeafExecutionError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = std::result::Result<UpdaterLeafSuccess<T>, UpdaterLeafFailure>>,
+    {
+        if request.run_budgets.as_ref() != Some(run_clock.budgets()) {
+            return Err(UpdaterLeafExecutionError::Audit {
+                phase: UpdaterLeafAuditPhase::Intent,
+                effect_error_sha256: None,
+                source: anyhow::anyhow!(
+                    "budgeted native CLI leaf did not carry the outer pass budget tuple"
+                ),
+            });
+        }
+        self.execute_lifecycle_with_clock(request, Some(&run_clock), move |authority| async move {
+            authority.validate_process(
+                UpdaterLeafEffect::CliInstalledVersionProbe,
+                UpdaterProgram::ManagedCli,
+                argv,
+                &[],
+                max_output_bytes,
+                Some(native_cli_executable),
+            )?;
+            run().await
+        })
+        .await
+    }
     /// Execute one verified-stage leaf through the only crate-visible local
     /// stage authority surface.
     pub(crate) async fn execute_stage<F, Fut, T>(
@@ -4265,5 +4394,45 @@ mod tests {
         assert!(
             !UpdaterLeafEffect::VerifiedStageWrite.allows_outcome(UpdaterLeafOutcomeCode::Staged)
         );
+    }
+}
+
+#[cfg(test)]
+mod native_cli_process_binding_tests {
+    use super::*;
+
+    #[test]
+    fn native_cli_request_binds_the_resolved_image_detector() {
+        let request = UpdaterLeafRequest::native_cli_process(
+            "cli-pass-0001",
+            "cli-installed-0",
+            7,
+            UpdaterAuthorityComponent::ClaudeCli,
+            &["--version".to_string()],
+            8 * 1024,
+            NativeCliExecutableBinding::new("01".repeat(32), "02".repeat(32), "03".repeat(32), 4)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(request.effect, UpdaterLeafEffect::CliInstalledVersionProbe);
+        assert!(matches!(request.target, UpdaterLeafTarget::Process(_)));
+    }
+    #[test]
+    fn native_cli_descriptor_rejects_each_invalid_field() {
+        let valid =
+            NativeCliExecutableBinding::new("01".repeat(32), "02".repeat(32), "03".repeat(32), 4)
+                .unwrap();
+        let mut canonical = valid.clone();
+        canonical.canonical_path_sha256 = "bad".to_string();
+        assert!(canonical.validate().is_err());
+        let mut platform = valid.clone();
+        platform.platform_identity_sha256 = "bad".to_string();
+        assert!(platform.validate().is_err());
+        let mut file = valid.clone();
+        file.file_sha256 = "bad".to_string();
+        assert!(file.validate().is_err());
+        let mut size = valid;
+        size.file_size_bytes = 256 * 1024 * 1024 + 1;
+        assert!(size.validate().is_err());
     }
 }

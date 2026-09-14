@@ -4,6 +4,9 @@
 //! caller observes a terminal result. A deadline is not terminal: the caller
 //! retains this value, records cancellation, then asks it to reap.
 
+#[cfg(test)]
+use std::path::PathBuf;
+
 use std::{
     ffi::OsString,
     path::Path,
@@ -16,6 +19,70 @@ use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const PIPE_DRAIN_GRACE: Duration = Duration::from_secs(2);
+
+// Test-only argument selection for one exact, already verified native fixture
+// image. The W40 production path still receives only `--version`; this exists
+// solely because the production test binary can exceed the 256 MiB descriptor
+// cap and therefore cannot itself be used as the contained native image.
+#[cfg(test)]
+static NATIVE_CLI_VERSION_TEST_HELPERS: std::sync::Mutex<Vec<NativeCliVersionTestHelper>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+#[derive(Clone)]
+struct NativeCliVersionTestHelper {
+    program: PathBuf,
+    argv: Vec<OsString>,
+    launches: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    observed: std::sync::Arc<tokio::sync::Notify>,
+}
+
+#[cfg(test)]
+pub(crate) struct NativeCliVersionTestHelperGuard(PathBuf);
+
+#[cfg(test)]
+impl Drop for NativeCliVersionTestHelperGuard {
+    fn drop(&mut self) {
+        let mut helpers = NATIVE_CLI_VERSION_TEST_HELPERS
+            .lock()
+            .expect("native CLI helper registry");
+        helpers.retain(|helper| helper.program != self.0);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn enable_native_cli_version_test_helper(
+    program: &Path,
+    argv: Vec<OsString>,
+    launches: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    observed: std::sync::Arc<tokio::sync::Notify>,
+) -> NativeCliVersionTestHelperGuard {
+    let program = program.to_path_buf();
+    let mut helpers = NATIVE_CLI_VERSION_TEST_HELPERS
+        .lock()
+        .expect("native CLI helper registry");
+    assert!(
+        !helpers.iter().any(|helper| helper.program == program),
+        "native CLI helper program is already registered"
+    );
+    helpers.push(NativeCliVersionTestHelper {
+        program: program.clone(),
+        argv,
+        launches,
+        observed,
+    });
+    NativeCliVersionTestHelperGuard(program)
+}
+
+#[cfg(test)]
+fn native_cli_version_test_helper(program: &Path) -> Option<NativeCliVersionTestHelper> {
+    NATIVE_CLI_VERSION_TEST_HELPERS
+        .lock()
+        .expect("native CLI helper registry")
+        .iter()
+        .find(|helper| helper.program == program)
+        .cloned()
+}
 
 #[derive(Debug)]
 pub(crate) enum ContainedChildError {
@@ -78,6 +145,9 @@ impl std::error::Error for ContainedChildError {}
 #[derive(Debug)]
 pub(crate) struct ContainedOutput {
     pub(crate) status: ExitStatus,
+    pub(crate) stdout: Vec<u8>,
+    #[cfg(test)]
+    pub(crate) stderr: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -114,8 +184,55 @@ impl ContainedChild {
         output_cap: usize,
     ) -> std::result::Result<Self, ContainedChildError> {
         let mut command = tokio::process::Command::new(program);
+        command.args(argv);
+        Self::spawn_configured(command, exact_stdin, output_cap).await
+    }
+
+    /// The sole sterile launch variant, restricted to native managed CLI
+    /// version probes. It changes only command hygiene before the common
+    /// contained-child setup path; tree activation and cleanup stay shared.
+    pub(crate) async fn spawn_native_cli_version(
+        program: &Path,
+        argv: &[OsString],
+        working_directory: &Path,
+        output_cap: usize,
+    ) -> std::result::Result<Self, ContainedChildError> {
+        let mut command = tokio::process::Command::new(program);
+        command.current_dir(working_directory).env_clear();
+        #[cfg(test)]
+        let helper = native_cli_version_test_helper(program);
+        #[cfg(test)]
+        if let Some(helper) = helper.as_ref() {
+            command.args(&helper.argv);
+        } else {
+            command.args(argv);
+        }
+        #[cfg(not(test))]
+        command.args(argv);
+        #[cfg(windows)]
+        for key in ["SystemRoot", "WINDIR"] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
+        #[cfg(test)]
+        if let Some(helper) = helper {
+            // This is the test's launch boundary: the counter advances only
+            // immediately before the real ContainedChild spawn path.
+            helper
+                .launches
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            helper.observed.notify_one();
+        }
+        Self::spawn_configured(command, &[], output_cap).await
+    }
+
+    async fn spawn_configured(
+        mut command: tokio::process::Command,
+        exact_stdin: &[u8],
+        output_cap: usize,
+    ) -> std::result::Result<Self, ContainedChildError> {
         command
-            .args(argv)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -278,8 +395,15 @@ impl ContainedChild {
             return Err(ContainedChildError::TreeTermination(error));
         }
         let status = leader_result?;
-        pipes_result?;
-        Ok(ContainedOutput { status })
+        let (stdout, stderr) = pipes_result?;
+        #[cfg(not(test))]
+        drop(stderr);
+        Ok(ContainedOutput {
+            status,
+            stdout,
+            #[cfg(test)]
+            stderr,
+        })
     }
 
     fn child_mut(&mut self) -> &mut tokio::process::Child {
@@ -306,8 +430,15 @@ impl ContainedChild {
         if let Err(error) = tree_result {
             return Err(ContainedChildError::TreeTermination(error));
         }
-        pipes_result?;
-        Ok(ContainedOutput { status })
+        let (stdout, stderr) = pipes_result?;
+        #[cfg(not(test))]
+        drop(stderr);
+        Ok(ContainedOutput {
+            status,
+            stdout,
+            #[cfg(test)]
+            stderr,
+        })
     }
 
     async fn kill_and_reap_leader(
@@ -337,7 +468,9 @@ impl ContainedChild {
         }
     }
 
-    async fn collect_pipes(&mut self) -> std::result::Result<(), ContainedChildError> {
+    async fn collect_pipes(
+        &mut self,
+    ) -> std::result::Result<(Vec<u8>, Vec<u8>), ContainedChildError> {
         let stdout_task = self.stdout.take().expect("stdout task is owned once");
         let stderr_task = self.stderr.take().expect("stderr task is owned once");
         let stdin_task = self.stdin.take().expect("stdin task is owned once");
@@ -364,13 +497,9 @@ impl ContainedChild {
                 max_bytes: self.output_cap,
             });
         }
-        // Helper output is bounded and fully drained to preserve process-tree
-        // cleanup semantics. It is intentionally private and discarded after
-        // the cap checks; the caller's authenticated result comes from the
-        // independently validated owned-stage readback.
-        drop(stdout.bytes);
-        drop(stderr.bytes);
-        Ok(())
+        // Output remains private to the contained owner and is returned only after
+        // the group/job, leader and both pipe workers reached terminal state.
+        Ok((stdout.bytes, stderr.bytes))
     }
 }
 
@@ -906,5 +1035,25 @@ mod tests {
         };
         assert!(group.terminate().is_err());
         assert!(group.armed, "a failed kill remains armed for Drop retry");
+    }
+    #[tokio::test]
+    async fn native_version_variant_uses_sterile_cwd_and_returns_bounded_stdout_after_reap() {
+        let directory = tempfile::tempdir().unwrap();
+        let args = vec![OsString::from("--help")];
+        let mut child = ContainedChild::spawn_native_cli_version(
+            &std::env::current_exe().unwrap(),
+            &args,
+            directory.path(),
+            8 * 1024,
+        )
+        .await
+        .unwrap();
+        let output = child
+            .wait_until(Instant::now() + Duration::from_secs(2))
+            .await
+            .unwrap();
+        assert!(output.status.success());
+        assert!(output.stdout.len() <= 8 * 1024);
+        assert!(output.stderr.len() <= 8 * 1024);
     }
 }

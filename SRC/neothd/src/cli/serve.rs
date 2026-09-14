@@ -500,11 +500,23 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // connector-control endpoint derives its own domain-separated nonce from
     // this value rather than competing for a second PID-file publication.
     let audit_endpoint_nonce = uuid::Uuid::now_v7().simple().to_string();
+    // The sealed chat runtime is deliberately ready for binding before the
+    // shared provider exists.  It retains daemon-selected config/home/segment
+    // custody and reports unavailable until the existing provider below is
+    // published; it never constructs a provider itself.
+    let chat_runtime = Arc::new(crate::daemon::chat_runtime::DaemonChatRuntime::new(
+        neoth_home.clone(),
+        config_path.clone(),
+        segment_path.clone(),
+        Arc::clone(&reload_controller),
+        writer.clone(),
+    ));
     #[cfg(feature = "cluster")]
     let (audit_rpc_task, mut audit_rpc_guard) = crate::cli::serve_tasks::spawn_audit_rpc(
         &config,
         &neoth_home,
         &writer,
+        Arc::clone(&chat_runtime),
         daemon_pid_guard,
         &audit_endpoint_nonce,
         std::sync::Arc::clone(&membership_controller),
@@ -516,6 +528,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         &config,
         &neoth_home,
         &writer,
+        Arc::clone(&chat_runtime),
         daemon_pid_guard,
         &audit_endpoint_nonce,
     )
@@ -995,6 +1008,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 None
             }
         };
+
+    if let Some(provider) = shared_provider.as_ref() {
+        let provider_epoch = reload_controller.accepted_snapshot().epoch();
+        chat_runtime
+            .publish_provider(Arc::clone(provider), provider_epoch)
+            .await
+            .context("publish existing shared provider to daemon chat runtime")?;
+    }
 
     // ── 5c-meter. Shared provider-call Meter (Q-3). One per daemon —
     // every channel pipeline records into the same rolling window so
@@ -2588,6 +2609,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // substituted. The CC guard cooperatively stops acceptance; its listener
     // then joins every admitted operation before BackgroundHandles continues
     // toward the WAL drain.
+    // Stop discovery before the potentially slow active turn drains.  The
+    // listener remains alive long enough for its already admitted operation
+    // to own cancellation and its response stream; runtime admission is
+    // closed before the listener is finally aborted below.
+    crate::daemon::audit_rpc::remove_sidecar(&neoth_home);
+    chat_runtime.close_and_drain().await;
     audit_rpc_guard.take();
     connector_control_rpc_guard.take();
     if connector_control_rpc_completed {
@@ -2597,6 +2624,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     }
     restart_watcher.abort();
     let _ = restart_watcher.await;
+    // This root owns a global writer clone and may retain the published
+    // provider.  Drop it before `shutdown_background_tasks` reaches its sole
+    // writer close/drain boundary; the listener task is joined there.
+    drop(chat_runtime);
     // Linearize generation-bound effect shutdown at the signal/fatal-boundary
     // decision, before breaker persistence and operator hooks can extend
     // teardown. Existing Dream commits and updater leaves drain; no new
