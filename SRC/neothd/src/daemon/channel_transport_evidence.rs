@@ -22,8 +22,11 @@ const EVIDENCE_WINDOW_SECONDS: i64 = 24 * 60 * 60;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TransportOrigin {
-    MappedTelegramLive,
-    ProactiveV4,
+    /// Authenticated general live egress with a grammar-validated typed ref.
+    TypedLiveEgress,
+    /// Authenticated proactive egress in one of the closed account-bound
+    /// versions accepted by `ProactiveAccountEgressCollector`.
+    ProactiveAccountBound,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -227,7 +230,7 @@ impl BoundLiveCollector {
                 observations.push(AccountTransportObservation {
                     channel_ref,
                     intent_id: intent.intent_id.clone(),
-                    origin: TransportOrigin::MappedTelegramLive,
+                    origin: TransportOrigin::TypedLiveEgress,
                     state: live_result_state(
                         result_value
                             .outcome
@@ -242,7 +245,7 @@ impl BoundLiveCollector {
                 observations.push(AccountTransportObservation {
                     channel_ref,
                     intent_id: intent.intent_id.clone(),
-                    origin: TransportOrigin::MappedTelegramLive,
+                    origin: TransportOrigin::TypedLiveEgress,
                     state: AccountTransportState::UnsettledLiveIntent,
                     observed_at_unix: created_at_unix,
                 });
@@ -252,8 +255,9 @@ impl BoundLiveCollector {
     }
 }
 
-/// Reads one complete authenticated home-WAL prefix and derives only historical
-/// account-bound Telegram transport evidence. An error yields no counters.
+/// Reads one complete authenticated home-WAL prefix and derives only the
+/// closed typed-live and account-bound proactive transport evidence families.
+/// An error yields no counters.
 pub(crate) fn read_account_transport_evidence(
     home: &Path,
     now_unix: i64,
@@ -316,7 +320,7 @@ pub(crate) fn read_account_transport_evidence(
         observations.push(AccountTransportObservation {
             channel_ref: proactive_record.channel_ref,
             intent_id: proactive_record.intent_id,
-            origin: TransportOrigin::ProactiveV4,
+            origin: TransportOrigin::ProactiveAccountBound,
             state: state_and_time.0,
             observed_at_unix: state_and_time.1,
         });
@@ -996,7 +1000,7 @@ mod tests {
         let future = AccountTransportObservation {
             channel_ref: ref_a,
             intent_id: LIVE_B.to_string(),
-            origin: TransportOrigin::MappedTelegramLive,
+            origin: TransportOrigin::TypedLiveEgress,
             state: AccountTransportState::AcceptedByAdapter,
             observed_at_unix: 102,
         };
@@ -1010,21 +1014,21 @@ mod tests {
             AccountTransportObservation {
                 channel_ref: ref_a.clone(),
                 intent_id: LIVE_A.to_string(),
-                origin: TransportOrigin::ProactiveV4,
+                origin: TransportOrigin::ProactiveAccountBound,
                 state: AccountTransportState::UnknownAfterArmed,
                 observed_at_unix: 100,
             },
             AccountTransportObservation {
                 channel_ref: ref_a.clone(),
                 intent_id: LIVE_B.to_string(),
-                origin: TransportOrigin::MappedTelegramLive,
+                origin: TransportOrigin::TypedLiveEgress,
                 state: AccountTransportState::UnsettledLiveIntent,
                 observed_at_unix: 100,
             },
             AccountTransportObservation {
                 channel_ref: ref_a.clone(),
                 intent_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
-                origin: TransportOrigin::ProactiveV4,
+                origin: TransportOrigin::ProactiveAccountBound,
                 state: AccountTransportState::NotAttempted,
                 observed_at_unix: 100,
             },
@@ -1146,6 +1150,54 @@ mod tests {
         assert_eq!(counters.get(&mapped_telegram).unwrap().failed, 0);
         assert_eq!(counters.get(&legacy_slack).unwrap().accepted, 0);
         assert_eq!(counters.get(&legacy_slack).unwrap().failed, 1);
+    }
+
+    #[tokio::test]
+    async fn authenticated_home_wal_keeps_equal_account_names_isolated_by_channel() {
+        let home = tempfile::tempdir().expect("test home");
+        let (_segment, writer, join) = ready_authenticated_writer(home.path()).await;
+        let telegram_default = default_ref(ChannelId::Telegram);
+        let slack_default = default_ref(ChannelId::Slack);
+        assert_eq!(
+            telegram_default.account_id, slack_default.account_id,
+            "the fixture must prove that ChannelRef, not an account-id string, is the key"
+        );
+        append_authenticated_live_frame(
+            &writer,
+            ExtendedSubtype::ChannelEgressIntent,
+            legacy_singleton_intent_json(LIVE_A, "telegram", &telegram_default, 100),
+        )
+        .await;
+        append_authenticated_live_frame(
+            &writer,
+            ExtendedSubtype::ChannelEgressResult,
+            result_json(LIVE_A, "delivered", 101),
+        )
+        .await;
+        append_authenticated_live_frame(
+            &writer,
+            ExtendedSubtype::ChannelEgressIntent,
+            legacy_singleton_intent_json(LIVE_B, "slack", &slack_default, 100),
+        )
+        .await;
+        append_authenticated_live_frame(
+            &writer,
+            ExtendedSubtype::ChannelEgressResult,
+            result_json(LIVE_B, "transport", 101),
+        )
+        .await;
+        drop(writer);
+        join.await
+            .expect("join authenticated home WAL writer")
+            .expect("close authenticated home WAL writer");
+
+        let counters = read_account_transport_evidence(home.path(), 101)
+            .expect("read complete authenticated channel-isolation evidence");
+        assert_eq!(counters.len(), 2);
+        assert_eq!(counters.get(&telegram_default).unwrap().accepted, 1);
+        assert_eq!(counters.get(&telegram_default).unwrap().failed, 0);
+        assert_eq!(counters.get(&slack_default).unwrap().accepted, 0);
+        assert_eq!(counters.get(&slack_default).unwrap().failed, 1);
     }
 
     #[tokio::test]

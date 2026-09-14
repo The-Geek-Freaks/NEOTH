@@ -963,8 +963,8 @@ pub(crate) struct VerifiedProactiveAccountEgress {
     pub(crate) terminal: Option<VerifiedProactiveTerminal>,
 }
 
-/// Frame-fed, read-only v4 account evidence decoder. It never opens a WAL,
-/// performs recovery, or consults mutable runtime configuration.
+/// Frame-fed, read-only account-bound (v4/v5) evidence decoder. It never
+/// opens a WAL, performs recovery, or consults mutable runtime configuration.
 pub(crate) struct ProactiveAccountEgressCollector {
     evidence: WalEvidence,
 }
@@ -1053,14 +1053,44 @@ impl ProactiveAccountEgressCollector {
         validate_wal_evidence_relationships(&self.evidence)?;
         let mut verified = Vec::new();
         for intent in self.evidence.intents.values() {
-            if intent.proactive_binding_version != ACCOUNT_BOUND_WAL_BINDING_VERSION {
+            // Filter before reading a typed reference. Historical unbound
+            // v1-v3 frames must remain silently outside this projection,
+            // rather than becoming an account-evidence reader error.
+            if intent.proactive_binding_version != ACCOUNT_BOUND_WAL_BINDING_VERSION
+                && intent.proactive_binding_version != INCARNATION_BOUND_WAL_BINDING_VERSION
+            {
                 continue;
             }
             let channel_ref = intent
                 .channel_ref
                 .clone()
-                .context("v4 proactive intent is missing its account binding")?;
-            validate_account_bound_channel_ref(&channel_ref, &intent.target_channel)?;
+                .context("account-bound proactive intent is missing its channel reference")?;
+            match intent.proactive_binding_version {
+                // v4 is the historical account-bound grammar. Its exact typed
+                // reference remains sufficient and must stay readable.
+                ACCOUNT_BOUND_WAL_BINDING_VERSION => {
+                    anyhow::ensure!(
+                        intent.account_binding.is_none(),
+                        "v4 proactive intent unexpectedly carries an incarnation binding"
+                    );
+                    validate_account_bound_channel_ref(&channel_ref, &intent.target_channel)?;
+                }
+                // v5 is the current mapped-account grammar. Do not reduce it
+                // to its display ref: require the sealed incarnation binding
+                // and prove that it names this exact reference.
+                INCARNATION_BOUND_WAL_BINDING_VERSION => {
+                    let binding = intent
+                        .account_binding
+                        .as_ref()
+                        .context("v5 proactive intent is missing its incarnation binding")?;
+                    validate_incarnation_bound_account(binding, &intent.target_channel)?;
+                    anyhow::ensure!(
+                        binding.channel_ref() == &channel_ref,
+                        "v5 proactive intent binding conflicts with channel reference"
+                    );
+                }
+                _ => continue,
+            }
             let armed = self.evidence.armed.get(&intent.intent_id);
             let terminal = self
                 .evidence
@@ -1168,6 +1198,15 @@ fn validate_wal_evidence_relationships(evidence: &WalEvidence) -> Result<()> {
                 && armed.armed_at_unix == intent.created_at_unix,
             "proactive Armed frame conflicts with Prepared intent"
         );
+        if matches!(
+            intent.proactive_binding_version,
+            ACCOUNT_BOUND_WAL_BINDING_VERSION | INCARNATION_BOUND_WAL_BINDING_VERSION
+        ) {
+            anyhow::ensure!(
+                armed.proactive_binding_version == intent.proactive_binding_version,
+                "account-bound proactive Armed frame changes binding version"
+            );
+        }
     }
     for (intent_id, result) in &evidence.results {
         let intent = &evidence.intents[intent_id];
@@ -1187,6 +1226,15 @@ fn validate_wal_evidence_relationships(evidence: &WalEvidence) -> Result<()> {
                 && result.message_bytes == intent.message_bytes,
             "proactive result metadata conflicts with authenticated intent"
         );
+        if matches!(
+            intent.proactive_binding_version,
+            ACCOUNT_BOUND_WAL_BINDING_VERSION | INCARNATION_BOUND_WAL_BINDING_VERSION
+        ) {
+            anyhow::ensure!(
+                result.proactive_binding_version == intent.proactive_binding_version,
+                "account-bound proactive result changes binding version"
+            );
+        }
     }
     Ok(())
 }
@@ -9363,6 +9411,136 @@ mod tests {
                 .count(),
             1,
             "Armed-without-Result counts once independently of terminal CrashUnknown"
+        );
+    }
+
+    #[test]
+    fn account_evidence_collector_projects_verified_v5_only_with_its_sealed_binding() {
+        let home = tempfile::tempdir().unwrap();
+        let (_source_path, _config, bindings) = write_incarnated_runtime_pair(
+            home.path(),
+            &[(
+                "account-a",
+                111,
+                "token-a",
+                "018f3d1e-2c50-7000-8000-000000000001",
+            )],
+        );
+        let binding = bindings.into_iter().next().unwrap();
+        let channel_ref = binding.channel_ref().clone();
+        let prepared = new_claim_with_deadline_and_account_binding(
+            incarnated_item("collector-v5", binding.clone()),
+            "collector",
+            "telegram",
+            "111",
+            100,
+            160,
+            Some(channel_ref.clone()),
+            Some(binding.clone()),
+        )
+        .unwrap();
+        assert_eq!(
+            prepared.version, INCARNATION_BOUND_WAL_BINDING_VERSION,
+            "the fixture must exercise the current v5 account grammar"
+        );
+        let armed = claim_in_phase(&prepared, ProactiveEgressPhase::Armed);
+        let receipt = MessageId("provider-receipt".to_string());
+        let result = terminal_result(
+            &armed,
+            ProactiveEgressOutcome::Delivered,
+            Some(&receipt),
+            None,
+            101,
+        );
+        let mut collector = ProactiveAccountEgressCollector::new();
+        let intent = intent_frame(&prepared);
+        collector
+            .evidence
+            .intents
+            .insert(intent.intent_id.clone(), intent);
+        let armed_evidence = armed_frame(&armed).unwrap();
+        collector
+            .evidence
+            .armed
+            .insert(armed_evidence.intent_id.clone(), armed_evidence);
+        collector
+            .evidence
+            .results
+            .insert(result.intent_id.clone(), result);
+
+        let records = collector.finish().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].channel_ref, channel_ref);
+        assert!(matches!(
+            records[0].terminal.as_ref(),
+            Some(VerifiedProactiveTerminal::AcceptedByAdapter { .. })
+        ));
+
+        let mut stripped = intent_frame(&prepared);
+        stripped.account_binding = None;
+        assert!(
+            validate_intent_frame(&stripped).is_err(),
+            "a v5 display ref without its sealed incarnation binding is never evidence"
+        );
+
+        let mut cross_bound = intent_frame(&prepared);
+        cross_bound.channel_ref = Some(ChannelRef::default_account(ChannelId::Telegram));
+        assert!(
+            validate_intent_frame(&cross_bound).is_err(),
+            "a v5 sealed binding must name the displayed ChannelRef exactly"
+        );
+
+        let mut mismatched_armed = armed_frame(&armed).unwrap();
+        mismatched_armed.proactive_binding_version = ACCOUNT_BOUND_WAL_BINDING_VERSION;
+        let mut mismatched_collector = ProactiveAccountEgressCollector::new();
+        let intent = intent_frame(&prepared);
+        mismatched_collector
+            .evidence
+            .intents
+            .insert(intent.intent_id.clone(), intent);
+        mismatched_collector
+            .evidence
+            .armed
+            .insert(mismatched_armed.intent_id.clone(), mismatched_armed);
+        assert!(
+            mismatched_collector.finish().is_err(),
+            "an Armed frame from another proactive binding version cannot authorize v5 evidence"
+        );
+    }
+
+    #[test]
+    fn account_evidence_collector_excludes_unbound_v1_v2_and_v3_without_error() {
+        let mut collector = ProactiveAccountEgressCollector::new();
+        for version in [
+            LEGACY_WAL_BINDING_VERSION,
+            PREVIOUS_WAL_BINDING_VERSION,
+            WAL_BINDING_VERSION,
+        ] {
+            let mut claim = new_claim_with_deadline(
+                item(&format!("historic-{version}")),
+                "collector",
+                "telegram",
+                "111",
+                100,
+                160,
+            )
+            .unwrap();
+            claim.version = version;
+            if version == LEGACY_WAL_BINDING_VERSION {
+                claim.attempt_deadline_unix = None;
+            }
+            claim.binding_sha256 = binding_hash(&claim);
+            let intent = intent_frame(&claim);
+            validate_intent_frame(&intent).unwrap();
+            collector
+                .evidence
+                .intents
+                .insert(intent.intent_id.clone(), intent);
+        }
+
+        assert!(
+            collector.finish().unwrap().is_empty(),
+            "unbound historical proactive rows are excluded, not attributed or treated as an error"
         );
     }
 }

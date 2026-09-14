@@ -215,11 +215,11 @@ pub(crate) fn check_refusal_recovery(home: &Path) -> CheckOutcome {
     }
 }
 
-/// Flapping detection for channel-routing providers (Slack outbound +
-/// WhatsApp Graph API). Reads the last 24h of usage_log entries and
-/// surfaces a warning when error rate per channel-related provider
-/// crosses `FLAPPING_THRESHOLD_PCT`. Pass on insufficient samples
-/// (<5 calls) or below threshold.
+/// Provider-call error-rate diagnostic. This is deliberately provider-only:
+/// persisted usage rows have no authenticated `ChannelRef`, so this function
+/// must never be presented as a channel-health diagnosis. Channel/account
+/// flapping is derived separately from authenticated outbound evidence by
+/// [`check_channel_transport_flapping`].
 pub(crate) const FLAPPING_THRESHOLD_PCT: f64 = 20.0;
 
 pub(crate) const FLAPPING_MIN_SAMPLES: u64 = 5;
@@ -228,12 +228,9 @@ pub(crate) fn check_provider_flapping(home: &Path) -> CheckOutcome {
     let now = crate::time::now_unix_i64();
     let since = now - 86_400;
     let roll = crate::daemon::usage_log::aggregate(home, since, now);
-    // Look for providers whose names suggest channel egress. We
-    // can't filter perfectly without per-call channel labels in
-    // usage_log (Phase 2 work), so the heuristic surfaces ANY
-    // provider with a >20% error rate over the last 24h — the
-    // detail string tags channel-suspect providers explicitly
-    // for operator interpretation.
+    // Usage rows are intentionally aggregated by provider. Do not infer a
+    // channel from a provider slug here: one provider can serve many channel
+    // accounts, and a current route cannot authenticate a historical row.
     if roll.per_provider.is_empty() {
         return CheckOutcome {
             name: "provider flapping",
@@ -559,32 +556,26 @@ pub(crate) const DOCS: &[CheckDoc] = &[
     },
     CheckDoc {
         name: "provider flapping",
-        purpose: "Flapping detection: scans the last 24h of \
-                  usage_log entries + warns when any provider with \
-                  ≥5 calls has an error rate ≥20%. Catches Slack \
-                  rate-limit storms / WhatsApp Graph 5xx waves / \
-                  OpenAI 429 spirals before they burn the operator's \
-                  daily cap.",
-        common_failures: "Slack workspace exceeded the per-app token \
-                          rate limit (50 req/min for `chat.postMessage` \
-                          on free workspaces); WhatsApp Cloud API \
-                          rejecting webhooks because the operator's \
-                          verify_token changed; OpenAI 429 from sudden \
-                          burst traffic without a paid tier.",
-        fix: "Check `~/.neoth/usage/<today>.jsonl` filtered by \
-              `ok == false` for the failure shape. For rate-limit \
-              flaps, reduce `council.max_calls_per_user_message` or \
-              switch to a local-only preset via `neoth preset activate \
-              fully-local && neoth preset apply fully-local`. For \
-              auth flaps, `neoth doctor channels` shows the credential \
-              wiring + a `neoth doctor --explain channels wiring` \
-              gives the per-channel fix.",
+        purpose: "Provider-call error-rate diagnostic: scans the last 24h \
+                  of usage_log entries and warns when a provider with ≥5 \
+                  calls has an error rate ≥20%. It is not channel health: \
+                  usage rows have no authenticated channel/account identity. \
+                  Use `channel transport flapping` for account-bound outbound \
+                  adapter evidence.",
+        common_failures: "A provider rate limit, regional outage, expired \
+                          provider credential or malformed prompt template \
+                          raises its call error rate. This result does not \
+                          identify a channel or recipient.",
+        fix: "Check `~/.neoth/usage/<today>.jsonl` filtered by `ok == false` \
+              for the provider failure shape. For an exact channel/account \
+              repair, inspect `channel transport flapping`; it never falls \
+              back from provider usage to a current channel route.",
     },
     CheckDoc {
         name: "channel transport flapping",
-        purpose: "Reads authenticated, account-bound adapter transport evidence from the last 24 hours. Warns per account at five or more completed attempts and twenty percent or more failures. An adapter acceptance confirms only that adapter call, never recipient delivery or a read receipt.",
-        common_failures: "An authenticated mapped Telegram or legacy Telegram/Slack live account has repeated adapter failures, or an Armed/unsettled record leaves the evidence inconclusive after an interrupted process.",
-        fix: "Inspect the named channel/account's credentials and adapter logs. Resolve inconclusive records before treating failure percentages as complete; this check does not retry, probe, or change delivery state.",
+        purpose: "Reads authenticated, typed channel/account outbound evidence from the last 24 hours. It accepts only the closed live grammar (mapped Telegram or marked default Telegram/Slack) and account-bound proactive v4/v5 grammar. Warns per ChannelRef at five or more completed attempts and twenty percent or more failures. An adapter acceptance confirms only that adapter call, never recipient delivery or a read receipt.",
+        common_failures: "An authenticated mapped Telegram, marked default Telegram/Slack live account, or account-bound proactive Telegram attempt has repeated adapter failures. Armed/unsettled or malformed/incomplete evidence remains inconclusive or unavailable rather than being attributed from current routing.",
+        fix: "Inspect the named channel/account's credentials and adapter logs. Resolve inconclusive records before treating failure percentages as complete; this check does not retry, probe, consult current routing, or change delivery state.",
     },
     CheckDoc {
         name: "refusal recovery",

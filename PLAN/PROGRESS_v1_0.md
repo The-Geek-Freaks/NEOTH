@@ -3,8 +3,8 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-14
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
-> **Waves 39 and 40 sealed daemon chat and native CLI version probe — LOCAL
-> VALIDATION COMPLETE 2026-09-14:** eighteen source files
+> **Waves 39 and 40 sealed daemon chat and native CLI version probe — PUBLISHED
+> `e4b4a117f258df401467b5c10c17e6ef1d266b2c` 2026-09-14:** eighteen source files
 > share a 204-input retained union based on W35–38 `20423301`. W39 retains daemon
 > custody of its sealed same-user plain-chat turn and permits CLI fallback only
 > before an RPC write. W40 is an authority-bound, version-only native CLI probe;
@@ -17,7 +17,10 @@
 > GUI link or native-GUI claim; existing 13 GUI test dead-code/vendor warnings
 > remain. Python19+11+8 passed. Manifest/matrix record 204 inputs and 14
 > executables. Earlier hang and 636/3/1 runs were repaired before final validation.
-> Full CI for the published commit remains required. No closure or native
+> Exact-head full CI [34857514849](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34857514849)
+> is running; [Preflight 34857493885](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34857493885)
+> and [CodeQL/quality 34857493659](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34857493659)
+> succeeded. No closure or native
 > GUI claim; R3-18B/P2-26/P1-16/P1-17 remain open. Counts 1324/1012/310/2.
 >
 > **Waves 35–38 — PUBLISHED `20423301ffbfcf0b6bb7d9478b9749ac5716e5d0`:**
@@ -26,11 +29,19 @@
 > successes. Linux's known audit-RPC fixture-race repair now passes locally and
 > is included in this changeset. No full-CI claim.
 >
-> **Waves 41 and 42 — PROPOSALS ONLY:** Wave 41 B1 and GUI07 slices are approved,
-> but lifecycle/owned-cleanup integration and real tests remain pending; no source
-> is admitted. Its GUI/RPC/runtime, HTTP, MCP, and process-start gates remain
-> under review. Wave 42's approved three-file v5 channel-health proposal is not
-> admitted and its partial parent remains open.
+> **Waves 41 and 42 — W41 PROPOSAL; W42 LOCAL VALIDATION COMPLETE:** W41 has 45
+> proposed source mirrors; B4 identity/real-consent tests and repair15 remain
+> pending. W42 reads v5 typed proactive health and keeps equal-text
+> Telegram/default and Slack/default accounts isolated, without changing outbound
+> behavior. Clippy02 PASS2m41/min221.51/peak7.01; TestBuild01
+> PASS3m34/min217.27/peak10.99; four focused filters PASS266/0/0 in17.79s.
+> Fresh unit executable SHA256 `5EFA85E946A6B7026D4F1229992E92FB5B64BD315C6FAE5C32BFEB874768DF91`,
+> 284851712 bytes, catalog14531. Contracts PASS373/0/0: gui_channel_status353 +
+> proactive_egress_source_gate20, 2m17/min220.74/peak7.52. Python19+11+8 PASS in
+> 1.130s/0.111s/0.002s. Public W42 manifest/matrix record 204 inputs, three
+> binaries, unit266, contracts373. No GUI source changed, so no W42 GUI-check
+> rerun is due; W39 GUI evidence is historical only. No W42 commit, push, or
+> exact-head CI claim. P1-17 stays partial; P1-14/P1-16 stay open.
 >
 > **Wave 37 CI cadence — PUBLISHED `ff101c05`; FULL CI ACCEPTANCE OUTSTANDING
 > 2026-09-14:** two reviewed workflow files retain their coverage, lock, and

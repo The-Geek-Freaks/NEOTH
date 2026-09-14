@@ -8,8 +8,8 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
-**Waves 39 and 40 sealed daemon chat and native CLI version probe — LOCAL
-VALIDATION COMPLETE (2026-09-14):** eighteen source files
+**Waves 39 and 40 sealed daemon chat and native CLI version probe — PUBLISHED
+`e4b4a117f258df401467b5c10c17e6ef1d266b2c` (2026-09-14):** eighteen source files
 share a 204-input retained union based on W35–38 `20423301`. W39's sealed,
 same-user plain-chat RPC keeps daemon custody of provider, configuration, home,
 segment, writer, capacity, and cancellation. It rejects commands before
@@ -30,8 +30,11 @@ test dead-code and vendor warnings remain), and Python19+11+8 passed. Source
 and executable evidence is recorded in
 `docs/verification/gold-wave39-40-{source-manifest,test-matrix}.json` with 204
 inputs and 14 executables. The earlier hang and 636/3/1 run were repaired before
-the final run; they are not pass evidence. This is local validation only:
-a full CI run for the published commit remains required. No closure or
+the final run; they are not pass evidence. Exact-head full CI
+[`34857514849`](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34857514849)
+is running; its Preflight [`34857493885`](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34857493885)
+and CodeQL/quality [`34857493659`](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34857493659)
+succeeded. No closure or
 native GUI claim is made; R3-18B, P2-26, P1-16, and P1-17 remain open. Counts
 remain **1324 / 1012 / 310 / 2**.
 
@@ -42,12 +45,25 @@ Its exact-head full CI `34836363982` has Windows and macOS successes. Linux's
 known audit-RPC fixture-race repair now passes locally and is included in this changeset.
 This is not a full-CI or cross-platform acceptance claim.
 
-**Waves 41 and 42 — PROPOSALS ONLY:** Wave 41 B1 and GUI07 slices are approved,
-but lifecycle/owned-cleanup integration and real tests remain pending; no source
-is admitted. Its GUI/RPC/runtime, HTTP, MCP, and process-start gates remain
-under review.
-Wave 42's three-file v5 channel-health proposal is approved but not admitted;
-its partial parent remains open. Neither changes counts or obligations.
+**Waves 41 and 42 — W41 PROPOSAL; W42 LOCAL VALIDATION COMPLETE:** W41 has 45
+proposed source mirrors; B4 identity/real-consent tests and repair15 remain
+pending. Wave 42 admits a typed v5 proactive-health reader and keeps
+Telegram/default and Slack/default transport evidence isolated even when their
+account-id text is the same. It changes no outbound behavior. W42 Clippy02
+passed in 2m41s (221.51 GiB minimum free, 7.01 GiB peak), TestBuild01 passed in
+3m34s (217.27 GiB minimum free, 10.99 GiB peak), and four focused filters
+passed **266 / 0 / 0** in 17.79s. The fresh unit executable is
+`5EFA85E946A6B7026D4F1229992E92FB5B64BD315C6FAE5C32BFEB874768DF91`
+(284,851,712 bytes) from the 14,531-test catalog. The two contract targets
+passed **373 / 0 / 0** (gui_channel_status 353 plus proactive_egress source gate
+20) in 2m17s, with 220.74 GiB minimum free and 7.52 GiB peak. Python19+11+8
+passed in 1.130s/0.111s/0.002s. The public source manifest and test matrix at
+`docs/verification/gold-wave42-{source-manifest,test-matrix}.json` record 204
+inputs, three binaries, catalog 14,531, unit 266, and contracts 373. No GUI
+source changed, so the W39 GUI check is historical evidence only and no W42
+GUI-check rerun is required. No W42 commit, push, or exact-head CI claim is
+made. P1-17 remains partial, P1-14/P1-16 remain open, and neither wave changes
+counts or obligations.
 
 **Wave 37 CI cadence — PUBLISHED `ff101c05`; FULL CI ACCEPTANCE OUTSTANDING
 (2026-09-14):** two reviewed workflow files retain their coverage, lock, and
