@@ -42,10 +42,17 @@ impl BindingTag {
             account.allowed_user_id(),
             account.is_legacy_singleton(),
             account.token().expose_secret().as_bytes(),
+            account.inbound_admission(),
         )
     }
 
-    fn from_parts(channel: &ChannelRef, allowed_user_id: u64, legacy: bool, token: &[u8]) -> Self {
+    fn from_parts(
+        channel: &ChannelRef,
+        allowed_user_id: u64,
+        legacy: bool,
+        token: &[u8],
+        admission: &crate::config::TelegramInboundAdmission,
+    ) -> Self {
         let mut digest = Sha256::new();
         digest.update(BINDING_TAG_DOMAIN);
         digest.update(
@@ -54,6 +61,13 @@ impl BindingTag {
         digest.update(allowed_user_id.to_be_bytes());
         digest.update([u8::from(legacy)]);
         digest.update(token);
+        match admission {
+            crate::config::TelegramInboundAdmission::PinnedOperator { .. } => digest.update([0]),
+            crate::config::TelegramInboundAdmission::DmPairing { binding_tag, .. } => {
+                digest.update([1]);
+                digest.update(binding_tag.as_bytes());
+            }
+        }
         Self(hex::encode(digest.finalize()))
     }
 
@@ -374,7 +388,15 @@ mod tests {
     }
     fn tag(reference: &ChannelRef, user: u64, legacy: bool, token: &str) -> BindingTag {
         let secret = SecretString::new(token.into());
-        BindingTag::from_parts(reference, user, legacy, secret.expose_secret().as_bytes())
+        BindingTag::from_parts(
+            reference,
+            user,
+            legacy,
+            secret.expose_secret().as_bytes(),
+            &crate::config::TelegramInboundAdmission::PinnedOperator {
+                allowed_user_id: user,
+            },
+        )
     }
     fn commitment(seed: &str) -> InstanceCommitment {
         super::super::audit_rpc::instance_commitment_for_nonce(seed)

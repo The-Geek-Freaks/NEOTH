@@ -118,11 +118,35 @@ repair-only in the CLI; the GUI neither repairs it nor silently migrates it.
 The UI's account request stays in private stdin and accepts only the exact
 secret-free acknowledgement for that account.
 
-Account removal/retirement, pairing or importer custody, native GUI acceptance,
-other account families, and remaining account-aware outbound routing are still
-separate P1-16 work. W21–23 is locally validated: Rust, unit, headless-GUI,
-contract, and Python gates pass. Native GUI acceptance and macOS CI remain
-separate.
+Account removal/retirement, other account families, and remaining
+account-aware outbound routing are still separate P1-16 work. Native GUI
+acceptance and macOS CI remain separate.
+
+### Mapped Telegram DM pairing (W29; locally validated)
+
+Pairing is disabled until an operator explicitly enables it for one mapped
+Telegram account:
+
+```powershell
+neoth channel account set-dm-pairing telegram --account <account-id> --enabled
+neoth channel pairing list telegram --account <account-id>
+neoth channel pairing approve telegram --account <account-id> --code <code>
+neoth channel pairing dismiss telegram --account <account-id> --request-id <id>
+```
+
+Only a private, non-pinned direct-message sender can create a pending request.
+Requests are scoped to that account and its current binding, expire after one
+hour, and are capped at three. Pinned operator groups and the established
+`ConfirmBus` path keep their existing behavior. Edited Telegram messages cannot
+create or refresh pending pairing requests. A binding rotation invalidates only
+that account's pending state;
+another mapped account remains separate. A missing authenticated mapped receipt
+is surfaced as a failure and does not continue into the chat pipeline.
+
+The local selection, Clippy, build, AccountConfigContracts, formatting, CLI-doc
+generation, final GUI check, and integrity checks passed. This feature does not
+provide pairing migration, physical-provider live acceptance, or complete
+multi-account readiness.
 
 ### OpenClaw account import (W26; locally validated)
 

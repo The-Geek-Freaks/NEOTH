@@ -760,6 +760,17 @@ mod tests {
         crate::cli::chat::LocalChatCommunicationSubject::for_test()
     }
 
+    /// Test-only status rendering: never format recall output or source text
+    /// into a failure message.
+    fn outcome_diagnostic(outcome: &SessionStartRecallOutcome) -> String {
+        match outcome {
+            SessionStartRecallOutcome::Ready { .. } => String::from("Ready"),
+            SessionStartRecallOutcome::NoData(reason) => format!("NoData({reason:?})"),
+            SessionStartRecallOutcome::Stale(reason) => format!("Stale({reason:?})"),
+            SessionStartRecallOutcome::Failed(reason) => format!("Failed({reason:?})"),
+        }
+    }
+
     fn seeded_home() -> TempDir {
         let home = tempfile::tempdir().unwrap();
         let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
@@ -880,12 +891,17 @@ mod tests {
                 .await,
             SessionStartRecallOutcome::Stale(RecallPreloadStale::BindingMismatch)
         ));
-        assert!(matches!(
-            preload
-                .consume(&local, &home, "operator\0session-1", "rust")
-                .await,
-            SessionStartRecallOutcome::NoData(RecallPreloadEmpty::Missing)
-        ));
+        let outcome = preload
+            .consume(&local, &home, "operator\0session-1", "rust")
+            .await;
+        assert!(
+            matches!(
+                &outcome,
+                SessionStartRecallOutcome::NoData(RecallPreloadEmpty::Missing)
+            ),
+            "missing home must stay no-data; actual outcome: {}",
+            outcome_diagnostic(&outcome)
+        );
         assert!(!home.exists());
         assert!(!home.join("views.db").exists());
         assert!(!home.join("wal").exists());
@@ -981,12 +997,17 @@ mod tests {
             "operator\0session-1",
             "rust",
         );
-        assert!(matches!(
-            preload
-                .consume(&local, home.path(), "operator\0session-1", "rust")
-                .await,
-            SessionStartRecallOutcome::Failed(RecallPreloadFailure::Query)
-        ));
+        let outcome = preload
+            .consume(&local, home.path(), "operator\0session-1", "rust")
+            .await;
+        assert!(
+            matches!(
+                &outcome,
+                SessionStartRecallOutcome::Failed(RecallPreloadFailure::Query)
+            ),
+            "checked lane error must not become a true miss; actual outcome: {}",
+            outcome_diagnostic(&outcome)
+        );
     }
 
     #[tokio::test]

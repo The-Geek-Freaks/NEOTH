@@ -5043,6 +5043,7 @@ pub(crate) struct TelegramAccountBundle {
     token: crate::secret::SecretString,
     allowed_user_id: u64,
     legacy_singleton: bool,
+    dm_pairing: Option<TelegramDmPairingCapability>,
 }
 
 /// Opaque proof that a live adapter was built from an admitted nonlegacy
@@ -5059,6 +5060,108 @@ impl MappedTelegramLiveEgressProvenance {
     }
 }
 
+/// Opaque authenticated pairing admission.  It is formed only while the
+/// coherent public/credential pair is converted into a runtime bundle.  In
+/// particular, neither an inbound Telegram update nor a loose `ChannelRef`
+/// can reconstruct the current binding generation.
+#[derive(Clone)]
+pub(crate) struct TelegramDmPairingCapability {
+    channel_ref: ChannelRef,
+    binding_tag: String,
+    pinned_operator: u64,
+}
+
+impl TelegramDmPairingCapability {
+    pub(crate) fn channel_ref(&self) -> &ChannelRef {
+        &self.channel_ref
+    }
+
+    pub(crate) fn binding_tag(&self) -> &str {
+        &self.binding_tag
+    }
+
+    pub(crate) fn pinned_operator(&self) -> u64 {
+        self.pinned_operator
+    }
+}
+
+/// Sealed one-purpose reply capability for the first pairing challenge.  It
+/// has no `Bot`, token, recipient string, or generic message method: all
+/// sends are a mapped-Telegram `LiveDelivery` to one checked private chat.
+#[derive(Clone)]
+pub(crate) struct PairingReplySender {
+    channel: Arc<std::sync::OnceLock<std::sync::Weak<dyn Channel>>>,
+    writer: WalWriterHandle,
+    live_delivery: crate::config::LiveDeliveryConfig,
+    provenance: MappedTelegramLiveEgressProvenance,
+}
+
+impl PairingReplySender {
+    fn new(
+        writer: WalWriterHandle,
+        live_delivery: crate::config::LiveDeliveryConfig,
+        provenance: MappedTelegramLiveEgressProvenance,
+    ) -> Self {
+        Self {
+            channel: Arc::new(std::sync::OnceLock::new()),
+            writer,
+            live_delivery,
+            provenance,
+        }
+    }
+
+    /// Complete the startup-only construction cycle after the exact
+    /// `Arc<TelegramChannel>` exists.  The once-cell cannot be replaced, so a
+    /// reply capability cannot be rebound to another account's adapter.
+    fn bind_exact_channel(&self, channel: Arc<dyn Channel>) -> anyhow::Result<()> {
+        self.channel
+            .set(Arc::downgrade(&channel))
+            .map_err(|_| anyhow::anyhow!("pairing reply sender channel was already bound"))
+    }
+
+    /// Send exactly one first challenge through the established mapped live
+    /// intent -> CHANNEL_SEND -> authenticated result sequence.  A terminal
+    /// receipt failure is surfaced to the adapter; it never becomes a
+    /// successful pairing admission or pipeline invocation.
+    pub(crate) async fn send_pairing_code(&self, chat_id: i64, code: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            chat_id > 0,
+            "pairing reply requires a positive private Telegram chat id"
+        );
+        anyhow::ensure!(
+            code.len() == 8
+                && code
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || matches!(byte, b'2'..=b'9')),
+            "pairing reply received an invalid code"
+        );
+        let channel = self
+            .channel
+            .get()
+            .context("pairing reply sender was not bound to its Telegram adapter")?;
+        let channel = channel
+            .upgrade()
+            .context("pairing reply sender Telegram adapter was retired")?;
+        let mut delivery = crate::channels::LiveDelivery::new_mapped_telegram(
+            channel,
+            chat_id.to_string(),
+            ChannelKind::Telegram,
+            self.live_delivery.clone(),
+            self.provenance.clone(),
+        )
+        .map_err(|error| anyhow::anyhow!("construct mapped pairing reply delivery: {error}"))?;
+        delivery
+            .send_or_edit(
+                &self.writer,
+                &format!("[NEOTH] Your pairing code is: {code}"),
+                true,
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("send mapped pairing reply: {error}"))?;
+        Ok(())
+    }
+}
+
 impl TelegramAccountBundle {
     /// The only production factory for a live account-evidence capability.
     /// A legacy singleton and a malformed non-Telegram fixture cannot mint it.
@@ -5072,6 +5175,26 @@ impl TelegramAccountBundle {
         )
     }
 
+    /// The only transfer point for an authenticated explicit pairing policy.
+    /// Legacy singleton and pinned mapped accounts deliberately return `None`.
+    fn dm_pairing_capability(&self) -> Option<TelegramDmPairingCapability> {
+        self.dm_pairing.clone()
+    }
+
+    /// Mint a reply sender only when this same authenticated mapped bundle
+    /// also carries pairing admission.  The provenance is consumed from this
+    /// bundle rather than an inbound payload or separately supplied ref.
+    fn pairing_reply_sender(
+        &self,
+        writer: WalWriterHandle,
+        live_delivery: crate::config::LiveDeliveryConfig,
+    ) -> Option<PairingReplySender> {
+        self.dm_pairing_capability().and_then(|_| {
+            self.mapped_live_egress_provenance()
+                .map(|provenance| PairingReplySender::new(writer, live_delivery, provenance))
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test(channel_ref: ChannelRef, legacy_singleton: bool) -> Self {
         Self {
@@ -5079,7 +5202,29 @@ impl TelegramAccountBundle {
             token: crate::secret::SecretString::from("test-token"),
             allowed_user_id: 1,
             legacy_singleton,
+            dm_pairing: None,
         }
+    }
+
+    /// Test-only route through the same authenticated bundle factory used by
+    /// startup.  Tests may supply a transport solely to complete the
+    /// startup's one-time channel binding; they cannot construct an account
+    /// reference, pairing generation, or egress provenance independently.
+    #[cfg(test)]
+    pub(crate) fn pairing_parts_for_test(
+        &self,
+        writer: WalWriterHandle,
+        live_delivery: crate::config::LiveDeliveryConfig,
+        transport: Arc<dyn Channel>,
+    ) -> anyhow::Result<(TelegramDmPairingCapability, PairingReplySender)> {
+        let capability = self
+            .dm_pairing_capability()
+            .context("test pairing parts require a paired Telegram bundle")?;
+        let reply = self
+            .pairing_reply_sender(writer, live_delivery)
+            .context("test pairing parts require mapped pairing reply provenance")?;
+        reply.bind_exact_channel(transport)?;
+        Ok((capability, reply))
     }
 }
 
@@ -5089,13 +5234,44 @@ pub(crate) fn telegram_account_bundles(
     let bundles = runtime
         .authenticated_telegram_accounts()?
         .into_iter()
-        .map(|account| TelegramAccountBundle {
-            channel_ref: account.channel_ref().clone(),
-            token: account.token().clone(),
-            allowed_user_id: account.allowed_user_id(),
-            legacy_singleton: account.is_legacy_singleton(),
+        .map(|account| -> anyhow::Result<TelegramAccountBundle> {
+            let (allowed_user_id, dm_pairing) = match account.inbound_admission() {
+                crate::config::TelegramInboundAdmission::PinnedOperator { allowed_user_id } => {
+                    (*allowed_user_id, None)
+                }
+                crate::config::TelegramInboundAdmission::DmPairing {
+                    pinned_operator_id,
+                    channel_ref,
+                    binding_tag,
+                } => {
+                    anyhow::ensure!(
+                        !account.is_legacy_singleton()
+                            && channel_ref == account.channel_ref()
+                            && channel_ref.channel_id == ChannelKind::Telegram
+                            && *pinned_operator_id == account.allowed_user_id()
+                            && binding_tag.len() == 64
+                            && binding_tag.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                        "authenticated Telegram DM-pairing admission is incoherent"
+                    );
+                    (
+                        *pinned_operator_id,
+                        Some(TelegramDmPairingCapability {
+                            channel_ref: channel_ref.clone(),
+                            binding_tag: binding_tag.clone(),
+                            pinned_operator: *pinned_operator_id,
+                        }),
+                    )
+                }
+            };
+            Ok(TelegramAccountBundle {
+                channel_ref: account.channel_ref().clone(),
+                token: account.token().clone(),
+                allowed_user_id,
+                legacy_singleton: account.is_legacy_singleton(),
+                dm_pairing,
+            })
         })
-        .collect();
+        .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(bundles)
 }
 
@@ -5414,6 +5590,10 @@ pub(crate) fn channel_account_fingerprints(
         hasher.write(account.channel_ref.account_id.as_str().as_bytes());
         hasher.write_u64(account.allowed_user_id);
         hasher.write_u8(u8::from(account.legacy_singleton));
+        hasher.write_u8(u8::from(account.dm_pairing.is_some()));
+        if let Some(pairing) = &account.dm_pairing {
+            hasher.write(pairing.binding_tag.as_bytes());
+        }
         let mut token = account.token.expose().as_bytes().to_vec();
         hasher.write(&token);
         token.zeroize();
@@ -5534,15 +5714,59 @@ pub(crate) fn spawn_channel_adapters(
                 );
                 continue;
             };
-            // SF-03: hand the adapter the daemon's WAL writer so allowlist-rejected
-            // senders are audited via `0x3B CHANNEL_GATE_REJECTED`.
-            let channel = Arc::new(
-                crate::channels::telegram::TelegramChannel::new(
-                    account.token.clone(),
-                    Some(account.allowed_user_id),
+            // Pairing is a mapped-account-only admission mode.  Its reply
+            // capability is minted from this exact authenticated bundle and
+            // later bound once to this exact adapter Arc before the receive
+            // loop starts; no Bot or unbound send surface is available.
+            let channel = if let Some(pairing) = account.dm_pairing_capability() {
+                let store = match crate::channels::dm_pairing::DmPairingStore::open(neoth_home) {
+                    Ok(store) => Arc::new(store),
+                    Err(error) => {
+                        warn!(
+                            channel = %account.channel_ref.channel_id.as_str(),
+                            account = %account.channel_ref.account_id,
+                            error = %error,
+                            status = "CONFIGURED-NOT-STARTED",
+                            "Telegram DM pairing store could not be opened; adapter not started"
+                        );
+                        continue;
+                    }
+                };
+                let reply = account
+                    .pairing_reply_sender(writer.clone(), config.live_delivery.clone())
+                    .expect(
+                        "authenticated pairing bundle must mint exactly one mapped reply sender",
+                    );
+                let channel = Arc::new(
+                    crate::channels::telegram::TelegramChannel::from_authenticated_pairing(
+                        account.token.clone(),
+                        pairing,
+                        store,
+                        reply.clone(),
+                    )
+                    .with_gate_writer(writer.clone()),
+                );
+                let exact_channel: Arc<dyn Channel> = channel.clone();
+                if let Err(error) = reply.bind_exact_channel(exact_channel) {
+                    warn!(
+                        channel = %account.channel_ref.channel_id.as_str(),
+                        account = %account.channel_ref.account_id,
+                        error = %error,
+                        status = "CONFIGURED-NOT-STARTED",
+                        "Telegram pairing reply capability could not bind its exact adapter"
+                    );
+                    continue;
+                }
+                channel
+            } else {
+                Arc::new(
+                    crate::channels::telegram::TelegramChannel::new(
+                        account.token.clone(),
+                        Some(account.allowed_user_id),
+                    )
+                    .with_gate_writer(writer.clone()),
                 )
-                .with_gate_writer(writer.clone()),
-            );
+            };
             let live_channel: Arc<dyn Channel> = channel.clone();
             let binding = if account.legacy_singleton {
                 AuthenticatedInboundBinding::for_legacy_telegram_singleton(
@@ -10453,6 +10677,85 @@ mod channel_reconcile_tests {
     }
 
     #[tokio::test]
+    async fn paired_reply_binding_releases_a_retired_telegram_adapter() {
+        let account = telegram_account("paired-retirement");
+        let mut runtime = crate::config::RuntimeConfigPair {
+            config: FreedomConfig::default(),
+            raw_credentials: crate::config::credentials::Credentials::default(),
+            credentials: crate::config::credentials::Credentials::default(),
+        };
+        runtime.config.channel_accounts.telegram.insert(
+            account.account_id.clone(),
+            crate::config::TelegramAccountConfig {
+                allowed_user_id: 11,
+                dm_pairing: Some(crate::config::TelegramDmPairingConfig { enabled: true }),
+            },
+        );
+        let credential = crate::config::credentials::TelegramAccountCredentials {
+            token: Some(SecretString::from("paired-retirement-token")),
+        };
+        runtime
+            .raw_credentials
+            .channel_accounts
+            .telegram
+            .insert(account.account_id.clone(), credential.clone());
+        runtime
+            .credentials
+            .channel_accounts
+            .telegram
+            .insert(account.account_id.clone(), credential);
+        let bundle = telegram_account_bundles(&runtime)
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("authenticated paired runtime yields one bundle");
+        let home = tempfile::tempdir().unwrap();
+        let reply = bundle
+            .pairing_reply_sender(
+                crate::wal::writer::closed_test_writer(),
+                crate::config::LiveDeliveryConfig::default(),
+            )
+            .expect("authenticated paired bundle mints its reply capability");
+        let channel = Arc::new(
+            crate::channels::telegram::TelegramChannel::from_authenticated_pairing(
+                bundle.token.clone(),
+                bundle
+                    .dm_pairing_capability()
+                    .expect("authenticated paired bundle carries its admission capability"),
+                Arc::new(crate::channels::dm_pairing::DmPairingStore::open(home.path()).unwrap()),
+                reply.clone(),
+            ),
+        );
+        let retired = Arc::downgrade(&channel);
+        let exact_channel: Arc<dyn Channel> = channel.clone();
+        reply.bind_exact_channel(exact_channel).unwrap();
+
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let owner = tokio::spawn(async move {
+            let _owned_channel = channel;
+            let _ = release_rx.await;
+        });
+        assert!(
+            retired.upgrade().is_some(),
+            "the actual task owner retains the paired adapter until fleet retirement"
+        );
+        release_tx.send(()).unwrap();
+        owner.await.unwrap();
+        assert!(
+            retired.upgrade().is_none(),
+            "the reply capability retained by TelegramChannel must not form a strong self-cycle"
+        );
+        let error = reply
+            .send_pairing_code(4242, "ABCDEFGH")
+            .await
+            .expect_err("a retired adapter must fail before WAL or transport work");
+        assert!(
+            format!("{error:#}").contains("adapter was retired"),
+            "retired reply must fail at its exact weak adapter boundary"
+        );
+    }
+
+    #[tokio::test]
     async fn runtime_health_projection_reaps_owned_fleet_and_defers_rotated_tag_until_rebuild() {
         use crate::daemon::channel_runtime_health::AccountRuntimeState;
 
@@ -10468,7 +10771,10 @@ mod channel_reconcile_tests {
         {
             runtime.config.channel_accounts.telegram.insert(
                 channel_ref.account_id.clone(),
-                crate::config::TelegramAccountConfig { allowed_user_id },
+                crate::config::TelegramAccountConfig {
+                    allowed_user_id,
+                    ..Default::default()
+                },
             );
             let entry = crate::config::credentials::TelegramAccountCredentials {
                 token: Some(SecretString::from(token)),
@@ -10700,12 +11006,14 @@ mod channel_reconcile_tests {
             token: SecretString::from("token"),
             allowed_user_id: 7,
             legacy_singleton: true,
+            dm_pairing: None,
         };
         let migrated_default = TelegramAccountBundle {
             channel_ref: default_ref,
             token: SecretString::from("token"),
             allowed_user_id: 7,
             legacy_singleton: false,
+            dm_pairing: None,
         };
         let legacy_fingerprint =
             channel_account_fingerprints(&config, &credentials, &[legacy], home.path());
@@ -10725,6 +11033,7 @@ mod channel_reconcile_tests {
             token: SecretString::from("legacy-token"),
             allowed_user_id: 7,
             legacy_singleton: true,
+            dm_pairing: None,
         };
         let mapped_a = TelegramAccountBundle {
             channel_ref: ChannelRef::new(
@@ -10734,12 +11043,14 @@ mod channel_reconcile_tests {
             token: SecretString::from("mapped-token-a"),
             allowed_user_id: 8,
             legacy_singleton: false,
+            dm_pairing: None,
         };
         let mapped_default = TelegramAccountBundle {
             channel_ref: ChannelRef::default_account(ChannelKind::Telegram),
             token: SecretString::from("mapped-token-default"),
             allowed_user_id: 9,
             legacy_singleton: false,
+            dm_pairing: None,
         };
         assert!(legacy.mapped_live_egress_provenance().is_none());
         assert_eq!(

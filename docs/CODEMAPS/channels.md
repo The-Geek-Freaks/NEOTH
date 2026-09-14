@@ -30,10 +30,29 @@ account for a valid map and the exact fresh Telegram state beside explicit
 legacy Configure, with per-account Edit and exact Test. Invalid maps remain
 CLI-repair-only; the GUI does not silently migrate them.
 
-Account removal/retirement, pairing/importer custody, native GUI acceptance,
-other account families, and remaining account-aware routing remain open.
-W21–23 is locally validated: Rust, unit, headless-GUI, contract, and Python
-gates pass. Native GUI acceptance and macOS CI remain separate.
+Account removal/retirement, other account families, and remaining
+account-aware routing remain open. Native GUI acceptance and macOS CI remain
+separate.
+
+## Mapped Telegram DM pairing (W29; locally validated)
+
+`cli/mod.rs` dispatches account-scoped `channel account set-dm-pairing telegram
+--account <id> --enabled` plus `channel pairing list|approve|dismiss telegram
+--account <id>`; approval requires `--code` and dismissal `--request-id`.
+`cli/channel.rs` resolves the exact account and binding before opening
+`channels/dm_pairing.rs::DmPairingStore`.
+
+The store owns a private bound-directory capability and SQLite access. Pending
+rows are keyed by `ChannelRef` and binding tag, hold no pairing code, expire
+after one hour, and are limited to three. `channels/telegram.rs` admits the
+pairing branch only for private, non-pinned DMs; pinned operator groups and the
+existing `ConfirmBus` branch retain their prior behavior. Edited Telegram
+messages cannot create or refresh pending rows. A changed account binding invalidates only its own
+requests, and missing authenticated mapped receipts remain ingress failures
+before pipeline execution. The local selection, Clippy, build,
+AccountConfigContracts, formatting, CLI doc generation, final GUI check, and
+integrity checks passed. This is not a pairing-migration or live-provider
+acceptance.
 
 ## OpenClaw account import (W26; locally validated)
 

@@ -640,10 +640,13 @@ mod tests {
         };
         for &(account, allowed_user_id, token) in entries {
             let account = ChannelAccountId::new(account).unwrap();
-            pair.config
-                .channel_accounts
-                .telegram
-                .insert(account.clone(), TelegramAccountConfig { allowed_user_id });
+            pair.config.channel_accounts.telegram.insert(
+                account.clone(),
+                TelegramAccountConfig {
+                    allowed_user_id,
+                    ..Default::default()
+                },
+            );
             let credentials = TelegramAccountCredentials {
                 token: token.map(crate::secret::SecretString::from),
             };

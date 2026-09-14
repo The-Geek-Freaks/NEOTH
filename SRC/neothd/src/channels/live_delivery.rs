@@ -389,7 +389,13 @@ impl LiveDelivery {
                         crate::time::now_unix_secs(),
                         provenance,
                     )
-                    .await;
+                    .await
+                    .map_err(|()| {
+                        ChannelError::Transport(
+                        "mandatory authenticated account-bound egress receipt could not be recorded"
+                            .to_string(),
+                    )
+                    })?;
                 }
                 Ok(id)
             }
@@ -433,7 +439,13 @@ impl LiveDelivery {
                         crate::time::now_unix_secs(),
                         provenance,
                     )
-                    .await;
+                    .await
+                    .map_err(|()| {
+                        ChannelError::Transport(
+                        "mandatory authenticated account-bound egress receipt could not be recorded"
+                            .to_string(),
+                    )
+                    })?;
                 }
                 Err(error)
             }

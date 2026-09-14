@@ -23,6 +23,7 @@
 pub mod discord;
 pub mod discord_gateway;
 pub mod discord_gateway_loop;
+pub(crate) mod dm_pairing;
 pub mod formatter;
 /// B9 — Google Chat via a GCP Pub/Sub PULL subscription (NEOTH dials out, no
 /// public URL). The pure wire types + event mapping (`gchat_api`) stay

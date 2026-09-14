@@ -327,6 +327,14 @@ Read the named Telegram account token and policy from a strict private stdin env
 - `<CHANNEL>`
 - `--account <ACCOUNT>`
 
+#### `neoth channel account set-dm-pairing`
+
+Explicitly enable or disable direct-message pairing on one mapped account
+
+- `<CHANNEL>`
+- `--account <ACCOUNT>`
+- `--enabled`
+
 ### `neoth channel add`
 
 Add a channel non-interactively (pass --token etc.) or interactively (stdin prompts)
@@ -369,6 +377,27 @@ Move the admitted legacy Telegram singleton into one named inbound account. This
 
 - `<CHANNEL>` — Must be the canonical channel id `telegram`
 - `--account <ACCOUNT>` — Validated account id that receives the legacy inbound binding
+
+### `neoth channel pairing`
+
+Explicit local Telegram DM-pairing request administration
+
+#### `neoth channel pairing approve`
+
+- `<CHANNEL>`
+- `--account <ACCOUNT>`
+- `--code <CODE>`
+
+#### `neoth channel pairing dismiss`
+
+- `<CHANNEL>`
+- `--account <ACCOUNT>`
+- `--request-id <REQUEST_ID>`
+
+#### `neoth channel pairing list`
+
+- `<CHANNEL>`
+- `--account <ACCOUNT>`
 
 ### `neoth channel remove`
 

@@ -1013,9 +1013,17 @@ impl Credentials {
                         }
                     }
 
+                    let existing_dm_pairing = config
+                        .channel_accounts
+                        .telegram
+                        .get(&account_id)
+                        .and_then(|existing| existing.dm_pairing.clone());
                     config.channel_accounts.telegram.insert(
                         account_id.clone(),
-                        crate::config::TelegramAccountConfig { allowed_user_id },
+                        crate::config::TelegramAccountConfig {
+                            allowed_user_id,
+                            dm_pairing: existing_dm_pairing,
+                        },
                     );
                     raw_credentials.channel_accounts.telegram.insert(
                         account_id.clone(),
@@ -1318,7 +1326,10 @@ impl Credentials {
                     credentials.telegram_token = None;
                     config.channel_accounts.telegram.insert(
                         account_id.clone(),
-                        crate::config::TelegramAccountConfig { allowed_user_id },
+                        crate::config::TelegramAccountConfig {
+                            allowed_user_id,
+                            ..Default::default()
+                        },
                     );
                     credentials.channel_accounts.telegram.insert(
                         account_id,

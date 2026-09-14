@@ -7936,6 +7936,7 @@ mod tests {
                     .expect("test account id"),
                 crate::config::TelegramAccountConfig {
                     allowed_user_id: *allowed_user_id,
+                    ..Default::default()
                 },
             );
         }

@@ -129,6 +129,26 @@ pub(crate) struct RuntimeConfigPair {
 #[serde(default)]
 pub struct TelegramAccountConfig {
     pub allowed_user_id: u64,
+    /// Absent preserves the historical pinned-operator admission. Pairing is
+    /// intentionally opt-in and is invalid for legacy singleton Telegram.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dm_pairing: Option<TelegramDmPairingConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TelegramDmPairingConfig {
+    pub enabled: bool,
+}
+
+impl TelegramDmPairingConfig {
+    fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.enabled,
+            "telegram dm_pairing accepts only {{ enabled: true }}"
+        );
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -148,6 +168,22 @@ pub(crate) struct AuthenticatedTelegramAccount {
     token: crate::secret::SecretString,
     allowed_user_id: u64,
     origin: TelegramAccountOrigin,
+    inbound_admission: TelegramInboundAdmission,
+}
+
+/// Authenticated-only ingress policy. It cannot be reconstructed from a
+/// Telegram update because only a coherent config/credential pair can create
+/// the current binding tag.
+#[derive(Clone)]
+pub(crate) enum TelegramInboundAdmission {
+    PinnedOperator {
+        allowed_user_id: u64,
+    },
+    DmPairing {
+        pinned_operator_id: u64,
+        channel_ref: crate::channels::registry::ChannelRef,
+        binding_tag: String,
+    },
 }
 
 impl AuthenticatedTelegramAccount {
@@ -162,6 +198,9 @@ impl AuthenticatedTelegramAccount {
     }
     pub(crate) fn is_legacy_singleton(&self) -> bool {
         self.origin == TelegramAccountOrigin::LegacySingleton
+    }
+    pub(crate) fn inbound_admission(&self) -> &TelegramInboundAdmission {
+        &self.inbound_admission
     }
 }
 
@@ -191,6 +230,9 @@ impl RuntimeConfigPair {
                         token,
                         allowed_user_id,
                         origin: TelegramAccountOrigin::LegacySingleton,
+                        inbound_admission: TelegramInboundAdmission::PinnedOperator {
+                            allowed_user_id,
+                        },
                     }])
                 }
                 _ => Ok(Vec::new()),
@@ -227,14 +269,38 @@ impl RuntimeConfigPair {
                 !token.expose_secret().trim().is_empty(),
                 "telegram account `{account_id}` has an empty credential token"
             );
+            let channel_ref = crate::channels::registry::ChannelRef::new(
+                crate::channels::registry::ChannelId::Telegram,
+                account_id.clone(),
+            );
+            let inbound_admission = match &policy.dm_pairing {
+                None => TelegramInboundAdmission::PinnedOperator {
+                    allowed_user_id: policy.allowed_user_id,
+                },
+                Some(pairing) => {
+                    pairing.validate()?;
+                    // Opaque generation includes the validated credential, the
+                    // exact ref, policy mode and pinned sender. No inbound
+                    // field contributes to this value.
+                    use sha2::{Digest as _, Sha256};
+                    let mut digest = Sha256::new();
+                    digest.update(b"neoth/dm-pairing-binding/v1\0");
+                    digest.update(serde_json::to_vec(&channel_ref)?);
+                    digest.update(policy.allowed_user_id.to_be_bytes());
+                    digest.update(token.expose_secret().as_bytes());
+                    TelegramInboundAdmission::DmPairing {
+                        pinned_operator_id: policy.allowed_user_id,
+                        channel_ref: channel_ref.clone(),
+                        binding_tag: hex::encode(digest.finalize()),
+                    }
+                }
+            };
             resolved.push(AuthenticatedTelegramAccount {
-                channel_ref: crate::channels::registry::ChannelRef::new(
-                    crate::channels::registry::ChannelId::Telegram,
-                    account_id.clone(),
-                ),
+                channel_ref,
                 token: token.clone(),
                 allowed_user_id: policy.allowed_user_id,
                 origin: TelegramAccountOrigin::ConfiguredAccount,
+                inbound_admission,
             });
         }
         Ok(resolved)
@@ -260,6 +326,7 @@ mod telegram_account_tests {
             id.clone(),
             TelegramAccountConfig {
                 allowed_user_id: user,
+                ..Default::default()
             },
         );
         let entry = credentials::TelegramAccountCredentials {
@@ -322,6 +389,39 @@ mod telegram_account_tests {
             assert_eq!(account.token().expose_secret(), token);
             assert!(!account.is_legacy_singleton());
         }
+    }
+
+    #[test]
+    fn paired_account_token_rotation_keeps_opt_in_but_changes_its_generation() {
+        let mut pair = pair();
+        add_account(&mut pair, "account-a", 11, Some("token-a"));
+        let id = ChannelAccountId::new("account-a").unwrap();
+        pair.config
+            .channel_accounts
+            .telegram
+            .get_mut(&id)
+            .unwrap()
+            .dm_pairing = Some(TelegramDmPairingConfig { enabled: true });
+        let before = pair.authenticated_telegram_accounts().unwrap().remove(0);
+        let before_binding = match before.inbound_admission() {
+            TelegramInboundAdmission::DmPairing { binding_tag, .. } => binding_tag.clone(),
+            _ => panic!("paired account must resolve pairing admission"),
+        };
+        pair.credentials
+            .channel_accounts
+            .telegram
+            .get_mut(&id)
+            .unwrap()
+            .token = Some(crate::secret::SecretString::new("token-b".into()));
+        let after = pair.authenticated_telegram_accounts().unwrap().remove(0);
+        let after_binding = match after.inbound_admission() {
+            TelegramInboundAdmission::DmPairing { binding_tag, .. } => binding_tag.clone(),
+            _ => panic!("token rotation must retain explicit pairing policy"),
+        };
+        assert_ne!(
+            before_binding, after_binding,
+            "token rotation must invalidate prior pairing approvals"
+        );
     }
 
     #[test]

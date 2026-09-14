@@ -1933,7 +1933,14 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // This is checked only when a confirm_bus is wired (channel-driven
             // permission confirms active). A plain "yes" or "no" without a UUID
             // passes through normally.
-            if !has_media && let Some(ref bus) = confirm_bus_reply {
+            // Only the exact resolved pinned operator may consume an existing
+            // confirmation UUID. Adapter admission (including DM pairing)
+            // intentionally does not grant authority over the global bus.
+            if uuid_reply_fastpath_allowed(
+                pinned_operator_proofs.communication.is_some(),
+                has_media,
+            ) && let Some(ref bus) = confirm_bus_reply
+            {
                 static UUID_REPLY_RE: std::sync::OnceLock<regex::Regex> =
                     std::sync::OnceLock::new();
                 let re = UUID_REPLY_RE.get_or_init(|| {
@@ -1947,7 +1954,12 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     let uuid_str = caps.get(2).map_or("", |m| m.as_str());
                     if let Ok(parsed_uuid) = uuid_str.parse::<uuid::Uuid>() {
                         let approved = verdict_str.eq_ignore_ascii_case("yes");
-                        let found = bus.submit_response(parsed_uuid, approved);
+                        let found = submit_confirm_response_if_pinned(
+                            pinned_operator_proofs.communication.is_some(),
+                            bus,
+                            parsed_uuid,
+                            approved,
+                        );
                         tracing::debug!(
                             channel = channel_str,
                             sender_hash = %sender_hash,
@@ -4916,6 +4928,24 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
     })
 }
 
+/// Pairing admission never substitutes for the resolved pinned-operator proof
+/// required to answer a process-global confirmation UUID.
+fn uuid_reply_fastpath_allowed(has_pinned_operator_proof: bool, has_media: bool) -> bool {
+    has_pinned_operator_proof && !has_media
+}
+
+/// The sole production submission seam for inbound UUID replies.  Keep the
+/// proof check adjacent to the destructive `ConfirmBus` consume so a later
+/// control-flow edit cannot turn adapter admission into global authority.
+fn submit_confirm_response_if_pinned(
+    has_pinned_operator_proof: bool,
+    bus: &crate::permissions::confirm_bus::ConfirmBus,
+    uuid: uuid::Uuid,
+    approved: bool,
+) -> bool {
+    has_pinned_operator_proof && bus.submit_response(uuid, approved)
+}
+
 /// Run one owned inbound media attachment through the multimodal extraction
 /// pipeline and return its canonical untrusted attachment context. The
 /// operator caption is deliberately absent from this function and can never
@@ -5392,6 +5422,50 @@ fn delegated_system_bundle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn paired_sender_cannot_consume_confirm_bus_but_pinned_operator_can() {
+        use std::time::Duration;
+
+        let (bus, mut requests) = crate::permissions::confirm_bus::ConfirmBus::new();
+        let waiter_bus = Arc::clone(&bus);
+        let waiter = tokio::spawn(async move {
+            waiter_bus
+                .request_and_wait(
+                    "pairing-regression",
+                    serde_json::json!({}),
+                    Duration::from_secs(5),
+                )
+                .await
+        });
+        let request = tokio::time::timeout(Duration::from_secs(1), requests.recv())
+            .await
+            .expect("pending request must be emitted")
+            .expect("bus receiver stays live");
+        assert_eq!(bus.pending_count(), 1);
+
+        // This models an adapter-admitted pairing sender: it has no resolved
+        // pinned-operator communication proof. The exact pending UUID remains.
+        assert!(!submit_confirm_response_if_pinned(
+            false,
+            &bus,
+            request.uuid,
+            true
+        ));
+        assert_eq!(
+            bus.pending_count(),
+            1,
+            "paired sender must not consume a global confirmation"
+        );
+
+        assert!(submit_confirm_response_if_pinned(
+            true,
+            &bus,
+            request.uuid,
+            true
+        ));
+        assert_eq!(waiter.await.expect("waiter must not panic"), Some(true));
+    }
     use crate::channels::{Channel, ChannelError, ChannelKind, MessageId, PipelineHandler};
 
     #[test]
@@ -6018,7 +6092,10 @@ mod tests {
                 .expect("fixture account id");
             runtime.config.channel_accounts.telegram.insert(
                 account_id.clone(),
-                crate::config::TelegramAccountConfig { allowed_user_id },
+                crate::config::TelegramAccountConfig {
+                    allowed_user_id,
+                    ..Default::default()
+                },
             );
             let credential = crate::config::credentials::TelegramAccountCredentials {
                 token: Some(crate::secret::SecretString::new(token.to_owned())),

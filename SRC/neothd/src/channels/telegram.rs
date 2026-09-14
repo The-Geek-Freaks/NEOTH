@@ -44,7 +44,7 @@ pub struct TelegramChannel {
     /// production). `Some(id)` = only that single Telegram user_id may
     /// interact, including in group chats. There is currently no separate
     /// mention-only group mode; the sender allowlist remains authoritative.
-    allowed_user_id: Option<u64>,
+    admission: TelegramAdmission,
     /// SF-03: optional daemon WAL writer so the allowlist gate can emit a
     /// `0x3B CHANNEL_GATE_REJECTED` audit frame when it drops a
     /// non-allowlisted sender. The daemon owns the single WAL writer; the
@@ -53,11 +53,41 @@ pub struct TelegramChannel {
     gate_writer: Option<crate::wal::writer::WalWriterHandle>,
 }
 
+/// Sealed-by-construction adapter input. The pairing variant is assembled only
+/// from a validated `TelegramAccountBundle`; Telegram update fields never name
+/// an account or policy.
+#[derive(Clone)]
+enum TelegramAdmission {
+    Pinned(Option<u64>),
+    DmPairing {
+        capability: crate::cli::serve_tasks::TelegramDmPairingCapability,
+        store: Arc<crate::channels::dm_pairing::DmPairingStore>,
+        reply: crate::cli::serve_tasks::PairingReplySender,
+    },
+}
+
 impl TelegramChannel {
     pub fn new(token: SecretString, allowed_user_id: Option<u64>) -> Self {
         Self {
             token,
-            allowed_user_id,
+            admission: TelegramAdmission::Pinned(allowed_user_id),
+            gate_writer: None,
+        }
+    }
+
+    pub(crate) fn from_authenticated_pairing(
+        token: SecretString,
+        capability: crate::cli::serve_tasks::TelegramDmPairingCapability,
+        store: Arc<crate::channels::dm_pairing::DmPairingStore>,
+        reply: crate::cli::serve_tasks::PairingReplySender,
+    ) -> Self {
+        Self {
+            token,
+            admission: TelegramAdmission::DmPairing {
+                capability,
+                store,
+                reply,
+            },
             gate_writer: None,
         }
     }
@@ -489,7 +519,8 @@ impl Channel for TelegramChannel {
         );
 
         let handler = Arc::new(handler);
-        let allowed = self.allowed_user_id;
+        let admission_msg = self.admission.clone();
+        let admission_edit = self.admission.clone();
         // SF-03: one writer clone per dptree branch (each `move` endpoint
         // closure owns its own; cloned again per inbound for the audit).
         let gate_writer_msg = self.gate_writer.clone();
@@ -512,10 +543,12 @@ impl Channel for TelegramChannel {
             .branch(
                 Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
                     let handler = Arc::clone(&h_msg);
+                    let admission = admission_msg.clone();
                     let gate_writer = gate_writer_msg.clone();
                     async move {
                         if let Err(e) =
-                            handle_one_message(bot, msg, handler, allowed, gate_writer).await
+                            handle_one_message(bot, msg, handler, admission.clone(), gate_writer)
+                                .await
                         {
                             tracing::warn!(error = %e, "Telegram message handler error");
                         }
@@ -526,12 +559,19 @@ impl Channel for TelegramChannel {
             .branch(
                 Update::filter_edited_message().endpoint(move |bot: Bot, msg: Message| {
                     let handler = Arc::clone(&h_edit);
+                    let admission = admission_edit.clone();
                     let dedup = Arc::clone(&dedup_edit);
                     let gate_writer = gate_writer_edit.clone();
                     async move {
-                        if let Err(e) =
-                            handle_edited_message(bot, msg, handler, allowed, dedup, gate_writer)
-                                .await
+                        if let Err(e) = handle_edited_message(
+                            bot,
+                            msg,
+                            handler,
+                            admission.clone(),
+                            dedup,
+                            gate_writer,
+                        )
+                        .await
                         {
                             tracing::warn!(error = %e, "Telegram edited-message handler error");
                         }
@@ -648,11 +688,116 @@ async fn sender_blocked_by_allowlist(
     true
 }
 
+/// The pairing branch is deliberately before attachment/text extraction. The
+/// pinned branch calls the historical gate unchanged, including its group-chat
+/// behavior. A non-pinned pairing subject can only enter from a private chat.
+async fn admit_new_message(
+    admission: &TelegramAdmission,
+    msg: &Message,
+    sender: u64,
+) -> Result<crate::channels::dm_pairing::Admission> {
+    match admission {
+        TelegramAdmission::Pinned(allowed) => Ok(if allowed.is_none_or(|id| id == sender) {
+            crate::channels::dm_pairing::Admission::PinnedAllowed
+        } else {
+            crate::channels::dm_pairing::Admission::Rejected
+        }),
+        TelegramAdmission::DmPairing {
+            capability, store, ..
+        } => {
+            if sender != capability.pinned_operator() && !msg.chat.is_private() {
+                return Ok(crate::channels::dm_pairing::Admission::Rejected);
+            }
+            pairing_blocking({
+                let store = Arc::clone(store);
+                let reference = capability.channel_ref().clone();
+                let binding = capability.binding_tag().to_owned();
+                let pinned = capability.pinned_operator();
+                move || {
+                    store.check_or_create(
+                        &reference,
+                        &binding,
+                        pinned,
+                        sender,
+                        crate::time::now_unix_i64(),
+                    )
+                }
+            })
+            .await
+        }
+    }
+}
+
+/// Edits must never create/refresh pending state. An approved pairing sender
+/// remains DM-only; the pinned operator keeps historical edit/group behavior.
+async fn admit_edited_message(
+    admission: &TelegramAdmission,
+    msg: &Message,
+    sender: u64,
+) -> Result<bool> {
+    match admission {
+        TelegramAdmission::Pinned(allowed) => Ok(allowed.is_none_or(|id| id == sender)),
+        TelegramAdmission::DmPairing {
+            capability, store, ..
+        } => {
+            if sender == capability.pinned_operator() {
+                return Ok(true);
+            }
+            if !msg.chat.is_private() {
+                return Ok(false);
+            }
+            pairing_blocking({
+                let store = Arc::clone(store);
+                let reference = capability.channel_ref().clone();
+                let binding = capability.binding_tag().to_owned();
+                move || store.is_approved(&reference, &binding, sender)
+            })
+            .await
+        }
+    }
+}
+
+async fn emit_pairing_rejected(
+    admission: &TelegramAdmission,
+    sender: u64,
+    writer: Option<&crate::wal::writer::WalWriterHandle>,
+    site: &'static str,
+) {
+    let allowed = match admission {
+        TelegramAdmission::Pinned(Some(id)) => Some(*id),
+        TelegramAdmission::DmPairing { capability, .. } => Some(capability.pinned_operator()),
+        _ => None,
+    };
+    if let Some(allowed) = allowed {
+        sender_blocked_by_allowlist(Some(allowed), sender, writer, site).await;
+    }
+}
+
+async fn pairing_blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
+    static SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+    let slots = SLOTS
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4)))
+        .clone();
+    let permit = tokio::time::timeout(std::time::Duration::from_secs(2), slots.acquire_owned())
+        .await
+        .map_err(|_| anyhow::anyhow!("DM pairing store is saturated"))??;
+    // The permit travels into the blocking closure. Dropping/cancelling this
+    // async caller cannot admit another SQLite job until the owned job exits.
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!("DM pairing store worker failed: {error}"))?
+}
+
 async fn handle_one_message(
     bot: Bot,
     msg: Message,
     handler: Arc<PipelineHandler>,
-    allowed_user_id: Option<u64>,
+    admission: TelegramAdmission,
     gate_writer: Option<crate::wal::writer::WalWriterHandle>,
 ) -> Result<()> {
     let Some(from) = msg.from.as_ref() else {
@@ -664,10 +809,25 @@ async fn handle_one_message(
     // WAL, before any provider call. Rejected messages get logged + dropped
     // (+ a 0x3B audit frame); we do NOT send a "you are not allowed" reply
     // (information leak).
-    if sender_blocked_by_allowlist(allowed_user_id, from.id.0, gate_writer.as_ref(), "message")
-        .await
-    {
-        return Ok(());
+    match admit_new_message(&admission, &msg, from.id.0).await? {
+        crate::channels::dm_pairing::Admission::PinnedAllowed
+        | crate::channels::dm_pairing::Admission::Approved => {}
+        crate::channels::dm_pairing::Admission::PairingCode {
+            code,
+            newly_created,
+            ..
+        } => {
+            // A duplicate intentionally has no plaintext code to prevent a
+            // code oracle/replay. Only the first durable request may reply.
+            if newly_created && let TelegramAdmission::DmPairing { reply, .. } = &admission {
+                reply.send_pairing_code(msg.chat.id.0, &code).await?;
+            }
+            return Ok(());
+        }
+        crate::channels::dm_pairing::Admission::Rejected => {
+            emit_pairing_rejected(&admission, from.id.0, gate_writer.as_ref(), "message").await;
+            return Ok(());
+        }
     }
 
     // Detect message kind. Order matters: photo/voice/audio/document
@@ -778,7 +938,7 @@ async fn handle_edited_message(
     _bot: Bot,
     msg: Message,
     handler: Arc<PipelineHandler>,
-    allowed_user_id: Option<u64>,
+    admission: TelegramAdmission,
     dedup: Arc<std::sync::Mutex<EditDedup>>,
     gate_writer: Option<crate::wal::writer::WalWriterHandle>,
 ) -> Result<()> {
@@ -788,7 +948,8 @@ async fn handle_edited_message(
 
     // Allowlist FIRST — same contract as new messages: rejected edits are
     // logged + dropped (+ a 0x3B audit frame), never acknowledged.
-    if sender_blocked_by_allowlist(allowed_user_id, from.id.0, gate_writer.as_ref(), "edit").await {
+    if !admit_edited_message(&admission, &msg, from.id.0).await? {
+        emit_pairing_rejected(&admission, from.id.0, gate_writer.as_ref(), "edit").await;
         return Ok(());
     }
 
@@ -1009,6 +1170,107 @@ fn append_bounded_download_chunk(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn pairing_message(chat_type: &str, chat_id: i64, sender: u64) -> Message {
+        serde_json::from_value(json!({
+            "message_id": 1,
+            "date": 1_700_000_000,
+            "chat": { "id": chat_id, "type": chat_type, "first_name": "test" },
+            "from": { "id": sender, "is_bot": false, "first_name": "test" },
+            "text": "hello"
+        }))
+        .expect("valid Telegram message fixture")
+    }
+
+    fn paired_runtime_account(
+        account: &str,
+        pinned_operator: u64,
+        token: &str,
+        enabled: bool,
+    ) -> crate::config::RuntimeConfigPair {
+        use crate::channels::registry::ChannelAccountId;
+        let account_id = ChannelAccountId::new(account).expect("valid account fixture");
+        let credentials = crate::config::credentials::TelegramAccountCredentials {
+            token: Some(SecretString::from(token)),
+        };
+        let mut runtime = crate::config::RuntimeConfigPair {
+            config: crate::config::FreedomConfig::default(),
+            raw_credentials: crate::config::credentials::Credentials::default(),
+            credentials: crate::config::credentials::Credentials::default(),
+        };
+        runtime.config.channel_accounts.telegram.insert(
+            account_id.clone(),
+            crate::config::TelegramAccountConfig {
+                allowed_user_id: pinned_operator,
+                dm_pairing: enabled
+                    .then_some(crate::config::TelegramDmPairingConfig { enabled: true }),
+            },
+        );
+        runtime
+            .raw_credentials
+            .channel_accounts
+            .telegram
+            .insert(account_id.clone(), credentials.clone());
+        runtime
+            .credentials
+            .channel_accounts
+            .telegram
+            .insert(account_id, credentials);
+        runtime
+    }
+
+    fn paired_bundle(
+        runtime: &crate::config::RuntimeConfigPair,
+        account: &str,
+    ) -> crate::cli::serve_tasks::TelegramAccountBundle {
+        crate::cli::serve_tasks::telegram_account_bundles(runtime)
+            .expect("coherent runtime yields authenticated bundles")
+            .into_iter()
+            .find(|bundle| bundle.channel_ref.account_id.as_str() == account)
+            .expect("requested paired account bundle")
+    }
+
+    fn live_delivery_config() -> crate::config::LiveDeliveryConfig {
+        crate::config::LiveDeliveryConfig {
+            edits_enabled: true,
+            min_edit_interval_ms: 0,
+            max_edits_per_message: 1,
+            final_edit_always_allowed: true,
+        }
+    }
+
+    struct NoopPairingTransport;
+
+    #[async_trait]
+    impl Channel for NoopPairingTransport {
+        fn name(&self) -> &'static str {
+            "pairing-test"
+        }
+        async fn run(&self, _handler: PipelineHandler) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn admission_from_bundle(
+        bundle: &crate::cli::serve_tasks::TelegramAccountBundle,
+        store: Arc<crate::channels::dm_pairing::DmPairingStore>,
+    ) -> TelegramAdmission {
+        let (capability, reply) = bundle
+            .pairing_parts_for_test(
+                crate::wal::writer::closed_test_writer(),
+                live_delivery_config(),
+                Arc::new(NoopPairingTransport),
+            )
+            .expect("paired bundle mints only its bound test reply capability");
+        TelegramAdmission::DmPairing {
+            capability,
+            store,
+            reply,
+        }
+    }
 
     #[test]
     fn channel_reports_name() {
@@ -1404,5 +1666,425 @@ mod tests {
         );
         // (3, 0) still present → duplicate.
         assert!(!d.check_and_insert((3, 0)), "recent key still deduped");
+    }
+
+    #[tokio::test]
+    async fn pairing_admission_enforces_private_first_contact_and_preserves_pinned_groups() {
+        let runtime = paired_runtime_account("account_a", 11, "token-a", true);
+        let bundle = paired_bundle(&runtime, "account_a");
+        let home = tempfile::tempdir().expect("pairing home");
+        let store = Arc::new(
+            crate::channels::dm_pairing::DmPairingStore::open(home.path())
+                .expect("open isolated pairing store"),
+        );
+        let admission = admission_from_bundle(&bundle, Arc::clone(&store));
+        let (reference, binding) = match &admission {
+            TelegramAdmission::DmPairing { capability, .. } => (
+                capability.channel_ref().clone(),
+                capability.binding_tag().to_owned(),
+            ),
+            _ => unreachable!("fixture is explicitly paired"),
+        };
+        let private_unknown = pairing_message("private", 4242, 22);
+        let code = match admit_new_message(&admission, &private_unknown, 22)
+            .await
+            .expect("private unknown admission")
+        {
+            crate::channels::dm_pairing::Admission::PairingCode {
+                code,
+                newly_created: true,
+                ..
+            } => code,
+            other => panic!("private unknown must create one pending request, got {other:?}"),
+        };
+        assert_eq!(
+            store
+                .list(&reference, &binding, crate::time::now_unix_i64())
+                .unwrap()
+                .len(),
+            1,
+            "first private contact creates exactly one pending request"
+        );
+        store
+            .approve(&reference, &binding, &code, crate::time::now_unix_i64())
+            .unwrap();
+        assert!(matches!(
+            admit_new_message(&admission, &private_unknown, 22)
+                .await
+                .unwrap(),
+            crate::channels::dm_pairing::Admission::Approved
+        ));
+
+        let group_unknown = pairing_message("group", -100, 33);
+        assert!(matches!(
+            admit_new_message(&admission, &group_unknown, 33)
+                .await
+                .unwrap(),
+            crate::channels::dm_pairing::Admission::Rejected
+        ));
+        assert!(matches!(
+            admit_new_message(&admission, &group_unknown, 22)
+                .await
+                .unwrap(),
+            crate::channels::dm_pairing::Admission::Rejected
+        ));
+        assert_eq!(
+            store
+                .list(&reference, &binding, crate::time::now_unix_i64())
+                .unwrap()
+                .len(),
+            0,
+            "unknown and approved non-pinned group senders do not mutate pairing state"
+        );
+
+        let pinned = TelegramAdmission::Pinned(Some(11));
+        assert!(matches!(
+            admit_new_message(&pinned, &pairing_message("group", -100, 11), 11)
+                .await
+                .unwrap(),
+            crate::channels::dm_pairing::Admission::PinnedAllowed
+        ));
+    }
+
+    #[tokio::test]
+    async fn pairing_edits_are_read_only_and_never_admit_a_pending_sender() {
+        let runtime = paired_runtime_account("account_a", 11, "token-a", true);
+        let bundle = paired_bundle(&runtime, "account_a");
+        let home = tempfile::tempdir().expect("pairing home");
+        let store =
+            Arc::new(crate::channels::dm_pairing::DmPairingStore::open(home.path()).unwrap());
+        let admission = admission_from_bundle(&bundle, Arc::clone(&store));
+        let (reference, binding) = match &admission {
+            TelegramAdmission::DmPairing { capability, .. } => (
+                capability.channel_ref().clone(),
+                capability.binding_tag().to_owned(),
+            ),
+            _ => unreachable!(),
+        };
+        let private_unknown = pairing_message("private", 4242, 22);
+        assert!(
+            !admit_edited_message(&admission, &private_unknown, 22)
+                .await
+                .unwrap()
+        );
+        assert!(
+            store
+                .list(&reference, &binding, crate::time::now_unix_i64())
+                .unwrap()
+                .is_empty()
+        );
+
+        let code = match admit_new_message(&admission, &private_unknown, 22)
+            .await
+            .unwrap()
+        {
+            crate::channels::dm_pairing::Admission::PairingCode { code, .. } => code,
+            other => panic!("new private sender must produce a pending code, got {other:?}"),
+        };
+        let before = store
+            .pending_last_seen_for_test(&reference, &binding, 22)
+            .unwrap()
+            .expect("durable pending row");
+        assert!(
+            !admit_edited_message(&admission, &private_unknown, 22)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            store
+                .pending_last_seen_for_test(&reference, &binding, 22)
+                .unwrap(),
+            Some(before),
+            "an edit may not refresh a pending pairing request"
+        );
+        store
+            .approve(&reference, &binding, &code, crate::time::now_unix_i64())
+            .unwrap();
+        assert!(
+            admit_edited_message(&admission, &private_unknown, 22)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !admit_edited_message(&admission, &pairing_message("group", -100, 22), 22)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn config_binding_rotation_stales_a_approval_while_unmodified_b_stays_live() {
+        use crate::channels::registry::ChannelAccountId;
+        let mut runtime = paired_runtime_account("account_a", 11, "token-a", true);
+        let account_b = ChannelAccountId::new("account_b").unwrap();
+        let b_credentials = crate::config::credentials::TelegramAccountCredentials {
+            token: Some(SecretString::from("token-b")),
+        };
+        runtime.config.channel_accounts.telegram.insert(
+            account_b.clone(),
+            crate::config::TelegramAccountConfig {
+                allowed_user_id: 44,
+                dm_pairing: Some(crate::config::TelegramDmPairingConfig { enabled: true }),
+            },
+        );
+        runtime
+            .raw_credentials
+            .channel_accounts
+            .telegram
+            .insert(account_b.clone(), b_credentials.clone());
+        runtime
+            .credentials
+            .channel_accounts
+            .telegram
+            .insert(account_b.clone(), b_credentials);
+        let home = tempfile::tempdir().unwrap();
+        let store =
+            Arc::new(crate::channels::dm_pairing::DmPairingStore::open(home.path()).unwrap());
+
+        let a_before =
+            admission_from_bundle(&paired_bundle(&runtime, "account_a"), Arc::clone(&store));
+        let b_before =
+            admission_from_bundle(&paired_bundle(&runtime, "account_b"), Arc::clone(&store));
+        let (a_ref, a_tag) = match &a_before {
+            TelegramAdmission::DmPairing { capability, .. } => (
+                capability.channel_ref().clone(),
+                capability.binding_tag().to_owned(),
+            ),
+            _ => unreachable!(),
+        };
+        let (b_ref, b_tag) = match &b_before {
+            TelegramAdmission::DmPairing { capability, .. } => (
+                capability.channel_ref().clone(),
+                capability.binding_tag().to_owned(),
+            ),
+            _ => unreachable!(),
+        };
+        let a_code = match admit_new_message(&a_before, &pairing_message("private", 4242, 22), 22)
+            .await
+            .unwrap()
+        {
+            crate::channels::dm_pairing::Admission::PairingCode { code, .. } => code,
+            other => panic!("A pairing request: {other:?}"),
+        };
+        let b_code = match admit_new_message(&b_before, &pairing_message("private", 4343, 55), 55)
+            .await
+            .unwrap()
+        {
+            crate::channels::dm_pairing::Admission::PairingCode { code, .. } => code,
+            other => panic!("B pairing request: {other:?}"),
+        };
+        store
+            .approve(&a_ref, &a_tag, &a_code, crate::time::now_unix_i64())
+            .unwrap();
+        store
+            .approve(&b_ref, &b_tag, &b_code, crate::time::now_unix_i64())
+            .unwrap();
+
+        let account_a = ChannelAccountId::new("account_a").unwrap();
+        runtime
+            .credentials
+            .channel_accounts
+            .telegram
+            .get_mut(&account_a)
+            .unwrap()
+            .token = Some(SecretString::from("token-a-rotated"));
+        runtime
+            .raw_credentials
+            .channel_accounts
+            .telegram
+            .get_mut(&account_a)
+            .unwrap()
+            .token = Some(SecretString::from("token-a-rotated"));
+        let a_rotated =
+            admission_from_bundle(&paired_bundle(&runtime, "account_a"), Arc::clone(&store));
+        let b_after_a_rotation =
+            admission_from_bundle(&paired_bundle(&runtime, "account_b"), Arc::clone(&store));
+        assert!(
+            matches!(
+                admit_new_message(&a_rotated, &pairing_message("private", 4242, 22), 22)
+                    .await
+                    .unwrap(),
+                crate::channels::dm_pairing::Admission::PairingCode {
+                    newly_created: true,
+                    ..
+                }
+            ),
+            "A token rotation invalidates the old approval"
+        );
+        assert!(
+            matches!(
+                admit_new_message(
+                    &b_after_a_rotation,
+                    &pairing_message("private", 4343, 55),
+                    55
+                )
+                .await
+                .unwrap(),
+                crate::channels::dm_pairing::Admission::Approved
+            ),
+            "unmodified B remains admitted from its original binding"
+        );
+
+        runtime
+            .config
+            .channel_accounts
+            .telegram
+            .get_mut(&account_a)
+            .unwrap()
+            .allowed_user_id = 12;
+        let a_new_operator =
+            admission_from_bundle(&paired_bundle(&runtime, "account_a"), Arc::clone(&store));
+        assert!(
+            matches!(
+                admit_new_message(&a_new_operator, &pairing_message("private", 4242, 22), 22)
+                    .await
+                    .unwrap(),
+                crate::channels::dm_pairing::Admission::PairingCode {
+                    newly_created: true,
+                    ..
+                }
+            ),
+            "A pinned-operator rotation invalidates the preceding binding"
+        );
+        runtime
+            .config
+            .channel_accounts
+            .telegram
+            .get_mut(&account_a)
+            .unwrap()
+            .dm_pairing = None;
+        let pinned_bundle = paired_bundle(&runtime, "account_a");
+        assert!(
+            pinned_bundle
+                .pairing_parts_for_test(
+                    crate::wal::writer::closed_test_writer(),
+                    live_delivery_config(),
+                    Arc::new(NoopPairingTransport)
+                )
+                .is_err(),
+            "policy rebind removes the pairing capability instead of retaining old approval authority"
+        );
+        let reconfigured_pinned = TelegramAdmission::Pinned(Some(12));
+        assert!(
+            matches!(
+                admit_new_message(
+                    &reconfigured_pinned,
+                    &pairing_message("private", 4242, 22),
+                    22
+                )
+                .await
+                .unwrap(),
+                crate::channels::dm_pairing::Admission::Rejected
+            ),
+            "the old paired sender cannot carry approval through the pinned-policy rebind"
+        );
+        assert!(matches!(
+            admit_new_message(
+                &reconfigured_pinned,
+                &pairing_message("private", 4242, 12),
+                12
+            )
+            .await
+            .unwrap(),
+            crate::channels::dm_pairing::Admission::PinnedAllowed
+        ));
+    }
+
+    struct TerminalReceiptFailureTransport {
+        sends: AtomicUsize,
+        writer_completion: std::sync::Mutex<Option<crate::wal::writer::WalWriterCompletion>>,
+    }
+
+    #[async_trait]
+    impl Channel for TerminalReceiptFailureTransport {
+        fn name(&self) -> &'static str {
+            "terminal-receipt-failure"
+        }
+        async fn run(&self, _handler: PipelineHandler) -> Result<()> {
+            Ok(())
+        }
+        async fn send_text(
+            &self,
+            _chat_id: &str,
+            _text: &str,
+        ) -> std::result::Result<MessageId, ChannelError> {
+            self.sends.fetch_add(1, Ordering::SeqCst);
+            let completion = { self.writer_completion.lock().unwrap().take() };
+            if let Some(completion) = completion {
+                completion.abort_handle().abort();
+                let _ = completion.wait().await;
+            }
+            Ok(MessageId("sent-before-terminal-receipt".to_owned()))
+        }
+    }
+
+    #[tokio::test]
+    async fn pairing_first_code_terminal_receipt_failure_retains_pending_and_skips_pipeline() {
+        let runtime = paired_runtime_account("account_a", 11, "token-a", true);
+        let bundle = paired_bundle(&runtime, "account_a");
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let (writer, writer_completion, ready) =
+            crate::wal::writer::spawn_for_home_ready_with_completion(
+                wal.join("000001.wal"),
+                home.path().to_path_buf(),
+            )
+            .expect("start authenticated writer");
+        ready.wait().await.expect("writer ready");
+        let transport = Arc::new(TerminalReceiptFailureTransport {
+            sends: AtomicUsize::new(0),
+            writer_completion: std::sync::Mutex::new(Some(writer_completion)),
+        });
+        let (capability, reply) = bundle
+            .pairing_parts_for_test(writer, live_delivery_config(), transport.clone())
+            .unwrap();
+        let reference = capability.channel_ref().clone();
+        let binding = capability.binding_tag().to_owned();
+        let store =
+            Arc::new(crate::channels::dm_pairing::DmPairingStore::open(home.path()).unwrap());
+        let admission = TelegramAdmission::DmPairing {
+            capability,
+            store: Arc::clone(&store),
+            reply,
+        };
+        let pipeline_calls = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::clone(&pipeline_calls);
+        let handler: Arc<PipelineHandler> = Arc::new(Box::new(move |_| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(None) })
+        }));
+
+        let result = handle_one_message(
+            Bot::new("dummy-token"),
+            pairing_message("private", 4242, 22),
+            handler,
+            admission,
+            None,
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "the failed mapped terminal receipt must surface to ingress"
+        );
+        assert_eq!(
+            transport.sends.load(Ordering::SeqCst),
+            1,
+            "the one first-code transport send occurred before receipt failure"
+        );
+        assert_eq!(
+            pipeline_calls.load(Ordering::SeqCst),
+            0,
+            "pairing challenge failure never reaches the inbound pipeline"
+        );
+        assert_eq!(
+            store
+                .list(&reference, &binding, crate::time::now_unix_i64())
+                .unwrap()
+                .len(),
+            1,
+            "a failed first-code receipt retains the durable pending request"
+        );
+        assert!(!store.is_approved(&reference, &binding, 22).unwrap());
     }
 }

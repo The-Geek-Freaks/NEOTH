@@ -2252,6 +2252,220 @@ pub async fn run_account_set_credentials(
     .await
 }
 
+/// Pairing policy is an account-selecting public-policy transaction. The
+/// credential target is deliberately retained in the PREPARED pair so a
+/// concurrent credential rotation cannot be overwritten by a policy toggle.
+pub fn run_account_set_dm_pairing(
+    channel: &str,
+    account: ChannelAccountId,
+    enabled: bool,
+    output: &OutputFormat,
+) -> Result<()> {
+    anyhow::ensure!(
+        channel == "telegram",
+        "DM pairing supports only canonical `telegram`"
+    );
+    let home = FreedomConfig::default_neoth_home();
+    let freedom_path = home.join("freedom.yaml");
+    let credentials_path = home.join("credentials.yaml");
+    Credentials::update_raw_freedom_with_credentials_at(
+        &freedom_path,
+        &credentials_path,
+        |raw, _credentials| {
+            let raw = raw.context("Telegram account policy requires freedom.yaml")?;
+            let mut doc: serde_yaml::Value = serde_yaml::from_str(raw)
+                .context("parse freedom.yaml while retaining unknown fields")?;
+            // Validate the exact account in the coherent candidate before change;
+            // legacy and partial maps cannot acquire a pairing policy.
+            let mut typed: FreedomConfig = serde_yaml::from_value(doc.clone())
+                .context("validate current public Telegram policy")?;
+            let root = doc
+                .as_mapping_mut()
+                .context("freedom.yaml root must be a mapping")?;
+            let accounts = root
+                .get_mut(serde_yaml::Value::String("channel_accounts".into()))
+                .and_then(serde_yaml::Value::as_mapping_mut)
+                .context("Telegram account map is not configured")?;
+            let telegram = accounts
+                .get_mut(serde_yaml::Value::String("telegram".into()))
+                .and_then(serde_yaml::Value::as_mapping_mut)
+                .context("Telegram account map is not configured")?;
+            let policy = telegram
+                .get_mut(serde_yaml::Value::String(account.as_str().to_owned()))
+                .and_then(serde_yaml::Value::as_mapping_mut)
+                .context("selected Telegram account is not configured")?;
+            let entry = typed
+                .channel_accounts
+                .telegram
+                .get_mut(&account)
+                .context("selected Telegram account is not configured")?;
+            anyhow::ensure!(
+                entry.allowed_user_id != 0,
+                "selected Telegram account has no pinned operator"
+            );
+            entry.dm_pairing =
+                enabled.then_some(crate::config::TelegramDmPairingConfig { enabled: true });
+            // Mutate only this known nested node; all unrelated YAML values remain.
+            if enabled {
+                policy.insert(
+                    serde_yaml::Value::String("dm_pairing".into()),
+                    serde_yaml::to_value(crate::config::TelegramDmPairingConfig { enabled: true })?,
+                );
+            } else {
+                policy.remove(serde_yaml::Value::String("dm_pairing".into()));
+            }
+            let rendered = serde_yaml::to_string(&doc)
+                .context("render pairing policy preserving unrelated YAML values")?;
+            let candidate: FreedomConfig =
+                serde_yaml::from_str(&rendered).context("validate pairing policy candidate")?;
+            let pair = crate::config::RuntimeConfigPair {
+                config: candidate,
+                raw_credentials: _credentials.clone(),
+                credentials: _credentials.clone(),
+            };
+            let selected = pair
+                .authenticated_telegram_accounts()?
+                .into_iter()
+                .find(|item| item.channel_ref().account_id == account)
+                .context("selected account is inactive or its credential map is partial")?;
+            anyhow::ensure!(
+                !selected.is_legacy_singleton(),
+                "legacy Telegram cannot enable DM pairing"
+            );
+            (match (enabled, selected.inbound_admission()) {
+                (true, crate::config::TelegramInboundAdmission::DmPairing { .. })
+                | (false, crate::config::TelegramInboundAdmission::PinnedOperator { .. }) => {
+                    Ok::<(), anyhow::Error>(())
+                }
+                _ => anyhow::bail!("pairing policy candidate did not resolve coherently"),
+            })?;
+            Ok((Some(rendered), ()))
+        },
+    )?;
+    crate::cli::reload::request_reload_at(&home)
+        .context("pairing policy committed but reload request failed; run `neoth reload`")?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({"channel":"telegram","account":account.as_str(),"dm_pairing":enabled,"saved":true})
+        ),
+        OutputFormat::Table => println!(
+            "telegram account `{}` DM pairing {} and reload requested",
+            account.as_str(),
+            if enabled { "enabled" } else { "disabled" }
+        ),
+    }
+    Ok(())
+}
+
+fn pairing_context(
+    home: &std::path::Path,
+    channel: &str,
+    account: &ChannelAccountId,
+) -> Result<(crate::channels::registry::ChannelRef, String)> {
+    anyhow::ensure!(
+        channel == "telegram",
+        "pairing supports only canonical `telegram`"
+    );
+    let pair = crate::config::load_runtime_config_pair_from_path(&home.join("freedom.yaml"))?;
+    let selected = pair
+        .authenticated_telegram_accounts()?
+        .into_iter()
+        .find(|item| item.channel_ref().account_id == *account)
+        .context("selected Telegram account is missing, legacy, inactive, or partial")?;
+    match selected.inbound_admission() {
+        crate::config::TelegramInboundAdmission::DmPairing {
+            channel_ref,
+            binding_tag,
+            ..
+        } => Ok((channel_ref.clone(), binding_tag.clone())),
+        crate::config::TelegramInboundAdmission::PinnedOperator { .. } => anyhow::bail!(
+            "selected Telegram account is pinned-only; explicitly enable DM pairing first"
+        ),
+    }
+}
+
+pub fn run_pairing_list(
+    channel: &str,
+    account: ChannelAccountId,
+    output: &OutputFormat,
+) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    let (reference, binding) = pairing_context(&home, channel, &account)?;
+    let rows = crate::channels::dm_pairing::DmPairingStore::open(&home)?.list(
+        &reference,
+        &binding,
+        crate::time::now_unix_i64(),
+    )?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({"channel":"telegram","account":account.as_str(),"pending":rows.iter().map(|r|serde_json::json!({"request_id":r.request_id,"created_at":r.created_at})).collect::<Vec<_>>() })
+        ),
+        OutputFormat::Table => {
+            for r in rows {
+                println!("{} {}", r.request_id, r.created_at)
+            }
+        }
+    };
+    Ok(())
+}
+pub fn run_pairing_approve(
+    channel: &str,
+    account: ChannelAccountId,
+    code: &str,
+    output: &OutputFormat,
+) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    let (reference, binding) = pairing_context(&home, channel, &account)?;
+    let row = crate::channels::dm_pairing::DmPairingStore::open(&home)?.approve(
+        &reference,
+        &binding,
+        code,
+        crate::time::now_unix_i64(),
+    )?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({"channel":"telegram","account":account.as_str(),"request_id":row.request_id,"approved":true})
+        ),
+        OutputFormat::Table => println!(
+            "approved pairing request {} for telegram/{}",
+            row.request_id,
+            account.as_str()
+        ),
+    };
+    Ok(())
+}
+pub fn run_pairing_dismiss(
+    channel: &str,
+    account: ChannelAccountId,
+    request_id: &str,
+    output: &OutputFormat,
+) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    let (reference, binding) = pairing_context(&home, channel, &account)?;
+    let dismissed = crate::channels::dm_pairing::DmPairingStore::open(&home)?.dismiss(
+        &reference,
+        &binding,
+        request_id,
+        crate::time::now_unix_i64(),
+    )?;
+    anyhow::ensure!(dismissed, "no current pairing request has that id");
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({"channel":"telegram","account":account.as_str(),"request_id":request_id,"dismissed":true})
+        ),
+        OutputFormat::Table => println!(
+            "dismissed pairing request {} for telegram/{}",
+            request_id,
+            account.as_str()
+        ),
+    };
+    Ok(())
+}
+
 async fn run_telegram_account_add_at(
     home: &std::path::Path,
     channel: &str,
@@ -4861,6 +5075,7 @@ mod tests {
                 ChannelAccountId::new(account).unwrap(),
                 TelegramAccountConfig {
                     allowed_user_id: sender,
+                    ..Default::default()
                 },
             );
         }
@@ -4889,6 +5104,7 @@ mod tests {
                 ChannelAccountId::new(account).unwrap(),
                 TelegramAccountConfig {
                     allowed_user_id: sender,
+                    ..Default::default()
                 },
             );
         }
@@ -4921,6 +5137,7 @@ mod tests {
                 account.clone(),
                 TelegramAccountConfig {
                     allowed_user_id: 11,
+                    ..Default::default()
                 },
             );
         }

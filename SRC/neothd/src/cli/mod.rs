@@ -1212,6 +1212,9 @@ pub enum ChannelAction {
     /// Add or replace one explicitly named Telegram account without inferring a default.
     #[command(subcommand)]
     Account(ChannelAccountAction),
+    /// Explicit local Telegram DM-pairing request administration.
+    #[command(subcommand)]
+    Pairing(ChannelPairingAction),
     /// Add a channel non-interactively (pass --token etc.) or interactively (stdin prompts).
     ///
     /// Pass at least the flags the channel requires to skip all prompts:
@@ -1347,6 +1350,37 @@ pub enum ChannelAccountAction {
         channel: String,
         #[arg(long)]
         account: crate::channels::registry::ChannelAccountId,
+    },
+    /// Explicitly enable or disable direct-message pairing on one mapped account.
+    SetDmPairing {
+        channel: String,
+        #[arg(long)]
+        account: crate::channels::registry::ChannelAccountId,
+        #[arg(long)]
+        enabled: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ChannelPairingAction {
+    List {
+        channel: String,
+        #[arg(long)]
+        account: crate::channels::registry::ChannelAccountId,
+    },
+    Approve {
+        channel: String,
+        #[arg(long)]
+        account: crate::channels::registry::ChannelAccountId,
+        #[arg(long)]
+        code: String,
+    },
+    Dismiss {
+        channel: String,
+        #[arg(long)]
+        account: crate::channels::registry::ChannelAccountId,
+        #[arg(long)]
+        request_id: String,
     },
 }
 
@@ -2111,6 +2145,27 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             }) => {
                 channel::run_account_set_credentials(&ch, account, &global_output).await?;
             }
+            ChannelAction::Account(ChannelAccountAction::SetDmPairing {
+                channel: ch,
+                account,
+                enabled,
+            }) => {
+                channel::run_account_set_dm_pairing(&ch, account, enabled, &global_output)?;
+            }
+            ChannelAction::Pairing(ChannelPairingAction::List {
+                channel: ch,
+                account,
+            }) => channel::run_pairing_list(&ch, account, &global_output)?,
+            ChannelAction::Pairing(ChannelPairingAction::Approve {
+                channel: ch,
+                account,
+                code,
+            }) => channel::run_pairing_approve(&ch, account, &code, &global_output)?,
+            ChannelAction::Pairing(ChannelPairingAction::Dismiss {
+                channel: ch,
+                account,
+                request_id,
+            }) => channel::run_pairing_dismiss(&ch, account, &request_id, &global_output)?,
             ChannelAction::List => channel::run_list(&global_output)?,
             ChannelAction::Test {
                 channel: ch,

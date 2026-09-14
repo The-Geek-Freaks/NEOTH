@@ -3,23 +3,16 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-14
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
-> **Waves 24–26 and 28 factory isolation, bounded updater, OpenClaw import, and
-> skill-route capture — LOCALLY VALIDATED 2026-09-14:** W21–23 base
-> `9dac2ee235690fa7c3c9a0e02cc5a60c53426a7c` has Preflight/Code Quality passes.
-> Its fullCI34787875712 terminally failed only on macOS103806563594: 16034 pass/
-> 2 fail/23 skip in the unchanged session-start-recall path; Windows/Linux pass.
-> W24 adds factory A/B isolation. W25's real lane/supervisor loopback admits only
-> control-originated typed cancellation as normal Cancel and keeps unexpected
-> cancellation fatal; R3-18B remains OPEN. W26 probes/rechecks an in-memory
-> selected OpenClaw account before prepared CAS commit and emits canonical
-> redacted custody reports without registry publication. W28 captures
-> `Arc<SkillBody>` and its resolved body/config through concurrent reload, so
-> P2-16 is COMPLETE. Final selection PASS1492/0/1/catalogue14415 in122.04s;
-> Build04 PASS4m15/min205.6GiB/peak10.7; CompoundClippy PASS5m08/min205.37/
-> peak9.72; contracts13 PASS157/build5m06/min206.53/peak8.27; custody108+21,
-> Python19/11/8/6/3, fmt/GUIlint/selftest and docgen pass. No native GUI, live
-> import, registry publication, or cross-platform claim. P1-16 OPEN; counts
-> 1324/1011/311/2 (313 raw; 312 pre-tag).
+> **Waves 29 and 31 mapped Telegram DM pairing and macOS-recall diagnosis —
+> LOCALLY VALIDATED 2026-09-14:** Fifteen source files/
+> 179 inputs/14 executables atop `d2ae7b4b`; Clippy08, TestBuild04,
+> selected741/0/0, 13 AccountConfigContracts157, fmt, docgen, final GUI check
+> and Python integrity checks pass. Pairing is explicit
+> mapped-account opt-in with private non-pinned requests, three-request cap,
+> one-hour expiry, A/B binding isolation, and visible receipt failure before chat
+> processing. W31 only diagnoses the two macOS recall assertions; no repair or
+> current-head GitHub CI is claimed. P1-16 and P1-17 OPEN; counts 1324/1011/311/2
+> (313 raw; 312 pre-tag).
 >
 > **Waves 21–23 named Telegram account onboarding and macOS SQLite-path repair —
 > LOCALLY VALIDATED 2026-09-14:** eleven frozen Rust/Slint source files build

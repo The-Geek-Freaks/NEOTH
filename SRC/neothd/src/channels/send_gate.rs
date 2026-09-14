@@ -294,10 +294,10 @@ pub(crate) async fn emit_account_bound_egress_result(
     provider_message_id: Option<&str>,
     ts_unix: u64,
     provenance: &crate::cli::serve_tasks::MappedTelegramLiveEgressProvenance,
-) {
+) -> std::result::Result<(), ()> {
     if provenance.channel_ref().channel_id != ChannelKind::Telegram {
         tracing::warn!("refusing account-bound egress result with non-Telegram provenance");
-        return;
+        return Err(());
     }
     let payload = serde_json::to_vec(&serde_json::json!({
         "intent_id": intent_id,
@@ -309,12 +309,16 @@ pub(crate) async fn emit_account_bound_egress_result(
     let header = crate::wal::HeaderBuilder::new(0x00, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::ChannelEgressResult as u8)
         .build();
-    if let Err(error) = writer.append_authenticated(header, payload).await {
-        tracing::warn!(
-            error = %error,
-            "authenticated WAL append CHANNEL_EGRESS_RESULT failed after bound egress"
-        );
-    }
+    writer
+        .append_authenticated(header, payload)
+        .await
+        .map(|_| ())
+        .map_err(|error| {
+            tracing::warn!(
+                error = %error,
+                "authenticated WAL append CHANNEL_EGRESS_RESULT failed after bound egress"
+            );
+        })
 }
 
 #[cfg(test)]
@@ -500,6 +504,43 @@ mod intent_tests {
             id.is_none(),
             "an unrecordable intent must not yield an id to send under"
         );
+    }
+
+    #[tokio::test]
+    async fn mapped_terminal_receipt_is_an_error_when_authenticated_markers_are_unavailable() {
+        let home = tempfile::tempdir().expect("create marker-disabled mapped-result home");
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).expect("create marker-disabled mapped-result WAL");
+        let segment = wal.join(format!(
+            "{}-{}-000001.wal",
+            uuid::Uuid::now_v7(),
+            crate::wal::writer::HMAC_ROTATION_SURFACE,
+        ));
+        let (writer, join) =
+            crate::wal::writer::spawn_hmac_rotation_for_home(segment, home.path().to_path_buf())
+                .expect("start live marker-disabled writer");
+        let bundle = crate::cli::serve_tasks::TelegramAccountBundle::for_test(
+            crate::channels::registry::ChannelRef::new(
+                ChannelKind::Telegram,
+                crate::channels::registry::ChannelAccountId::new("account_a").unwrap(),
+            ),
+            false,
+        );
+        assert!(
+            emit_account_bound_egress_result(
+                &writer,
+                "0123456789abcdef0123456789abcdef",
+                "delivered",
+                Some("provider-id"),
+                crate::time::now_unix_secs(),
+                &bundle.mapped_live_egress_provenance().unwrap(),
+            )
+            .await
+            .is_err(),
+            "a mapped terminal without its authenticated receipt must be visible to the caller"
+        );
+        drop(writer);
+        join.await.expect("marker-disabled writer task joins");
     }
 }
 

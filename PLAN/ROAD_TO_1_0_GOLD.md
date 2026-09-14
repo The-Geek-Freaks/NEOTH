@@ -8,28 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
-**Waves 24–26 and 28 factory isolation, bounded updater, OpenClaw import, and
-skill-route capture — LOCALLY VALIDATED (2026-09-14):** W21–23 base
-`9dac2ee235690fa7c3c9a0e02cc5a60c53426a7c` has exact-commit Preflight and Code
-Quality passes. Its full CI `34787875712` is terminal **FAILED** only on macOS:
-job `103806563594` has 16,034 pass / 2 fail / 23 skip in the unchanged
-session-start-recall path; Windows and Linux passed. W24 adds factory A/B
-isolation. W25 uses bounded updater outcomes: its real lane/supervisor loopback
-accepts only a control-originated typed cancel as normal Cancel and keeps
-unexpected cancellation fatal. R3-18B remains **OPEN** for separate runtime
-enforcement and process-containment work. W26 selects one OpenClaw source
-account, keeps the token in memory, probes/rechecks before prepared CAS commit,
-and emits canonical redacted custody reports without registry publication.
-W28 retains `Arc<SkillBody>` and the resolved body/config snapshot across real
-concurrent reload, so P2-16 is **COMPLETE**. Final selection is
-**1492/0/1** from catalogue14415 in122.04s; Build04 **PASS**4m15/min205.6GiB/
-peak10.7; Compound Clippy **PASS**5m08/min205.37GiB/peak9.72; 13 contracts
-**PASS**157/build5m06/min206.53GiB/peak8.27; custody108+21, Python19/11/8/6/3,
-fmt/GUI lint/self-test and docgen pass. The 176-input/16-executable receipts
-and binary are in `docs/gold-wave24-26-verification.md`. No native GUI, live
-import, registry publication, or cross-platform claim. P1-16 remains **OPEN**;
-counts are **1,011 complete / 311 open / 2 partial** (313 raw; 312 pre-tag
-blockers).
+**Waves 29 and 31 mapped Telegram DM pairing and macOS-recall diagnosis —
+LOCALLY VALIDATED (2026-09-14):** Fifteen admitted
+source files / 179 inputs / 14 executables atop published `d2ae7b4b`; Clippy08,
+TestBuild04, 741 selected tests, 13 AccountConfigContracts (157 tests), fmt,
+docgen, final GUI check, and Python integrity checks pass.
+Mapped pairing remains explicit per-account opt-in: private non-pinned requests
+only, maximum three, one-hour expiry, A/B binding isolation, and receipt failure
+before the chat pipeline. W31 only records diagnostics for the two macOS recall
+assertions; it claims no deadline change or fix. No current-head GitHub CI is
+claimed. P1-16 and P1-17 remain **OPEN**; counts are **1,324 total / 1,011
+complete / 311 open / 2 partial** (313 raw; 312 pre-tag blockers).
 
 **Waves 21–23 named Telegram account onboarding and macOS SQLite-path repair —
 LOCALLY VALIDATED (2026-09-14):** eleven frozen Rust/Slint source files build
