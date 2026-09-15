@@ -57,6 +57,29 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::mcp::client::{McpContent, McpTool, ToolAnnotations, ToolCallResult};
 use crate::mcp::config::McpServerConfig;
 
+pub(crate) const CODEGRAPH_CONTEXT_BINDING_META_KEY: &str = "io.neoth.codegraph.context_binding.v1";
+
+#[derive(Clone, Debug)]
+struct ContextBindingWitness {
+    root_identity: String,
+    index_generation: i64,
+    graph_generation: i64,
+}
+
+struct CodegraphToolResponse {
+    result: ToolCallResult,
+    witness: Option<ContextBindingWitness>,
+}
+
+impl CodegraphToolResponse {
+    fn plain(result: ToolCallResult) -> Self {
+        Self {
+            result,
+            witness: None,
+        }
+    }
+}
+
 fn open_code_map_read_only(path: &Path) -> Result<rusqlite::Connection> {
     let flags =
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
@@ -416,6 +439,10 @@ impl RequestedContextRuntime {
         Self(Some(policy))
     }
 
+    fn is_generated_requested_context(self) -> bool {
+        self.0.is_some()
+    }
+
     fn recall_limit(self, requested: u32) -> Result<usize> {
         if let Some(policy) = self.0 {
             anyhow::ensure!(
@@ -664,6 +691,10 @@ fn is_exact_generated_codegraph_base(cfg: &McpServerConfig) -> bool {
     is_generated_codegraph_identity(cfg) && parse_generated_codegraph_database(&cfg.args).is_some()
 }
 
+pub(crate) fn is_exact_generated_codegraph_base_for_direct_cli(cfg: &McpServerConfig) -> bool {
+    is_exact_generated_codegraph_base(cfg)
+}
+
 /// Read-only classification shared by Doctor and the W53 admission path. It
 /// never starts a child or opens SQLite; canonicalising an existing configured
 /// database only establishes whether W53 could select that exact descriptor.
@@ -768,31 +799,70 @@ fn dispatch_codegraph_tool_at_runtime(
     runtime: CodegraphImpactRuntime,
     requested_runtime: RequestedContextRuntime,
 ) -> ToolCallResult {
+    dispatch_codegraph_tool_at_runtime_with_binding(
+        db_path,
+        tool_name,
+        args,
+        cwd,
+        runtime,
+        requested_runtime,
+    )
+    .result
+}
+
+fn dispatch_codegraph_tool_at_runtime_with_binding(
+    db_path: &Path,
+    tool_name: &str,
+    args: &serde_json::Value,
+    cwd: &Path,
+    runtime: CodegraphImpactRuntime,
+    requested_runtime: RequestedContextRuntime,
+) -> CodegraphToolResponse {
     let result = match tool_name {
-        "codegraph_extract_identifiers" => tool_extract_identifiers(args),
-        "codegraph_path_keywords" => tool_path_keywords(args),
-        "codegraph_relevant_files" => {
-            tool_relevant_files(db_path, args, cwd, false, requested_runtime)
+        "codegraph_extract_identifiers" => {
+            CodegraphToolResponse::plain(tool_extract_identifiers(args))
         }
-        "codegraph_recall_v1" => tool_relevant_files(db_path, args, cwd, true, requested_runtime),
-        "codegraph_callers" => tool_callers(db_path, args, cwd, requested_runtime),
-        "codegraph_callees" => tool_callees(db_path, args, cwd, requested_runtime),
-        "codegraph_impact_radius" => tool_impact_radius(db_path, args, cwd, runtime),
-        "codegraph_diff_impact" => tool_diff_impact(db_path, args, cwd, runtime),
-        "codegraph_diff_test_gaps" => tool_diff_test_gaps(db_path, args, cwd, runtime),
-        "codegraph_outline" => tool_outline(db_path, args, cwd),
-        other => error_result(format!(
+        "codegraph_path_keywords" => CodegraphToolResponse::plain(tool_path_keywords(args)),
+        "codegraph_relevant_files" => {
+            tool_relevant_files_with_binding(db_path, args, cwd, false, requested_runtime)
+        }
+        "codegraph_recall_v1" => {
+            tool_relevant_files_with_binding(db_path, args, cwd, true, requested_runtime)
+        }
+        "codegraph_callers" => tool_callers_with_binding(db_path, args, cwd, requested_runtime),
+        "codegraph_callees" => tool_callees_with_binding(db_path, args, cwd, requested_runtime),
+        "codegraph_impact_radius" => {
+            CodegraphToolResponse::plain(tool_impact_radius(db_path, args, cwd, runtime))
+        }
+        "codegraph_diff_impact" => {
+            CodegraphToolResponse::plain(tool_diff_impact(db_path, args, cwd, runtime))
+        }
+        "codegraph_diff_test_gaps" => {
+            CodegraphToolResponse::plain(tool_diff_test_gaps(db_path, args, cwd, runtime))
+        }
+        "codegraph_outline" => CodegraphToolResponse::plain(tool_outline(db_path, args, cwd)),
+        other => CodegraphToolResponse::plain(error_result(format!(
             "unknown codegraph tool `{other}` (known: {})",
             TOOL_NAMES.join(", "),
-        )),
+        ))),
     };
-    match tool_name {
+    let result = match tool_name {
         "codegraph_relevant_files"
         | "codegraph_recall_v1"
         | "codegraph_callers"
-        | "codegraph_callees" => requested_runtime.bound_result(result),
+        | "codegraph_callees" => {
+            let CodegraphToolResponse { result, witness } = result;
+            CodegraphToolResponse {
+                result: requested_runtime.bound_result(result),
+                witness,
+            }
+        }
         _ => result,
+    };
+    if !requested_runtime.is_generated_requested_context() || result.result.is_error {
+        return CodegraphToolResponse::plain(result.result);
     }
+    result
 }
 
 #[derive(Deserialize)]
@@ -835,23 +905,23 @@ fn tool_path_keywords(args: &serde_json::Value) -> ToolCallResult {
     )
 }
 
-fn tool_relevant_files(
+fn tool_relevant_files_with_binding(
     db_path: &Path,
     args: &serde_json::Value,
     cwd: &Path,
     versioned: bool,
     runtime: RequestedContextRuntime,
-) -> ToolCallResult {
+) -> CodegraphToolResponse {
     let parsed: RelevantFilesArgs = match serde_json::from_value(args.clone()) {
         Ok(p) => p,
-        Err(e) => return error_result(format!("bad args: {e}")),
+        Err(e) => return CodegraphToolResponse::plain(error_result(format!("bad args: {e}"))),
     };
     let limit = match runtime.recall_limit(parsed.limit) {
         Ok(limit) => limit,
         Err(error) => {
-            return error_result(format!(
+            return CodegraphToolResponse::plain(error_result(format!(
                 "codegraph recall rejected before DB access: {error:#}"
-            ));
+            )));
         }
     };
     match recall_v1_inner(db_path, &parsed.prompt, limit, cwd) {
@@ -862,16 +932,28 @@ fn tool_relevant_files(
                 legacy_relevant_files_json(&envelope)
             };
             match payload {
-                Ok(payload) => text_result(payload),
-                Err(error) if versioned => {
-                    error_result(format!("serialize codegraph_recall_v1 result: {error:#}"))
-                }
-                Err(error) => error_result(format!(
+                Ok(payload) => CodegraphToolResponse {
+                    result: text_result(payload),
+                    witness: envelope
+                        .receipt
+                        .as_ref()
+                        .map(|receipt| ContextBindingWitness {
+                            root_identity: receipt.root_identity.clone(),
+                            index_generation: receipt.index_generation,
+                            graph_generation: receipt.graph_generation,
+                        }),
+                },
+                Err(error) if versioned => CodegraphToolResponse::plain(error_result(format!(
+                    "serialize codegraph_recall_v1 result: {error:#}"
+                ))),
+                Err(error) => CodegraphToolResponse::plain(error_result(format!(
                     "codegraph_relevant_files refused unsafe legacy result: {error:#}"
-                )),
+                ))),
             }
         }
-        Err(e) => error_result(format!("relevant_files failed: {e:#}")),
+        Err(e) => {
+            CodegraphToolResponse::plain(error_result(format!("relevant_files failed: {e:#}")))
+        }
     }
 }
 
@@ -1316,8 +1398,16 @@ fn validate_stored_graph_snapshot(
 /// Missing or unmapped state is an explicit error, distinct from a certified
 /// snapshot that legitimately contains zero edges. Corrupt, partial, stale or
 /// over-budget snapshots also fail closed.
+#[cfg(test)]
 fn graph_from_db(db_path: &Path, cwd: &Path) -> Result<crate::code_map::graph::CallGraph> {
-    graph_from_db_with_limits(
+    Ok(graph_from_db_with_snapshot(db_path, cwd)?.0)
+}
+
+fn graph_from_db_with_snapshot(
+    db_path: &Path,
+    cwd: &Path,
+) -> Result<(crate::code_map::graph::CallGraph, ContextBindingWitness)> {
+    graph_from_db_with_limits_and_snapshot(
         db_path,
         cwd,
         CALL_GRAPH_EDGE_LIMIT,
@@ -1325,12 +1415,22 @@ fn graph_from_db(db_path: &Path, cwd: &Path) -> Result<crate::code_map::graph::C
     )
 }
 
+#[cfg(test)]
 fn graph_from_db_with_limits(
     db_path: &Path,
     cwd: &Path,
     edge_limit: usize,
     edge_text_byte_limit: usize,
 ) -> Result<crate::code_map::graph::CallGraph> {
+    Ok(graph_from_db_with_limits_and_snapshot(db_path, cwd, edge_limit, edge_text_byte_limit)?.0)
+}
+
+fn graph_from_db_with_limits_and_snapshot(
+    db_path: &Path,
+    cwd: &Path,
+    edge_limit: usize,
+    edge_text_byte_limit: usize,
+) -> Result<(crate::code_map::graph::CallGraph, ContextBindingWitness)> {
     if !db_path
         .try_exists()
         .with_context(|| format!("inspect code-map DB path {}", db_path.display()))?
@@ -1409,63 +1509,88 @@ fn graph_from_db_with_limits(
         final_active.as_ref() == Some(&expected),
         "active code-map root or generation changed during call-graph materialization; retry"
     );
-    Ok(crate::code_map::graph::CallGraph::from_edges(edges))
+    Ok((
+        crate::code_map::graph::CallGraph::from_edges(edges),
+        ContextBindingWitness {
+            root_identity: expected.root.identity().as_str().to_owned(),
+            index_generation: expected.index_generation,
+            graph_generation: expected.graph_generation,
+        },
+    ))
 }
 
-fn tool_callers(
+fn tool_callers_with_binding(
     db_path: &Path,
     args: &serde_json::Value,
     cwd: &Path,
     runtime: RequestedContextRuntime,
-) -> ToolCallResult {
+) -> CodegraphToolResponse {
     let parsed: CallersArgs = match serde_json::from_value(args.clone()) {
         Ok(p) => p,
-        Err(e) => return error_result(format!("bad args: {e}")),
+        Err(e) => return CodegraphToolResponse::plain(error_result(format!("bad args: {e}"))),
     };
     let depth = match runtime.bfs_depth(parsed.depth) {
         Ok(depth) => depth,
         Err(error) => {
-            return error_result(format!(
+            return CodegraphToolResponse::plain(error_result(format!(
                 "codegraph callers rejected before DB access: {error:#}"
-            ));
+            )));
         }
     };
-    let graph = match graph_from_db(db_path, cwd) {
+    let (graph, witness) = match graph_from_db_with_snapshot(db_path, cwd) {
         Ok(g) => g,
-        Err(e) => return error_result(format!("codegraph_callers failed: {e:#}")),
+        Err(e) => {
+            return CodegraphToolResponse::plain(error_result(format!(
+                "codegraph_callers failed: {e:#}"
+            )));
+        }
     };
     match callers_inner_with_requested_budget(&graph, &parsed.symbol, depth, runtime) {
-        Ok(payload) => text_result(payload),
-        Err(error) => error_result(format!("codegraph callers bounded result: {error:#}")),
+        Ok(payload) => CodegraphToolResponse {
+            result: text_result(payload),
+            witness: Some(witness),
+        },
+        Err(error) => CodegraphToolResponse::plain(error_result(format!(
+            "codegraph callers bounded result: {error:#}"
+        ))),
     }
 }
 
-fn tool_callees(
+fn tool_callees_with_binding(
     db_path: &Path,
     args: &serde_json::Value,
     cwd: &Path,
     runtime: RequestedContextRuntime,
-) -> ToolCallResult {
+) -> CodegraphToolResponse {
     let parsed: CalleesArgs = match serde_json::from_value(args.clone()) {
         Ok(p) => p,
-        Err(e) => return error_result(format!("bad args: {e}")),
+        Err(e) => return CodegraphToolResponse::plain(error_result(format!("bad args: {e}"))),
     };
     let depth = match runtime.bfs_depth(parsed.depth) {
         Ok(depth) => depth,
         Err(error) => {
-            return error_result(format!(
+            return CodegraphToolResponse::plain(error_result(format!(
                 "codegraph callees rejected before DB access: {error:#}"
-            ));
+            )));
         }
     };
-    let graph = match graph_from_db(db_path, cwd) {
+    let (graph, witness) = match graph_from_db_with_snapshot(db_path, cwd) {
         Ok(g) => g,
-        Err(e) => return error_result(format!("codegraph_callees failed: {e:#}")),
+        Err(e) => {
+            return CodegraphToolResponse::plain(error_result(format!(
+                "codegraph_callees failed: {e:#}"
+            )));
+        }
     };
     match callees_inner_with_requested_budget(&graph, &parsed.file, &parsed.symbol, depth, runtime)
     {
-        Ok(payload) => text_result(payload),
-        Err(error) => error_result(format!("codegraph callees bounded result: {error:#}")),
+        Ok(payload) => CodegraphToolResponse {
+            result: text_result(payload),
+            witness: Some(witness),
+        },
+        Err(error) => CodegraphToolResponse::plain(error_result(format!(
+            "codegraph callees bounded result: {error:#}"
+        ))),
     }
 }
 
@@ -2517,13 +2642,17 @@ fn handle_stdio_message_with_runtimes(
                 "name": name,
                 "arguments": arguments.clone(),
             }));
+            let response = dispatch_codegraph_tool_at_runtime_with_binding(
+                db_path,
+                name,
+                &arguments,
+                &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+                runtime,
+                requested_runtime,
+            );
             Some(rpc_result(
                 id,
-                serde_json::to_value(dispatch_codegraph_tool_at_with_runtimes(
-                    db_path, name, &arguments,
-                    &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-                    runtime, requested_runtime,
-                ))
+                codegraph_response_with_context_meta(name, response)
                     .unwrap_or_else(|error| {
                         serde_json::json!({
                             "content": [{"type": "text", "text": format!("result serialisation failed: {error}")}],
@@ -2534,6 +2663,105 @@ fn handle_stdio_message_with_runtimes(
         }
         _ => Some(rpc_error(id, -32601, "Method not found", None)),
     }
+}
+
+fn codegraph_response_with_context_meta(
+    tool: &str,
+    response: CodegraphToolResponse,
+) -> Result<serde_json::Value> {
+    let mut value = serde_json::to_value(&response.result)?;
+    let Some(witness) = response.witness else {
+        return Ok(value);
+    };
+    anyhow::ensure!(
+        !response.result.is_error
+            && witness.index_generation > 0
+            && witness.index_generation == witness.graph_generation,
+        "refuse codegraph provenance for an uncertified result"
+    );
+    let projection = crate::mcp::client::tool_call_result_projection(&response.result);
+    let projection = serde_json::to_vec(&projection)?;
+    let root_identity_sha256 = hex::encode(Sha256::digest(witness.root_identity.as_bytes()));
+    value["_meta"] = serde_json::json!({
+        CODEGRAPH_CONTEXT_BINDING_META_KEY: {
+            "schema": "io.neoth.codegraph.context_binding.v1",
+            "tool": tool,
+            "root_identity_sha256": root_identity_sha256,
+            "index_generation": witness.index_generation,
+            "graph_generation": witness.graph_generation,
+            "public_result_sha256": hex::encode(Sha256::digest(&projection)),
+            "public_result_bytes": projection.len(),
+        }
+    });
+    Ok(value)
+}
+
+pub(crate) fn validate_codegraph_context_binding_metadata(
+    tool: &str,
+    result: &ToolCallResult,
+    meta: Option<&serde_json::Value>,
+) -> Result<()> {
+    let binding = meta
+        .and_then(|meta| meta.get(CODEGRAPH_CONTEXT_BINDING_META_KEY))
+        .and_then(serde_json::Value::as_object)
+        .context("missing codegraph context-binding metadata")?;
+    const BINDING_KEYS: &[&str] = &[
+        "schema",
+        "tool",
+        "root_identity_sha256",
+        "index_generation",
+        "graph_generation",
+        "public_result_sha256",
+        "public_result_bytes",
+    ];
+    anyhow::ensure!(
+        binding.len() == BINDING_KEYS.len()
+            && BINDING_KEYS.iter().all(|key| binding.contains_key(*key)),
+        "unexpected codegraph context-binding metadata fields"
+    );
+    let string = |key: &str| binding.get(key).and_then(serde_json::Value::as_str);
+    anyhow::ensure!(
+        string("schema") == Some("io.neoth.codegraph.context_binding.v1"),
+        "invalid codegraph context-binding schema"
+    );
+    anyhow::ensure!(
+        string("tool") == Some(tool),
+        "codegraph context-binding tool mismatch"
+    );
+    let root = string("root_identity_sha256").context("missing root identity commitment")?;
+    anyhow::ensure!(
+        root.len() == 64
+            && root
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "invalid root identity commitment"
+    );
+    let index = binding
+        .get("index_generation")
+        .and_then(serde_json::Value::as_i64)
+        .context("missing index generation")?;
+    let graph = binding
+        .get("graph_generation")
+        .and_then(serde_json::Value::as_i64)
+        .context("missing graph generation")?;
+    anyhow::ensure!(index > 0 && index == graph, "invalid codegraph generations");
+    let projection = serde_json::to_vec(&crate::mcp::client::tool_call_result_projection(result))?;
+    anyhow::ensure!(
+        binding
+            .get("public_result_bytes")
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|bytes| {
+                bytes <= crate::mcp::transport::MAX_MCP_FRAME_BYTES as u64
+                    && bytes == projection.len() as u64
+            }),
+        "codegraph public-result byte count mismatch"
+    );
+    let expected_digest = hex::encode(Sha256::digest(&projection));
+    anyhow::ensure!(
+        string("public_result_sha256") == Some(expected_digest.as_str()),
+        "codegraph public-result digest mismatch"
+    );
+    Ok(())
 }
 
 fn rpc_result(id: serde_json::Value, result: serde_json::Value) -> serde_json::Value {
@@ -4155,6 +4383,114 @@ fn root() { alpha(); beta(); }
         assert!(
             !unrequested.is_error,
             "requested policy must not cap extract-identifiers"
+        );
+    }
+
+    #[test]
+    fn w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results() {
+        // The stdio handler deliberately resolves its repository from the
+        // process CWD. Keep this scoped process-global mutation serialized and
+        // restore it before the temporary repository is dropped.
+        let _environment = crate::test_env::lock();
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("code_map.db");
+        let repo = dir.path().join("repo");
+        seed_code_map_db(&db, &repo);
+        let prior_cwd = std::env::current_dir().unwrap();
+        struct RestoreCwd(std::path::PathBuf);
+        impl Drop for RestoreCwd {
+            fn drop(&mut self) {
+                std::env::set_current_dir(&self.0).expect("restore W61 fixture CWD");
+            }
+        }
+        std::env::set_current_dir(&repo).unwrap();
+        let _restore_cwd = RestoreCwd(prior_cwd);
+        let runtime = RequestedContextRuntime::from_policy(w59_requested_policy());
+        let calls = [
+            (
+                "codegraph_recall_v1",
+                serde_json::json!({"prompt":"absent_symbol","limit":1}),
+            ),
+            (
+                "codegraph_relevant_files",
+                serde_json::json!({"prompt":"absent_symbol","limit":1}),
+            ),
+            (
+                "codegraph_callers",
+                serde_json::json!({"symbol":"root","depth":1}),
+            ),
+            (
+                "codegraph_callees",
+                serde_json::json!({"file":"x.rs","symbol":"leaf","depth":1}),
+            ),
+        ];
+        for (index, (tool, arguments)) in calls.into_iter().enumerate() {
+            let mut session = StdioSession {
+                initialize_seen: true,
+                ready: true,
+            };
+            let request = serde_json::to_vec(&serde_json::json!({
+                "jsonrpc":"2.0", "id":index, "method":"tools/call",
+                "params":{"name":tool,"arguments":arguments}
+            }))
+            .unwrap();
+            let response = handle_stdio_message_with_runtimes(
+                &db,
+                &request,
+                &mut session,
+                CodegraphImpactRuntime::static_defaults(),
+                runtime,
+            )
+            .unwrap();
+            let result: ToolCallResult =
+                serde_json::from_value(response["result"].clone()).unwrap();
+            assert!(!result.is_error, "{tool}: {result:?}");
+            let inner: serde_json::Value = serde_json::from_str(&text_content(&result))
+                .expect("the established public text payload remains JSON");
+            match tool {
+                "codegraph_recall_v1" => assert!(
+                    inner.is_object(),
+                    "recall remains its versioned object envelope"
+                ),
+                "codegraph_relevant_files" | "codegraph_callers" | "codegraph_callees" => {
+                    assert!(
+                        inner.is_array(),
+                        "{tool} remains its legacy JSON array shape"
+                    );
+                }
+                _ => unreachable!("the fixture is intentionally limited to the four bound tools"),
+            }
+            let meta = response["result"].get("_meta").cloned();
+            validate_codegraph_context_binding_metadata(tool, &result, meta.as_ref()).unwrap();
+            let binding = meta.unwrap()[CODEGRAPH_CONTEXT_BINDING_META_KEY].clone();
+            assert_eq!(binding["index_generation"], binding["graph_generation"]);
+            assert!(binding["index_generation"].as_i64().unwrap() > 0);
+        }
+    }
+
+    #[test]
+    fn w61_context_binding_rejects_unknown_own_fields_but_does_not_constrain_other_meta_namespaces()
+    {
+        let result = text_result("[]".into());
+        let projection =
+            serde_json::to_vec(&crate::mcp::client::tool_call_result_projection(&result)).unwrap();
+        let own = serde_json::json!({
+            "schema":"io.neoth.codegraph.context_binding.v1", "tool":"codegraph_callers",
+            "root_identity_sha256":"a".repeat(64), "index_generation":1, "graph_generation":1,
+            "public_result_sha256":hex::encode(Sha256::digest(&projection)), "public_result_bytes":projection.len(),
+        });
+        let meta = serde_json::json!({CODEGRAPH_CONTEXT_BINDING_META_KEY: own, "com.example.other": {"opaque": true}});
+        validate_codegraph_context_binding_metadata("codegraph_callers", &result, Some(&meta))
+            .unwrap();
+        let mut malformed = meta;
+        malformed[CODEGRAPH_CONTEXT_BINDING_META_KEY]["root"] = serde_json::json!("C:/private");
+        assert!(
+            validate_codegraph_context_binding_metadata(
+                "codegraph_callers",
+                &result,
+                Some(&malformed)
+            )
+            .is_err()
         );
     }
 

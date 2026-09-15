@@ -34,7 +34,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use xxhash_rust::xxh3::xxh3_64;
 
-use crate::mcp::client::{McpClient, McpError, McpTool, ToolCallResult};
+use crate::mcp::client::{DecodedToolCallResponse, McpClient, McpError, McpTool, ToolCallResult};
 use crate::mcp::config::McpServerConfig;
 use crate::mcp::sanitizer::{
     SanitizerVerdict, sanitize_description, sanitize_schema_descriptions, sanitize_tool_name,
@@ -59,6 +59,11 @@ pub(crate) enum McpAuditSink<'a> {
     DaemonRpc(&'a std::path::Path),
     #[cfg(test)]
     Fail(&'static str),
+    /// Test-only final receipt failure: ordinary permission and MCP evidence
+    /// still reaches the owned writer, while only the W61 prepared-result
+    /// append is refused. This is deliberately not a production sink.
+    #[cfg(test)]
+    WriterFailFinal(&'a WalWriterHandle, &'static str),
 }
 
 impl<'a> McpAuditSink<'a> {
@@ -87,6 +92,8 @@ impl<'a> McpAuditSink<'a> {
             Self::DaemonRpc(home) => PermissionAuditSink::DaemonRpc(home),
             #[cfg(test)]
             Self::Fail(message) => PermissionAuditSink::Fail(message),
+            #[cfg(test)]
+            Self::WriterFailFinal(writer, _) => PermissionAuditSink::Writer(writer),
         }
     }
 
@@ -108,7 +115,51 @@ impl<'a> McpAuditSink<'a> {
             }
             #[cfg(test)]
             Self::Fail(message) => anyhow::bail!(message),
+            #[cfg(test)]
+            Self::WriterFailFinal(writer, _) => {
+                let header = HeaderBuilder::new(event_type, &payload).build();
+                writer
+                    .append(header, payload)
+                    .await
+                    .context("append MCP audit frame")
+                    .map(|_| ())
+            }
         }
+    }
+}
+
+/// Reuse the active RequiredPermissionAudit lifecycle for a final code-map
+/// result preparation claim. The payload is metadata-only and this is not a
+/// delivery acknowledgement.
+pub(crate) async fn append_final_tool_result_prepared(
+    sink: McpAuditSink<'_>,
+    payload: Vec<u8>,
+) -> Result<(), GateError> {
+    let header = HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8)
+        .build();
+    match sink {
+        McpAuditSink::None => Ok(()),
+        McpAuditSink::Writer(writer) => writer
+            .append(header, payload)
+            .await
+            .context("append final codegraph tool result audit")
+            .map(|_| ())
+            .map_err(GateError::Wal),
+        McpAuditSink::DaemonRpc(home) => {
+            crate::daemon::audit_rpc::try_post_audit_frame_with_subtype(
+                home,
+                crate::wal::events::EVENT_TYPE_EXTENDED,
+                crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8,
+                &payload,
+            )
+            .await
+            .map_err(|error| GateError::Wal(anyhow::anyhow!(error)))
+        }
+        #[cfg(test)]
+        McpAuditSink::Fail(message) => Err(GateError::Wal(anyhow::anyhow!(message))),
+        #[cfg(test)]
+        McpAuditSink::WriterFailFinal(_, message) => Err(GateError::Wal(anyhow::anyhow!(message))),
     }
 }
 
@@ -797,14 +848,17 @@ pub(crate) async fn invoke_authorized_with_audit_effect_gate(
         Some(&request_binding_sha256),
         effect_gate,
         pre_tool_use,
+        false,
     )
     .await
+    .map(|response| response.result)
 }
 
 /// Invoke a proof on its one audit destination. A CLI supplies the same
 /// pre-spawn binding used by authorization; any argument/tool drift is denied
 /// before the MCP client can touch the wire.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) async fn invoke_authorized_with_audit_sink(
     client: &mut McpClient,
     cfg: &McpServerConfig,
@@ -829,6 +883,41 @@ pub(crate) async fn invoke_authorized_with_audit_sink(
         request_binding_sha256,
         None,
         pre_tool_use,
+        false,
+    )
+    .await
+    .map(|response| response.result)
+}
+
+/// Direct CLI-only form. It follows the exact legacy gate path, but preserves
+/// optional raw result metadata so the caller can make an honest local receipt.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn invoke_authorized_with_audit_sink_decoded(
+    client: &mut McpClient,
+    cfg: &McpServerConfig,
+    tool: &str,
+    arguments: Value,
+    authorized: AuthorizedMcpInvocation,
+    sink: McpAuditSink<'_>,
+    rollback_policy: Option<&crate::config::RollbackConfig>,
+    now_unix: i64,
+    request_binding_sha256: Option<&str>,
+    pre_tool_use: AdmittedPreToolUse,
+    require_context_binding: bool,
+) -> Result<DecodedToolCallResponse, GateError> {
+    invoke_authorized_with_audit_sink_effect_gate(
+        client,
+        cfg,
+        tool,
+        arguments,
+        authorized,
+        sink,
+        rollback_policy,
+        now_unix,
+        request_binding_sha256,
+        None,
+        pre_tool_use,
+        require_context_binding,
     )
     .await
 }
@@ -846,7 +935,8 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
     request_binding_sha256: Option<&str>,
     effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
     pre_tool_use: AdmittedPreToolUse,
-) -> Result<ToolCallResult, GateError> {
+    require_context_binding: bool,
+) -> Result<DecodedToolCallResponse, GateError> {
     if !authorized.matches(cfg, tool, request_binding_sha256) {
         return Err(GateError::PermissionDenied {
             server: cfg.id.clone(),
@@ -897,7 +987,7 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
         ..
     } = pre_tool_use;
 
-    let mut result = call_tool_with_success_audit(
+    let mut response = call_tool_with_success_audit(
         client,
         cfg,
         tool,
@@ -907,21 +997,28 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
         now_unix,
         effect_gate,
         authorized.request_binding_sha256.as_deref(),
+        require_context_binding,
     )
     .await?;
-    if !result.is_error
+    if !response.result.is_error
         && let Some(enrichment) = builtin_outline_plan.and_then(|plan| plan.still_fresh())
     {
-        result.content.push(crate::mcp::client::McpContent::Text {
-            text: enrichment.as_str().to_owned(),
-        });
+        response
+            .result
+            .content
+            .push(crate::mcp::client::McpContent::Text {
+                text: enrichment.as_str().to_owned(),
+            });
     }
     if let Some(enrichment) = enrichment {
-        result.content.push(crate::mcp::client::McpContent::Text {
-            text: enrichment.as_str().to_owned(),
-        });
+        response
+            .result
+            .content
+            .push(crate::mcp::client::McpContent::Text {
+                text: enrichment.as_str().to_owned(),
+            });
     }
-    Ok(result)
+    Ok(response)
 }
 
 /// Test-only default-off wrapper for admission fixtures that do not exercise
@@ -1071,9 +1168,10 @@ async fn call_tool_with_success_audit(
     now_unix: i64,
     effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
     request_binding_sha256: Option<&str>,
-) -> Result<ToolCallResult, GateError> {
-    let mut result = client
-        .call_tool_with_effect(
+    require_context_binding: bool,
+) -> Result<DecodedToolCallResponse, GateError> {
+    let mut response = client
+        .call_tool_with_effect_and_meta(
             tool,
             arguments,
             effect_gate.as_ref(),
@@ -1081,7 +1179,8 @@ async fn call_tool_with_success_audit(
         )
         .await?;
     if sink.is_present() {
-        let content_bytes: usize = result
+        let content_bytes: usize = response
+            .raw_result
             .content
             .iter()
             .map(|content| match content {
@@ -1096,18 +1195,26 @@ async fn call_tool_with_success_audit(
             tool,
             arguments_hash,
             content_bytes,
-            result.is_error,
+            response.raw_result.is_error,
             now_unix,
         )
         .await
         .map_err(GateError::Wal)?;
     }
+    if require_context_binding && !response.raw_result.is_error {
+        crate::mcp::codegraph_server::validate_codegraph_context_binding_metadata(
+            tool,
+            &response.raw_result,
+            response.meta.as_ref(),
+        )
+        .map_err(|error| GateError::Mcp(McpError::Protocol(cfg.id.clone(), error.to_string())))?;
+    }
     // GOLD-LF-P1-03 — the C0 audit above deliberately measures the raw wire
     // response while persisting metadata only. Sanitize immediately after that
     // accounting boundary and before the typed result can reach CLI rendering,
     // elicitation, TokenJuice, untrusted wrapping, prompt assembly, or CCR.
-    result.sanitize_external_output();
-    Ok(result)
+    response.result.sanitize_external_output();
+    Ok(response)
 }
 
 #[derive(Serialize)]
@@ -1355,6 +1462,12 @@ async fn record_trust_decision(
         }
         #[cfg(test)]
         McpAuditSink::Fail(message) => Err(GateError::Wal(anyhow::anyhow!(message))),
+        #[cfg(test)]
+        McpAuditSink::WriterFailFinal(writer, _) => {
+            crate::permissions::trust_ledger::append_resolved_decision_to_writer(writer, resolved)
+                .await
+                .map_err(GateError::Wal)
+        }
     }
 }
 
@@ -2208,6 +2321,52 @@ mod tests {
             found,
             "a RISK_GATE_ALLOWED_BY_READONLY_CACHE frame must be present"
         );
+    }
+
+    #[tokio::test]
+    async fn w61_called_audit_precedes_invalid_direct_context_metadata() {
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(wal.join("000001.wal"), home.path().to_path_buf())
+                .unwrap();
+        let counter = home.path().join("tools-call-count.txt");
+        let cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        let mut client = McpClient::spawn(&cfg).await.unwrap();
+        let error = call_tool_with_success_audit(
+            &mut client,
+            &cfg,
+            "read",
+            serde_json::json!({"fixture":true}),
+            "0000000000000001",
+            McpAuditSink::Writer(&writer),
+            1,
+            None,
+            Some("binding"),
+            true,
+        )
+        .await
+        .expect_err(
+            "a successful raw result without the exact binding must fail before consumer delivery",
+        );
+        assert!(matches!(error, GateError::Mcp(McpError::Protocol(_, _))));
+        drop(writer);
+        join.await.unwrap();
+        let mut called = 0;
+        crate::wal::scan::for_each_frame_at_home(
+            home.path(),
+            crate::wal::scan::supported_home_scan_limits(),
+            |_, frame| {
+                if frame.header.event_type == EVENT_TYPE_MCP_TOOL_CALLED {
+                    called += 1;
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(called, 1, "the tool effect audit survives invalid metadata");
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
     }
 
     #[tokio::test]

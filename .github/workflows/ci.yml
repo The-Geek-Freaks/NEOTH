@@ -180,14 +180,16 @@ jobs:
           toolchain: '1.91.0'
           components: rustfmt, clippy
 
-      - name: Install Linux build deps (fontconfig + X11)
+      - name: Install Linux build deps (fontconfig + X11 + Xvfb)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libfontconfig1-dev \
             libx11-dev \
             libxcb1-dev \
-            libxkbcommon-dev
+            libxkbcommon-dev \
+            xauth \
+            xvfb
 
       - name: Cache Cargo registry + target
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -262,7 +264,7 @@ jobs:
           CARGO_BUILD_JOBS: 1
         run: |
           rm -f target/nextest/ci/junit.xml
-          cargo nextest run --workspace --locked --profile ci
+          xvfb-run --auto-servernum cargo nextest run --workspace --locked --profile ci
 
       - name: Upload Linux JUnit report
         if: always()

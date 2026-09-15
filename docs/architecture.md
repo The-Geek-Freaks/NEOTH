@@ -277,6 +277,32 @@ its snapshot. The four requested-context tools retain their public success
 schemas and original request JSON. CLI inspection identifies its locally validated
 configuration and does not label it as a daemon snapshot.
 
+For direct generated codegraph calls, the MCP child supplies a bounded witness
+for its selected root and snapshot generations. The parent preserves the raw
+child commitment and separately digests the sanitized public result projection.
+After the existing called audit, only a successful generated call with validated
+metadata can append `final_tool_result_prepared` before return. Missing or
+malformed metadata, mismatched generations and child errors cannot create that
+receipt; non-generated calls retain their existing result behavior. The audit
+RPC accepts only the narrow observational metadata contract. This records a
+prepared tool result, not provider completion or external delivery.
+
+Coding workers consume the immutable prepared code-map context owned by their
+request. Re-sanitization and a fixed byte ceiling apply before either provider
+call. The optional selector stays context-free; the task envelope receives the
+required `worker_code_map_context` field. Missing context produces an explicit
+empty field, and an expanded-over-cap value prevents selector and task dispatch
+without another database lookup or root acquisition.
+
+Dispatch-loop and utility-provider compaction wrap complete older-history data
+with the canonical `UntrustedContext::ModelOutput` renderer. Neither silently
+truncates a history payload to fit the class ceiling. Dispatch-loop compaction
+also sizes UTF-8 chunks against the fully escaped request capacity and refuses
+excess fan-out before its first affected call. Utility-provider compaction
+retains its existing threshold, identifier keep-verbatim guard, authorization,
+fallback and tail assembly; an over-class-cap old zone fails before utility and
+main dispatch. These changes add no new compaction receipt or delivery claim.
+
 ## WAL source of truth
 
 The WAL is the durable event chain under NEOTH. Views can be rebuilt; the WAL is authoritative.

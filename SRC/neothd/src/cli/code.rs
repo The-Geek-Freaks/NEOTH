@@ -1084,7 +1084,12 @@ async fn build_worker_set(
                         default_model,
                         "coding.worker",
                     ));
-                let worker = ProviderWorker::new(label, provider, model_name, patch_root.clone());
+                // `--run-pending` resumes persisted tasks without a fresh
+                // `CodingStartRequest` or its already-prepared code-map
+                // snapshot.  Preserve that legacy no-context path; it must
+                // not reacquire a root, CWD, or code-map data here.
+                let worker =
+                    ProviderWorker::new(label, provider, model_name, None, patch_root.clone());
                 workers.bind(hemi, Box::new(worker));
                 println!("dispatch: {hemi:?} bound to {label}", hemi = hemi.as_str());
             }

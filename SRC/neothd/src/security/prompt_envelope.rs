@@ -36,6 +36,10 @@ pub(crate) const MAX_WORKER_ROLE_BYTES: usize = 4 * 1024;
 pub(crate) const MAX_WORKER_IDENTIFIER_BYTES: usize = 256;
 pub(crate) const MAX_WORKER_ASSIGNED_WORKER_BYTES: usize = 4 * 1024;
 pub(crate) const MAX_WORKER_TOOL_HINT_BYTES: usize = 16 * 1024;
+/// A task worker receives only the immutable, service-prepared code-map
+/// context selected for its coding run.  Keep this no larger than the matching
+/// decomposer field: neither consumer may expand the prepared snapshot.
+pub(crate) const MAX_WORKER_CODE_MAP_CONTEXT_BYTES: usize = MAX_DECOMPOSER_PROJECT_CONTEXT_BYTES;
 pub(crate) const MAX_MEMORY_ENTITY_SOURCE_TEXT_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_WARM_SUMMARY_INSTRUCTION_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_WARM_SUMMARY_SYSTEM_BYTES: usize = 16 * 1024;
@@ -97,6 +101,7 @@ impl PromptEnvelopePurpose {
             Self::CodingProviderWorkerTask => &[
                 PromptFieldKind::WorkerTaskTitle,
                 PromptFieldKind::WorkerTaskDescription,
+                PromptFieldKind::WorkerCodeMapContext,
                 PromptFieldKind::WorkerTaskType,
                 PromptFieldKind::WorkerTaskHemisphere,
                 PromptFieldKind::WorkerRoleHint,
@@ -192,6 +197,7 @@ pub(crate) enum PromptFieldKind {
     PriorProviderOutput,
     WorkerTaskTitle,
     WorkerTaskDescription,
+    WorkerCodeMapContext,
     WorkerTaskType,
     WorkerTaskHemisphere,
     WorkerRoleHint,
@@ -235,6 +241,7 @@ impl PromptFieldKind {
             Self::PriorProviderOutput => MAX_DECOMPOSER_PRIOR_PROVIDER_OUTPUT_BYTES,
             Self::WorkerTaskTitle => MAX_WORKER_TASK_TITLE_BYTES,
             Self::WorkerTaskDescription => MAX_WORKER_TASK_DESCRIPTION_BYTES,
+            Self::WorkerCodeMapContext => MAX_WORKER_CODE_MAP_CONTEXT_BYTES,
             Self::WorkerTaskType => MAX_WORKER_TASK_TYPE_BYTES,
             Self::WorkerTaskHemisphere | Self::WorkerRoleHint => MAX_WORKER_ROLE_BYTES,
             Self::WorkerSessionIdentifier | Self::WorkerTaskIdentifier => {
@@ -277,6 +284,7 @@ impl PromptFieldKind {
             Self::PriorProviderOutput => "prior_provider_output",
             Self::WorkerTaskTitle => "worker_task_title",
             Self::WorkerTaskDescription => "worker_task_description",
+            Self::WorkerCodeMapContext => "worker_code_map_context",
             Self::WorkerTaskType => "worker_task_type",
             Self::WorkerTaskHemisphere => "worker_task_hemisphere",
             Self::WorkerRoleHint => "worker_role_hint",
@@ -647,6 +655,61 @@ mod tests {
         )
         .unwrap();
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn coding_worker_context_field_is_required_and_has_one_fixed_position() {
+        let fields = [
+            UntrustedPromptField::new(PromptFieldKind::WorkerToolHint, "hint"),
+            UntrustedPromptField::new(PromptFieldKind::WorkerTaskIdentifier, "task"),
+            UntrustedPromptField::new(PromptFieldKind::WorkerTaskTitle, "title"),
+            UntrustedPromptField::new(PromptFieldKind::WorkerTaskDescription, "description"),
+            UntrustedPromptField::new(PromptFieldKind::WorkerCodeMapContext, "context"),
+            UntrustedPromptField::new(PromptFieldKind::WorkerTaskType, "type"),
+            UntrustedPromptField::new(PromptFieldKind::WorkerTaskHemisphere, "hemisphere"),
+            UntrustedPromptField::new(PromptFieldKind::WorkerRoleHint, "role"),
+            UntrustedPromptField::new(PromptFieldKind::WorkerSessionIdentifier, "session"),
+            UntrustedPromptField::new(PromptFieldKind::WorkerAssignedWorker, "worker"),
+        ];
+        let rendered =
+            serialize_untrusted_prompt(PromptEnvelopePurpose::CodingProviderWorkerTask, &fields)
+                .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        let kinds: Vec<_> = parsed["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|field| field["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                "worker_task_title",
+                "worker_task_description",
+                "worker_code_map_context",
+                "worker_task_type",
+                "worker_task_hemisphere",
+                "worker_role_hint",
+                "worker_session_identifier",
+                "worker_task_identifier",
+                "worker_assigned_worker",
+                "worker_tool_hint",
+            ]
+        );
+        assert_eq!(field_data(&parsed, "worker_code_map_context"), "context");
+
+        let missing: Vec<_> = fields
+            .iter()
+            .copied()
+            .filter(|field| field.kind != PromptFieldKind::WorkerCodeMapContext)
+            .collect();
+        assert_eq!(
+            serialize_untrusted_prompt(PromptEnvelopePurpose::CodingProviderWorkerTask, &missing),
+            Err(PromptEnvelopeError::MissingField {
+                purpose: PromptEnvelopePurpose::CodingProviderWorkerTask,
+                kind: PromptFieldKind::WorkerCodeMapContext,
+            })
+        );
     }
 
     #[test]

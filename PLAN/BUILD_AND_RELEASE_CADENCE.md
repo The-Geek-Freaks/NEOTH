@@ -64,6 +64,13 @@ not.
 
 ## Native workspace test phases
 
+The Linux workspace test step runs under `xvfb-run --auto-servernum`, with
+`xvfb` and `xauth` installed by the existing dependency step. This supplies a
+display for the real Slint/Winit callback acceptance test while retaining the
+complete nextest selection and its normal failure status. A headless runner's
+missing `DISPLAY` must not be handled by skipping the callback test or replacing
+its native backend. Fresh CI must validate the workflow after a change.
+
 The macOS and Windows CI jobs compile the locked workspace test profile with
 `cargo nextest run --workspace --locked --profile ci --no-run`, then execute
 the complete suite in a separate step against the same checkout and target

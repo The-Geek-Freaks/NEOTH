@@ -107,6 +107,9 @@ pub const ALLOWED_CLIENT_EXTENDED_SUBTYPES: &[u8] = &[
     // GOLD-LF-P1-05 — one-shot commands may route their final canonical Gate
     // decision through the daemon-owned WAL writer.
     ExtendedSubtype::TrustDecision as u8,
+    // A direct generated-codegraph result receipt is observational context
+    // evidence, never an execution authority or delivery acknowledgement.
+    ExtendedSubtype::CodeMapRecallResolved as u8,
 ];
 
 /// Max inbound request size (headers + body). Audit payloads are small.
@@ -214,6 +217,115 @@ fn skill_audit_dedup_binding(
     let key = format!("{event_subtype:02x}:{audit_event_id}");
     let payload_sha256 = hex::encode(Sha256::digest(payload));
     Ok(Some((key, payload_sha256)))
+}
+
+fn validate_code_map_result_prepared_payload(
+    event_type: u8,
+    event_subtype: u8,
+    payload: &[u8],
+) -> Result<()> {
+    if event_type != EVENT_TYPE_EXTENDED
+        || event_subtype != ExtendedSubtype::CodeMapRecallResolved as u8
+    {
+        return Ok(());
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(payload).context("invalid code-map result receipt payload")?;
+    let object = value
+        .as_object()
+        .context("code-map result receipt must be an object")?;
+    const KEYS: &[&str] = &[
+        "schema",
+        "status",
+        "surface",
+        "request_sha256",
+        "tool",
+        "root_identity_hash_sha256",
+        "index_generation",
+        "graph_generation",
+        "child_public_result_sha256",
+        "child_public_result_bytes",
+        "final_public_result_sha256",
+        "final_public_result_bytes",
+        "ts_unix",
+    ];
+    anyhow::ensure!(
+        object.len() == KEYS.len() && KEYS.iter().all(|key| object.contains_key(*key)),
+        "unexpected code-map result receipt fields"
+    );
+    let string = |key: &str| object.get(key).and_then(serde_json::Value::as_str);
+    let hash = |key: &str| -> Result<()> {
+        let value = string(key).with_context(|| format!("missing {key}"))?;
+        anyhow::ensure!(
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+            "{key} must be a lowercase SHA-256 hex digest"
+        );
+        Ok(())
+    };
+    anyhow::ensure!(
+        string("schema") == Some("neoth.code_map.recall.audit.v1"),
+        "invalid code-map result receipt schema"
+    );
+    anyhow::ensure!(
+        string("status") == Some("final_tool_result_prepared"),
+        "invalid code-map result receipt status"
+    );
+    anyhow::ensure!(
+        string("surface") == Some("direct_cli_mcp"),
+        "invalid code-map result receipt surface"
+    );
+    anyhow::ensure!(
+        matches!(
+            string("tool"),
+            Some(
+                "codegraph_recall_v1"
+                    | "codegraph_relevant_files"
+                    | "codegraph_callers"
+                    | "codegraph_callees"
+            )
+        ),
+        "invalid code-map result receipt tool"
+    );
+    for key in [
+        "request_sha256",
+        "root_identity_hash_sha256",
+        "child_public_result_sha256",
+        "final_public_result_sha256",
+    ] {
+        hash(key)?;
+    }
+    let index = object
+        .get("index_generation")
+        .and_then(serde_json::Value::as_i64)
+        .context("missing index generation")?;
+    let graph = object
+        .get("graph_generation")
+        .and_then(serde_json::Value::as_i64)
+        .context("missing graph generation")?;
+    anyhow::ensure!(
+        index > 0 && index == graph,
+        "invalid code-map result receipt generations"
+    );
+    for key in ["child_public_result_bytes", "final_public_result_bytes"] {
+        anyhow::ensure!(
+            object
+                .get(key)
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|bytes| bytes <= crate::mcp::transport::MAX_MCP_FRAME_BYTES as u64),
+            "invalid {key}"
+        );
+    }
+    anyhow::ensure!(
+        object
+            .get("ts_unix")
+            .and_then(serde_json::Value::as_i64)
+            .is_some(),
+        "missing ts_unix"
+    );
+    Ok(())
 }
 
 async fn authenticate_skill_authority_ingress(
@@ -445,6 +557,66 @@ pub fn is_allowed_client_event_pair(event_type: u8, event_subtype: u8) -> bool {
         event_subtype != 0 && ALLOWED_CLIENT_EXTENDED_SUBTYPES.contains(&event_subtype)
     } else {
         event_subtype == 0 && is_allowed_client_event(event_type)
+    }
+}
+
+#[cfg(test)]
+mod w61_code_map_result_receipt_tests {
+    use super::*;
+
+    fn payload() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "neoth.code_map.recall.audit.v1",
+            "status": "final_tool_result_prepared",
+            "surface": "direct_cli_mcp",
+            "request_sha256": "a".repeat(64),
+            "tool": "codegraph_callers",
+            "root_identity_hash_sha256": "b".repeat(64),
+            "index_generation": 7,
+            "graph_generation": 7,
+            "child_public_result_sha256": "c".repeat(64),
+            "child_public_result_bytes": 12,
+            "final_public_result_sha256": "d".repeat(64),
+            "final_public_result_bytes": 12,
+            "ts_unix": 1,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn code_map_result_receipt_is_the_one_observational_client_subtype() {
+        let subtype = ExtendedSubtype::CodeMapRecallResolved as u8;
+        assert!(ALLOWED_CLIENT_EXTENDED_SUBTYPES.contains(&subtype));
+        assert!(is_allowed_client_event_pair(EVENT_TYPE_EXTENDED, subtype));
+        assert!(
+            validate_code_map_result_prepared_payload(EVENT_TYPE_EXTENDED, subtype, &payload(),)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn code_map_result_receipt_rejects_raw_or_mismatched_generation_claims() {
+        let subtype = ExtendedSubtype::CodeMapRecallResolved as u8;
+        let mut value: serde_json::Value = serde_json::from_slice(&payload()).unwrap();
+        value["root"] = serde_json::json!("C:/private");
+        assert!(
+            validate_code_map_result_prepared_payload(
+                EVENT_TYPE_EXTENDED,
+                subtype,
+                &serde_json::to_vec(&value).unwrap(),
+            )
+            .is_err()
+        );
+        value.as_object_mut().unwrap().remove("root");
+        value["graph_generation"] = serde_json::json!(8);
+        assert!(
+            validate_code_map_result_prepared_payload(
+                EVENT_TYPE_EXTENDED,
+                subtype,
+                &serde_json::to_vec(&value).unwrap(),
+            )
+            .is_err()
+        );
     }
 }
 
@@ -1058,6 +1230,17 @@ async fn handle_one_pre_admission(
         emit_reject(state, reason).await;
         let _ = stream
             .write_all(http_response(422, reason).as_bytes())
+            .await;
+        let _ = stream.shutdown().await;
+        return Ok(ConnectionOutcome::Complete);
+    }
+
+    if let Err(error) =
+        validate_code_map_result_prepared_payload(event_type, event_subtype, &payload)
+    {
+        emit_reject(state, "invalid_code_map_result_receipt").await;
+        let _ = stream
+            .write_all(http_response(400, &format!("{error:#}")).as_bytes())
             .await;
         let _ = stream.shutdown().await;
         return Ok(ConnectionOutcome::Complete);

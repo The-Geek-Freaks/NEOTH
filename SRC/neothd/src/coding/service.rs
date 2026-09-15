@@ -498,6 +498,10 @@ async fn build_dispatch_plan(
         .transpose()?;
     let audit = coding_audit_writer_for_home(neoth_home);
     let writer = audit.as_ref().map(|(writer, _)| Arc::clone(writer));
+    // This snapshot was prepared from the canonical request root before any
+    // worker/provider exists. Clone only the immutable value into each
+    // hemisphere worker; no worker reopens the DB or consults process CWD.
+    let prepared_worker_context = prepared_worker_context_for_dispatch(request);
     let mut workers = HemisphereWorkerSet::new();
     for (role, hemisphere, role_name) in [
         (HemisphereRole::Left, Hemisphere::Left, "left"),
@@ -533,6 +537,7 @@ async fn build_dispatch_plan(
                         label,
                         provider,
                         model_name,
+                        prepared_worker_context.clone(),
                         neoth_home.to_path_buf(),
                     )),
                 );
@@ -584,6 +589,12 @@ async fn build_dispatch_plan(
         None
     };
     Ok(CodingDispatchPlan::new(workers, apply_config, audit))
+}
+
+fn prepared_worker_context_for_dispatch(
+    request: &CodingStartRequest,
+) -> Option<PreparedCodeMapContext> {
+    request.prepared_code_map_context.clone()
 }
 
 fn coding_audit_writer_for_home(
@@ -3376,6 +3387,19 @@ mod tests {
             }],
         )
         .unwrap()
+    }
+
+    #[test]
+    fn dispatch_workers_receive_the_same_prepared_context_snapshot_as_the_request() {
+        let root = tempfile::tempdir().unwrap();
+        let mut start = request(root.path());
+        let prepared = prepared_context();
+        start.prepared_code_map_context = Some(prepared.clone());
+
+        let worker_context = prepared_worker_context_for_dispatch(&start)
+            .expect("prepared request context must reach the dispatch plan");
+        assert_eq!(worker_context.text(), prepared.text());
+        assert_eq!(worker_context.sources(), prepared.sources());
     }
 
     #[tokio::test(flavor = "current_thread")]

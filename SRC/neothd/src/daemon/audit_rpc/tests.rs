@@ -528,6 +528,9 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     let skill_authority_decision =
         crate::wal::events::ExtendedSubtype::SkillAuthorityDecision as u8;
     let trust_decision = crate::wal::events::ExtendedSubtype::TrustDecision as u8;
+    // W61 admits exactly this observational result receipt over the one-shot
+    // RPC route. Its payload validator remains fail-closed below.
+    let code_map_recall_resolved = crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8;
     // GOLD-LF-P1-01 — os_tools::gate reaches the WAL over this RPC route via
     // AuditSink::DaemonRpc, so its intent/result pairs are admitted. The
     // channel and media pairs are deliberately NOT here: they hold an
@@ -556,6 +559,7 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
             os_app_launch_intent,
             os_app_launch_result,
             trust_decision,
+            code_map_recall_resolved,
         ]
     );
     assert!(is_allowed_client_event_pair(0x00, plugin_removal_intent));
@@ -572,6 +576,7 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     assert!(is_allowed_client_event_pair(0x00, os_app_launch_intent));
     assert!(is_allowed_client_event_pair(0x00, os_app_launch_result));
     assert!(is_allowed_client_event_pair(0x00, trust_decision));
+    assert!(is_allowed_client_event_pair(0x00, code_map_recall_resolved));
     // The pairs with no client caller must stay OUT — this is the half of the
     // contract that actually bounds the surface.
     assert!(!is_allowed_client_event_pair(
@@ -756,6 +761,115 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
     assert!(
         types.contains(&crate::wal::events::EVENT_TYPE_AUDIT_RPC_ACCEPT),
         "accept marker landed"
+    );
+}
+
+/// W61 must exercise the authenticated listener, not only the server-side
+/// payload validator.  HTTP 200 is the daemon writer's acknowledgement, so
+/// the decoded frame below is checked before this fixture tears that writer
+/// down.  The adjacent SelfEdit subtype remains an explicit denial.
+#[tokio::test]
+async fn w61_live_audit_rpc_accepts_only_durable_code_map_result_receipt() {
+    let home = tempdir().unwrap();
+    let segment = canonical_test_wal(home.path(), "w61-code-map-receipt");
+    let (writer, wal_join, ready) =
+        crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
+            .unwrap();
+    ready.wait().await.unwrap();
+    let token = init_rpc_token(home.path()).unwrap();
+    let nonce = test_endpoint_nonce();
+    let state = AuditRpcState {
+        token: token.clone(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
+        chat_runtime: None,
+        gui_chat_runtime: None,
+    };
+    let (endpoint, listener) = bind_and_serve(home.path(), &nonce, state).await.unwrap();
+    let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "schema": "neoth.code_map.recall.audit.v1",
+        "status": "final_tool_result_prepared",
+        "surface": "direct_cli_mcp",
+        "request_sha256": "1".repeat(64),
+        "tool": "codegraph_recall_v1",
+        "root_identity_hash_sha256": "2".repeat(64),
+        "index_generation": 17,
+        "graph_generation": 17,
+        "child_public_result_sha256": "3".repeat(64),
+        "child_public_result_bytes": 41,
+        "final_public_result_sha256": "4".repeat(64),
+        "final_public_result_bytes": 41,
+        "ts_unix": 1_700_000_061_i64,
+    }))
+    .unwrap();
+    let subtype = crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8;
+    let request = format!(
+        "{{\"event_type\":0,\"event_subtype\":{subtype},\"payload_b64\":{:?}}}",
+        base64::engine::general_purpose::STANDARD.encode(&payload)
+    );
+    assert_eq!(raw_post(&endpoint, Some(&token), &request).await, 200);
+
+    let malformed = serde_json::to_vec(&serde_json::json!({
+        "schema": "neoth.code_map.recall.audit.v1",
+        "status": "final_tool_result_prepared",
+        "surface": "direct_cli_mcp",
+        "request_sha256": "1".repeat(64),
+        "tool": "codegraph_recall_v1",
+        "root_identity_hash_sha256": "2".repeat(64),
+        "index_generation": 17,
+        "graph_generation": 18,
+        "child_public_result_sha256": "3".repeat(64),
+        "child_public_result_bytes": 41,
+        "final_public_result_sha256": "4".repeat(64),
+        "final_public_result_bytes": 41,
+        "ts_unix": 1_700_000_061_i64,
+    }))
+    .unwrap();
+    let malformed_request = format!(
+        "{{\"event_type\":0,\"event_subtype\":{subtype},\"payload_b64\":{:?}}}",
+        base64::engine::general_purpose::STANDARD.encode(malformed)
+    );
+    assert_eq!(
+        raw_post(&endpoint, Some(&token), &malformed_request).await,
+        400,
+        "an allowed subtype with an invalid metadata-only payload is a malformed request; an unlisted subtype remains 422"
+    );
+    let adjacent = crate::wal::events::ExtendedSubtype::SelfEditProposed as u8;
+    let adjacent_request = format!(
+        "{{\"event_type\":0,\"event_subtype\":{adjacent},\"payload_b64\":{:?}}}",
+        base64::engine::general_purpose::STANDARD.encode(b"{}")
+    );
+    assert_eq!(
+        raw_post(&endpoint, Some(&token), &adjacent_request).await,
+        422
+    );
+
+    listener.abort();
+    let _ = listener.await;
+    drop(writer);
+    wal_join.await.unwrap().unwrap();
+    let bytes = std::fs::read(&segment).unwrap();
+    let mut cursor = crate::wal::segment_header::parse_segment_header(&bytes)
+        .unwrap()
+        .header_len();
+    let mut accepted = Vec::new();
+    while cursor < bytes.len() {
+        let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+        cursor += frame.header.total_len as usize;
+        if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+            && frame.header.event_subtype == subtype
+        {
+            accepted.push(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+        }
+    }
+    assert_eq!(
+        accepted,
+        vec![serde_json::from_slice::<serde_json::Value>(&payload).unwrap()]
     );
 }
 

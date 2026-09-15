@@ -8,6 +8,28 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**Validated W61/W63/W64/W65 batch (2026-09-15):** thirteen reviewed Rust
+sources bind direct-MCP prepared results, request-owned coding-worker context
+and canonical older-history compaction. The final source passed native
+TestBuild03 (3m08s), selected03 **2894/0/1** in 176.40s (14739 catalog tests,
+24 filters, 21 mandatory fixtures passed), native Clippy05 (3m05s), seven
+contracts **750/0/0**, CLI docgen **1/0/0**, final GUI Clippy01 (7m33s), Python
+**45/45**, CI-matrix assertions and fresh GUI lint. Source evidence covers
+267 pre-docgen / 268 post-docgen inputs. Reviewed runtime repairs include the
+real UTF-8 compaction boundary and child-protocol/WAL/RPC fixture corrections.
+See [the verification report](../docs/gold-wave61-65-verification.md).
+
+Linux Xvfb and build-cadence documentation are included. GUI source is unchanged
+from W60; no new GUI runtime or installed-CLI pass is claimed. W66–W69 are the
+next reviewed eight-source batch, including GUI coding context and the Windows
+software-renderer test path. W62 installer acceptance remains separate.
+No checkbox closes: **1324/1015/307/2**, raw309/pre-tag308. Earlier failed
+selections remain diagnostic only. W60 remote run
+[34991863633](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34991863633)
+reported Linux 16759/1/20 (missing display), Windows 16692/1/22 (OpenGL), and a
+macOS compile-step failure after 100m14s before tests. No full remote pass is
+claimed for either source revision.
+
 **Validated W60 batch (2026-09-15):** final prepared Chat/Channel replies
 are bound to retained canonical repository/architecture context before ordinary
 success. Exact-target rebuild recall retains its immutable scope; automatic

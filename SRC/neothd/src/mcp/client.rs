@@ -122,6 +122,23 @@ pub struct ToolCallResult {
     pub is_error: bool,
 }
 
+/// The optional MCP result metadata is intentionally kept off the public
+/// result model: ordinary consumers must continue to see the legacy result
+/// shape, while the direct CLI may validate a codegraph provenance claim.
+#[derive(Clone, Debug)]
+pub(crate) struct DecodedToolCallResponse {
+    pub(crate) result: ToolCallResult,
+    /// Untouched peer result for provenance validation at the gate boundary.
+    pub(crate) raw_result: ToolCallResult,
+    pub(crate) meta: Option<serde_json::Value>,
+}
+
+/// Stable public-result projection used by the generated codegraph server and
+/// the direct CLI. `_meta` is deliberately excluded to avoid self-reference.
+pub(crate) fn tool_call_result_projection(result: &ToolCallResult) -> serde_json::Value {
+    serde_json::json!({"content": result.content, "isError": result.is_error})
+}
+
 impl ToolCallResult {
     fn validate_external_output(&self, server_id: &str) -> Result<(), McpError> {
         for content in &self.content {
@@ -802,13 +819,13 @@ impl McpClient {
         Ok(parsed)
     }
 
-    pub(super) async fn call_tool_with_effect(
+    pub(super) async fn call_tool_with_effect_and_meta(
         &mut self,
         name: &str,
         arguments: serde_json::Value,
         effect_gate: Option<&Arc<dyn crate::providers::ChatTurnEffectGate>>,
         request_binding_sha256: &str,
-    ) -> Result<ToolCallResult, McpError> {
+    ) -> Result<DecodedToolCallResponse, McpError> {
         let result = self
             .request_with_effect(
                 "tools/call",
@@ -817,10 +834,15 @@ impl McpClient {
                 request_binding_sha256,
             )
             .await?;
-        let parsed: ToolCallResult = serde_json::from_value(result)
+        let meta = result.get("_meta").cloned();
+        let result: ToolCallResult = serde_json::from_value(result)
             .map_err(|e| McpError::Protocol(self.server_id.clone(), e.to_string()))?;
-        parsed.validate_external_output(&self.server_id)?;
-        Ok(parsed)
+        result.validate_external_output(&self.server_id)?;
+        Ok(DecodedToolCallResponse {
+            raw_result: result.clone(),
+            result,
+            meta,
+        })
     }
 
     /// Server identifier (from the config). Useful for log spans.

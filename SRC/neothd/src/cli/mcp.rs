@@ -14,6 +14,7 @@
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
+use sha2::{Digest as _, Sha256};
 
 use crate::cli::{OutputFormat, permission_audit::RequiredPermissionAudit};
 use crate::config::FreedomConfig;
@@ -982,6 +983,8 @@ where
             tool: tool.to_owned(),
             reason: format!("invalid requested-context policy: {error:#}"),
         })?;
+    let exact_generated_descriptor =
+        crate::mcp::codegraph_server::is_exact_generated_codegraph_base_for_direct_cli(cfg);
     let effective_cfg =
         crate::mcp::codegraph_server::effective_builtin_codegraph_server_with_requested_policy(
             cfg,
@@ -1042,7 +1045,8 @@ where
         outline_enrichment_enabled,
     )?;
     let mut client = spawn(cfg.clone()).await?;
-    crate::mcp::gate::invoke_authorized_with_audit_sink(
+    let require_context_binding = exact_generated_descriptor && direct_context_binding_tool(tool);
+    let response = crate::mcp::gate::invoke_authorized_with_audit_sink_decoded(
         &mut client,
         cfg,
         tool,
@@ -1053,8 +1057,75 @@ where
         now_unix,
         Some(&request_binding_sha256),
         pre_tool_use,
+        require_context_binding,
     )
-    .await
+    .await?;
+    if require_context_binding && !response.result.is_error {
+        let payload = final_tool_result_prepared_payload(
+            tool,
+            &request_binding_sha256,
+            response.meta.as_ref(),
+            &response.result,
+            now_unix,
+        )?;
+        crate::mcp::gate::append_final_tool_result_prepared(sink, payload).await?;
+    }
+    Ok(response.result)
+}
+
+fn direct_context_binding_tool(tool: &str) -> bool {
+    matches!(
+        tool,
+        "codegraph_recall_v1"
+            | "codegraph_relevant_files"
+            | "codegraph_callers"
+            | "codegraph_callees"
+    )
+}
+
+fn final_tool_result_prepared_payload(
+    tool: &str,
+    request_binding_sha256: &str,
+    meta: Option<&serde_json::Value>,
+    sanitized_result: &ToolCallResult,
+    now_unix: i64,
+) -> Result<Vec<u8>, GateError> {
+    let binding = meta
+        .and_then(|value| {
+            value.get(crate::mcp::codegraph_server::CODEGRAPH_CONTEXT_BINDING_META_KEY)
+        })
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            GateError::Mcp(McpError::Protocol(
+                "neoth-codegraph".into(),
+                "missing codegraph context-binding metadata".into(),
+            ))
+        })?;
+    let str_field = |key: &str| binding.get(key).and_then(serde_json::Value::as_str);
+    let number_field = |key: &str| binding.get(key).and_then(serde_json::Value::as_i64);
+    let projection = crate::mcp::client::tool_call_result_projection(sanitized_result);
+    let projection = serde_json::to_vec(&projection).map_err(|error| {
+        GateError::Mcp(McpError::Protocol(
+            "neoth-codegraph".into(),
+            error.to_string(),
+        ))
+    })?;
+    serde_json::to_vec(&serde_json::json!({
+        "schema": "neoth.code_map.recall.audit.v1",
+        "status": "final_tool_result_prepared",
+        "surface": "direct_cli_mcp",
+        "request_sha256": request_binding_sha256,
+        "tool": tool,
+        "root_identity_hash_sha256": str_field("root_identity_sha256"),
+        "index_generation": number_field("index_generation"),
+        "graph_generation": number_field("graph_generation"),
+        "child_public_result_sha256": str_field("public_result_sha256"),
+        "child_public_result_bytes": binding.get("public_result_bytes").and_then(serde_json::Value::as_u64),
+        "final_public_result_sha256": hex::encode(Sha256::digest(&projection)),
+        "final_public_result_bytes": projection.len(),
+        "ts_unix": now_unix,
+    }))
+    .map_err(|error| GateError::Mcp(McpError::Protocol("neoth-codegraph".into(), error.to_string())))
 }
 
 /// SHA-256 commitment to the exact operator request. Object keys are sorted
@@ -2216,5 +2287,606 @@ reason = "test block before external call"
         let (error, attempts) = rejected_cli_call_spawn_attempts(&config, "read", policy).await;
         assert!(matches!(error, GateError::PermissionDenied { .. }));
         assert_eq!(attempts, 0);
+    }
+
+    // This is intentionally a real stdio child rather than a constructed
+    // ToolCallResult: W61's receipt is only meaningful when the child chose
+    // the root/generation witness that travelled on the tools/call response.
+    #[test]
+    fn w61_direct_cli_generated_stdio_receipts_bind_child_metadata_before_return() {
+        let _env = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build W61 current-thread runtime")
+            .block_on(async {
+                let home = tempfile::tempdir().expect("W61 home");
+                let database = home.path().join("code-map.sqlite");
+                let root = home.path().join("canonical-root");
+                crate::mcp::codegraph_server::w59_seed_real_sqlite_root(&database, &root, "w61");
+                let database = database.canonicalize().expect("canonical W61 SQLite map");
+                let executable = std::env::current_exe()
+                    .expect("test executable")
+                    .canonicalize()
+                    .expect("canonical test executable");
+                let config = codegraph_server_config(&executable, Some(database));
+                let record = home.path().join("w61-child-events.jsonl");
+                let old_record = std::env::var_os("NEOTH_W56_CHILD_RECORD");
+                let old_cwd = std::env::var_os("NEOTH_W59_CHILD_CWD");
+                unsafe {
+                    std::env::set_var("NEOTH_W56_CHILD_RECORD", &record);
+                    std::env::set_var("NEOTH_W59_CHILD_CWD", &root);
+                }
+                struct RestoreW61ChildEnv(Option<std::ffi::OsString>, Option<std::ffi::OsString>);
+                impl Drop for RestoreW61ChildEnv {
+                    fn drop(&mut self) {
+                        unsafe {
+                            match self.0.take() {
+                                Some(value) => std::env::set_var("NEOTH_W56_CHILD_RECORD", value),
+                                None => std::env::remove_var("NEOTH_W56_CHILD_RECORD"),
+                            }
+                            match self.1.take() {
+                                Some(value) => std::env::set_var("NEOTH_W59_CHILD_CWD", value),
+                                None => std::env::remove_var("NEOTH_W59_CHILD_CWD"),
+                            }
+                        }
+                    }
+                }
+                let _restore = RestoreW61ChildEnv(old_record, old_cwd);
+                let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+                    crate::permissions::AutonomyLevel::Full,
+                )
+                .expect("Full policy allows the owned direct call");
+                let calls = [
+                    (
+                        "codegraph_recall_v1",
+                        serde_json::json!({"prompt":"leaf_w61","limit":1}),
+                    ),
+                    (
+                        "codegraph_relevant_files",
+                        serde_json::json!({"prompt":"leaf_w61","limit":1}),
+                    ),
+                    (
+                        "codegraph_callers",
+                        serde_json::json!({"symbol":"leaf_w61","depth":2}),
+                    ),
+                    (
+                        "codegraph_callees",
+                        serde_json::json!({"file":"x.rs","symbol":"root_w61","depth":2}),
+                    ),
+                ];
+                let mut returned = Vec::new();
+                for (tool, arguments) in &calls {
+                    let result = invoke_cli_call_with_spawner_at_home(
+                        &config,
+                        tool,
+                        arguments.clone(),
+                        policy.clone(),
+                        1_700_000_061,
+                        home.path(),
+                        |fixture| async move { McpClient::spawn(&fixture).await },
+                    )
+                    .await
+                    .unwrap_or_else(|error| {
+                        panic!("{tool} must return only after its audited W61 receipt: {error:#}")
+                    });
+                    assert!(!result.is_error, "{tool} returned an error result");
+                    returned.push(result);
+                }
+                assert!(
+                    serde_json::from_str::<serde_json::Value>(match &returned[0].content[0] {
+                        crate::mcp::client::McpContent::Text { text } => text,
+                        _ => panic!("recall text"),
+                    })
+                    .unwrap()
+                    .is_object()
+                );
+                for result in returned.iter().skip(1) {
+                    assert!(
+                        serde_json::from_str::<serde_json::Value>(match &result.content[0] {
+                            crate::mcp::client::McpContent::Text { text } => text,
+                            _ => panic!("legacy text"),
+                        })
+                        .unwrap()
+                        .is_array()
+                    );
+                }
+                let events: Vec<serde_json::Value> = std::fs::read_to_string(&record)
+                    .expect("W61 child record")
+                    .lines()
+                    .map(|line| serde_json::from_str(line).expect("W61 child event"))
+                    .collect();
+                let child_calls: Vec<_> = events
+                    .iter()
+                    .filter(|event| event["event"] == "tools/call")
+                    .collect();
+                assert_eq!(
+                    child_calls.len(),
+                    4,
+                    "every receipt follows one actual child tools/call"
+                );
+                for (event, (tool, _)) in child_calls.iter().zip(calls.iter()) {
+                    assert_eq!(event["name"].as_str(), Some(*tool));
+                }
+                let mut receipts = Vec::new();
+                let mut called_before_receipt = 0usize;
+                let mut durable_allows = 0usize;
+                crate::wal::scan::for_each_authenticated_prefix_frame_at_home(
+                    home.path(),
+                    crate::wal::scan::supported_home_scan_limits(),
+                    |_, frame| {
+                        if frame.header.event_type == crate::wal::events::EVENT_TYPE_MCP_TOOL_CALLED
+                        {
+                            called_before_receipt += 1;
+                        }
+                        if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                            && frame.header.event_subtype
+                                == crate::wal::events::ExtendedSubtype::TrustDecision as u8
+                        {
+                            durable_allows += 1;
+                        }
+                        if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                            && frame.header.event_subtype
+                                == crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8
+                        {
+                            assert!(
+                                called_before_receipt > receipts.len(),
+                                "called audit precedes prepared receipt"
+                            );
+                            receipts.push(
+                                serde_json::from_slice::<serde_json::Value>(frame.payload)
+                                    .expect("prepared result payload"),
+                            );
+                        }
+                        Ok(())
+                    },
+                )
+                .expect("scan authenticated W61 WAL");
+                assert_eq!(
+                    receipts.len(),
+                    4,
+                    "one prepared result receipt per returned child result"
+                );
+                assert_eq!(
+                    called_before_receipt, 4,
+                    "exactly four real child calls reach the called audit"
+                );
+                assert_eq!(
+                    durable_allows, 4,
+                    "the existing required permission allow is durable for every direct call"
+                );
+                for ((receipt, result), (tool, _)) in
+                    receipts.iter().zip(returned.iter()).zip(calls.iter())
+                {
+                    assert_eq!(receipt["status"], "final_tool_result_prepared");
+                    assert_eq!(receipt["tool"], *tool);
+                    assert_eq!(receipt["index_generation"], receipt["graph_generation"]);
+                    assert_eq!(
+                        receipt.as_object().map(|object| object.len()),
+                        Some(13),
+                        "receipt remains metadata-only with a closed field set"
+                    );
+                    for forbidden in ["root", "path", "symbol", "prompt", "result", "content"] {
+                        assert!(
+                            receipt.get(forbidden).is_none(),
+                            "receipt leaked {forbidden}"
+                        );
+                    }
+                    assert_eq!(
+                        receipt["child_public_result_sha256"].as_str().map(str::len),
+                        Some(64)
+                    );
+                    assert_eq!(
+                        receipt["final_public_result_sha256"].as_str().map(str::len),
+                        Some(64)
+                    );
+                    let projection = serde_json::to_vec(
+                        &crate::mcp::client::tool_call_result_projection(result),
+                    )
+                    .expect("serialize sanitized final result projection");
+                    assert_eq!(
+                        receipt["final_public_result_bytes"].as_u64(),
+                        Some(projection.len() as u64)
+                    );
+                    assert_eq!(
+                        receipt["final_public_result_sha256"],
+                        hex::encode(Sha256::digest(&projection))
+                    );
+                }
+            });
+    }
+
+    #[test]
+    fn w61_raw_metadata_wire_child() {
+        let Some(mode) = std::env::var_os("NEOTH_W61_RAW_METADATA_MODE") else {
+            return;
+        };
+        use std::io::{BufRead as _, Write as _};
+        println!("NEOTH_W53_STDIO_READY");
+        std::io::stdout().flush().expect("flush W61 child marker");
+        for line in std::io::stdin().lock().lines() {
+            let request: serde_json::Value =
+                serde_json::from_str(&line.expect("W61 child request"))
+                    .expect("valid W61 child request");
+            // The concrete `McpClient` owns the regular lifecycle.  This
+            // fixture must answer `initialize` faithfully before it can
+            // exercise a deliberately malformed *tools/call* result.
+            if request["method"] == "initialize" {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "jsonrpc":"2.0",
+                        "id":request["id"].clone(),
+                        "result":{"protocolVersion": crate::mcp::client::MCP_PROTOCOL_VERSION, "capabilities":{}}
+                    })
+                );
+                std::io::stdout()
+                    .flush()
+                    .expect("flush W61 initialize response");
+                continue;
+            }
+            if request["method"] == "notifications/initialized" {
+                continue;
+            }
+            let mode = mode.to_string_lossy();
+            let mut result = serde_json::json!({"content":[{"type":"text","text":"[]"}],"isError":mode == "is_error"});
+            if mode == "malformed" {
+                let mut meta = serde_json::Map::new();
+                meta.insert(
+                    crate::mcp::codegraph_server::CODEGRAPH_CONTEXT_BINDING_META_KEY.to_owned(),
+                    serde_json::json!({"schema":"wrong"}),
+                );
+                result["_meta"] = serde_json::Value::Object(meta);
+            }
+            if matches!(
+                mode.as_ref(),
+                "digest_mismatch" | "extra_own_field" | "unequal_generations"
+            ) {
+                let typed: ToolCallResult =
+                    serde_json::from_value(result.clone()).expect("W61 typed raw child result");
+                let projection =
+                    serde_json::to_vec(&crate::mcp::client::tool_call_result_projection(&typed))
+                        .expect("W61 raw child projection");
+                let mut binding = serde_json::json!({
+                    "schema":"io.neoth.codegraph.context_binding.v1",
+                    "tool":"codegraph_relevant_files",
+                    "root_identity_sha256":"a".repeat(64),
+                    "index_generation":7,
+                    "graph_generation":7,
+                    "public_result_sha256":hex::encode(Sha256::digest(&projection)),
+                    "public_result_bytes":projection.len(),
+                });
+                if mode == "digest_mismatch" {
+                    binding["public_result_sha256"] = serde_json::json!("b".repeat(64));
+                }
+                if mode == "extra_own_field" {
+                    binding["unexpected"] = serde_json::json!(true);
+                }
+                if mode == "unequal_generations" {
+                    binding["graph_generation"] = serde_json::json!(8);
+                }
+                let mut meta = serde_json::Map::new();
+                meta.insert(
+                    crate::mcp::codegraph_server::CODEGRAPH_CONTEXT_BINDING_META_KEY.to_owned(),
+                    binding,
+                );
+                result["_meta"] = serde_json::Value::Object(meta);
+            }
+            println!(
+                "{}",
+                serde_json::json!({"jsonrpc":"2.0","id":request["id"].clone(),"result":result})
+            );
+            std::io::stdout().flush().expect("flush W61 child response");
+        }
+    }
+
+    async fn w61_raw_metadata_child(mode: &str) -> Result<McpClient, McpError> {
+        let mut child =
+            tokio::process::Command::new(std::env::current_exe().expect("W61 test executable"));
+        child
+            .args([
+                "--exact",
+                "cli::mcp::tests::w61_raw_metadata_wire_child",
+                "--nocapture",
+            ])
+            .env("NEOTH_W61_RAW_METADATA_MODE", mode)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+        McpClient::from_test_child(
+            "neoth-codegraph",
+            child.spawn().expect("spawn W61 wire child"),
+        )
+        .await
+    }
+
+    async fn w61_frame_types(
+        home: &std::path::Path,
+        writer: crate::wal::writer::WalWriterHandle,
+        join: tokio::task::JoinHandle<()>,
+    ) -> Vec<(u8, u8)> {
+        drop(writer);
+        join.await.expect("W61 WAL writer exits");
+        let mut frames = Vec::new();
+        crate::wal::scan::for_each_authenticated_prefix_frame_at_home(
+            home,
+            crate::wal::scan::supported_home_scan_limits(),
+            |_, frame| {
+                frames.push((frame.header.event_type, frame.header.event_subtype));
+                Ok(())
+            },
+        )
+        .expect("scan authenticated W61 WAL frames");
+        frames
+    }
+
+    #[tokio::test]
+    async fn w61_direct_cli_invalid_child_binding_fails_after_called_without_receipt() {
+        for mode in [
+            "missing",
+            "malformed",
+            "digest_mismatch",
+            "extra_own_field",
+            "unequal_generations",
+        ] {
+            let home = tempfile::tempdir().expect("W61 negative home");
+            let (writer, join) = home_audit_writer(home.path());
+            let database = home.path().join("code-map.sqlite");
+            std::fs::write(&database, b"W61 fixture database").expect("W61 fixture DB");
+            let config = codegraph_server_config(
+                &std::env::current_exe().expect("W61 executable"),
+                Some(database),
+            );
+            let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+                crate::permissions::AutonomyLevel::Full,
+            )
+            .expect("W61 Full policy");
+            let error = invoke_cli_call_with_spawner_and_audit_sink(
+                &config,
+                "codegraph_relevant_files",
+                serde_json::json!({"prompt":"wire","limit":1}),
+                policy,
+                1_700_000_061,
+                crate::mcp::gate::McpAuditSink::Writer(&writer),
+                home.path(),
+                move |_| async move { w61_raw_metadata_child(mode).await },
+            )
+            .await
+            .expect_err("invalid required child metadata must fail before a public result returns");
+            assert!(matches!(error, GateError::Mcp(_)), "{mode}: {error:#}");
+            let frames = w61_frame_types(home.path(), writer, join).await;
+            assert_eq!(
+                frames
+                    .iter()
+                    .filter(|(kind, _)| *kind == crate::wal::events::EVENT_TYPE_MCP_TOOL_CALLED)
+                    .count(),
+                1,
+                "{mode}: called audit remains durable"
+            );
+            assert!(
+                !frames.iter().any(|(kind, subtype)| *kind
+                    == crate::wal::events::EVENT_TYPE_EXTENDED
+                    && *subtype
+                        == crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8),
+                "{mode}: no false prepared success receipt"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn w61_direct_cli_generated_is_error_returns_only_the_child_error_without_final_claim() {
+        let home = tempfile::tempdir().expect("W61 generated error home");
+        let (writer, join) = home_audit_writer(home.path());
+        let database = home.path().join("code-map.sqlite");
+        std::fs::write(&database, b"W61 fixture database").expect("W61 fixture DB");
+        let config = codegraph_server_config(
+            &std::env::current_exe().expect("W61 executable"),
+            Some(database),
+        );
+        let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .expect("W61 Full policy");
+        let result = invoke_cli_call_with_spawner_and_audit_sink(
+            &config,
+            "codegraph_relevant_files",
+            serde_json::json!({"prompt":"wire","limit":1}),
+            policy,
+            1_700_000_061,
+            crate::mcp::gate::McpAuditSink::Writer(&writer),
+            home.path(),
+            |_| async move { w61_raw_metadata_child("is_error").await },
+        )
+        .await
+        .expect("generated isError remains a returned MCP error result");
+        assert!(
+            result.is_error,
+            "only a child isError returns successfully; invalid metadata is a typed Err"
+        );
+        let frames = w61_frame_types(home.path(), writer, join).await;
+        assert_eq!(
+            frames
+                .iter()
+                .filter(|(kind, _)| *kind == crate::wal::events::EVENT_TYPE_MCP_TOOL_CALLED)
+                .count(),
+            1
+        );
+        assert!(!frames.iter().any(|(kind, subtype)| *kind
+            == crate::wal::events::EVENT_TYPE_EXTENDED
+            && *subtype == crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8));
+    }
+
+    #[tokio::test]
+    async fn w61_direct_cli_nongenerated_child_success_retains_legacy_no_receipt_behavior() {
+        let home = tempfile::tempdir().expect("W61 external home");
+        let (writer, join) = home_audit_writer(home.path());
+        let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .expect("W61 Full policy");
+        let result = invoke_cli_call_with_spawner_and_audit_sink(
+            &callable_server(),
+            "read",
+            serde_json::json!({"legacy":true}),
+            policy,
+            1_700_000_061,
+            crate::mcp::gate::McpAuditSink::Writer(&writer),
+            home.path(),
+            |_| async move { w61_raw_metadata_child("missing").await },
+        )
+        .await
+        .expect("non-generated child result keeps ordinary direct CLI success");
+        assert!(!result.is_error);
+        let frames = w61_frame_types(home.path(), writer, join).await;
+        assert_eq!(
+            frames
+                .iter()
+                .filter(|(kind, _)| *kind == crate::wal::events::EVENT_TYPE_MCP_TOOL_CALLED)
+                .count(),
+            1
+        );
+        assert!(!frames.iter().any(|(kind, subtype)| *kind
+            == crate::wal::events::EVENT_TYPE_EXTENDED
+            && *subtype == crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8));
+    }
+
+    #[test]
+    fn w61_direct_cli_final_receipt_append_failure_returns_error_after_real_child_called_audit() {
+        let _env = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("W61 runtime")
+            .block_on(async {
+                let home = tempfile::tempdir().expect("W61 final failure home");
+                let database = home.path().join("code-map.sqlite");
+                let root = home.path().join("canonical-root");
+                crate::mcp::codegraph_server::w59_seed_real_sqlite_root(&database, &root, "final");
+                let config = codegraph_server_config(
+                    &std::env::current_exe().expect("W61 executable"),
+                    Some(database),
+                );
+                let record = home.path().join("w61-final-child.jsonl");
+                let previous_record = std::env::var_os("NEOTH_W56_CHILD_RECORD");
+                let previous_cwd = std::env::var_os("NEOTH_W59_CHILD_CWD");
+                unsafe {
+                    std::env::set_var("NEOTH_W56_CHILD_RECORD", &record);
+                    std::env::set_var("NEOTH_W59_CHILD_CWD", &root);
+                }
+                struct Restore(Option<std::ffi::OsString>, Option<std::ffi::OsString>);
+                impl Drop for Restore {
+                    fn drop(&mut self) {
+                        unsafe {
+                            match self.0.take() {
+                                Some(value) => std::env::set_var("NEOTH_W56_CHILD_RECORD", value),
+                                None => std::env::remove_var("NEOTH_W56_CHILD_RECORD"),
+                            };
+                            match self.1.take() {
+                                Some(value) => std::env::set_var("NEOTH_W59_CHILD_CWD", value),
+                                None => std::env::remove_var("NEOTH_W59_CHILD_CWD"),
+                            };
+                        }
+                    }
+                }
+                let _restore = Restore(previous_record, previous_cwd);
+                let (writer, join) = home_audit_writer(home.path());
+                let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+                    crate::permissions::AutonomyLevel::Full,
+                )
+                .expect("W61 Full policy");
+                let error = invoke_cli_call_with_spawner_and_audit_sink(
+                    &config,
+                    "codegraph_relevant_files",
+                    serde_json::json!({"prompt":"leaf_final","limit":1}),
+                    policy,
+                    1_700_000_061,
+                    crate::mcp::gate::McpAuditSink::WriterFailFinal(
+                        &writer,
+                        "forced W61 final receipt append failure",
+                    ),
+                    home.path(),
+                    |fixture| async move { McpClient::spawn(&fixture).await },
+                )
+                .await
+                .expect_err("final receipt failure must prevent a successful public result");
+                assert!(matches!(error, GateError::Wal(_)), "{error:#}");
+                let events: Vec<serde_json::Value> = std::fs::read_to_string(&record)
+                    .expect("real child record")
+                    .lines()
+                    .map(|line| serde_json::from_str(line).expect("child event"))
+                    .collect();
+                assert_eq!(
+                    events
+                        .iter()
+                        .filter(|event| event["event"] == "tools/call")
+                        .count(),
+                    1,
+                    "the actual child returned before final append failed"
+                );
+                let frames = w61_frame_types(home.path(), writer, join).await;
+                assert_eq!(
+                    frames
+                        .iter()
+                        .filter(|(kind, _)| *kind == crate::wal::events::EVENT_TYPE_MCP_TOOL_CALLED)
+                        .count(),
+                    1,
+                    "called evidence is durable"
+                );
+                assert!(
+                    !frames.iter().any(|(kind, subtype)| *kind
+                        == crate::wal::events::EVENT_TYPE_EXTENDED
+                        && *subtype
+                            == crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8),
+                    "failed append cannot create a false receipt"
+                );
+            });
+    }
+
+    #[test]
+    fn w61_direct_cli_receipt_uses_the_child_selected_root_for_empty_and_nonempty_results() {
+        let _env = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread().enable_all().build().expect("W61 runtime").block_on(async {
+            let home = tempfile::tempdir().expect("W61 two-root home"); let database = home.path().join("code-map.sqlite");
+            let populated = home.path().join("populated-root"); let empty = home.path().join("empty-root");
+            crate::mcp::codegraph_server::w59_seed_real_sqlite_root(&database, &populated, "populated");
+            crate::mcp::codegraph_server::w59_seed_real_sqlite_root(&database, &empty, "empty");
+            let config = codegraph_server_config(&std::env::current_exe().expect("W61 executable"), Some(database));
+            let record = home.path().join("w61-two-root-child.jsonl"); let old_record = std::env::var_os("NEOTH_W56_CHILD_RECORD"); let old_cwd = std::env::var_os("NEOTH_W59_CHILD_CWD");
+            unsafe { std::env::set_var("NEOTH_W56_CHILD_RECORD", &record); std::env::set_var("NEOTH_W59_CHILD_CWD", &populated); }
+            struct Restore(Option<std::ffi::OsString>, Option<std::ffi::OsString>);
+            impl Drop for Restore { fn drop(&mut self) { unsafe { match self.0.take() { Some(value) => std::env::set_var("NEOTH_W56_CHILD_RECORD", value), None => std::env::remove_var("NEOTH_W56_CHILD_RECORD") }; match self.1.take() { Some(value) => std::env::set_var("NEOTH_W59_CHILD_CWD", value), None => std::env::remove_var("NEOTH_W59_CHILD_CWD") }; } } }
+            let _restore = Restore(old_record, old_cwd); let (writer, join) = home_audit_writer(home.path());
+            let policy = crate::permissions::AutonomyPolicySnapshot::builtin(crate::permissions::AutonomyLevel::Full).expect("W61 Full policy");
+            let populated_result = invoke_cli_call_with_spawner_and_audit_sink(&config, "codegraph_relevant_files", serde_json::json!({"prompt":"leaf_populated","limit":1}), policy.clone(), 1_700_000_061, crate::mcp::gate::McpAuditSink::Writer(&writer), home.path(), |fixture| async move { McpClient::spawn(&fixture).await }).await.expect("populated root result");
+            unsafe { std::env::set_var("NEOTH_W59_CHILD_CWD", &empty); }
+            let empty_result = invoke_cli_call_with_spawner_and_audit_sink(&config, "codegraph_relevant_files", serde_json::json!({"prompt":"not-present-anywhere","limit":1}), policy, 1_700_000_062, crate::mcp::gate::McpAuditSink::Writer(&writer), home.path(), |fixture| async move { McpClient::spawn(&fixture).await }).await.expect("empty root result");
+            fn text(result: &ToolCallResult) -> &str {
+                match &result.content[0] {
+                    crate::mcp::client::McpContent::Text { text } => text,
+                    _ => panic!("W61 text result"),
+                }
+            }
+            assert!(!serde_json::from_str::<serde_json::Value>(text(&populated_result)).unwrap().as_array().unwrap().is_empty());
+            assert!(serde_json::from_str::<serde_json::Value>(text(&empty_result)).unwrap().as_array().unwrap().is_empty(), "second actual root returns its empty map result");
+            drop(writer); join.await.expect("W61 two-root writer exits");
+            let mut roots = Vec::new();
+            crate::wal::scan::for_each_authenticated_prefix_frame_at_home(
+                home.path(),
+                crate::wal::scan::supported_home_scan_limits(),
+                |_, frame| {
+                    if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                        && frame.header.event_subtype == crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8
+                    {
+                        roots.push(
+                            serde_json::from_slice::<serde_json::Value>(frame.payload)
+                                .expect("W61 receipt")["root_identity_hash_sha256"].clone(),
+                        );
+                    }
+                    Ok(())
+                },
+            )
+            .expect("scan authenticated W61 two-root WAL");
+            assert_eq!(roots.len(), 2); assert_ne!(roots[0], roots[1], "receipt follows the actual child-selected canonical root, including empty result");
+        });
     }
 }
