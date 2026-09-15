@@ -303,6 +303,27 @@ retains its existing threshold, identifier keep-verbatim guard, authorization,
 fallback and tail assembly; an over-class-cap old zone fails before utility and
 main dispatch. These changes add no new compaction receipt or delivery claim.
 
+Session-sort grouping treats the complete persisted HindsightCard list as data:
+before the existing daemon budget and provider call, it renders one canonical
+`UntrustedContext::ModelOutput` envelope with a stable source identity. A class
+cap or final daemon-budget failure leaves `group_titles` as an error; the
+existing session-sort pass reports grouping skipped, preserves the cards and
+creates no assignment success claim.
+
+A GUI coding start carries its request-owned prepared map context through the
+real service and ProviderWorker task. The persisted prepared-request receipt commits the
+submitted context's UTF-8 byte count and SHA-256; acceptance compares those
+commitments with the captured `worker_code_map_context` in the actual task
+envelope. Filename equality alone is insufficient: a substituted token can
+retain a selected file name while failing the receipt commitment.
+
+Outer Council role recall remains bounded before provider egress: at most three
+role-region episodes and two Left facts pass through the existing redaction and
+snippet limit, then form one fixed-source canonical
+`UntrustedContext::Memory` envelope. The authorized outer leaf receives that
+rendered data as data; empty, Incognito, model-cap-drop and recursive/legacy
+paths retain their existing context behavior.
+
 ## WAL source of truth
 
 The WAL is the durable event chain under NEOTH. Views can be rebuilt; the WAL is authoritative.

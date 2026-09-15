@@ -71,6 +71,14 @@ complete nextest selection and its normal failure status. A headless runner's
 missing `DISPLAY` must not be handled by skipping the callback test or replacing
 its native backend. Fresh CI must validate the workflow after a change.
 
+The Windows platform-test step selects `SLINT_BACKEND=software` while retaining
+the real Winit event loop. For local Gold validation, one fresh, hash-bound
+GUI test binary runs its complete
+suite with one test thread; a same-binary catalogue accounts for every `ok` and
+`ignored` result and requires both the GUI coding controller-to-ProviderWorker
+loopback and the W58 Buddy callback fixture to pass. This is software-renderer
+runtime evidence only. It does not establish visual or accessibility acceptance.
+
 The macOS and Windows CI jobs compile the locked workspace test profile with
 `cargo nextest run --workspace --locked --profile ci --no-run`, then execute
 the complete suite in a separate step against the same checkout and target

@@ -3,6 +3,27 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-15
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **W66/W67/W68/W69 local Source09 validation (2026-09-15):** eleven manual
+> source paths plus reviewed generated `Cargo.lock`; 270/271 inputs, **25**
+> filters, **27** mandatory fixtures and 19 commit paths. Clippy12 **3m02s**,
+> TestBuild06 **1.70s**, selected06 **2919/0/1** in **163.23s** (2920/14744),
+> contracts05 **750/0/0**, docgen **1/0/0**, GUI build05 **20.68s**, GUI05
+> **742/0/0** in **5.94s**/catalog742, GuiClippy02 **4m53s** (min **215.38 GiB**,
+> peak **6.85 GiB**), Python45, CI matrix and fresh GUI lint all passed. Builder
+> verified 271 inputs and 2920 selected tests in
+> `docs/verification/gold-wave66-69-{source-manifest,test-matrix}.json`.
+> This is local scope evidence only; no full-CI, installer, visual, delivery,
+> release or ROAD-leaf claim. Counts **1324/1015/307/2**, raw309/pre-tag308;
+> W62/W70/W71 remain separate.
+>
+> The original selected01 failure (2916/1/1, 164.77s) exposed a watcher helper
+> rejecting a retained `Recovering` generation. Diagnosis also found a production
+> wedge: a stale prior generation left its orphan journal running and prevented
+> all later rebuilds. The new regression reproduced that exact error against the
+> byte-identical old production prefix (0/1/0, 0.12s), then passed with the reviewed
+> repair in selected02. The watcher test also passed without weakening its strict
+> generation-advance requirement. Both failed runs remain diagnostic evidence.
+>
 > **Validated W61/W63/W64/W65 batch (2026-09-15):** thirteen reviewed Rust
 > sources bind direct-MCP prepared results, request-owned coding-worker context
 > and canonical older-history compaction. The final source passed native

@@ -394,6 +394,10 @@ jobs:
         timeout-minutes: ${{ matrix.test_execution_timeout_minutes }}
         shell: bash
         working-directory: SRC
+        env:
+          # The hosted Windows runner exposes Winit but no usable OpenGL entry points.
+          # Exercise the same real callback/event-loop path with Slint's compiled software renderer.
+          SLINT_BACKEND: ${{ runner.os == 'Windows' && 'software' || '' }}
         run: |
           cargo nextest run --workspace --locked --profile ci --test-threads ${{ matrix.test_threads }} --no-tests=fail
 

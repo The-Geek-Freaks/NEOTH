@@ -900,6 +900,7 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
     let service = crate::coding::service::CodingService::spawn(
         crate::coding::service::CodingServiceConfig {
             database_path: db_path,
+            code_map_database_path: crate::code_map::persist::default_path(),
             neoth_home: FreedomConfig::default_neoth_home(),
             freedom_config_path: FreedomConfig::default_path(),
             freedom_config: cfg,

@@ -49,6 +49,7 @@ impl Drop for ThreadMutexBlocker {
 fn service_config(root: &std::path::Path, config_path: std::path::PathBuf) -> CodingServiceConfig {
     CodingServiceConfig {
         database_path: root.join("views.db"),
+        code_map_database_path: root.join("code_map.db"),
         neoth_home: root.join("neoth-home"),
         freedom_config_path: config_path,
         // The runtime must never use this cached value for a new run.
@@ -204,5 +205,47 @@ async fn abandoned_public_shutdown_caller_leaves_guardian_to_complete_owned_join
             .expect("coding service thread mutex poisoned")
             .is_none(),
         "guardian completion must include the actual runtime thread join"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn audited_coding_worker_one_shot_wal_binds_to_selected_home() {
+    let root = tempfile::tempdir().expect("fixture directory");
+    let selected_home = root.path().join("selected-neoth-home");
+    let config = crate::config::FreedomConfig {
+        autonomy: crate::permissions::AutonomyLevel::Full,
+        provider_kind: Some(crate::cli::init::ProviderKind::OpenaiCompat),
+        provider_endpoint: Some("http://127.0.0.1:9".to_owned()),
+        provider_model: Some("gpt-4o".to_owned()),
+        ..Default::default()
+    };
+    let worker = build_audited_worker(&config, &selected_home, root.path().join("views.db"), None)
+        .await
+        .expect("construct real selected-home audited coding worker");
+    let audit = worker
+        .audit
+        .lock()
+        .expect("audited worker audit mutex")
+        .take()
+        .expect("one-shot audit owner");
+    let provider_owner = worker
+        .provider_owner
+        .lock()
+        .expect("audited worker provider owner mutex")
+        .take()
+        .expect("provider owner");
+    drop(worker);
+    audit
+        .finish(provider_owner)
+        .await
+        .expect("finish selected-home one-shot audit");
+    assert!(
+        selected_home
+            .join("wal")
+            .read_dir()
+            .expect("selected-home WAL exists")
+            .next()
+            .is_some(),
+        "the one-shot coding audit must live beside the selected service home"
     );
 }

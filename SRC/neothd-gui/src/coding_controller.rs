@@ -125,6 +125,15 @@ impl CodingController {
         }
     }
 
+    #[cfg(test)]
+    fn with_service(service: CodingService) -> Self {
+        Self {
+            service: Mutex::new(Some(service)),
+            state: Mutex::new(ControllerState::default()),
+            admission: tokio::sync::Mutex::new(()),
+        }
+    }
+
     /// Reserves the one GUI operation slot before a background bridge starts.
     pub fn begin_start(&self) -> Result<u64> {
         let mut state = self.state.lock().expect("coding controller lock poisoned");
@@ -667,6 +676,7 @@ impl CodingController {
             .context("load freedom configuration for native coding service")?;
         let started = CodingService::spawn(CodingServiceConfig {
             database_path: neothd::memory::store::default_path(),
+            code_map_database_path: neothd::code_map::persist::default_path(),
             neoth_home,
             freedom_config_path: neothd::config::FreedomConfig::default_path(),
             freedom_config,
@@ -703,9 +713,14 @@ pub fn native_coding_request(
 mod tests {
     use std::path::PathBuf;
 
+    use neothd::cli::init::ProviderKind;
     use neothd::coding::{
-        CodingPatchApprovalId, CodingPatchApprovalMetadata, CodingRunId, KanbanTaskId,
+        CodingPatchApprovalId, CodingPatchApprovalMetadata, CodingRunId, CodingRunResult,
+        CodingService, CodingServiceConfig, KanbanTaskId,
     };
+    use sha2::{Digest, Sha256};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::sync::oneshot;
 
     use super::{CodingCancelState, CodingController, native_coding_request};
 
@@ -735,6 +750,378 @@ mod tests {
             .activate(revision, run_id)
             .expect("activate test run");
         (controller, revision, run_id)
+    }
+
+    async fn read_loopback_openai_request(socket: &mut tokio::net::TcpStream) -> serde_json::Value {
+        let mut bytes = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        let header_end = loop {
+            let read = socket
+                .read(&mut buffer)
+                .await
+                .expect("read loopback HTTP request");
+            assert_ne!(
+                read, 0,
+                "loopback peer must not close before request headers"
+            );
+            bytes.extend_from_slice(&buffer[..read]);
+            if let Some(position) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                break position + 4;
+            }
+        };
+        let headers = std::str::from_utf8(&bytes[..header_end]).expect("ASCII HTTP headers");
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then_some(value.trim())
+            })
+            .expect("OpenAI-compatible request has content length")
+            .parse::<usize>()
+            .expect("numeric content length");
+        while bytes.len() < header_end + content_length {
+            let read = socket
+                .read(&mut buffer)
+                .await
+                .expect("read loopback HTTP body");
+            assert_ne!(read, 0, "loopback peer must not close before request body");
+            bytes.extend_from_slice(&buffer[..read]);
+        }
+        serde_json::from_slice(&bytes[header_end..header_end + content_length])
+            .expect("OpenAI-compatible JSON request")
+    }
+
+    fn worker_envelope_field(prompt: &str, kind: &str) -> String {
+        let envelope_line = prompt
+            .lines()
+            .find(|line| line.contains("\"purpose\":\"coding_provider_worker_task\""))
+            .expect("ProviderWorker prompt contains canonical typed envelope");
+        let envelope: serde_json::Value =
+            serde_json::from_str(envelope_line).expect("canonical worker envelope JSON");
+        envelope["fields"]
+            .as_array()
+            .expect("canonical worker envelope fields")
+            .iter()
+            .find(|field| field["kind"].as_str() == Some(kind))
+            .expect("canonical worker envelope field")["data"]
+            .as_str()
+            .expect("canonical worker envelope field data")
+            .to_owned()
+    }
+
+    fn sha256_hex(value: &str) -> String {
+        format!("{:x}", Sha256::digest(value.as_bytes()))
+    }
+
+    fn loopback_openai_response(content: &str) -> String {
+        serde_json::json!({
+            "id": "wave67-loopback",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        })
+        .to_string()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn gui_reserved_start_reaches_real_provider_worker_with_prepared_code_map_context() {
+        let fixture = tempfile::tempdir().expect("create GUI coding fixture");
+        let repository = fixture.path().join("repository");
+        std::fs::create_dir_all(repository.join("src")).expect("create fixture repository");
+        std::fs::write(
+            repository.join("src/auth.rs"),
+            "pub fn verify_token(token: &str) -> bool { !token.is_empty() }\n",
+        )
+        .expect("write selected fixture source");
+        let canonical_root = neothd::code_map::CanonicalRepoRoot::discover(&repository)
+            .expect("discover canonical fixture root");
+        let code_map_database = fixture.path().join("code-map.db");
+        neothd::code_map::rebuild_snapshot(&canonical_root, &code_map_database, Default::default())
+            .expect("seed selected-root code-map snapshot");
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback OpenAI-compatible fixture");
+        let address = listener
+            .local_addr()
+            .expect("read loopback fixture address");
+        let endpoint = format!("http://{address}");
+        let selected_neoth_home = fixture.path().join("neoth-home");
+        let consent_route =
+            neothd::consent::ConsentRoute::new(ProviderKind::OpenaiCompat, Some(&endpoint));
+        let consent_marker =
+            neothd::consent::marker_path(&selected_neoth_home, ProviderKind::OpenaiCompat);
+        std::fs::create_dir_all(
+            consent_marker
+                .parent()
+                .expect("consent marker has a parent"),
+        )
+        .expect("create selected-home consent directory");
+        let mut granted_endpoints = std::collections::BTreeMap::new();
+        granted_endpoints.insert(endpoint.clone(), "1");
+        std::fs::write(
+            &consent_marker,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "version": 1,
+                "endpoints": granted_endpoints,
+            }))
+            .expect("serialize versioned loopback consent marker"),
+        )
+        .expect("write selected-home loopback consent marker");
+        assert!(
+            neothd::consent::is_route_granted(&selected_neoth_home, &consent_route),
+            "fixture marker must grant exactly the loopback OpenAI-compatible origin"
+        );
+        let (requests_tx, requests_rx) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            let responses = [
+                loopback_openai_response(
+                    r#"{"tasks":[{"title":"Add tests for verify_token","task_type":"tests","depends_on":[]}],"clarifying_question":null,"estimated_session_complexity":"fast"}"#,
+                ),
+                loopback_openai_response(
+                    "APPROVED: loopback plan review accepts the prepared task.",
+                ),
+                loopback_openai_response(
+                    "```diff\n--- a/src/auth.rs\n+++ b/src/auth.rs\n@@ -1 +1,7 @@\n pub fn verify_token(token: &str) -> bool { !token.is_empty() }\n+\n+#[cfg(test)]\n+mod tests {\n+    #[test]\n+    fn empty_token_is_rejected() { assert!(!super::verify_token(\"\")); }\n+}\n```\nSUMMARY: loopback ProviderWorker added the empty-token regression test",
+                ),
+            ];
+            let mut requests = Vec::new();
+            for response in responses {
+                let (mut socket, _) = listener
+                    .accept()
+                    .await
+                    .expect("accept loopback provider request");
+                requests.push(read_loopback_openai_request(&mut socket).await);
+                let wire = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response.len(),
+                    response,
+                );
+                socket
+                    .write_all(wire.as_bytes())
+                    .await
+                    .expect("write loopback provider response");
+                socket
+                    .shutdown()
+                    .await
+                    .expect("close loopback provider response");
+            }
+            requests_tx
+                .send(requests)
+                .expect("test receives loopback requests");
+        });
+
+        let config_path = fixture.path().join("freedom.yaml");
+        // gpt-4o takes the direct worker route after the normal decomposer
+        // and default plan-review calls; the loopback script binds all three.
+        let mut config = neothd::config::FreedomConfig {
+            autonomy: neothd::permissions::AutonomyLevel::Full,
+            provider_kind: Some(ProviderKind::OpenaiCompat),
+            provider_endpoint: Some(endpoint.clone()),
+            provider_model: Some("gpt-4o".to_owned()),
+            ..Default::default()
+        };
+        config.code_map.auto_context_max_files = 1;
+        config.code_map.coding_recall_max_files = 1;
+        config.code_map.coding_callers_per_symbol = 1;
+        config.code_map.coding_summary_token_budget = 128;
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&config).expect("serialize fixture runtime config"),
+        )
+        .expect("write fixture runtime config");
+        let service = CodingService::spawn(CodingServiceConfig {
+            database_path: fixture.path().join("views.db"),
+            code_map_database_path: code_map_database,
+            neoth_home: selected_neoth_home.clone(),
+            freedom_config_path: config_path,
+            freedom_config: neothd::config::FreedomConfig::default(),
+        })
+        .expect("spawn real coding runtime");
+        let controller = CodingController::with_service(service);
+        let revision = controller.begin_start().expect("reserve GUI coding run");
+        let mut started = controller
+            .start_reserved(
+                revision,
+                native_coding_request(
+                    "add tests for verify_token".to_owned(),
+                    repository.clone(),
+                    "gui-wave67-fixture".to_owned(),
+                    false,
+                    true,
+                    false,
+                )
+                .expect("construct dispatching GUI request"),
+            )
+            .await
+            .expect("GUI reservation starts real coding service");
+        let result = started
+            .handle
+            .wait_terminal()
+            .await
+            .expect("real coding run terminal");
+        let session_id = match result {
+            CodingRunResult::Completed {
+                session_id,
+                dispatch: Some(dispatch),
+                ..
+            } => {
+                assert_eq!(
+                    dispatch.tasks_completed, 1,
+                    "real dispatch completes the seeded task; dispatch={dispatch:?}"
+                );
+                session_id
+            }
+            other => panic!("expected completed dispatched GUI coding run, got {other:?}"),
+        };
+        controller
+            .shutdown_and_join()
+            .await
+            .expect("join injected coding service");
+        let requests = requests_rx.await.expect("capture real provider requests");
+        server.await.expect("join loopback provider server");
+        let usage_rows = std::fs::read_dir(selected_neoth_home.join("usage"))
+            .expect("selected home projects provider usage")
+            .map(|entry| {
+                std::fs::read_to_string(entry.expect("usage entry").path())
+                    .expect("read selected-home usage projection")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            usage_rows.matches("\"outcome\":\"complete\"").count(),
+            3,
+            "each captured provider call projects a selected-home terminal usage row"
+        );
+        let provider_wal_count = std::fs::read_dir(selected_neoth_home.join("wal"))
+            .expect("selected home retains provider-call WAL")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    == Some("wal")
+            })
+            .count();
+        assert!(
+            provider_wal_count > 0,
+            "the actual provider calls retain durable selected-home WAL evidence"
+        );
+        assert_eq!(
+            requests.len(),
+            3,
+            "exactly the decomposer, default plan review, and real ProviderWorker calls may reach the loopback"
+        );
+        let decomposer_envelope = requests[0]["messages"]
+            .as_array()
+            .expect("decomposer request messages")
+            .iter()
+            .find_map(|message| {
+                let content = message["content"].as_str()?;
+                content
+                    .contains("\"purpose\":\"coding_decomposition\"")
+                    .then_some(content)
+            })
+            .expect("first captured request is the real decomposer envelope");
+        assert!(decomposer_envelope.contains("add tests for verify_token"));
+        let plan_review_envelope = requests[1]["messages"]
+            .as_array()
+            .expect("plan-review request messages")
+            .iter()
+            .find_map(|message| {
+                let content = message["content"].as_str()?;
+                content
+                    .contains("\"purpose\":\"coding_plan_review\"")
+                    .then_some(content)
+            })
+            .expect("second captured request is the default real plan-review envelope");
+        assert!(plan_review_envelope.contains("Add tests for verify_token"));
+
+        let views_database = fixture.path().join("views.db");
+        let conn =
+            neothd::memory::store::open(&views_database).expect("open persisted coding database");
+        let receipts = neothd::coding::store::load_code_map_receipts(&conn, session_id)
+            .expect("load persisted prepared-context receipt");
+        assert_eq!(
+            receipts.len(),
+            1,
+            "one prepared context receipt before provider work"
+        );
+        let source = receipts[0]
+            .sources
+            .first()
+            .expect("receipt retains selected root source");
+        assert_eq!(
+            source.root,
+            repository
+                .canonicalize()
+                .expect("canonical selected root")
+                .display()
+                .to_string()
+        );
+        assert!(source.index_generation > 0 && source.graph_generation > 0);
+        assert_eq!(source.index_generation, source.graph_generation);
+        assert!(
+            source
+                .selected_files
+                .iter()
+                .any(|file| file.path == "src/auth.rs")
+        );
+        assert!(
+            !receipts[0].context_truncated,
+            "fixture context must retain the one prepared snapshot used by both calls"
+        );
+        assert_eq!(
+            receipts[0].assembled_context_sha256, receipts[0].submitted_context_sha256,
+            "receipt must commit the untruncated prepared snapshot"
+        );
+
+        let task_envelope = requests[2]["messages"]
+            .as_array()
+            .expect("ProviderWorker request messages")
+            .iter()
+            .find_map(|message| {
+                let content = message["content"].as_str()?;
+                content
+                    .contains("\"purpose\":\"coding_provider_worker_task\"")
+                    .then_some(content)
+            })
+            .expect("third captured request is the real ProviderWorker task envelope");
+        assert_eq!(
+            worker_envelope_field(task_envelope, "worker_task_title"),
+            "Add tests for verify_token",
+            "captured task is the real decomposer-selected ProviderWorker envelope"
+        );
+        let worker_code_map_context =
+            worker_envelope_field(task_envelope, "worker_code_map_context");
+        assert!(worker_code_map_context.contains("src/auth.rs"));
+        assert!(worker_code_map_context.contains("verify_token"));
+        assert_eq!(
+            worker_code_map_context.len(),
+            receipts[0].submitted_context_bytes,
+            "the observed worker context has the receipt-committed byte length"
+        );
+        assert_eq!(
+            sha256_hex(&worker_code_map_context),
+            receipts[0].submitted_context_sha256,
+            "the observed canonical worker context is the exact prepared snapshot committed by this session receipt"
+        );
+        let alternate_symbol_context =
+            worker_code_map_context.replacen("verify_token", "verify_alternate_token", 1);
+        assert!(alternate_symbol_context.contains("src/auth.rs"));
+        assert_ne!(
+            sha256_hex(&alternate_symbol_context),
+            receipts[0].submitted_context_sha256,
+            "a different context with the same selected filename must not satisfy the receipt binding"
+        );
     }
 
     #[test]

@@ -28,6 +28,10 @@ fn generation(database: &Path, root: &Path) -> LifecycleGeneration {
         CodeMapLifecycleState::Refreshing {
             prior: Some(snapshot),
             ..
+        }
+        | CodeMapLifecycleState::Recovering {
+            prior: Some(snapshot),
+            ..
         } => snapshot,
         state => panic!("expected an indexed lifecycle snapshot, found {state:?}"),
     }

@@ -461,11 +461,11 @@ fn refresh_with_repair_checkpoint(
             ));
         }
     }
-    if let CodeMapLifecycleState::Recovering {
-        attempt_id,
-        prior: None,
-    } = &inspected.state
-    {
+    // A retained snapshot can be recovered only while it is still fresh. Once
+    // it is stale, terminalize the orphaned attempt under the new lease before
+    // publishing its replacement; otherwise journal_start must refuse the
+    // still-running owner record.
+    if let CodeMapLifecycleState::Recovering { attempt_id, .. } = &inspected.state {
         if cancellation.is_cancelled() {
             return Ok(receipt(
                 &root,
@@ -1219,6 +1219,54 @@ mod tests {
             published(&receipt).graph_generation,
             snapshot.graph_generation
         );
+    }
+
+    #[test]
+    fn stale_published_orphan_is_interrupted_then_rebuilt() {
+        let workspace = tempdir().unwrap();
+        let repo = workspace.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        write_source(&repo, "lib.rs", "pub fn ready() {}\n");
+        let database = workspace.path().join("code_map.db");
+        let first = normal_refresh(&database, &repo);
+        let prior = published(&first);
+        let root = CanonicalRepoRoot::discover(&repo).unwrap();
+        let orphan_attempt = "018f36e7-42d3-7000-8000-000000000004";
+        let journal = super::super::persist::open(&database).unwrap();
+        journal_start(
+            &journal,
+            &root,
+            orphan_attempt,
+            "orphan-owner",
+            Some(&prior),
+        )
+        .unwrap();
+        drop(journal);
+
+        assert!(matches!(
+            inspect(&database, &repo).state,
+            CodeMapLifecycleState::Recovering { prior: Some(_), .. }
+        ));
+        write_source(&repo, "lib.rs", "pub fn changed() {}\n");
+
+        let receipt = reconcile(&database, &repo, &LifecycleCancellation::new()).unwrap();
+        let rebuilt = published(&receipt);
+        assert_eq!(receipt.outcome, RefreshOutcome::RefreshedStale);
+        assert_ne!(receipt.journal_attempt_id, orphan_attempt);
+        assert!(rebuilt.index_generation > prior.index_generation);
+        assert_eq!(rebuilt.graph_generation, rebuilt.index_generation);
+        let journal = super::super::persist::open_read_only(&database).unwrap();
+        assert!(matches!(
+            journal_phase(&journal, root.identity().as_str()).unwrap(),
+            Some((attempt_id, phase, _))
+                if attempt_id == receipt.journal_attempt_id && phase == "committed"
+        ));
+        assert!(matches!(
+            inspect(&database, &repo).state,
+            CodeMapLifecycleState::Fresh { snapshot }
+                if snapshot.index_generation == rebuilt.index_generation
+                    && snapshot.graph_generation == rebuilt.graph_generation
+        ));
     }
 
     #[test]

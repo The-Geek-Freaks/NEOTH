@@ -472,7 +472,7 @@ class CiCadenceContractTests(unittest.TestCase):
         )
         self.assertEqual(
             direct_mapping_keys(execute, 8),
-            ["timeout-minutes", "shell", "working-directory", "run"],
+            ["timeout-minutes", "shell", "working-directory", "env", "run"],
         )
         self.assertIn(
             "timeout-minutes: ${{ matrix.test_build_timeout_minutes }}", build
@@ -480,6 +480,19 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertIn(
             "timeout-minutes: ${{ matrix.test_execution_timeout_minutes }}", execute
         )
+        self.assertIn(
+            "\n".join(
+                [
+                    "        env:",
+                    "          # The hosted Windows runner exposes Winit but no usable OpenGL entry points.",
+                    "          # Exercise the same real callback/event-loop path with Slint's compiled software renderer.",
+                    "          SLINT_BACKEND: ${{ runner.os == 'Windows' && 'software' || '' }}",
+                ]
+            ),
+            execute,
+        )
+        self.assertEqual(direct_mapping_keys(mapping_block(execute, "env", 8), 10), ["SLINT_BACKEND"])
+        self.assertEqual(execute.count("SLINT_BACKEND:"), 1)
         self.assertEqual(
             step_run_command(build),
             "\n".join(

@@ -27,6 +27,7 @@ release-desktop = ["neothd/release-desktop"]
 slint = { version = "1.8", default-features = false, features = [
     "compat-1-2",
     "renderer-femtovg",
+    "renderer-software",
     "backend-winit",
     "std",
     "unstable-winit-030",

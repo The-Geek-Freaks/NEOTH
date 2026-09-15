@@ -526,7 +526,8 @@ async fn build_dispatch_plan(
                             config.autonomy_policy(),
                             writer.as_ref().map(|writer| writer.as_ref().clone()),
                             config.tokens.max_per_request,
-                        ),
+                        )
+                        .with_usage_home(neoth_home.to_path_buf()),
                         default_model,
                         "coding.worker",
                     ),
@@ -1137,11 +1138,13 @@ pub(crate) async fn build_audited_worker(
     )
     .await?;
     let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
-    let audit = crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
-        config.autonomy_policy(),
-        config.tokens.max_per_request,
-    )
-    .await?;
+    let audit =
+        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot_at_home(
+            config.autonomy_policy(),
+            neoth_home,
+            config.tokens.max_per_request,
+        )
+        .await?;
     let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
         provider,
         audit.authorizer(),
@@ -2189,6 +2192,9 @@ impl LocalCodingService {
 #[derive(Clone)]
 pub struct CodingServiceConfig {
     pub database_path: PathBuf,
+    /// The code-map snapshot selected by this service instance. Keeping it in
+    /// the instance config avoids consulting a process-global home at run time.
+    pub code_map_database_path: PathBuf,
     pub neoth_home: PathBuf,
     /// Exact config file reloaded before every fresh coding run.
     pub freedom_config_path: PathBuf,
@@ -2613,7 +2619,7 @@ async fn start_runtime_run(
     request: CodingStartRequest,
     control: Arc<ServiceControl>,
 ) -> Result<CodingRunHandle> {
-    let code_map_database_path = crate::code_map::persist::default_path();
+    let code_map_database_path = config.code_map_database_path.clone();
     let neoth_home = config.neoth_home.clone();
     let database_path = config.database_path.clone();
     let local = start_runtime_run_with_worker_factory(
@@ -2874,6 +2880,7 @@ mod tests {
         std::fs::create_dir_all(&neoth_home).unwrap();
         let config = CodingServiceConfig {
             database_path: dir.path().join("views.db"),
+            code_map_database_path: code_map_database_path.clone(),
             neoth_home,
             freedom_config_path,
             freedom_config: crate::config::FreedomConfig::default(),

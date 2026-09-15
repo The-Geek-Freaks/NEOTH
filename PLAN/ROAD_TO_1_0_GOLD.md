@@ -8,6 +8,32 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W66/W67/W68/W69 local Source09 validation (2026-09-15):** eleven manual source
+paths plus reviewed generated `Cargo.lock` cover 270 pre-docgen / **271**
+post-docgen inputs, **25** filters, **27** mandatory fixtures and 19 commit paths.
+NativeClippy12 passed in **3m02s**; TestBuild06 in **1.70s**; selected06
+**2919/0/1** in **163.23s** (2920 selected, 14744 catalog); contracts05
+**750/0/0**; and docgen **1/0/0**. GUI build05 passed in **20.68s**; GUI05 passed
+**742/0/0** in **5.94s** with its 742-test catalog and binary
+`81A75F3BC560CFBB0D3A540348FDB796226023F8E474C6AA731E3DF504BD2DA9`.
+GUI Clippy02 passed in **4m53s** (minimum free **215.38 GiB**, peak **6.85 GiB**);
+Python45, CI matrix and fresh GUI lint passed. The evidence builder verified 271
+inputs and 2920 selected tests; source09 evidence is recorded in
+`docs/verification/gold-wave66-69-{source-manifest,test-matrix}.json`. The W67
+selected-home audit/usage fix, W66 session-sort and W68 Council framing, W69
+Windows software renderer, and orphan-recovery regression are locally validated
+within this scope. This is local evidence only: no full CI, installer, visual,
+delivery, release or ROAD-leaf claim. Counts remain **1324/1015/307/2**,
+raw309/pre-tag308. W62 and W70/W71 remain separate.
+
+The original selected01 failure (2916/1/1, 164.77s) exposed a watcher helper
+rejecting a retained `Recovering` generation. Diagnosis also found a production
+wedge: a stale prior generation left its orphan journal running and prevented
+all later rebuilds. The new regression reproduced that exact error against the
+byte-identical old production prefix (0/1/0, 0.12s), then passed with the reviewed
+repair in selected02. The watcher test also passed without weakening its strict
+generation-advance requirement. Both failed runs remain diagnostic evidence.
+
 **Validated W61/W63/W64/W65 batch (2026-09-15):** thirteen reviewed Rust
 sources bind direct-MCP prepared results, request-owned coding-worker context
 and canonical older-history compaction. The final source passed native
