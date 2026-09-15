@@ -77,6 +77,7 @@
 //! A crash mid-persist leaves the prior snapshot intact (no partial
 //! state). A successful commit replaces the snapshot atomically.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -123,6 +124,25 @@ const MAX_FRESHNESS_ROW_TEXT_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_DOCTOR_TEST_EVIDENCE_ROWS: usize = 1_024;
 const DOCTOR_TEST_EVIDENCE_VM_STEP_LIMIT: usize = 100_000;
 const DOCTOR_TEST_EVIDENCE_VM_STEP_INTERVAL: i32 = 1_000;
+
+/// Retrieval never needs a whole-root symbol census merely to explain why
+/// exact `TestedBy` evidence may be absent. The caller also supplies a tighter
+/// shared-work cap for impact-bound queries.
+const MAX_TEST_EVIDENCE_EXCLUSION_ROWS: usize = 20_000;
+const MAX_TEST_EVIDENCE_EXCLUSION_TEXT_BYTES: usize = 2 * 1024 * 1024;
+const MAX_TEST_EVIDENCE_EXCLUSION_ROW_TEXT_BYTES: usize = 64 * 1024;
+const TEST_EVIDENCE_EXCLUSION_VM_STEP_LIMIT: usize = 100_000;
+const TEST_EVIDENCE_EXCLUSION_VM_STEP_INTERVAL: i32 = 1_000;
+
+struct TestEvidenceExclusionProgressReset<'a> {
+    conn: &'a Connection,
+}
+
+impl Drop for TestEvidenceExclusionProgressReset<'_> {
+    fn drop(&mut self) {
+        self.conn.progress_handler(0, None::<fn() -> bool>);
+    }
+}
 
 /// Instance-default code-map path. `FreedomConfig::default_neoth_home()` is
 /// the shared authority and honours `NEOTH_HOME`; using raw HOME here split
@@ -2214,6 +2234,220 @@ pub(crate) fn root_snapshot_complete(conn: &Connection, root: &str) -> Result<bo
     .map(|complete| complete.unwrap_or(false))
 }
 
+/// Read classifier-visible test-evidence exclusions from the already-persisted
+/// root snapshot. This intentionally avoids source re-scanning and schema
+/// migration: file paths, languages, and declarations are enough to retain
+/// only the narrow path/language and duplicate-target facts below. Framework
+/// marker forms are not recoverable from this schema and remain unknown.
+///
+/// `max_rows` is a whole-operation work ceiling. Both file and declaration
+/// rows, including a cap sentinel, consume it; `work_units` reports the exact
+/// number physically materialised so an impact caller can charge its shared
+/// budget without resetting it per node.
+pub(crate) fn root_test_evidence_exclusion_summary_bounded(
+    conn: &Connection,
+    root: &str,
+    max_rows: usize,
+) -> Result<crate::code_map::graph::TestEvidenceExclusionSummary> {
+    ensure!(
+        max_rows > 0,
+        "test-evidence exclusion work cap must be positive"
+    );
+    let max_rows = max_rows.min(MAX_TEST_EVIDENCE_EXCLUSION_ROWS);
+    let step_limit = Arc::new(AtomicBool::new(false));
+    let step_limit_for_progress = Arc::clone(&step_limit);
+    let mut steps = 0usize;
+    conn.progress_handler(
+        TEST_EVIDENCE_EXCLUSION_VM_STEP_INTERVAL,
+        Some(move || {
+            steps = steps.saturating_add(TEST_EVIDENCE_EXCLUSION_VM_STEP_INTERVAL as usize);
+            let stop = steps >= TEST_EVIDENCE_EXCLUSION_VM_STEP_LIMIT;
+            if stop {
+                step_limit_for_progress.store(true, Ordering::Relaxed);
+            }
+            stop
+        }),
+    );
+    let _reset_progress = TestEvidenceExclusionProgressReset { conn };
+    let mut summary = crate::code_map::graph::TestEvidenceExclusionSummary::default();
+    let mut categories = BTreeMap::new();
+    let file_observation_cap = max_rows.saturating_sub(1);
+    let file_limit = i64::try_from(file_observation_cap.saturating_add(1))
+        .context("convert test-evidence exclusion file row limit")?;
+    let mut statement = conn
+        .prepare(
+            "SELECT path, language, \
+                    length(CAST(path AS BLOB)) + length(CAST(language AS BLOB)) \
+             FROM code_map_files \
+             WHERE root = ?1 ORDER BY path LIMIT ?2",
+        )
+        .context("prepare bounded test-evidence exclusion file query")?;
+    let mut rows = statement
+        .query(rusqlite::params![root, file_limit])
+        .context("query bounded test-evidence exclusion files")?;
+    let mut text_bytes = 0usize;
+    while let Some(row) = match rows.next() {
+        Ok(row) => row,
+        Err(error) if step_limit.load(Ordering::Relaxed) => bail!(
+            "test-evidence exclusion query exceeded its {} SQLite-VM-step work bound: {error}",
+            TEST_EVIDENCE_EXCLUSION_VM_STEP_LIMIT
+        ),
+        Err(error) => {
+            return Err(error).context("advance bounded test-evidence exclusion file row");
+        }
+    } {
+        if summary.source_files_examined == file_observation_cap {
+            summary.work_units = summary
+                .work_units
+                .checked_add(1)
+                .context("test-evidence exclusion sentinel work overflow")?;
+            summary.capped = true;
+            summary.categories = categories;
+            return Ok(summary);
+        }
+        let row_bytes: i64 = row
+            .get(2)
+            .context("read test-evidence exclusion file text-byte count")?;
+        let row_bytes = usize::try_from(row_bytes).with_context(|| {
+            format!("invalid test-evidence exclusion file text bytes {row_bytes}")
+        })?;
+        ensure!(
+            row_bytes <= MAX_TEST_EVIDENCE_EXCLUSION_ROW_TEXT_BYTES,
+            "test-evidence exclusion file row exceeds text ceiling"
+        );
+        text_bytes = text_bytes
+            .checked_add(row_bytes)
+            .context("test-evidence exclusion file text-byte overflow")?;
+        ensure!(
+            text_bytes <= MAX_TEST_EVIDENCE_EXCLUSION_TEXT_BYTES,
+            "test-evidence exclusion file materialization exceeds text ceiling"
+        );
+        let path: String = row.get(0).context("read test-evidence exclusion path")?;
+        let language: String = row
+            .get(1)
+            .context("read test-evidence exclusion language")?;
+        for category in
+            crate::code_map::graph::persisted_test_evidence_file_exclusions(&path, &language)
+        {
+            let count = categories.entry(category).or_insert(0usize);
+            *count = count
+                .checked_add(1)
+                .context("test-evidence exclusion category count overflow")?;
+        }
+        summary.source_files_examined = summary
+            .source_files_examined
+            .checked_add(1)
+            .context("test-evidence exclusion file count overflow")?;
+        summary.work_units = summary
+            .work_units
+            .checked_add(1)
+            .context("test-evidence exclusion file work overflow")?;
+    }
+    drop(rows);
+    drop(statement);
+
+    // Only a complete bounded file pass may make a duplicate-target claim.
+    // A truncated declaration stream could hide a second target file, so it
+    // remains unknown instead of publishing a misleading lower bound.
+    let remaining = max_rows.saturating_sub(summary.work_units);
+    if remaining == 0 {
+        summary.capped = true;
+        summary.categories = categories;
+        return Ok(summary);
+    }
+    let symbol_observation_cap = remaining.saturating_sub(1);
+    let symbol_limit = i64::try_from(symbol_observation_cap.saturating_add(1))
+        .context("convert test-evidence exclusion symbol row limit")?;
+    let mut statement = conn
+        .prepare(
+            "SELECT f.path, f.language, s.name, s.kind, \
+                    length(CAST(f.path AS BLOB)) + length(CAST(f.language AS BLOB)) + \
+                    length(CAST(s.name AS BLOB)) + length(CAST(s.kind AS BLOB)) \
+             FROM code_map_files f \
+             JOIN code_map_symbols s ON s.file_id = f.id \
+             WHERE f.root = ?1 \
+             ORDER BY s.name, f.path, s.kind, s.line LIMIT ?2",
+        )
+        .context("prepare bounded test-evidence exclusion symbol query")?;
+    let mut rows = statement
+        .query(rusqlite::params![root, symbol_limit])
+        .context("query bounded test-evidence exclusion symbols")?;
+    let mut duplicate_names = BTreeSet::new();
+    let mut current_name: Option<String> = None;
+    let mut current_paths = BTreeSet::new();
+    while let Some(row) = match rows.next() {
+        Ok(row) => row,
+        Err(error) if step_limit.load(Ordering::Relaxed) => bail!(
+            "test-evidence exclusion query exceeded its {} SQLite-VM-step work bound: {error}",
+            TEST_EVIDENCE_EXCLUSION_VM_STEP_LIMIT
+        ),
+        Err(error) => {
+            return Err(error).context("advance bounded test-evidence exclusion symbol row");
+        }
+    } {
+        if summary.source_symbols_examined == symbol_observation_cap {
+            summary.work_units = summary
+                .work_units
+                .checked_add(1)
+                .context("test-evidence exclusion symbol sentinel work overflow")?;
+            summary.capped = true;
+            summary.categories = categories;
+            return Ok(summary);
+        }
+        let row_bytes: i64 = row
+            .get(4)
+            .context("read test-evidence exclusion symbol text-byte count")?;
+        let row_bytes = usize::try_from(row_bytes).with_context(|| {
+            format!("invalid test-evidence exclusion symbol text bytes {row_bytes}")
+        })?;
+        ensure!(
+            row_bytes <= MAX_TEST_EVIDENCE_EXCLUSION_ROW_TEXT_BYTES,
+            "test-evidence exclusion symbol row exceeds text ceiling"
+        );
+        text_bytes = text_bytes
+            .checked_add(row_bytes)
+            .context("test-evidence exclusion symbol text-byte overflow")?;
+        ensure!(
+            text_bytes <= MAX_TEST_EVIDENCE_EXCLUSION_TEXT_BYTES,
+            "test-evidence exclusion symbol materialization exceeds text ceiling"
+        );
+        let path: String = row.get(0).context("read test-evidence target path")?;
+        let language: String = row.get(1).context("read test-evidence target language")?;
+        let name: String = row.get(2).context("read test-evidence target name")?;
+        let kind: String = row.get(3).context("read test-evidence target kind")?;
+        if crate::code_map::graph::persisted_supported_test_evidence_target(&path, &language, &kind)
+        {
+            if current_name.as_deref() != Some(&name) {
+                if current_paths.len() > 1 {
+                    duplicate_names.insert(current_name.take().expect("present duplicate name"));
+                }
+                current_paths.clear();
+                current_name = Some(name.clone());
+            }
+            current_paths.insert(path);
+        }
+        summary.source_symbols_examined = summary
+            .source_symbols_examined
+            .checked_add(1)
+            .context("test-evidence exclusion symbol count overflow")?;
+        summary.work_units = summary
+            .work_units
+            .checked_add(1)
+            .context("test-evidence exclusion symbol work overflow")?;
+    }
+    if current_paths.len() > 1 {
+        duplicate_names.insert(current_name.expect("present final duplicate name"));
+    }
+    if !duplicate_names.is_empty() {
+        categories.insert(
+            crate::code_map::graph::TestEvidenceExclusionCategory::DuplicateTarget,
+            duplicate_names.len(),
+        );
+    }
+    summary.categories = categories;
+    Ok(summary)
+}
+
 /// Bounded, persisted `TestedBy` evidence for Doctor.  These are structural
 /// graph observations only: an exact edge is not a record that any test was
 /// executed, and an empty observation is never evidence that a repository has
@@ -3272,6 +3506,68 @@ mod tests {
             None
         );
         assert_eq!(load_edges(&conn, "/repo/a").unwrap(), bounded);
+    }
+
+    #[test]
+    fn root_test_evidence_exclusions_are_deterministic_bounded_and_root_scoped() {
+        let (_dir, mut conn) = temp_db();
+        persist_map(&mut conn, &sample_map("/repo/a")).unwrap();
+        persist_map(&mut conn, &sample_map("/repo/b")).unwrap();
+        conn.execute_batch(
+            "INSERT INTO code_map_files (root, path, language, bytes, loc, sha256, mtime_ns) VALUES
+                ('/repo/a', 'tests/helpers/support.rs', 'rust', 1, 1, 'a', 1),
+                ('/repo/a', 'tests/fixtures/case.rs', 'rust', 1, 1, 'b', 1),
+                ('/repo/a', 'tests/generated/case.rs', 'rust', 1, 1, 'c', 1),
+                ('/repo/a', 'tests/foreign/case.go', 'go', 1, 1, 'd', 1),
+                ('/repo/a', 'src/left.rs', 'rust', 1, 1, 'e', 1),
+                ('/repo/a', 'src/right.rs', 'rust', 1, 1, 'f', 1),
+                ('/repo/b', 'tests/generated/other.rs', 'rust', 1, 1, 'g', 1);
+             INSERT INTO code_map_symbols (file_id, name, kind, line, line_end)
+                SELECT id, 'duplicated', 'function', 1, 1 FROM code_map_files
+                WHERE root = '/repo/a' AND path IN ('src/left.rs', 'src/right.rs');",
+        )
+        .unwrap();
+
+        let summary = root_test_evidence_exclusion_summary_bounded(&conn, "/repo/a", 64)
+            .expect("bounded aggregate");
+        assert!(!summary.capped);
+        assert_eq!(
+            summary
+                .categories
+                .get(&crate::code_map::graph::TestEvidenceExclusionCategory::HelperOrFixture),
+            Some(&2)
+        );
+        assert_eq!(
+            summary
+                .categories
+                .get(&crate::code_map::graph::TestEvidenceExclusionCategory::Generated),
+            Some(&1)
+        );
+        assert_eq!(
+            summary
+                .categories
+                .get(&crate::code_map::graph::TestEvidenceExclusionCategory::UnsupportedLanguage),
+            Some(&1)
+        );
+        assert_eq!(
+            summary
+                .categories
+                .get(&crate::code_map::graph::TestEvidenceExclusionCategory::DuplicateTarget),
+            Some(&1)
+        );
+        assert_eq!(
+            root_test_evidence_exclusion_summary_bounded(&conn, "/repo/b", 64)
+                .unwrap()
+                .categories
+                .get(&crate::code_map::graph::TestEvidenceExclusionCategory::Generated),
+            Some(&1),
+            "each root reports only its own persisted source inventory"
+        );
+        let capped = root_test_evidence_exclusion_summary_bounded(&conn, "/repo/a", 1)
+            .expect("one sentinel-row budget remains a truthful capped receipt");
+        assert!(capped.capped);
+        assert_eq!(capped.work_units, 1);
+        assert!(capped.categories.is_empty());
     }
 
     #[test]

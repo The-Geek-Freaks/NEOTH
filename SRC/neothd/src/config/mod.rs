@@ -1139,7 +1139,7 @@ pub use features::{
 };
 pub use memory::{MemoryConfig, VectorBackend, VectorIndexConfig};
 pub use ops::{
-    AutoUpdateConfig, CodeMapConfig, CodeMapLifecycleConfig, CodingConfig,
+    AutoUpdateConfig, CodeMapConfig, CodeMapImpactPolicy, CodeMapLifecycleConfig, CodingConfig,
     CommunicationProfileConfig, CommunicationPromptExport, DoctorConfig, PluginsConfig,
     ProfileConfig, RefusalRecoveryConfig, ReleaseChannel, SupervisorConfig, SupervisorKind,
     TaskEngineConfig, UpdaterConfig, WasmPluginsConfig,
@@ -2957,7 +2957,7 @@ fn warn_if_world_readable(path: &Path) {
 mod code_map_config_tests {
     use std::path::PathBuf;
 
-    use super::{CodeMapConfig, CodeMapLifecycleConfig, FreedomConfig};
+    use super::{CodeMapConfig, CodeMapImpactPolicy, CodeMapLifecycleConfig, FreedomConfig};
 
     #[test]
     fn code_map_serde_defaults_preserve_auto_context_opt_in() {
@@ -2966,6 +2966,10 @@ mod code_map_config_tests {
 
         assert_eq!(config.code_map.auto_context_max_files, 0);
         assert!(!config.code_map.outline_enrichment);
+        assert_eq!(
+            config.code_map.impact_policy,
+            CodeMapImpactPolicy::default()
+        );
         assert_eq!(config.code_map.coding_recall_max_files, 8);
         assert_eq!(config.code_map.coding_callers_per_symbol, 3);
         assert_eq!(config.code_map.coding_summary_token_budget, 2_048);
@@ -2985,6 +2989,9 @@ mod code_map_config_tests {
             "code_map:\n  coding_recall_max_files: 51\n",
             "code_map:\n  coding_callers_per_symbol: 21\n",
             "code_map:\n  coding_summary_token_budget: 12001\n",
+            "code_map:\n  impact_policy:\n    max_depth: 33\n",
+            "code_map:\n  impact_policy:\n    max_nodes: 10001\n",
+            "code_map:\n  impact_policy:\n    allow_stale: true\n",
         ] {
             assert!(
                 serde_yaml::from_str::<FreedomConfig>(source).is_err(),
@@ -3006,6 +3013,7 @@ mod code_map_config_tests {
 
         let maximum = CodeMapConfig {
             outline_enrichment: true,
+            impact_policy: CodeMapImpactPolicy::default(),
             auto_context_max_files: 200,
             coding_recall_max_files: 50,
             coding_callers_per_symbol: 20,

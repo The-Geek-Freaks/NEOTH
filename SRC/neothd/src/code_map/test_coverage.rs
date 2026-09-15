@@ -74,6 +74,10 @@ pub struct TestCoverageResult {
     pub index_generation: i64,
     pub graph_generation: i64,
     pub observed_tests: Vec<ObservedTest>,
+    /// Aggregate-only exclusions from this same persisted root/generation.
+    /// They are root-wide classifier facts, not an assertion that any one
+    /// impacted declaration has a missing test.
+    pub exclusion_provenance: super::graph::TestEvidenceExclusionSummary,
     pub uncertainty: TestCoverageUncertainty,
 }
 
@@ -182,6 +186,8 @@ pub struct ImpactTestGapResult {
     pub per_node: Vec<ImpactTestGapNodeResult>,
     pub impact_partial: bool,
     pub work_budget: ImpactTestGapWorkBudget,
+    /// Absent only when typed input rejection prevented every database read.
+    pub exclusion_provenance: Option<super::graph::TestEvidenceExclusionSummary>,
     pub no_observed_test_is_not_absence: bool,
 }
 
@@ -252,6 +258,7 @@ fn coverage_for_exact_impact_node(
     graph_generation: i64,
     partial_graph: bool,
     edge_rows_capped: bool,
+    exclusion_provenance: &super::graph::TestEvidenceExclusionSummary,
     incoming_calls: &BTreeMap<String, Vec<TestCoverageNode>>,
     tested_by: &BTreeMap<TestCoverageNode, Vec<super::graph::CodeEdge>>,
     options: &TestCoverageOptions,
@@ -377,15 +384,19 @@ fn coverage_for_exact_impact_node(
     uncertainty.no_observed_test = observed_tests.is_empty();
     uncertainty.unsupported_or_unclassified = uncertainty.partial_graph
         || uncertainty.stale_graph
-        || uncertainty.unresolved_or_ambiguous
         || uncertainty.edge_rows_capped
-        || uncertainty.node_capped;
+        || uncertainty.node_capped
+        || exclusion_provenance.capped
+        || (uncertainty.no_observed_test
+            && (uncertainty.unresolved_or_ambiguous
+                || !exclusion_provenance.categories.is_empty()));
     TestCoverageResult {
         root: root.to_owned(),
         seed,
         index_generation,
         graph_generation,
         observed_tests,
+        exclusion_provenance: exclusion_provenance.clone(),
         uncertainty,
     }
 }
@@ -413,6 +424,7 @@ pub fn test_gap_for_impact(
             per_node: Vec::new(),
             impact_partial: true,
             work_budget: SharedImpactTestGapBudget::new(options.max_nodes).finish(),
+            exclusion_provenance: None,
             no_observed_test_is_not_absence: true,
         });
     }
@@ -503,6 +515,30 @@ pub fn test_gap_for_impact(
             _ => {}
         }
     }
+    // Preserve a small reserve for identity/traversal/output. The provenance
+    // query itself receives every other remaining unit and returns a capped,
+    // explicitly non-total aggregate when that is insufficient.
+    let provenance_budget = budget.receipt.remaining_units.saturating_sub(8);
+    let exclusion_provenance = if provenance_budget == 0 {
+        super::graph::TestEvidenceExclusionSummary {
+            capped: true,
+            ..Default::default()
+        }
+    } else {
+        let summary = super::persist::root_test_evidence_exclusion_summary_bounded(
+            conn,
+            &impact.root,
+            provenance_budget,
+        )?;
+        for _ in 0..summary.work_units {
+            if !budget.charge() {
+                bail!(
+                    "shared impact test-gap budget exhausted while accounting exclusion provenance"
+                );
+            }
+        }
+        summary
+    };
     let mut nodes = BTreeSet::new();
     let mut coverage_key_counts = BTreeMap::<TestCoverageNode, usize>::new();
     for impacted in &impact.impacted_nodes {
@@ -521,6 +557,7 @@ pub fn test_gap_for_impact(
         nodes.insert(impacted.node.clone());
     }
     let mut impact_partial = edge_rows_capped;
+    impact_partial |= exclusion_provenance.capped;
     let mut per_node = Vec::new();
     for impact_node in nodes {
         if !budget.charge() {
@@ -556,6 +593,7 @@ pub fn test_gap_for_impact(
             graph,
             !complete_before,
             edge_rows_capped,
+            &exclusion_provenance,
             &incoming_calls,
             &tested_by,
             &options,
@@ -616,6 +654,7 @@ pub fn test_gap_for_impact(
         per_node,
         impact_partial,
         work_budget: budget.finish(),
+        exclusion_provenance: Some(exclusion_provenance),
         no_observed_test_is_not_absence: true,
     })
 }
@@ -651,9 +690,14 @@ pub fn test_coverage_for(
         MAX_TEST_EDGE_ROWS,
         MAX_TEST_EDGE_TEXT_BYTES,
     )?;
+    let exclusion_provenance = super::persist::root_test_evidence_exclusion_summary_bounded(
+        conn,
+        root,
+        MAX_TEST_EDGE_ROWS,
+    )?;
     let mut uncertainty = TestCoverageUncertainty {
         stale_graph: index_generation < 0 || graph_generation != index_generation,
-        partial_graph: truncated_at.is_some(),
+        partial_graph: truncated_at.is_some() || exclusion_provenance.capped,
         edge_rows_capped,
         ..Default::default()
     };
@@ -773,14 +817,19 @@ pub fn test_coverage_for(
     uncertainty.no_observed_test = observed_tests.is_empty();
     uncertainty.unsupported_or_unclassified = uncertainty.partial_graph
         || uncertainty.stale_graph
-        || uncertainty.unresolved_or_ambiguous
-        || uncertainty.edge_rows_capped;
+        || uncertainty.edge_rows_capped
+        || uncertainty.node_capped
+        || (uncertainty.no_observed_test
+            && (uncertainty.unresolved_or_ambiguous
+                || !exclusion_provenance.categories.is_empty()
+                || exclusion_provenance.capped));
     Ok(TestCoverageResult {
         root: root.to_owned(),
         seed,
         index_generation,
         graph_generation,
         observed_tests,
+        exclusion_provenance,
         uncertainty,
     })
 }
@@ -1011,6 +1060,85 @@ mod impact_gap_behavior_tests {
     }
 
     #[test]
+    fn impact_gap_projects_root_scoped_classifier_exclusions_without_inventing_edges() {
+        let sources = [
+            ("src/work.rs", "pub fn work() {}\n"),
+            ("src/wrapper.rs", "pub fn wrapper() { work(); }\n"),
+            ("src/left.rs", "pub fn duplicated() {}\n"),
+            ("src/right.rs", "pub fn duplicated() {}\n"),
+            (
+                "tests/work_tests.rs",
+                "#[test]\nfn observes_work() { work(); }\n",
+            ),
+            (
+                "tests/helpers/support.rs",
+                "#[test]\nfn ignored_helper() {}\n",
+            ),
+            (
+                "tests/fixtures/case.rs",
+                "#[test]\nfn ignored_fixture() {}\n",
+            ),
+            (
+                "tests/generated/case.rs",
+                "#[test]\nfn ignored_generated() {}\n",
+            ),
+            ("tests/foreign/case.go", "func TestForeign() {}\n"),
+        ];
+        let fixture = indexed_fixture(&sources);
+        let impact = impact_from_wrapper(&fixture, 64);
+        let gap = test_gap_for_impact(
+            &fixture.conn,
+            &impact,
+            TestCoverageOptions {
+                max_depth: 3,
+                max_nodes: 64,
+            },
+        )
+        .expect("root-scoped exclusion provenance");
+        let exclusions = gap
+            .exclusion_provenance
+            .as_ref()
+            .expect("complete input reads one aggregate from the same root generation");
+        assert!(!exclusions.capped);
+        assert_eq!(
+            exclusions
+                .categories
+                .get(&super::super::graph::TestEvidenceExclusionCategory::HelperOrFixture),
+            Some(&2)
+        );
+        assert_eq!(
+            exclusions
+                .categories
+                .get(&super::super::graph::TestEvidenceExclusionCategory::Generated),
+            Some(&1)
+        );
+        assert_eq!(
+            exclusions
+                .categories
+                .get(&super::super::graph::TestEvidenceExclusionCategory::UnsupportedLanguage),
+            Some(&1)
+        );
+        assert_eq!(
+            exclusions
+                .categories
+                .get(&super::super::graph::TestEvidenceExclusionCategory::DuplicateTarget),
+            Some(&1)
+        );
+        let work = coverage_for(&gap, "work");
+        assert!(work.observed_tests.iter().any(|observed| {
+            observed.test.file == "tests/work_tests.rs" && observed.test.symbol == "observes_work"
+        }));
+        assert!(
+            work.uncertainty.unresolved_or_ambiguous,
+            "the fixture retains its inferred call traversal without promoting it to an exact edge"
+        );
+        assert!(
+            !work.uncertainty.unsupported_or_unclassified,
+            "root-wide exclusions do not make an exact positive observation unknown"
+        );
+    }
+
+    #[test]
     fn duplicate_file_symbol_with_distinct_line_and_kind_stays_two_truthful_nodes() {
         let fixture = indexed_fixture(&primary_sources());
         let mut impact = impact_from_wrapper(&fixture, 32);
@@ -1084,6 +1212,10 @@ mod impact_gap_behavior_tests {
             ImpactTestGapOutcome::RejectedInput(ImpactTestGapRejection::Stale)
         );
         assert!(stale_gap.per_node.is_empty());
+        assert!(
+            stale_gap.exclusion_provenance.is_none(),
+            "rejected stale input must not borrow exclusion facts from any persisted root"
+        );
 
         let fresh = indexed_fixture(&fanout_sources());
         let truncated = impact_from_wrapper(&fresh, 1);

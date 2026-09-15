@@ -453,6 +453,54 @@ impl McpClient {
         config
             .validate_launcher()
             .map_err(|e| McpError::Spawn(config.id.clone(), e.to_string()))?;
+
+        // W56 exercises the ordinary dispatcher against the generated
+        // codegraph descriptor.  A Rust libtest executable cannot accept the
+        // production `mcp codegraph-serve …` argv directly, so this narrowly
+        // swaps only the executable argv for the marker child.  The validated
+        // descriptor remains the one bound, preflighted, catalogued and used
+        // for `tools/call`; the child receives that exact descriptor as an
+        // auditable startup record before serving the real stdio protocol.
+        #[cfg(test)]
+        if let Some(record) = std::env::var_os("NEOTH_W56_CHILD_RECORD") {
+            let Some(database) = config.args.get(3).filter(|_| {
+                matches!(config.args.as_slice(), [mcp, serve, flag, _, depth, _, nodes, _, stale, _]
+                    if mcp == "mcp" && serve == "codegraph-serve" && flag == "--db"
+                        && depth == "--impact-max-depth" && nodes == "--impact-max-nodes"
+                        && stale == "--impact-allow-stale")
+            }) else {
+                return Err(McpError::Spawn(
+                    config.id.clone(),
+                    "W56 marker child requires a derived exact codegraph descriptor".into(),
+                ));
+            };
+            let executable = std::env::current_exe()
+                .map_err(|error| McpError::Spawn(config.id.clone(), error.to_string()))?;
+            let mut marker = tokio::process::Command::new(executable);
+            marker
+                .args([
+                    "--exact",
+                    "mcp::codegraph_server::w53_serve_stdio_marker_child",
+                    "--nocapture",
+                ])
+                .env("NEOTH_W53_SERVE_STDIO_DB", database)
+                .env("NEOTH_W56_CHILD_RECORD", record)
+                .env("NEOTH_W56_REQUEST_BINDING", request_binding_sha256)
+                .env(
+                    "NEOTH_W56_DERIVED_DESCRIPTOR",
+                    serde_json::to_string(config)
+                        .map_err(|error| McpError::Spawn(config.id.clone(), error.to_string()))?,
+                )
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            let child = marker
+                .spawn()
+                .map_err(|error| McpError::Spawn(config.id.clone(), error.to_string()))?;
+            let mut client = Self::from_test_child(&config.id, child).await?;
+            client.request_timeout = request_timeout;
+            return Ok(client);
+        }
         let env = config
             .resolve_env()
             .map_err(|e| McpError::Spawn(config.id.clone(), e.to_string()))?;

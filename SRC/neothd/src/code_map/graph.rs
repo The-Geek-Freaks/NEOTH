@@ -146,6 +146,79 @@ pub enum EdgeKind {
     TestedBy,
 }
 
+/// Aggregate-only reasons why an indexed root may omit otherwise test-shaped
+/// evidence from its exact `TestedBy` graph. These values describe classifier
+/// decisions, never inferred calls or an assertion that a test is absent.
+///
+/// `unclassified_test_form` is deliberately not represented here: the
+/// persisted snapshot retains declarations but not framework-marker source
+/// syntax, so a retrieval path cannot prove that classification after a
+/// rebuild without re-reading source text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TestEvidenceExclusionCategory {
+    HelperOrFixture,
+    Generated,
+    UnsupportedLanguage,
+    DuplicateTarget,
+}
+
+/// One bounded, root-scoped aggregate. Counts are lower bounds when `capped`
+/// is true and contain no source paths, symbol names, or inferred edges.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TestEvidenceExclusionSummary {
+    pub categories: BTreeMap<TestEvidenceExclusionCategory, usize>,
+    pub source_files_examined: usize,
+    pub source_symbols_examined: usize,
+    /// Includes sentinel rows used to make a capped aggregate explicit.
+    pub work_units: usize,
+    pub capped: bool,
+}
+
+/// Classifier-visible exclusions retained by the persisted file inventory.
+/// More than one category may apply to a path; that is a truthful aggregate of
+/// the classifier's independently visible path predicates rather than a
+/// priority-dependent attempt to choose one explanation.
+pub(crate) fn persisted_test_evidence_file_exclusions(
+    path: &str,
+    language: &str,
+) -> BTreeSet<TestEvidenceExclusionCategory> {
+    let normalized = path.replace('\\', "/");
+    let mut categories = BTreeSet::new();
+    if normalized.contains("/helpers/") || normalized.contains("/fixtures/") {
+        categories.insert(TestEvidenceExclusionCategory::HelperOrFixture);
+    }
+    if normalized.contains("/generated/") {
+        categories.insert(TestEvidenceExclusionCategory::Generated);
+    }
+    let filename = normalized.rsplit('/').next().unwrap_or_default();
+    let conventional_test_path = normalized.starts_with("tests/")
+        || normalized.contains("/tests/")
+        || normalized.ends_with("_test.rs")
+        || normalized.ends_with("_test.py")
+        || (filename.starts_with("test_") && filename.ends_with(".py"));
+    if conventional_test_path && language != "rust" && language != "python" {
+        categories.insert(TestEvidenceExclusionCategory::UnsupportedLanguage);
+    }
+    categories
+}
+
+/// The persisted map can still prove this narrow subset of the production
+/// declaration predicate. Framework markers and source bodies are not used.
+pub(crate) fn persisted_supported_test_evidence_target(
+    path: &str,
+    language: &str,
+    kind: &str,
+) -> bool {
+    persisted_test_evidence_file_exclusions(path, language).is_empty()
+        && matches!(language, "rust" | "python")
+        && matches!(kind, "function" | "method")
+        && !path.replace('\\', "/").contains("/tests/")
+        && !path.replace('\\', "/").starts_with("tests/")
+        && !path.replace('\\', "/").ends_with("_test.rs")
+        && !path.replace('\\', "/").ends_with("_test.py")
+}
+
 impl EdgeKind {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -1102,6 +1175,33 @@ mod tests {
         assert_eq!(edges[0].kind, EdgeKind::TestedBy);
         assert_eq!(edges[0].target_file.as_deref(), Some("src/work.rs"));
         assert_eq!(edges[0].confidence_tier, EdgeConfidenceTier::Resolved);
+    }
+
+    #[test]
+    fn persisted_test_evidence_exclusions_keep_only_classifier_visible_facts() {
+        assert!(persisted_test_evidence_file_exclusions("tests/case.rs", "rust").is_empty());
+        assert!(
+            persisted_test_evidence_file_exclusions("tests/helpers/case.rs", "rust")
+                .contains(&TestEvidenceExclusionCategory::HelperOrFixture)
+        );
+        assert!(
+            persisted_test_evidence_file_exclusions("tests/generated/case.rs", "rust")
+                .contains(&TestEvidenceExclusionCategory::Generated)
+        );
+        assert!(
+            persisted_test_evidence_file_exclusions("tests/case.go", "go")
+                .contains(&TestEvidenceExclusionCategory::UnsupportedLanguage)
+        );
+        assert!(persisted_supported_test_evidence_target(
+            "src/work.rs",
+            "rust",
+            "function"
+        ));
+        assert!(!persisted_supported_test_evidence_target(
+            "tests/work_test.rs",
+            "rust",
+            "function"
+        ));
     }
 
     #[test]

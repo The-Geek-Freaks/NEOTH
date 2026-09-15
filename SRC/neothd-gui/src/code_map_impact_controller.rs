@@ -69,18 +69,6 @@ pub struct CodeMapImpactOperation {
 }
 
 impl CodeMapImpactOperation {
-    pub fn revision(&self) -> u64 {
-        self.revision
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    pub fn requested_root(&self) -> &Path {
-        &self.requested_root
-    }
-
     pub fn source(&self) -> &CodeMapImpactSource {
         &self.source
     }
@@ -291,6 +279,7 @@ impl CodeMapImpactController {
     }
 
     /// Fences a queued receipt against the exact visible root and source.
+    #[cfg(test)]
     pub fn is_current_view(
         &self,
         operation: &CodeMapImpactOperation,

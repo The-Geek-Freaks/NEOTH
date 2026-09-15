@@ -1025,16 +1025,19 @@ pub(crate) fn admit_pre_tool_use_with_outline(
     }
 }
 
-/// SHA-256 commitment to the exact MCP request. Object keys are sorted
-/// recursively and arrays retain order. Both preflight authorization and the
-/// one-use PreToolUse permit consume this same commitment.
+/// SHA-256 commitment to the exact MCP request and the immutable launcher
+/// descriptor selected for it. Object keys are sorted recursively and arrays
+/// retain order. Both preflight authorization and the one-use PreToolUse
+/// permit consume this same commitment.
 pub(crate) fn mcp_request_binding(
     cfg: &McpServerConfig,
     tool: &str,
     arguments: &Value,
 ) -> Result<String, GateError> {
+    let descriptor = serde_json::to_value(cfg)
+        .map_err(|error| GateError::Mcp(McpError::Protocol(cfg.id.clone(), error.to_string())))?;
     let request = serde_json::json!({
-        "server_id": cfg.id,
+        "server_descriptor": canonicalize_json(&descriptor),
         "tool": tool,
         "arguments": canonicalize_json(arguments),
     });
@@ -1408,6 +1411,45 @@ mod tests {
             smart_approve: false,
             autonomy_gate: None,
         }
+    }
+
+    #[test]
+    fn request_binding_commits_to_canonical_descriptor_without_rewriting_arguments() {
+        let arguments = serde_json::json!({"nested": {"z": 1, "a": 2}});
+        let original_arguments = arguments.clone();
+        let mut policy_n = base_cfg(Some(vec!["read"]));
+        policy_n.command = "neothd".into();
+        policy_n.args = vec![
+            "mcp".into(),
+            "codegraph-serve".into(),
+            "--impact-max-depth".into(),
+            "2".into(),
+        ];
+        policy_n.env.insert("BETA".into(), "two".into());
+        policy_n.env.insert("ALPHA".into(), "one".into());
+
+        let mut same_descriptor = policy_n.clone();
+        same_descriptor.env.clear();
+        same_descriptor.env.insert("ALPHA".into(), "one".into());
+        same_descriptor.env.insert("BETA".into(), "two".into());
+        let mut policy_n1 = policy_n.clone();
+        policy_n1.args[3] = "3".into();
+
+        let binding_n = mcp_request_binding(&policy_n, "read", &arguments).unwrap();
+        assert_eq!(
+            binding_n,
+            mcp_request_binding(&same_descriptor, "read", &arguments).unwrap(),
+            "equivalent descriptors must retain a stable commitment"
+        );
+        assert_ne!(
+            binding_n,
+            mcp_request_binding(&policy_n1, "read", &arguments).unwrap(),
+            "a policy-derived launcher descriptor cannot reuse an old request commitment"
+        );
+        assert_eq!(
+            arguments, original_arguments,
+            "binding never rewrites tool JSON"
+        );
     }
 
     #[test]

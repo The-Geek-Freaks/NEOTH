@@ -6,6 +6,7 @@
 //! Prompt content is journaled separately only when incognito mode is off.
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use clap::Args;
@@ -2703,12 +2704,27 @@ pub(super) async fn build_prompt_bundle(
     // its CWD is outside every indexed root. The typed receipt stays attached
     // until final budgeting proves the exact block survived into the request.
     let prompt_instance_paths = InstancePaths::for_home(&home);
-    let repo_context_recall =
+    let repo_context_outcome =
         maybe_repo_context_recall_async(&config, &prompt, &prompt_instance_paths, &cwd, false)
+            .await;
+    if let Some(reason) = repo_context_outcome.unavailable_reason_code() {
+        emit_chat_output(
+            output,
+            ChatOutput::HumanStderr {
+                text: format!(
+                    "[neoth:code-map] repository context unavailable ({reason}); continuing without auto-context. Rebuild the code map before retrying."
+                ),
+            },
+        )?;
+        if emit_repo_context_unavailable_audit(writer, &repo_context_outcome, "cli")
             .await
-            .context("resolve repository recall for CLI turn")?;
-    let mut repo_context_block = repo_context_recall
-        .as_ref()
+            .is_err()
+        {
+            anyhow::bail!("repository-context status could not be retained");
+        }
+    }
+    let mut repo_context_block = repo_context_outcome
+        .injected()
         .map(|recall| recall.block.clone());
     let mut architecture_recall = None;
     if let Some(context) = maybe_architecture_findings_for_skill(
@@ -2719,13 +2735,13 @@ pub(super) async fn build_prompt_bundle(
     .await
     .context("resolve architecture code-map context for CLI turn")?
     {
-        if repo_context_recall
-            .as_ref()
+        if repo_context_outcome
+            .injected()
             .is_some_and(|recall| recall.receipt.snapshot != context.snapshot)
         {
             warn!(
-                repo_snapshot = ?repo_context_recall
-                    .as_ref()
+                repo_snapshot = ?repo_context_outcome
+                    .injected()
                     .map(|recall| &recall.receipt.snapshot),
                 architecture_snapshot = ?context.snapshot,
                 "discarding architecture recall from a different code-map generation"
@@ -2940,7 +2956,7 @@ pub(super) async fn build_prompt_bundle(
             // GOLD-CCPARITY-EFFORT-03: thread the per-skill effort to dispatch_provider.
             resolved_effort: skill_effort,
             skill_loop_trigger,
-            repo_recall_audit: repo_context_recall,
+            repo_recall_audit: repo_context_outcome.into_recall(),
             architecture_recall_audit: architecture_recall,
         },
         config,
@@ -5593,6 +5609,7 @@ pub(super) async fn dispatch_provider(
                         once_guard,
                         cancellation.pre_tool_use_cancellation(),
                         config.code_map.outline_enrichment,
+                        config.code_map.impact_policy,
                     )
                     .await
                     {
@@ -9960,15 +9977,193 @@ pub(crate) struct RepoContextRecall {
     pub(crate) receipt: crate::code_map::recall::RecallReceipt,
 }
 
+/// A bounded local outcome for one opt-in repository-context attempt.
+///
+/// It deliberately carries no raw SQLite, filesystem, repository, prompt, or
+/// source error. Those values remain local to the read operation; consumers may
+/// only show or retain the stable reason code below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RepoContextUnavailable {
+    MissingStore,
+    UnmappedRoot,
+    StaleSnapshot,
+    UnreadableStore,
+    WorkerUnavailable,
+}
+
+/// Terminal state for the mandatory unavailable-context receipt.  `Pending`
+/// is deliberately not success: a caller may proceed only after the WAL
+/// writer has acknowledged `Durable`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RepoContextReceiptState {
+    Unclaimed,
+    Pending,
+    Durable,
+    Failed,
+}
+
+/// A prepared unavailable outcome owns this state across caller cancellation.
+/// The append worker, rather than a cancellable route future, settles it.
+#[derive(Debug)]
+pub(crate) struct RepoContextUnavailableReceipt {
+    state: Mutex<RepoContextReceiptState>,
+    terminal: tokio::sync::Notify,
+}
+
+impl RepoContextUnavailableReceipt {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(RepoContextReceiptState::Unclaimed),
+            terminal: tokio::sync::Notify::new(),
+        }
+    }
+
+    fn state(&self) -> RepoContextReceiptState {
+        *self
+            .state
+            .lock()
+            .expect("repository-context receipt state poisoned")
+    }
+
+    fn claim(&self) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .expect("repository-context receipt state poisoned");
+        if *state == RepoContextReceiptState::Unclaimed {
+            *state = RepoContextReceiptState::Pending;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn settle(&self, terminal: RepoContextReceiptState) {
+        debug_assert!(matches!(
+            terminal,
+            RepoContextReceiptState::Durable | RepoContextReceiptState::Failed
+        ));
+        let mut state = self
+            .state
+            .lock()
+            .expect("repository-context receipt state poisoned");
+        if *state == RepoContextReceiptState::Pending {
+            *state = terminal;
+            drop(state);
+            self.terminal.notify_waiters();
+        }
+    }
+}
+
+/// Fails the outcome closed if its append-owning task is cancelled or panics
+/// before it publishes a terminal acknowledgement.  A subsequent route must
+/// never guess whether the request became durable or append a second frame.
+struct RepoContextReceiptPendingGuard {
+    receipt: Arc<RepoContextUnavailableReceipt>,
+    settled: bool,
+}
+
+impl RepoContextReceiptPendingGuard {
+    fn new(receipt: Arc<RepoContextUnavailableReceipt>) -> Self {
+        Self {
+            receipt,
+            settled: false,
+        }
+    }
+
+    fn settle(&mut self, state: RepoContextReceiptState) {
+        self.receipt.settle(state);
+        self.settled = true;
+    }
+}
+
+impl Drop for RepoContextReceiptPendingGuard {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.receipt.settle(RepoContextReceiptState::Failed);
+        }
+    }
+}
+
+impl RepoContextUnavailable {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::MissingStore => "missing_store",
+            Self::UnmappedRoot => "unmapped_root",
+            Self::StaleSnapshot => "stale_snapshot",
+            Self::UnreadableStore => "unreadable_store",
+            Self::WorkerUnavailable => "worker_unavailable",
+        }
+    }
+}
+
+/// The exact result prepared once for a Chat or Channel turn.
+///
+/// `Injected` owns the bounded prompt block and root/generation receipt. Every
+/// other variant leaves the provider prompt unchanged. This turns a configured
+/// but context-free request into an explicit local outcome without widening the
+/// provider boundary or selecting an ambient daemon CWD.
+#[derive(Debug)]
+pub(crate) enum RepoContextOutcome {
+    Disabled,
+    Unavailable {
+        reason: RepoContextUnavailable,
+        receipt: Arc<RepoContextUnavailableReceipt>,
+    },
+    EmptySelection,
+    Injected(RepoContextRecall),
+}
+
+impl RepoContextOutcome {
+    fn unavailable(reason: RepoContextUnavailable) -> Self {
+        Self::Unavailable {
+            reason,
+            receipt: Arc::new(RepoContextUnavailableReceipt::new()),
+        }
+    }
+
+    pub(crate) fn injected(&self) -> Option<&RepoContextRecall> {
+        match self {
+            Self::Injected(recall) => Some(recall),
+            Self::Disabled | Self::Unavailable { .. } | Self::EmptySelection => None,
+        }
+    }
+
+    pub(crate) fn into_recall(self) -> Option<RepoContextRecall> {
+        match self {
+            Self::Injected(recall) => Some(recall),
+            Self::Disabled | Self::Unavailable { .. } | Self::EmptySelection => None,
+        }
+    }
+
+    pub(crate) const fn unavailable_reason_code(&self) -> Option<&'static str> {
+        match self {
+            Self::Unavailable { reason, .. } => Some((*reason).code()),
+            Self::Disabled | Self::EmptySelection | Self::Injected(_) => None,
+        }
+    }
+
+    fn unavailable_receipt(&self) -> Option<&Arc<RepoContextUnavailableReceipt>> {
+        match self {
+            Self::Unavailable { receipt, .. } => Some(receipt),
+            Self::Disabled | Self::EmptySelection | Self::Injected(_) => None,
+        }
+    }
+}
+
 /// K-Repo-Map Phase 3c (Session 14 Pick #26) — repository-local context
-/// lookup. Returns a typed block + receipt when:
+/// lookup. The default-disabled branch returns before inspecting or opening the
+/// code-map store. Enabled failures are classified locally instead of being
+/// flattened to `None` or exposing their raw error chain at a provider boundary.
+///
+/// Returns `Injected` with a typed block + receipt when:
 ///   1. `config.code_map.auto_context_max_files > 0` (operator opted in)
 ///   2. `~/.neoth/code_map.db` exists + opens cleanly
 ///   3. The persisted map has at least one file matching `prompt`
 ///
-/// Missing/disabled/unmapped state is `Ok(None)`. Corrupt or unverifiable
-/// state is returned to the caller so operator surfaces can report it instead
-/// of silently pretending recall succeeded.
+/// `EmptySelection` is a successful bounded read with no safe block. Missing,
+/// unmapped, stale, corrupt/unreadable, and worker failures are typed
+/// `Unavailable` states. The caller may persist only the stable reason code.
 ///
 /// Production resolves both stores from the selected runtime instance home;
 /// The alternate policy entry point is reserved for the daemon/channel path,
@@ -9981,7 +10176,7 @@ pub(crate) fn maybe_repo_context_recall(
     prompt: &str,
     paths: &InstancePaths,
     current_path: &std::path::Path,
-) -> Result<Option<RepoContextRecall>> {
+) -> RepoContextOutcome {
     maybe_repo_context_recall_with_policy(config, prompt, paths, current_path, false)
 }
 
@@ -9991,12 +10186,12 @@ pub(crate) async fn maybe_repo_context_recall_async(
     paths: &InstancePaths,
     current_path: &std::path::Path,
     sole_root_only: bool,
-) -> Result<Option<RepoContextRecall>> {
+) -> RepoContextOutcome {
     let config = config.clone();
     let prompt = prompt.to_owned();
     let paths = paths.clone();
     let current_path = current_path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
+    match tokio::task::spawn_blocking(move || {
         maybe_repo_context_recall_with_policy(
             &config,
             &prompt,
@@ -10006,7 +10201,10 @@ pub(crate) async fn maybe_repo_context_recall_async(
         )
     })
     .await
-    .context("repository recall worker panicked")?
+    {
+        Ok(outcome) => outcome,
+        Err(_) => RepoContextOutcome::unavailable(RepoContextUnavailable::WorkerUnavailable),
+    }
 }
 
 pub(crate) fn maybe_repo_context_recall_with_policy(
@@ -10015,32 +10213,46 @@ pub(crate) fn maybe_repo_context_recall_with_policy(
     paths: &InstancePaths,
     current_path: &std::path::Path,
     sole_root_only: bool,
-) -> Result<Option<RepoContextRecall>> {
+) -> RepoContextOutcome {
     if config.code_map.auto_context_max_files == 0 {
-        return Ok(None);
+        return RepoContextOutcome::Disabled;
     }
-    if !paths
-        .code_map
-        .try_exists()
-        .with_context(|| format!("inspect code-map store {}", paths.code_map.display()))?
-    {
-        return Ok(None);
+    match paths.code_map.try_exists() {
+        Ok(false) => {
+            return RepoContextOutcome::unavailable(RepoContextUnavailable::MissingStore);
+        }
+        Err(_) => {
+            return RepoContextOutcome::unavailable(RepoContextUnavailable::UnreadableStore);
+        }
+        Ok(true) => {}
     }
-    let conn = crate::code_map::persist::open(&paths.code_map)
-        .with_context(|| format!("open code-map store {}", paths.code_map.display()))?;
+    // This consumer must never create, migrate, or refresh an opted-in map.
+    // open_read_only keeps existing schema metadata, including a legacy version,
+    // and rejects missing, corrupt, and non-regular stores without writable effects.
+    let conn = match crate::code_map::persist::open_read_only(&paths.code_map) {
+        Ok(conn) => conn,
+        Err(_) => {
+            return RepoContextOutcome::unavailable(RepoContextUnavailable::UnreadableStore);
+        }
+    };
     let max = config.code_map.auto_context_max_files as usize;
     let receipt = if sole_root_only {
         // A service CWD is ambient process state, not conversation authority.
         // Ignore it even when it happens to sit inside an indexed repository.
-        match crate::code_map::recall::sole_persisted_root_snapshot(&conn)? {
-            Some(snapshot) => crate::code_map::recall::recall_receipt_for_prompt(
+        match crate::code_map::recall::sole_persisted_root_snapshot(&conn) {
+            Ok(Some(snapshot)) => crate::code_map::recall::recall_receipt_for_prompt(
                 &conn,
                 snapshot.root.path(),
                 prompt,
                 max,
                 crate::code_map::recall::RecallStaleness::Check,
-            )?,
-            None => None,
+            ),
+            Ok(None) => {
+                return RepoContextOutcome::unavailable(RepoContextUnavailable::UnmappedRoot);
+            }
+            Err(_) => {
+                return RepoContextOutcome::unavailable(RepoContextUnavailable::UnreadableStore);
+            }
         }
     } else {
         crate::code_map::recall::recall_receipt_for_prompt(
@@ -10049,22 +10261,20 @@ pub(crate) fn maybe_repo_context_recall_with_policy(
             prompt,
             max,
             crate::code_map::recall::RecallStaleness::Check,
-        )?
+        )
     };
-    let Some(receipt) = receipt else {
-        return Ok(None);
+    let receipt = match receipt {
+        Ok(Some(receipt)) => receipt,
+        Ok(None) => return RepoContextOutcome::unavailable(RepoContextUnavailable::UnmappedRoot),
+        Err(_) => return RepoContextOutcome::unavailable(RepoContextUnavailable::UnreadableStore),
     };
     if receipt.stale != Some(false) {
-        anyhow::bail!(
-            "repository recall refused stale or unverifiable snapshot for {} at generation {}",
-            receipt.snapshot.root.display(),
-            receipt.snapshot.index_generation
-        );
+        return RepoContextOutcome::unavailable(RepoContextUnavailable::StaleSnapshot);
     }
     let Some(block) = render_repo_context_block(config, &paths.ccr, &receipt.ranked_files) else {
-        return Ok(None);
+        return RepoContextOutcome::EmptySelection;
     };
-    Ok(Some(RepoContextRecall { block, receipt }))
+    RepoContextOutcome::Injected(RepoContextRecall { block, receipt })
 }
 
 /// Test-friendly inner: resolve the code-map DB at an explicit path
@@ -10355,6 +10565,89 @@ fn repo_context_recall_audit_payload(
         "ts_unix": crate::time::now_unix_i64(),
     }))
     .context("serialize repository recall audit payload")
+}
+
+/// Metadata-only receipt for an enabled request that continued without
+/// repository context. This deliberately contains only a stable local reason
+/// class: no error chain, path, root identity, prompt, source, or secret is
+/// retained for an unavailable outcome.
+fn repo_context_unavailable_audit_payload(
+    outcome: &RepoContextOutcome,
+    surface: &'static str,
+) -> Result<Option<Vec<u8>>> {
+    let Some(reason) = outcome.unavailable_reason_code() else {
+        return Ok(None);
+    };
+    serde_json::to_vec(&serde_json::json!({
+        "schema": "neoth.code_map.recall.audit.v1",
+        "status": "enabled_context_unavailable",
+        "surface": surface,
+        "reason": reason,
+        "ts_unix": crate::time::now_unix_i64(),
+    }))
+    .map(Some)
+    .context("serialize repository-context unavailable audit payload")
+}
+
+/// Require one durable receipt for the exact prepared unavailable outcome.
+///
+/// A route future may be cancelled after enqueuing the append.  The detached
+/// append owner therefore settles the shared outcome; pending, failed, and
+/// cancellation-ambiguous states never report success or authorize provider
+/// dispatch.  We intentionally do not blind-retry a failed state because the
+/// generic append contract acknowledges only after durable publication, and a
+/// caller cancellation cannot prove that a queued request wrote no bytes.
+pub(crate) async fn emit_repo_context_unavailable_audit(
+    writer: &crate::wal::writer::WalWriterHandle,
+    outcome: &RepoContextOutcome,
+    surface: &'static str,
+) -> Result<()> {
+    let Some(receipt) = outcome.unavailable_receipt().cloned() else {
+        return Ok(());
+    };
+    let payload = match repo_context_unavailable_audit_payload(outcome, surface) {
+        Ok(Some(payload)) => payload,
+        Ok(None) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+
+    if receipt.claim() {
+        let writer = writer.clone();
+        let receipt = Arc::clone(&receipt);
+        tokio::spawn(async move {
+            let mut guard = RepoContextReceiptPendingGuard::new(Arc::clone(&receipt));
+            let header =
+                crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+                    .event_subtype(crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8)
+                    .build();
+            let terminal = if writer.append(header, payload).await.is_ok() {
+                RepoContextReceiptState::Durable
+            } else {
+                RepoContextReceiptState::Failed
+            };
+            guard.settle(terminal);
+        });
+    }
+
+    loop {
+        // This uses `notify_waiters()`, whose terminal wake is retained by
+        // Tokio for every `Notified` created before that transition. A route
+        // that observes Pending therefore cannot lose a Durable/Failed update
+        // in the check/await window.
+        let notified = receipt.terminal.notified();
+        match receipt.state() {
+            RepoContextReceiptState::Durable => return Ok(()),
+            RepoContextReceiptState::Failed => {
+                anyhow::bail!(
+                    "repository-context unavailable receipt was not durably acknowledged"
+                );
+            }
+            RepoContextReceiptState::Pending => notified.await,
+            RepoContextReceiptState::Unclaimed => {
+                anyhow::bail!("repository-context unavailable receipt was not claimed");
+            }
+        }
+    }
 }
 
 pub(crate) async fn emit_repo_context_recall_audit(
@@ -12365,6 +12658,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
     pre_tool_cancellation: crate::hooks::PreToolUseCancellation,
     // Immutable FreedomConfig snapshot selected by this provider turn.
     outline_enrichment_enabled: bool,
+    impact_policy: crate::config::CodeMapImpactPolicy,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -12470,6 +12764,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         pre_tool_once_guard,
         pre_tool_cancellation,
         outline_enrichment_enabled,
+        impact_policy,
     )
     .await
 }
@@ -18496,6 +18791,59 @@ modes:
         (config, paths, root.display().to_owned())
     }
 
+    fn unavailable_context_receipt_payloads(bytes: &[u8]) -> Vec<serde_json::Value> {
+        let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
+        let mut receipts = Vec::new();
+        while !cursor.is_empty() {
+            let frame = decode_frame(cursor).expect("decode unavailable-context WAL frame");
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8
+            {
+                let payload: serde_json::Value = serde_json::from_slice(frame.payload)
+                    .expect("decode unavailable-context receipt payload");
+                if payload["status"] == "enabled_context_unavailable" {
+                    receipts.push(payload);
+                }
+            }
+            cursor = &cursor[frame.header.total_len as usize..];
+        }
+        receipts
+    }
+
+    fn code_map_store_artifacts(home: &std::path::Path) -> Vec<(std::ffi::OsString, Vec<u8>)> {
+        let mut artifacts = std::fs::read_dir(home)
+            .expect("read code-map fixture home")
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let name = entry.file_name();
+                name.to_string_lossy().starts_with("code_map.db").then(|| {
+                    (
+                        name,
+                        std::fs::read(entry.path()).expect("read code-map artifact"),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        artifacts.sort_by(|left, right| left.0.cmp(&right.0));
+        artifacts
+    }
+
+    fn assert_valid_read_only_code_map_artifacts(home: &std::path::Path) {
+        for (name, bytes) in code_map_store_artifacts(home) {
+            match name.to_string_lossy().as_ref() {
+                "code_map.db" | "code_map.db-shm" => {}
+                "code_map.db-wal" => assert!(
+                    bytes.is_empty(),
+                    "a valid read-only SQLite coordination WAL must be empty"
+                ),
+                unexpected => {
+                    panic!("unexpected code-map artifact after read-only lookup: {unexpected}")
+                }
+            }
+        }
+    }
+
     #[test]
     fn repo_context_cli_requires_active_root_but_channel_may_use_verified_sole_root() {
         let dir = tempdir().unwrap();
@@ -18507,26 +18855,33 @@ modes:
         let (config, paths, canonical) = seed_physical_repo_recall(&home, &repo);
 
         assert!(
-            maybe_repo_context_recall(&config, "private_auth_marker", &paths, &unrelated)
-                .unwrap()
-                .is_none(),
+            matches!(
+                maybe_repo_context_recall(&config, "private_auth_marker", &paths, &unrelated),
+                RepoContextOutcome::Unavailable {
+                    reason: RepoContextUnavailable::UnmappedRoot,
+                    ..
+                }
+            ),
             "CLI recall must not jump from an unrelated CWD to the sole indexed repo"
         );
-        let daemon = maybe_repo_context_recall_with_policy(
+        let daemon = match maybe_repo_context_recall_with_policy(
             &config,
             "private_auth_marker",
             &paths,
             &unrelated,
             true,
-        )
-        .unwrap()
-        .expect("daemon may use one physically verified sole root");
+        ) {
+            RepoContextOutcome::Injected(recall) => recall,
+            other => panic!("daemon may use one physically verified sole root: {other:?}"),
+        };
         assert_eq!(daemon.receipt.snapshot.root.display(), canonical);
         assert!(daemon.block.contains("private_auth_marker"));
 
-        let active = maybe_repo_context_recall(&config, "private_auth_marker", &paths, &repo)
-            .unwrap()
-            .expect("active physical root must resolve for CLI recall");
+        let active = match maybe_repo_context_recall(&config, "private_auth_marker", &paths, &repo)
+        {
+            RepoContextOutcome::Injected(recall) => recall,
+            other => panic!("active physical root must resolve for CLI recall: {other:?}"),
+        };
         assert_eq!(active.receipt.snapshot, daemon.receipt.snapshot);
 
         let second = dir.path().join("second-repo");
@@ -18547,33 +18902,297 @@ modes:
         .unwrap();
         drop(conn);
         assert!(
-            maybe_repo_context_recall_with_policy(
-                &config,
-                "private_auth_marker",
-                &paths,
-                &unrelated,
-                true,
-            )
-            .unwrap()
-            .is_none(),
+            matches!(
+                maybe_repo_context_recall_with_policy(
+                    &config,
+                    "private_auth_marker",
+                    &paths,
+                    &unrelated,
+                    true,
+                ),
+                RepoContextOutcome::Unavailable {
+                    reason: RepoContextUnavailable::UnmappedRoot,
+                    ..
+                }
+            ),
             "daemon fallback must not guess when multiple roots are indexed"
         );
         assert!(
-            maybe_repo_context_recall_with_policy(
-                &config,
-                "private_auth_marker",
-                &paths,
-                &repo,
-                true,
-            )
-            .unwrap()
-            .is_none(),
+            matches!(
+                maybe_repo_context_recall_with_policy(
+                    &config,
+                    "private_auth_marker",
+                    &paths,
+                    &repo,
+                    true,
+                ),
+                RepoContextOutcome::Unavailable {
+                    reason: RepoContextUnavailable::UnmappedRoot,
+                    ..
+                }
+            ),
             "daemon CWD inside one indexed root is ambient and must not select it"
         );
     }
 
     #[test]
-    fn repo_context_stale_snapshot_is_a_visible_error_not_disabled_state() {
+    fn repo_context_default_off_skips_store_and_outcome_receipt() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let paths = InstancePaths::for_home(&home);
+        let outcome = maybe_repo_context_recall_with_policy(
+            &FreedomConfig::default(),
+            "private_auth_marker",
+            &paths,
+            dir.path(),
+            false,
+        );
+        assert!(matches!(outcome, RepoContextOutcome::Disabled));
+        assert!(
+            !paths.code_map.exists(),
+            "default-off must return before creating or opening a code-map store"
+        );
+        assert!(
+            repo_context_unavailable_audit_payload(&outcome, "cli")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn repo_context_enabled_missing_and_corrupt_stores_are_typed_without_creation_or_leakage() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let paths = InstancePaths::for_home(&home);
+        let mut config = FreedomConfig::default();
+        config.code_map.auto_context_max_files = 1;
+
+        let missing = maybe_repo_context_recall_with_policy(
+            &config,
+            "SECRET_QUERY_MARKER",
+            &paths,
+            dir.path(),
+            false,
+        );
+        assert!(matches!(
+            missing,
+            RepoContextOutcome::Unavailable {
+                reason: RepoContextUnavailable::MissingStore,
+                ..
+            }
+        ));
+        assert!(
+            !paths.code_map.exists(),
+            "missing-store read must not create a database"
+        );
+
+        let corrupt = b"not a sqlite database; SECRET_STORE_MARKER";
+        std::fs::write(&paths.code_map, corrupt).unwrap();
+        let before = std::fs::read(&paths.code_map).unwrap();
+        let unreadable = maybe_repo_context_recall_with_policy(
+            &config,
+            "SECRET_QUERY_MARKER",
+            &paths,
+            dir.path(),
+            false,
+        );
+        assert!(matches!(
+            unreadable,
+            RepoContextOutcome::Unavailable {
+                reason: RepoContextUnavailable::UnreadableStore,
+                ..
+            }
+        ));
+        assert_eq!(std::fs::read(&paths.code_map).unwrap(), before);
+        assert_valid_read_only_code_map_artifacts(&home);
+        let payload = repo_context_unavailable_audit_payload(&unreadable, "cli")
+            .unwrap()
+            .expect("enabled unavailable outcome has a receipt");
+        let text = String::from_utf8(payload).unwrap();
+        assert!(text.contains("unreadable_store"));
+        assert!(!text.contains("SECRET_QUERY_MARKER"));
+        assert!(!text.contains("SECRET_STORE_MARKER"));
+        assert!(!text.contains(&paths.code_map.display().to_string()));
+    }
+
+    #[test]
+    fn repo_context_legacy_schema_read_is_read_only_for_bytes_schema_and_generations() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        let (config, paths, canonical) = seed_physical_repo_recall(&home, &repo);
+
+        let writer = crate::code_map::persist::open(&paths.code_map).unwrap();
+        writer
+            .execute(
+                "UPDATE meta SET value = '9' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
+        drop(writer);
+        let before_bytes = std::fs::read(&paths.code_map).unwrap();
+        let before_artifacts = code_map_store_artifacts(&home);
+        let before = crate::code_map::persist::open_read_only(&paths.code_map).unwrap();
+        let before_schema: String = before
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let before_generations = (
+            crate::code_map::persist::root_index_generation(&before, &canonical).unwrap(),
+            crate::code_map::persist::root_graph_generation(&before, &canonical).unwrap(),
+        );
+        drop(before);
+
+        let outcome = maybe_repo_context_recall(&config, "private_auth_marker", &paths, &repo);
+        assert!(matches!(outcome, RepoContextOutcome::Injected(_)));
+
+        assert_eq!(std::fs::read(&paths.code_map).unwrap(), before_bytes);
+        let after = crate::code_map::persist::open_read_only(&paths.code_map).unwrap();
+        let after_schema: String = after
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let after_generations = (
+            crate::code_map::persist::root_index_generation(&after, &canonical).unwrap(),
+            crate::code_map::persist::root_graph_generation(&after, &canonical).unwrap(),
+        );
+        drop(after);
+        assert_eq!(
+            after_schema, before_schema,
+            "read-only recall must not migrate schema"
+        );
+        assert_eq!(
+            after_generations, before_generations,
+            "read-only recall must not refresh generations"
+        );
+        assert_valid_read_only_code_map_artifacts(&home);
+        for (name, _) in before_artifacts {
+            assert!(
+                code_map_store_artifacts(&home)
+                    .iter()
+                    .any(|(after_name, _)| after_name == &name),
+                "read-only lookup removed pre-existing artifact {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn repo_context_empty_real_sqlite_selection_stays_distinct_from_unavailable() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        let (config, paths, _) = seed_physical_repo_recall(&home, &repo);
+        let outcome = maybe_repo_context_recall(&config, "absent_needle_qzvx", &paths, &repo);
+        assert!(matches!(outcome, RepoContextOutcome::EmptySelection));
+        assert!(
+            repo_context_unavailable_audit_payload(&outcome, "cli")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn prepared_unavailable_context_cli_cancellation_keeps_reuse_pending_until_durable() {
+        let dir = tempdir().unwrap();
+        let segment = dir.path().join("context-outcome.wal");
+        let (writer, writer_join) = wal_spawn(segment.clone()).unwrap();
+        let gate = crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+        let writer = writer.with_test_ack_gate(gate.clone());
+        let outcome = Arc::new(RepoContextOutcome::unavailable(
+            RepoContextUnavailable::StaleSnapshot,
+        ));
+
+        let first_writer = writer.clone();
+        let first_outcome = Arc::clone(&outcome);
+        let first = tokio::spawn(async move {
+            emit_repo_context_unavailable_audit(&first_writer, &first_outcome, "cli").await
+        });
+        gate.wait_until_durable().await;
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+
+        let replay_writer = writer.clone();
+        let replay_outcome = Arc::clone(&outcome);
+        let replay = tokio::spawn(async move {
+            emit_repo_context_unavailable_audit(&replay_writer, &replay_outcome, "cli").await
+        });
+        tokio::task::yield_now().await;
+        assert!(
+            !replay.is_finished(),
+            "pending receipt must not authorize retry or provider dispatch"
+        );
+        gate.release();
+        replay.await.unwrap().unwrap();
+
+        drop(writer);
+        writer_join.await.unwrap();
+        let bytes = std::fs::read(segment).unwrap();
+        let receipts = unavailable_context_receipt_payloads(&bytes);
+        assert_eq!(
+            receipts.len(),
+            1,
+            "one prepared CLI outcome must append one unavailable-context receipt"
+        );
+        let payload = &receipts[0];
+        assert_eq!(payload["status"], "enabled_context_unavailable");
+        assert_eq!(payload["surface"], "cli");
+        assert_eq!(payload["reason"], "stale_snapshot");
+    }
+
+    #[tokio::test]
+    async fn unavailable_context_receipt_captures_terminal_transition_between_check_and_await() {
+        let receipt = RepoContextUnavailableReceipt::new();
+        assert!(receipt.claim());
+
+        // This is the former lost-wake window in the route helper: state is
+        // still Pending at the check, then the append owner settles before the
+        // future is awaited. `notify_waiters` records the transition for this
+        // Notified future when it was created before the terminal update.
+        let notified = receipt.terminal.notified();
+        assert_eq!(receipt.state(), RepoContextReceiptState::Pending);
+        receipt.settle(RepoContextReceiptState::Durable);
+        notified.await;
+        assert_eq!(receipt.state(), RepoContextReceiptState::Durable);
+    }
+
+    #[tokio::test]
+    async fn unavailable_context_receipt_captures_failed_transition_between_check_and_await() {
+        let receipt = RepoContextUnavailableReceipt::new();
+        assert!(receipt.claim());
+
+        let notified = receipt.terminal.notified();
+        assert_eq!(receipt.state(), RepoContextReceiptState::Pending);
+        receipt.settle(RepoContextReceiptState::Failed);
+        notified.await;
+        assert_eq!(receipt.state(), RepoContextReceiptState::Failed);
+    }
+
+    #[tokio::test]
+    async fn prepared_unavailable_context_channel_writer_failure_stays_failed_closed() {
+        let writer = crate::wal::writer::closed_test_writer();
+        let outcome = RepoContextOutcome::unavailable(RepoContextUnavailable::UnmappedRoot);
+        let first = emit_repo_context_unavailable_audit(&writer, &outcome, "channel")
+            .await
+            .expect_err("closed writer must block the Channel before provider dispatch");
+        let replay = emit_repo_context_unavailable_audit(&writer, &outcome, "channel")
+            .await
+            .expect_err("failed receipt must not append a duplicate on replay");
+        assert!(first.to_string().contains("not durably acknowledged"));
+        assert!(replay.to_string().contains("not durably acknowledged"));
+    }
+
+    #[test]
+    fn repo_context_stale_snapshot_is_a_typed_unavailable_outcome() {
         let dir = tempdir().unwrap();
         let home = dir.path().join("home");
         let repo = dir.path().join("repo");
@@ -18585,18 +19204,17 @@ modes:
         )
         .unwrap();
 
-        let error =
-            maybe_repo_context_recall(&config, "private_auth_marker", &paths, &repo).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("refused stale or unverifiable snapshot"),
-            "stale recall must remain distinguishable from disabled/no-match state: {error:#}"
-        );
+        assert!(matches!(
+            maybe_repo_context_recall(&config, "private_auth_marker", &paths, &repo),
+            RepoContextOutcome::Unavailable {
+                reason: RepoContextUnavailable::StaleSnapshot,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
-    async fn prompt_bundle_blocks_stale_repo_context_before_provider_boundary() {
+    async fn prompt_bundle_keeps_stale_repo_context_outside_the_provider_boundary() {
         let dir = tempdir().unwrap();
         let home = dir.path().join("home");
         let repo = dir.path().join("repo");
@@ -18629,6 +19247,7 @@ modes:
             until: vec![],
         };
         let (writer, writer_join) = wal_spawn(home.join("prompt-build.wal")).unwrap();
+        let wal_path = home.join("prompt-build.wal");
         let prompt_hash = "0".repeat(64);
         let result = build_prompt_bundle(
             config,
@@ -18652,14 +19271,110 @@ modes:
         drop(writer);
         writer_join.await.unwrap();
 
-        let error = match result {
-            Ok(_) => panic!("stale repository context reached the provider-side prompt bundle"),
-            Err(error) => error,
-        };
+        let (bundle, ..) =
+            result.expect("stale context must continue as a context-free local turn");
+        assert!(bundle.repo_recall_audit.is_none());
         assert!(
-            format!("{error:#}").contains("refused stale or unverifiable snapshot"),
-            "prompt boundary lost the stale recall cause: {error:#}"
+            !bundle
+                .combined_system
+                .as_deref()
+                .unwrap_or_default()
+                .contains("repo-context"),
+            "stale context must not reach the provider-side prompt bundle"
         );
+        let bytes = std::fs::read(wal_path).unwrap();
+        let frame = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).expect("unavailable receipt frame");
+        assert_eq!(
+            frame.header.event_subtype,
+            crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8
+        );
+        let receipt: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+        assert_eq!(receipt["status"], "enabled_context_unavailable");
+        assert_eq!(receipt["reason"], "stale_snapshot");
+    }
+
+    #[tokio::test]
+    async fn prompt_bundle_cli_route_cancellation_waits_for_unavailable_receipt_before_reuse() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().join("home");
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        let (config, _, _) = seed_physical_repo_recall(&home, &repo);
+        std::fs::write(
+            repo.join("src/private_auth_marker.rs"),
+            "pub fn private_auth_marker() { changed(); }\n",
+        )
+        .unwrap();
+        let args = ChatArgs {
+            attach: Vec::new(),
+            repository_root: None,
+            message: Some("private_auth_marker".to_string()),
+            model: None,
+            skill: None,
+            system: None,
+            edit: false,
+            config: None,
+            wal_segment: None,
+            stream: false,
+            gui_consent_token_stdin: false,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            resume_from: None,
+            incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
+        };
+        let wal_path = home.join("prompt-cancel.wal");
+        let (writer, writer_join) = wal_spawn(wal_path.clone()).unwrap();
+        let gate = crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+        let writer = writer.with_test_ack_gate(gate.clone());
+        let route_writer = writer.clone();
+        let route = tokio::spawn(async move {
+            let mut output = CliChatOutput;
+            let prompt_hash = "0".repeat(64);
+            build_prompt_bundle(
+                config,
+                "private_auth_marker".to_string(),
+                home,
+                PromptBuildContext {
+                    args: &args,
+                    prompt_bundle_hash: &prompt_hash,
+                    writer: &route_writer,
+                    current_path: &repo,
+                    attachment_contexts: None,
+                    output: &mut output,
+                    session_recall: None,
+                },
+                PromptBuildOptions {
+                    slash_skill_name: None,
+                    persona_override_from_tweaks: None,
+                },
+            )
+            .await
+        });
+        gate.wait_until_durable().await;
+        route.abort();
+        assert!(matches!(route.await, Err(error) if error.is_cancelled()));
+
+        // This is the production CLI pre-provider route: cancellation did not
+        // create a usable prompt bundle.  The detached receipt owner must
+        // finish before the writer drains, so a later turn cannot treat a
+        // merely-pending result as durable.
+        gate.release();
+        drop(writer);
+        writer_join.await.unwrap();
+        let bytes = std::fs::read(wal_path).unwrap();
+        let receipts = unavailable_context_receipt_payloads(&bytes);
+        assert_eq!(
+            receipts.len(),
+            1,
+            "cancelled CLI route must retain exactly one receipt before any later reuse"
+        );
+        let payload = &receipts[0];
+        assert_eq!(payload["surface"], "cli");
+        assert_eq!(payload["reason"], "stale_snapshot");
     }
 
     #[tokio::test]
@@ -18972,9 +19687,12 @@ modes:
         std::fs::create_dir_all(&home).unwrap();
         let (config, paths, canonical) = seed_physical_repo_recall(&home, &repo);
         let prompt = "find private_auth_marker for SECRET_QUERY_MARKER";
-        let recall = maybe_repo_context_recall(&config, prompt, &paths, &repo)
-            .unwrap()
-            .expect("physical recall");
+        let recall = match maybe_repo_context_recall(&config, prompt, &paths, &repo) {
+            RepoContextOutcome::Injected(recall) => recall,
+            other => panic!("physical recall: {other:?}"),
+        };
+        assert!(recall.receipt.snapshot.index_generation > 0);
+        assert!(recall.receipt.snapshot.graph_generation > 0);
         let payload =
             repo_context_recall_audit_payload(&recall.receipt, prompt, &recall.block, "cli")
                 .unwrap();

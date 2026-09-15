@@ -55,6 +55,12 @@ pub enum McpAction {
         /// Override the persisted code-map database path.
         #[arg(long)]
         db: Option<std::path::PathBuf>,
+        #[arg(long, hide = true)]
+        impact_max_depth: Option<u32>,
+        #[arg(long, hide = true)]
+        impact_max_nodes: Option<u32>,
+        #[arg(long, hide = true, action = clap::ArgAction::Set)]
+        impact_allow_stale: Option<bool>,
     },
     /// Idempotently register the built-in codegraph stdio server in
     /// `~/.neoth/mcp_servers.yaml` with an exact tool allowlist.
@@ -83,9 +89,20 @@ pub async fn run_mcp(args: McpArgs) -> Result<()> {
             )
             .await
         }
-        McpAction::CodegraphServe { db } => {
-            crate::mcp::codegraph_server::serve_stdio(
+        McpAction::CodegraphServe {
+            db,
+            impact_max_depth,
+            impact_max_nodes,
+            impact_allow_stale,
+        } => {
+            let runtime = crate::mcp::codegraph_server::startup_impact_runtime(
+                impact_max_depth,
+                impact_max_nodes,
+                impact_allow_stale,
+            )?;
+            crate::mcp::codegraph_server::serve_stdio_with_runtime(
                 db.unwrap_or_else(crate::code_map::persist::default_path),
+                runtime,
             )
             .await
         }

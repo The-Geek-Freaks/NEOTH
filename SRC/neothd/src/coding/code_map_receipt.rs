@@ -97,6 +97,11 @@ pub struct ImpactTestGapCitation {
     pub outcome: crate::code_map::test_coverage::ImpactTestGapOutcome,
     pub impact_partial: bool,
     pub work_budget_capped: bool,
+    /// Aggregate-only classifier exclusions from the same root/generation.
+    /// A missing value means the input was rejected before a database read;
+    /// it never converts an empty observation into an absence claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclusion_provenance: Option<crate::code_map::graph::TestEvidenceExclusionSummary>,
     pub no_observed_test_is_not_absence: bool,
     pub nodes: Vec<ImpactTestGapNodeCitation>,
 }
@@ -359,6 +364,7 @@ impl ImpactTestGapCitation {
             outcome: result.outcome.clone(),
             impact_partial: result.impact_partial,
             work_budget_capped: result.work_budget.capped,
+            exclusion_provenance: result.exclusion_provenance.clone(),
             no_observed_test_is_not_absence: result.no_observed_test_is_not_absence,
             nodes,
         };
@@ -377,6 +383,24 @@ impl ImpactTestGapCitation {
                 self.impact_partial, self.work_budget_capped
             ),
         );
+        if let Some(exclusions) = &self.exclusion_provenance {
+            let categories = exclusions
+                .categories
+                .iter()
+                .map(|(category, count)| format!("{category:?}={count}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            append_projection_line(
+                &mut out,
+                "root_exclusion_provenance",
+                &format!(
+                    "categories=[{categories}]; files={}; symbols={}; capped={}; relevance_to_node=unknown",
+                    exclusions.source_files_examined,
+                    exclusions.source_symbols_examined,
+                    exclusions.capped
+                ),
+            );
+        }
         for node in &self.nodes {
             append_projection_line(
                 &mut out,
@@ -433,6 +457,42 @@ impl ImpactTestGapCitation {
             self.no_observed_test_is_not_absence,
             "test-gap citation must retain non-absence truth marker"
         );
+        if matches!(
+            &self.outcome,
+            crate::code_map::test_coverage::ImpactTestGapOutcome::RejectedInput(_)
+        ) {
+            ensure!(
+                self.exclusion_provenance.is_none(),
+                "rejected test-gap citation cannot retain exclusion provenance"
+            );
+            ensure!(
+                self.nodes.is_empty(),
+                "rejected test-gap citation cannot retain node evidence"
+            );
+        }
+        if let Some(exclusions) = &self.exclusion_provenance {
+            ensure!(
+                exclusions.categories.len() <= 4,
+                "test-gap exclusion provenance has unsupported categories"
+            );
+            let minimum_work = exclusions
+                .source_files_examined
+                .checked_add(exclusions.source_symbols_examined)
+                .context("test-gap exclusion provenance work overflow")?;
+            let maximum_work = minimum_work
+                .checked_add(if exclusions.capped { 1 } else { 0 })
+                .context("test-gap exclusion provenance sentinel work overflow")?;
+            ensure!(
+                exclusions.work_units >= minimum_work && exclusions.work_units <= maximum_work,
+                "test-gap exclusion provenance work receipt is invalid"
+            );
+            for count in exclusions.categories.values() {
+                ensure!(
+                    *count > 0,
+                    "test-gap exclusion provenance cannot retain zero counts"
+                );
+            }
+        }
         ensure!(
             self.nodes.len() <= MAX_IMPACT_TEST_GAP_NODES,
             "test-gap citation nodes exceed bound"
@@ -1251,6 +1311,7 @@ mod tests {
             outcome: crate::code_map::test_coverage::ImpactTestGapOutcome::Complete,
             impact_partial: false,
             work_budget_capped: false,
+            exclusion_provenance: None,
             no_observed_test_is_not_absence: true,
             nodes: vec![ImpactTestGapNodeCitation {
                 impact_node,
@@ -1275,6 +1336,32 @@ mod tests {
         assert!(projection.contains("no_observed_test_is_not_absence: true"));
         assert!(projection.contains("tests/changed_test.rs :: changed_is_covered confidence=80"));
         assert!(!projection.contains("diff --git"));
+
+        source
+            .diff_impact
+            .as_mut()
+            .unwrap()
+            .impact_test_gap
+            .as_mut()
+            .unwrap()
+            .exclusion_provenance = Some(crate::code_map::graph::TestEvidenceExclusionSummary {
+            categories: std::collections::BTreeMap::from([(
+                crate::code_map::graph::TestEvidenceExclusionCategory::Generated,
+                1,
+            )]),
+            source_files_examined: 4,
+            source_symbols_examined: 7,
+            work_units: 11,
+            capped: false,
+        });
+        assert!(source.validate().is_ok());
+        let provenance_projection = source
+            .diff_impact
+            .as_ref()
+            .unwrap()
+            .render_prompt_projection();
+        assert!(provenance_projection.contains("root_exclusion_provenance"));
+        assert!(provenance_projection.contains("relevance_to_node=unknown"));
 
         source
             .diff_impact
@@ -1360,6 +1447,78 @@ mod tests {
         assert!(
             source.validate().is_err(),
             "nested graph generation cannot detach from its source"
+        );
+    }
+
+    #[test]
+    fn rejected_test_gap_receipt_cannot_retain_deserialized_evidence_payloads() {
+        let mut source = source(CodeMapContextKind::DiffImpact);
+        let mut citation = diff_citation();
+        let impact_digest = citation.impact_digest.clone();
+        let impact_node = citation.affected_identities[0].clone();
+        citation.impact_test_gap = Some(ImpactTestGapCitation {
+            impact_digest,
+            root_identity: source.root_identity.clone(),
+            index_generation: source.index_generation,
+            graph_generation: source.graph_generation,
+            outcome: crate::code_map::test_coverage::ImpactTestGapOutcome::RejectedInput(
+                crate::code_map::test_coverage::ImpactTestGapRejection::Stale,
+            ),
+            impact_partial: true,
+            work_budget_capped: false,
+            exclusion_provenance: None,
+            no_observed_test_is_not_absence: true,
+            nodes: Vec::new(),
+        });
+        source.diff_impact = Some(citation);
+        let persisted = serde_json::to_string(&source).expect("serialize rejected receipt");
+        let mut decoded: CodeMapContextSource =
+            serde_json::from_str(&persisted).expect("deserialize rejected receipt");
+        assert!(
+            decoded.validate().is_ok(),
+            "an empty rejected receipt remains a valid typed result"
+        );
+
+        decoded
+            .diff_impact
+            .as_mut()
+            .unwrap()
+            .impact_test_gap
+            .as_mut()
+            .unwrap()
+            .exclusion_provenance = Some(crate::code_map::graph::TestEvidenceExclusionSummary {
+            categories: std::collections::BTreeMap::from([(
+                crate::code_map::graph::TestEvidenceExclusionCategory::Generated,
+                1,
+            )]),
+            source_files_examined: 1,
+            source_symbols_examined: 0,
+            work_units: 1,
+            capped: false,
+        });
+        assert!(
+            decoded.validate().is_err(),
+            "a persisted rejected receipt cannot retain exclusion provenance"
+        );
+
+        let rejected = decoded
+            .diff_impact
+            .as_mut()
+            .unwrap()
+            .impact_test_gap
+            .as_mut()
+            .unwrap();
+        rejected.exclusion_provenance = None;
+        rejected.nodes.push(ImpactTestGapNodeCitation {
+            impact_node,
+            identity: crate::code_map::test_coverage::ImpactTestGapIdentity::Exact,
+            coverage_unknown: true,
+            no_observed_test_in_indexed_map: false,
+            observed_tests: Vec::new(),
+        });
+        assert!(
+            decoded.validate().is_err(),
+            "a persisted rejected receipt cannot retain node evidence independently of provenance"
         );
     }
 

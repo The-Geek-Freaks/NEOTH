@@ -620,6 +620,8 @@ pub struct CodeMapConfig {
     /// MCP server. It never enables generic filesystem tools.
     #[serde(default)]
     pub outline_enrichment: bool,
+    #[serde(default)]
+    pub impact_policy: CodeMapImpactPolicy,
     /// Max files to surface in the auto-injected `<repo-context>`
     /// block. `0` (default) disables auto-injection. Recommended
     /// production value: 3-5 — large enough to surface the obvious
@@ -657,6 +659,52 @@ pub struct CodeMapConfig {
     /// recall limits.
     #[serde(default)]
     pub lifecycle: CodeMapLifecycleConfig,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CodeMapImpactPolicy {
+    #[serde(
+        default = "default_impact_policy_max_depth",
+        deserialize_with = "deserialize_impact_policy_max_depth"
+    )]
+    pub max_depth: u32,
+    #[serde(
+        default = "default_impact_policy_max_nodes",
+        deserialize_with = "deserialize_impact_policy_max_nodes"
+    )]
+    pub max_nodes: u32,
+    #[serde(default, deserialize_with = "deserialize_impact_policy_allow_stale")]
+    pub allow_stale: bool,
+}
+
+impl Default for CodeMapImpactPolicy {
+    fn default() -> Self {
+        Self {
+            max_depth: default_impact_policy_max_depth(),
+            max_nodes: default_impact_policy_max_nodes(),
+            allow_stale: false,
+        }
+    }
+}
+
+impl CodeMapImpactPolicy {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            (1..=crate::code_map::impact::MAX_IMPACT_DEPTH as u32).contains(&self.max_depth),
+            "code_map.impact_policy.max_depth must be between 1 and {}",
+            crate::code_map::impact::MAX_IMPACT_DEPTH
+        );
+        anyhow::ensure!(
+            (1..=crate::code_map::impact::MAX_IMPACT_NODES as u32).contains(&self.max_nodes),
+            "code_map.impact_policy.max_nodes must be between 1 and {}",
+            crate::code_map::impact::MAX_IMPACT_NODES
+        );
+        anyhow::ensure!(
+            !self.allow_stale,
+            "code_map.impact_policy.allow_stale must remain false"
+        );
+        Ok(())
+    }
 }
 
 /// Bounded daemon lifecycle controls for native code-map refreshes.
@@ -803,6 +851,47 @@ fn default_auto_context_max_files() -> u32 {
     0
 }
 
+fn default_impact_policy_max_depth() -> u32 {
+    crate::code_map::impact::DEFAULT_MAX_DEPTH as u32
+}
+fn default_impact_policy_max_nodes() -> u32 {
+    crate::code_map::impact::DEFAULT_MAX_NODES as u32
+}
+fn deserialize_impact_policy_max_depth<'de, D>(d: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_code_map_u32_in_range(
+        d,
+        "code_map.impact_policy.max_depth",
+        1,
+        crate::code_map::impact::MAX_IMPACT_DEPTH as u32,
+    )
+}
+fn deserialize_impact_policy_max_nodes<'de, D>(d: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_code_map_u32_in_range(
+        d,
+        "code_map.impact_policy.max_nodes",
+        1,
+        crate::code_map::impact::MAX_IMPACT_NODES as u32,
+    )
+}
+fn deserialize_impact_policy_allow_stale<'de, D>(d: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    if bool::deserialize(d)? {
+        Err(D::Error::custom(
+            "code_map.impact_policy.allow_stale must remain false",
+        ))
+    } else {
+        Ok(false)
+    }
+}
+
 fn default_coding_recall_max_files() -> u32 {
     8
 }
@@ -936,6 +1025,7 @@ impl Default for CodeMapConfig {
     fn default() -> Self {
         Self {
             outline_enrichment: false,
+            impact_policy: CodeMapImpactPolicy::default(),
             auto_context_max_files: default_auto_context_max_files(),
             coding_recall_max_files: default_coding_recall_max_files(),
             coding_callers_per_symbol: default_coding_callers_per_symbol(),
@@ -961,6 +1051,7 @@ impl CodeMapConfig {
         if !(128..=12_000).contains(&self.coding_summary_token_budget) {
             anyhow::bail!("coding_summary_token_budget must be between 128 and 12000");
         }
+        self.impact_policy.validate()?;
         self.lifecycle.validate()?;
         Ok(())
     }

@@ -832,8 +832,9 @@ mod tests {
         // + asynchronous cluster runtime membership = 58;
         // + code-map lifecycle readiness = 59;
         // + account-bound channel transport flapping = 60;
-        // + code-map bounded analysis-evidence readiness = 61.
-        assert_eq!(all_check_docs().count(), 61);
+        // + code-map bounded analysis-evidence readiness = 61;
+        // + opt-in codegraph outline-enrichment readiness = 62.
+        assert_eq!(all_check_docs().count(), 62);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────
@@ -1623,8 +1624,9 @@ mod tests {
         // + ppt_master, graphify and officecli readiness = 57;
         // + code-map lifecycle state/repair diagnostic = 58;
         // + account-bound channel transport flapping = 59;
-        // + code-map bounded analysis-evidence readiness = 60.
-        assert_eq!(outs.len(), 60);
+        // + code-map bounded analysis-evidence readiness = 60;
+        // + opt-in codegraph outline-enrichment readiness = 61.
+        assert_eq!(outs.len(), 61);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }

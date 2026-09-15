@@ -395,6 +395,169 @@ pub const TOOL_NAMES: &[&str] = &[
     "codegraph_outline",
 ];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CodegraphImpactRuntime {
+    max_depth: usize,
+    max_nodes: usize,
+    reject_stale: bool,
+}
+impl CodegraphImpactRuntime {
+    pub(crate) fn static_defaults() -> Self {
+        Self {
+            max_depth: crate::code_map::impact::DEFAULT_MAX_DEPTH,
+            max_nodes: crate::code_map::impact::DEFAULT_MAX_NODES,
+            reject_stale: false,
+        }
+    }
+    pub(crate) fn from_policy(policy: crate::config::CodeMapImpactPolicy) -> Result<Self> {
+        policy.validate()?;
+        Ok(Self {
+            max_depth: policy.max_depth as usize,
+            max_nodes: policy.max_nodes as usize,
+            reject_stale: true,
+        })
+    }
+    fn resolve(
+        self,
+        depth: Option<usize>,
+        nodes: Option<usize>,
+        stale: bool,
+    ) -> Result<(usize, usize, bool)> {
+        anyhow::ensure!(
+            !self.reject_stale || !stale,
+            "allow_stale=true is denied by the accepted impact policy"
+        );
+        let depth = depth.unwrap_or(self.max_depth);
+        let nodes = nodes.unwrap_or(self.max_nodes);
+        anyhow::ensure!(
+            depth <= self.max_depth,
+            "max_depth {depth} exceeds accepted impact-policy ceiling {}",
+            self.max_depth
+        );
+        anyhow::ensure!(
+            nodes <= self.max_nodes,
+            "max_nodes {nodes} exceeds accepted impact-policy ceiling {}",
+            self.max_nodes
+        );
+        Ok((depth, nodes, stale))
+    }
+}
+pub(crate) fn startup_impact_runtime(
+    depth: Option<u32>,
+    nodes: Option<u32>,
+    stale: Option<bool>,
+) -> Result<CodegraphImpactRuntime> {
+    match (depth, nodes, stale) {
+        (None, None, None) => Ok(CodegraphImpactRuntime::static_defaults()),
+        (Some(max_depth), Some(max_nodes), Some(false)) => {
+            CodegraphImpactRuntime::from_policy(crate::config::CodeMapImpactPolicy {
+                max_depth,
+                max_nodes,
+                allow_stale: false,
+            })
+        }
+        _ => anyhow::bail!(
+            "codegraph impact startup policy requires --impact-max-depth, --impact-max-nodes, and --impact-allow-stale false together"
+        ),
+    }
+}
+pub(crate) fn effective_builtin_codegraph_server(
+    base: &McpServerConfig,
+    policy: crate::config::CodeMapImpactPolicy,
+) -> Result<McpServerConfig> {
+    policy.validate()?;
+    if !is_exact_generated_codegraph_base(base) {
+        return Ok(base.clone());
+    }
+    let mut effective = base.clone();
+    effective.args.extend([
+        "--impact-max-depth".into(),
+        policy.max_depth.to_string(),
+        "--impact-max-nodes".into(),
+        policy.max_nodes.to_string(),
+        "--impact-allow-stale".into(),
+        "false".into(),
+    ]);
+    Ok(effective)
+}
+fn generated_codegraph_database_candidate(args: &[String]) -> Option<PathBuf> {
+    match args {
+        [mcp, serve] if mcp == "mcp" && serve == "codegraph-serve" => {
+            Some(crate::code_map::persist::default_path())
+        }
+        [mcp, serve, flag, db]
+            if mcp == "mcp"
+                && serve == "codegraph-serve"
+                && flag == "--db"
+                && !db.is_empty()
+                && !db.contains('\0') =>
+        {
+            Some(PathBuf::from(db))
+        }
+        _ => None,
+    }
+}
+fn parse_generated_codegraph_database(args: &[String]) -> Option<PathBuf> {
+    generated_codegraph_database_candidate(args)?
+        .canonicalize()
+        .ok()
+}
+fn is_generated_codegraph_identity(cfg: &McpServerConfig) -> bool {
+    if cfg.id != "neoth-codegraph"
+        || !cfg.enabled
+        || !cfg.env.is_empty()
+        || cfg.validate_launcher().is_err()
+        || cfg.trust_all_tools
+        || !cfg.smart_approve
+        || cfg.autonomy_gate.is_some()
+        || !cfg.allow_tools.as_ref().is_some_and(|tools| {
+            tools.len() == TOOL_NAMES.len()
+                && TOOL_NAMES.iter().all(|required| {
+                    tools
+                        .iter()
+                        .filter(|tool| tool.as_str() == *required)
+                        .count()
+                        == 1
+                })
+        })
+        || generated_codegraph_database_candidate(&cfg.args).is_none()
+    {
+        return false;
+    }
+    let Ok(exe) = std::env::current_exe().and_then(|path| path.canonicalize()) else {
+        return false;
+    };
+    PathBuf::from(&cfg.command).canonicalize().ok().as_ref() == Some(&exe)
+}
+fn is_exact_generated_codegraph_base(cfg: &McpServerConfig) -> bool {
+    is_generated_codegraph_identity(cfg) && parse_generated_codegraph_database(&cfg.args).is_some()
+}
+
+/// Read-only classification shared by Doctor and the W53 admission path. It
+/// never starts a child or opens SQLite; canonicalising an existing configured
+/// database only establishes whether W53 could select that exact descriptor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum BuiltinOutlineRegistrationReadiness {
+    NotExactGenerated,
+    DatabaseUnavailable,
+    Exact { database_path: PathBuf },
+}
+
+pub(crate) fn inspect_builtin_outline_registration(
+    cfg: Option<&McpServerConfig>,
+) -> BuiltinOutlineRegistrationReadiness {
+    let Some(cfg) = cfg else {
+        return BuiltinOutlineRegistrationReadiness::NotExactGenerated;
+    };
+    if !is_generated_codegraph_identity(cfg) {
+        return BuiltinOutlineRegistrationReadiness::NotExactGenerated;
+    }
+    match parse_generated_codegraph_database(&cfg.args) {
+        Some(database_path) => BuiltinOutlineRegistrationReadiness::Exact { database_path },
+        None => BuiltinOutlineRegistrationReadiness::DatabaseUnavailable,
+    }
+}
+
 /// Dispatch one `tools/call` request. `db_path` points at the
 /// operator's `~/.neoth/code_map.db`; tools that need it open the
 /// DB read-only inside their branch. Tools that don't need the DB
@@ -408,20 +571,52 @@ pub fn dispatch_codegraph_tool(
     tool_name: &str,
     args: &serde_json::Value,
 ) -> ToolCallResult {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    dispatch_codegraph_tool_at_with_runtime(
+        db_path,
+        tool_name,
+        args,
+        &cwd,
+        CodegraphImpactRuntime::static_defaults(),
+    )
+}
+fn dispatch_codegraph_tool_at_with_runtime(
+    db_path: &Path,
+    tool_name: &str,
+    args: &serde_json::Value,
+    cwd: &Path,
+    runtime: CodegraphImpactRuntime,
+) -> ToolCallResult {
     // The server runs as a stdio child and inherits the client's working
     // directory; that directory is what decides WHICH indexed repository may
     // answer. Resolved once here and threaded down, so every tool on this
     // surface applies the same containment and tests can state the location
     // explicitly instead of depending on the test runner's cwd.
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    dispatch_codegraph_tool_at(db_path, tool_name, args, &cwd)
+    dispatch_codegraph_tool_at_runtime(db_path, tool_name, args, cwd, runtime)
 }
 
+#[cfg(test)]
 pub(crate) fn dispatch_codegraph_tool_at(
     db_path: &Path,
     tool_name: &str,
     args: &serde_json::Value,
     cwd: &Path,
+) -> ToolCallResult {
+    dispatch_codegraph_tool_at_runtime(
+        db_path,
+        tool_name,
+        args,
+        cwd,
+        CodegraphImpactRuntime::static_defaults(),
+    )
+}
+
+fn dispatch_codegraph_tool_at_runtime(
+    db_path: &Path,
+    tool_name: &str,
+    args: &serde_json::Value,
+    cwd: &Path,
+    runtime: CodegraphImpactRuntime,
 ) -> ToolCallResult {
     match tool_name {
         "codegraph_extract_identifiers" => tool_extract_identifiers(args),
@@ -430,9 +625,9 @@ pub(crate) fn dispatch_codegraph_tool_at(
         "codegraph_recall_v1" => tool_relevant_files(db_path, args, cwd, true),
         "codegraph_callers" => tool_callers(db_path, args, cwd),
         "codegraph_callees" => tool_callees(db_path, args, cwd),
-        "codegraph_impact_radius" => tool_impact_radius(db_path, args, cwd),
-        "codegraph_diff_impact" => tool_diff_impact(db_path, args, cwd),
-        "codegraph_diff_test_gaps" => tool_diff_test_gaps(db_path, args, cwd),
+        "codegraph_impact_radius" => tool_impact_radius(db_path, args, cwd, runtime),
+        "codegraph_diff_impact" => tool_diff_impact(db_path, args, cwd, runtime),
+        "codegraph_diff_test_gaps" => tool_diff_test_gaps(db_path, args, cwd, runtime),
         "codegraph_outline" => tool_outline(db_path, args, cwd),
         other => error_result(format!(
             "unknown codegraph tool `{other}` (known: {})",
@@ -636,27 +831,31 @@ struct ImpactArgs {
     seeds: Vec<crate::code_map::impact::ImpactSeed>,
     #[serde(default)]
     direction: crate::code_map::impact::ImpactDirection,
-    #[serde(default = "default_impact_depth")]
-    max_depth: usize,
-    #[serde(default = "default_impact_nodes")]
-    max_nodes: usize,
+    #[serde(default)]
+    max_depth: Option<usize>,
+    #[serde(default)]
+    max_nodes: Option<usize>,
     #[serde(default)]
     allow_stale: bool,
 }
 
-fn default_impact_depth() -> usize {
-    crate::code_map::impact::DEFAULT_MAX_DEPTH
-}
-
-fn default_impact_nodes() -> usize {
-    crate::code_map::impact::DEFAULT_MAX_NODES
-}
-
-fn tool_impact_radius(db_path: &Path, args: &serde_json::Value, cwd: &Path) -> ToolCallResult {
+fn tool_impact_radius(
+    db_path: &Path,
+    args: &serde_json::Value,
+    cwd: &Path,
+    runtime: CodegraphImpactRuntime,
+) -> ToolCallResult {
     let parsed: ImpactArgs = match serde_json::from_value(args.clone()) {
         Ok(parsed) => parsed,
         Err(error) => return error_result(format!("bad args: {error}")),
     };
+    let (max_depth, max_nodes, allow_stale) =
+        match runtime.resolve(parsed.max_depth, parsed.max_nodes, parsed.allow_stale) {
+            Ok(value) => value,
+            Err(error) => {
+                return error_result(format!("codegraph_impact_radius failed: {error:#}"));
+            }
+        };
     let db_exists = match db_path.try_exists() {
         Ok(exists) => exists,
         Err(error) => {
@@ -688,9 +887,9 @@ fn tool_impact_radius(db_path: &Path, args: &serde_json::Value, cwd: &Path) -> T
         &parsed.seeds,
         crate::code_map::impact::ImpactOptions {
             direction: parsed.direction,
-            max_depth: parsed.max_depth,
-            max_nodes: parsed.max_nodes,
-            allow_stale: parsed.allow_stale,
+            max_depth,
+            max_nodes,
+            allow_stale,
         },
     ) {
         Ok(result) => result,
@@ -730,10 +929,10 @@ struct DiffImpactArgs {
     unified_diff: Option<String>,
     #[serde(default)]
     direction: crate::code_map::impact::ImpactDirection,
-    #[serde(default = "default_impact_depth")]
-    max_depth: usize,
-    #[serde(default = "default_impact_nodes")]
-    max_nodes: usize,
+    #[serde(default)]
+    max_depth: Option<usize>,
+    #[serde(default)]
+    max_nodes: Option<usize>,
     #[serde(default)]
     allow_stale: bool,
 }
@@ -743,6 +942,7 @@ struct DiffImpactArgs {
 fn resolve_diff_impact(
     db_path: &Path,
     args: &serde_json::Value,
+    runtime: CodegraphImpactRuntime,
 ) -> Result<crate::code_map::impact::ImpactResult> {
     // This check intentionally borrows the JSON string before `from_value`
     // clones it. JSON Schema's maxLength is character-based; this byte cap is
@@ -766,6 +966,7 @@ fn resolve_diff_impact(
         max_nodes,
         allow_stale,
     } = parsed;
+    let (max_depth, max_nodes, allow_stale) = runtime.resolve(max_depth, max_nodes, allow_stale)?;
     let root = std::path::PathBuf::from(root);
     let acquired = match (&source, base, target, unified_diff) {
         (DiffImpactSource::WorkingTree, None, None, None) => {
@@ -831,8 +1032,13 @@ fn resolve_diff_impact(
     )
 }
 
-fn tool_diff_impact(db_path: &Path, args: &serde_json::Value, _cwd: &Path) -> ToolCallResult {
-    match resolve_diff_impact(db_path, args) {
+fn tool_diff_impact(
+    db_path: &Path,
+    args: &serde_json::Value,
+    _cwd: &Path,
+    runtime: CodegraphImpactRuntime,
+) -> ToolCallResult {
+    match resolve_diff_impact(db_path, args, runtime) {
         Ok(result) => match serde_json::to_string(&result) {
             Ok(payload) => text_result(payload),
             Err(error) => error_result(format!(
@@ -846,8 +1052,13 @@ fn tool_diff_impact(db_path: &Path, args: &serde_json::Value, _cwd: &Path) -> To
 /// W48 composes the existing explicit diff selector with the canonical typed
 /// test-gap service. The intermediate impact value is local and transient;
 /// callers never provide or receive a detached impact receipt as input.
-fn tool_diff_test_gaps(db_path: &Path, args: &serde_json::Value, _cwd: &Path) -> ToolCallResult {
-    let impact = match resolve_diff_impact(db_path, args) {
+fn tool_diff_test_gaps(
+    db_path: &Path,
+    args: &serde_json::Value,
+    _cwd: &Path,
+    runtime: CodegraphImpactRuntime,
+) -> ToolCallResult {
+    let impact = match resolve_diff_impact(db_path, args, runtime) {
         Ok(impact) => impact,
         Err(error) => return error_result(format!("codegraph_diff_test_gaps failed: {error:#}")),
     };
@@ -1293,22 +1504,7 @@ fn trusted_generated_codegraph_database(cfg: &McpServerConfig) -> Option<PathBuf
     {
         return None;
     }
-    let database = match cfg.args.as_slice() {
-        [mcp, serve] if mcp == "mcp" && serve == "codegraph-serve" => {
-            crate::code_map::persist::default_path()
-        }
-        [mcp, serve, flag, db]
-            if mcp == "mcp"
-                && serve == "codegraph-serve"
-                && flag == "--db"
-                && !db.is_empty()
-                && !db.contains('\0') =>
-        {
-            PathBuf::from(db)
-        }
-        _ => return None,
-    };
-    let database = database.canonicalize().ok()?;
+    let database = parse_generated_codegraph_database(&cfg.args)?;
     let executable = std::env::current_exe().ok()?.canonicalize().ok()?;
     let configured = PathBuf::from(&cfg.command).canonicalize().ok()?;
     (configured == executable).then_some(database)
@@ -1795,6 +1991,12 @@ struct StdioSession {
 /// exclusively for compact JSON-RPC messages; diagnostics belong on stderr via
 /// the process tracing subscriber.
 pub async fn serve_stdio(db_path: PathBuf) -> Result<()> {
+    serve_stdio_with_runtime(db_path, CodegraphImpactRuntime::static_defaults()).await
+}
+pub(crate) async fn serve_stdio_with_runtime(
+    db_path: PathBuf,
+    runtime: CodegraphImpactRuntime,
+) -> Result<()> {
     let mut input = tokio::io::stdin();
     let mut output = tokio::io::stdout();
     let mut buffer = Vec::with_capacity(8 * 1024);
@@ -1806,7 +2008,9 @@ pub async fn serve_stdio(db_path: PathBuf) -> Result<()> {
             .map_err(|error| anyhow::anyhow!("invalid MCP stdio message: {error}"))?
         {
             buffer.drain(..consumed);
-            if let Some(response) = handle_stdio_message(&db_path, &body, &mut session) {
+            if let Some(response) =
+                handle_stdio_message_with_runtime(&db_path, &body, &mut session, runtime)
+            {
                 let message = encode_bounded_stdio_response(&response)?;
                 output
                     .write_all(&message)
@@ -1884,10 +2088,24 @@ fn encode_bounded_stdio_response_with_limit(
 
 /// Pure JSON-RPC request handler used by the stdio loop and protocol tests.
 /// Notifications return `None` as required by JSON-RPC.
+#[cfg(test)]
 fn handle_stdio_message(
     db_path: &Path,
     body: &[u8],
     session: &mut StdioSession,
+) -> Option<serde_json::Value> {
+    handle_stdio_message_with_runtime(
+        db_path,
+        body,
+        session,
+        CodegraphImpactRuntime::static_defaults(),
+    )
+}
+fn handle_stdio_message_with_runtime(
+    db_path: &Path,
+    body: &[u8],
+    session: &mut StdioSession,
+    runtime: CodegraphImpactRuntime,
 ) -> Option<serde_json::Value> {
     let value: serde_json::Value = match serde_json::from_slice(body) {
         Ok(value) => value,
@@ -1986,9 +2204,15 @@ fn handle_stdio_message(
                 .pointer("/params/arguments")
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({}));
+            #[cfg(test)]
+            record_w56_child_event(serde_json::json!({
+                "event": "tools/call",
+                "name": name,
+                "arguments": arguments.clone(),
+            }));
             Some(rpc_result(
                 id,
-                serde_json::to_value(dispatch_codegraph_tool(db_path, name, &arguments))
+                serde_json::to_value(dispatch_codegraph_tool_at_with_runtime(db_path, name, &arguments, &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")), runtime))
                     .unwrap_or_else(|error| {
                         serde_json::json!({
                             "content": [{"type": "text", "text": format!("result serialisation failed: {error}")}],
@@ -2040,6 +2264,36 @@ fn w53_serve_stdio_marker_child() {
         return;
     };
     let db = std::path::PathBuf::from(raw_db);
+    let runtime = if let Ok(descriptor) = std::env::var("NEOTH_W56_DERIVED_DESCRIPTOR") {
+        let descriptor = serde_json::from_str::<serde_json::Value>(&descriptor)
+            .expect("W56 marker receives a serializable descriptor");
+        let args = descriptor["args"].as_array().expect("W56 descriptor args");
+        let depth = args[5]
+            .as_str()
+            .expect("W56 impact depth")
+            .parse()
+            .expect("numeric W56 impact depth");
+        let nodes = args[7]
+            .as_str()
+            .expect("W56 impact nodes")
+            .parse()
+            .expect("numeric W56 impact nodes");
+        let stale = args[9]
+            .as_str()
+            .expect("W56 impact stale")
+            .parse()
+            .expect("boolean W56 impact stale");
+        record_w56_child_event(serde_json::json!({
+            "event": "startup",
+            "descriptor": descriptor,
+            "request_binding": std::env::var("NEOTH_W56_REQUEST_BINDING")
+                .expect("W56 marker receives the bound request commitment"),
+        }));
+        startup_impact_runtime(Some(depth), Some(nodes), Some(stale))
+            .expect("W56 marker starts with the derived impact policy")
+    } else {
+        CodegraphImpactRuntime::static_defaults()
+    };
     use std::io::Write as _;
     println!();
     println!("NEOTH_W53_STDIO_READY");
@@ -2048,8 +2302,28 @@ fn w53_serve_stdio_marker_child() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(serve_stdio(db))
+        .block_on(serve_stdio_with_runtime(db, runtime))
         .unwrap();
+}
+
+/// The W56 marker child writes evidence to a file, never stdout, so its real
+/// JSON-RPC transport remains byte-for-byte the production server path.
+#[cfg(test)]
+fn record_w56_child_event(event: serde_json::Value) {
+    use std::io::Write as _;
+
+    let Ok(path) = std::env::var("NEOTH_W56_CHILD_RECORD") else {
+        return;
+    };
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .expect("open W56 marker evidence");
+    serde_json::to_writer(&mut file, &event).expect("serialize W56 marker evidence");
+    file.write_all(b"\n")
+        .expect("terminate W56 marker evidence");
+    file.flush().expect("flush W56 marker evidence");
 }
 
 #[cfg(test)]
@@ -2073,6 +2347,90 @@ mod tests {
             }
         }
         String::new()
+    }
+
+    fn w56_generated_base(database: &std::path::Path) -> McpServerConfig {
+        McpServerConfig {
+            id: "neoth-codegraph".into(),
+            description: None,
+            command: std::env::current_exe()
+                .unwrap()
+                .canonicalize()
+                .unwrap()
+                .display()
+                .to_string(),
+            args: vec![
+                "mcp".into(),
+                "codegraph-serve".into(),
+                "--db".into(),
+                database.display().to_string(),
+            ],
+            env: std::collections::HashMap::new(),
+            enabled: true,
+            allow_tools: Some(TOOL_NAMES.iter().map(|tool| (*tool).to_owned()).collect()),
+            trust_all_tools: false,
+            smart_approve: true,
+            autonomy_gate: None,
+        }
+    }
+
+    #[test]
+    fn w56_derived_launch_binds_policy_without_rewriting_tool_json_and_requires_canonical_db() {
+        let temp = tempdir().unwrap();
+        let database = temp.path().join("code_map.db");
+        std::fs::write(&database, b"fixture").unwrap();
+        let base = w56_generated_base(&database.canonicalize().unwrap());
+        let policy_n = crate::config::CodeMapImpactPolicy {
+            max_depth: 2,
+            max_nodes: 40,
+            allow_stale: false,
+        };
+        let policy_n1 = crate::config::CodeMapImpactPolicy {
+            max_depth: 3,
+            max_nodes: 80,
+            allow_stale: false,
+        };
+        let args = serde_json::json!({"seeds":[{"file":"src/lib.rs"}],"nested":{"z":1,"a":2}});
+        let n = effective_builtin_codegraph_server(&base, policy_n).unwrap();
+        let n1 = effective_builtin_codegraph_server(&base, policy_n1).unwrap();
+        assert_eq!(
+            args,
+            serde_json::json!({"seeds":[{"file":"src/lib.rs"}],"nested":{"z":1,"a":2}})
+        );
+        assert_ne!(
+            n.args, n1.args,
+            "accepted N+1 must bind a new child descriptor"
+        );
+        assert_ne!(
+            crate::mcp::gate::mcp_request_binding(&n, "codegraph_impact_radius", &args).unwrap(),
+            crate::mcp::gate::mcp_request_binding(&n1, "codegraph_impact_radius", &args).unwrap()
+        );
+        assert!(trusted_generated_codegraph_database(&base).is_some());
+        let mut relative = base.clone();
+        relative.args[3] = "relative.db".into();
+        assert_eq!(
+            effective_builtin_codegraph_server(&relative, policy_n).unwrap(),
+            relative
+        );
+        let mut missing = base.clone();
+        missing.args[3] = temp.path().join("missing.db").display().to_string();
+        assert_eq!(
+            effective_builtin_codegraph_server(&missing, policy_n).unwrap(),
+            missing
+        );
+        let mut trailer_lookalike = base.clone();
+        trailer_lookalike.args.extend([
+            "--impact-max-depth".into(),
+            "2".into(),
+            "--impact-max-nodes".into(),
+            "40".into(),
+            "--impact-allow-stale".into(),
+            "false".into(),
+        ]);
+        assert!(
+            trusted_generated_codegraph_database(&trailer_lookalike).is_none(),
+            "a persisted trailer lookalike cannot gain W53 provenance"
+        );
     }
 
     #[test]

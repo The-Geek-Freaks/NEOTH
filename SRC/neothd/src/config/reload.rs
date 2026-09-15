@@ -1484,6 +1484,8 @@ mod tests {
         changed.code_map.coding_recall_max_files = 12;
         changed.code_map.coding_callers_per_symbol = 0;
         changed.code_map.coding_summary_token_budget = 4_096;
+        changed.code_map.impact_policy.max_depth = 2;
+        changed.code_map.impact_policy.max_nodes = 40;
         write_yaml(&yaml_path, &serde_yaml::to_string(&changed).unwrap());
 
         let ctrl = ReloadController::new(initial, yaml_path);
@@ -1501,6 +1503,9 @@ mod tests {
         assert_eq!(latest.code_map.coding_recall_max_files, 12);
         assert_eq!(latest.code_map.coding_callers_per_symbol, 0);
         assert_eq!(latest.code_map.coding_summary_token_budget, 4_096);
+        assert_eq!(latest.code_map.impact_policy.max_depth, 2);
+        assert_eq!(latest.code_map.impact_policy.max_nodes, 40);
+        assert!(!latest.code_map.impact_policy.allow_stale);
     }
 
     #[test]
@@ -1523,6 +1528,16 @@ mod tests {
         assert_eq!(ctrl.latest().code_map.coding_summary_token_budget, 2_048);
         assert!(!ctrl.latest().code_map.outline_enrichment);
         assert_eq!(*generation.borrow(), 0);
+
+        write_yaml(
+            &ctrl.source_path,
+            "code_map:\n  impact_policy:\n    allow_stale: true\n",
+        );
+        assert!(
+            ctrl.try_reload().is_err(),
+            "stale-relaxing policy must not publish"
+        );
+        assert!(!ctrl.latest().code_map.impact_policy.allow_stale);
     }
 
     #[test]

@@ -141,7 +141,17 @@ code_map:
   coding_callers_per_symbol: 3    # depth-one callers per symbol; 0..20
   coding_summary_token_budget: 2048 # generic repo-map summary; 128..12000
   outline_enrichment: false       # built-in codegraph outline sidecar; explicit opt-in
+  impact_policy:
+    max_depth: 3                  # impact/default ceiling; 1..32
+    max_nodes: 250                # impact/default ceiling; 1..10000
+    allow_stale: false            # fixed false; stale graphs cannot authorize coding
 ```
+
+`impact_policy` is loaded once by `neoth code-map impact`, `diff-impact`, and
+`diff-test-gaps`; omitted limits use the policy values and explicit limits may
+only tighten them. A daemon supplies the same accepted immutable limits only to
+its exact generated `neoth-codegraph` child. Generic `neoth mcp codegraph-serve`
+remains static-default and never reads `freedom.yaml`.
 
 `coding_callers_per_symbol: 0` disables only caller enrichment. It does
 not disable targeted recall. `coding_summary_token_budget` is a local heuristic

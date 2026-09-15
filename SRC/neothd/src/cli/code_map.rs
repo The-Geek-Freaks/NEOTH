@@ -225,12 +225,12 @@ pub enum CodeMapAction {
         direction: ImpactDirectionArg,
 
         /// Maximum relationship hops. Hard ceiling 32.
-        #[arg(long, value_name = "N", default_value_t = crate::code_map::impact::DEFAULT_MAX_DEPTH)]
-        max_depth: usize,
+        #[arg(long, value_name = "N")]
+        max_depth: Option<usize>,
 
         /// Maximum affected declarations returned. Hard ceiling 10000.
-        #[arg(long, value_name = "N", default_value_t = crate::code_map::impact::DEFAULT_MAX_NODES)]
-        max_nodes: usize,
+        #[arg(long, value_name = "N")]
+        max_nodes: Option<usize>,
 
         /// Permit analysis against an index known to predate on-disk edits.
         /// The result still records `stale: true`.
@@ -271,12 +271,12 @@ pub enum CodeMapAction {
         direction: ImpactDirectionArg,
 
         /// Maximum relationship hops. Hard ceiling 32.
-        #[arg(long, value_name = "N", default_value_t = crate::code_map::impact::DEFAULT_MAX_DEPTH)]
-        max_depth: usize,
+        #[arg(long, value_name = "N")]
+        max_depth: Option<usize>,
 
         /// Maximum affected declarations returned. Hard ceiling 10000.
-        #[arg(long, value_name = "N", default_value_t = crate::code_map::impact::DEFAULT_MAX_NODES)]
-        max_nodes: usize,
+        #[arg(long, value_name = "N")]
+        max_nodes: Option<usize>,
 
         /// Permit analysis against an index known to predate on-disk edits.
         #[arg(long)]
@@ -303,10 +303,10 @@ pub struct DiffTestGapArgs {
     stdin: bool,
     #[arg(long, value_enum, default_value_t = ImpactDirectionArg::Callers)]
     direction: ImpactDirectionArg,
-    #[arg(long, value_name = "N", default_value_t = crate::code_map::impact::DEFAULT_MAX_DEPTH)]
-    max_depth: usize,
-    #[arg(long, value_name = "N", default_value_t = crate::code_map::impact::DEFAULT_MAX_NODES)]
-    max_nodes: usize,
+    #[arg(long, value_name = "N")]
+    max_depth: Option<usize>,
+    #[arg(long, value_name = "N")]
+    max_nodes: Option<usize>,
     #[arg(long)]
     allow_stale: bool,
 }
@@ -374,15 +374,19 @@ pub async fn run_code_map(args: CodeMapArgs) -> Result<()> {
             max_depth,
             max_nodes,
             allow_stale,
-        } => run_impact(
-            files,
-            symbols,
-            direction,
-            max_depth,
-            max_nodes,
-            allow_stale,
-            args.output,
-        ),
+        } => {
+            let (max_depth, max_nodes, allow_stale) =
+                resolve_cli_impact_policy(max_depth, max_nodes, allow_stale)?;
+            run_impact(
+                files,
+                symbols,
+                direction,
+                max_depth,
+                max_nodes,
+                allow_stale,
+                args.output,
+            )
+        }
         CodeMapAction::DiffImpact {
             root,
             staged,
@@ -393,35 +397,74 @@ pub async fn run_code_map(args: CodeMapArgs) -> Result<()> {
             max_depth,
             max_nodes,
             allow_stale,
-        } => run_diff_impact(
-            DiffImpactRequest {
-                root,
-                staged,
-                base,
-                target,
-                stdin,
-                direction,
-                max_depth,
-                max_nodes,
-                allow_stale,
-            },
-            args.output,
-        ),
-        CodeMapAction::DiffTestGaps { request } => run_diff_test_gaps(
-            DiffImpactRequest {
-                root: request.root,
-                staged: request.staged,
-                base: request.base,
-                target: request.target,
-                stdin: request.stdin,
-                direction: request.direction,
-                max_depth: request.max_depth,
-                max_nodes: request.max_nodes,
-                allow_stale: request.allow_stale,
-            },
-            args.output,
-        ),
+        } => {
+            let (max_depth, max_nodes, allow_stale) =
+                resolve_cli_impact_policy(max_depth, max_nodes, allow_stale)?;
+            run_diff_impact(
+                DiffImpactRequest {
+                    root,
+                    staged,
+                    base,
+                    target,
+                    stdin,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                    allow_stale,
+                },
+                args.output,
+            )
+        }
+        CodeMapAction::DiffTestGaps { request } => {
+            let (max_depth, max_nodes, allow_stale) = resolve_cli_impact_policy(
+                request.max_depth,
+                request.max_nodes,
+                request.allow_stale,
+            )?;
+            run_diff_test_gaps(
+                DiffImpactRequest {
+                    root: request.root,
+                    staged: request.staged,
+                    base: request.base,
+                    target: request.target,
+                    stdin: request.stdin,
+                    direction: request.direction,
+                    max_depth,
+                    max_nodes,
+                    allow_stale,
+                },
+                args.output,
+            )
+        }
     }
+}
+
+fn resolve_cli_impact_policy(
+    requested_depth: Option<usize>,
+    requested_nodes: Option<usize>,
+    allow_stale: bool,
+) -> Result<(usize, usize, bool)> {
+    let policy = crate::config::FreedomConfig::load_from_default_path_or_default()?
+        .code_map
+        .impact_policy;
+    policy.validate()?;
+    anyhow::ensure!(
+        !allow_stale,
+        "allow_stale=true is denied by code_map.impact_policy"
+    );
+    let max_depth = requested_depth.unwrap_or(policy.max_depth as usize);
+    let max_nodes = requested_nodes.unwrap_or(policy.max_nodes as usize);
+    anyhow::ensure!(
+        max_depth <= policy.max_depth as usize,
+        "max_depth {max_depth} exceeds code_map.impact_policy ceiling {}",
+        policy.max_depth
+    );
+    anyhow::ensure!(
+        max_nodes <= policy.max_nodes as usize,
+        "max_nodes {max_nodes} exceeds code_map.impact_policy ceiling {}",
+        policy.max_nodes
+    );
+    Ok((max_depth, max_nodes, false))
 }
 
 fn lifecycle_root(path: Option<PathBuf>) -> Result<PathBuf> {
@@ -1496,8 +1539,8 @@ mod tests {
             target: request.target,
             stdin: request.stdin,
             direction: request.direction,
-            max_depth: request.max_depth,
-            max_nodes: request.max_nodes,
+            max_depth: request.max_depth.expect("fixture supplied --max-depth"),
+            max_nodes: request.max_nodes.expect("fixture supplied --max-nodes"),
             allow_stale: request.allow_stale,
         }
     }

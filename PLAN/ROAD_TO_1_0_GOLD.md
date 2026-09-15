@@ -8,6 +8,28 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**Validated W54–W57 batch (2026-09-15):** the reviewed 18-path composition
+and subsequent runtime/CI repairs cover 20 changed source/configuration paths
+on published `4409ff6c1b36f1c3ad921f8fb7df476e6e1411ad`. This joins bounded
+test-evidence exclusion provenance, durable Chat/Channel context-outcome
+receipts, immutable MCP impact policy and read-only outline Doctor readiness.
+Final native Clippy07, TestBuild03, selected runtime03 **2580/0/0**,
+contracts02 **746/0/0**, GUI Clippy01, CLI docgen **1/0/0** and Python45 passed.
+GUI Clippy took 7m57s with minimum free 219.22 GiB and peak build working set
+11.68 GiB under the one-job, Idle, four-CPU guard. The 260-input source union,
+eight executable hashes and 26 publication paths are bound by strict index
+checks; see `docs/gold-wave54-57-verification.md` and the public source/test
+matrix. Earlier failures remain diagnostic only. No checkbox changes:
+counts1324/1014/308/2, raw310/pre-tag309. W58/W59 readiness/requested-policy
+work and CI cache repair remain the next reviewed batch; its extra output and
+real-dispatch acceptance fixtures are being completed before admission.
+Full CI [34912037901](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34912037901)
+and Security [34912040045](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34912040045)
+belong to the previous published `4409ff6c`. Security attempt2 and Windows CI
+passed; its Linux GUI dead-code failure is repaired here, while macOS reached
+the 100-minute compilation deadline. New exact-commit CI, native GUI interaction,
+live delivery and release acceptance remain separate.
+
 **Waves 39 and 40 sealed daemon chat and native CLI version probe — PUBLISHED
 `e4b4a117f258df401467b5c10c17e6ef1d266b2c` (2026-09-14):** eighteen source files
 share a 204-input retained union based on W35–38 `20423301`. W39's sealed,
@@ -92,7 +114,7 @@ W50repair11, W52repair03 and W53repair04 were independently approved before
 their later 23-file combined admission below. No further checkbox closes;
 counts1324/1014/308/2.
 
-**W50/W52/W53 — IMPLEMENTED AND LOCALLY VERIFIED (2026-09-15):**
+**W50/W52/W53 — PUBLISHED `4409ff6c1b36f1c3ad921f8fb7df476e6e1411ad` (2026-09-15):**
 Immutable-commit review context, the Code Sessions diff-impact/test-evidence
 surface, and default-off built-in outline enrichment are implemented. The
 reviewed 23-file feature scope includes the existing GUI `rusqlite` dependency;

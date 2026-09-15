@@ -262,6 +262,131 @@ pub(crate) fn check_code_map_analysis_readiness(home: &Path) -> CheckOutcome {
     }
 }
 
+/// CRG-05 operator diagnostic for the opt-in W53 sidecar. This deliberately
+/// shares only the exact generated descriptor classification with the producer:
+/// Doctor never prepares a sidecar, starts a child, or treats readiness as a
+/// request that was enriched.
+pub(crate) fn check_codegraph_outline_enrichment(home: &Path) -> CheckOutcome {
+    const NAME: &str = "codegraph outline enrichment";
+    let config_path = home.join("freedom.yaml");
+    let config = match std::fs::read(&config_path) {
+        Ok(bytes) => match serde_yaml::from_slice::<crate::config::FreedomConfig>(&bytes) {
+            Ok(config) if config.code_map.validate().is_ok() => config,
+            _ => return CheckOutcome {
+                name: NAME,
+                status: CheckStatus::Warn,
+                detail: "outline enrichment configuration is unavailable or invalid; Doctor did not inspect MCP registration or SQLite".into(),
+            },
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => crate::config::FreedomConfig::default(),
+        Err(_) => return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: "outline enrichment configuration is unavailable or invalid; Doctor did not inspect MCP registration or SQLite".into(),
+        },
+    };
+    if !config.code_map.outline_enrichment {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Pass,
+            detail: "disabled by freedom.yaml — no outline enrichment readiness is expected and no SQLite database was opened".into(),
+        };
+    }
+
+    let registry_path = home.join("mcp_servers.yaml");
+    let servers = match crate::mcp::McpServers::load_from(&registry_path) {
+        Ok(servers) => servers,
+        Err(_) => return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: "enabled, but mcp_servers.yaml is unavailable or invalid; no child, provider, or SQLite inspection was attempted".into(),
+        },
+    };
+    let database_path = match crate::mcp::codegraph_server::inspect_builtin_outline_registration(
+        servers.get_enabled("neoth-codegraph"),
+    ) {
+        crate::mcp::codegraph_server::BuiltinOutlineRegistrationReadiness::Exact { database_path } => database_path,
+        crate::mcp::codegraph_server::BuiltinOutlineRegistrationReadiness::DatabaseUnavailable => return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: "enabled, but the exact generated codegraph registration names an absent or inaccessible database; Doctor did not create, migrate, or repair it".into(),
+        },
+        crate::mcp::codegraph_server::BuiltinOutlineRegistrationReadiness::NotExactGenerated => return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: "enabled, but no exact generated neoth-codegraph registration is eligible; custom or lookalike registrations are not used for outline enrichment".into(),
+        },
+    };
+    let lifecycle = &config.code_map.lifecycle;
+    if !lifecycle.enabled || lifecycle.managed_roots.is_empty() {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: "enabled with no managed code-map roots; Doctor cannot establish a fresh complete outline snapshot".into(),
+        };
+    }
+
+    let mut ready = Vec::new();
+    let mut unavailable = Vec::new();
+    // `CodeMapLifecycleConfig` validates this operator-controlled list to at
+    // most eight roots. `inspect` is read-only and preserves its normal
+    // physical-root identity, completeness, freshness, and corruption rules.
+    for root in &lifecycle.managed_roots {
+        let observed = crate::code_map::lifecycle::inspect(&database_path, root);
+        match (&observed.root, &observed.state) {
+            (
+                Some(physical_root),
+                crate::code_map::lifecycle::CodeMapLifecycleState::Fresh { snapshot },
+            ) if snapshot.index_generation > 0
+                && snapshot.index_generation == snapshot.graph_generation =>
+            {
+                ready.push(format!(
+                    "{} (index_generation={}, graph_generation={})",
+                    physical_root, snapshot.index_generation, snapshot.graph_generation
+                ));
+            }
+            (Some(physical_root), state) => unavailable.push(format!(
+                "{}: {}",
+                physical_root,
+                code_map_lifecycle_state_label(state)
+            )),
+            (None, state) => unavailable.push(format!(
+                "{}: {}",
+                root.display(),
+                code_map_lifecycle_state_label(state)
+            )),
+        }
+    }
+    if ready.is_empty() {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: format!(
+                "enabled exact generated registration found, but no fresh complete managed map is ready ({}) ; Doctor did not rebuild, refresh, or enrich a request",
+                unavailable.join(", ")
+            ),
+        };
+    }
+    let suffix = if !unavailable.is_empty() {
+        format!(
+            "; other managed roots unavailable: {}",
+            unavailable.join(", ")
+        )
+    } else {
+        String::new()
+    };
+    CheckOutcome {
+        name: NAME,
+        status: CheckStatus::Pass,
+        detail: format!(
+            "ready for a next eligible built-in codegraph_outline attempt across {} fresh complete managed root(s): {}{}; Doctor did not enrich a request",
+            ready.len(),
+            ready.join(", "),
+            suffix
+        ),
+    }
+}
+
 fn code_map_analysis_detail(
     root: &str,
     lifecycle: &crate::code_map::lifecycle::LifecycleGeneration,
@@ -1026,6 +1151,7 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_vector_index_snapshot,
     check_code_map_lifecycle,
     check_code_map_analysis_readiness,
+    check_codegraph_outline_enrichment,
     check_omi_runtime,
 ];
 
@@ -1171,6 +1297,26 @@ pub(crate) const DOCS: &[CheckDoc] = &[
                   the read-only cap, use a scoped CRG consumer rather than \
                   treating this health summary as a repository-wide census.",
     },
+    CheckDoc {
+        name: "codegraph outline enrichment",
+        purpose: "Read-only readiness for the opt-in built-in `codegraph_outline` \
+                  sidecar. Doctor first accepts only the exact generated \
+                  `neoth-codegraph` registration, then inspects at most the eight \
+                  configured managed roots using the existing lifecycle rules. A pass \
+                  means a future eligible built-in call can attempt enrichment; it \
+                  does not claim any request was enriched.",
+        common_failures: "The feature is disabled by default; freedom.yaml or \
+                  mcp_servers.yaml is malformed; a custom/lookalike registration \
+                  replaced the generated descriptor; the selected database is absent \
+                  or corrupt; or every managed root is absent, incomplete, stale, or \
+                  otherwise not fresh.",
+        fix: "Enable `code_map.outline_enrichment` only with the generated \
+              `neoth-codegraph` registration intact, then use the normal \
+              `neoth code-map refresh <absolute-root>` lifecycle path until at least \
+              one managed physical root is fresh and complete. Doctor never starts \
+              codegraph-serve, calls tools/list, migrates, rebuilds, repairs, or \
+              changes configuration.",
+    },
 ];
 
 #[cfg(test)]
@@ -1212,6 +1358,57 @@ mod omi_tests {
             .expect("create fixture store outside Doctor");
         crate::code_map::persist::persist_map_and_edges(&mut store, &map, edges)
             .expect("publish fixture map and graph");
+    }
+
+    fn write_enabled_outline_enrichment(home: &Path, root: &Path) {
+        let mut config = crate::config::FreedomConfig::default();
+        config.code_map.outline_enrichment = true;
+        config.code_map.lifecycle.enabled = true;
+        config.code_map.lifecycle.managed_roots = vec![root.to_path_buf()];
+        std::fs::write(
+            home.join("freedom.yaml"),
+            serde_yaml::to_string(&config).expect("serialize outline fixture config"),
+        )
+        .expect("write outline fixture config");
+    }
+
+    fn write_generated_outline_registration(home: &Path, database: &Path) {
+        let server = crate::mcp::McpServerConfig {
+            id: "neoth-codegraph".into(),
+            description: None,
+            command: std::env::current_exe()
+                .expect("fixture executable")
+                .canonicalize()
+                .expect("canonical fixture executable")
+                .display()
+                .to_string(),
+            args: vec![
+                "mcp".into(),
+                "codegraph-serve".into(),
+                "--db".into(),
+                database.display().to_string(),
+            ],
+            env: std::collections::HashMap::new(),
+            enabled: true,
+            allow_tools: Some(
+                crate::mcp::codegraph_server::TOOL_NAMES
+                    .iter()
+                    .map(|tool| (*tool).to_owned())
+                    .collect(),
+            ),
+            trust_all_tools: false,
+            smart_approve: true,
+            autonomy_gate: None,
+        };
+        let servers = crate::mcp::McpServers {
+            servers: vec![server],
+            smart_loading: true,
+        };
+        std::fs::write(
+            home.join("mcp_servers.yaml"),
+            serde_yaml::to_string(&servers).expect("serialize generated outline registration"),
+        )
+        .expect("write generated outline registration");
     }
 
     fn code_map_store_artifacts(home: &Path) -> Vec<(std::ffi::OsString, Vec<u8>)> {
@@ -1457,6 +1654,187 @@ mod omi_tests {
                 .detail
                 .contains("does not prove the repository has no tests or coverage"),
             "{outcome:?}"
+        );
+    }
+
+    #[test]
+    fn outline_enrichment_disabled_returns_before_database_open() {
+        let home = tempfile::tempdir().unwrap();
+        let store = home.path().join("code_map.db");
+
+        let outcome = check_codegraph_outline_enrichment(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Pass, "{outcome:?}");
+        assert!(outcome.detail.contains("disabled by freedom.yaml"));
+        assert!(
+            !store.exists(),
+            "disabled readiness must not create a database"
+        );
+    }
+
+    #[test]
+    fn outline_enrichment_warns_for_invalid_config_without_inspection() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("freedom.yaml"), "code_map: [not-a-map]\n").unwrap();
+
+        let outcome = check_codegraph_outline_enrichment(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Warn, "{outcome:?}");
+        assert!(
+            outcome
+                .detail
+                .contains("configuration is unavailable or invalid")
+        );
+        assert!(code_map_store_artifacts(home.path()).is_empty());
+    }
+
+    #[test]
+    fn outline_enrichment_rejects_custom_lookalike_registration_without_child_work() {
+        let home = tempfile::tempdir().unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        write_enabled_outline_enrichment(home.path(), repository.path());
+        let mut server = crate::mcp::McpServerConfig {
+            id: "neoth-codegraph".into(),
+            description: None,
+            command: std::env::current_exe()
+                .unwrap()
+                .canonicalize()
+                .unwrap()
+                .display()
+                .to_string(),
+            args: vec![
+                "mcp".into(),
+                "codegraph-serve".into(),
+                "--db".into(),
+                home.path().join("missing.db").display().to_string(),
+                "--lookalike".into(),
+            ],
+            env: std::collections::HashMap::new(),
+            enabled: true,
+            allow_tools: Some(
+                crate::mcp::codegraph_server::TOOL_NAMES
+                    .iter()
+                    .map(|tool| (*tool).to_owned())
+                    .collect(),
+            ),
+            trust_all_tools: false,
+            smart_approve: true,
+            autonomy_gate: None,
+        };
+        server.description = Some("custom must not gain built-in provenance".into());
+        let servers = crate::mcp::McpServers {
+            servers: vec![server],
+            smart_loading: true,
+        };
+        std::fs::write(
+            home.path().join("mcp_servers.yaml"),
+            serde_yaml::to_string(&servers).unwrap(),
+        )
+        .unwrap();
+
+        let outcome = check_codegraph_outline_enrichment(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Warn, "{outcome:?}");
+        assert!(outcome.detail.contains("custom or lookalike"));
+        assert!(
+            code_map_store_artifacts(home.path()).is_empty(),
+            "registration rejection must precede SQLite work"
+        );
+    }
+
+    #[test]
+    fn outline_enrichment_warns_for_absent_or_corrupt_database_without_repair() {
+        let absent_home = tempfile::tempdir().unwrap();
+        let absent_repo = tempfile::tempdir().unwrap();
+        write_enabled_outline_enrichment(absent_home.path(), absent_repo.path());
+        let absent_database = absent_home.path().join("missing.db");
+        write_generated_outline_registration(absent_home.path(), &absent_database);
+        let absent = check_codegraph_outline_enrichment(absent_home.path());
+        assert_eq!(absent.status, CheckStatus::Warn, "{absent:?}");
+        assert!(absent.detail.contains("absent or inaccessible database"));
+        assert!(!absent_database.exists());
+
+        let corrupt_home = tempfile::tempdir().unwrap();
+        let corrupt_repo = tempfile::tempdir().unwrap();
+        write_enabled_outline_enrichment(corrupt_home.path(), corrupt_repo.path());
+        let corrupt_database = corrupt_home.path().join("code_map.db");
+        let bytes = b"not sqlite evidence";
+        std::fs::write(&corrupt_database, bytes).unwrap();
+        write_generated_outline_registration(corrupt_home.path(), &corrupt_database);
+        let corrupt = check_codegraph_outline_enrichment(corrupt_home.path());
+        assert_eq!(corrupt.status, CheckStatus::Warn, "{corrupt:?}");
+        assert!(corrupt.detail.contains("no fresh complete managed map"));
+        assert_eq!(std::fs::read(&corrupt_database).unwrap(), bytes);
+    }
+
+    #[test]
+    fn outline_enrichment_warns_for_stale_map_and_reports_fresh_physical_generation() {
+        let stale_home = tempfile::tempdir().unwrap();
+        let stale_repository = tempfile::tempdir().unwrap();
+        let source = stale_repository.path().join("tracked.rs");
+        std::fs::write(&source, "pub fn tracked() {}\n").unwrap();
+        write_enabled_outline_enrichment(stale_home.path(), stale_repository.path());
+        let map = crate::code_map::RepoMapBuilder::new(stale_repository.path())
+            .scan()
+            .unwrap();
+        let stale_database = stale_home.path().join("code_map.db");
+        let mut store = crate::code_map::persist::open(&stale_database).unwrap();
+        crate::code_map::persist::persist_map_and_edges(&mut store, &map, &[]).unwrap();
+        drop(store);
+        write_generated_outline_registration(stale_home.path(), &stale_database);
+        std::fs::write(&source, "pub fn tracked() { let stale = true; }\n").unwrap();
+        let stale = check_codegraph_outline_enrichment(stale_home.path());
+        assert_eq!(stale.status, CheckStatus::Warn, "{stale:?}");
+        assert!(stale.detail.contains("stale"));
+
+        let fresh_home = tempfile::tempdir().unwrap();
+        let fresh_repository = tempfile::tempdir().unwrap();
+        write_enabled_outline_enrichment(fresh_home.path(), fresh_repository.path());
+        let fresh_database = fresh_home.path().join("code_map.db");
+        let fresh_map = crate::code_map::RepoMapBuilder::new(fresh_repository.path())
+            .scan()
+            .unwrap();
+        let mut fresh_store = crate::code_map::persist::open(&fresh_database).unwrap();
+        crate::code_map::persist::persist_map_and_edges(&mut fresh_store, &fresh_map, &[]).unwrap();
+        drop(fresh_store);
+        write_generated_outline_registration(fresh_home.path(), &fresh_database);
+        let fresh = check_codegraph_outline_enrichment(fresh_home.path());
+        assert_eq!(fresh.status, CheckStatus::Pass, "{fresh:?}");
+        assert!(fresh.detail.contains("fresh complete managed root(s)"));
+        assert!(fresh.detail.contains("index_generation="));
+        assert!(fresh.detail.contains("Doctor did not enrich a request"));
+        assert_valid_read_only_wal_artifacts(fresh_home.path());
+    }
+
+    #[test]
+    fn outline_enrichment_warns_for_incomplete_generation_without_rebuild() {
+        let home = tempfile::tempdir().unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        write_enabled_outline_enrichment(home.path(), repository.path());
+        let database = home.path().join("code_map.db");
+        let map = crate::code_map::RepoMapBuilder::new(repository.path())
+            .scan()
+            .unwrap();
+        let mut store = crate::code_map::persist::open(&database).unwrap();
+        crate::code_map::persist::persist_map_and_edges(&mut store, &map, &[]).unwrap();
+        store
+            .execute(
+                "UPDATE code_map_roots SET graph_generation = graph_generation + 1 WHERE root = ?1",
+                rusqlite::params![map.root],
+            )
+            .unwrap();
+        drop(store);
+        write_generated_outline_registration(home.path(), &database);
+        let before = std::fs::read(&database).unwrap();
+
+        let outcome = check_codegraph_outline_enrichment(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Warn, "{outcome:?}");
+        assert!(outcome.detail.contains("incomplete"));
+        assert_eq!(
+            std::fs::read(&database).unwrap(),
+            before,
+            "Doctor must not repair incomplete generations"
         );
     }
 

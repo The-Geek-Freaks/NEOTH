@@ -2562,45 +2562,50 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // The daemon CWD is not a conversation repository, so a verified
             // physical sole-root snapshot is allowed as the only fallback.
             // Every adapter reaches this one seam before provider dispatch.
-            let channel_repo_context_recall =
-                match crate::cli::chat::maybe_repo_context_recall_async(
-                    config_for_handler.as_ref(),
-                    &sanitized_text,
-                    &instance_paths,
-                    &channel_cwd,
-                    true,
+            let channel_repo_context_outcome = crate::cli::chat::maybe_repo_context_recall_async(
+                config_for_handler.as_ref(),
+                &sanitized_text,
+                &instance_paths,
+                &channel_cwd,
+                true,
+            )
+            .await;
+            if let Some(reason) = channel_repo_context_outcome.unavailable_reason_code() {
+                tracing::warn!(
+                    channel = channel_str,
+                    reason,
+                    "repository context unavailable; continuing channel turn without auto-context"
+                );
+                if retain_channel_repo_context_unavailable_outcome(
+                    &writer,
+                    &channel_repo_context_outcome,
                 )
                 .await
+                .is_err()
                 {
-                    Ok(recall) => recall,
-                    Err(e) => {
-                        tracing::warn!(
-                            channel = channel_str,
-                            error = %e,
-                            "repository recall unavailable; channel turn blocked before provider dispatch"
-                        );
-                        let notice = format!(
-                            "[NEOTH] Repository context is unavailable: {e:#}. Rebuild the code map and retry."
-                        );
-                        return release_local_channel_notice(
-                            &writer,
-                            &neoth_home,
-                            &hooks,
-                            &autonomy_policy,
-                            &inbound,
-                            &inbound_binding,
-                            channel_str,
-                            &sender_hash,
-                            &notice,
-                            "code-map-recall-error",
-                            channel_asker.as_ref().map(Arc::clone),
-                            &session_fired_once,
-                        )
-                        .await;
-                    }
-                };
-            let mut channel_repo_context = channel_repo_context_recall
-                .as_ref()
+                    tracing::warn!(
+                        channel = channel_str,
+                        "repository-context unavailable receipt could not be persisted; channel provider dispatch refused"
+                    );
+                    return release_local_channel_notice(
+                        &writer,
+                        &neoth_home,
+                        &hooks,
+                        &autonomy_policy,
+                        &inbound,
+                        &inbound_binding,
+                        channel_str,
+                        &sender_hash,
+                        "[NEOTH] Repository-context status could not be retained; request blocked before sending.",
+                        "code-map-context-outcome-audit-error",
+                        channel_asker.as_ref().map(Arc::clone),
+                        &session_fired_once,
+                    )
+                    .await;
+                }
+            }
+            let mut channel_repo_context = channel_repo_context_outcome
+                .injected()
                 .map(|recall| recall.block.clone());
             let mut channel_architecture_recall =
                 crate::cli::chat::maybe_architecture_findings_for_skill_with_policy(
@@ -2612,14 +2617,14 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 .await
                 .context("resolve architecture code-map context for channel turn")?;
             if channel_architecture_recall.as_ref().is_some_and(|context| {
-                channel_repo_context_recall
-                    .as_ref()
+                channel_repo_context_outcome
+                    .injected()
                     .is_some_and(|recall| recall.receipt.snapshot != context.snapshot)
             }) {
                 tracing::warn!(
                     channel = channel_str,
-                    repo_snapshot = ?channel_repo_context_recall
-                        .as_ref()
+                    repo_snapshot = ?channel_repo_context_outcome
+                        .injected()
                         .map(|recall| &recall.receipt.snapshot),
                     architecture_snapshot = ?channel_architecture_recall
                         .as_ref()
@@ -3622,7 +3627,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             } = budgeted;
             if let Err(error) = crate::cli::chat::emit_retained_code_map_audits(
                 &writer,
-                channel_repo_context_recall.as_ref(),
+                channel_repo_context_outcome.injected(),
                 channel_architecture_recall.as_ref(),
                 &sanitized_text,
                 system_override.as_deref(),
@@ -3973,6 +3978,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         &session_fired_once,
                         crate::hooks::PreToolUseCancellation::unbound(),
                         config_for_handler.code_map.outline_enrichment,
+                        config_for_handler.code_map.impact_policy,
                     )
                     .await
                     {
@@ -5468,6 +5474,16 @@ fn delegated_system_bundle(
     bundle
 }
 
+/// Channel pre-provider boundary for a prepared unavailable repository-context
+/// outcome. A return of `Err` means the required receipt was not durably
+/// acknowledged, so the caller must release only a local blocked notice.
+async fn retain_channel_repo_context_unavailable_outcome(
+    writer: &crate::wal::writer::WalWriterHandle,
+    outcome: &crate::cli::chat::RepoContextOutcome,
+) -> anyhow::Result<()> {
+    crate::cli::chat::emit_repo_context_unavailable_audit(writer, outcome, "channel").await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5516,6 +5532,95 @@ mod tests {
         assert_eq!(waiter.await.expect("waiter must not panic"), Some(true));
     }
     use crate::channels::{Channel, ChannelError, ChannelKind, MessageId, PipelineHandler};
+
+    #[tokio::test]
+    async fn channel_context_receipt_route_blocks_when_writer_is_not_durable() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = crate::config::InstancePaths::for_home(home.path());
+        let mut config = crate::config::FreedomConfig::default();
+        config.code_map.auto_context_max_files = 1;
+        let outcome = crate::cli::chat::maybe_repo_context_recall_with_policy(
+            &config,
+            "channel request",
+            &paths,
+            home.path(),
+            true,
+        );
+        let writer = crate::wal::writer::closed_test_writer();
+        let error = retain_channel_repo_context_unavailable_outcome(&writer, &outcome)
+            .await
+            .expect_err("channel pre-provider receipt failure must block dispatch");
+        assert!(error.to_string().contains("not durably acknowledged"));
+    }
+
+    #[tokio::test]
+    async fn channel_context_receipt_route_cancellation_keeps_replay_pending_until_acknowledged() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = crate::config::InstancePaths::for_home(home.path());
+        let mut config = crate::config::FreedomConfig::default();
+        config.code_map.auto_context_max_files = 1;
+        let outcome = Arc::new(crate::cli::chat::maybe_repo_context_recall_with_policy(
+            &config,
+            "channel request",
+            &paths,
+            home.path(),
+            true,
+        ));
+        let segment = home.path().join("channel-context-cancel.wal");
+        let (writer, join) = crate::wal::spawn(segment.clone()).unwrap();
+        let gate = crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+        let writer = writer.with_test_ack_gate(gate.clone());
+
+        let first_writer = writer.clone();
+        let first_outcome = Arc::clone(&outcome);
+        let first = tokio::spawn(async move {
+            retain_channel_repo_context_unavailable_outcome(&first_writer, &first_outcome).await
+        });
+        gate.wait_until_durable().await;
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+
+        let replay_writer = writer.clone();
+        let replay_outcome = Arc::clone(&outcome);
+        let replay = tokio::spawn(async move {
+            retain_channel_repo_context_unavailable_outcome(&replay_writer, &replay_outcome).await
+        });
+        tokio::task::yield_now().await;
+        assert!(
+            !replay.is_finished(),
+            "pending Channel receipt must block provider dispatch and replay"
+        );
+        gate.release();
+        replay.await.unwrap().unwrap();
+
+        drop(writer);
+        let _ = join.await;
+        let bytes = std::fs::read(segment).unwrap();
+        let mut cursor = &bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..];
+        let mut receipts = 0;
+        while !cursor.is_empty() {
+            let frame = crate::wal::frame::decode_frame(cursor)
+                .expect("decode channel unavailable-context WAL frame");
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8
+            {
+                let payload: serde_json::Value = serde_json::from_slice(frame.payload)
+                    .expect("decode channel unavailable-context receipt payload");
+                if payload["status"] == "enabled_context_unavailable"
+                    && payload["surface"] == "channel"
+                    && payload["reason"] == "missing_store"
+                {
+                    receipts += 1;
+                }
+            }
+            cursor = &cursor[frame.header.total_len as usize..];
+        }
+        assert_eq!(
+            receipts, 1,
+            "replayed Channel route must retain exactly one receipt"
+        );
+    }
 
     #[test]
     fn legacy_telegram_and_slack_startup_bindings_expose_only_their_sealed_default_capability() {

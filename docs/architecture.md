@@ -214,6 +214,27 @@ may use coordination sidecars; these are distinct from a code-map refresh.
 Counts describe persisted observations, not executed-test coverage or proof
 that tests are absent.
 
+Exclusion provenance counts stored helper/fixture, generated,
+unsupported-language and duplicate-target declarations within one root and
+generation pair. These bounded aggregates do not establish relevance to an
+individual impact node. Rejected test-gap input must contain neither aggregate
+exclusion evidence nor nodes; each condition is validated independently.
+
+Chat and Channel record enabled automatic-context outcomes through one durable
+`Unclaimed → Pending → Durable | Failed` receipt protocol. When a receipt is
+required, provider dispatch waits for its single append owner to acknowledge
+`Durable`. Cancelling a waiter leaves `Pending`; only the owner can settle the
+write. Append failure prevents provider dispatch, while disabled automatic
+context retains its zero-I/O path.
+
+An accepted impact policy derives an immutable generated-child descriptor before
+MCP authorization, catalogue, spawn and invocation. The original tool JSON and
+the strict base descriptor used for outline eligibility remain intact. Later
+accepted settings govern a new session; an in-flight session keeps its snapshot.
+Doctor's optional outline check observes that exact generated descriptor and
+bounded physical-root readiness without launching a child or enriching a request.
+Disabled inspection performs no registry or SQLite work.
+
 ## WAL source of truth
 
 The WAL is the durable event chain under NEOTH. Views can be rebuilt; the WAL is authoritative.
