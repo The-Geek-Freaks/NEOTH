@@ -654,6 +654,14 @@ pub struct CodeMapConfig {
         deserialize_with = "deserialize_coding_summary_token_budget"
     )]
     pub coding_summary_token_budget: u32,
+    /// Traversal ceiling for explicit codegraph callers/callees requests.
+    /// It is distinct from `coding_callers_per_symbol`, which counts direct
+    /// caller rows in `neoth code` and is never a BFS depth.
+    #[serde(
+        default = "default_requested_context_max_bfs_depth",
+        deserialize_with = "deserialize_requested_context_max_bfs_depth"
+    )]
+    pub requested_context_max_bfs_depth: u8,
     /// Default-off daemon ownership for explicitly selected repository roots.
     /// It is separate from both automatic chat context and one-shot coding
     /// recall limits.
@@ -675,6 +683,29 @@ pub struct CodeMapImpactPolicy {
     pub max_nodes: u32,
     #[serde(default, deserialize_with = "deserialize_impact_policy_allow_stale")]
     pub allow_stale: bool,
+}
+
+/// Immutable, data-only limits for an explicit code-map request.  This is
+/// deliberately derived from the existing validated coding settings: automatic
+/// Chat/Channel context remains governed by `auto_context_max_files` and is
+/// never enabled by this view.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+pub struct RequestedContextPolicy {
+    pub recall_max_files: u32,
+    /// A count of direct caller rows per matched symbol, never traversal depth.
+    pub callers_per_symbol: u32,
+    pub summary_token_budget: u32,
+    pub max_bfs_depth: u8,
+}
+
+impl RequestedContextPolicy {
+    pub const MAX_RENDERED_BYTES: usize = 64 * 1024;
+
+    pub fn max_rendered_bytes(self) -> usize {
+        (self.summary_token_budget as usize)
+            .saturating_mul(4)
+            .min(Self::MAX_RENDERED_BYTES)
+    }
 }
 
 impl Default for CodeMapImpactPolicy {
@@ -904,6 +935,10 @@ fn default_coding_summary_token_budget() -> u32 {
     2_048
 }
 
+fn default_requested_context_max_bfs_depth() -> u8 {
+    20
+}
+
 fn default_code_map_debounce_millis() -> u64 {
     500
 }
@@ -976,6 +1011,19 @@ where
     deserialize_code_map_u32_in_range(deserializer, "coding_summary_token_budget", 128, 12_000)
 }
 
+fn deserialize_requested_context_max_bfs_depth<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u8::deserialize(deserializer)?;
+    if !(1..=20).contains(&value) {
+        return Err(D::Error::custom(
+            "requested_context_max_bfs_depth must be between 1 and 20",
+        ));
+    }
+    Ok(value)
+}
+
 fn deserialize_code_map_managed_roots<'de, D>(deserializer: D) -> Result<Vec<PathBuf>, D::Error>
 where
     D: Deserializer<'de>,
@@ -1030,12 +1078,23 @@ impl Default for CodeMapConfig {
             coding_recall_max_files: default_coding_recall_max_files(),
             coding_callers_per_symbol: default_coding_callers_per_symbol(),
             coding_summary_token_budget: default_coding_summary_token_budget(),
+            requested_context_max_bfs_depth: default_requested_context_max_bfs_depth(),
             lifecycle: CodeMapLifecycleConfig::default(),
         }
     }
 }
 
 impl CodeMapConfig {
+    pub fn requested_context_policy(&self) -> anyhow::Result<RequestedContextPolicy> {
+        self.validate()?;
+        Ok(RequestedContextPolicy {
+            recall_max_files: self.coding_recall_max_files,
+            callers_per_symbol: self.coding_callers_per_symbol,
+            summary_token_budget: self.coding_summary_token_budget,
+            max_bfs_depth: self.requested_context_max_bfs_depth,
+        })
+    }
+
     /// Reject invalid programmatically-built values that bypassed the
     /// YAML field deserializers. Call this before a caller performs IO.
     pub fn validate(&self) -> anyhow::Result<()> {
@@ -1050,6 +1109,9 @@ impl CodeMapConfig {
         }
         if !(128..=12_000).contains(&self.coding_summary_token_budget) {
             anyhow::bail!("coding_summary_token_budget must be between 128 and 12000");
+        }
+        if !(1..=20).contains(&self.requested_context_max_bfs_depth) {
+            anyhow::bail!("requested_context_max_bfs_depth must be between 1 and 20");
         }
         self.impact_policy.validate()?;
         self.lifecycle.validate()?;

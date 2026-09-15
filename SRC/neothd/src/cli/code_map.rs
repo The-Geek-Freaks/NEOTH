@@ -472,33 +472,113 @@ fn lifecycle_root(path: Option<PathBuf>) -> Result<PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("cannot resolve code-map root: no path given + no cwd"))
 }
 
+fn render_lifecycle_value_text<T: serde::Serialize>(
+    heading: &str,
+    value: &T,
+    output: OutputFormat,
+) -> Result<String> {
+    match output {
+        OutputFormat::Json => serde_json::to_string_pretty(value).map_err(Into::into),
+        OutputFormat::Jsonl => serde_json::to_string(value).map_err(Into::into),
+        OutputFormat::Table => {
+            // The lifecycle record is deliberately rendered from the same typed
+            // contract as JSON/JSONL. This keeps all state and repair evidence
+            // visible while the core state vocabulary evolves.
+            Ok(format!(
+                "# {heading}\n{}",
+                serde_json::to_string_pretty(value)?
+            ))
+        }
+    }
+}
+
 fn render_lifecycle_value<T: serde::Serialize>(
     heading: &str,
     value: &T,
     output: OutputFormat,
 ) -> Result<()> {
-    match output {
-        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(value)?),
-        OutputFormat::Jsonl => println!("{}", serde_json::to_string(value)?),
-        OutputFormat::Table => {
-            // The lifecycle record is deliberately rendered from the same typed
-            // contract as JSON/JSONL. This keeps all state and repair evidence
-            // visible while the core state vocabulary evolves.
-            println!("# {heading}");
-            println!("{}", serde_json::to_string_pretty(value)?);
-        }
-    }
+    println!("{}", render_lifecycle_value_text(heading, value, output)?);
     Ok(())
+}
+
+fn lifecycle_status_repair(
+    status: &crate::code_map::lifecycle::CodeMapLifecycleStatus,
+    requested_root: &std::path::Path,
+) -> Option<serde_json::Value> {
+    use crate::code_map::lifecycle::CodeMapLifecycleState;
+
+    let root = status
+        .root
+        .clone()
+        .unwrap_or_else(|| requested_root.to_string_lossy().into_owned());
+    let mut argv = vec!["neoth".to_owned(), "code-map".to_owned()];
+    let kind = match &status.state {
+        CodeMapLifecycleState::Absent
+        | CodeMapLifecycleState::Unmapped
+        | CodeMapLifecycleState::Incomplete { .. }
+        | CodeMapLifecycleState::Stale { .. }
+        | CodeMapLifecycleState::Recovering { .. } => {
+            argv.push("refresh".to_owned());
+            argv.push(root);
+            "refresh"
+        }
+        CodeMapLifecycleState::Corrupt { .. } => {
+            argv.push("refresh".to_owned());
+            argv.push(root);
+            argv.push("--repair-corrupt".to_owned());
+            "repair_corrupt"
+        }
+        CodeMapLifecycleState::Refreshing { .. } => {
+            argv.push("status".to_owned());
+            argv.push(root);
+            "wait_for_refresh"
+        }
+        CodeMapLifecycleState::Disabled | CodeMapLifecycleState::Fresh { .. } => return None,
+    };
+    Some(serde_json::json!({ "kind": kind, "argv": argv }))
+}
+
+fn lifecycle_status_value(
+    config: &crate::config::FreedomConfig,
+    db_path: &std::path::Path,
+    root: &std::path::Path,
+) -> Result<serde_json::Value> {
+    // `inspect` intentionally opens an existing store read-only. Do not
+    // replace this with persist::open: a diagnostic must not create, migrate,
+    // repair, or otherwise alter a missing/corrupt operator store.
+    let status = crate::code_map::lifecycle::inspect(db_path, root);
+    // W58/W59: status remains read-only while showing automatic readiness and
+    // the independently validated requested-context policy. Neither value is
+    // a daemon snapshot or an active-generation claim.
+    let automatic_context =
+        crate::code_map::inspect_automatic_context_readiness(config, db_path, root);
+    let repair = lifecycle_status_repair(&status, root);
+    let policy = config.code_map.requested_context_policy()?;
+    Ok(serde_json::json!({
+        "lifecycle": status,
+        "repair": repair,
+        "automatic_context": automatic_context,
+        "requested_context_policy": {
+            "kind": "requested",
+            "source": "local_validated_cli_config",
+            "daemon_snapshot": null,
+            "automatic_context_configured": config.code_map.auto_context_max_files > 0,
+            "recall_max_files": policy.recall_max_files,
+            "callers_per_symbol": policy.callers_per_symbol,
+            "callers_per_symbol_applies_to": "neoth_code_direct_rows",
+            "max_bfs_depth": policy.max_bfs_depth,
+            "summary_token_budget": policy.summary_token_budget,
+            "max_rendered_bytes": policy.max_rendered_bytes(),
+        }
+    }))
 }
 
 fn run_lifecycle_status(path: Option<PathBuf>, output: OutputFormat) -> Result<()> {
     let root = lifecycle_root(path)?;
     let db_path = crate::code_map::persist::default_path();
-    // `inspect` intentionally opens an existing store read-only. Do not
-    // replace this with persist::open: a diagnostic must not create, migrate,
-    // repair, or otherwise alter a missing/corrupt operator store.
-    let status = crate::code_map::lifecycle::inspect(&db_path, &root);
-    render_lifecycle_value("code-map lifecycle status", &status, output)
+    let config = crate::config::FreedomConfig::load_from_default_path_or_default()?;
+    let value = lifecycle_status_value(&config, &db_path, &root)?;
+    render_lifecycle_value("code-map lifecycle status", &value, output)
 }
 
 async fn run_lifecycle_refresh(
@@ -1929,6 +2009,248 @@ mod tests {
                 !db_path.exists(),
                 "status must not create or migrate a missing code-map database"
             );
+        });
+    }
+
+    #[test]
+    fn lifecycle_status_renderer_exposes_automatic_context_json_and_table_fields() {
+        with_temp_home(|| {
+            let repo = tempdir().unwrap();
+            let source = repo.path().join("lib.rs");
+            std::fs::write(&source, "pub fn lifecycle_fixture() {}\n").unwrap();
+            let db_path = crate::code_map::persist::default_path();
+            let root = crate::code_map::CanonicalRepoRoot::discover(repo.path()).unwrap();
+            let refresh_argv = json!(["neoth", "code-map", "refresh", root.display()]);
+
+            let disabled = crate::config::FreedomConfig::default();
+            let disabled_value = lifecycle_status_value(&disabled, &db_path, repo.path()).unwrap();
+            let disabled_json = render_lifecycle_value_text(
+                "code-map lifecycle status",
+                &disabled_value,
+                OutputFormat::Json,
+            )
+            .unwrap();
+            let disabled_rendered: serde_json::Value =
+                serde_json::from_str(&disabled_json).unwrap();
+            assert_eq!(disabled_rendered["automatic_context"]["kind"], "disabled");
+            // Automatic context is off, but the absent manual code-map lifecycle
+            // still offers its explicit, selected-root refresh action.
+            assert_eq!(disabled_rendered["repair"]["argv"], refresh_argv);
+            assert!(!db_path.exists(), "disabled status must not create a store");
+
+            let mut enabled = disabled.clone();
+            enabled.code_map.auto_context_max_files = 3;
+            enabled.code_map.coding_recall_max_files = 1;
+            enabled.code_map.coding_callers_per_symbol = 0;
+            enabled.code_map.coding_summary_token_budget = 128;
+            enabled.code_map.requested_context_max_bfs_depth = 2;
+            let missing_value = lifecycle_status_value(&enabled, &db_path, repo.path()).unwrap();
+            let missing_table = render_lifecycle_value_text(
+                "code-map lifecycle status",
+                &missing_value,
+                OutputFormat::Table,
+            )
+            .unwrap();
+            assert!(missing_table.starts_with("# code-map lifecycle status\n"));
+            assert!(missing_table.contains("\"kind\": \"unavailable\""));
+            assert!(missing_table.contains("\"reason\": \"missing_store\""));
+            assert!(missing_table.contains("\"repair\""));
+            assert!(missing_table.contains("\"refresh\""));
+            let missing_rendered: serde_json::Value = serde_json::from_str(
+                missing_table
+                    .strip_prefix("# code-map lifecycle status\n")
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(missing_rendered["repair"]["argv"], refresh_argv);
+            assert_eq!(
+                missing_rendered["requested_context_policy"],
+                json!({
+                    "kind": "requested",
+                    "source": "local_validated_cli_config",
+                    "daemon_snapshot": null,
+                    "automatic_context_configured": true,
+                    "recall_max_files": 1,
+                    "callers_per_symbol": 0,
+                    "callers_per_symbol_applies_to": "neoth_code_direct_rows",
+                    "max_bfs_depth": 2,
+                    "summary_token_budget": 128,
+                    "max_rendered_bytes": 512,
+                }),
+            );
+            assert!(!db_path.exists(), "missing status must remain read-only");
+
+            crate::code_map::rebuild_snapshot(
+                &root,
+                &db_path,
+                crate::code_map::RebuildOptions::default(),
+            )
+            .unwrap();
+            let before = std::fs::read(&db_path).unwrap();
+            let eligible_value = lifecycle_status_value(&enabled, &db_path, repo.path()).unwrap();
+            let eligible_json = render_lifecycle_value_text(
+                "code-map lifecycle status",
+                &eligible_value,
+                OutputFormat::Json,
+            )
+            .unwrap();
+            let eligible_rendered: serde_json::Value =
+                serde_json::from_str(&eligible_json).unwrap();
+            assert_eq!(eligible_rendered["automatic_context"]["kind"], "eligible");
+            assert_eq!(eligible_rendered["automatic_context"]["max_files"], 3);
+            assert_eq!(eligible_rendered["repair"], serde_json::Value::Null);
+            assert_eq!(
+                eligible_rendered["automatic_context"]["canonical_root"],
+                root.display().to_owned()
+            );
+            assert_eq!(
+                std::fs::read(&db_path).unwrap(),
+                before,
+                "status must not mutate a fresh store"
+            );
+            let disabled_fresh = lifecycle_status_value(&disabled, &db_path, repo.path()).unwrap();
+            assert_eq!(disabled_fresh["automatic_context"]["kind"], "disabled");
+            assert_eq!(disabled_fresh["repair"], serde_json::Value::Null);
+
+            std::fs::write(&source, "pub fn lifecycle_fixture() { changed(); }\n").unwrap();
+            let stale_value = lifecycle_status_value(&enabled, &db_path, repo.path()).unwrap();
+            let stale_json = render_lifecycle_value_text(
+                "code-map lifecycle status",
+                &stale_value,
+                OutputFormat::Json,
+            )
+            .unwrap();
+            let stale_rendered: serde_json::Value = serde_json::from_str(&stale_json).unwrap();
+            assert_eq!(stale_rendered["automatic_context"]["kind"], "unavailable");
+            assert_eq!(
+                stale_rendered["automatic_context"]["reason"],
+                "stale_snapshot"
+            );
+            assert_eq!(stale_rendered["repair"]["kind"], "refresh");
+            assert_eq!(stale_rendered["repair"]["argv"], refresh_argv);
+            assert_eq!(
+                std::fs::read(&db_path).unwrap(),
+                before,
+                "status must not refresh a stale store"
+            );
+
+            let unmapped_repo = tempdir().unwrap();
+            std::fs::write(
+                unmapped_repo.path().join("lib.rs"),
+                "pub fn unmapped() {}\n",
+            )
+            .unwrap();
+            let unmapped_value =
+                lifecycle_status_value(&enabled, &db_path, unmapped_repo.path()).unwrap();
+            let unmapped_json = render_lifecycle_value_text(
+                "code-map lifecycle status",
+                &unmapped_value,
+                OutputFormat::Json,
+            )
+            .unwrap();
+            let unmapped_rendered: serde_json::Value =
+                serde_json::from_str(&unmapped_json).unwrap();
+            assert_eq!(
+                unmapped_rendered["automatic_context"]["kind"],
+                "unavailable"
+            );
+            assert_eq!(
+                unmapped_rendered["automatic_context"]["reason"],
+                "unmapped_root"
+            );
+            assert_eq!(unmapped_rendered["repair"]["kind"], "refresh");
+            let unmapped_root =
+                crate::code_map::CanonicalRepoRoot::discover(unmapped_repo.path()).unwrap();
+            assert_eq!(
+                unmapped_rendered["repair"]["argv"],
+                json!(["neoth", "code-map", "refresh", unmapped_root.display()]),
+            );
+            let unmapped_table = render_lifecycle_value_text(
+                "code-map lifecycle status",
+                &unmapped_value,
+                OutputFormat::Table,
+            )
+            .unwrap();
+            assert!(unmapped_table.contains("\"reason\": \"unmapped_root\""));
+            assert!(unmapped_table.contains("\"repair\""));
+            assert_eq!(
+                std::fs::read(&db_path).unwrap(),
+                before,
+                "status must not mutate an unmapped store"
+            );
+
+            let corrupt_bytes = b"not a sqlite lifecycle fixture";
+            std::fs::write(&db_path, corrupt_bytes).unwrap();
+            let corrupt_value = lifecycle_status_value(&enabled, &db_path, repo.path()).unwrap();
+            let corrupt_json = render_lifecycle_value_text(
+                "code-map lifecycle status",
+                &corrupt_value,
+                OutputFormat::Json,
+            )
+            .unwrap();
+            let corrupt_rendered: serde_json::Value = serde_json::from_str(&corrupt_json).unwrap();
+            assert_eq!(corrupt_rendered["lifecycle"]["state"]["kind"], "corrupt");
+            assert_eq!(corrupt_rendered["automatic_context"]["kind"], "unavailable");
+            assert_eq!(
+                corrupt_rendered["automatic_context"]["reason"],
+                "unreadable_store"
+            );
+            assert_eq!(corrupt_rendered["repair"]["kind"], "repair_corrupt");
+            assert_eq!(
+                corrupt_rendered["repair"]["argv"],
+                json!([
+                    "neoth",
+                    "code-map",
+                    "refresh",
+                    root.display(),
+                    "--repair-corrupt"
+                ]),
+            );
+            let corrupt_table = render_lifecycle_value_text(
+                "code-map lifecycle status",
+                &corrupt_value,
+                OutputFormat::Table,
+            )
+            .unwrap();
+            assert!(corrupt_table.contains("\"kind\": \"repair_corrupt\""));
+            assert!(corrupt_table.contains("\"--repair-corrupt\""));
+            assert_eq!(
+                std::fs::read(&db_path).unwrap(),
+                corrupt_bytes,
+                "status must preserve corrupt evidence"
+            );
+
+            // Both supported presentation formats must carry the same complete
+            // classifications and repair argv already checked against each root.
+            for value in [
+                &disabled_value,
+                &missing_value,
+                &eligible_value,
+                &stale_value,
+                &unmapped_value,
+                &corrupt_value,
+            ] {
+                let json_text = render_lifecycle_value_text(
+                    "code-map lifecycle status",
+                    value,
+                    OutputFormat::Json,
+                )
+                .unwrap();
+                let table_text = render_lifecycle_value_text(
+                    "code-map lifecycle status",
+                    value,
+                    OutputFormat::Table,
+                )
+                .unwrap();
+                let rendered_json: serde_json::Value = serde_json::from_str(&json_text).unwrap();
+                let rendered_table: serde_json::Value = serde_json::from_str(
+                    table_text
+                        .strip_prefix("# code-map lifecycle status\n")
+                        .unwrap(),
+                )
+                .unwrap();
+                assert_eq!(rendered_json, rendered_table);
+            }
         });
     }
 

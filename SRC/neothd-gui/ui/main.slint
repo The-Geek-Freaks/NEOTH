@@ -1365,12 +1365,14 @@ export component MainWindow inherits Window {
     in property <string> code-map-lifecycle-operation: "";
     in property <string> code-map-lifecycle-state: "Choose a repository root to inspect its index.";
     in property <string> code-map-lifecycle-detail: "";
+    in property <string> code-map-automatic-context: "Inspect a repository root to classify automatic Chat/Channel context.";
     in property <string> code-map-lifecycle-runtime: "Daemon watcher status has not been read.";
     in property <string> code-map-lifecycle-canonical-root: "";
     in property <string> code-map-lifecycle-root-identity: "";
     in property <string> code-map-lifecycle-index-generation: "";
     in property <string> code-map-lifecycle-graph-generation: "";
     in-out property <bool> code-map-lifecycle-config-enabled: false;
+    in-out property <string> code-map-auto-context-max-files: "0";
     in-out property <string> code-map-lifecycle-debounce-millis: "500";
     in-out property <string> code-map-lifecycle-reconciliation-secs: "300";
     in property <bool> code-map-lifecycle-config-running: false;
@@ -1379,7 +1381,7 @@ export component MainWindow inherits Window {
     callback code-map-lifecycle-inspect-clicked(string);
     callback code-map-lifecycle-refresh-clicked(string, bool, bool);
     callback code-map-lifecycle-cancel-clicked;
-    callback code-map-lifecycle-config-apply-clicked(bool, string, string);
+    callback code-map-lifecycle-config-apply-clicked(bool, string, string, string);
     callback code-map-lifecycle-managed-root-remove-clicked(string);
     in-out property <int> code-map-impact-source-index: 0;
     in-out property <string> code-map-impact-base: "";
@@ -3683,12 +3685,14 @@ export component MainWindow inherits Window {
             code-map-lifecycle-operation: root.code-map-lifecycle-operation;
             code-map-lifecycle-state: root.code-map-lifecycle-state;
             code-map-lifecycle-detail: root.code-map-lifecycle-detail;
+            code-map-automatic-context: root.code-map-automatic-context;
             code-map-lifecycle-runtime: root.code-map-lifecycle-runtime;
             code-map-lifecycle-canonical-root: root.code-map-lifecycle-canonical-root;
             code-map-lifecycle-root-identity: root.code-map-lifecycle-root-identity;
             code-map-lifecycle-index-generation: root.code-map-lifecycle-index-generation;
             code-map-lifecycle-graph-generation: root.code-map-lifecycle-graph-generation;
             code-map-lifecycle-config-enabled <=> root.code-map-lifecycle-config-enabled;
+            code-map-auto-context-max-files <=> root.code-map-auto-context-max-files;
             code-map-lifecycle-debounce-millis <=> root.code-map-lifecycle-debounce-millis;
             code-map-lifecycle-reconciliation-secs <=> root.code-map-lifecycle-reconciliation-secs;
             code-map-lifecycle-config-running: root.code-map-lifecycle-config-running;
@@ -3697,8 +3701,8 @@ export component MainWindow inherits Window {
             code-map-lifecycle-inspect-clicked(repo-root) => { root.code-map-lifecycle-inspect-clicked(repo-root); }
             code-map-lifecycle-refresh-clicked(repo-root, force, repair-corrupt) => { root.code-map-lifecycle-refresh-clicked(repo-root, force, repair-corrupt); }
             code-map-lifecycle-cancel-clicked => { root.code-map-lifecycle-cancel-clicked(); }
-            code-map-lifecycle-config-apply-clicked(enabled, debounce-millis, reconciliation-secs) => {
-                root.code-map-lifecycle-config-apply-clicked(enabled, debounce-millis, reconciliation-secs);
+            code-map-lifecycle-config-apply-clicked(enabled, debounce-millis, reconciliation-secs, auto-context-max-files) => {
+                root.code-map-lifecycle-config-apply-clicked(enabled, debounce-millis, reconciliation-secs, auto-context-max-files);
             }
             code-map-lifecycle-managed-root-remove-clicked(path) => {
                 root.code-map-lifecycle-managed-root-remove-clicked(path);
@@ -5209,7 +5213,7 @@ export component MainWindow inherits Window {
             { label: "Minimize to companion", glyph: "⊟", danger: false },
             { label: root.cfg-quiet-hours-enabled ? "Quiet hours: on — disable" : "Quiet hours: off — enable", glyph: "☾", danger: false },
             { label: "Buddy settings", glyph: "⊙", danger: false },
-            { label: root.code-map-root == "" ? "Select a repository root first" : "Inspect repository index", glyph: "⌕", danger: false },
+            { label: root.code-map-root == "" ? "Select a repository root first" : root.code-map-automatic-context, glyph: "⌕", danger: false },
             { label: root.code-map-lifecycle-refresh-active ? "Index refresh is active" : "Set up or refresh index", glyph: "↻", danger: false },
             { label: root.code-map-root == "" ? "Select a repository root first" : "Force rebuild index", glyph: "↺", danger: root.code-map-root != "" },
             { label: root.code-map-lifecycle-refresh-active ? "Cancel index refresh" : "No index refresh active", glyph: "×", danger: root.code-map-lifecycle-refresh-active },

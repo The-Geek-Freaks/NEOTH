@@ -465,9 +465,10 @@ class CiCadenceContractTests(unittest.TestCase):
         steps = workflow_steps(platform_tests)
         build = steps["Compile nextest workspace test binaries"]
         execute = steps["Run nextest workspace tests"]
+        self.assertIn("id: compile-tests", build)
         self.assertEqual(
             direct_mapping_keys(build, 8),
-            ["timeout-minutes", "shell", "working-directory", "run"],
+            ["id", "timeout-minutes", "shell", "working-directory", "run"],
         )
         self.assertEqual(
             direct_mapping_keys(execute, 8),
@@ -507,6 +508,66 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertLess(junit_cleanup, compile_command)
         self.assertLess(compile_command, runtime_step)
         self.assertLess(runtime_step, runtime_command)
+
+        cache_restore = steps["Restore Cargo registry + target"]
+        complete_save = steps["Save completed Cargo registry + target"]
+        partial_save = steps["Save interrupted Cargo registry + target"]
+        self.assertEqual(
+            direct_mapping_keys(cache_restore, 8), ["id", "uses", "with"]
+        )
+        self.assertIn("id: cargo-cache", cache_restore)
+        self.assertIn(
+            "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830",
+            cache_restore,
+        )
+        for path in (
+            "~/.cargo/registry/index/",
+            "~/.cargo/registry/cache/",
+            "~/.cargo/git/db/",
+            "SRC/target/",
+        ):
+            self.assertIn(path, cache_restore)
+            self.assertIn(path, complete_save)
+            self.assertIn(path, partial_save)
+        self.assertIn(
+            "key: ${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}",
+            cache_restore,
+        )
+        self.assertLess(
+            cache_restore.index(
+                "${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-"
+            ),
+            cache_restore.index(
+                "${{ runner.os }}-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}"
+            ),
+        )
+        self.assertLess(
+            cache_restore.index(
+                "${{ runner.os }}-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}"
+            ),
+            cache_restore.index("${{ runner.os }}-1.91-cargo-\n"),
+        )
+        self.assertNotIn("restore-keys: |\n            #", cache_restore)
+        self.assertIn(
+            "if: ${{ !cancelled() && steps.compile-tests.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true' }}",
+            complete_save,
+        )
+        self.assertIn(
+            "key: ${{ steps.cargo-cache.outputs.cache-primary-key }}", complete_save
+        )
+        self.assertIn(
+            "if: ${{ !cancelled() && failure() && steps.compile-tests.outcome == 'failure' }}",
+            partial_save,
+        )
+        self.assertIn(
+            "key: ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}",
+            partial_save,
+        )
+        complete_save_step = platform_tests.index("Save completed Cargo registry + target")
+        partial_save_step = platform_tests.index("Save interrupted Cargo registry + target")
+        self.assertLess(compile_step, complete_save_step)
+        self.assertLess(complete_save_step, partial_save_step)
+        self.assertLess(partial_save_step, runtime_step)
 
         junit = steps["Upload JUnit report"]
         self.assertIn("if: always()", junit)

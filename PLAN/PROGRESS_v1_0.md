@@ -3,6 +3,25 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-15
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Validated W58/W59 batch (2026-09-15):** automatic-context readiness and immutable
+> requested-context policy are implemented on published W54-W57
+> `4250014d06363d2cc8abb864fb219bdbfff29f63`, with the reviewed CI cache repair.
+> Final common-source Clippy07 passed in 1m44s; TestBuild03 in 1m19s;
+> selected03 passed **2597/0/0** in 126.84s from a 14706-test catalog.
+> Seven integration targets passed **750/0/0** and CLI docgen passed **1/0/0**.
+> The real GUI/Buddy callback passed **1/0/0** in 0.52s after a 4m12s build;
+> its exact executable catalog has 740 tests. Every completed final gate shares
+> the frozen 262-input source set. Builds used one job, Idle priority and four CPUs.
+> Final GUI Clippy passed in 8m25s (minimum free 214.25 GiB, peak 12.30 GiB); all 45 Python checks and fresh GUI lint passed. The source/binary verifier binds 263 inputs and nine executables. Publication uses the strict byte-for-byte Git index guard; new exact-head remote results remain separate.
+> The visibility/actionability leaf stays open: W60 composed05 prepares the remaining
+> actual GUI stale/corrupt/unmapped callbacks plus final Chat/Channel result binding.
+> W61 composed02 prepares direct-MCP metadata/result receipts with nine required
+> acceptance fixtures. Both remain WORK-only. Counts stay **1324/1014/308/2**,
+> raw **310** / pre-tag **309**. See `docs/gold-wave58-59-verification.md`.
+> Prior W54-W57 [Preflight](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34959741997)
+> and [CodeQL Code Quality](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34959741183)
+> passed; those remote results apply only to that prior published commit.
+>
 > **Validated W54–W57 batch (2026-09-15):** the reviewed 18-path composition
 > and subsequent runtime/CI repairs cover 20 changed source/configuration paths
 > on published `4409ff6c1b36f1c3ad921f8fb7df476e6e1411ad`. This joins bounded

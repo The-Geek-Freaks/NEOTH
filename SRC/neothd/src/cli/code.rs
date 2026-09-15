@@ -193,7 +193,7 @@ fn repo_map_context_at_bounded(
     config: &crate::config::CodeMapConfig,
     max_text_bytes: usize,
 ) -> Result<Option<BoundCodeMapContext>> {
-    config.validate()?;
+    let policy = config.requested_context_policy()?;
     let Some(before) = crate::code_map::recall::resolve_active_root_snapshot(conn, cwd)? else {
         return Ok(None);
     };
@@ -219,7 +219,7 @@ fn repo_map_context_at_bounded(
     // `build_summary` takes a token heuristic, whereas the prepared context
     // is bounded in exact UTF-8 bytes. Retry deterministically with a smaller
     // summary budget until both the rendered text and receipt source fit.
-    let max_tokens = (max_text_bytes / 4).min(config.coding_summary_token_budget as usize);
+    let max_tokens = (max_text_bytes / 4).min(policy.summary_token_budget as usize);
     if max_tokens == 0 {
         return Ok(None);
     }
@@ -336,17 +336,21 @@ fn prompt_recall_context_at_bounded(
     config: &crate::config::CodeMapConfig,
     max_text_bytes: usize,
 ) -> Result<Option<BoundCodeMapContext>> {
-    config.validate()?;
+    let policy = config.requested_context_policy()?;
     let receipt = crate::code_map::recall::recall_receipt_for_prompt(
         conn,
         cwd,
         prompt,
-        config.coding_recall_max_files as usize,
+        policy.recall_max_files as usize,
         crate::code_map::recall::RecallStaleness::Check,
     )?;
     let Some(receipt) = receipt else {
         return Ok(None);
     };
+    anyhow::ensure!(
+        crate::code_map::persist::root_snapshot_complete(conn, receipt.snapshot.root.display())?,
+        "active code-map root was published from a partial scan; rebuild it without custom limits"
+    );
     anyhow::ensure!(
         receipt.stale == Some(false),
         "active code-map snapshot is stale or unverifiable; run `neoth code-map persist`"
@@ -354,7 +358,7 @@ fn prompt_recall_context_at_bounded(
     prompt_recall_context_from_receipt(
         conn,
         &receipt,
-        config.coding_callers_per_symbol as usize,
+        policy.callers_per_symbol as usize,
         max_text_bytes,
     )
 }
@@ -1887,6 +1891,163 @@ mod tests {
             ..config
         };
         assert!(prompt_recall_context_at(&conn, &repo, "verify_token", &invalid).is_err());
+    }
+
+    #[tokio::test]
+    async fn coding_requested_policy_builds_provider_prompt_from_persisted_snapshot() {
+        struct RecordingLlm {
+            prompts: Arc<Mutex<Vec<String>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl DecomposerLlm for RecordingLlm {
+            async fn complete(&self, prompt: &str) -> Result<String> {
+                self.prompts.lock().unwrap().push(prompt.to_owned());
+                Ok(
+                    r#"{"tasks":[{"title":"Repair token verification","task_type":"tests"}]}"#
+                        .into(),
+                )
+            }
+        }
+
+        let (dir, repo, conn) = real_code_map_fixture();
+        drop(conn);
+        for index in 0..96 {
+            std::fs::write(
+                repo.join(format!("src/summary_budget_{index:03}.rs")),
+                format!("pub fn summary_budget_symbol_{index:03}() {{}}\n"),
+            )
+            .unwrap();
+        }
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        crate::code_map::rebuild_snapshot(
+            &root,
+            &dir.path().join("code_map.db"),
+            Default::default(),
+        )
+        .unwrap();
+        let config = crate::config::CodeMapConfig {
+            outline_enrichment: false,
+            auto_context_max_files: 0,
+            coding_recall_max_files: 1,
+            coding_callers_per_symbol: 0,
+            coding_summary_token_budget: 128,
+            requested_context_max_bfs_depth: 2,
+            ..Default::default()
+        };
+        config.validate().unwrap();
+        assert_eq!(config.auto_context_max_files, 0);
+        let policy = config.requested_context_policy().unwrap();
+        assert_eq!(policy.recall_max_files, 1);
+        assert_eq!(policy.callers_per_symbol, 0);
+        assert_eq!(policy.summary_token_budget, 128);
+        assert_eq!(policy.max_bfs_depth, 2);
+
+        let prepared = prepare_code_map_context_for_root_at_database(
+            "repair verify_token through handle_request",
+            &repo,
+            &config,
+            None,
+            &dir.path().join("code_map.db"),
+        )
+        .unwrap()
+        .expect("the seeded existing snapshot supplies one-shot coding context");
+        let recall = prepared
+            .sources()
+            .iter()
+            .find(|source| source.kind == CodeMapContextKind::TargetedRecall)
+            .expect("one-shot prompt uses targeted recall");
+        assert_eq!(recall.selected_files.len(), 1);
+        assert!(
+            recall.callers.is_empty(),
+            "zero caller rows is not a BFS-depth setting"
+        );
+        assert!(prepared.text().contains("src/auth.rs"));
+        assert!(prepared.text().contains("src/routes.rs"));
+        assert!(!prepared.text().contains("<-"));
+        let bounded_summary = prepared
+            .sources()
+            .iter()
+            .find(|source| source.kind == CodeMapContextKind::RepoMapSummary)
+            .expect("one-shot prompt includes the bounded repo-map summary");
+        assert!(bounded_summary.selection_truncated);
+
+        let wider_config = crate::config::CodeMapConfig {
+            coding_summary_token_budget: 512,
+            ..config.clone()
+        };
+        let wider_prepared = prepare_code_map_context_for_root_at_database(
+            "repair verify_token through handle_request",
+            &repo,
+            &wider_config,
+            None,
+            &dir.path().join("code_map.db"),
+        )
+        .unwrap()
+        .expect("the same seeded snapshot supports a wider requested summary budget");
+        let wider_summary = wider_prepared
+            .sources()
+            .iter()
+            .find(|source| source.kind == CodeMapContextKind::RepoMapSummary)
+            .expect("wider policy retains a repo-map summary");
+        assert!(
+            wider_summary.selected_files.len() > bounded_summary.selected_files.len(),
+            "summary_token_budget must change the selected summary, not only the config projection"
+        );
+        assert!(
+            wider_prepared.text().len() > prepared.text().len(),
+            "the provider context must retain the larger production summary"
+        );
+
+        let views = memstore::open(&dir.path().join("views.db")).unwrap();
+        store::ensure_schema(&views).unwrap();
+        let session = store::insert_session(
+            &views,
+            1,
+            "repair verify_token through handle_request",
+            "h",
+            "cli",
+            None,
+        )
+        .unwrap();
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let result = decompose_with_code_map_context(
+            &RecordingLlm {
+                prompts: Arc::clone(&prompts),
+            },
+            &views,
+            session,
+            "repair verify_token through handle_request",
+            Some(&prepared),
+            2,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.task_ids.len(), 1);
+        let prompts = prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 1);
+        let envelope_line = prompts[0]
+            .lines()
+            .find(|line| line.contains("\"trust\":\"untrusted_data_only\""))
+            .expect("the recorded provider prompt contains the typed data envelope");
+        let envelope: serde_json::Value = serde_json::from_str(envelope_line).unwrap();
+        let context_fields = envelope["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|field| field["kind"] == "decomposer_project_context")
+            .collect::<Vec<_>>();
+        assert_eq!(context_fields.len(), 1);
+        assert_eq!(
+            context_fields[0]["data"].as_str(),
+            Some(prepared.text()),
+            "the actual provider envelope retains the complete bounded prepared summary"
+        );
+        assert!(prompts[0].contains("src/auth.rs"));
+        assert!(prompts[0].contains("src/routes.rs"));
+        let receipts = store::load_code_map_receipts(&views, session).unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].sources, prepared.sources());
     }
 
     #[test]

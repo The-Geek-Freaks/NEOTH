@@ -98,7 +98,22 @@ This split addresses the observed cold-cache macOS boundary in CI run
 fixture failure and remains failed evidence. The new cadence requires a fresh,
 complete CI run; changing these limits does not establish a passing result.
 
+The combined Cargo registry, git and workspace-target cache first restores a
+same-lock partial cache, then the prior exact combined-cache key, then its
+broad legacy prefix. Only a completed `cargo nextest ... --no-run` may write
+the immutable exact complete key. A failed or timed-out compile may write a
+unique run-and-attempt partial key; it is fallback-only material, so it cannot
+poison the complete key. Cargo fingerprints remain the authority for reuse. A
+later full CI run must still complete the unchanged compile and execution
+bounds before it counts as macOS evidence.
+
 ## Final Gold verification
+
+Keep local proposal directories limited to their declared source files and
+small review artifacts. Do not copy workspace `target` directories or whole
+dependency trees into a proposal. After a batch is verified and published,
+remove confirmed disposable copies and temporary outputs while retaining the
+required verification evidence and the current reusable build cache.
 
 After every mandatory checkbox in `PLAN/ROAD_TO_1_0_GOLD.md` is complete, freeze
 one release-candidate commit. Do not rebuild from a different commit between

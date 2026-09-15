@@ -73,6 +73,129 @@ pub struct CodeMapLifecycleController {
     state: Mutex<ControllerState>,
 }
 
+/// Owns the visible automatic-context state across config writes and selected
+/// root changes. The GUI supplies its already-authoritative revisions; this
+/// small controller only decides whether a worker completion is still allowed
+/// to replace the status that Settings and Buddy share.
+#[derive(Default)]
+pub struct AutomaticContextPresentationController {
+    state: Mutex<AutomaticContextPresentationState>,
+}
+
+#[derive(Default)]
+struct AutomaticContextPresentationState {
+    config_revision: u64,
+    root_revision: u64,
+    root: String,
+    presentation: Option<String>,
+}
+
+/// The only completion token an automatic-context inspection may use.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AutomaticContextInspection {
+    config_revision: u64,
+    root_revision: u64,
+    root: String,
+}
+
+impl AutomaticContextInspection {
+    pub fn root(&self) -> &str {
+        &self.root
+    }
+}
+
+/// The accepted config path either publishes disabled synchronously, before
+/// any database inspection, or grants one fenced inspection token.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AutomaticContextConfigAcceptance {
+    Disabled(String),
+    Inspect(AutomaticContextInspection),
+}
+
+impl AutomaticContextPresentationController {
+    /// Begins a typed config transaction without changing the currently shown
+    /// status. This fences a previously queued inspection while a failed
+    /// transaction still retains the last accepted presentation.
+    pub fn config_attempt(&self, config_revision: u64) {
+        self.state
+            .lock()
+            .expect("automatic-context presentation lock poisoned")
+            .config_revision = config_revision;
+    }
+
+    /// A rejected edit is intentionally a no-op: only the typed receipt path
+    /// may replace an accepted automatic-context presentation.
+    pub fn rejected_config(&self) {}
+
+    pub fn root_changed(&self, root_revision: u64, root: String) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("automatic-context presentation lock poisoned");
+        state.root_revision = root_revision;
+        state.root = root;
+    }
+
+    pub fn accepted_config(
+        &self,
+        config_revision: u64,
+        root_revision: u64,
+        root: String,
+        max_files: u64,
+    ) -> AutomaticContextConfigAcceptance {
+        let mut state = self
+            .state
+            .lock()
+            .expect("automatic-context presentation lock poisoned");
+        state.config_revision = config_revision;
+        state.root_revision = root_revision;
+        state.root = root.clone();
+        if max_files == 0 {
+            let presentation =
+                "Automatic Chat/Channel context is disabled (max files: 0); no index was opened for this state."
+                    .to_owned();
+            state.presentation = Some(presentation.clone());
+            AutomaticContextConfigAcceptance::Disabled(presentation)
+        } else {
+            AutomaticContextConfigAcceptance::Inspect(AutomaticContextInspection {
+                config_revision,
+                root_revision,
+                root,
+            })
+        }
+    }
+
+    /// Returns true exactly once when this result still belongs to the latest
+    /// accepted config and selected root. Rejected config never enters this
+    /// API, so it cannot alter the retained visible state.
+    pub fn finish_inspection(
+        &self,
+        inspection: &AutomaticContextInspection,
+        presentation: String,
+    ) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .expect("automatic-context presentation lock poisoned");
+        let current = state.config_revision == inspection.config_revision
+            && state.root_revision == inspection.root_revision
+            && state.root == inspection.root;
+        if current {
+            state.presentation = Some(presentation);
+        }
+        current
+    }
+
+    #[cfg(test)]
+    fn presentation(&self) -> Option<String> {
+        self.state
+            .lock()
+            .expect("automatic-context presentation lock poisoned")
+            .presentation
+            .clone()
+    }
+}
+
 impl CodeMapLifecycleController {
     pub fn new(database_path: PathBuf) -> Self {
         Self {
@@ -304,7 +427,76 @@ fn canonical_root(root: &Path) -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::CodeMapLifecycleController;
+    use super::{
+        AutomaticContextConfigAcceptance, AutomaticContextPresentationController,
+        CodeMapLifecycleController,
+    };
+
+    #[test]
+    fn accepted_disable_publishes_without_an_inspection_and_rejected_input_retains_it() {
+        let controller = AutomaticContextPresentationController::default();
+        let pending = match controller.accepted_config(6, 3, "C:/repo".into(), 4) {
+            AutomaticContextConfigAcceptance::Inspect(inspection) => inspection,
+            AutomaticContextConfigAcceptance::Disabled(_) => panic!("enabled config must inspect"),
+        };
+        let disabled = controller.accepted_config(7, 3, "C:/repo".into(), 0);
+
+        assert!(matches!(
+            disabled,
+            AutomaticContextConfigAcceptance::Disabled(_)
+        ));
+        assert_eq!(
+            controller.presentation().as_deref(),
+            Some(
+                "Automatic Chat/Channel context is disabled (max files: 0); no index was opened for this state."
+            )
+        );
+
+        controller.config_attempt(8);
+        controller.rejected_config();
+        assert!(
+            !controller.finish_inspection(&pending, "late enabled result".into()),
+            "a rejected later transaction must retain the accepted disabled view"
+        );
+        assert_eq!(
+            controller.presentation().as_deref(),
+            Some(
+                "Automatic Chat/Channel context is disabled (max files: 0); no index was opened for this state."
+            )
+        );
+    }
+
+    #[test]
+    fn late_automatic_context_completion_loses_after_root_or_config_change() {
+        let controller = AutomaticContextPresentationController::default();
+        let first = match controller.accepted_config(10, 4, "C:/first".into(), 8) {
+            AutomaticContextConfigAcceptance::Inspect(inspection) => inspection,
+            AutomaticContextConfigAcceptance::Disabled(_) => panic!("enabled config must inspect"),
+        };
+        assert_eq!(first.root(), "C:/first");
+
+        controller.root_changed(5, "C:/second".into());
+        assert!(
+            !controller.finish_inspection(&first, "old root result".into()),
+            "a completed worker may not overwrite a newer selected root"
+        );
+        assert_eq!(controller.presentation(), None);
+
+        let second = match controller.accepted_config(11, 5, "C:/second".into(), 8) {
+            AutomaticContextConfigAcceptance::Inspect(inspection) => inspection,
+            AutomaticContextConfigAcceptance::Disabled(_) => panic!("enabled config must inspect"),
+        };
+        let third = match controller.accepted_config(12, 5, "C:/second".into(), 9) {
+            AutomaticContextConfigAcceptance::Inspect(inspection) => inspection,
+            AutomaticContextConfigAcceptance::Disabled(_) => panic!("enabled config must inspect"),
+        };
+        assert!(
+            !controller.finish_inspection(&second, "old config result".into()),
+            "a completed worker may not overwrite a newer accepted config"
+        );
+        assert!(controller.finish_inspection(&third, "current result".into()));
+        assert_eq!(controller.presentation().as_deref(), Some("current result"));
+    }
 
     #[test]
     fn cancellation_keeps_the_operation_owned_until_its_worker_finishes() {

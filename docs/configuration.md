@@ -140,6 +140,7 @@ code_map:
   coding_recall_max_files: 8      # recalled files per code invocation; 1..50
   coding_callers_per_symbol: 3    # depth-one callers per symbol; 0..20
   coding_summary_token_budget: 2048 # generic repo-map summary; 128..12000
+  requested_context_max_bfs_depth: 20 # explicit MCP callers/callees only; 1..20
   outline_enrichment: false       # built-in codegraph outline sidecar; explicit opt-in
   impact_policy:
     max_depth: 3                  # impact/default ceiling; 1..32
@@ -155,6 +156,20 @@ remains static-default and never reads `freedom.yaml`.
 
 `coding_callers_per_symbol: 0` disables only caller enrichment. It does
 not disable targeted recall. `coding_summary_token_budget` is a local heuristic
+
+Requested code-map context is separate from automatic Chat/Channel context.
+The existing `coding_recall_max_files`, `coding_callers_per_symbol`, and
+`coding_summary_token_budget` form one immutable per-command/per-turn snapshot.
+`coding_callers_per_symbol` is a direct caller-row count used by `neoth code`;
+it is not graph traversal depth. The explicit MCP callers/callees tools use
+`requested_context_max_bfs_depth`, default 20, and their existing `depth`
+argument may only tighten that ceiling. For the exact generated codegraph child,
+the same snapshot also limits recall `limit` and the rendered success payload to
+`min(coding_summary_token_budget * 4, 65536)` UTF-8 bytes. An oversized result
+is returned as a typed MCP error rather than partial JSON. Raw `neoth mcp
+codegraph-serve` retains its documented static defaults; it never reads
+`freedom.yaml`. Automatic `auto_context_max_files` injection happens before a
+provider tool request and neither receives nor implies requested-context authority.
 for the generic repo-map summary, not a provider billing meter and not a cap on
 the full combined coding context. The graph-memory caps and decomposer's 12k
 input guard remain in force. The targeted selection and generic summary share

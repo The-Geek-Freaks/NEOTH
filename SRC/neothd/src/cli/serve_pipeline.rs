@@ -3979,6 +3979,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         crate::hooks::PreToolUseCancellation::unbound(),
                         config_for_handler.code_map.outline_enrichment,
                         config_for_handler.code_map.impact_policy,
+                        config_for_handler.code_map.requested_context_policy()?,
                     )
                     .await
                     {

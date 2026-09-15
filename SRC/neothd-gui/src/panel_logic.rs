@@ -202,6 +202,23 @@ pub fn present_code_map_lifecycle_receipt(
     presentation
 }
 
+/// Keep automatic Chat/Channel readiness distinct from lifecycle daemon state.
+/// Eligible means a later prompt may attempt selection; it is not provider-use
+/// proof and an empty prompt selection remains a separate W55 outcome.
+pub fn present_automatic_context_readiness(
+    readiness: Option<&neothd::code_map::AutomaticContextReadiness>,
+) -> String {
+    match readiness {
+        Some(neothd::code_map::AutomaticContextReadiness::Disabled) =>
+            "Automatic Chat/Channel context is disabled (max files: 0); no index was opened for this state.".into(),
+        Some(neothd::code_map::AutomaticContextReadiness::Unavailable { reason }) =>
+            format!("Automatic Chat/Channel context is unavailable ({}) — use the existing index setup, refresh, or repair action.", reason.code()),
+        Some(neothd::code_map::AutomaticContextReadiness::Eligible { max_files, .. }) =>
+            format!("Automatic Chat/Channel context is eligible for this root (max files: {max_files}). A later prompt may still select no context."),
+        None => "Automatic Chat/Channel context could not be classified because the accepted configuration was unavailable.".into(),
+    }
+}
+
 fn apply_generation(
     presentation: &mut CodeMapLifecyclePresentation,
     generation: &neothd::code_map::LifecycleGeneration,
@@ -7772,6 +7789,28 @@ pub fn parse_cron_jobs(json: &str) -> Vec<CronJobRow> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_context_presentation_keeps_disabled_and_eligible_distinct() {
+        assert!(
+            present_automatic_context_readiness(Some(
+                &neothd::code_map::AutomaticContextReadiness::Disabled,
+            ))
+            .contains("disabled")
+        );
+        assert!(
+            present_automatic_context_readiness(Some(
+                &neothd::code_map::AutomaticContextReadiness::Eligible {
+                    canonical_root: "C:/repo".into(),
+                    root_identity: "physical-root".into(),
+                    index_generation: 3,
+                    graph_generation: 3,
+                    max_files: 4,
+                },
+            ))
+            .contains("eligible")
+        );
+    }
 
     #[test]
     fn lifecycle_presentation_requires_explicit_repair_for_corruption() {

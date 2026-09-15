@@ -13857,6 +13857,8 @@ fn main() -> Result<()> {
         std::sync::Arc::new(code_map_controller::CodeMapLifecycleController::new(
             neothd::code_map::persist::default_path(),
         ));
+    let automatic_context_presentation =
+        std::sync::Arc::new(code_map_controller::AutomaticContextPresentationController::default());
     let code_map_impact_controller =
         std::sync::Arc::new(code_map_impact_controller::CodeMapImpactController::new(
             neothd::code_map::persist::default_path(),
@@ -13921,10 +13923,15 @@ fn main() -> Result<()> {
     });
     let weak_code_map_root_changed = window.as_weak();
     let root_change_impact_controller = std::sync::Arc::clone(&code_map_impact_controller);
+    let automatic_context_on_root_change = std::sync::Arc::clone(&automatic_context_presentation);
     window.on_code_map_root_changed(move |selected_root| {
         if let Some(window) = weak_code_map_root_changed.upgrade() {
             window.set_code_map_root(selected_root);
-            CODE_MAP_ROOT_SELECTION_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            let revision = CODE_MAP_ROOT_SELECTION_REVISION
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+                .saturating_add(1);
+            automatic_context_on_root_change
+                .root_changed(revision, window.get_code_map_root().to_string());
             invalidate_code_map_lifecycle_view_for_root_change(&window);
             invalidate_code_map_impact_view(
                 &window,
@@ -13935,38 +13942,34 @@ fn main() -> Result<()> {
     });
 
     let weak_code_map_lifecycle_config = window.as_weak();
-    window.on_code_map_lifecycle_config_apply_clicked(move |enabled, debounce, reconciliation| {
-        start_code_map_lifecycle_config_apply(
-            weak_code_map_lifecycle_config.clone(),
-            enabled,
-            debounce.to_string(),
-            reconciliation.to_string(),
-        );
-    });
+    let automatic_context_on_config_apply = std::sync::Arc::clone(&automatic_context_presentation);
+    window.on_code_map_lifecycle_config_apply_clicked(
+        move |enabled, debounce, reconciliation, auto_context_max_files| {
+            start_code_map_lifecycle_config_apply(
+                weak_code_map_lifecycle_config.clone(),
+                std::sync::Arc::clone(&automatic_context_on_config_apply),
+                enabled,
+                debounce.to_string(),
+                reconciliation.to_string(),
+                auto_context_max_files.to_string(),
+            );
+        },
+    );
     let weak_code_map_lifecycle_root_remove = window.as_weak();
+    let automatic_context_on_root_remove = std::sync::Arc::clone(&automatic_context_presentation);
     window.on_code_map_lifecycle_managed_root_remove_clicked(move |path| {
         start_code_map_lifecycle_root_remove(
             weak_code_map_lifecycle_root_remove.clone(),
+            std::sync::Arc::clone(&automatic_context_on_root_remove),
             path.to_string(),
         );
     });
     load_code_map_lifecycle_config_view(window.as_weak());
 
-    // Buddy commands intentionally enter the exact same typed controller as
-    // Settings. The selected root is still explicit UI state; no CWD fallback.
-    let weak_buddy_code_map_status = window.as_weak();
-    let buddy_status_controller = std::sync::Arc::clone(&code_map_lifecycle_controller);
-    window.on_buddy_code_map_status(move || {
-        let Some(window) = weak_buddy_code_map_status.upgrade() else {
-            return;
-        };
-        window.set_nav_active("coding".into());
-        start_code_map_lifecycle_inspection(
-            weak_buddy_code_map_status.clone(),
-            std::sync::Arc::clone(&buddy_status_controller),
-            window.get_code_map_root().to_string(),
-        );
-    });
+    register_buddy_code_map_status_callback(
+        &window,
+        std::sync::Arc::clone(&code_map_lifecycle_controller),
+    );
     let weak_buddy_code_map_setup = window.as_weak();
     let buddy_setup_controller = std::sync::Arc::clone(&code_map_lifecycle_controller);
     window.on_buddy_code_map_setup(move || {
@@ -14073,9 +14076,11 @@ fn main() -> Result<()> {
     // explicit operator input; this path never consults the GUI process CWD.
     let weak_code_map_browse = window.as_weak();
     let picker_impact_controller = std::sync::Arc::clone(&code_map_impact_controller);
+    let automatic_context_on_browse = std::sync::Arc::clone(&automatic_context_presentation);
     window.on_code_map_browse_clicked(move || {
         let weak = weak_code_map_browse.clone();
         let impact_controller = std::sync::Arc::clone(&picker_impact_controller);
+        let automatic_context = std::sync::Arc::clone(&automatic_context_on_browse);
         std::thread::spawn(move || {
             let picked = rfd::FileDialog::new()
                 .set_title("Select repository root for code-map recall")
@@ -14083,8 +14088,12 @@ fn main() -> Result<()> {
             let _ = slint::invoke_from_event_loop(move || {
                 if let (Some(window), Some(path)) = (weak.upgrade(), picked) {
                     window.set_code_map_root(path.to_string_lossy().into_owned().into());
-                    CODE_MAP_ROOT_SELECTION_REVISION
+                    let revision = CODE_MAP_ROOT_SELECTION_REVISION
                         .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                    automatic_context.root_changed(
+                        revision.saturating_add(1),
+                        window.get_code_map_root().to_string(),
+                    );
                     invalidate_code_map_lifecycle_view_for_root_change(&window);
                     invalidate_code_map_impact_view(
                         &window,
@@ -19895,8 +19904,12 @@ fn load_code_map_lifecycle_config_view(weak: slint::Weak<MainWindow>) {
         .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
         .saturating_add(1);
     std::thread::spawn(move || {
-        let result = neothd::config::FreedomConfig::load_from_default_path()
-            .map(|config| config.code_map.lifecycle);
+        let result = neothd::config::FreedomConfig::load_from_default_path().map(|config| {
+            (
+                config.code_map.lifecycle,
+                config.code_map.auto_context_max_files,
+            )
+        });
         let runtime = code_map_lifecycle_runtime_summary();
         let _ = slint::invoke_from_event_loop(move || {
             if CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
@@ -19908,7 +19921,7 @@ fn load_code_map_lifecycle_config_view(weak: slint::Weak<MainWindow>) {
                 return;
             };
             match result {
-                Ok(config) => {
+                Ok((config, auto_context_max_files)) => {
                     let roots = config
                         .managed_roots
                         .iter()
@@ -19916,6 +19929,9 @@ fn load_code_map_lifecycle_config_view(weak: slint::Weak<MainWindow>) {
                         .collect::<Vec<_>>()
                         .join(", ");
                     window.set_code_map_lifecycle_config_enabled(config.enabled);
+                    window.set_code_map_auto_context_max_files(
+                        auto_context_max_files.to_string().into(),
+                    );
                     window.set_code_map_lifecycle_debounce_millis(
                         config.debounce_millis.to_string().into(),
                     );
@@ -19943,9 +19959,11 @@ fn load_code_map_lifecycle_config_view(weak: slint::Weak<MainWindow>) {
 
 fn start_code_map_lifecycle_config_apply(
     weak: slint::Weak<MainWindow>,
+    automatic_context: std::sync::Arc<code_map_controller::AutomaticContextPresentationController>,
     enabled: bool,
     debounce: String,
     reconciliation: String,
+    auto_context_max_files: String,
 ) {
     let Some(window) = weak.upgrade() else {
         return;
@@ -19953,6 +19971,7 @@ fn start_code_map_lifecycle_config_apply(
     let debounce_millis = match debounce.trim().parse::<u64>() {
         Ok(value) => value,
         Err(_) => {
+            automatic_context.rejected_config();
             window.set_code_map_lifecycle_config_status(
                 "Debounce must be a whole number of milliseconds.".into(),
             );
@@ -19962,14 +19981,27 @@ fn start_code_map_lifecycle_config_apply(
     let reconciliation_interval_secs = match reconciliation.trim().parse::<u64>() {
         Ok(value) => value,
         Err(_) => {
+            automatic_context.rejected_config();
             window.set_code_map_lifecycle_config_status(
                 "Reconciliation interval must be a whole number of seconds.".into(),
             );
             return;
         }
     };
+    let auto_context_max_files = match auto_context_max_files.trim().parse::<u64>() {
+        Ok(value) => value,
+        Err(_) => {
+            automatic_context.rejected_config();
+            window.set_code_map_lifecycle_config_status(
+                "Automatic context files must be a whole number; 0 disables automatic context."
+                    .into(),
+            );
+            return;
+        }
+    };
     let root = window.get_code_map_root().trim().to_owned();
     if enabled && root.is_empty() {
+        automatic_context.rejected_config();
         window.set_code_map_lifecycle_config_status(
             "Choose a repository root before enabling its daemon lifecycle.".into(),
         );
@@ -19978,6 +20010,7 @@ fn start_code_map_lifecycle_config_apply(
     let revision = CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION
         .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
         .saturating_add(1);
+    automatic_context.config_attempt(revision);
     window.set_code_map_lifecycle_config_running(true);
     window.set_code_map_lifecycle_config_status(
         "Persisting lifecycle configuration and requesting daemon reload…".into(),
@@ -19985,6 +20018,7 @@ fn start_code_map_lifecycle_config_apply(
 
     std::thread::spawn(move || {
         let patch = neothd::code_map::CodeMapLifecycleConfigPatch {
+            auto_context_max_files: Some(auto_context_max_files),
             enabled: Some(enabled),
             debounce_millis: Some(debounce_millis),
             reconciliation_interval_secs: Some(reconciliation_interval_secs),
@@ -20011,6 +20045,33 @@ fn start_code_map_lifecycle_config_apply(
             match result {
                 Ok(receipt) => {
                     window.set_code_map_lifecycle_config_enabled(receipt.persisted_config.enabled);
+                    window.set_code_map_auto_context_max_files(
+                        receipt.auto_context_max_files.to_string().into(),
+                    );
+                    let root_revision =
+                        CODE_MAP_ROOT_SELECTION_REVISION.load(std::sync::atomic::Ordering::Acquire);
+                    match automatic_context.accepted_config(
+                        revision,
+                        root_revision,
+                        window.get_code_map_root().to_string(),
+                        receipt.auto_context_max_files,
+                    ) {
+                        code_map_controller::AutomaticContextConfigAcceptance::Disabled(
+                            presentation,
+                        ) => {
+                            window.set_code_map_automatic_context(presentation.into());
+                        }
+                        code_map_controller::AutomaticContextConfigAcceptance::Inspect(
+                            inspection,
+                        ) => {
+                            refresh_automatic_context_after_config_acceptance(
+                                window.as_weak(),
+                                std::sync::Arc::clone(&automatic_context),
+                                receipt.auto_context_max_files,
+                                inspection,
+                            );
+                        }
+                    }
                     window.set_code_map_lifecycle_debounce_millis(
                         receipt.persisted_config.debounce_millis.to_string().into(),
                     );
@@ -20060,6 +20121,7 @@ fn start_code_map_lifecycle_config_apply(
                     buddy(&window, GuiActivity::CodeMapLifecycleConfigSaved);
                 }
                 Err(error) => {
+                    automatic_context.rejected_config();
                     window.set_code_map_lifecycle_config_status(
                         format!("Lifecycle configuration was not changed: {error:#}").into(),
                     );
@@ -20067,6 +20129,69 @@ fn start_code_map_lifecycle_config_apply(
                 }
             }
         });
+    });
+}
+
+fn refresh_automatic_context_after_config_acceptance(
+    weak: slint::Weak<MainWindow>,
+    controller: std::sync::Arc<code_map_controller::AutomaticContextPresentationController>,
+    accepted_max_files: u64,
+    inspection: code_map_controller::AutomaticContextInspection,
+) {
+    let Some(window) = weak.upgrade() else {
+        return;
+    };
+    let root = inspection.root().to_owned();
+    if root.trim().is_empty() {
+        window.set_code_map_automatic_context(
+            "Choose a repository root to classify automatic Chat/Channel context.".into(),
+        );
+        return;
+    }
+    std::thread::spawn(move || {
+        let readiness = neothd::config::FreedomConfig::load_from_default_path()
+            .ok()
+            .and_then(|config| {
+                (u64::from(config.code_map.auto_context_max_files) == accepted_max_files).then(
+                    || {
+                        neothd::code_map::inspect_automatic_context_readiness(
+                            &config,
+                            &neothd::code_map::persist::default_path(),
+                            Path::new(&root),
+                        )
+                    },
+                )
+            });
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            let presentation = panel_logic::present_automatic_context_readiness(readiness.as_ref());
+            if controller.finish_inspection(&inspection, presentation.clone()) {
+                window.set_code_map_automatic_context(presentation.into());
+            }
+        });
+    });
+}
+
+/// Registers the production Buddy status action. Keeping this as one small
+/// registration point lets the GUI runtime acceptance test exercise the same
+/// generated Slint callback and lifecycle worker used after normal startup.
+fn register_buddy_code_map_status_callback(
+    window: &MainWindow,
+    controller: std::sync::Arc<code_map_controller::CodeMapLifecycleController>,
+) {
+    let weak_buddy_code_map_status = window.as_weak();
+    window.on_buddy_code_map_status(move || {
+        let Some(window) = weak_buddy_code_map_status.upgrade() else {
+            return;
+        };
+        window.set_nav_active("coding".into());
+        start_code_map_lifecycle_inspection(
+            weak_buddy_code_map_status.clone(),
+            std::sync::Arc::clone(&controller),
+            window.get_code_map_root().to_string(),
+        );
     });
 }
 
@@ -20096,6 +20221,8 @@ fn start_code_map_lifecycle_inspection(
     }
     let selection_revision =
         CODE_MAP_ROOT_SELECTION_REVISION.load(std::sync::atomic::Ordering::Acquire);
+    let config_revision =
+        CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION.load(std::sync::atomic::Ordering::Acquire);
     window.set_code_map_lifecycle_running(true);
     window.set_code_map_lifecycle_refresh_active(false);
     window.set_code_map_lifecycle_operation("inspect".into());
@@ -20109,6 +20236,20 @@ fn start_code_map_lifecycle_inspection(
 
     std::thread::spawn(move || {
         let result = controller.inspect(Path::new(&root));
+        let automatic_context = result
+            .as_ref()
+            .ok()
+            .and_then(|(_, canonical_root, status)| {
+                neothd::config::FreedomConfig::load_from_default_path()
+                    .ok()
+                    .map(|config| {
+                        neothd::code_map::inspect_automatic_context_readiness(
+                            &config,
+                            &status.database_path,
+                            canonical_root,
+                        )
+                    })
+            });
         let runtime = code_map_lifecycle_runtime_summary();
         let _ = slint::invoke_from_event_loop(move || {
             let Some(window) = weak.upgrade() else {
@@ -20116,6 +20257,9 @@ fn start_code_map_lifecycle_inspection(
             };
             if selection_revision
                 != CODE_MAP_ROOT_SELECTION_REVISION.load(std::sync::atomic::Ordering::Acquire)
+                || config_revision
+                    != CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION
+                        .load(std::sync::atomic::Ordering::Acquire)
                 || window.get_code_map_root().to_string().trim() != root.as_str()
             {
                 settle_discarded_code_map_lifecycle_result(&window);
@@ -20132,6 +20276,12 @@ fn start_code_map_lifecycle_inspection(
                     apply_code_map_lifecycle_presentation(
                         &window,
                         panel_logic::present_code_map_lifecycle_status(&status),
+                    );
+                    window.set_code_map_automatic_context(
+                        panel_logic::present_automatic_context_readiness(
+                            automatic_context.as_ref(),
+                        )
+                        .into(),
                     );
                     window.set_code_map_lifecycle_runtime(runtime.into());
                     buddy(&window, GuiActivity::CodeMapLifecycleStatus);
@@ -20152,10 +20302,15 @@ fn start_code_map_lifecycle_inspection(
     });
 }
 
-fn start_code_map_lifecycle_root_remove(weak: slint::Weak<MainWindow>, root: String) {
+fn start_code_map_lifecycle_root_remove(
+    weak: slint::Weak<MainWindow>,
+    automatic_context: std::sync::Arc<code_map_controller::AutomaticContextPresentationController>,
+    root: String,
+) {
     let revision = CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION
         .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
         .saturating_add(1);
+    automatic_context.config_attempt(revision);
     let Some(window) = weak.upgrade() else {
         return;
     };
@@ -20165,6 +20320,7 @@ fn start_code_map_lifecycle_root_remove(weak: slint::Weak<MainWindow>, root: Str
     );
     std::thread::spawn(move || {
         let patch = neothd::code_map::CodeMapLifecycleConfigPatch {
+            auto_context_max_files: None,
             enabled: None,
             debounce_millis: None,
             reconciliation_interval_secs: None,
@@ -20187,6 +20343,33 @@ fn start_code_map_lifecycle_root_remove(weak: slint::Weak<MainWindow>, root: Str
             match result {
                 Ok(receipt) => {
                     window.set_code_map_lifecycle_config_enabled(receipt.persisted_config.enabled);
+                    window.set_code_map_auto_context_max_files(
+                        receipt.auto_context_max_files.to_string().into(),
+                    );
+                    let root_revision =
+                        CODE_MAP_ROOT_SELECTION_REVISION.load(std::sync::atomic::Ordering::Acquire);
+                    match automatic_context.accepted_config(
+                        revision,
+                        root_revision,
+                        window.get_code_map_root().to_string(),
+                        receipt.auto_context_max_files,
+                    ) {
+                        code_map_controller::AutomaticContextConfigAcceptance::Disabled(
+                            presentation,
+                        ) => {
+                            window.set_code_map_automatic_context(presentation.into());
+                        }
+                        code_map_controller::AutomaticContextConfigAcceptance::Inspect(
+                            inspection,
+                        ) => {
+                            refresh_automatic_context_after_config_acceptance(
+                                window.as_weak(),
+                                std::sync::Arc::clone(&automatic_context),
+                                receipt.auto_context_max_files,
+                                inspection,
+                            );
+                        }
+                    }
                     window.set_code_map_lifecycle_config_status(
                         if receipt.reload_requested {
                             "Managed root removed; daemon reload requested."
@@ -20212,6 +20395,7 @@ fn start_code_map_lifecycle_root_remove(weak: slint::Weak<MainWindow>, root: Str
                     buddy(&window, GuiActivity::CodeMapLifecycleConfigSaved);
                 }
                 Err(error) => {
+                    automatic_context.rejected_config();
                     window.set_code_map_lifecycle_config_status(
                         format!("Managed root was not removed: {error:#}").into(),
                     );
@@ -20342,6 +20526,17 @@ fn start_code_map_lifecycle_refresh(
     };
     std::thread::spawn(move || {
         let result = controller.refresh(&operation, options);
+        let automatic_context = result.as_ref().ok().and_then(|receipt| {
+            neothd::config::FreedomConfig::load_from_default_path()
+                .ok()
+                .map(|config| {
+                    neothd::code_map::inspect_automatic_context_readiness(
+                        &config,
+                        &receipt.database_path,
+                        Path::new(&receipt.root),
+                    )
+                })
+        });
         let accepted = controller.finish(&operation);
         let runtime = code_map_lifecycle_runtime_summary();
         let _ = slint::invoke_from_event_loop(move || {
@@ -20367,6 +20562,12 @@ fn start_code_map_lifecycle_refresh(
                     let presentation = panel_logic::present_code_map_lifecycle_receipt(&receipt);
                     let completed = !presentation.is_error;
                     apply_code_map_lifecycle_presentation(&window, presentation);
+                    window.set_code_map_automatic_context(
+                        panel_logic::present_automatic_context_readiness(
+                            automatic_context.as_ref(),
+                        )
+                        .into(),
+                    );
                     window.set_code_map_lifecycle_runtime(runtime.into());
                     buddy(
                         &window,
@@ -20648,6 +20849,9 @@ fn invalidate_code_map_lifecycle_view_for_root_change(window: &MainWindow) {
     window.set_code_map_lifecycle_root_identity("".into());
     window.set_code_map_lifecycle_index_generation("".into());
     window.set_code_map_lifecycle_graph_generation("".into());
+    window.set_code_map_automatic_context(
+        "Repository selection changed; inspect the current root before relying on automatic Chat/Channel context.".into(),
+    );
     window.set_code_map_lifecycle_can_setup(false);
     window.set_code_map_lifecycle_can_refresh(false);
     window.set_code_map_lifecycle_can_force_rebuild(false);
@@ -20765,6 +20969,9 @@ fn set_code_map_lifecycle_error(window: &MainWindow, message: &str) {
     window.set_code_map_lifecycle_error(true);
     window.set_code_map_lifecycle_state("Repository index action failed".into());
     window.set_code_map_lifecycle_detail(message.into());
+    window.set_code_map_automatic_context(
+        "Automatic Chat/Channel context was not classified; inspect the selected root again after resolving the lifecycle action.".into(),
+    );
     window.set_code_map_lifecycle_can_setup(false);
     window.set_code_map_lifecycle_can_refresh(false);
     window.set_code_map_lifecycle_can_force_rebuild(false);
@@ -36634,5 +36841,208 @@ mod dream_cron_gui_tests {
         assert!(doctor.contains("crate::cron::scheduler::autonomy_allows_scheduler"));
         assert!(doctor.contains("Strict and Custom remain fail-closed"));
         assert!(doctor.contains("NEOTH will not change autonomy automatically"));
+    }
+}
+
+/// W58 callback acceptance: this is deliberately one real Slint component,
+/// the normal Buddy registration, and its production worker path. It remains
+/// process-serial because `NEOTH_HOME` selects the typed config and SQLite
+/// fixture for the whole process.
+#[cfg(test)]
+mod w58_gui_callback_runtime_tests {
+    use std::{
+        cell::Cell,
+        path::Path,
+        rc::Rc,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    use slint::ComponentHandle as _;
+    use tempfile::TempDir;
+
+    use super::{
+        CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION, CODE_MAP_ROOT_SELECTION_REVISION, MainWindow,
+        code_map_controller::{AutomaticContextPresentationController, CodeMapLifecycleController},
+        register_buddy_code_map_status_callback, start_code_map_lifecycle_config_apply,
+        start_code_map_lifecycle_refresh,
+    };
+
+    static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct NeothHomeGuard(Option<std::ffi::OsString>);
+
+    impl NeothHomeGuard {
+        fn install(path: &Path) -> Self {
+            let previous = std::env::var_os("NEOTH_HOME");
+            // The W58 gate serializes this test process; restore on every
+            // exit path so a failed assertion cannot leak its fixture home.
+            unsafe { std::env::set_var("NEOTH_HOME", path) };
+            Self(previous)
+        }
+    }
+
+    impl Drop for NeothHomeGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => unsafe { std::env::set_var("NEOTH_HOME", value) },
+                None => unsafe { std::env::remove_var("NEOTH_HOME") },
+            }
+        }
+    }
+
+    fn pump_until_automatic_context(window: &MainWindow, expected: &str) {
+        let expected_owned = expected.to_owned();
+        let completed = Rc::new(Cell::new(false));
+        let ticks = Rc::new(Cell::new(0_u16));
+        let observed_completed = completed.clone();
+        let observed_ticks = ticks.clone();
+        let weak = window.as_weak();
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                let Some(window) = weak.upgrade() else {
+                    let _ = slint::quit_event_loop();
+                    return;
+                };
+                if window
+                    .get_code_map_automatic_context()
+                    .to_string()
+                    .contains(&expected_owned)
+                {
+                    observed_completed.set(true);
+                    let _ = slint::quit_event_loop();
+                    return;
+                }
+                let next_tick = observed_ticks.get().saturating_add(1);
+                observed_ticks.set(next_tick);
+                if next_tick >= 500 {
+                    let _ = slint::quit_event_loop();
+                }
+            },
+        );
+        // The test needs Slint's real event loop for worker completions, but
+        // should not expose a window while the guarded binary is running.
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("run bounded Slint callback event loop");
+        drop(timer);
+        assert!(
+            completed.get(),
+            "timed out waiting for automatic-context {expected:?}; displayed: {}; config status: {}; config running: {}; runtime: {}",
+            window.get_code_map_automatic_context(),
+            window.get_code_map_lifecycle_config_status(),
+            window.get_code_map_lifecycle_config_running(),
+            window.get_code_map_lifecycle_runtime(),
+        );
+    }
+
+    fn apply_typed_lifecycle_config(
+        window: &MainWindow,
+        presentation: Arc<AutomaticContextPresentationController>,
+        enabled: bool,
+        max_files: u64,
+        expected: &str,
+    ) {
+        start_code_map_lifecycle_config_apply(
+            window.as_weak(),
+            presentation,
+            enabled,
+            "250".into(),
+            "60".into(),
+            max_files.to_string(),
+        );
+        pump_until_automatic_context(window, expected);
+    }
+
+    fn expected_canonical_root(root: &Path) -> String {
+        root.canonicalize()
+            .expect("canonical fixture root")
+            .display()
+            .to_string()
+    }
+
+    #[test]
+    fn w58_buddy_status_callback_publishes_selected_root_readiness() {
+        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("GUI callback env lock");
+        let home = TempDir::new().expect("temporary NEOTH home");
+        let root = TempDir::new().expect("temporary repository root");
+        std::fs::write(root.path().join("lib.rs"), "fn w58_callback_fixture() {}\n")
+            .expect("write repository fixture");
+        let _home = NeothHomeGuard::install(home.path());
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&neothd::config::FreedomConfig::default())
+                .expect("serialize default freedom config"),
+        )
+        .expect("seed default freedom config");
+        CODE_MAP_ROOT_SELECTION_REVISION.store(0, std::sync::atomic::Ordering::Release);
+        CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION.store(0, std::sync::atomic::Ordering::Release);
+
+        let window = MainWindow::new().expect("construct generated MainWindow");
+        window.set_code_map_root(root.path().display().to_string().into());
+        let database = neothd::code_map::persist::default_path();
+        let lifecycle = Arc::new(CodeMapLifecycleController::new(database.clone()));
+        let presentation = Arc::new(AutomaticContextPresentationController::default());
+        register_buddy_code_map_status_callback(&window, Arc::clone(&lifecycle));
+
+        apply_typed_lifecycle_config(
+            &window,
+            Arc::clone(&presentation),
+            false,
+            0,
+            "disabled (max files: 0)",
+        );
+        assert!(
+            !database.exists(),
+            "disabled transaction must retain absent store"
+        );
+        window.set_code_map_automatic_context("W58 awaiting Buddy disabled inspection.".into());
+        window.invoke_buddy_code_map_status();
+        pump_until_automatic_context(&window, "disabled (max files: 0)");
+        assert_eq!(window.get_nav_active().to_string(), "coding");
+
+        apply_typed_lifecycle_config(
+            &window,
+            Arc::clone(&presentation),
+            true,
+            3,
+            "unavailable (missing_store)",
+        );
+        assert!(
+            !database.exists(),
+            "missing-store inspection must stay read-only"
+        );
+        window.set_code_map_automatic_context("W58 awaiting Buddy unavailable inspection.".into());
+        window.invoke_buddy_code_map_status();
+        pump_until_automatic_context(&window, "unavailable (missing_store)");
+        let unavailable = window.get_code_map_automatic_context().to_string();
+        assert!(unavailable.contains("existing index setup, refresh, or repair action"));
+        assert_eq!(window.get_nav_active().to_string(), "coding");
+
+        // Build the complete map through the existing production lifecycle
+        // refresh, then re-enter through Buddy status to prove its callback
+        // reads the same selected-root SQLite state rather than a test mock.
+        start_code_map_lifecycle_refresh(
+            window.as_weak(),
+            Arc::clone(&lifecycle),
+            root.path().display().to_string(),
+            false,
+            false,
+        );
+        pump_until_automatic_context(&window, "eligible for this root (max files: 3)");
+        window.set_code_map_automatic_context("W58 awaiting Buddy eligible inspection.".into());
+        window.invoke_buddy_code_map_status();
+        pump_until_automatic_context(&window, "eligible for this root (max files: 3)");
+        assert_eq!(window.get_nav_active().to_string(), "coding");
+        assert_eq!(
+            window.get_code_map_lifecycle_canonical_root().to_string(),
+            expected_canonical_root(root.path()),
+        );
+        let index_generation = window.get_code_map_lifecycle_index_generation().to_string();
+        let graph_generation = window.get_code_map_lifecycle_graph_generation().to_string();
+        assert_ne!(index_generation, "0");
+        assert_eq!(index_generation, graph_generation);
     }
 }

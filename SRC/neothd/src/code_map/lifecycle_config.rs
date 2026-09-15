@@ -25,6 +25,9 @@ pub struct CodeMapLifecycleConfigApplyReceipt {
     pub instance_home: PathBuf,
     pub config_path: PathBuf,
     pub persisted_config: CodeMapLifecycleConfig,
+    /// Accepted automatic Chat/Channel context bound read back from the same
+    /// configuration generation. Zero is the intentional no-DB-I/O default.
+    pub auto_context_max_files: u64,
     pub canonical_managed_roots: Vec<PathBuf>,
     /// Every persisted root is represented even when its path is currently
     /// unavailable. `canonical_path = None` is a runtime availability fact,
@@ -50,6 +53,8 @@ pub struct CodeMapLifecycleManagedRootObservation {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct CodeMapLifecycleConfigPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_context_max_files: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub debounce_millis: Option<u64>,
@@ -70,7 +75,8 @@ impl CodeMapLifecycleConfigPatch {
     /// Empty patches are read-only config/runtime observations and do not write
     /// either freedom.yaml or a reload sentinel.
     pub fn is_empty(&self) -> bool {
-        self.enabled.is_none()
+        self.auto_context_max_files.is_none()
+            && self.enabled.is_none()
             && self.debounce_millis.is_none()
             && self.reconciliation_interval_secs.is_none()
             && self.add_managed_roots.is_empty()
@@ -215,6 +221,10 @@ where
     FreedomConfig::update_at(&config_path, move |config| {
         let merged = merge_lifecycle_patch(&config.code_map.lifecycle, &patch)?;
         config.code_map.lifecycle = merged;
+        if let Some(max_files) = patch.auto_context_max_files {
+            config.code_map.auto_context_max_files = u32::try_from(max_files)
+                .context("convert auto_context_max_files to persisted config bound")?;
+        }
         config
             .code_map
             .validate()
@@ -322,8 +332,9 @@ fn lifecycle_config_readback_receipt(
                 config_path.display()
             )
         })?
-        .code_map
-        .lifecycle;
+        .code_map;
+    let auto_context_max_files = persisted.auto_context_max_files;
+    let persisted = persisted.lifecycle;
     let managed_root_observations = persisted
         .managed_roots
         .iter()
@@ -356,6 +367,7 @@ fn lifecycle_config_readback_receipt(
         instance_home: instance_home.to_path_buf(),
         config_path,
         persisted_config: persisted,
+        auto_context_max_files: u64::from(auto_context_max_files),
         canonical_managed_roots: persisted_canonical_managed_roots,
         managed_root_observations,
         reload_requested,
@@ -693,6 +705,31 @@ mod tests {
                 .path()
                 .join(crate::config::reload::RELOAD_SENTINEL_NAME)
                 .exists()
+        );
+    }
+
+    #[test]
+    fn automatic_context_patch_is_read_back_from_the_accepted_generation() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_config(home.path());
+
+        let receipt = apply_code_map_lifecycle_config_patch_with_reload(
+            home.path(),
+            CodeMapLifecycleConfigPatch {
+                auto_context_max_files: Some(4),
+                ..CodeMapLifecycleConfigPatch::default()
+            },
+            |_| Ok(()),
+        )
+        .expect("automatic context patch must use the typed config transaction");
+
+        assert_eq!(receipt.auto_context_max_files, 4);
+        assert_eq!(
+            FreedomConfig::load_from_path(&receipt.config_path)
+                .unwrap()
+                .code_map
+                .auto_context_max_files,
+            4
         );
     }
 }

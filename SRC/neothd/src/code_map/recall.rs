@@ -470,22 +470,27 @@ where
     let tx = conn
         .unchecked_transaction()
         .context("begin atomic code-map recall read transaction")?;
-    let Some(snapshot) = resolve_active_root_snapshot_in_transaction(&tx, &current_canonical)?
+    let Some(preflight) = automatic_context_preflight_in_transaction(
+        &tx,
+        &current_canonical,
+        staleness == RecallStaleness::Check,
+    )?
     else {
         tx.commit()
             .context("commit empty code-map recall read transaction")?;
         return Ok(None);
     };
-    ensure!(
-        snapshot.index_generation > 0
-            && snapshot.graph_generation > 0
-            && snapshot.index_generation == snapshot.graph_generation,
-        "code-map recall requires one complete map/graph generation; run `neoth code-map persist`"
-    );
-    ensure!(
-        super::persist::root_snapshot_complete(&tx, snapshot.root.display())?,
-        "code-map root was published from a partial scan; rebuild without explicit limits before recall"
-    );
+    let snapshot = preflight.snapshot;
+    if preflight.stale {
+        tx.commit()
+            .context("commit stale code-map automatic-context preflight")?;
+        return Ok(Some(RecallReceipt {
+            snapshot,
+            ranked_files: Vec::new(),
+            stale: Some(true),
+            truncated: false,
+        }));
+    }
     let initial_freshness = match staleness {
         RecallStaleness::Skip => None,
         RecallStaleness::Check => Some(super::persist::index_freshness_receipt_cached_scoped(
@@ -534,6 +539,75 @@ where
         stale,
         truncated,
     }))
+}
+
+/// Shared non-prompt eligibility for automatic context.  It runs inside the
+/// W55 recall transaction; callers retain prompt ranking and the final
+/// root/freshness revalidation as their stronger turn-specific authority.
+struct AutomaticContextPreflight {
+    snapshot: RootGenerationSnapshot,
+    stale: bool,
+}
+
+fn automatic_context_preflight_in_transaction(
+    tx: &Transaction<'_>,
+    current_canonical: &Path,
+    check_freshness: bool,
+) -> Result<Option<AutomaticContextPreflight>> {
+    let Some(snapshot) = resolve_active_root_snapshot_in_transaction(tx, current_canonical)? else {
+        return Ok(None);
+    };
+    let complete_generation = snapshot.index_generation > 0
+        && snapshot.graph_generation > 0
+        && snapshot.index_generation == snapshot.graph_generation;
+    let complete_scan =
+        complete_generation && super::persist::root_snapshot_complete(tx, snapshot.root.display())?;
+    // The persisted root identity is authority only while it still names the
+    // same physical repository. Treat replacement/removal as stale evidence;
+    // a status probe must never bless a snapshot that W55 would reject at its
+    // final physical-root fence.
+    let same_physical_root = complete_scan
+        && CanonicalRepoRoot::discover(snapshot.root.path())
+            .map(|observed| observed == snapshot.root)
+            .unwrap_or(false);
+    let stale = if !complete_scan || !same_physical_root {
+        true
+    } else if check_freshness {
+        super::persist::index_freshness_receipt_cached_scoped(
+            tx,
+            snapshot.root.display(),
+            snapshot.index_generation,
+            &[],
+            &[],
+        )?
+        .stale
+    } else {
+        false
+    };
+    Ok(Some(AutomaticContextPreflight { snapshot, stale }))
+}
+
+/// Status/Doctor/GUI use the same root, generation, completeness and initial
+/// freshness predicate as W55. This probe is read-only and never supplies a
+/// cache or receipt to a later prompt-specific recall.
+pub fn automatic_context_preflight(
+    conn: &Connection,
+    current_path: &Path,
+) -> Result<Option<(RootGenerationSnapshot, bool)>> {
+    let current_canonical = std::fs::canonicalize(current_path).with_context(|| {
+        format!(
+            "canonicalize automatic-context root {}",
+            current_path.display()
+        )
+    })?;
+    let tx = conn
+        .unchecked_transaction()
+        .context("begin automatic-context preflight transaction")?;
+    let result = automatic_context_preflight_in_transaction(&tx, &current_canonical, true)?
+        .map(|preflight| (preflight.snapshot, preflight.stale));
+    tx.commit()
+        .context("commit automatic-context preflight transaction")?;
+    Ok(result)
 }
 
 /// Resolve the active canonical root and generation tuple atomically.
@@ -1469,7 +1543,7 @@ mod tests {
     }
 
     #[test]
-    fn recall_receipt_rejects_unpaired_legacy_generation() {
+    fn recall_receipt_marks_unpaired_legacy_generation_stale_without_ranking() {
         let repo = tempdir().unwrap();
         let map = crate::code_map::walker::RepoMapBuilder::new(repo.path())
             .scan()
@@ -1478,11 +1552,57 @@ mod tests {
         let mut conn = open(&db.path().join("code_map.db")).unwrap();
         persist_map(&mut conn, &map).unwrap();
 
-        let error =
+        let receipt =
             recall_receipt_for_prompt(&conn, repo.path(), "anything", 5, RecallStaleness::Skip)
-                .unwrap_err();
+                .unwrap()
+                .expect("an indexed root still yields a bounded stale receipt");
+        assert_eq!(receipt.stale, Some(true));
+        assert!(receipt.ranked_files.is_empty());
+    }
 
-        assert!(error.to_string().contains("complete map/graph generation"));
+    #[test]
+    fn skip_recall_ranks_after_a_filesystem_change_while_check_returns_stale() {
+        let repo = tempdir().unwrap();
+        let source = repo.path().join("src.rs");
+        std::fs::write(&source, "fn freshness_regression_symbol() {}\n").unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(repo.path())
+            .with_symbols(true)
+            .scan()
+            .unwrap();
+        let db = tempdir().unwrap();
+        let mut conn = open(&db.path().join("code_map.db")).unwrap();
+        persist_map_and_edges(&mut conn, &map, &[]).unwrap();
+
+        std::fs::write(
+            &source,
+            "fn freshness_regression_symbol() { let changed = true; }\n",
+        )
+        .unwrap();
+
+        let skipped = recall_receipt_for_prompt(
+            &conn,
+            repo.path(),
+            "freshness_regression_symbol",
+            5,
+            RecallStaleness::Skip,
+        )
+        .unwrap()
+        .expect("Skip retains the normal ranked recall path");
+        assert_eq!(skipped.stale, None);
+        assert_eq!(skipped.ranked_files.len(), 1);
+        assert_eq!(skipped.ranked_files[0].path, "src.rs");
+
+        let checked = recall_receipt_for_prompt(
+            &conn,
+            repo.path(),
+            "freshness_regression_symbol",
+            5,
+            RecallStaleness::Check,
+        )
+        .unwrap()
+        .expect("Check retains the stale preflight receipt");
+        assert_eq!(checked.stale, Some(true));
+        assert!(checked.ranked_files.is_empty());
     }
 
     #[test]

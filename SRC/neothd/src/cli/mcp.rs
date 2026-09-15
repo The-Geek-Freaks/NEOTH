@@ -61,6 +61,14 @@ pub enum McpAction {
         impact_max_nodes: Option<u32>,
         #[arg(long, hide = true, action = clap::ArgAction::Set)]
         impact_allow_stale: Option<bool>,
+        #[arg(long, hide = true)]
+        requested_recall_max_files: Option<u32>,
+        #[arg(long, hide = true)]
+        requested_callers_per_symbol: Option<u32>,
+        #[arg(long, hide = true)]
+        requested_summary_token_budget: Option<u32>,
+        #[arg(long, hide = true)]
+        requested_max_bfs_depth: Option<u8>,
     },
     /// Idempotently register the built-in codegraph stdio server in
     /// `~/.neoth/mcp_servers.yaml` with an exact tool allowlist.
@@ -94,15 +102,27 @@ pub async fn run_mcp(args: McpArgs) -> Result<()> {
             impact_max_depth,
             impact_max_nodes,
             impact_allow_stale,
+            requested_recall_max_files,
+            requested_callers_per_symbol,
+            requested_summary_token_budget,
+            requested_max_bfs_depth,
         } => {
             let runtime = crate::mcp::codegraph_server::startup_impact_runtime(
                 impact_max_depth,
                 impact_max_nodes,
                 impact_allow_stale,
             )?;
-            crate::mcp::codegraph_server::serve_stdio_with_runtime(
+            let requested_runtime =
+                crate::mcp::codegraph_server::startup_requested_context_runtime(
+                    requested_recall_max_files,
+                    requested_callers_per_symbol,
+                    requested_summary_token_budget,
+                    requested_max_bfs_depth,
+                )?;
+            crate::mcp::codegraph_server::serve_stdio_with_runtimes(
                 db.unwrap_or_else(crate::code_map::persist::default_path),
                 runtime,
+                requested_runtime,
             )
             .await
         }
@@ -943,6 +963,37 @@ where
     F: FnOnce(crate::mcp::McpServerConfig) -> Fut,
     Fut: std::future::Future<Output = Result<McpClient, McpError>>,
 {
+    // Direct calls have no reload controller, but still bind one validated
+    // local config snapshot before authorization. A missing optional file uses
+    // defaults; an unreadable/invalid file never silently relaxes W59.
+    let config = crate::config::FreedomConfig::load_from_path_or_default(
+        &instance_home.join("freedom.yaml"),
+    )
+    .map_err(|error| GateError::PreToolUseBlocked {
+        server: cfg.id.clone(),
+        tool: tool.to_owned(),
+        reason: format!("cannot load requested-context config snapshot: {error:#}"),
+    })?;
+    let requested_policy = config
+        .code_map
+        .requested_context_policy()
+        .map_err(|error| GateError::PreToolUseBlocked {
+            server: cfg.id.clone(),
+            tool: tool.to_owned(),
+            reason: format!("invalid requested-context policy: {error:#}"),
+        })?;
+    let effective_cfg =
+        crate::mcp::codegraph_server::effective_builtin_codegraph_server_with_requested_policy(
+            cfg,
+            config.code_map.impact_policy,
+            requested_policy,
+        )
+        .map_err(|error| GateError::PreToolUseBlocked {
+            server: cfg.id.clone(),
+            tool: tool.to_owned(),
+            reason: format!("cannot derive requested-context descriptor: {error:#}"),
+        })?;
+    let cfg = &effective_cfg;
     let request_binding_sha256 = crate::mcp::gate::mcp_request_binding(cfg, tool, &arguments)?;
     let preflight = crate::mcp::gate::preflight_with_audit_sink(
         cfg,
@@ -976,13 +1027,7 @@ where
             reason: format!("cannot load configured PreToolUse hooks: {error}"),
         })?;
     let once_guard = crate::hooks::SessionOnceGuard::new();
-    // One-shot CLI calls have no reload controller. Read one config snapshot
-    // from the exact instance home; an unreadable optional file preserves legacy off.
-    let outline_enrichment_enabled = crate::config::FreedomConfig::load_from_path_or_default(
-        &instance_home.join("freedom.yaml"),
-    )
-    .map(|config| config.code_map.outline_enrichment)
-    .unwrap_or(false);
+    let outline_enrichment_enabled = config.code_map.outline_enrichment;
     let pre_tool_use = crate::mcp::gate::admit_pre_tool_use_with_outline(
         crate::hooks::PreToolUseOrigin::DirectCliMcp,
         cfg,

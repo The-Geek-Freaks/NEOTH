@@ -5610,6 +5610,7 @@ pub(super) async fn dispatch_provider(
                         cancellation.pre_tool_use_cancellation(),
                         config.code_map.outline_enrichment,
                         config.code_map.impact_policy,
+                        config.code_map.requested_context_policy()?,
                     )
                     .await
                     {
@@ -12659,6 +12660,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
     // Immutable FreedomConfig snapshot selected by this provider turn.
     outline_enrichment_enabled: bool,
     impact_policy: crate::config::CodeMapImpactPolicy,
+    requested_context_policy: crate::config::RequestedContextPolicy,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -12765,6 +12767,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         pre_tool_cancellation,
         outline_enrichment_enabled,
         impact_policy,
+        requested_context_policy,
     )
     .await
 }

@@ -232,6 +232,9 @@ where
         crate::hooks::PreToolUseCancellation::unbound(),
         false,
         crate::config::CodeMapImpactPolicy::default(),
+        crate::config::CodeMapConfig::default()
+            .requested_context_policy()
+            .expect("default requested context policy"),
     )
     .await
 }
@@ -304,6 +307,9 @@ pub(crate) async fn run_tool_loop_with_budget<D, P>(
     // freedom.yaml inside a live provider loop.
     outline_enrichment_enabled: bool,
     impact_policy: crate::config::CodeMapImpactPolicy,
+    // W59: accepted once at the outer turn boundary; never reload config in
+    // the provider loop or in dispatch.
+    requested_context_policy: crate::config::RequestedContextPolicy,
 ) -> Result<LoopOutcome>
 where
     D: CompletionDriver + Send,
@@ -1114,6 +1120,7 @@ where
                 },
                 outline_enrichment_enabled,
                 impact_policy,
+                requested_context_policy,
             )
             .await
             {
@@ -2009,6 +2016,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
     pre_tool_replay: crate::hooks::PreToolUseReplay,
     outline_enrichment_enabled: bool,
     impact_policy: crate::config::CodeMapImpactPolicy,
+    requested_context_policy: crate::config::RequestedContextPolicy,
 ) -> std::result::Result<DispatchedToolResult, String> {
     let Some(cfg) = servers.get_enabled(&call.server) else {
         return Err(format!(
@@ -2019,8 +2027,12 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
     };
     let base_cfg = cfg;
     let effective_cfg =
-        crate::mcp::codegraph_server::effective_builtin_codegraph_server(base_cfg, impact_policy)
-            .map_err(|error| {
+        crate::mcp::codegraph_server::effective_builtin_codegraph_server_with_requested_policy(
+            base_cfg,
+            impact_policy,
+            requested_context_policy,
+        )
+        .map_err(|error| {
             format!(
                 "dispatch `{}::{}`: invalid impact policy: {error:#}",
                 call.server, call.tool
@@ -2865,6 +2877,9 @@ mod tests {
             crate::hooks::PreToolUseReplay::direct_request(),
             false,
             crate::config::CodeMapImpactPolicy::default(),
+            crate::config::CodeMapConfig::default()
+                .requested_context_policy()
+                .expect("default requested context policy"),
         )
         .await
         .err()
@@ -2915,6 +2930,9 @@ mod tests {
             crate::hooks::PreToolUseReplay::direct_request(),
             false,
             crate::config::CodeMapImpactPolicy::default(),
+            crate::config::CodeMapConfig::default()
+                .requested_context_policy()
+                .expect("default requested context policy"),
         )
         .await
         .err()
@@ -2962,6 +2980,9 @@ mod tests {
             crate::hooks::PreToolUseReplay::direct_request(),
             false,
             crate::config::CodeMapImpactPolicy::default(),
+            crate::config::CodeMapConfig::default()
+                .requested_context_policy()
+                .expect("default requested context policy"),
         )
         .await
         .err()
@@ -3004,193 +3025,467 @@ mod tests {
         }
     }
 
+    #[test]
+    fn w59_real_dispatch_accepts_requested_policy_across_real_sqlite_roots() {
+        let _env = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build W59 current-thread runtime")
+            .block_on(async {
+                let home = smart_approve_fixture_home();
+                let db = home.path().join("code_map.db");
+                let root_n = home.path().join("root-n");
+                let root_n1 = home.path().join("root-n1");
+                crate::mcp::codegraph_server::w59_seed_real_sqlite_root(&db, &root_n, "n");
+                crate::mcp::codegraph_server::w59_seed_real_sqlite_root(&db, &root_n1, "n1");
+                let db = db.canonicalize().expect("canonical W59 fixture DB");
+                let base = w56_generated_codegraph_config(&db);
+                let servers = McpServers { servers: vec![base.clone()], smart_loading: true };
+                let impact = crate::config::CodeMapImpactPolicy::default();
+                let requested_n = crate::config::RequestedContextPolicy {
+                    recall_max_files: 1,
+                    callers_per_symbol: 1,
+                    summary_token_budget: 256,
+                    max_bfs_depth: 2,
+                };
+                let requested_n1 = crate::config::RequestedContextPolicy {
+                    recall_max_files: 2,
+                    callers_per_symbol: 2,
+                    summary_token_budget: 512,
+                    max_bfs_depth: 3,
+                };
+                let record = home.path().join("w59-child-events.jsonl");
+                let previous_record = std::env::var_os("NEOTH_W56_CHILD_RECORD");
+                let previous_cwd = std::env::var_os("NEOTH_W59_CHILD_CWD");
+                unsafe {
+                    std::env::set_var("NEOTH_W56_CHILD_RECORD", &record);
+                    std::env::set_var("NEOTH_W59_CHILD_CWD", &root_n);
+                }
+                struct RestoreW59Env(Option<std::ffi::OsString>, Option<std::ffi::OsString>);
+                impl Drop for RestoreW59Env {
+                    fn drop(&mut self) {
+                        unsafe {
+                            match self.0.take() { Some(value) => std::env::set_var("NEOTH_W56_CHILD_RECORD", value), None => std::env::remove_var("NEOTH_W56_CHILD_RECORD") }
+                            match self.1.take() { Some(value) => std::env::set_var("NEOTH_W59_CHILD_CWD", value), None => std::env::remove_var("NEOTH_W59_CHILD_CWD") }
+                        }
+                    }
+                }
+                let _restore = RestoreW59Env(previous_record, previous_cwd);
+                let once = crate::hooks::SessionOnceGuard::new();
+                let mut session_n = crate::mcp::smart_approve::SmartApproveSession::new(&servers).with_home(home.path().to_path_buf());
+                let expected_n_calls = [
+                    ("codegraph_relevant_files", serde_json::json!({"prompt":"leaf_n","limit":1})),
+                    ("codegraph_recall_v1", serde_json::json!({"prompt":"leaf_n","limit":1})),
+                    ("codegraph_callers", serde_json::json!({"symbol":"leaf_n","depth":2})),
+                    ("codegraph_callees", serde_json::json!({"file":"x.rs","symbol":"root_n","depth":2})),
+                ];
+                let mut rendered_n = Vec::new();
+                for (tool, arguments) in &expected_n_calls {
+                    let outcome = dispatch_one(
+                        &ParsedToolCall { server: base.id.clone(), tool: (*tool).into(), arguments: arguments.clone() },
+                        &servers, crate::permissions::AutonomyLevel::Standard, None, None,
+                        Some(&mut session_n), None, None, home.path(),
+                        crate::hooks::PreToolUseHookPolicy::Configured(&[]), &once,
+                        crate::hooks::PreToolUseCancellation::unbound(), crate::hooks::PreToolUseReplay::direct_request(),
+                        false, impact, requested_n,
+                    ).await.expect("requested W59 call reaches real child");
+                    assert!(!outcome.is_error, "{tool}: {}", outcome.rendered);
+                    rendered_n.push(outcome.rendered);
+                }
+                assert!(rendered_n[2].contains("middle_n") && rendered_n[2].contains("root_n"));
+                assert!(rendered_n[3].contains("middle_n") && rendered_n[3].contains("leaf_n"));
+                assert!(rendered_n.iter().all(|text| !text.contains("_n1")), "root N never returns root N+1 data");
+                assert_eq!(session_n.initialization_attempts(), 1);
+                let rejected = dispatch_one(
+                    &ParsedToolCall { server: base.id.clone(), tool: "codegraph_recall_v1".into(), arguments: serde_json::json!({"prompt":"leaf_n","limit":1}) },
+                    &servers, crate::permissions::AutonomyLevel::Standard, None, None, Some(&mut session_n), None, None,
+                    home.path(), crate::hooks::PreToolUseHookPolicy::Configured(&[]), &once,
+                    crate::hooks::PreToolUseCancellation::unbound(), crate::hooks::PreToolUseReplay::direct_request(), false,
+                    crate::config::CodeMapImpactPolicy { max_depth: 99, max_nodes: 99, allow_stale: true }, requested_n,
+                ).await.err().expect("stale-relaxing reload is rejected before child reuse");
+                assert!(rejected.contains("invalid impact policy"));
+                unsafe { std::env::set_var("NEOTH_W59_CHILD_CWD", &root_n1) };
+                let mut session_n1 = crate::mcp::smart_approve::SmartApproveSession::new(&servers).with_home(home.path().to_path_buf());
+                let n1 = dispatch_one(
+                    &ParsedToolCall { server: base.id.clone(), tool: "codegraph_callers".into(), arguments: serde_json::json!({"symbol":"leaf_n1","depth":2}) },
+                    &servers, crate::permissions::AutonomyLevel::Standard, None, None, Some(&mut session_n1), None, None,
+                    home.path(), crate::hooks::PreToolUseHookPolicy::Configured(&[]), &crate::hooks::SessionOnceGuard::new(),
+                    crate::hooks::PreToolUseCancellation::unbound(), crate::hooks::PreToolUseReplay::direct_request(), false, impact, requested_n1,
+                ).await.expect("accepted N+1 opens a real separately rooted child");
+                assert!(!n1.is_error, "{}", n1.rendered);
+                assert!(n1.rendered.contains("middle_n1") && n1.rendered.contains("root_n1"));
+                assert!(!n1.rendered.contains("middle_n\"") && !n1.rendered.contains("root_n\""));
+                let events: Vec<serde_json::Value> = std::fs::read_to_string(&record).expect("read W59 child record").lines().map(|line| serde_json::from_str(line).expect("valid W59 event")).collect();
+                let startups: Vec<_> = events.iter().filter(|event| event["event"] == "startup").collect();
+                assert_eq!(startups.len(), 2);
+                let calls: Vec<_> = events.iter().filter(|event| event["event"] == "tools/call").collect();
+                assert_eq!(calls.len(), 5);
+                for (observed, (tool, arguments)) in calls[..4].iter().zip(expected_n_calls.iter()) {
+                    assert_eq!(observed["name"].as_str(), Some(*tool));
+                    assert_eq!(observed["arguments"], *arguments, "dispatcher must preserve W59 tool JSON");
+                }
+                assert_eq!(calls[4]["name"].as_str(), Some("codegraph_callers"));
+                assert_eq!(calls[4]["arguments"], serde_json::json!({"symbol":"leaf_n1","depth":2}));
+                let expected_n = crate::mcp::codegraph_server::effective_builtin_codegraph_server_with_requested_policy(&base, impact, requested_n).expect("expected N descriptor");
+                let expected_n1 = crate::mcp::codegraph_server::effective_builtin_codegraph_server_with_requested_policy(&base, impact, requested_n1).expect("expected N+1 descriptor");
+                let observed_n = serde_json::from_value::<crate::mcp::config::McpServerConfig>(startups[0]["descriptor"].clone()).expect("complete observed N descriptor");
+                let observed_n1 = serde_json::from_value::<crate::mcp::config::McpServerConfig>(startups[1]["descriptor"].clone()).expect("complete observed N+1 descriptor");
+                assert_eq!(observed_n, expected_n);
+                assert_eq!(observed_n1, expected_n1);
+            });
+    }
+
+    #[test]
+    fn w59_real_dispatch_refuses_oversized_result_and_pretool_denials_before_child_start() {
+        let _env = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build W59 negative current-thread runtime")
+            .block_on(async {
+                let home = smart_approve_fixture_home();
+                let db = home.path().join("code_map.db");
+                let root = home.path().join("oversized-root");
+                crate::mcp::codegraph_server::w59_seed_oversized_callers_root(&db, &root);
+                let base = w56_generated_codegraph_config(
+                    &db.canonicalize().expect("canonical W59 negative DB"),
+                );
+                let servers = McpServers {
+                    servers: vec![base.clone()],
+                    smart_loading: true,
+                };
+                let record = home.path().join("w59-negative-events.jsonl");
+                let prior_record = std::env::var_os("NEOTH_W56_CHILD_RECORD");
+                let prior_cwd = std::env::var_os("NEOTH_W59_CHILD_CWD");
+                unsafe {
+                    std::env::set_var("NEOTH_W56_CHILD_RECORD", &record);
+                    std::env::set_var("NEOTH_W59_CHILD_CWD", &root);
+                }
+                struct RestoreW59NegativeEnv(
+                    Option<std::ffi::OsString>,
+                    Option<std::ffi::OsString>,
+                );
+                impl Drop for RestoreW59NegativeEnv {
+                    fn drop(&mut self) {
+                        unsafe {
+                            match self.0.take() {
+                                Some(value) => std::env::set_var("NEOTH_W56_CHILD_RECORD", value),
+                                None => std::env::remove_var("NEOTH_W56_CHILD_RECORD"),
+                            }
+                            match self.1.take() {
+                                Some(value) => std::env::set_var("NEOTH_W59_CHILD_CWD", value),
+                                None => std::env::remove_var("NEOTH_W59_CHILD_CWD"),
+                            }
+                        }
+                    }
+                }
+                let _restore = RestoreW59NegativeEnv(prior_record, prior_cwd);
+                let requested = crate::config::RequestedContextPolicy {
+                    recall_max_files: 1,
+                    callers_per_symbol: 20,
+                    summary_token_budget: 128,
+                    max_bfs_depth: 2,
+                };
+                let once = crate::hooks::SessionOnceGuard::new();
+                let mut session = crate::mcp::smart_approve::SmartApproveSession::new(&servers)
+                    .with_home(home.path().to_path_buf());
+                let oversized = dispatch_one(
+                    &ParsedToolCall {
+                        server: base.id.clone(),
+                        tool: "codegraph_callers".into(),
+                        arguments: serde_json::json!({"symbol":"leaf_big","depth":1}),
+                    },
+                    &servers,
+                    crate::permissions::AutonomyLevel::Standard,
+                    None,
+                    None,
+                    Some(&mut session),
+                    None,
+                    None,
+                    home.path(),
+                    crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+                    &once,
+                    crate::hooks::PreToolUseCancellation::unbound(),
+                    crate::hooks::PreToolUseReplay::direct_request(),
+                    false,
+                    crate::config::CodeMapImpactPolicy::default(),
+                    requested,
+                )
+                .await
+                .expect("oversized child result remains a typed MCP response");
+                assert!(oversized.is_error);
+                assert!(oversized.rendered.contains(
+                    "bounded callers traversal refused before retaining an over-budget result row"
+                ));
+                assert!(
+                    !oversized.rendered.contains("caller_"),
+                    "no partial caller JSON is returned"
+                );
+                let events_before =
+                    std::fs::read_to_string(&record).expect("oversized call starts child");
+                assert_eq!(
+                    events_before
+                        .lines()
+                        .filter(|line| line.contains("\"event\":\"startup\""))
+                        .count(),
+                    1
+                );
+
+                let hooks = [configured_pre_tool_block()];
+                let denied = dispatch_one(
+                    &ParsedToolCall {
+                        server: base.id.clone(),
+                        tool: "codegraph_extract_identifiers".into(),
+                        arguments: serde_json::json!({"text":"blocked"}),
+                    },
+                    &servers,
+                    crate::permissions::AutonomyLevel::Standard,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    home.path(),
+                    crate::hooks::PreToolUseHookPolicy::Configured(&hooks),
+                    &crate::hooks::SessionOnceGuard::new(),
+                    crate::hooks::PreToolUseCancellation::unbound(),
+                    crate::hooks::PreToolUseReplay::direct_request(),
+                    false,
+                    crate::config::CodeMapImpactPolicy::default(),
+                    requested,
+                )
+                .await
+                .err()
+                .expect("PreToolUse block must precede child startup");
+                assert!(denied.contains("blocked by PreToolUse"));
+                let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(true));
+                let cancellation = dispatch_one(
+                    &ParsedToolCall {
+                        server: base.id.clone(),
+                        tool: "codegraph_extract_identifiers".into(),
+                        arguments: serde_json::json!({"text":"cancelled"}),
+                    },
+                    &servers,
+                    crate::permissions::AutonomyLevel::Standard,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    home.path(),
+                    crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+                    &crate::hooks::SessionOnceGuard::new(),
+                    crate::hooks::PreToolUseCancellation::from_chat_turn(cancelled),
+                    crate::hooks::PreToolUseReplay::direct_request(),
+                    false,
+                    crate::config::CodeMapImpactPolicy::default(),
+                    requested,
+                )
+                .await
+                .err()
+                .expect("cancelled PreToolUse must precede child startup");
+                assert!(cancellation.contains("cancelled"));
+                assert_eq!(
+                    std::fs::read_to_string(&record).expect("read final W59 events"),
+                    events_before
+                );
+            });
+    }
+
     /// W56's process-isolated marker evidence makes the actual dispatcher
     /// boundary observable without weakening the generated descriptor.  The
     /// cfg(test) child adapter only translates libtest argv; it still runs the
     /// real codegraph stdio server, SmartApprove catalogue, and tools/call wire.
     #[test]
     fn w56_real_dispatch_binds_immutable_policy_sessions_and_preserves_tool_json() {
-        let runtime = tokio::runtime::Builder::new_current_thread()
+        let _env = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .expect("build W56 test runtime");
-        let _env = crate::test_env::lock();
-        runtime.block_on(async {
-            let home_n = smart_approve_fixture_home();
-            let home_n1 = smart_approve_fixture_home();
-            let database = home_n.path().join("code_map.db");
-            std::fs::write(&database, b"fixture database").expect("create codegraph fixture DB");
-            let database = database.canonicalize().expect("canonical fixture DB");
-            let base = w56_generated_codegraph_config(&database);
-            let servers = McpServers {
-                servers: vec![base.clone()],
-                smart_loading: true,
-            };
-            let arguments = serde_json::json!({
-                "text": "OrderService auth_middleware",
-                "nested": {"z": 1, "a": 2}
-            });
-            let call = ParsedToolCall {
-                server: base.id.clone(),
-                tool: "codegraph_extract_identifiers".into(),
-                arguments: arguments.clone(),
-            };
-            let policy_n = crate::config::CodeMapImpactPolicy {
-                max_depth: 2,
-                max_nodes: 40,
-                allow_stale: false,
-            };
-            let policy_n1 = crate::config::CodeMapImpactPolicy {
-                max_depth: 3,
-                max_nodes: 80,
-                allow_stale: false,
-            };
-            let effective_n =
-                crate::mcp::codegraph_server::effective_builtin_codegraph_server(&base, policy_n)
-                    .expect("derive accepted N descriptor");
-            let effective_n1 =
-                crate::mcp::codegraph_server::effective_builtin_codegraph_server(&base, policy_n1)
-                    .expect("derive accepted N+1 descriptor");
-            let binding_n =
-                crate::mcp::gate::mcp_request_binding(&effective_n, &call.tool, &arguments)
-                    .expect("bind accepted N request");
-            let binding_n1 =
-                crate::mcp::gate::mcp_request_binding(&effective_n1, &call.tool, &arguments)
-                    .expect("bind accepted N+1 request");
-            assert_ne!(
-                binding_n, binding_n1,
-                "policy trailers must produce distinct request commitments"
-            );
+            .expect("build current-thread W56 runtime")
+            .block_on(async {
+        let home_n = smart_approve_fixture_home();
+        let home_n1 = smart_approve_fixture_home();
+        let database = home_n.path().join("code_map.db");
+        std::fs::write(&database, b"fixture database").expect("create codegraph fixture DB");
+        let database = database.canonicalize().expect("canonical fixture DB");
+        let base = w56_generated_codegraph_config(&database);
+        let servers = McpServers {
+            servers: vec![base.clone()],
+            smart_loading: true,
+        };
+        let arguments = serde_json::json!({
+            "text": "OrderService auth_middleware",
+            "nested": {"z": 1, "a": 2}
+        });
+        let call = ParsedToolCall {
+            server: base.id.clone(),
+            tool: "codegraph_extract_identifiers".into(),
+            arguments: arguments.clone(),
+        };
+        let policy_n = crate::config::CodeMapImpactPolicy {
+            max_depth: 2,
+            max_nodes: 40,
+            allow_stale: false,
+        };
+        let policy_n1 = crate::config::CodeMapImpactPolicy {
+            max_depth: 3,
+            max_nodes: 80,
+            allow_stale: false,
+        };
+        let requested_n = crate::config::CodeMapConfig::default().requested_context_policy().expect("default requested policy");
+        let mut requested_n1 = requested_n;
+        requested_n1.recall_max_files = 4;
+        let effective_n =
+            crate::mcp::codegraph_server::effective_builtin_codegraph_server_with_requested_policy(&base, policy_n, requested_n)
+                .expect("derive accepted N descriptor");
+        let effective_n1 =
+            crate::mcp::codegraph_server::effective_builtin_codegraph_server_with_requested_policy(&base, policy_n1, requested_n1)
+                .expect("derive accepted N+1 descriptor");
+        let binding_n = crate::mcp::gate::mcp_request_binding(&effective_n, &call.tool, &arguments)
+            .expect("bind accepted N request");
+        let binding_n1 =
+            crate::mcp::gate::mcp_request_binding(&effective_n1, &call.tool, &arguments)
+                .expect("bind accepted N+1 request");
+        assert_ne!(
+            binding_n, binding_n1,
+            "policy trailers must produce distinct request commitments"
+        );
 
-            let record = home_n.path().join("w56-child-events.jsonl");
-            let previous = std::env::var_os("NEOTH_W56_CHILD_RECORD");
-            // SAFETY: the crate-wide env lock remains held and the previous value
-            // is restored by the guard before the test releases it.
-            unsafe { std::env::set_var("NEOTH_W56_CHILD_RECORD", &record) };
-            struct RestoreRecordEnv(Option<std::ffi::OsString>);
-            impl Drop for RestoreRecordEnv {
-                fn drop(&mut self) {
-                    // SAFETY: the parent test owns crate::test_env::lock for this scope.
-                    unsafe {
-                        match self.0.take() {
-                            Some(value) => std::env::set_var("NEOTH_W56_CHILD_RECORD", value),
-                            None => std::env::remove_var("NEOTH_W56_CHILD_RECORD"),
-                        }
+        let record = home_n.path().join("w56-child-events.jsonl");
+        let previous = std::env::var_os("NEOTH_W56_CHILD_RECORD");
+        // SAFETY: the crate-wide env lock remains held and the previous value
+        // is restored by the guard before the test releases it.
+        unsafe { std::env::set_var("NEOTH_W56_CHILD_RECORD", &record) };
+        struct RestoreRecordEnv(Option<std::ffi::OsString>);
+        impl Drop for RestoreRecordEnv {
+            fn drop(&mut self) {
+                // SAFETY: the parent test owns crate::test_env::lock for this scope.
+                unsafe {
+                    match self.0.take() {
+                        Some(value) => std::env::set_var("NEOTH_W56_CHILD_RECORD", value),
+                        None => std::env::remove_var("NEOTH_W56_CHILD_RECORD"),
                     }
                 }
             }
-            let _restore = RestoreRecordEnv(previous);
+        }
+        let _restore = RestoreRecordEnv(previous);
 
-            let once = crate::hooks::SessionOnceGuard::new();
-            let mut session_n = crate::mcp::smart_approve::SmartApproveSession::new(&servers)
-                .with_home(home_n.path().to_path_buf());
-            let first_n = dispatch_one(
-                &call,
-                &servers,
-                crate::permissions::AutonomyLevel::Standard,
-                None,
-                None,
-                Some(&mut session_n),
-                None,
-                None,
-                home_n.path(),
-                crate::hooks::PreToolUseHookPolicy::Configured(&[]),
-                &once,
-                crate::hooks::PreToolUseCancellation::unbound(),
-                crate::hooks::PreToolUseReplay::direct_request(),
-                false,
-                policy_n,
-            )
-            .await
-            .expect("accepted N must catalogue, spawn, and call the real child");
-            assert!(!first_n.is_error);
-            assert_eq!(session_n.initialization_attempts(), 1);
+        let once = crate::hooks::SessionOnceGuard::new();
+        let mut session_n = crate::mcp::smart_approve::SmartApproveSession::new(&servers)
+            .with_home(home_n.path().to_path_buf());
+        let first_n = dispatch_one(
+            &call,
+            &servers,
+            crate::permissions::AutonomyLevel::Standard,
+            None,
+            None,
+            Some(&mut session_n),
+            None,
+            None,
+            home_n.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &once,
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+            false,
+            policy_n,
+            requested_n,
+        )
+        .await
+        .expect("accepted N must catalogue, spawn, and call the real child");
+        assert!(!first_n.is_error);
+        assert_eq!(session_n.initialization_attempts(), 1);
 
-            let rejected_reload = dispatch_one(
-                &call,
-                &servers,
-                crate::permissions::AutonomyLevel::Standard,
-                None,
-                None,
-                Some(&mut session_n),
-                None,
-                None,
-                home_n.path(),
-                crate::hooks::PreToolUseHookPolicy::Configured(&[]),
-                &once,
-                crate::hooks::PreToolUseCancellation::unbound(),
-                crate::hooks::PreToolUseReplay::direct_request(),
-                false,
-                crate::config::CodeMapImpactPolicy {
-                    max_depth: 99,
-                    max_nodes: 99,
-                    allow_stale: true,
-                },
-            )
-            .await
-            .err()
-            .expect("stale-relaxing reload must be rejected before catalogue/spawn");
-            assert!(rejected_reload.contains("invalid impact policy"));
-            assert_eq!(
-                session_n.initialization_attempts(),
-                1,
-                "rejected reload cannot create N+1 authority"
-            );
+        let rejected_reload = dispatch_one(
+            &call,
+            &servers,
+            crate::permissions::AutonomyLevel::Standard,
+            None,
+            None,
+            Some(&mut session_n),
+            None,
+            None,
+            home_n.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &once,
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+            false,
+            crate::config::CodeMapImpactPolicy {
+                max_depth: 99,
+                max_nodes: 99,
+                allow_stale: true,
+            },
+            crate::config::CodeMapConfig::default().requested_context_policy().expect("default requested context policy"),
+        )
+        .await
+        .err()
+        .expect("stale-relaxing reload must be rejected before catalogue/spawn");
+        assert!(rejected_reload.contains("invalid impact policy"));
+        assert_eq!(
+            session_n.initialization_attempts(),
+            1,
+            "rejected reload cannot create N+1 authority"
+        );
 
-            let second_n = dispatch_one(
-                &call,
-                &servers,
-                crate::permissions::AutonomyLevel::Standard,
-                None,
-                None,
-                Some(&mut session_n),
-                None,
-                None,
-                home_n.path(),
-                crate::hooks::PreToolUseHookPolicy::Configured(&[]),
-                &once,
-                crate::hooks::PreToolUseCancellation::unbound(),
-                crate::hooks::PreToolUseReplay::direct_request(),
-                false,
-                policy_n,
-            )
-            .await
-            .expect("in-flight N session remains valid after rejected reload");
-            assert!(!second_n.is_error);
+        let second_n = dispatch_one(
+            &call,
+            &servers,
+            crate::permissions::AutonomyLevel::Standard,
+            None,
+            None,
+            Some(&mut session_n),
+            None,
+            None,
+            home_n.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &once,
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+            false,
+            policy_n,
+            requested_n,
+        )
+        .await
+        .expect("in-flight N session remains valid after rejected reload");
+        assert!(!second_n.is_error);
 
-            let mut session_n1 = crate::mcp::smart_approve::SmartApproveSession::new(&servers)
-                .with_home(home_n1.path().to_path_buf());
-            let next_n1 = dispatch_one(
-                &call,
-                &servers,
-                crate::permissions::AutonomyLevel::Standard,
-                None,
-                None,
-                Some(&mut session_n1),
-                None,
-                None,
-                home_n1.path(),
-                crate::hooks::PreToolUseHookPolicy::Configured(&[]),
-                &crate::hooks::SessionOnceGuard::new(),
-                crate::hooks::PreToolUseCancellation::unbound(),
-                crate::hooks::PreToolUseReplay::direct_request(),
-                false,
-                policy_n1,
-            )
-            .await
-            .expect("accepted N+1 opens a separately bound child session");
-            assert!(!next_n1.is_error);
-            assert_eq!(session_n1.initialization_attempts(), 1);
+        let mut session_n1 = crate::mcp::smart_approve::SmartApproveSession::new(&servers)
+            .with_home(home_n1.path().to_path_buf());
+        let next_n1 = dispatch_one(
+            &call,
+            &servers,
+            crate::permissions::AutonomyLevel::Standard,
+            None,
+            None,
+            Some(&mut session_n1),
+            None,
+            None,
+            home_n1.path(),
+            crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+            &crate::hooks::SessionOnceGuard::new(),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+            false,
+            policy_n1,
+            requested_n1,
+        )
+        .await
+        .expect("accepted N+1 opens a separately bound child session");
+        assert!(!next_n1.is_error);
+        assert_eq!(session_n1.initialization_attempts(), 1);
 
-            let events: Vec<serde_json::Value> = std::fs::read_to_string(&record)
-                .expect("read marker child evidence")
-                .lines()
-                .map(|line| serde_json::from_str(line).expect("valid marker event"))
-                .collect();
-            let startups: Vec<_> = events
-                .iter()
-                .filter(|event| event["event"] == "startup")
-                .collect();
+        let events: Vec<serde_json::Value> = std::fs::read_to_string(&record)
+            .expect("read marker child evidence")
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("valid marker event"))
+            .collect();
+        let startups: Vec<_> = events
+            .iter()
+            .filter(|event| event["event"] == "startup")
+            .collect();
             let calls: Vec<_> = events
                 .iter()
                 .filter(|event| event["event"] == "tools/call")
@@ -3209,73 +3504,73 @@ mod tests {
                 ],
                 "the retained N child receives both N calls before the separately derived N+1 child starts"
             );
+        assert_eq!(
+            startups.len(),
+            2,
+            "N retains one child while N+1 gets a new child"
+        );
+        assert_eq!(
+            calls.len(),
+            3,
+            "only accepted N, retained N, and accepted N+1 reach tools/call"
+        );
+        assert_eq!(
+            startups[0]["descriptor"]["args"],
+            serde_json::json!(effective_n.args)
+        );
+        assert_eq!(
+            startups[0]["request_binding"].as_str(),
+            Some(""),
+            "SmartApprove starts one server-scoped catalogue child; its startup is not a per-call authorization receipt"
+        );
+        assert_eq!(
+            startups[1]["descriptor"]["args"],
+            serde_json::json!(effective_n1.args)
+        );
+        assert_eq!(
+            startups[1]["request_binding"].as_str(),
+            Some(""),
+            "a separate immutable descriptor gets a new catalogue child, not a launch receipt for its first call"
+        );
+        let observed_n = serde_json::from_value::<crate::mcp::config::McpServerConfig>(startups[0]["descriptor"].clone())
+            .expect("startup N records a complete effective descriptor");
+        let observed_n1 = serde_json::from_value::<crate::mcp::config::McpServerConfig>(startups[1]["descriptor"].clone())
+            .expect("startup N+1 records a complete effective descriptor");
+        assert_eq!(observed_n, effective_n);
+        assert_eq!(observed_n1, effective_n1);
+        let observed_bindings = [
+            crate::mcp::gate::mcp_request_binding(
+                &observed_n,
+                calls[0]["name"].as_str().expect("observed N tool name"),
+                &calls[0]["arguments"],
+            )
+            .expect("bind observed retained N call"),
+            crate::mcp::gate::mcp_request_binding(
+                &observed_n,
+                calls[1]["name"].as_str().expect("observed retained N tool name"),
+                &calls[1]["arguments"],
+            )
+            .expect("bind second observed N call"),
+            crate::mcp::gate::mcp_request_binding(
+                &observed_n1,
+                calls[2]["name"].as_str().expect("observed N+1 tool name"),
+                &calls[2]["arguments"],
+            )
+            .expect("bind observed N+1 call"),
+        ];
+        assert_eq!(
+            observed_bindings,
+            [binding_n.clone(), binding_n, binding_n1],
+            "each observed call canonicalizes against the descriptor of the child that actually served it"
+        );
+        for observed in calls {
+            assert_eq!(observed["name"].as_str(), Some(call.tool.as_str()));
             assert_eq!(
-                startups.len(),
-                2,
-                "N retains one child while N+1 gets a new child"
+                observed["arguments"], arguments,
+                "dispatcher must not rewrite tool JSON"
             );
-            assert_eq!(
-                calls.len(),
-                3,
-                "only accepted N, retained N, and accepted N+1 reach tools/call"
-            );
-            assert_eq!(
-                startups[0]["descriptor"]["args"],
-                serde_json::json!(effective_n.args)
-            );
-            assert_eq!(
-                startups[0]["request_binding"].as_str(),
-                Some(""),
-                "SmartApprove starts one server-scoped catalogue child; its startup is not a per-call authorization receipt"
-            );
-            assert_eq!(
-                startups[1]["descriptor"]["args"],
-                serde_json::json!(effective_n1.args)
-            );
-            assert_eq!(
-                startups[1]["request_binding"].as_str(),
-                Some(""),
-                "a separate immutable descriptor gets a new catalogue child, not a launch receipt for its first call"
-            );
-            let observed_n = serde_json::from_value::<crate::mcp::config::McpServerConfig>(startups[0]["descriptor"].clone())
-                .expect("startup N records a complete effective descriptor");
-            let observed_n1 = serde_json::from_value::<crate::mcp::config::McpServerConfig>(startups[1]["descriptor"].clone())
-                .expect("startup N+1 records a complete effective descriptor");
-            assert_eq!(observed_n, effective_n);
-            assert_eq!(observed_n1, effective_n1);
-            let observed_bindings = [
-                crate::mcp::gate::mcp_request_binding(
-                    &observed_n,
-                    calls[0]["name"].as_str().expect("observed N tool name"),
-                    &calls[0]["arguments"],
-                )
-                .expect("bind observed retained N call"),
-                crate::mcp::gate::mcp_request_binding(
-                    &observed_n,
-                    calls[1]["name"].as_str().expect("observed retained N tool name"),
-                    &calls[1]["arguments"],
-                )
-                .expect("bind second observed N call"),
-                crate::mcp::gate::mcp_request_binding(
-                    &observed_n1,
-                    calls[2]["name"].as_str().expect("observed N+1 tool name"),
-                    &calls[2]["arguments"],
-                )
-                .expect("bind observed N+1 call"),
-            ];
-            assert_eq!(
-                observed_bindings,
-                [binding_n.clone(), binding_n, binding_n1],
-                "each observed call canonicalizes against the descriptor of the child that actually served it"
-            );
-            for observed in calls {
-                assert_eq!(observed["name"].as_str(), Some(call.tool.as_str()));
-                assert_eq!(
-                    observed["arguments"], arguments,
-                    "dispatcher must not rewrite tool JSON"
-                );
-            }
-        });
+        }
+            });
     }
 
     #[tokio::test]
@@ -3312,6 +3607,9 @@ mod tests {
                 crate::hooks::PreToolUseReplay::direct_request(),
                 false,
                 crate::config::CodeMapImpactPolicy::default(),
+                crate::config::CodeMapConfig::default()
+                    .requested_context_policy()
+                    .expect("default requested context policy"),
             )
             .await
             .expect("SmartApprove retained fixture call");
@@ -3359,6 +3657,9 @@ mod tests {
             crate::hooks::PreToolUseReplay::direct_request(),
             false,
             crate::config::CodeMapImpactPolicy::default(),
+            crate::config::CodeMapConfig::default()
+                .requested_context_policy()
+                .expect("default requested context policy"),
         )
         .await
         .expect("normal fixture call");
@@ -3400,6 +3701,9 @@ mod tests {
             crate::hooks::PreToolUseReplay::direct_request(),
             false,
             crate::config::CodeMapImpactPolicy::default(),
+            crate::config::CodeMapConfig::default()
+                .requested_context_policy()
+                .expect("default requested context policy"),
         )
         .await;
         assert!(first.is_err());
@@ -3419,6 +3723,9 @@ mod tests {
             crate::hooks::PreToolUseReplay::direct_request(),
             false,
             crate::config::CodeMapImpactPolicy::default(),
+            crate::config::CodeMapConfig::default()
+                .requested_context_policy()
+                .expect("default requested context policy"),
         )
         .await;
         assert!(second.is_ok());
@@ -3446,6 +3753,9 @@ mod tests {
             crate::hooks::PreToolUseReplay::direct_request(),
             false,
             crate::config::CodeMapImpactPolicy::default(),
+            crate::config::CodeMapConfig::default()
+                .requested_context_policy()
+                .expect("default requested context policy"),
         )
         .await
         .err()
@@ -3495,6 +3805,9 @@ mod tests {
             crate::hooks::PreToolUseReplay::direct_request(),
             false,
             crate::config::CodeMapImpactPolicy::default(),
+            crate::config::CodeMapConfig::default()
+                .requested_context_policy()
+                .expect("default requested context policy"),
         )
         .await
         .err()
@@ -3521,6 +3834,9 @@ mod tests {
             crate::hooks::PreToolUseReplay::direct_request(),
             false,
             crate::config::CodeMapImpactPolicy::default(),
+            crate::config::CodeMapConfig::default()
+                .requested_context_policy()
+                .expect("default requested context policy"),
         )
         .await
         .err()
@@ -3556,6 +3872,9 @@ mod tests {
             crate::hooks::PreToolUseReplay::direct_request(),
             false,
             crate::config::CodeMapImpactPolicy::default(),
+            crate::config::CodeMapConfig::default()
+                .requested_context_policy()
+                .expect("default requested context policy"),
         )
         .await
         .err()
@@ -3586,6 +3905,9 @@ mod tests {
                 crate::hooks::PreToolUseReplay::direct_request(),
                 false,
                 crate::config::CodeMapImpactPolicy::default(),
+                crate::config::CodeMapConfig::default()
+                    .requested_context_policy()
+                    .expect("default requested context policy"),
             )
             .await
             .err()
@@ -3672,6 +3994,9 @@ mod tests {
             crate::hooks::PreToolUseReplay::direct_request(),
             false,
             crate::config::CodeMapImpactPolicy::default(),
+            crate::config::CodeMapConfig::default()
+                .requested_context_policy()
+                .expect("default requested context policy"),
         )
         .await
         .err()
@@ -5024,6 +5349,9 @@ mod tests {
             crate::hooks::PreToolUseCancellation::unbound(),
             false,
             crate::config::CodeMapImpactPolicy::default(),
+            crate::config::CodeMapConfig::default()
+                .requested_context_policy()
+                .expect("default requested context policy"),
         )
         .await
         .unwrap();

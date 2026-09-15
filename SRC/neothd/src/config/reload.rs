@@ -1484,6 +1484,7 @@ mod tests {
         changed.code_map.coding_recall_max_files = 12;
         changed.code_map.coding_callers_per_symbol = 0;
         changed.code_map.coding_summary_token_budget = 4_096;
+        changed.code_map.requested_context_max_bfs_depth = 20;
         changed.code_map.impact_policy.max_depth = 2;
         changed.code_map.impact_policy.max_nodes = 40;
         write_yaml(&yaml_path, &serde_yaml::to_string(&changed).unwrap());
@@ -1503,6 +1504,7 @@ mod tests {
         assert_eq!(latest.code_map.coding_recall_max_files, 12);
         assert_eq!(latest.code_map.coding_callers_per_symbol, 0);
         assert_eq!(latest.code_map.coding_summary_token_budget, 4_096);
+        assert_eq!(latest.code_map.requested_context_max_bfs_depth, 20);
         assert_eq!(latest.code_map.impact_policy.max_depth, 2);
         assert_eq!(latest.code_map.impact_policy.max_nodes, 40);
         assert!(!latest.code_map.impact_policy.allow_stale);
@@ -1526,6 +1528,7 @@ mod tests {
         );
         assert!(error.contains("coding_summary_token_budget"), "{error}");
         assert_eq!(ctrl.latest().code_map.coding_summary_token_budget, 2_048);
+        assert_eq!(ctrl.latest().code_map.requested_context_max_bfs_depth, 20);
         assert!(!ctrl.latest().code_map.outline_enrichment);
         assert_eq!(*generation.borrow(), 0);
 
@@ -1538,6 +1541,25 @@ mod tests {
             "stale-relaxing policy must not publish"
         );
         assert!(!ctrl.latest().code_map.impact_policy.allow_stale);
+
+        write_yaml(
+            &ctrl.source_path,
+            "code_map:\n  requested_context_max_bfs_depth: 0\n",
+        );
+        assert!(
+            ctrl.try_reload().is_err(),
+            "zero BFS depth must not publish"
+        );
+        assert_eq!(ctrl.latest().code_map.requested_context_max_bfs_depth, 20);
+        write_yaml(
+            &ctrl.source_path,
+            "code_map:\n  requested_context_max_bfs_depth: 21\n",
+        );
+        assert!(
+            ctrl.try_reload().is_err(),
+            "oversized BFS depth must not publish"
+        );
+        assert_eq!(ctrl.latest().code_map.requested_context_max_bfs_depth, 20);
     }
 
     #[test]

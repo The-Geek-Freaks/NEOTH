@@ -979,12 +979,14 @@ export component SettingsView inherits Rectangle {
     in property <string> code-map-lifecycle-operation: "";
     in property <string> code-map-lifecycle-state: "Choose a repository root to inspect its index.";
     in property <string> code-map-lifecycle-detail: "";
+    in property <string> code-map-automatic-context: "Inspect a repository root to classify automatic Chat/Channel context.";
     in property <string> code-map-lifecycle-runtime: "Daemon watcher status has not been read.";
     in property <string> code-map-lifecycle-canonical-root: "";
     in property <string> code-map-lifecycle-root-identity: "";
     in property <string> code-map-lifecycle-index-generation: "";
     in property <string> code-map-lifecycle-graph-generation: "";
     in-out property <bool> code-map-lifecycle-config-enabled: false;
+    in-out property <string> code-map-auto-context-max-files: "0";
     in-out property <string> code-map-lifecycle-debounce-millis: "500";
     in-out property <string> code-map-lifecycle-reconciliation-secs: "300";
     in property <bool> code-map-lifecycle-config-running: false;
@@ -993,7 +995,7 @@ export component SettingsView inherits Rectangle {
     callback code-map-lifecycle-inspect-clicked(string);
     callback code-map-lifecycle-refresh-clicked(string, bool, bool);
     callback code-map-lifecycle-cancel-clicked();
-    callback code-map-lifecycle-config-apply-clicked(bool, string, string);
+    callback code-map-lifecycle-config-apply-clicked(bool, string, string, string);
     callback code-map-lifecycle-managed-root-remove-clicked(string);
     // W52 — explicit-root, Git-only, read-only change impact and W48 observed
     // test evidence. No optional stale-analysis path is exposed here.
@@ -4966,6 +4968,13 @@ export component SettingsView inherits Rectangle {
                             wrap: word-wrap;
                         }
                         Text {
+                            text: root.code-map-automatic-context;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.text-secondary;
+                            wrap: word-wrap;
+                        }
+                        Text {
                             text: root.code-map-lifecycle-runtime;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-2xs;
@@ -5201,6 +5210,11 @@ export component SettingsView inherits Rectangle {
                             checked <=> root.code-map-lifecycle-config-enabled;
                             enabled: !root.code-map-lifecycle-config-running && !root.code-map-lifecycle-running;
                         }
+                        NeothLineEdit {
+                            text <=> root.code-map-auto-context-max-files;
+                            placeholder-text: "Automatic Chat/Channel context files (0 disables)";
+                            enabled: !root.code-map-lifecycle-config-running && !root.code-map-lifecycle-running;
+                        }
                         HorizontalLayout {
                             spacing: Theme.space-tight;
                             NeothLineEdit {
@@ -5226,6 +5240,7 @@ export component SettingsView inherits Rectangle {
                                         root.code-map-lifecycle-config-enabled,
                                         root.code-map-lifecycle-debounce-millis,
                                         root.code-map-lifecycle-reconciliation-secs,
+                                        root.code-map-auto-context-max-files,
                                     );
                                 }
                             }

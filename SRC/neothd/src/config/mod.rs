@@ -1141,8 +1141,8 @@ pub use memory::{MemoryConfig, VectorBackend, VectorIndexConfig};
 pub use ops::{
     AutoUpdateConfig, CodeMapConfig, CodeMapImpactPolicy, CodeMapLifecycleConfig, CodingConfig,
     CommunicationProfileConfig, CommunicationPromptExport, DoctorConfig, PluginsConfig,
-    ProfileConfig, RefusalRecoveryConfig, ReleaseChannel, SupervisorConfig, SupervisorKind,
-    TaskEngineConfig, UpdaterConfig, WasmPluginsConfig,
+    ProfileConfig, RefusalRecoveryConfig, ReleaseChannel, RequestedContextPolicy, SupervisorConfig,
+    SupervisorKind, TaskEngineConfig, UpdaterConfig, WasmPluginsConfig,
 };
 pub use policy::{
     CompactionConfig, CompressionConfig, DangerousPolicy, EgressMode, EgressPolicy, FeedEntry,
@@ -2973,6 +2973,7 @@ mod code_map_config_tests {
         assert_eq!(config.code_map.coding_recall_max_files, 8);
         assert_eq!(config.code_map.coding_callers_per_symbol, 3);
         assert_eq!(config.code_map.coding_summary_token_budget, 2_048);
+        assert_eq!(config.code_map.requested_context_max_bfs_depth, 20);
         config
             .code_map
             .validate()
@@ -2989,6 +2990,8 @@ mod code_map_config_tests {
             "code_map:\n  coding_recall_max_files: 51\n",
             "code_map:\n  coding_callers_per_symbol: 21\n",
             "code_map:\n  coding_summary_token_budget: 12001\n",
+            "code_map:\n  requested_context_max_bfs_depth: 0\n",
+            "code_map:\n  requested_context_max_bfs_depth: 21\n",
             "code_map:\n  impact_policy:\n    max_depth: 33\n",
             "code_map:\n  impact_policy:\n    max_nodes: 10001\n",
             "code_map:\n  impact_policy:\n    allow_stale: true\n",
@@ -3003,7 +3006,7 @@ mod code_map_config_tests {
     #[test]
     fn code_map_accepts_valid_bounds_and_programmatic_validation() {
         let config: FreedomConfig = serde_yaml::from_str(
-            "code_map:\n  auto_context_max_files: 200\n  coding_recall_max_files: 50\n  coding_callers_per_symbol: 0\n  coding_summary_token_budget: 128\n",
+            "code_map:\n  auto_context_max_files: 200\n  coding_recall_max_files: 50\n  coding_callers_per_symbol: 0\n  coding_summary_token_budget: 128\n  requested_context_max_bfs_depth: 20\n",
         )
         .expect("inclusive code_map bounds must deserialize");
         config
@@ -3018,6 +3021,7 @@ mod code_map_config_tests {
             coding_recall_max_files: 50,
             coding_callers_per_symbol: 20,
             coding_summary_token_budget: 12_000,
+            requested_context_max_bfs_depth: 20,
             lifecycle: CodeMapLifecycleConfig::default(),
         };
         maximum
@@ -3031,6 +3035,15 @@ mod code_map_config_tests {
         assert!(
             invalid.validate().is_err(),
             "programmatic callers must not bypass code_map validation"
+        );
+
+        let policy = maximum
+            .requested_context_policy()
+            .expect("validated requested policy");
+        assert_eq!(policy.callers_per_symbol, 20);
+        assert_eq!(
+            policy.max_bfs_depth, 20,
+            "caller row count is not BFS depth"
         );
     }
 

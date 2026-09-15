@@ -158,7 +158,30 @@ pub(crate) fn check_code_map_lifecycle(home: &Path) -> CheckOutcome {
         // back to the exact configured string so its repair instruction still
         // tells the operator what needs correction.
         let inspected_root = status.root.as_deref().map(Path::new).unwrap_or(root);
-        let (severity, detail) = code_map_lifecycle_detail(inspected_root, &status.state);
+        let (severity, mut detail) = code_map_lifecycle_detail(inspected_root, &status.state);
+        let automatic =
+            crate::code_map::inspect_automatic_context_readiness(&config, &database_path, root);
+        let automatic_detail = if matches!(
+            &automatic,
+            crate::code_map::AutomaticContextReadiness::Disabled
+        ) {
+            "automatic Chat/Channel context disabled".to_owned()
+        } else if let crate::code_map::AutomaticContextReadiness::Eligible { max_files, .. } =
+            &automatic
+        {
+            format!("automatic Chat/Channel context eligible (max_files={max_files})")
+        } else if let crate::code_map::AutomaticContextReadiness::Unavailable { reason } =
+            &automatic
+        {
+            format!(
+                "automatic Chat/Channel context unavailable ({})",
+                reason.code()
+            )
+        } else {
+            unreachable!("automatic context readiness has three states")
+        };
+        detail.push_str("; ");
+        detail.push_str(&automatic_detail);
         aggregate = more_severe(aggregate, severity);
         details.push(detail);
     }
@@ -1865,6 +1888,191 @@ mod omi_tests {
     }
 
     #[test]
+    fn lifecycle_doctor_reports_enabled_automatic_context_missing_store_without_mutation() {
+        let home = tempfile::tempdir().unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        std::fs::write(repository.path().join("lib.rs"), "pub fn fixture() {}\n").unwrap();
+        let mut config = crate::config::FreedomConfig::default();
+        config.code_map.lifecycle.enabled = true;
+        config.code_map.lifecycle.managed_roots = vec![repository.path().to_path_buf()];
+        config.code_map.auto_context_max_files = 3;
+        let database = home.path().join("code_map.db");
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&config).unwrap(),
+        )
+        .unwrap();
+
+        let outcome = check_code_map_lifecycle(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(
+            outcome
+                .detail
+                .contains("automatic Chat/Channel context unavailable (missing_store)"),
+            "{outcome:?}"
+        );
+        assert!(
+            !database.exists(),
+            "Doctor status must not create the missing store"
+        );
+    }
+
+    #[test]
+    fn lifecycle_doctor_reports_automatic_context_disabled_eligible_stale_and_unmapped() {
+        let disabled_home = tempfile::tempdir().unwrap();
+        let disabled_repository = tempfile::tempdir().unwrap();
+        std::fs::write(
+            disabled_repository.path().join("lib.rs"),
+            "pub fn disabled() {}\n",
+        )
+        .unwrap();
+        write_enabled_code_map_lifecycle(disabled_home.path(), disabled_repository.path());
+        let disabled = check_code_map_lifecycle(disabled_home.path());
+        assert_eq!(disabled.status, CheckStatus::Warn, "{disabled:?}");
+        assert!(
+            disabled
+                .detail
+                .contains("automatic Chat/Channel context disabled"),
+            "{disabled:?}"
+        );
+        assert!(
+            !disabled_home.path().join("code_map.db").exists(),
+            "Doctor must not open a disabled automatic-context store"
+        );
+
+        let eligible_home = tempfile::tempdir().unwrap();
+        let eligible_repository = tempfile::tempdir().unwrap();
+        std::fs::write(
+            eligible_repository.path().join("lib.rs"),
+            "pub fn eligible() {}\n",
+        )
+        .unwrap();
+        let mut eligible_config = crate::config::FreedomConfig::default();
+        eligible_config.code_map.lifecycle.enabled = true;
+        eligible_config.code_map.lifecycle.managed_roots =
+            vec![eligible_repository.path().to_path_buf()];
+        eligible_config.code_map.auto_context_max_files = 3;
+        std::fs::write(
+            eligible_home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&eligible_config).unwrap(),
+        )
+        .unwrap();
+        let eligible_database = eligible_home.path().join("code_map.db");
+        let eligible_root =
+            crate::code_map::CanonicalRepoRoot::discover(eligible_repository.path()).unwrap();
+        crate::code_map::rebuild_snapshot(
+            &eligible_root,
+            &eligible_database,
+            crate::code_map::RebuildOptions::default(),
+        )
+        .unwrap();
+        let eligible_before = std::fs::read(&eligible_database).unwrap();
+        let eligible = check_code_map_lifecycle(eligible_home.path());
+        assert_eq!(eligible.status, CheckStatus::Pass, "{eligible:?}");
+        assert!(
+            eligible
+                .detail
+                .contains("automatic Chat/Channel context eligible (max_files=3)"),
+            "{eligible:?}"
+        );
+        assert_eq!(
+            std::fs::read(&eligible_database).unwrap(),
+            eligible_before,
+            "Doctor must not mutate an eligible store"
+        );
+        assert_valid_read_only_wal_artifacts(eligible_home.path());
+
+        let stale_home = tempfile::tempdir().unwrap();
+        let stale_repository = tempfile::tempdir().unwrap();
+        let stale_source = stale_repository.path().join("lib.rs");
+        std::fs::write(&stale_source, "pub fn stale() {}\n").unwrap();
+        let mut stale_config = eligible_config.clone();
+        stale_config.code_map.lifecycle.managed_roots = vec![stale_repository.path().to_path_buf()];
+        std::fs::write(
+            stale_home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&stale_config).unwrap(),
+        )
+        .unwrap();
+        let stale_database = stale_home.path().join("code_map.db");
+        let stale_root =
+            crate::code_map::CanonicalRepoRoot::discover(stale_repository.path()).unwrap();
+        crate::code_map::rebuild_snapshot(
+            &stale_root,
+            &stale_database,
+            crate::code_map::RebuildOptions::default(),
+        )
+        .unwrap();
+        std::fs::write(&stale_source, "pub fn stale() { changed(); }\n").unwrap();
+        let stale_before = std::fs::read(&stale_database).unwrap();
+        let stale = check_code_map_lifecycle(stale_home.path());
+        assert_eq!(stale.status, CheckStatus::Warn, "{stale:?}");
+        assert!(
+            stale
+                .detail
+                .contains("automatic Chat/Channel context unavailable (stale_snapshot)"),
+            "{stale:?}"
+        );
+        assert!(stale.detail.contains("neoth code-map refresh"), "{stale:?}");
+        assert_eq!(
+            std::fs::read(&stale_database).unwrap(),
+            stale_before,
+            "Doctor must not refresh a stale store"
+        );
+        assert_valid_read_only_wal_artifacts(stale_home.path());
+
+        let unmapped_home = tempfile::tempdir().unwrap();
+        let mapped_repository = tempfile::tempdir().unwrap();
+        let unmapped_repository = tempfile::tempdir().unwrap();
+        std::fs::write(
+            mapped_repository.path().join("lib.rs"),
+            "pub fn mapped() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            unmapped_repository.path().join("lib.rs"),
+            "pub fn unmapped() {}\n",
+        )
+        .unwrap();
+        let mut unmapped_config = eligible_config;
+        unmapped_config.code_map.lifecycle.managed_roots =
+            vec![unmapped_repository.path().to_path_buf()];
+        std::fs::write(
+            unmapped_home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&unmapped_config).unwrap(),
+        )
+        .unwrap();
+        let unmapped_database = unmapped_home.path().join("code_map.db");
+        let mapped_root =
+            crate::code_map::CanonicalRepoRoot::discover(mapped_repository.path()).unwrap();
+        crate::code_map::rebuild_snapshot(
+            &mapped_root,
+            &unmapped_database,
+            crate::code_map::RebuildOptions::default(),
+        )
+        .unwrap();
+        let unmapped_before = std::fs::read(&unmapped_database).unwrap();
+        let unmapped = check_code_map_lifecycle(unmapped_home.path());
+        assert_eq!(unmapped.status, CheckStatus::Warn, "{unmapped:?}");
+        assert!(
+            unmapped
+                .detail
+                .contains("automatic Chat/Channel context unavailable (unmapped_root)"),
+            "{unmapped:?}"
+        );
+        assert!(
+            unmapped.detail.contains("neoth code-map refresh"),
+            "{unmapped:?}"
+        );
+        assert_eq!(
+            std::fs::read(&unmapped_database).unwrap(),
+            unmapped_before,
+            "Doctor must not map or refresh an unmapped root"
+        );
+        assert_valid_read_only_wal_artifacts(unmapped_home.path());
+    }
+
+    #[test]
     fn code_map_lifecycle_corrupt_store_fails_without_repairing_it() {
         let home = tempfile::tempdir().unwrap();
         let repository = tempfile::tempdir().unwrap();
@@ -1882,6 +2090,25 @@ mod omi_tests {
 
         assert_eq!(outcome.status, CheckStatus::Fail);
         assert!(outcome.detail.contains("--repair-corrupt"), "{outcome:?}");
+        assert!(
+            outcome
+                .detail
+                .contains("automatic Chat/Channel context disabled"),
+            "{outcome:?}"
+        );
+        let config_path = home.path().join("freedom.yaml");
+        let mut config = crate::config::FreedomConfig::load_from_path(&config_path).unwrap();
+        config.code_map.auto_context_max_files = 3;
+        std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        let outcome = check_code_map_lifecycle(home.path());
+        assert_eq!(outcome.status, CheckStatus::Fail);
+        assert!(outcome.detail.contains("--repair-corrupt"), "{outcome:?}");
+        assert!(
+            outcome
+                .detail
+                .contains("automatic Chat/Channel context unavailable (unreadable_store)"),
+            "{outcome:?}"
+        );
         assert_eq!(
             std::fs::read(&store).unwrap(),
             original,

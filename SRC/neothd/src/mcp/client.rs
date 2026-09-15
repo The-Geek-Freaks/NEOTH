@@ -463,15 +463,55 @@ impl McpClient {
         // auditable startup record before serving the real stdio protocol.
         #[cfg(test)]
         if let Some(record) = std::env::var_os("NEOTH_W56_CHILD_RECORD") {
-            let Some(database) = config.args.get(3).filter(|_| {
-                matches!(config.args.as_slice(), [mcp, serve, flag, _, depth, _, nodes, _, stale, _]
-                    if mcp == "mcp" && serve == "codegraph-serve" && flag == "--db"
-                        && depth == "--impact-max-depth" && nodes == "--impact-max-nodes"
-                        && stale == "--impact-allow-stale")
-            }) else {
+            let marker_descriptor_is_exact = match config.args.as_slice() {
+                [mcp, serve, flag, _, depth, _, nodes, _, stale, _]
+                    if mcp == "mcp"
+                        && serve == "codegraph-serve"
+                        && flag == "--db"
+                        && depth == "--impact-max-depth"
+                        && nodes == "--impact-max-nodes"
+                        && stale == "--impact-allow-stale" =>
+                {
+                    true
+                }
+                [
+                    mcp,
+                    serve,
+                    flag,
+                    _,
+                    depth,
+                    _,
+                    nodes,
+                    _,
+                    stale,
+                    _,
+                    recall,
+                    _,
+                    callers,
+                    _,
+                    tokens,
+                    _,
+                    bfs,
+                    _,
+                ] if mcp == "mcp"
+                    && serve == "codegraph-serve"
+                    && flag == "--db"
+                    && depth == "--impact-max-depth"
+                    && nodes == "--impact-max-nodes"
+                    && stale == "--impact-allow-stale"
+                    && recall == "--requested-recall-max-files"
+                    && callers == "--requested-callers-per-symbol"
+                    && tokens == "--requested-summary-token-budget"
+                    && bfs == "--requested-max-bfs-depth" =>
+                {
+                    true
+                }
+                _ => false,
+            };
+            let Some(database) = config.args.get(3).filter(|_| marker_descriptor_is_exact) else {
                 return Err(McpError::Spawn(
                     config.id.clone(),
-                    "W56 marker child requires a derived exact codegraph descriptor".into(),
+                    "W56/W59 marker child requires an exact derived codegraph descriptor".into(),
                 ));
             };
             let executable = std::env::current_exe()

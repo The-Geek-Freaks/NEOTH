@@ -330,16 +330,22 @@ jobs:
             exit 1
           fi
 
-      - name: Cache Cargo registry + target
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      # Completed and interrupted targets need disjoint immutable keys.
+      - name: Restore Cargo registry + target
+        id: cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: ${{ runner.os }}-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          key: ${{ runner.os }}-1.91-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
+          # Prefer a compatible interrupted target, then retain the existing
+          # exact and broad combined-cache archives during the migration.
           restore-keys: |
+            ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
             ${{ runner.os }}-1.91-cargo-
 
       - name: Install cargo-nextest
@@ -351,12 +357,36 @@ jobs:
       # target directory.  The following run retains Cargo's normal freshness
       # check but has no substantive compilation when this phase succeeds.
       - name: Compile nextest workspace test binaries
+        id: compile-tests
         timeout-minutes: ${{ matrix.test_build_timeout_minutes }}
         shell: bash
         working-directory: SRC
         run: |
           rm -f target/nextest/ci/junit.xml
           cargo nextest run --workspace --locked --profile ci --no-run
+
+      - name: Save completed Cargo registry + target
+        if: ${{ !cancelled() && steps.compile-tests.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+      - name: Save interrupted Cargo registry + target
+        # An interrupted compile must never occupy the immutable complete key.
+        if: ${{ !cancelled() && failure() && steps.compile-tests.outcome == 'failure' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-1.91-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Run nextest workspace tests
         timeout-minutes: ${{ matrix.test_execution_timeout_minutes }}

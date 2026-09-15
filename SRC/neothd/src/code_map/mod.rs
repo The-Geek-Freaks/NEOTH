@@ -88,7 +88,9 @@ pub use recall::{
 };
 #[allow(unused_imports)]
 pub use recall_wire::{
-    RECALL_WIRE_SCHEMA, RecallWireEnvelope, RecallWireHit, RecallWireReceipt, RecallWireStatus,
+    AutomaticContextReadiness, RECALL_WIRE_SCHEMA, RecallWireEnvelope, RecallWireHit,
+    RecallWireReceipt, RecallWireStatus, RepositoryContextUnavailable,
+    inspect_automatic_context_readiness,
 };
 #[allow(unused_imports)]
 pub use repo_map::{DEFAULT_TOKEN_BUDGET, RepoMapSummary, build_summary};

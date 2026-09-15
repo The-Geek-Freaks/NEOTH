@@ -235,6 +235,23 @@ Doctor's optional outline check observes that exact generated descriptor and
 bounded physical-root readiness without launching a child or enriching a request.
 Disabled inspection performs no registry or SQLite work.
 
+Automatic-context readiness is one shared, bounded presentation state. CLI,
+Doctor, Coding, Main and Buddy use the same selected-root lifecycle result;
+disabled automatic-context inspection remains zero-I/O. Status does not create,
+refresh or repair an index. The CLI also exposes explicit lifecycle repair argv
+bound to the selected root, independently of whether automatic context is enabled.
+The GUI callback consumes the same readiness state. Its generated-window fixture
+targets that route without claiming visual or accessibility acceptance.
+
+Requested coding context uses one validated immutable policy captured before
+Chat, Coding, MCP or the loop engine dispatches a request. It bounds recall files,
+callers per symbol, summary tokens and BFS depth (default maximum depth 20).
+A derived child receives the accepted impact and requested-policy trailers;
+later configuration changes govern a new request, while an in-flight child keeps
+its snapshot. The four requested-context tools retain their public success
+schemas and original request JSON. CLI inspection identifies its locally validated
+configuration and does not label it as a daemon snapshot.
+
 ## WAL source of truth
 
 The WAL is the durable event chain under NEOTH. Views can be rebuilt; the WAL is authoritative.

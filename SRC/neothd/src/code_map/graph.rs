@@ -608,6 +608,59 @@ impl CallGraph {
         out
     }
 
+    /// Bounded inverse BFS for request-scoped rendering. Unlike
+    /// [`Self::callers_of`], this refuses before retaining an over-budget row,
+    /// so a caller cannot turn a small rendered-context ceiling into an
+    /// unbounded intermediate result.
+    pub fn callers_of_bounded(
+        &self,
+        target: &str,
+        max_depth: usize,
+        max_entries: usize,
+        max_text_bytes: usize,
+    ) -> Result<Vec<CallerEntry>> {
+        if max_depth == 0 {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        let mut text_bytes = 0usize;
+        let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+        let mut q: VecDeque<(String, usize)> = VecDeque::new();
+        q.push_back((target.to_string(), 0));
+        seen.insert((String::new(), target.to_string()));
+        while let Some((current_name, depth)) = q.pop_front() {
+            if depth >= max_depth {
+                continue;
+            }
+            let Some(edge_idxs) = self.by_callee.get(&current_name) else {
+                continue;
+            };
+            for &i in edge_idxs {
+                let edge = &self.edges[i];
+                let key = (edge.from_file.clone(), edge.from_symbol.clone());
+                if seen.insert(key) {
+                    let next_text = text_bytes
+                        .checked_add(edge.from_file.len())
+                        .and_then(|total| total.checked_add(edge.from_symbol.len()))
+                        .ok_or_else(|| anyhow::anyhow!("bounded callers text counter overflow"))?;
+                    if out.len() >= max_entries || next_text > max_text_bytes {
+                        bail!(
+                            "bounded callers traversal refused before retaining an over-budget result row"
+                        );
+                    }
+                    text_bytes = next_text;
+                    out.push(CallerEntry {
+                        file_path: edge.from_file.clone(),
+                        symbol: edge.from_symbol.clone(),
+                        depth: depth + 1,
+                    });
+                    q.push_back((edge.from_symbol.clone(), depth + 1));
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Detect cycles in the call graph using bounded iterative DFS with
     /// grey/black node colouring. Returns up to `limit` distinct cycles,
     /// each represented as an ordered list of symbol names.
@@ -833,6 +886,58 @@ impl CallGraph {
             }
         }
         out
+    }
+
+    /// Bounded forward BFS counterpart to [`Self::callees_of`].
+    pub fn callees_of_bounded(
+        &self,
+        file_path: &str,
+        source: &str,
+        max_depth: usize,
+        max_entries: usize,
+        max_text_bytes: usize,
+    ) -> Result<Vec<CalleeEntry>> {
+        if max_depth == 0 {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        let mut text_bytes = 0usize;
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut q: VecDeque<(String, String, usize)> = VecDeque::new();
+        seen.insert(source.to_string());
+        q.push_back((file_path.to_string(), source.to_string(), 0));
+        while let Some((cur_file, cur_sym, depth)) = q.pop_front() {
+            if depth >= max_depth {
+                continue;
+            }
+            let Some(edge_idxs) = self.by_source.get(&(cur_file.clone(), cur_sym.clone())) else {
+                continue;
+            };
+            for &i in edge_idxs {
+                let edge = &self.edges[i];
+                if seen.insert(edge.to_name.clone()) {
+                    let next_text = text_bytes
+                        .checked_add(edge.to_name.len())
+                        .ok_or_else(|| anyhow::anyhow!("bounded callees text counter overflow"))?;
+                    if out.len() >= max_entries || next_text > max_text_bytes {
+                        bail!(
+                            "bounded callees traversal refused before retaining an over-budget result row"
+                        );
+                    }
+                    text_bytes = next_text;
+                    out.push(CalleeEntry {
+                        name: edge.to_name.clone(),
+                        depth: depth + 1,
+                    });
+                    if let Some(defs) = self.defs_by_name.get(&edge.to_name) {
+                        for def in defs {
+                            q.push_back((def.file_path.clone(), edge.to_name.clone(), depth + 1));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 }
 

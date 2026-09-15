@@ -401,6 +401,75 @@ pub(crate) struct CodegraphImpactRuntime {
     max_nodes: usize,
     reject_stale: bool,
 }
+
+/// Runtime-only descriptor data for explicit requested context. `None` is the
+/// generic stdio server's legacy static mode; only the exact generated child
+/// receives `Some` from an accepted config snapshot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RequestedContextRuntime(Option<crate::config::RequestedContextPolicy>);
+
+impl RequestedContextRuntime {
+    pub(crate) fn static_defaults() -> Self {
+        Self(None)
+    }
+    pub(crate) fn from_policy(policy: crate::config::RequestedContextPolicy) -> Self {
+        Self(Some(policy))
+    }
+
+    fn recall_limit(self, requested: u32) -> Result<usize> {
+        if let Some(policy) = self.0 {
+            anyhow::ensure!(
+                requested <= 50,
+                "limit {requested} exceeds codegraph hard ceiling 50"
+            );
+            anyhow::ensure!(
+                requested <= policy.recall_max_files,
+                "limit {requested} exceeds accepted requested-context recall ceiling {}",
+                policy.recall_max_files
+            );
+            return Ok(requested.max(1) as usize);
+        }
+        Ok(requested.clamp(1, 50) as usize)
+    }
+
+    fn bfs_depth(self, requested: u32) -> Result<usize> {
+        if let Some(policy) = self.0 {
+            anyhow::ensure!(
+                requested <= 20,
+                "depth {requested} exceeds codegraph hard ceiling 20"
+            );
+            anyhow::ensure!(
+                requested <= u32::from(policy.max_bfs_depth),
+                "depth {requested} exceeds accepted requested-context BFS ceiling {}",
+                policy.max_bfs_depth
+            );
+            return Ok(requested.max(1) as usize);
+        }
+        Ok(requested.clamp(1, 20) as usize)
+    }
+
+    fn bound_result(self, result: ToolCallResult) -> ToolCallResult {
+        let Some(policy) = self.0 else {
+            return result;
+        };
+        let bytes: usize = result
+            .content
+            .iter()
+            .map(|content| match content {
+                McpContent::Text { text } => text.len(),
+                _ => 0,
+            })
+            .sum();
+        if !result.is_error && bytes > policy.max_rendered_bytes() {
+            return error_result(format!(
+                "requested-context result is {} bytes, exceeding accepted rendered ceiling {} bytes",
+                bytes,
+                policy.max_rendered_bytes()
+            ));
+        }
+        result
+    }
+}
 impl CodegraphImpactRuntime {
     pub(crate) fn static_defaults() -> Self {
         Self {
@@ -461,6 +530,42 @@ pub(crate) fn startup_impact_runtime(
         ),
     }
 }
+
+pub(crate) fn startup_requested_context_runtime(
+    recall_max_files: Option<u32>,
+    callers_per_symbol: Option<u32>,
+    summary_token_budget: Option<u32>,
+    max_bfs_depth: Option<u8>,
+) -> Result<RequestedContextRuntime> {
+    match (
+        recall_max_files,
+        callers_per_symbol,
+        summary_token_budget,
+        max_bfs_depth,
+    ) {
+        (None, None, None, None) => Ok(RequestedContextRuntime::static_defaults()),
+        (
+            Some(recall_max_files),
+            Some(callers_per_symbol),
+            Some(summary_token_budget),
+            Some(max_bfs_depth),
+        ) => {
+            let config = crate::config::CodeMapConfig {
+                coding_recall_max_files: recall_max_files,
+                coding_callers_per_symbol: callers_per_symbol,
+                coding_summary_token_budget: summary_token_budget,
+                requested_context_max_bfs_depth: max_bfs_depth,
+                ..Default::default()
+            };
+            Ok(RequestedContextRuntime::from_policy(
+                config.requested_context_policy()?,
+            ))
+        }
+        _ => anyhow::bail!(
+            "codegraph requested-context startup policy requires --requested-recall-max-files, --requested-callers-per-symbol, --requested-summary-token-budget, and --requested-max-bfs-depth together"
+        ),
+    }
+}
 pub(crate) fn effective_builtin_codegraph_server(
     base: &McpServerConfig,
     policy: crate::config::CodeMapImpactPolicy,
@@ -477,6 +582,32 @@ pub(crate) fn effective_builtin_codegraph_server(
         policy.max_nodes.to_string(),
         "--impact-allow-stale".into(),
         "false".into(),
+    ]);
+    Ok(effective)
+}
+
+/// Compose W56 and W59 trailers only for the exact generated descriptor.
+/// The original tool JSON and authorization binding remain untouched; the
+/// immutable values become child startup arguments after PreToolUse admits the
+/// call.
+pub(crate) fn effective_builtin_codegraph_server_with_requested_policy(
+    base: &McpServerConfig,
+    impact_policy: crate::config::CodeMapImpactPolicy,
+    requested_policy: crate::config::RequestedContextPolicy,
+) -> Result<McpServerConfig> {
+    let mut effective = effective_builtin_codegraph_server(base, impact_policy)?;
+    if !is_exact_generated_codegraph_base(base) {
+        return Ok(effective);
+    }
+    effective.args.extend([
+        "--requested-recall-max-files".into(),
+        requested_policy.recall_max_files.to_string(),
+        "--requested-callers-per-symbol".into(),
+        requested_policy.callers_per_symbol.to_string(),
+        "--requested-summary-token-budget".into(),
+        requested_policy.summary_token_budget.to_string(),
+        "--requested-max-bfs-depth".into(),
+        requested_policy.max_bfs_depth.to_string(),
     ]);
     Ok(effective)
 }
@@ -587,12 +718,29 @@ fn dispatch_codegraph_tool_at_with_runtime(
     cwd: &Path,
     runtime: CodegraphImpactRuntime,
 ) -> ToolCallResult {
+    dispatch_codegraph_tool_at_with_runtimes(
+        db_path,
+        tool_name,
+        args,
+        cwd,
+        runtime,
+        RequestedContextRuntime::static_defaults(),
+    )
+}
+fn dispatch_codegraph_tool_at_with_runtimes(
+    db_path: &Path,
+    tool_name: &str,
+    args: &serde_json::Value,
+    cwd: &Path,
+    runtime: CodegraphImpactRuntime,
+    requested_runtime: RequestedContextRuntime,
+) -> ToolCallResult {
     // The server runs as a stdio child and inherits the client's working
     // directory; that directory is what decides WHICH indexed repository may
     // answer. Resolved once here and threaded down, so every tool on this
     // surface applies the same containment and tests can state the location
     // explicitly instead of depending on the test runner's cwd.
-    dispatch_codegraph_tool_at_runtime(db_path, tool_name, args, cwd, runtime)
+    dispatch_codegraph_tool_at_runtime(db_path, tool_name, args, cwd, runtime, requested_runtime)
 }
 
 #[cfg(test)]
@@ -608,6 +756,7 @@ pub(crate) fn dispatch_codegraph_tool_at(
         args,
         cwd,
         CodegraphImpactRuntime::static_defaults(),
+        RequestedContextRuntime::static_defaults(),
     )
 }
 
@@ -617,14 +766,17 @@ fn dispatch_codegraph_tool_at_runtime(
     args: &serde_json::Value,
     cwd: &Path,
     runtime: CodegraphImpactRuntime,
+    requested_runtime: RequestedContextRuntime,
 ) -> ToolCallResult {
-    match tool_name {
+    let result = match tool_name {
         "codegraph_extract_identifiers" => tool_extract_identifiers(args),
         "codegraph_path_keywords" => tool_path_keywords(args),
-        "codegraph_relevant_files" => tool_relevant_files(db_path, args, cwd, false),
-        "codegraph_recall_v1" => tool_relevant_files(db_path, args, cwd, true),
-        "codegraph_callers" => tool_callers(db_path, args, cwd),
-        "codegraph_callees" => tool_callees(db_path, args, cwd),
+        "codegraph_relevant_files" => {
+            tool_relevant_files(db_path, args, cwd, false, requested_runtime)
+        }
+        "codegraph_recall_v1" => tool_relevant_files(db_path, args, cwd, true, requested_runtime),
+        "codegraph_callers" => tool_callers(db_path, args, cwd, requested_runtime),
+        "codegraph_callees" => tool_callees(db_path, args, cwd, requested_runtime),
         "codegraph_impact_radius" => tool_impact_radius(db_path, args, cwd, runtime),
         "codegraph_diff_impact" => tool_diff_impact(db_path, args, cwd, runtime),
         "codegraph_diff_test_gaps" => tool_diff_test_gaps(db_path, args, cwd, runtime),
@@ -633,6 +785,13 @@ fn dispatch_codegraph_tool_at_runtime(
             "unknown codegraph tool `{other}` (known: {})",
             TOOL_NAMES.join(", "),
         )),
+    };
+    match tool_name {
+        "codegraph_relevant_files"
+        | "codegraph_recall_v1"
+        | "codegraph_callers"
+        | "codegraph_callees" => requested_runtime.bound_result(result),
+        _ => result,
     }
 }
 
@@ -681,12 +840,20 @@ fn tool_relevant_files(
     args: &serde_json::Value,
     cwd: &Path,
     versioned: bool,
+    runtime: RequestedContextRuntime,
 ) -> ToolCallResult {
     let parsed: RelevantFilesArgs = match serde_json::from_value(args.clone()) {
         Ok(p) => p,
         Err(e) => return error_result(format!("bad args: {e}")),
     };
-    let limit = parsed.limit.clamp(1, 50) as usize;
+    let limit = match runtime.recall_limit(parsed.limit) {
+        Ok(limit) => limit,
+        Err(error) => {
+            return error_result(format!(
+                "codegraph recall rejected before DB access: {error:#}"
+            ));
+        }
+    };
     match recall_v1_inner(db_path, &parsed.prompt, limit, cwd) {
         Ok(envelope) => {
             let payload: Result<String> = if versioned {
@@ -1245,35 +1412,161 @@ fn graph_from_db_with_limits(
     Ok(crate::code_map::graph::CallGraph::from_edges(edges))
 }
 
-fn tool_callers(db_path: &Path, args: &serde_json::Value, cwd: &Path) -> ToolCallResult {
+fn tool_callers(
+    db_path: &Path,
+    args: &serde_json::Value,
+    cwd: &Path,
+    runtime: RequestedContextRuntime,
+) -> ToolCallResult {
     let parsed: CallersArgs = match serde_json::from_value(args.clone()) {
         Ok(p) => p,
         Err(e) => return error_result(format!("bad args: {e}")),
     };
-    let depth = parsed.depth.clamp(1, 20) as usize;
+    let depth = match runtime.bfs_depth(parsed.depth) {
+        Ok(depth) => depth,
+        Err(error) => {
+            return error_result(format!(
+                "codegraph callers rejected before DB access: {error:#}"
+            ));
+        }
+    };
     let graph = match graph_from_db(db_path, cwd) {
         Ok(g) => g,
         Err(e) => return error_result(format!("codegraph_callers failed: {e:#}")),
     };
-    text_result(callers_inner(&graph, &parsed.symbol, depth))
+    match callers_inner_with_requested_budget(&graph, &parsed.symbol, depth, runtime) {
+        Ok(payload) => text_result(payload),
+        Err(error) => error_result(format!("codegraph callers bounded result: {error:#}")),
+    }
 }
 
-fn tool_callees(db_path: &Path, args: &serde_json::Value, cwd: &Path) -> ToolCallResult {
+fn tool_callees(
+    db_path: &Path,
+    args: &serde_json::Value,
+    cwd: &Path,
+    runtime: RequestedContextRuntime,
+) -> ToolCallResult {
     let parsed: CalleesArgs = match serde_json::from_value(args.clone()) {
         Ok(p) => p,
         Err(e) => return error_result(format!("bad args: {e}")),
     };
-    let depth = parsed.depth.clamp(1, 20) as usize;
+    let depth = match runtime.bfs_depth(parsed.depth) {
+        Ok(depth) => depth,
+        Err(error) => {
+            return error_result(format!(
+                "codegraph callees rejected before DB access: {error:#}"
+            ));
+        }
+    };
     let graph = match graph_from_db(db_path, cwd) {
         Ok(g) => g,
         Err(e) => return error_result(format!("codegraph_callees failed: {e:#}")),
     };
-    text_result(callees_inner(&graph, &parsed.file, &parsed.symbol, depth))
+    match callees_inner_with_requested_budget(&graph, &parsed.file, &parsed.symbol, depth, runtime)
+    {
+        Ok(payload) => text_result(payload),
+        Err(error) => error_result(format!("codegraph callees bounded result: {error:#}")),
+    }
+}
+
+/// Serialize an existing public JSON-array shape without accepting a partial
+/// array. The item is encoded before it enters the final buffer, making the
+/// configured ceiling observable before the outer response serialization.
+fn bounded_json_array<I>(items: I, byte_ceiling: Option<usize>) -> Result<String>
+where
+    I: IntoIterator<Item = serde_json::Value>,
+{
+    let mut payload = String::from("[");
+    for (index, item) in items.into_iter().enumerate() {
+        let encoded = serde_json::to_string(&item)?;
+        let separator = usize::from(index != 0);
+        if let Some(limit) = byte_ceiling
+            && payload
+                .len()
+                .saturating_add(separator)
+                .saturating_add(encoded.len())
+                .saturating_add(1)
+                > limit
+        {
+            anyhow::bail!(
+                "result exceeds accepted rendered ceiling {limit} bytes before JSON-array materialization"
+            );
+        }
+        if index != 0 {
+            payload.push(',');
+        }
+        payload.push_str(&encoded);
+    }
+    payload.push(']');
+    Ok(payload)
+}
+
+fn callers_inner_with_requested_budget(
+    graph: &crate::code_map::graph::CallGraph,
+    symbol: &str,
+    depth: usize,
+    runtime: RequestedContextRuntime,
+) -> Result<String> {
+    let mut entries = match runtime.0 {
+        Some(policy) => graph.callers_of_bounded(
+            symbol,
+            depth,
+            policy.max_rendered_bytes(),
+            policy.max_rendered_bytes(),
+        )?,
+        None => graph.callers_of(symbol, depth),
+    };
+    entries.sort_by(|a, b| {
+        a.depth
+            .cmp(&b.depth)
+            .then(a.file_path.cmp(&b.file_path))
+            .then(a.symbol.cmp(&b.symbol))
+    });
+    bounded_json_array(
+        entries.iter().map(|entry| {
+            serde_json::json!({
+                "file_path": entry.file_path,
+                "symbol": entry.symbol,
+                "depth": entry.depth,
+            })
+        }),
+        runtime.0.map(|policy| policy.max_rendered_bytes()),
+    )
+}
+
+fn callees_inner_with_requested_budget(
+    graph: &crate::code_map::graph::CallGraph,
+    file: &str,
+    symbol: &str,
+    depth: usize,
+    runtime: RequestedContextRuntime,
+) -> Result<String> {
+    let mut entries = match runtime.0 {
+        Some(policy) => graph.callees_of_bounded(
+            file,
+            symbol,
+            depth,
+            policy.max_rendered_bytes(),
+            policy.max_rendered_bytes(),
+        )?,
+        None => graph.callees_of(file, symbol, depth),
+    };
+    entries.sort_by(|a, b| a.depth.cmp(&b.depth).then(a.name.cmp(&b.name)));
+    bounded_json_array(
+        entries.iter().map(|entry| {
+            serde_json::json!({
+                "name": entry.name,
+                "depth": entry.depth,
+            })
+        }),
+        runtime.0.map(|policy| policy.max_rendered_bytes()),
+    )
 }
 
 /// Build a [`CallGraph`] from `files` and call [`CallGraph::callers_of`].
 /// Extracted so tests can drive the BFS without going through the
 /// `dispatch_codegraph_tool` HTTP surface.
+#[cfg(test)]
 pub(crate) fn callers_inner(
     graph: &crate::code_map::graph::CallGraph,
     symbol: &str,
@@ -1300,6 +1593,7 @@ pub(crate) fn callers_inner(
 }
 
 /// Same as [`callers_inner`] for the forward direction.
+#[cfg(test)]
 pub(crate) fn callees_inner(
     graph: &crate::code_map::graph::CallGraph,
     file: &str,
@@ -1997,6 +2291,13 @@ pub(crate) async fn serve_stdio_with_runtime(
     db_path: PathBuf,
     runtime: CodegraphImpactRuntime,
 ) -> Result<()> {
+    serve_stdio_with_runtimes(db_path, runtime, RequestedContextRuntime::static_defaults()).await
+}
+pub(crate) async fn serve_stdio_with_runtimes(
+    db_path: PathBuf,
+    runtime: CodegraphImpactRuntime,
+    requested_runtime: RequestedContextRuntime,
+) -> Result<()> {
     let mut input = tokio::io::stdin();
     let mut output = tokio::io::stdout();
     let mut buffer = Vec::with_capacity(8 * 1024);
@@ -2008,9 +2309,13 @@ pub(crate) async fn serve_stdio_with_runtime(
             .map_err(|error| anyhow::anyhow!("invalid MCP stdio message: {error}"))?
         {
             buffer.drain(..consumed);
-            if let Some(response) =
-                handle_stdio_message_with_runtime(&db_path, &body, &mut session, runtime)
-            {
+            if let Some(response) = handle_stdio_message_with_runtimes(
+                &db_path,
+                &body,
+                &mut session,
+                runtime,
+                requested_runtime,
+            ) {
                 let message = encode_bounded_stdio_response(&response)?;
                 output
                     .write_all(&message)
@@ -2094,18 +2399,20 @@ fn handle_stdio_message(
     body: &[u8],
     session: &mut StdioSession,
 ) -> Option<serde_json::Value> {
-    handle_stdio_message_with_runtime(
+    handle_stdio_message_with_runtimes(
         db_path,
         body,
         session,
         CodegraphImpactRuntime::static_defaults(),
+        RequestedContextRuntime::static_defaults(),
     )
 }
-fn handle_stdio_message_with_runtime(
+fn handle_stdio_message_with_runtimes(
     db_path: &Path,
     body: &[u8],
     session: &mut StdioSession,
     runtime: CodegraphImpactRuntime,
+    requested_runtime: RequestedContextRuntime,
 ) -> Option<serde_json::Value> {
     let value: serde_json::Value = match serde_json::from_slice(body) {
         Ok(value) => value,
@@ -2212,7 +2519,11 @@ fn handle_stdio_message_with_runtime(
             }));
             Some(rpc_result(
                 id,
-                serde_json::to_value(dispatch_codegraph_tool_at_with_runtime(db_path, name, &arguments, &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")), runtime))
+                serde_json::to_value(dispatch_codegraph_tool_at_with_runtimes(
+                    db_path, name, &arguments,
+                    &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+                    runtime, requested_runtime,
+                ))
                     .unwrap_or_else(|error| {
                         serde_json::json!({
                             "content": [{"type": "text", "text": format!("result serialisation failed: {error}")}],
@@ -2263,37 +2574,93 @@ fn w53_serve_stdio_marker_child() {
     let Ok(raw_db) = std::env::var("NEOTH_W53_SERVE_STDIO_DB") else {
         return;
     };
+    if let Some(cwd) = std::env::var_os("NEOTH_W59_CHILD_CWD") {
+        std::env::set_current_dir(cwd)
+            .expect("W59 marker child receives an existing isolated active root");
+    }
     let db = std::path::PathBuf::from(raw_db);
-    let runtime = if let Ok(descriptor) = std::env::var("NEOTH_W56_DERIVED_DESCRIPTOR") {
-        let descriptor = serde_json::from_str::<serde_json::Value>(&descriptor)
-            .expect("W56 marker receives a serializable descriptor");
-        let args = descriptor["args"].as_array().expect("W56 descriptor args");
-        let depth = args[5]
-            .as_str()
-            .expect("W56 impact depth")
-            .parse()
-            .expect("numeric W56 impact depth");
-        let nodes = args[7]
-            .as_str()
-            .expect("W56 impact nodes")
-            .parse()
-            .expect("numeric W56 impact nodes");
-        let stale = args[9]
-            .as_str()
-            .expect("W56 impact stale")
-            .parse()
-            .expect("boolean W56 impact stale");
-        record_w56_child_event(serde_json::json!({
-            "event": "startup",
-            "descriptor": descriptor,
-            "request_binding": std::env::var("NEOTH_W56_REQUEST_BINDING")
-                .expect("W56 marker receives the bound request commitment"),
-        }));
-        startup_impact_runtime(Some(depth), Some(nodes), Some(stale))
-            .expect("W56 marker starts with the derived impact policy")
-    } else {
-        CodegraphImpactRuntime::static_defaults()
-    };
+    let (runtime, requested_runtime) =
+        if let Ok(descriptor) = std::env::var("NEOTH_W56_DERIVED_DESCRIPTOR") {
+            let descriptor = serde_json::from_str::<serde_json::Value>(&descriptor)
+                .expect("W56 marker receives a serializable descriptor");
+            let args = descriptor["args"].as_array().expect("W56 descriptor args");
+            let depth = args[5]
+                .as_str()
+                .expect("W56 impact depth")
+                .parse()
+                .expect("numeric W56 impact depth");
+            let nodes = args[7]
+                .as_str()
+                .expect("W56 impact nodes")
+                .parse()
+                .expect("numeric W56 impact nodes");
+            let stale = args[9]
+                .as_str()
+                .expect("W56 impact stale")
+                .parse()
+                .expect("boolean W56 impact stale");
+            record_w56_child_event(serde_json::json!({
+                "event": "startup",
+                "descriptor": descriptor,
+                "request_binding": std::env::var("NEOTH_W56_REQUEST_BINDING")
+                    .expect("W56 marker receives the bound request commitment"),
+            }));
+            let requested_runtime = match args.get(10..) {
+                None => RequestedContextRuntime::static_defaults(),
+                Some(trailer)
+                    if trailer.len() == 8
+                        && trailer[0].as_str() == Some("--requested-recall-max-files")
+                        && trailer[2].as_str() == Some("--requested-callers-per-symbol")
+                        && trailer[4].as_str() == Some("--requested-summary-token-budget")
+                        && trailer[6].as_str() == Some("--requested-max-bfs-depth") =>
+                {
+                    startup_requested_context_runtime(
+                        Some(
+                            trailer[1]
+                                .as_str()
+                                .expect("W59 recall value")
+                                .parse()
+                                .expect("numeric W59 recall"),
+                        ),
+                        Some(
+                            trailer[3]
+                                .as_str()
+                                .expect("W59 callers value")
+                                .parse()
+                                .expect("numeric W59 callers"),
+                        ),
+                        Some(
+                            trailer[5]
+                                .as_str()
+                                .expect("W59 token value")
+                                .parse()
+                                .expect("numeric W59 token budget"),
+                        ),
+                        Some(
+                            trailer[7]
+                                .as_str()
+                                .expect("W59 depth value")
+                                .parse()
+                                .expect("numeric W59 BFS depth"),
+                        ),
+                    )
+                    .expect("W59 marker starts with the complete canonical requested policy")
+                }
+                Some(_) => panic!(
+                    "W59 marker rejects partial, reordered, or duplicate requested-policy trailer"
+                ),
+            };
+            (
+                startup_impact_runtime(Some(depth), Some(nodes), Some(stale))
+                    .expect("W56 marker starts with the derived impact policy"),
+                requested_runtime,
+            )
+        } else {
+            (
+                CodegraphImpactRuntime::static_defaults(),
+                RequestedContextRuntime::static_defaults(),
+            )
+        };
     use std::io::Write as _;
     println!();
     println!("NEOTH_W53_STDIO_READY");
@@ -2302,7 +2669,7 @@ fn w53_serve_stdio_marker_child() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(serve_stdio_with_runtime(db, runtime))
+        .block_on(serve_stdio_with_runtimes(db, runtime, requested_runtime))
         .unwrap();
 }
 
@@ -2324,6 +2691,54 @@ fn record_w56_child_event(event: serde_json::Value) {
     file.write_all(b"\n")
         .expect("terminate W56 marker evidence");
     file.flush().expect("flush W56 marker evidence");
+}
+
+/// Seed one real persisted root for the W59 process-isolated dispatcher
+/// acceptance fixture. The unique suffix makes a cross-root response visible.
+#[cfg(test)]
+pub(crate) fn w59_seed_real_sqlite_root(db: &Path, root: &Path, suffix: &str) {
+    std::fs::create_dir_all(root).expect("create W59 fixture root");
+    let source = format!(
+        "fn leaf_{suffix}() {{}}\nfn middle_{suffix}() {{ leaf_{suffix}(); }}\nfn root_{suffix}() {{ middle_{suffix}(); }}\n"
+    );
+    std::fs::write(root.join("x.rs"), &source).expect("write W59 fixture source");
+    let map = crate::code_map::walker::RepoMapBuilder::new(root)
+        .with_symbols(true)
+        .scan()
+        .expect("scan W59 fixture root");
+    let symbols =
+        crate::code_map::symbols::extract_symbols(&source, crate::code_map::walker::Language::Rust);
+    let graph =
+        crate::code_map::graph::CallGraph::build(&[crate::code_map::graph::FileInput::c_family(
+            "x.rs", &source, symbols,
+        )]);
+    let mut conn = crate::code_map::persist::open(db).expect("open W59 fixture DB");
+    crate::code_map::persist::persist_map_and_edges(&mut conn, &map, graph.edges())
+        .expect("persist W59 fixture graph");
+}
+
+/// Persist a result deliberately larger than W59's accepted rendered ceiling.
+#[cfg(test)]
+pub(crate) fn w59_seed_oversized_callers_root(db: &Path, root: &Path) {
+    std::fs::create_dir_all(root).expect("create W59 oversized fixture root");
+    let mut source = String::from("fn leaf_big() {}\n");
+    for index in 0..48 {
+        source.push_str(&format!("fn caller_{index:02}() {{ leaf_big(); }}\n"));
+    }
+    std::fs::write(root.join("x.rs"), &source).expect("write W59 oversized fixture source");
+    let map = crate::code_map::walker::RepoMapBuilder::new(root)
+        .with_symbols(true)
+        .scan()
+        .expect("scan W59 oversized fixture root");
+    let symbols =
+        crate::code_map::symbols::extract_symbols(&source, crate::code_map::walker::Language::Rust);
+    let graph =
+        crate::code_map::graph::CallGraph::build(&[crate::code_map::graph::FileInput::c_family(
+            "x.rs", &source, symbols,
+        )]);
+    let mut conn = crate::code_map::persist::open(db).expect("open W59 oversized fixture DB");
+    crate::code_map::persist::persist_map_and_edges(&mut conn, &map, graph.edges())
+        .expect("persist W59 oversized fixture graph");
 }
 
 #[cfg(test)]
@@ -3530,6 +3945,217 @@ fn root() { alpha(); beta(); }
         assert!(bounded["id"].is_null());
         assert_eq!(bounded["error"]["code"], -32003);
         assert_eq!(bounded["error"]["data"]["limit_bytes"], 512);
+    }
+
+    fn w59_requested_policy() -> crate::config::RequestedContextPolicy {
+        crate::config::RequestedContextPolicy {
+            recall_max_files: 1,
+            callers_per_symbol: 0,
+            summary_token_budget: 128,
+            max_bfs_depth: 2,
+        }
+    }
+
+    #[test]
+    fn w59_requested_runtime_keeps_four_public_success_shapes_with_real_sqlite_graph() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("code_map.db");
+        let repo = dir.path().join("repo");
+        seed_code_map_db(&db, &repo);
+        let runtime = RequestedContextRuntime::from_policy(w59_requested_policy());
+
+        let recall = dispatch_codegraph_tool_at_runtime(
+            &db,
+            "codegraph_recall_v1",
+            &serde_json::json!({"prompt":"leaf","limit":1}),
+            &repo,
+            CodegraphImpactRuntime::static_defaults(),
+            runtime,
+        );
+        assert!(!recall.is_error, "{}", text_content(&recall));
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&text_content(&recall))
+                .unwrap()
+                .is_object()
+        );
+        let legacy = dispatch_codegraph_tool_at_runtime(
+            &db,
+            "codegraph_relevant_files",
+            &serde_json::json!({"prompt":"leaf","limit":1}),
+            &repo,
+            CodegraphImpactRuntime::static_defaults(),
+            runtime,
+        );
+        assert!(!legacy.is_error, "{}", text_content(&legacy));
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&text_content(&legacy))
+                .unwrap()
+                .is_array()
+        );
+        for (tool, arguments) in [
+            (
+                "codegraph_callers",
+                serde_json::json!({"symbol":"leaf","depth":2}),
+            ),
+            (
+                "codegraph_callees",
+                serde_json::json!({"file":"x.rs","symbol":"root","depth":2}),
+            ),
+        ] {
+            let result = dispatch_codegraph_tool_at_runtime(
+                &db,
+                tool,
+                &arguments,
+                &repo,
+                CodegraphImpactRuntime::static_defaults(),
+                runtime,
+            );
+            assert!(!result.is_error, "{tool}: {}", text_content(&result));
+            assert!(
+                serde_json::from_str::<serde_json::Value>(&text_content(&result))
+                    .unwrap()
+                    .is_array()
+            );
+        }
+    }
+
+    #[test]
+    fn w59_requested_runtime_rejects_raw_limit_depth_and_overflow_before_db_access() {
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("never-opened.db");
+        let runtime = RequestedContextRuntime::from_policy(w59_requested_policy());
+        for (tool, arguments, expected) in [
+            (
+                "codegraph_recall_v1",
+                serde_json::json!({"prompt":"x","limit":2}),
+                "recall rejected before DB access",
+            ),
+            (
+                "codegraph_callers",
+                serde_json::json!({"symbol":"x","depth":3}),
+                "callers rejected before DB access",
+            ),
+            (
+                "codegraph_callees",
+                serde_json::json!({"file":"x.rs","symbol":"x","depth":21}),
+                "callees rejected before DB access",
+            ),
+        ] {
+            let result = dispatch_codegraph_tool_at_runtime(
+                &missing,
+                tool,
+                &arguments,
+                dir.path(),
+                CodegraphImpactRuntime::static_defaults(),
+                runtime,
+            );
+            let text = text_content(&result);
+            assert!(result.is_error && text.contains(expected), "{tool}: {text}");
+            assert!(
+                !text.contains("does not exist"),
+                "{tool} opened the DB: {text}"
+            );
+        }
+        let overflow = dispatch_codegraph_tool_at_runtime(
+            &missing,
+            "codegraph_recall_v1",
+            &serde_json::json!({"prompt":"x","limit":4294967296u64}),
+            dir.path(),
+            CodegraphImpactRuntime::static_defaults(),
+            runtime,
+        );
+        assert!(overflow.is_error);
+        assert!(text_content(&overflow).contains("bad args"));
+    }
+
+    #[test]
+    fn w59_descriptor_is_exact_atomic_and_raw_mode_stays_static() {
+        let dir = tempdir().unwrap();
+        let database = dir.path().join("code_map.db");
+        std::fs::write(&database, b"fixture").unwrap();
+        let base = w56_generated_base(&database.canonicalize().unwrap());
+        let impact = crate::config::CodeMapImpactPolicy {
+            max_depth: 2,
+            max_nodes: 40,
+            allow_stale: false,
+        };
+        let effective = effective_builtin_codegraph_server_with_requested_policy(
+            &base,
+            impact,
+            w59_requested_policy(),
+        )
+        .unwrap();
+        assert_eq!(
+            effective.args[4..]
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec![
+                "--impact-max-depth",
+                "2",
+                "--impact-max-nodes",
+                "40",
+                "--impact-allow-stale",
+                "false",
+                "--requested-recall-max-files",
+                "1",
+                "--requested-callers-per-symbol",
+                "0",
+                "--requested-summary-token-budget",
+                "128",
+                "--requested-max-bfs-depth",
+                "2",
+            ]
+        );
+        let mut lookalike = base.clone();
+        lookalike
+            .args
+            .extend(["--requested-recall-max-files".into(), "1".into()]);
+        assert_eq!(
+            effective_builtin_codegraph_server_with_requested_policy(
+                &lookalike,
+                impact,
+                w59_requested_policy()
+            )
+            .unwrap(),
+            lookalike
+        );
+        assert_eq!(
+            RequestedContextRuntime::static_defaults()
+                .recall_limit(100)
+                .unwrap(),
+            50
+        );
+    }
+
+    #[test]
+    fn w59_requested_result_cap_is_typed_and_does_not_change_other_tools() {
+        let runtime = RequestedContextRuntime::from_policy(w59_requested_policy());
+        let oversized = runtime.bound_result(text_result("x".repeat(513)));
+        assert!(oversized.is_error);
+        assert!(text_content(&oversized).contains("exceeding accepted rendered ceiling 512"));
+        let mut source = String::from("fn leaf() {}\n");
+        for index in 0..32 {
+            source.push_str(&format!("fn caller_{index:02}() {{ leaf(); }}\n"));
+        }
+        let graph = graph_from_rust("fixture.rs", &source);
+        let bounded = callers_inner_with_requested_budget(&graph, "leaf", 1, runtime);
+        assert!(
+            bounded.is_err(),
+            "a public JSON array must be refused whole, never partially rendered"
+        );
+        let unrequested = dispatch_codegraph_tool_at_runtime(
+            &tempdir().unwrap().path().join("missing.db"),
+            "codegraph_extract_identifiers",
+            &serde_json::json!({"text":"OrderService"}),
+            std::path::Path::new("."),
+            CodegraphImpactRuntime::static_defaults(),
+            runtime,
+        );
+        assert!(
+            !unrequested.is_error,
+            "requested policy must not cap extract-identifiers"
+        );
     }
 
     #[test]
