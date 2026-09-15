@@ -4458,6 +4458,43 @@ fn build_stream_done_line(metadata: StreamDoneMetadata<'_>) -> String {
     .expect("stream completion frame contains only serializable fields")
 }
 
+/// Add the optional opaque W60 terminal field only after its corresponding
+/// `final_reply_prepared` WAL append has acknowledged. The existing terminal
+/// hash and finalization receipt are deliberately left unchanged.
+pub(crate) fn attach_code_map_binding_to_stream_done_line(
+    done_line: String,
+    binding_sha256: &str,
+) -> Result<String> {
+    anyhow::ensure!(
+        binding_sha256.len() == 64
+            && binding_sha256
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+        "code-map binding must be lowercase hexadecimal"
+    );
+    let mut frame: serde_json::Value =
+        serde_json::from_str(&done_line).context("parse deferred stream done frame")?;
+    let object = frame
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("deferred stream done frame must be an object"))?;
+    anyhow::ensure!(
+        object
+            .get("neoth_stream")
+            .and_then(serde_json::Value::as_str)
+            == Some("done")
+            && object
+                .get("protocol_version")
+                .and_then(serde_json::Value::as_u64)
+                == Some(CHAT_STREAM_PROTOCOL_VERSION.into()),
+        "code-map binding may only decorate a v3 terminal done frame"
+    );
+    object.insert(
+        "code_map_binding_sha256".to_owned(),
+        serde_json::Value::String(binding_sha256.to_owned()),
+    );
+    serde_json::to_string(&frame).context("serialize code-map-bound stream done frame")
+}
+
 fn write_provider_done_and_build_stream_done_line(
     mut output: impl std::io::Write,
     metadata: StreamDoneMetadata<'_>,
@@ -5998,6 +6035,8 @@ pub(super) async fn run_post_reply_pipelines(
     cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
     turn_effect_gate: Option<std::sync::Arc<dyn crate::providers::ChatTurnEffectGate>>,
     mut stream_plan: PostReplyStreamPlan<'_>,
+    retained_code_map_binding: Option<&RetainedCodeMapBinding>,
+    correlation: Option<&str>,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<Option<String>> {
     let first_tour_home = instance_paths.home.clone();
@@ -7257,6 +7296,28 @@ pub(super) async fn run_post_reply_pipelines(
         && let Err(e) = persist_chat_onboarding_complete(&instance_paths.config)
     {
         tracing::warn!(error = %e, "OH-11: could not persist chat_onboarding_completed=true (non-fatal)");
+    }
+
+    // This append is the final successful-turn durability boundary. It occurs
+    // after all post-provider replacement paths selected `response_text`, and
+    // before the deferred authenticated terminal is handed back to its sole
+    // emitter. A failed append therefore propagates as StreamFinalizationError
+    // and cannot advertise a clean terminal success.
+    if let Some(binding) = retained_code_map_binding {
+        emit_final_code_map_reply_binding(
+            &writer,
+            binding,
+            correlation,
+            &response_text,
+            "chat_terminal",
+        )
+        .await?;
+        if let Some(done_line) = stream_plan.done_line.take() {
+            stream_plan.done_line = Some(attach_code_map_binding_to_stream_done_line(
+                done_line,
+                binding.binding_sha256(),
+            )?);
+        }
     }
 
     let _ = provider;
@@ -10526,12 +10587,69 @@ pub(crate) fn append_architecture_findings(
 /// Metadata-only proof that one repository-local recall receipt reached a
 /// prompt surface. Repository paths, identities, symbols and prompt bytes stay
 /// out of the WAL; stable digests bind the audit row to those local values.
-fn repo_context_recall_audit_payload(
+#[derive(Clone, serde::Serialize)]
+struct RetainedRecallAuditV1 {
+    surface: &'static str,
+    root_identity_hash_sha256: String,
+    index_generation: i64,
+    graph_generation: i64,
+    stale: Option<bool>,
+    hit_count: usize,
+    truncated: bool,
+    query_hash_sha256: String,
+    query_hash_truncated: bool,
+    query_bytes: u64,
+    context_hash_sha256: String,
+    context_hash_truncated: bool,
+    context_bytes: u64,
+}
+
+/// A request-side recall receipt whose exact metadata was retained in the
+/// final provider request. It never contains the prompt, context, root, or
+/// response body; the digest is over the canonical typed metadata only.
+#[derive(Clone)]
+pub(crate) struct RetainedCodeMapBinding {
+    audit_payload: RetainedRecallAuditV1,
+    binding_sha256: String,
+    #[cfg(test)]
+    reject_final_append_for_test: bool,
+}
+
+impl RetainedCodeMapBinding {
+    pub(crate) fn binding_sha256(&self) -> &str {
+        &self.binding_sha256
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture(surface: &'static str) -> Self {
+        Self {
+            audit_payload: RetainedRecallAuditV1 {
+                surface,
+                root_identity_hash_sha256: "1".repeat(64),
+                index_generation: 7,
+                graph_generation: 7,
+                stale: Some(false),
+                hit_count: 1,
+                truncated: false,
+                query_hash_sha256: "2".repeat(64),
+                query_hash_truncated: false,
+                query_bytes: 9,
+                context_hash_sha256: "3".repeat(64),
+                context_hash_truncated: false,
+                context_bytes: 11,
+            },
+            binding_sha256: "a".repeat(64),
+            reject_final_append_for_test: false,
+        }
+    }
+}
+
+fn retained_recall_audit_v1(
     receipt: &crate::code_map::recall::RecallReceipt,
     prompt: &str,
     block: &str,
     surface: &'static str,
-) -> Result<Vec<u8>> {
+) -> RetainedRecallAuditV1 {
     let root_identity = crate::security::redact::bounded_audit_digest_bytes(
         b"code-map-recall-root/v1",
         &[receipt.snapshot.root.identity().as_str().as_bytes()],
@@ -10547,22 +10665,72 @@ fn repo_context_recall_audit_payload(
         &[block.as_bytes()],
         false,
     );
+    RetainedRecallAuditV1 {
+        surface,
+        root_identity_hash_sha256: root_identity.sha256,
+        index_generation: receipt.snapshot.index_generation,
+        graph_generation: receipt.snapshot.graph_generation,
+        stale: receipt.stale,
+        hit_count: receipt.ranked_files.len(),
+        truncated: receipt.truncated,
+        query_hash_sha256: query.sha256,
+        query_hash_truncated: query.truncated,
+        query_bytes: query.formatted_bytes,
+        context_hash_sha256: context.sha256,
+        context_hash_truncated: context.truncated,
+        context_bytes: context.formatted_bytes,
+    }
+}
+
+fn retained_code_map_binding(
+    receipt: &crate::code_map::recall::RecallReceipt,
+    prompt: &str,
+    block: &str,
+    surface: &'static str,
+) -> Result<RetainedCodeMapBinding> {
+    let audit_payload = retained_recall_audit_v1(receipt, prompt, block, surface);
+    let canonical = serde_json::to_vec(&audit_payload)
+        .context("serialize canonical retained code-map binding metadata")?;
+    let binding_sha256 = crate::security::redact::bounded_audit_digest_bytes(
+        b"neoth.code-map.recall.binding.v1",
+        &[&canonical],
+        false,
+    )
+    .sha256;
+    Ok(RetainedCodeMapBinding {
+        audit_payload,
+        binding_sha256,
+        #[cfg(test)]
+        // Scoped fixture input, carried through the real recall/binding path.
+        // This avoids a writer-global or next-append test switch, so a parallel
+        // test cannot make another route's final receipt fail.
+        reject_final_append_for_test: prompt.contains("W60_FINAL_BINDING_APPEND_REJECTION_FIXTURE"),
+    })
+}
+
+fn repo_context_recall_audit_payload(
+    receipt: &crate::code_map::recall::RecallReceipt,
+    prompt: &str,
+    block: &str,
+    surface: &'static str,
+) -> Result<Vec<u8>> {
+    let audit = retained_recall_audit_v1(receipt, prompt, block, surface);
     serde_json::to_vec(&serde_json::json!({
         "schema": "neoth.code_map.recall.audit.v1",
         "status": "retained_in_provider_request",
-        "surface": surface,
-        "root_identity_hash_sha256": root_identity.sha256,
-        "index_generation": receipt.snapshot.index_generation,
-        "graph_generation": receipt.snapshot.graph_generation,
-        "stale": receipt.stale,
-        "hit_count": receipt.ranked_files.len(),
-        "truncated": receipt.truncated,
-        "query_hash_sha256": query.sha256,
-        "query_hash_truncated": query.truncated,
-        "query_bytes": query.formatted_bytes,
-        "context_hash_sha256": context.sha256,
-        "context_hash_truncated": context.truncated,
-        "context_bytes": context.formatted_bytes,
+        "surface": audit.surface,
+        "root_identity_hash_sha256": audit.root_identity_hash_sha256,
+        "index_generation": audit.index_generation,
+        "graph_generation": audit.graph_generation,
+        "stale": audit.stale,
+        "hit_count": audit.hit_count,
+        "truncated": audit.truncated,
+        "query_hash_sha256": audit.query_hash_sha256,
+        "query_hash_truncated": audit.query_hash_truncated,
+        "query_bytes": audit.query_bytes,
+        "context_hash_sha256": audit.context_hash_sha256,
+        "context_hash_truncated": audit.context_hash_truncated,
+        "context_bytes": audit.context_bytes,
         "ts_unix": crate::time::now_unix_i64(),
     }))
     .context("serialize repository recall audit payload")
@@ -10669,6 +10837,26 @@ pub(crate) async fn emit_repo_context_recall_audit(
         .map(|_| ())
 }
 
+/// Return whether the exact, complete canonical repository-hint envelope
+/// survived final token budgeting. The request builder applies this same trim,
+/// provenance, and render operation to the combined repository/architecture
+/// context before it enters Block D.
+fn canonical_repo_context_survived(final_system: &str, combined_context: Option<&str>) -> bool {
+    let Some(content) = combined_context
+        .map(str::trim)
+        .filter(|content| !content.is_empty())
+    else {
+        return false;
+    };
+    let rendered = crate::pipeline::UntrustedContext::new(
+        crate::pipeline::UntrustedContextClass::RepoHint,
+        "repo:auto-context",
+        content,
+    )
+    .render();
+    !rendered.was_truncated() && final_system.contains(rendered.as_str())
+}
+
 /// Emit only receipts whose exact context bytes survived routing and final
 /// token-budget degradation. A WAL failure blocks provider dispatch; a
 /// dropped/omitted degradable block produces no misleading injection event.
@@ -10679,22 +10867,92 @@ pub(crate) async fn emit_retained_code_map_audits(
     prompt: &str,
     final_system: Option<&str>,
     surface: &'static str,
-) -> Result<()> {
+) -> Result<Option<RetainedCodeMapBinding>> {
     let Some(final_system) = final_system else {
-        return Ok(());
+        return Ok(None);
     };
-    if let Some(recall) = repo_recall
-        && final_system.contains(&recall.block)
-    {
+    let combined_context = match architecture_recall {
+        Some(context) => {
+            append_architecture_findings(repo_recall.map(|recall| recall.block.clone()), context)
+        }
+        None => repo_recall.map(|recall| recall.block.clone()),
+    };
+    if !canonical_repo_context_survived(final_system, combined_context.as_deref()) {
+        return Ok(None);
+    }
+
+    let mut binding = None;
+    if let Some(recall) = repo_recall {
         emit_repo_context_recall_audit(writer, &recall.receipt, prompt, &recall.block, surface)
             .await?;
+        binding = Some(retained_code_map_binding(
+            &recall.receipt,
+            prompt,
+            &recall.block,
+            surface,
+        )?);
     }
-    if let Some(context) = architecture_recall
-        && final_system.contains(&context.block)
-    {
+    if let Some(context) = architecture_recall {
         emit_architecture_findings_audit(writer, context, surface).await?;
     }
-    Ok(())
+    Ok(binding)
+}
+
+/// Bind a fully prepared final reply to the already durable retained-request
+/// receipt. This is deliberately preparation evidence only; channel delivery
+/// remains exclusively represented by the existing egress intent/result path.
+pub(crate) async fn emit_final_code_map_reply_binding(
+    writer: &crate::wal::writer::WalWriterHandle,
+    binding: &RetainedCodeMapBinding,
+    correlation: Option<&str>,
+    final_reply: &str,
+    completion_kind: &'static str,
+) -> Result<()> {
+    #[cfg(test)]
+    if binding.reject_final_append_for_test {
+        anyhow::bail!("test-only final code-map reply binding append rejection");
+    }
+    let correlation_sha256 = correlation.map(|value| {
+        crate::security::redact::bounded_audit_digest_bytes(
+            b"neoth.code-map.recall.final-correlation.v1",
+            &[value.as_bytes()],
+            false,
+        )
+        .sha256
+    });
+    let audit = &binding.audit_payload;
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "schema": "neoth.code_map.recall.audit.v1",
+        "status": "final_reply_prepared",
+        "surface": audit.surface,
+        "root_identity_hash_sha256": audit.root_identity_hash_sha256,
+        "index_generation": audit.index_generation,
+        "graph_generation": audit.graph_generation,
+        "stale": audit.stale,
+        "hit_count": audit.hit_count,
+        "truncated": audit.truncated,
+        "query_hash_sha256": audit.query_hash_sha256,
+        "query_hash_truncated": audit.query_hash_truncated,
+        "query_bytes": audit.query_bytes,
+        "context_hash_sha256": audit.context_hash_sha256,
+        "context_hash_truncated": audit.context_hash_truncated,
+        "context_bytes": audit.context_bytes,
+        "binding_sha256": binding.binding_sha256,
+        "correlation_sha256": correlation_sha256,
+        "final_reply_hash_xxh3": xxhash_rust::xxh3::xxh3_64(final_reply.as_bytes()),
+        "final_reply_bytes": final_reply.len(),
+        "completion_kind": completion_kind,
+        "ts_unix": crate::time::now_unix_i64(),
+    }))
+    .context("serialize final code-map reply binding payload")?;
+    let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8)
+        .build();
+    writer
+        .append(header, payload)
+        .await
+        .context("append final code-map reply binding WAL event")
+        .map(|_| ())
 }
 
 /// Durable metadata-only proof that the automatic cycle evidence reached a
@@ -12966,6 +13224,66 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    #[test]
+    fn canonical_repo_context_retention_requires_complete_builder_envelope() {
+        fn rendered_repo_context(content: &str) -> crate::pipeline::RenderedUntrustedContext {
+            crate::pipeline::UntrustedContext::new(
+                crate::pipeline::UntrustedContextClass::RepoHint,
+                "repo:auto-context",
+                content.trim(),
+            )
+            .render()
+        }
+
+        let repo = "[neoth:code-map] relevant files:\nsrc/lib.rs";
+        let architecture = "[neoth:architecture] cycle:\na -> b -> a";
+        let combined = format!("{repo}\n\n{architecture}");
+        for context in [repo, architecture, combined.as_str()] {
+            let rendered = rendered_repo_context(context);
+            assert!(canonical_repo_context_survived(
+                rendered.as_str(),
+                Some(context),
+            ));
+            assert!(
+                !canonical_repo_context_survived(context, Some(context)),
+                "bare raw context must not claim canonical provider retention"
+            );
+        }
+
+        let expected = rendered_repo_context(repo);
+        let wrong_source = crate::pipeline::UntrustedContext::new(
+            crate::pipeline::UntrustedContextClass::RepoHint,
+            "repo:other-context",
+            repo,
+        )
+        .render();
+        let wrong_class = crate::pipeline::UntrustedContext::new(
+            crate::pipeline::UntrustedContextClass::Memory,
+            "repo:auto-context",
+            repo,
+        )
+        .render();
+        let wrong_payload = rendered_repo_context("[neoth:code-map] relevant files:\nsrc/other.rs");
+        for final_system in [
+            wrong_source.as_str(),
+            wrong_class.as_str(),
+            wrong_payload.as_str(),
+            &expected.as_str()[..expected.as_str().len() - 1],
+        ] {
+            assert!(!canonical_repo_context_survived(final_system, Some(repo)));
+        }
+        assert!(!canonical_repo_context_survived(expected.as_str(), None));
+
+        let over_cap =
+            "x".repeat(crate::pipeline::UntrustedContextClass::RepoHint.max_payload_bytes() + 1);
+        let truncated = rendered_repo_context(&over_cap);
+        assert!(truncated.was_truncated());
+        assert!(!canonical_repo_context_survived(
+            truncated.as_str(),
+            Some(&over_cap),
+        ));
+    }
+
     #[derive(clap::Parser)]
     struct ChatArgsParser {
         #[command(flatten)]
@@ -13675,6 +13993,78 @@ mod tests {
         let wal_dir = home.join("wal");
         std::fs::create_dir_all(&wal_dir).expect("create canonical test WAL directory");
         wal_dir.join(format!("{namespace}-000001.wal"))
+    }
+
+    #[test]
+    fn code_map_binding_only_decorates_a_valid_v3_terminal_frame() {
+        let termination = crate::providers::ProviderTermination::default();
+        let done = build_stream_done_line(StreamDoneMetadata {
+            control_token: Some("0123456789abcdef0123456789abcdef"),
+            incognito: false,
+            chunk_count: 1,
+            input_tokens: None,
+            output_tokens: None,
+            limit_tokens: 64,
+            elapsed_ms: 1,
+            model: "fixture",
+            response_text: "reply",
+            termination: &termination,
+        });
+        let bound = attach_code_map_binding_to_stream_done_line(done, &"a".repeat(64)).unwrap();
+        let bound: serde_json::Value = serde_json::from_str(&bound).unwrap();
+        assert_eq!(bound["code_map_binding_sha256"], "a".repeat(64));
+        assert!(
+            attach_code_map_binding_to_stream_done_line(
+                "{\"neoth_stream\":\"done\",\"protocol_version\":2}".to_owned(),
+                &"a".repeat(64),
+            )
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn final_code_map_binding_records_final_replaced_body_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("w60-final-reply.wal");
+        let (writer, join) = wal_spawn(segment.clone()).unwrap();
+        let binding = RetainedCodeMapBinding::fixture("cli");
+        emit_final_code_map_reply_binding(
+            &writer,
+            &binding,
+            Some("turn-fixture"),
+            "post-hook replacement",
+            "chat_terminal",
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        join.await.unwrap();
+        let bytes = std::fs::read(segment).unwrap();
+        let mut payloads = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, decoded| {
+            if decoded.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && decoded.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8
+            {
+                let payload: serde_json::Value = serde_json::from_slice(decoded.payload).unwrap();
+                if payload["status"] == "final_reply_prepared" {
+                    payloads.push(payload);
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0]["binding_sha256"], binding.binding_sha256());
+        assert_eq!(
+            payloads[0]["final_reply_hash_xxh3"],
+            xxhash_rust::xxh3::xxh3_64("post-hook replacement".as_bytes())
+        );
+        assert!(
+            serde_json::to_string(&payloads[0])
+                .unwrap()
+                .contains("final_reply_prepared")
+        );
     }
 
     #[test]

@@ -3,6 +3,33 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-15
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Validated W60 batch (2026-09-15):** final prepared Chat/Channel replies
+> are bound to retained canonical repository/architecture context before ordinary
+> success. Exact-target rebuild recall retains its immutable scope; automatic
+> readiness still checks the full selected root. This repairs the common
+> Self-Improve stale-receipt failure found in the earlier Linux and Windows CI.
+> The final 265-input source passed native Clippy05 (1m57s), TestBuild03 (1m20s),
+> selected03 **2757/0/0** in 160.13s (14716 catalogued tests, 20 filters, ten
+> mandatory fixtures and all 150 Self-Improve tests), seven contracts **750/0/0**
+> and CLI docgen **1/0/0**. The real GUI/Buddy six-state callback passed in 0.64s
+> after a 7m58s build; the same 741-test executable passed the exact optional
+> terminal-binding test in 0.01s. Final GUI Clippy passed in 7m 37s
+> (minimum free 211.73 GiB, peak 11.75 GiB).
+> All 45 Python checks and fresh GUI lint passed. Builds were serialized with one
+> job, Idle priority and four CPUs; no memory guard stopped a build.
+> Only the CRG-01 visibility/actionability child closes. Counts are now
+> **1324/1015/307/2**, raw **309** / pre-tag **308**. CRG-01's parent and other
+> children, visual/a11y, installed GUI/CLI/Buddy, live delivery and final release
+> acceptance remain open. The source/test evidence binds 266 post-docgen inputs
+> and nine executables; publication uses the strict staged/current/source guard.
+> See `docs/gold-wave60-verification.md`. Earlier failed attempts remain diagnostic.
+> The preceding `752031cb478b102c19f52cb0eb6951c202744ebf` CI is separate from W60:
+> Linux and Windows had the same 20 Self-Improve failures; macOS reached its
+> 100-minute compile deadline before tests, with no logged compiler error or OOM.
+> No remote W60 pass is claimed. Next is reviewed W61+W63+W64+W65 (13 sources, 24 filters, 21 required
+> fixtures). W62 installed-CLI acceptance and the reviewed W66 memory-consumer
+> candidate remain separate and unadmitted.
+>
 > **Validated W58/W59 batch (2026-09-15):** automatic-context readiness and immutable
 > requested-context policy are implemented on published W54-W57
 > `4250014d06363d2cc8abb864fb219bdbfff29f63`, with the reviewed CI cache repair.
@@ -13,10 +40,9 @@
 > its exact executable catalog has 740 tests. Every completed final gate shares
 > the frozen 262-input source set. Builds used one job, Idle priority and four CPUs.
 > Final GUI Clippy passed in 8m25s (minimum free 214.25 GiB, peak 12.30 GiB); all 45 Python checks and fresh GUI lint passed. The source/binary verifier binds 263 inputs and nine executables. Publication uses the strict byte-for-byte Git index guard; new exact-head remote results remain separate.
-> The visibility/actionability leaf stays open: W60 composed05 prepares the remaining
-> actual GUI stale/corrupt/unmapped callbacks plus final Chat/Channel result binding.
-> W61 composed02 prepares direct-MCP metadata/result receipts with nine required
-> acceptance fixtures. Both remain WORK-only. Counts stay **1324/1014/308/2**,
+> At W58/W59 publication the visibility/actionability leaf remained open;
+> its later W60 closure is recorded above. The W58/W59 counts are historical:
+> **1324/1014/308/2**,
 > raw **310** / pre-tag **309**. See `docs/gold-wave58-59-verification.md`.
 > Prior W54-W57 [Preflight](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34959741997)
 > and [CodeQL Code Quality](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34959741183)

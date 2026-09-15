@@ -26644,9 +26644,21 @@ fn terminal_matches_provider_boundary(
         boundary.count,
         &boundary.content_hash,
     );
-    done.get("finalization_receipt")
+    let receipt_matches = done
+        .get("finalization_receipt")
         .and_then(|value| value.as_str())
-        == Some(expected_receipt.as_str())
+        == Some(expected_receipt.as_str());
+    let binding_is_valid = match done.get("code_map_binding_sha256") {
+        None => true,
+        Some(serde_json::Value::String(binding)) => {
+            binding.len() == 64
+                && binding
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        }
+        Some(_) => false,
+    };
+    receipt_matches && binding_is_valid
 }
 
 /// Accept a completion marker only when it is valid JSON on the final
@@ -27733,6 +27745,34 @@ mod chat_subprocess_tests {
             control_frame(bad_receipt)
         );
         assert!(!parse_chat_stream_protocol(&bad_receipt, Some("right")).protocol_valid);
+    }
+
+    #[test]
+    fn optional_code_map_binding_is_terminal_only_and_strict_for_main_and_buddy() {
+        let route = skill_route_frame("right");
+        let delta = provider_delta_frame("right", 1, "reply");
+        let boundary = provider_done_frame("right", 1, "reply");
+        let mut valid_done = done_frame("right", 1, "reply");
+        valid_done["code_map_binding_sha256"] = serde_json::json!("a".repeat(64));
+        let valid = format!(
+            "{route}\n{delta}\n{boundary}\n{}\n",
+            control_frame(valid_done.clone())
+        );
+        assert!(parse_chat_stream_protocol(&valid, Some("right")).protocol_valid);
+
+        for invalid in [
+            serde_json::json!("A".repeat(64)),
+            serde_json::json!("a".repeat(63)),
+            serde_json::json!(42),
+        ] {
+            let mut done = valid_done.clone();
+            done["code_map_binding_sha256"] = invalid;
+            let raw = format!("{route}\n{delta}\n{boundary}\n{}\n", control_frame(done));
+            assert!(
+                !parse_chat_stream_protocol(&raw, Some("right")).protocol_valid,
+                "optional binding must reject malformed terminal metadata"
+            );
+        }
     }
 
     #[test]
@@ -36963,6 +37003,35 @@ mod w58_gui_callback_runtime_tests {
             .to_string()
     }
 
+    fn invoke_buddy_status_from_clear_sentinel(
+        window: &MainWindow,
+        selected_root: &str,
+        sentinel: &str,
+        expected_reason_or_status: &str,
+        expected_truthful_action: &str,
+    ) -> String {
+        assert_eq!(
+            window.get_code_map_root().to_string(),
+            selected_root,
+            "each Buddy status case must retain its explicit selected root"
+        );
+        window.set_code_map_automatic_context(sentinel.into());
+        assert_eq!(
+            window.get_code_map_automatic_context().to_string(),
+            sentinel,
+            "the callback must replace a known clear sentinel, not a prior readiness state"
+        );
+        window.invoke_buddy_code_map_status();
+        pump_until_automatic_context(window, expected_reason_or_status);
+        let rendered = window.get_code_map_automatic_context().to_string();
+        assert!(
+            rendered.contains(expected_truthful_action),
+            "expected actionable/status guidance {expected_truthful_action:?}: {rendered}"
+        );
+        assert_eq!(window.get_nav_active().to_string(), "coding");
+        rendered
+    }
+
     #[test]
     fn w58_buddy_status_callback_publishes_selected_root_readiness() {
         let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("GUI callback env lock");
@@ -36998,10 +37067,13 @@ mod w58_gui_callback_runtime_tests {
             !database.exists(),
             "disabled transaction must retain absent store"
         );
-        window.set_code_map_automatic_context("W58 awaiting Buddy disabled inspection.".into());
-        window.invoke_buddy_code_map_status();
-        pump_until_automatic_context(&window, "disabled (max files: 0)");
-        assert_eq!(window.get_nav_active().to_string(), "coding");
+        invoke_buddy_status_from_clear_sentinel(
+            &window,
+            &root.path().display().to_string(),
+            "W60 clear Buddy disabled sentinel.",
+            "disabled (max files: 0)",
+            "no index was opened for this state",
+        );
 
         apply_typed_lifecycle_config(
             &window,
@@ -37014,12 +37086,14 @@ mod w58_gui_callback_runtime_tests {
             !database.exists(),
             "missing-store inspection must stay read-only"
         );
-        window.set_code_map_automatic_context("W58 awaiting Buddy unavailable inspection.".into());
-        window.invoke_buddy_code_map_status();
-        pump_until_automatic_context(&window, "unavailable (missing_store)");
-        let unavailable = window.get_code_map_automatic_context().to_string();
+        let unavailable = invoke_buddy_status_from_clear_sentinel(
+            &window,
+            &root.path().display().to_string(),
+            "W60 clear Buddy missing-store sentinel.",
+            "unavailable (missing_store)",
+            "existing index setup, refresh, or repair action",
+        );
         assert!(unavailable.contains("existing index setup, refresh, or repair action"));
-        assert_eq!(window.get_nav_active().to_string(), "coding");
 
         // Build the complete map through the existing production lifecycle
         // refresh, then re-enter through Buddy status to prove its callback
@@ -37032,10 +37106,13 @@ mod w58_gui_callback_runtime_tests {
             false,
         );
         pump_until_automatic_context(&window, "eligible for this root (max files: 3)");
-        window.set_code_map_automatic_context("W58 awaiting Buddy eligible inspection.".into());
-        window.invoke_buddy_code_map_status();
-        pump_until_automatic_context(&window, "eligible for this root (max files: 3)");
-        assert_eq!(window.get_nav_active().to_string(), "coding");
+        invoke_buddy_status_from_clear_sentinel(
+            &window,
+            &root.path().display().to_string(),
+            "W60 clear Buddy eligible sentinel.",
+            "eligible for this root (max files: 3)",
+            "A later prompt may still select no context",
+        );
         assert_eq!(
             window.get_code_map_lifecycle_canonical_root().to_string(),
             expected_canonical_root(root.path()),
@@ -37044,5 +37121,47 @@ mod w58_gui_callback_runtime_tests {
         let graph_generation = window.get_code_map_lifecycle_graph_generation().to_string();
         assert_ne!(index_generation, "0");
         assert_eq!(index_generation, graph_generation);
+
+        std::fs::write(
+            root.path().join("lib.rs"),
+            "fn w58_callback_fixture() { let stale = true; }\n",
+        )
+        .expect("make the existing selected-root snapshot stale");
+        let stale = invoke_buddy_status_from_clear_sentinel(
+            &window,
+            &root.path().display().to_string(),
+            "W60 clear Buddy stale sentinel.",
+            "unavailable (stale_snapshot)",
+            "existing index setup, refresh, or repair action",
+        );
+        assert!(stale.contains("stale_snapshot"));
+
+        let unmapped = TempDir::new().expect("temporary unmapped repository root");
+        std::fs::write(
+            unmapped.path().join("lib.rs"),
+            "fn unmapped_callback_fixture() {}\n",
+        )
+        .expect("write unmapped repository fixture");
+        window.set_code_map_root(unmapped.path().display().to_string().into());
+        let unmapped_rendered = invoke_buddy_status_from_clear_sentinel(
+            &window,
+            &unmapped.path().display().to_string(),
+            "W60 clear Buddy unmapped-root sentinel.",
+            "unavailable (unmapped_root)",
+            "existing index setup, refresh, or repair action",
+        );
+        assert!(unmapped_rendered.contains("unmapped_root"));
+
+        std::fs::write(&database, b"not a SQLite code-map store")
+            .expect("corrupt the fixture store after production refresh");
+        window.set_code_map_root(root.path().display().to_string().into());
+        let unreadable = invoke_buddy_status_from_clear_sentinel(
+            &window,
+            &root.path().display().to_string(),
+            "W60 clear Buddy unreadable-store sentinel.",
+            "unavailable (unreadable_store)",
+            "existing index setup, refresh, or repair action",
+        );
+        assert!(unreadable.contains("unreadable_store"));
     }
 }

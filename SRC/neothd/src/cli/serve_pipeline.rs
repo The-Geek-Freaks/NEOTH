@@ -3625,7 +3625,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 effective_cap: request_token_cap,
                 ..
             } = budgeted;
-            if let Err(error) = crate::cli::chat::emit_retained_code_map_audits(
+            let retained_code_map_binding = match crate::cli::chat::emit_retained_code_map_audits(
                 &writer,
                 channel_repo_context_outcome.injected(),
                 channel_architecture_recall.as_ref(),
@@ -3635,30 +3635,33 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             )
             .await
             {
-                warn!(
-                    channel = channel_str,
-                    error = %error,
-                    "code-map context audit failed; channel provider dispatch refused before egress"
-                );
-                let notice = format!(
-                    "[NEOTH] Request blocked before sending: code-map audit could not be persisted: {error}"
-                );
-                return release_local_channel_notice(
-                    &writer,
-                    &neoth_home,
-                    &hooks,
-                    &autonomy_policy,
-                    &inbound,
-                    &inbound_binding,
-                    channel_str,
-                    &sender_hash,
-                    &notice,
-                    "code-map-audit-error",
-                    channel_asker.as_ref().map(Arc::clone),
-                    &session_fired_once,
-                )
-                .await;
-            }
+                Ok(binding) => binding,
+                Err(error) => {
+                    warn!(
+                        channel = channel_str,
+                        error = %error,
+                        "code-map context audit failed; channel provider dispatch refused before egress"
+                    );
+                    let notice = format!(
+                        "[NEOTH] Request blocked before sending: code-map audit could not be persisted: {error}"
+                    );
+                    return release_local_channel_notice(
+                        &writer,
+                        &neoth_home,
+                        &hooks,
+                        &autonomy_policy,
+                        &inbound,
+                        &inbound_binding,
+                        channel_str,
+                        &sender_hash,
+                        &notice,
+                        "code-map-audit-error",
+                        channel_asker.as_ref().map(Arc::clone),
+                        &session_fired_once,
+                    )
+                    .await;
+                }
+            };
             let req = Request {
                 prompt: final_prompt.clone(),
                 // `finalize_provider_request` injects the clarification protocol,
@@ -4962,6 +4965,43 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             };
 
             let reply_for_egress = completion.text.clone();
+
+            // Prepared-result provenance is intentionally committed before the
+            // shared release tail. PreEgress replacement/blocking, ChannelSend
+            // denial, transport failure, or a missing result remain delivery
+            // questions owned solely by the existing egress event path.
+            if let Some(binding) = retained_code_map_binding.as_ref()
+                && let Err(error) = crate::cli::chat::emit_final_code_map_reply_binding(
+                    &writer,
+                    binding,
+                    Some(&sender_hash),
+                    &reply_for_egress,
+                    "channel_pre_egress",
+                )
+                .await
+            {
+                warn!(
+                    channel = channel_str,
+                    error = %error,
+                    "final code-map reply binding failed; model reply withheld before channel release"
+                );
+                let notice = "[NEOTH] Reply withheld before sending: final context receipt could not be persisted.";
+                return release_local_channel_notice(
+                    &writer,
+                    &neoth_home,
+                    &hooks,
+                    &autonomy_policy,
+                    &inbound,
+                    &inbound_binding,
+                    channel_str,
+                    &sender_hash,
+                    notice,
+                    "code-map-final-binding-error",
+                    channel_asker.as_ref().map(Arc::clone),
+                    &session_fired_once,
+                )
+                .await;
+            }
 
             release_channel_reply(
                 &writer,
@@ -7221,6 +7261,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn w60_prepared_binding_precedes_actual_channel_release_without_claiming_delivery() {
+        let dir = tempfile::tempdir().unwrap();
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let seg = wal_dir.join("000001.wal");
+        let (writer, join) =
+            crate::wal::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
+        let msg = inbound(Some("channel request"), None);
+        let binding = crate::cli::chat::RetainedCodeMapBinding::fixture("channel");
+        crate::cli::chat::emit_final_code_map_reply_binding(
+            &writer,
+            &binding,
+            Some("deadbeefdeadbeef"),
+            "prepared model reply",
+            "channel_pre_egress",
+        )
+        .await
+        .expect("prepared result is durable before the release seam");
+        let once_guard = crate::hooks::SessionOnceGuard::new();
+        let provenance = ReplyProvenance {
+            provider: "fixture-provider".to_owned(),
+            model: "fixture-model".to_owned(),
+            latency: std::time::Duration::ZERO,
+            input_tokens: None,
+            output_tokens: None,
+        };
+        let outbound = release_channel_reply(
+            &writer,
+            dir.path(),
+            &[],
+            crate::permissions::AutonomyLevel::Standard,
+            &msg,
+            &AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                ChannelId::Telegram,
+            )),
+            "telegram",
+            "deadbeefdeadbeef",
+            "prepared model reply",
+            &provenance,
+            None,
+            false,
+            None,
+            &once_guard,
+        )
+        .await
+        .expect("actual channel release path remains available after prepared binding");
+        assert_eq!(
+            outbound.expect("standard release returns outbound").text,
+            "prepared model reply"
+        );
+        drop(writer);
+        let _ = join.await;
+        let bytes = std::fs::read(seg).unwrap();
+        let mut sequence = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, decoded| {
+            if decoded.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && decoded.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8
+            {
+                let payload: serde_json::Value = serde_json::from_slice(decoded.payload).unwrap();
+                if payload["status"] == "final_reply_prepared" {
+                    sequence.push("prepared");
+                }
+            }
+            if decoded.header.event_type == EVENT_TYPE_CHANNEL_EGRESS {
+                sequence.push("egress");
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(sequence, ["prepared", "egress"]);
+    }
+
+    #[tokio::test]
     async fn released_research_failure_notice_emits_only_fixed_reply_and_opaque_receipt() {
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
@@ -7733,5 +7847,358 @@ mod tests {
         let resolved = require_delegate_agent("writer", &agents).unwrap();
         assert_eq!(resolved.tools, vec!["fetch".to_string()]);
         assert_eq!(resolved.disallowed_tools, vec!["shell_exec".to_string()]);
+    }
+
+    struct ChannelMcpScriptedProvider {
+        replies: std::sync::Mutex<std::collections::VecDeque<String>>,
+        calls: AtomicUsize,
+        receipt_seen_before_first_provider_call: AtomicBool,
+        wal_path: std::path::PathBuf,
+    }
+
+    #[async_trait]
+    impl Provider for ChannelMcpScriptedProvider {
+        fn name(&self) -> &'static str {
+            "channel-mcp-scripted"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("channel-mcp-scripted-model")
+        }
+
+        async fn complete(
+            &self,
+            _request: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                let mut found = false;
+                crate::wal::scan::for_each_frame(
+                    &std::fs::read(&self.wal_path).unwrap_or_default(),
+                    |_, frame| {
+                        if let Ok(payload) =
+                            serde_json::from_slice::<serde_json::Value>(frame.payload)
+                            && payload["status"] == "enabled_context_unavailable"
+                            && payload["surface"] == "channel"
+                            && payload["reason"] == "unmapped_root"
+                        {
+                            found = true;
+                        }
+                        Ok(())
+                    },
+                )
+                .expect("scan durable channel receipt before provider call");
+                self.receipt_seen_before_first_provider_call
+                    .store(found, Ordering::SeqCst);
+            }
+            let text = self
+                .replies
+                .lock()
+                .expect("scripted provider replies")
+                .pop_front()
+                .expect("scripted provider received no unexpected extra call");
+            Ok(crate::providers::Completion {
+                text,
+                identity: crate::providers::CompletionIdentity {
+                    provider: self.name().into(),
+                    wire_model: "channel-mcp-scripted-model".into(),
+                    dispatch_route: Vec::new(),
+                },
+                model: "channel-mcp-scripted-model".into(),
+                ..Default::default()
+            })
+        }
+    }
+
+    struct FinalBindingFailureChannelProvider {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for FinalBindingFailureChannelProvider {
+        fn name(&self) -> &'static str {
+            "final-binding-failure-channel"
+        }
+        fn default_model(&self) -> Option<&str> {
+            Some("final-binding-failure-channel-model")
+        }
+        async fn complete(
+            &self,
+            _request: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(crate::providers::Completion {
+                text: "ordinary provider body that must be withheld".into(),
+                identity: crate::providers::CompletionIdentity {
+                    provider: self.name().into(),
+                    wire_model: "final-binding-failure-channel-model".into(),
+                    dispatch_route: Vec::new(),
+                },
+                model: "final-binding-failure-channel-model".into(),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[test]
+    fn channel_retained_final_binding_failure_withholds_ordinary_reply_before_egress() {
+        let _environment = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread().enable_all().build().expect("build channel failure runtime").block_on(async {
+            let fixture = tempfile::tempdir().expect("create channel failure fixture");
+            let home = fixture.path().join("home");
+            let repo = fixture.path().join("repo");
+            std::fs::create_dir_all(repo.join("src")).expect("create retained channel repository");
+            std::fs::create_dir_all(&home).expect("create retained channel home");
+            std::fs::write(repo.join("src/private_auth_marker.rs"), "pub fn private_auth_marker() {}\n").expect("write retained channel marker");
+            let paths = crate::config::InstancePaths::for_home(&home);
+            let root = crate::code_map::CanonicalRepoRoot::discover(&repo).expect("discover retained channel root");
+            crate::code_map::rebuild_snapshot(&root, &paths.code_map, crate::code_map::RebuildOptions::default()).expect("seed retained channel code-map");
+            let original_cwd = std::env::current_dir().expect("capture process CWD");
+            std::env::set_current_dir(&repo).expect("enter retained channel root");
+            struct RestoreCwd(std::path::PathBuf);
+            impl Drop for RestoreCwd { fn drop(&mut self) { let _ = std::env::set_current_dir(&self.0); } }
+            let _cwd = RestoreCwd(original_cwd);
+            let wal_dir = home.join("wal");
+            std::fs::create_dir_all(&wal_dir).expect("create retained channel WAL directory");
+            let wal_path = wal_dir.join("000001.wal");
+            let (writer, writer_join) = crate::wal::spawn_for_home(wal_path.clone(), home.clone()).expect("spawn channel failure WAL");
+            let mut config = FreedomConfig::default();
+            config.autonomy = crate::permissions::AutonomyLevel::Full;
+            config.council.disabled = Some(true);
+            config.memory.recall_shortcut = false;
+            config.code_map.auto_context_max_files = 1;
+            let provider = Arc::new(FinalBindingFailureChannelProvider { calls: AtomicUsize::new(0) });
+            let handler = build_pipeline_handler(PipelineHandlerDeps {
+                inbound_binding: AuthenticatedInboundBinding::for_account(ChannelRef::default_account(ChannelId::Telegram)),
+                provider: provider.clone(), live_channel: None, writer: writer.clone(), operator_id: None,
+                goal_max_turns: 1, meter: crate::providers::meter::Meter::with_default_window(),
+                rate_limiter: Arc::new(crate::channels::rate_limit::RateLimiter::with_defaults()),
+                segment_path: wal_path.clone(), neoth_home: home.clone(), profile_config: crate::config::ProfileConfig::default(),
+                reload_controller: Arc::new(crate::config::reload::ReloadController::new(config, home.join("freedom.yaml"))),
+                views_conn: None, views_executor: None, confirm_bus: None,
+            });
+            let reply = handler(inbound(Some("find private_auth_marker W60_FINAL_BINDING_APPEND_REJECTION_FIXTURE"), None))
+                .await.expect("failure route returns bounded local notice").expect("headless channel receives the local notice");
+            assert_eq!(provider.calls.load(Ordering::SeqCst), 1, "provider succeeded before the required final receipt failed");
+            assert_eq!(reply.text, "[NEOTH] Reply withheld before sending: final context receipt could not be persisted.");
+            assert_ne!(reply.text, "ordinary provider body that must be withheld");
+            drop(handler); drop(writer); writer_join.await.expect("drain channel failure WAL");
+            let wal = std::fs::read(&wal_path).expect("read channel failure WAL");
+            assert!(wal.windows(b"retained_in_provider_request".len()).any(|w| w == b"retained_in_provider_request"), "real retained audit precedes provider success");
+            assert!(!wal.windows(b"final_reply_prepared".len()).any(|w| w == b"final_reply_prepared"), "failed final receipt cannot authorize ordinary channel egress");
+            assert!(!wal.windows(b"ordinary provider body that must be withheld".len()).any(|w| w == b"ordinary provider body that must be withheld"), "ordinary provider body is absent from the released channel result path");
+        });
+    }
+
+    #[test]
+    fn channel_mcp_turn_threads_requested_policy_to_real_codegraph_child_after_w55_receipt() {
+        let _env = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build channel consumer current-thread runtime")
+            .block_on(async {
+                let home = crate::test_env::canonical_tempdir()
+                    .expect("create isolated channel consumer home");
+                let db = home.path().join("code_map.db");
+                let root_n = home.path().join("mapped-child-root-n");
+                let root_n1 = home.path().join("mapped-child-root-n1");
+                crate::mcp::codegraph_server::w59_seed_real_sqlite_root(&db, &root_n, "n");
+                crate::mcp::codegraph_server::w59_seed_real_sqlite_root(
+                    &db,
+                    &root_n1,
+                    "n1",
+                );
+                let db = db.canonicalize().expect("canonical channel code-map DB");
+                let descriptor = crate::mcp::config::McpServerConfig {
+                    id: "neoth-codegraph".into(),
+                    description: None,
+                    command: std::env::current_exe()
+                        .expect("test executable")
+                        .canonicalize()
+                        .expect("canonical test executable")
+                        .display()
+                        .to_string(),
+                    args: vec![
+                        "mcp".into(),
+                        "codegraph-serve".into(),
+                        "--db".into(),
+                        db.display().to_string(),
+                    ],
+                    env: std::collections::HashMap::new(),
+                    enabled: true,
+                    allow_tools: Some(
+                        crate::mcp::codegraph_server::TOOL_NAMES
+                            .iter()
+                            .map(|tool| (*tool).to_owned())
+                            .collect(),
+                    ),
+                    trust_all_tools: false,
+                    smart_approve: true,
+                    autonomy_gate: None,
+                };
+                let servers = crate::mcp::McpServers {
+                    servers: vec![descriptor.clone()],
+                    smart_loading: true,
+                };
+                std::fs::write(
+                    home.path().join("mcp_servers.yaml"),
+                    serde_yaml::to_string(&servers).expect("serialize public MCP server config"),
+                )
+                .expect("write channel instance MCP config");
+                let wal_dir = home.path().join("wal");
+                std::fs::create_dir_all(&wal_dir).expect("create channel fixture WAL directory");
+                std::fs::write(wal_dir.join("hmac.key"), [9_u8; 32])
+                    .expect("seed SmartApprove HMAC identity");
+                let wal_path = wal_dir.join("000001.wal");
+                let (writer, writer_join) = crate::wal::spawn_for_home(
+                    wal_path.clone(),
+                    home.path().to_path_buf(),
+                )
+                .expect("spawn channel fixture WAL");
+
+                let child_record = home.path().join("channel-child-events.jsonl");
+                let previous_record = std::env::var_os("NEOTH_W56_CHILD_RECORD");
+                let previous_child_cwd = std::env::var_os("NEOTH_W59_CHILD_CWD");
+                let previous_autoroute = std::env::var_os("NEOTH_MCP_AUTOROUTE");
+                let prior_cwd = std::env::current_dir().expect("capture parent CWD");
+                let parent_cwd = home.path().join("unmapped-parent-cwd");
+                std::fs::create_dir_all(&parent_cwd).expect("create unmapped parent CWD");
+                unsafe {
+                    std::env::set_var("NEOTH_W56_CHILD_RECORD", &child_record);
+                    std::env::set_var("NEOTH_W59_CHILD_CWD", &root_n);
+                    std::env::set_var("NEOTH_MCP_AUTOROUTE", "1");
+                }
+                std::env::set_current_dir(&parent_cwd).expect("set unmapped parent CWD");
+                struct RestoreChannelConsumerProcessState {
+                    record: Option<std::ffi::OsString>,
+                    child_cwd: Option<std::ffi::OsString>,
+                    autoroute: Option<std::ffi::OsString>,
+                    cwd: std::path::PathBuf,
+                }
+                impl Drop for RestoreChannelConsumerProcessState {
+                    fn drop(&mut self) {
+                        let _ = std::env::set_current_dir(&self.cwd);
+                        unsafe {
+                            match self.record.take() {
+                                Some(value) => std::env::set_var("NEOTH_W56_CHILD_RECORD", value),
+                                None => std::env::remove_var("NEOTH_W56_CHILD_RECORD"),
+                            }
+                            match self.child_cwd.take() {
+                                Some(value) => std::env::set_var("NEOTH_W59_CHILD_CWD", value),
+                                None => std::env::remove_var("NEOTH_W59_CHILD_CWD"),
+                            }
+                            match self.autoroute.take() {
+                                Some(value) => std::env::set_var("NEOTH_MCP_AUTOROUTE", value),
+                                None => std::env::remove_var("NEOTH_MCP_AUTOROUTE"),
+                            }
+                        }
+                    }
+                }
+                let _restore = RestoreChannelConsumerProcessState {
+                    record: previous_record,
+                    child_cwd: previous_child_cwd,
+                    autoroute: previous_autoroute,
+                    cwd: prior_cwd,
+                };
+
+                let mut config = FreedomConfig::default();
+                config.autonomy = crate::permissions::AutonomyLevel::Full;
+                config.council.disabled = Some(true);
+                config.security.smart_approve = true;
+                config.code_map.auto_context_max_files = 1;
+                config.code_map.coding_recall_max_files = 1;
+                config.code_map.coding_callers_per_symbol = 1;
+                config.code_map.coding_summary_token_budget = 256;
+                config.code_map.requested_context_max_bfs_depth = 2;
+                let provider = Arc::new(ChannelMcpScriptedProvider {
+                    replies: std::sync::Mutex::new(std::collections::VecDeque::from([
+                        "```mcp-tool-call\n{\"server\":\"neoth-codegraph\",\"tool\":\"codegraph_recall_v1\",\"arguments\":{\"prompt\":\"leaf_n\",\"limit\":1}}\n```".into(),
+                        "ordinary channel final".into(),
+                    ])),
+                    calls: AtomicUsize::new(0),
+                    receipt_seen_before_first_provider_call: AtomicBool::new(false),
+                    wal_path: wal_path.clone(),
+                });
+                let handler = build_pipeline_handler(PipelineHandlerDeps {
+                    inbound_binding: AuthenticatedInboundBinding::for_account(
+                        ChannelRef::default_account(ChannelId::Telegram),
+                    ),
+                    provider: provider.clone(),
+                    live_channel: None,
+                    writer: writer.clone(),
+                    operator_id: None,
+                    goal_max_turns: 2,
+                    meter: crate::providers::meter::Meter::with_default_window(),
+                    rate_limiter: Arc::new(crate::channels::rate_limit::RateLimiter::with_defaults()),
+                    segment_path: wal_path.clone(),
+                    neoth_home: home.path().to_path_buf(),
+                    profile_config: crate::config::ProfileConfig::default(),
+                    reload_controller: Arc::new(crate::config::reload::ReloadController::new(
+                        config,
+                        home.path().join("freedom.yaml"),
+                    )),
+                    views_conn: None,
+                    views_executor: None,
+                    confirm_bus: None,
+                });
+                let reply = handler(inbound(Some("recall leaf_n"), None))
+                    .await
+                    .expect("channel MCP turn completes")
+                    .expect("headless channel returns final outbound reply");
+                assert_eq!(reply.text, "ordinary channel final");
+                assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+                assert!(
+                    provider
+                        .receipt_seen_before_first_provider_call
+                        .load(Ordering::SeqCst),
+                    "the W55 unavailable-context receipt is durable before provider/child work"
+                );
+
+                drop(handler);
+                drop(writer);
+                writer_join.await.expect("channel fixture WAL writer completes");
+                let mut unavailable_receipts = Vec::new();
+                crate::wal::scan::for_each_frame(&std::fs::read(&wal_path).expect("read channel WAL"), |_, frame| {
+                    if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(frame.payload)
+                        && payload["status"] == "enabled_context_unavailable"
+                        && payload["surface"] == "channel"
+                        && payload["reason"] == "unmapped_root"
+                    {
+                        unavailable_receipts.push(payload);
+                    }
+                    Ok(())
+                })
+                .expect("scan channel WAL");
+                assert_eq!(unavailable_receipts.len(), 1, "one W55 channel receipt");
+
+                let events: Vec<serde_json::Value> = std::fs::read_to_string(&child_record)
+                    .expect("read real codegraph child record")
+                    .lines()
+                    .map(|line| serde_json::from_str(line).expect("valid child event"))
+                    .collect();
+                let startups: Vec<_> = events.iter().filter(|event| event["event"] == "startup").collect();
+                let calls: Vec<_> = events.iter().filter(|event| event["event"] == "tools/call").collect();
+                assert_eq!(startups.len(), 1, "one real codegraph child starts");
+                assert_eq!(calls.len(), 1, "only the requested tool reaches the child");
+                assert_eq!(calls[0]["name"].as_str(), Some("codegraph_recall_v1"));
+                assert_eq!(calls[0]["arguments"], serde_json::json!({"prompt":"leaf_n","limit":1}));
+                let observed = serde_json::from_value::<crate::mcp::config::McpServerConfig>(
+                    startups[0]["descriptor"].clone(),
+                )
+                .expect("complete child descriptor");
+                let requested = crate::config::RequestedContextPolicy {
+                    recall_max_files: 1,
+                    callers_per_symbol: 1,
+                    summary_token_budget: 256,
+                    max_bfs_depth: 2,
+                };
+                let expected = crate::mcp::codegraph_server::effective_builtin_codegraph_server_with_requested_policy(
+                    &descriptor,
+                    crate::config::CodeMapImpactPolicy::default(),
+                    requested,
+                )
+                .expect("derive expected requested-policy descriptor");
+                assert_eq!(observed, expected);
+            });
     }
 }

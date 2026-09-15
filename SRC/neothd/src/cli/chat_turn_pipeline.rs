@@ -806,7 +806,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         prompt_token_estimate,
         effective_cap: request_token_cap,
     } = budgeted;
-    if let Err(error) = emit_retained_code_map_audits(
+    let retained_code_map_binding = match emit_retained_code_map_audits(
         &writer,
         repo_recall_audit.as_ref(),
         architecture_recall_audit.as_ref(),
@@ -816,11 +816,14 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     )
     .await
     {
-        drop(writer);
-        let audit_error =
-            error.context("code-map context audit failed; provider dispatch refused before egress");
-        return Err(preserve_code_map_audit_and_writer_failure(audit_error).await);
-    }
+        Ok(binding) => binding,
+        Err(error) => {
+            drop(writer);
+            let audit_error = error
+                .context("code-map context audit failed; provider dispatch refused before egress");
+            return Err(preserve_code_map_audit_and_writer_failure(audit_error).await);
+        }
+    };
     // The actual 0x20 intent is emitted centrally for every concrete leaf,
     // after cost/permission approval and immediately before transport dispatch.
     // Carry the old turn-level business fields into those request-bound frames.
@@ -959,6 +962,8 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
             provider_chunk_count: stream_chunk_count,
             limit_tokens: stream_limit_tokens,
         },
+        retained_code_map_binding.as_ref(),
+        Some(turn_id.as_str()),
         output,
     )
     .await;
@@ -991,6 +996,7 @@ mod tests {
     use crate::cli::init::ProviderKind;
     use crate::providers::{Completion, CompletionIdentity, Provider, Request};
     use async_trait::async_trait;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
@@ -1040,6 +1046,198 @@ mod tests {
                 usage_measurements: None,
             })
         }
+    }
+
+    /// Records the concrete requests of an initial native refusal plus its
+    /// truthful retry.  Keeping this beside the prepared-turn fixture proves
+    /// the production adapter, rather than only the metadata helper, carries
+    /// the exact retained context through a response replacement.
+    #[derive(Default)]
+    struct RetainedContextRetryProvider {
+        requests: Mutex<Vec<Request>>,
+    }
+
+    #[async_trait]
+    impl Provider for RetainedContextRetryProvider {
+        fn name(&self) -> &'static str {
+            "retained-context-retry-mock"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("retained-context-retry-model")
+        }
+
+        async fn complete(&self, request: Request) -> Result<Completion> {
+            let mut requests = self.requests.lock().expect("lock captured requests");
+            let attempt = requests.len();
+            requests.push(request);
+            drop(requests);
+
+            if attempt == 0 {
+                return Ok(Completion {
+                    text: String::new(),
+                    termination: crate::providers::ProviderTermination::refused(
+                        Some("refusal".to_owned()),
+                        crate::providers::RefusalOrigin::ProviderMessage,
+                        "refusal",
+                        Some("I cannot help with that request.".to_owned()),
+                    ),
+                    identity: CompletionIdentity {
+                        provider: self.name().to_owned(),
+                        wire_model: "retained-context-retry-model".to_owned(),
+                        dispatch_route: Vec::new(),
+                    },
+                    model: "retained-context-retry-model".to_owned(),
+                    latency: Duration::from_millis(1),
+                    input_tokens: Some(3),
+                    output_tokens: Some(0),
+                    cache_creation_tokens: None,
+                    cache_read_tokens: None,
+                    usage_measurements: None,
+                });
+            }
+
+            Ok(Completion {
+                termination: Default::default(),
+                text: "recovered reply after the truthful retry".to_owned(),
+                identity: CompletionIdentity {
+                    provider: self.name().to_owned(),
+                    wire_model: "retained-context-retry-model".to_owned(),
+                    dispatch_route: Vec::new(),
+                },
+                model: "retained-context-retry-model".to_owned(),
+                latency: Duration::from_millis(1),
+                input_tokens: Some(3),
+                output_tokens: Some(5),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                usage_measurements: None,
+            })
+        }
+    }
+
+    /// Drives the real MCP loop while making the first provider boundary prove
+    /// that automatic-context's unavailable receipt is already durable.
+    struct ChatConsumerMcpProvider {
+        segment_path: std::path::PathBuf,
+        requests: std::sync::Mutex<Vec<Request>>,
+        first_call_saw_w55_receipt: AtomicBool,
+    }
+
+    impl ChatConsumerMcpProvider {
+        fn new(segment_path: std::path::PathBuf) -> Self {
+            Self {
+                segment_path,
+                requests: std::sync::Mutex::new(Vec::new()),
+                first_call_saw_w55_receipt: AtomicBool::new(false),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for ChatConsumerMcpProvider {
+        fn name(&self) -> &'static str {
+            "chat-consumer-mcp-mock"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("chat-consumer-mcp-model")
+        }
+
+        async fn complete(&self, request: Request) -> Result<Completion> {
+            let mut requests = self.requests.lock().expect("lock captured MCP requests");
+            let attempt = requests.len();
+            requests.push(request);
+            drop(requests);
+
+            if attempt == 0 {
+                let wal = std::fs::read(&self.segment_path)
+                    .expect("the caller-owned WAL is readable before the provider starts");
+                self.first_call_saw_w55_receipt.store(
+                    wal.windows(b"enabled_context_unavailable".len())
+                        .any(|window| window == b"enabled_context_unavailable")
+                        && wal
+                            .windows(b"\"surface\":\"cli\"".len())
+                            .any(|window| window == b"\"surface\":\"cli\"")
+                        && wal
+                            .windows(b"unmapped_root".len())
+                            .any(|window| window == b"unmapped_root"),
+                    Ordering::SeqCst,
+                );
+                return Ok(Completion {
+                    termination: Default::default(),
+                    text: "```mcp-tool-call\n{\"server\":\"neoth-codegraph\",\"tool\":\"codegraph_recall_v1\",\"arguments\":{\"prompt\":\"leaf_n\",\"limit\":1}}\n```".to_owned(),
+                    identity: CompletionIdentity {
+                        provider: self.name().to_owned(),
+                        wire_model: "chat-consumer-mcp-model".to_owned(),
+                        dispatch_route: Vec::new(),
+                    },
+                    model: "chat-consumer-mcp-model".to_owned(),
+                    latency: Duration::from_millis(1),
+                    input_tokens: Some(3),
+                    output_tokens: Some(1),
+                    cache_creation_tokens: None,
+                    cache_read_tokens: None,
+                    usage_measurements: None,
+                });
+            }
+
+            Ok(Completion {
+                termination: Default::default(),
+                text: "final chat consumer response".to_owned(),
+                identity: CompletionIdentity {
+                    provider: self.name().to_owned(),
+                    wire_model: "chat-consumer-mcp-model".to_owned(),
+                    dispatch_route: Vec::new(),
+                },
+                model: "chat-consumer-mcp-model".to_owned(),
+                latency: Duration::from_millis(1),
+                input_tokens: Some(3),
+                output_tokens: Some(4),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                usage_measurements: None,
+            })
+        }
+    }
+
+    /// The prompt builder intentionally resolves repository context from the
+    /// active working directory.  This test-only guard restores process state
+    /// after the isolated, seeded repository fixture completes.
+    struct PipelineCwdGuard {
+        original: std::path::PathBuf,
+    }
+
+    impl PipelineCwdGuard {
+        fn enter(path: &std::path::Path) -> Self {
+            let original = std::env::current_dir().expect("capture test working directory");
+            std::env::set_current_dir(path).expect("enter seeded code-map repository");
+            Self { original }
+        }
+    }
+
+    impl Drop for PipelineCwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
+
+    fn seed_pipeline_repo_context(home: &std::path::Path, repo: &std::path::Path) -> InstancePaths {
+        let source = repo.join("src/retained_context_marker.rs");
+        std::fs::create_dir_all(source.parent().expect("source parent"))
+            .expect("create fixture source directory");
+        std::fs::write(&source, "pub fn retained_context_marker() {}\n")
+            .expect("write indexed marker source");
+        let paths = InstancePaths::for_home(home);
+        let root = crate::code_map::CanonicalRepoRoot::discover(repo)
+            .expect("discover seeded fixture repository");
+        crate::code_map::rebuild_snapshot(
+            &root,
+            &paths.code_map,
+            crate::code_map::RebuildOptions::default(),
+        )
+        .expect("persist seeded code-map snapshot");
+        paths
     }
 
     #[test]
@@ -1181,6 +1379,15 @@ mod tests {
             .wait()
             .await
             .expect("caller drains the real WAL writer");
+        let wal = std::fs::read(&segment_path).expect("read default-off pipeline WAL");
+        assert!(
+            !wal.windows(b"retained_in_provider_request".len())
+                .any(|window| window == b"retained_in_provider_request")
+                && !wal
+                    .windows(b"final_reply_prepared".len())
+                    .any(|window| window == b"final_reply_prepared"),
+            "default-off code-map context must not create retained or prepared binding records"
+        );
         assert!(
             !sink
                 .events
@@ -1201,6 +1408,248 @@ mod tests {
             Some(ChatTurnEvent::Terminal(ChatTurnTerminal::Complete { provider, model, .. }))
                 if provider == "neutral-engine-mock" && model == "neutral-engine-model"
         ));
+    }
+
+    #[test]
+    fn prepared_turn_retains_seeded_context_through_truthful_retry_before_final_receipt_and_terminal()
+     {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build retained-context test runtime");
+        // CWD, like environment variables, is process-global. Acquire the
+        // crate-wide process-state lock before the guard and retain it until
+        // the async turn returns and the guard has restored the original CWD.
+        let _environment = crate::test_env::lock();
+        runtime.block_on(async {
+            let fixture = tempfile::tempdir().expect("create retained-context fixture");
+            let home = fixture.path().join("home");
+            let repo = fixture.path().join("repo");
+            std::fs::create_dir_all(&home).expect("create retained-context home");
+            let instance_paths = seed_pipeline_repo_context(&home, &repo);
+            let _cwd = PipelineCwdGuard::enter(&repo);
+            let selected_config_path = home.join("freedom.yaml");
+            let wal_dir = home.join("wal");
+            std::fs::create_dir_all(&wal_dir).expect("create retained-context WAL directory");
+            crate::consent::grant(&home, ProviderKind::ClaudeCli)
+                .expect("grant fixture provider consent");
+
+            let mut config = FreedomConfig {
+                provider_kind: Some(ProviderKind::ClaudeCli),
+                provider_binary: Some("claude".to_owned()),
+                provider_model: Some("retained-context-retry-model".to_owned()),
+                autonomy: crate::permissions::AutonomyLevel::Full,
+                review_gate_enabled: false,
+                steps_completed: vec![1, 2, 3, 4, 5, 6, 7],
+                ..Default::default()
+            };
+            config.council.disabled = Some(true);
+            config.memory.recall_shortcut = false;
+            config.code_map.auto_context_max_files = 5;
+            config.refusal_recovery.enabled = true;
+            config.refusal_recovery.max_attempts = 1;
+
+            let mut prepared = PreparedChatTurn {
+                input: ChatTurnInput {
+                    message: Some("find retained_context_marker".to_owned()),
+                    model: Some("retained-context-retry-model".to_owned()),
+                    skill: None,
+                    system: None,
+                    attach: Vec::new(),
+                    repository_root: None,
+                    edit: false,
+                    resume_from: None,
+                    incognito: false,
+                    loop_mode: false,
+                    iterations: None,
+                    until: Vec::new(),
+                    stream: false,
+                    temperature: None,
+                    top_p: None,
+                    sampling_seed: None,
+                },
+                preparation: ChatTurnPreparation {
+                    config,
+                    ephemeral_consent: crate::consent::EphemeralConsent::default(),
+                    stream_control_token: None,
+                    cancellation: ChatTurnCancellation::default(),
+                    session_canary: std::sync::Arc::new(
+                        crate::security::injection_tracker::CanaryToken::generate()
+                            .expect("mint retained-context session canary"),
+                    ),
+                    instance_paths,
+                    first_tour_home: home.clone(),
+                    selected_config_path,
+                    prompt: "find retained_context_marker".to_owned(),
+                    current_session_id: "retained-context-retry-regression".to_owned(),
+                    chat_ts_unix: 1_725_000_002,
+                    mcp_servers: crate::mcp::McpServers::default(),
+                    scoped_mcp_servers: Vec::new(),
+                    tweaks: crate::tweaks::Tweaks::default(),
+                    profile_extensions:
+                        crate::profile::extension_registry::TypedExtensionRegistry::default(),
+                    slash_skill_name: None,
+                    explicit_route_requested: false,
+                },
+                deferred_failure_output: None,
+                deferred_terminal: None,
+            };
+            let segment_path = wal_dir.join("retained-context-retry-000001.wal");
+            let (writer, writer_completion) = crate::wal::writer::spawn_for_home_with_completion(
+                segment_path.clone(),
+                home.clone(),
+            )
+            .expect("spawn retained-context WAL writer");
+            let provider = RetainedContextRetryProvider::default();
+            let mut sink = CollectingSink::default();
+
+            let deferred_output =
+                run_prepared_chat_turn(&mut prepared, &provider, &writer, &segment_path, &mut sink)
+                    .await
+                    .expect("prepared turn accepts the recovered provider reply");
+
+            assert!(
+                deferred_output.is_none(),
+                "non-stream recovery has no done line"
+            );
+            {
+                let requests = provider.requests.lock().expect("read captured requests");
+                assert_eq!(
+                    requests.len(),
+                    2,
+                    "initial refusal must receive one truthful retry"
+                );
+                for request in requests.iter() {
+                    let system = request.system.as_deref().expect("retained request system");
+                    assert!(
+                        system.contains("retained_context_marker"),
+                        "every successful-route request retains the seeded code-map context: {system}"
+                    );
+                }
+            }
+            assert!(sink.events.iter().any(|event| matches!(
+                event,
+                ChatTurnEvent::Output(ChatOutput::HumanStdout { text })
+                    if text == "recovered reply after the truthful retry"
+            )));
+            assert!(
+                !sink
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, ChatTurnEvent::Terminal(_))),
+                "the final receipt exists before, never after, caller-owned terminal release"
+            );
+            assert!(prepared.deferred_terminal.is_some());
+
+            drop(writer);
+            writer_completion
+                .wait()
+                .await
+                .expect("drain retained-context WAL writer");
+            let wal = std::fs::read(&segment_path).expect("read retained-context WAL");
+            let first_audit = wal
+                .windows(b"retained_in_provider_request".len())
+                .position(|window| window == b"retained_in_provider_request")
+                .expect("record retained request audit");
+            let final_receipt = wal
+                .windows(b"final_reply_prepared".len())
+                .position(|window| window == b"final_reply_prepared")
+                .expect("record prepared final reply binding");
+            assert!(
+                first_audit < final_receipt,
+                "the final binding receipt follows the real retained-request audit"
+            );
+            emit_terminal(
+                &mut sink,
+                prepared
+                    .deferred_terminal
+                    .take()
+                    .expect("successful route leaves terminal for caller release"),
+            )
+            .expect("release terminal after durable final binding");
+            assert!(matches!(
+                sink.events.last(),
+                Some(ChatTurnEvent::Terminal(ChatTurnTerminal::Complete { provider, model, .. }))
+                    if provider == "retained-context-retry-mock"
+                        && model == "retained-context-retry-model"
+            ));
+        });
+    }
+
+    #[test]
+    fn prepared_streaming_turn_reports_finalization_error_when_final_binding_append_fails() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build final-binding failure runtime");
+        let _environment = crate::test_env::lock();
+        runtime.block_on(async {
+            let fixture = tempfile::tempdir().expect("create final-binding failure fixture");
+            let home = fixture.path().join("home");
+            let repo = fixture.path().join("repo");
+            std::fs::create_dir_all(&home).expect("create final-binding failure home");
+            let instance_paths = seed_pipeline_repo_context(&home, &repo);
+            let _cwd = PipelineCwdGuard::enter(&repo);
+            let selected_config_path = home.join("freedom.yaml");
+            let wal_dir = home.join("wal");
+            std::fs::create_dir_all(&wal_dir).expect("create final-binding failure WAL directory");
+            crate::consent::grant(&home, ProviderKind::ClaudeCli)
+                .expect("grant final-binding fixture provider consent");
+            let mut config = FreedomConfig {
+                provider_kind: Some(ProviderKind::ClaudeCli),
+                provider_binary: Some("claude".to_owned()),
+                provider_model: Some("retained-context-retry-model".to_owned()),
+                autonomy: crate::permissions::AutonomyLevel::Full,
+                review_gate_enabled: false,
+                steps_completed: vec![1, 2, 3, 4, 5, 6, 7],
+                ..Default::default()
+            };
+            config.council.disabled = Some(true);
+            config.memory.recall_shortcut = false;
+            config.code_map.auto_context_max_files = 5;
+            config.refusal_recovery.enabled = true;
+            config.refusal_recovery.max_attempts = 1;
+            let prompt = "find retained_context_marker W60_FINAL_BINDING_APPEND_REJECTION_FIXTURE".to_owned();
+            let mut prepared = PreparedChatTurn {
+                input: ChatTurnInput {
+                    message: Some(prompt.clone()), model: Some("retained-context-retry-model".to_owned()),
+                    skill: None, system: None, attach: Vec::new(), repository_root: None, edit: false,
+                    resume_from: None, incognito: false, loop_mode: false, iterations: None,
+                    until: Vec::new(), stream: true, temperature: None, top_p: None, sampling_seed: None,
+                },
+                preparation: ChatTurnPreparation {
+                    config, ephemeral_consent: crate::consent::EphemeralConsent::default(),
+                    stream_control_token: Some(Zeroizing::new("final-binding-failure-token".to_owned())),
+                    cancellation: ChatTurnCancellation::default(),
+                    session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint failure fixture canary")),
+                    instance_paths, first_tour_home: home.clone(), selected_config_path, prompt,
+                    current_session_id: "final-binding-failure-regression".to_owned(), chat_ts_unix: 1_725_000_003,
+                    mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(),
+                    tweaks: crate::tweaks::Tweaks::default(),
+                    profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(),
+                    slash_skill_name: None, explicit_route_requested: false,
+                },
+                deferred_failure_output: None, deferred_terminal: None,
+            };
+            let segment_path = wal_dir.join("final-binding-failure-000001.wal");
+            let (writer, writer_completion) = crate::wal::writer::spawn_for_home_with_completion(segment_path.clone(), home.clone())
+                .expect("spawn final-binding failure WAL writer");
+            let provider = RetainedContextRetryProvider::default();
+            let mut sink = CollectingSink::default();
+            let error = run_prepared_chat_turn(&mut prepared, &provider, &writer, &segment_path, &mut sink)
+                .await
+                .expect_err("the final receipt rejection must fail the prepared streaming turn");
+            assert!(error.to_string().contains("post_reply_pipeline"));
+            assert_eq!(provider.requests.lock().expect("read retained requests").len(), 2);
+            assert!(matches!(prepared.deferred_failure_output.as_ref(), Some(ChatOutput::StreamFinalizationError { control_token, .. }) if control_token == "final-binding-failure-token"));
+            assert!(prepared.deferred_terminal.is_none(), "no complete terminal is staged after the final receipt failure");
+            assert!(!sink.events.iter().any(|event| matches!(event, ChatTurnEvent::Output(ChatOutput::StreamDone { .. }) | ChatTurnEvent::Terminal(_))), "no authenticated done or terminal completion escapes the failed final-binding route");
+            drop(writer);
+            writer_completion.wait().await.expect("drain failed final-binding WAL");
+            let wal = std::fs::read(&segment_path).expect("read failed final-binding WAL");
+            assert!(wal.windows(b"retained_in_provider_request".len()).any(|window| window == b"retained_in_provider_request"), "the retained request audit committed before provider success");
+            assert!(!wal.windows(b"final_reply_prepared".len()).any(|window| window == b"final_reply_prepared"), "the rejected final receipt is never reported as prepared");
+        });
     }
 
     #[tokio::test]
@@ -1320,5 +1769,235 @@ mod tests {
             default_config_before,
             "the local action must not fall back to the sibling freedom.yaml"
         );
+    }
+
+    #[test]
+    fn prepared_chat_mcp_turn_threads_requested_policy_to_real_codegraph_child_after_w55_receipt() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build Chat consumer fixture runtime");
+        // Environment and CWD select both the parent auto-context root and the
+        // real stdio child's root. Keep the process lock until every guard has
+        // restored the state it changed.
+        let _environment = crate::test_env::lock();
+        runtime.block_on(async {
+            let fixture = tempfile::tempdir().expect("create Chat consumer fixture");
+            let home = fixture.path().join("selected-home");
+            let parent_root = fixture.path().join("unmapped-parent-root");
+            let child_root = fixture.path().join("indexed-child-root");
+            std::fs::create_dir_all(&home).expect("create selected home");
+            std::fs::create_dir_all(&parent_root).expect("create unmapped parent root");
+            let paths = InstancePaths::for_home(&home);
+            crate::mcp::codegraph_server::w59_seed_real_sqlite_root(
+                &paths.code_map,
+                &child_root,
+                "n",
+            );
+            let database = paths.code_map.canonicalize().expect("canonical real code-map DB");
+            let base = crate::mcp::config::McpServerConfig {
+                id: "neoth-codegraph".into(),
+                description: None,
+                command: std::env::current_exe()
+                    .expect("test executable")
+                    .canonicalize()
+                    .expect("canonical test executable")
+                    .display()
+                    .to_string(),
+                args: vec![
+                    "mcp".into(),
+                    "codegraph-serve".into(),
+                    "--db".into(),
+                    database.display().to_string(),
+                ],
+                env: std::collections::HashMap::new(),
+                enabled: true,
+                allow_tools: Some(
+                    crate::mcp::codegraph_server::TOOL_NAMES
+                        .iter()
+                        .map(|tool| (*tool).to_owned())
+                        .collect(),
+                ),
+                trust_all_tools: false,
+                smart_approve: true,
+                autonomy_gate: None,
+            };
+            let servers = crate::mcp::McpServers {
+                servers: vec![base.clone()],
+                smart_loading: true,
+            };
+            std::fs::write(
+                &paths.mcp_servers,
+                serde_yaml::to_string(&servers).expect("serialize real stdio MCP descriptor"),
+            )
+            .expect("write selected-home mcp_servers.yaml");
+
+            let selected_config_path = home.join("freedom.yaml");
+            let mut config = FreedomConfig {
+                provider_kind: Some(ProviderKind::ClaudeCli),
+                provider_binary: Some("claude".to_owned()),
+                provider_model: Some("chat-consumer-mcp-model".to_owned()),
+                autonomy: crate::permissions::AutonomyLevel::Full,
+                review_gate_enabled: false,
+                steps_completed: vec![1, 2, 3, 4, 5, 6, 7],
+                ..Default::default()
+            };
+            config.council.disabled = Some(true);
+            config.memory.recall_shortcut = false;
+            config.code_map.auto_context_max_files = 1;
+            config.code_map.coding_recall_max_files = 1;
+            config.code_map.coding_callers_per_symbol = 1;
+            config.code_map.coding_summary_token_budget = 256;
+            config.code_map.requested_context_max_bfs_depth = 2;
+            std::fs::write(
+                &selected_config_path,
+                serde_yaml::to_string(&config).expect("serialize selected Chat config"),
+            )
+            .expect("write selected Chat config");
+            crate::consent::grant(&home, ProviderKind::ClaudeCli)
+                .expect("grant selected-home provider consent");
+            let wal_dir = home.join("wal");
+            std::fs::create_dir_all(&wal_dir).expect("create selected-home WAL directory");
+            // Pre-seed the exact home-owned HMAC key which authenticates the
+            // receipt and the later tool-loop WAL records.
+            std::fs::write(wal_dir.join("hmac.key"), [0x5A_u8; 32])
+                .expect("seed selected-home HMAC key");
+
+            let prior_record = std::env::var_os("NEOTH_W56_CHILD_RECORD");
+            let prior_child_cwd = std::env::var_os("NEOTH_W59_CHILD_CWD");
+            let prior_autoroute = std::env::var_os("NEOTH_MCP_AUTOROUTE");
+            let record = home.join("real-child-events.jsonl");
+            unsafe {
+                std::env::set_var("NEOTH_W56_CHILD_RECORD", &record);
+                std::env::set_var("NEOTH_W59_CHILD_CWD", &child_root);
+                std::env::set_var("NEOTH_MCP_AUTOROUTE", "1");
+            }
+            struct RestoreChatConsumerEnv(
+                Option<std::ffi::OsString>,
+                Option<std::ffi::OsString>,
+                Option<std::ffi::OsString>,
+            );
+            impl Drop for RestoreChatConsumerEnv {
+                fn drop(&mut self) {
+                    unsafe {
+                        match self.0.take() {
+                            Some(value) => std::env::set_var("NEOTH_W56_CHILD_RECORD", value),
+                            None => std::env::remove_var("NEOTH_W56_CHILD_RECORD"),
+                        }
+                        match self.1.take() {
+                            Some(value) => std::env::set_var("NEOTH_W59_CHILD_CWD", value),
+                            None => std::env::remove_var("NEOTH_W59_CHILD_CWD"),
+                        }
+                        match self.2.take() {
+                            Some(value) => std::env::set_var("NEOTH_MCP_AUTOROUTE", value),
+                            None => std::env::remove_var("NEOTH_MCP_AUTOROUTE"),
+                        }
+                    }
+                }
+            }
+            let _restore = RestoreChatConsumerEnv(prior_record, prior_child_cwd, prior_autoroute);
+            let _cwd = PipelineCwdGuard::enter(&parent_root);
+            let segment_path = wal_dir.join("chat-consumer-000001.wal");
+            let (writer, writer_completion) =
+                crate::wal::writer::spawn_for_home_with_completion(segment_path.clone(), home.clone())
+                    .expect("spawn Chat consumer WAL writer");
+            let provider = ChatConsumerMcpProvider::new(segment_path.clone());
+            let mut sink = CollectingSink::default();
+
+            let mut prepared = match crate::cli::chat::prepare_daemon_plain_chat_turn(
+                "find leaf_n".to_owned(),
+                config,
+                selected_config_path,
+                home.clone(),
+                &provider,
+                ChatTurnCancellation::default(),
+                &mut sink,
+            )
+            .await
+            .expect("daemon plain chat preparation accepts the selected instance") {
+                ChatPreparationOutcome::Ready(prepared) => prepared,
+                ChatPreparationOutcome::Completed => panic!("ordinary Chat input must prepare a provider turn"),
+            };
+            let deferred = run_prepared_chat_turn(
+                &mut prepared,
+                &provider,
+                &writer,
+                &segment_path,
+                &mut sink,
+            )
+            .await
+            .expect("prepared Chat turn reaches the real codegraph child");
+
+            assert!(deferred.is_none(), "plain Chat turn has no stream completion");
+            assert!(
+                provider.first_call_saw_w55_receipt.load(Ordering::SeqCst),
+                "the W55 unavailable-context receipt is durable before the first provider/tool effect"
+            );
+            assert_eq!(
+                provider.requests.lock().expect("read captured requests").len(),
+                2,
+                "the provider emits exactly one real tool call followed by the normal final response"
+            );
+            assert!(sink.events.iter().any(|event| matches!(
+                event,
+                ChatTurnEvent::Output(ChatOutput::HumanStdout { text })
+                    if text == "final chat consumer response"
+            )));
+            assert!(prepared.deferred_terminal.is_some());
+
+            drop(writer);
+            writer_completion
+                .wait()
+                .await
+                .expect("drain Chat consumer WAL writer before terminal release");
+            let wal = std::fs::read(&segment_path).expect("read Chat consumer WAL");
+            assert_eq!(
+                wal.windows(b"enabled_context_unavailable".len())
+                    .filter(|window| *window == b"enabled_context_unavailable")
+                    .count(),
+                1,
+                "one automatic-context unavailable outcome produces one durable receipt"
+            );
+            assert!(
+                wal.windows(b"\"surface\":\"cli\"".len())
+                    .any(|window| window == b"\"surface\":\"cli\"")
+                    && wal.windows(b"unmapped_root".len())
+                        .any(|window| window == b"unmapped_root"),
+                "the receipt retains the actual CLI unmapped-root outcome"
+            );
+
+            let events: Vec<serde_json::Value> = std::fs::read_to_string(&record)
+                .expect("read real stdio child evidence")
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("decode child event"))
+                .collect();
+            let startups: Vec<_> = events.iter().filter(|event| event["event"] == "startup").collect();
+            let calls: Vec<_> = events.iter().filter(|event| event["event"] == "tools/call").collect();
+            assert_eq!(startups.len(), 1, "one real child owns the Chat tool call");
+            assert_eq!(calls.len(), 1, "one requested recall reaches the child");
+            assert_eq!(calls[0]["name"], "codegraph_recall_v1");
+            assert_eq!(calls[0]["arguments"], serde_json::json!({"prompt":"leaf_n","limit":1}));
+            let expected = crate::mcp::codegraph_server::effective_builtin_codegraph_server_with_requested_policy(
+                &base,
+                crate::config::CodeMapImpactPolicy::default(),
+                crate::config::RequestedContextPolicy {
+                    recall_max_files: 1,
+                    callers_per_symbol: 1,
+                    summary_token_budget: 256,
+                    max_bfs_depth: 2,
+                },
+            )
+            .expect("derive canonical W59 descriptor");
+            let observed = serde_json::from_value::<crate::mcp::config::McpServerConfig>(
+                startups[0]["descriptor"].clone(),
+            )
+            .expect("decode complete real-child descriptor");
+            assert_eq!(observed, expected, "Chat preserves the exact W59 descriptor and policy trailer");
+            emit_terminal(
+                &mut sink,
+                prepared.deferred_terminal.take().expect("release normal final terminal"),
+            )
+            .expect("publish terminal after durable completion");
+        });
     }
 }

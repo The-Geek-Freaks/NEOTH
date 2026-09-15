@@ -227,6 +227,31 @@ required, provider dispatch waits for its single append owner to acknowledge
 write. Append failure prevents provider dispatch, while disabled automatic
 context retains its zero-I/O path.
 
+When repository context survives the final prompt budget, Chat and Channel retain
+an opaque binding to its durable request receipt. A metadata-only
+`CodeMapRecallResolved` record with status `final_reply_prepared` binds the final
+reply after recovery, post-reply hooks and teacher replacement have settled.
+Chat waits for this append before its authenticated terminal success frame;
+Channel waits before releasing the ordinary reply to the existing egress path.
+Append failure suppresses normal success, while omitted or disabled context
+creates no extra claim. This records preparation, not channel delivery.
+
+The existing v3 stream `done` frame may carry `code_map_binding_sha256`, exactly
+64 lowercase hexadecimal characters. Main and Buddy accept it only on a valid
+authenticated terminal frame; the existing terminal hash and finalization
+receipt remain unchanged. The field is optional and does not change the stream
+protocol version or authorize delivery.
+
+Retention is checked against the complete canonical `repo_hint` envelope with
+source `repo:auto-context`, including the combined repository and architecture
+payload. A raw-text match or a truncated envelope cannot create a retained
+receipt. Existing audit digests retain their logical input-block semantics.
+
+Capability-bound recall after an exact-target rebuild verifies the same
+immutable include/exclude scope from preflight through the final fingerprint.
+General automatic-context readiness continues to verify the full selected root;
+a scoped snapshot is not sufficient authority for unrelated source files.
+
 An accepted impact policy derives an immutable generated-child descriptor before
 MCP authorization, catalogue, spawn and invocation. The original tool JSON and
 the strict base descriptor used for outline eligibility remain intact. Later

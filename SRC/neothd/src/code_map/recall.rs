@@ -474,6 +474,8 @@ where
         &tx,
         &current_canonical,
         staleness == RecallStaleness::Check,
+        included_relative_paths,
+        excluded_relative_paths,
     )?
     else {
         tx.commit()
@@ -541,9 +543,10 @@ where
     }))
 }
 
-/// Shared non-prompt eligibility for automatic context.  It runs inside the
-/// W55 recall transaction; callers retain prompt ranking and the final
-/// root/freshness revalidation as their stronger turn-specific authority.
+/// Shared non-prompt eligibility for automatic context. It runs inside the
+/// W55 recall transaction over the caller's published source scope; callers
+/// retain prompt ranking and the final root/freshness revalidation as their
+/// stronger turn-specific authority.
 struct AutomaticContextPreflight {
     snapshot: RootGenerationSnapshot,
     stale: bool,
@@ -553,6 +556,8 @@ fn automatic_context_preflight_in_transaction(
     tx: &Transaction<'_>,
     current_canonical: &Path,
     check_freshness: bool,
+    included_relative_paths: &[std::path::PathBuf],
+    excluded_relative_paths: &[std::path::PathBuf],
 ) -> Result<Option<AutomaticContextPreflight>> {
     let Some(snapshot) = resolve_active_root_snapshot_in_transaction(tx, current_canonical)? else {
         return Ok(None);
@@ -577,8 +582,8 @@ fn automatic_context_preflight_in_transaction(
             tx,
             snapshot.root.display(),
             snapshot.index_generation,
-            &[],
-            &[],
+            included_relative_paths,
+            excluded_relative_paths,
         )?
         .stale
     } else {
@@ -603,8 +608,9 @@ pub fn automatic_context_preflight(
     let tx = conn
         .unchecked_transaction()
         .context("begin automatic-context preflight transaction")?;
-    let result = automatic_context_preflight_in_transaction(&tx, &current_canonical, true)?
-        .map(|preflight| (preflight.snapshot, preflight.stale));
+    let result =
+        automatic_context_preflight_in_transaction(&tx, &current_canonical, true, &[], &[])?
+            .map(|preflight| (preflight.snapshot, preflight.stale));
     tx.commit()
         .context("commit automatic-context preflight transaction")?;
     Ok(result)
@@ -1152,8 +1158,10 @@ mod tests {
     use crate::code_map::persist::{
         open, persist_edges, persist_map, persist_map_and_edges, root_index_generation,
     };
+    use crate::code_map::snapshot::{RebuildOptions, rebuild_snapshot_scoped};
     use crate::code_map::symbols::{Symbol, SymbolKind};
     use crate::code_map::walker::{Language, RepoFile, RepoMap, ScanReport};
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     /// PR5-010: a daemon's process CWD is never the indexed repo, so
@@ -1603,6 +1611,63 @@ mod tests {
         .expect("Check retains the stale preflight receipt");
         assert_eq!(checked.stale, Some(true));
         assert!(checked.ranked_files.is_empty());
+    }
+
+    #[test]
+    fn scoped_rebuild_receipt_checks_its_exact_target_scope() {
+        // Self-improve's direct-NEOTH_HOME path publishes only its proposal
+        // target. A general automatic-context preflight must still reject this
+        // partial corpus, while the capability-bound recall must validate the
+        // same exact include set the rebuild published.
+        let repo = tempdir().unwrap();
+        let target = repo.path().join("target.rs");
+        let runtime_sibling = repo.path().join("runtime-state.json");
+        std::fs::write(&target, "fn scoped_target_symbol() {}\n").unwrap();
+        std::fs::write(&runtime_sibling, "mutable runtime state\n").unwrap();
+        let root = crate::code_map::CanonicalRepoRoot::discover(repo.path()).unwrap();
+        let db = tempdir().unwrap();
+        let db_path = db.path().join("code_map.db");
+        let included = [PathBuf::from("target.rs")];
+        let rebuilt =
+            rebuild_snapshot_scoped(&root, &db_path, RebuildOptions::default(), &included, &[])
+                .unwrap();
+        let conn = open(&db_path).unwrap();
+
+        let (_, unscoped_stale) = automatic_context_preflight(&conn, repo.path())
+            .unwrap()
+            .expect("published scoped root remains discoverable");
+        assert!(
+            unscoped_stale,
+            "general automatic context must not accept an exact-target corpus"
+        );
+
+        let fresh = recall_receipt_for_rebuild_snapshot(
+            &conn,
+            repo.path(),
+            "scoped_target_symbol",
+            5,
+            RecallStaleness::Check,
+            &rebuilt,
+        )
+        .unwrap()
+        .expect("scoped snapshot has a receipt");
+        assert_eq!(fresh.stale, Some(false));
+        assert_eq!(fresh.ranked_files.len(), 1);
+        assert_eq!(fresh.ranked_files[0].path, "target.rs");
+
+        std::fs::write(&target, "fn scoped_target_symbol() { changed(); }\n").unwrap();
+        let stale = recall_receipt_for_rebuild_snapshot(
+            &conn,
+            repo.path(),
+            "scoped_target_symbol",
+            5,
+            RecallStaleness::Check,
+            &rebuilt,
+        )
+        .unwrap()
+        .expect("changed scoped target retains a stale receipt");
+        assert_eq!(stale.stale, Some(true));
+        assert!(stale.ranked_files.is_empty());
     }
 
     #[test]
