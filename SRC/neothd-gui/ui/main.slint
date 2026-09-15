@@ -20,7 +20,7 @@
 import { AboutSlint, Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack, PaletteItem, CommandPalette, ContextMenu, MenuItem, ConfirmDialog } from "components.slint";
-import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, CodeMapHitRow, CodeMapManagedRootRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelAccountRow, ChannelActivityRow, PresetRow, ProfilePresetRow, PermRow } from "settings.slint";
+import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, CodeMapHitRow, CodeMapImpactTestRow, CodeMapManagedRootRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelAccountRow, ChannelActivityRow, PresetRow, ProfilePresetRow, PermRow } from "settings.slint";
 import { ChatView, ChatMessage, ChatChannelRow, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
@@ -75,6 +75,7 @@ export { ChannelActivityRow }
 export { CronJobRow }
 // Chat-surface consent strip.
 export { ConsentGrant }
+export { CodeMapImpactTestRow }
 
 export enum WizardStep {
     /// Very first screen the operator sees — pick between the GUI
@@ -1351,6 +1352,7 @@ export component MainWindow inherits Window {
     in property <string> code-map-graph-generation: "";
     in property <[CodeMapHitRow]> code-map-hits: [];
     callback code-map-browse-clicked;
+    callback code-map-root-changed(string);
     callback code-map-search-clicked(string, string);
     in property <bool> code-map-lifecycle-running: false;
     in property <bool> code-map-lifecycle-refresh-active: false;
@@ -1379,6 +1381,29 @@ export component MainWindow inherits Window {
     callback code-map-lifecycle-cancel-clicked;
     callback code-map-lifecycle-config-apply-clicked(bool, string, string);
     callback code-map-lifecycle-managed-root-remove-clicked(string);
+    in-out property <int> code-map-impact-source-index: 0;
+    in-out property <string> code-map-impact-base: "";
+    in-out property <string> code-map-impact-target: "HEAD";
+    in property <bool> code-map-impact-running: false;
+    in property <bool> code-map-impact-error: false;
+    in property <bool> code-map-impact-has-receipt: false;
+    in property <bool> code-map-impact-limited: false;
+    in property <bool> code-map-impact-no-observed-test-is-not-absence: false;
+    in property <string> code-map-impact-state: "Choose a repository root and Git source.";
+    in property <string> code-map-impact-detail: "";
+    in property <string> code-map-impact-canonical-root: "";
+    in property <string> code-map-impact-root-identity: "";
+    in property <string> code-map-impact-source: "";
+    in property <string> code-map-impact-diff-sha256: "";
+    in property <string> code-map-impact-index-generation: "";
+    in property <string> code-map-impact-graph-generation: "";
+    in property <string> code-map-impact-affected: "";
+    in property <string> code-map-impact-exact-seeds: "";
+    in property <string> code-map-impact-fallback-seeds: "";
+    in property <[CodeMapImpactTestRow]> code-map-impact-observed-tests: [];
+    in property <string> code-map-impact-observed-tests-omitted: "";
+    callback code-map-impact-analyze-clicked(string, int, string, string);
+    callback code-map-impact-view-changed;
     callback buddy-code-map-status;
     callback buddy-code-map-setup;
     callback buddy-code-map-rebuild;
@@ -3645,6 +3670,7 @@ export component MainWindow inherits Window {
             code-map-graph-generation: root.code-map-graph-generation;
             code-map-hits: root.code-map-hits;
             code-map-browse-clicked => { root.code-map-browse-clicked(); }
+            code-map-root-changed(updated-root) => { root.code-map-root-changed(updated-root); }
             code-map-search-clicked(repo-root, query) => { root.code-map-search-clicked(repo-root, query); }
             code-map-lifecycle-running: root.code-map-lifecycle-running;
             code-map-lifecycle-refresh-active: root.code-map-lifecycle-refresh-active;
@@ -3677,6 +3703,31 @@ export component MainWindow inherits Window {
             code-map-lifecycle-managed-root-remove-clicked(path) => {
                 root.code-map-lifecycle-managed-root-remove-clicked(path);
             }
+            code-map-impact-source-index <=> root.code-map-impact-source-index;
+            code-map-impact-base <=> root.code-map-impact-base;
+            code-map-impact-target <=> root.code-map-impact-target;
+            code-map-impact-running: root.code-map-impact-running;
+            code-map-impact-error: root.code-map-impact-error;
+            code-map-impact-has-receipt: root.code-map-impact-has-receipt;
+            code-map-impact-limited: root.code-map-impact-limited;
+            code-map-impact-no-observed-test-is-not-absence: root.code-map-impact-no-observed-test-is-not-absence;
+            code-map-impact-state: root.code-map-impact-state;
+            code-map-impact-detail: root.code-map-impact-detail;
+            code-map-impact-canonical-root: root.code-map-impact-canonical-root;
+            code-map-impact-root-identity: root.code-map-impact-root-identity;
+            code-map-impact-source: root.code-map-impact-source;
+            code-map-impact-diff-sha256: root.code-map-impact-diff-sha256;
+            code-map-impact-index-generation: root.code-map-impact-index-generation;
+            code-map-impact-graph-generation: root.code-map-impact-graph-generation;
+            code-map-impact-affected: root.code-map-impact-affected;
+            code-map-impact-exact-seeds: root.code-map-impact-exact-seeds;
+            code-map-impact-fallback-seeds: root.code-map-impact-fallback-seeds;
+            code-map-impact-observed-tests: root.code-map-impact-observed-tests;
+            code-map-impact-observed-tests-omitted: root.code-map-impact-observed-tests-omitted;
+            code-map-impact-analyze-clicked(repo-root, source-kind, base, target) => {
+                root.code-map-impact-analyze-clicked(repo-root, source-kind, base, target);
+            }
+            code-map-impact-view-changed => { root.code-map-impact-view-changed(); }
             native-coding-prompt <=> root.native-coding-prompt;
             native-coding-source-channel <=> root.native-coding-source-channel;
             native-coding-no-assign <=> root.native-coding-no-assign;

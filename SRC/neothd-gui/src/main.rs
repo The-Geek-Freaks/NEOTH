@@ -66,6 +66,12 @@ static CODE_MAP_RECALL_ACTIVE: std::sync::atomic::AtomicBool =
 static CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+// Every selected-root mutation, including a delayed native folder-picker
+// completion, advances this revision. Lifecycle and impact workers capture it
+// before they touch core and must discard old-root terminal state.
+static CODE_MAP_ROOT_SELECTION_REVISION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 // Native Coding background callbacks may outlive a terminal receipt or a
 // subsequent Buddy/Settings start. This UI ownership revision is distinct
 // from the shared service run id: it prevents an older queued UI callback from
@@ -1108,6 +1114,7 @@ mod buddy_activity;
 mod chat_child_supervisor;
 mod chat_stream_phase;
 mod code_map_controller;
+mod code_map_impact_controller;
 mod coding_controller;
 mod gui_action;
 mod gui_chat_bridge_controller;
@@ -13850,6 +13857,10 @@ fn main() -> Result<()> {
         std::sync::Arc::new(code_map_controller::CodeMapLifecycleController::new(
             neothd::code_map::persist::default_path(),
         ));
+    let code_map_impact_controller =
+        std::sync::Arc::new(code_map_impact_controller::CodeMapImpactController::new(
+            neothd::code_map::persist::default_path(),
+        ));
     let native_coding_controller = std::sync::Arc::new(coding_controller::CodingController::new());
 
     let weak_code_map_lifecycle_inspect = window.as_weak();
@@ -13881,6 +13892,46 @@ fn main() -> Result<()> {
             weak_code_map_lifecycle_cancel.clone(),
             std::sync::Arc::clone(&cancel_controller),
         );
+    });
+
+    // W52 — typed, explicit-root and read-only impact evidence. This has no
+    // coupling to lifecycle mutation or the provider-owning Coding service.
+    let weak_code_map_impact = window.as_weak();
+    let impact_controller = std::sync::Arc::clone(&code_map_impact_controller);
+    window.on_code_map_impact_analyze_clicked(move |root, source_kind, base, target| {
+        start_code_map_impact_analysis(
+            weak_code_map_impact.clone(),
+            std::sync::Arc::clone(&impact_controller),
+            root.to_string(),
+            source_kind,
+            base.to_string(),
+            target.to_string(),
+        );
+    });
+    let weak_code_map_impact_selection = window.as_weak();
+    let impact_selection_controller = std::sync::Arc::clone(&code_map_impact_controller);
+    window.on_code_map_impact_view_changed(move || {
+        if let Some(window) = weak_code_map_impact_selection.upgrade() {
+            invalidate_code_map_impact_view(
+                &window,
+                &impact_selection_controller,
+                "Git comparison changed",
+            );
+        }
+    });
+    let weak_code_map_root_changed = window.as_weak();
+    let root_change_impact_controller = std::sync::Arc::clone(&code_map_impact_controller);
+    window.on_code_map_root_changed(move |selected_root| {
+        if let Some(window) = weak_code_map_root_changed.upgrade() {
+            window.set_code_map_root(selected_root);
+            CODE_MAP_ROOT_SELECTION_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            invalidate_code_map_lifecycle_view_for_root_change(&window);
+            invalidate_code_map_impact_view(
+                &window,
+                &root_change_impact_controller,
+                "Repository selection changed",
+            );
+        }
     });
 
     let weak_code_map_lifecycle_config = window.as_weak();
@@ -14021,8 +14072,10 @@ fn main() -> Result<()> {
     // GOLD-R3-13 — repository-local code-map recall. Root selection is an
     // explicit operator input; this path never consults the GUI process CWD.
     let weak_code_map_browse = window.as_weak();
+    let picker_impact_controller = std::sync::Arc::clone(&code_map_impact_controller);
     window.on_code_map_browse_clicked(move || {
         let weak = weak_code_map_browse.clone();
+        let impact_controller = std::sync::Arc::clone(&picker_impact_controller);
         std::thread::spawn(move || {
             let picked = rfd::FileDialog::new()
                 .set_title("Select repository root for code-map recall")
@@ -14030,6 +14083,14 @@ fn main() -> Result<()> {
             let _ = slint::invoke_from_event_loop(move || {
                 if let (Some(window), Some(path)) = (weak.upgrade(), picked) {
                     window.set_code_map_root(path.to_string_lossy().into_owned().into());
+                    CODE_MAP_ROOT_SELECTION_REVISION
+                        .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                    invalidate_code_map_lifecycle_view_for_root_change(&window);
+                    invalidate_code_map_impact_view(
+                        &window,
+                        &impact_controller,
+                        "Repository selection changed",
+                    );
                 }
             });
         });
@@ -20033,6 +20094,8 @@ fn start_code_map_lifecycle_inspection(
         buddy(&window, GuiActivity::CodeMapLifecycleFailed);
         return;
     }
+    let selection_revision =
+        CODE_MAP_ROOT_SELECTION_REVISION.load(std::sync::atomic::Ordering::Acquire);
     window.set_code_map_lifecycle_running(true);
     window.set_code_map_lifecycle_refresh_active(false);
     window.set_code_map_lifecycle_operation("inspect".into());
@@ -20051,6 +20114,13 @@ fn start_code_map_lifecycle_inspection(
             let Some(window) = weak.upgrade() else {
                 return;
             };
+            if selection_revision
+                != CODE_MAP_ROOT_SELECTION_REVISION.load(std::sync::atomic::Ordering::Acquire)
+                || window.get_code_map_root().to_string().trim() != root.as_str()
+            {
+                settle_discarded_code_map_lifecycle_result(&window);
+                return;
+            }
             match result {
                 Ok((revision, canonical_root, status)) => {
                     if !controller.is_current_view(revision, &canonical_root) {
@@ -20213,6 +20283,8 @@ fn start_code_map_lifecycle_refresh(
         buddy(&window, GuiActivity::CodeMapLifecycleFailed);
         return;
     }
+    let selection_revision =
+        CODE_MAP_ROOT_SELECTION_REVISION.load(std::sync::atomic::Ordering::Acquire);
     let operation = match controller.begin_refresh(Path::new(&root)) {
         Ok(operation) => operation,
         Err(error) => {
@@ -20279,6 +20351,13 @@ fn start_code_map_lifecycle_refresh(
             let Some(window) = weak.upgrade() else {
                 return;
             };
+            if selection_revision
+                != CODE_MAP_ROOT_SELECTION_REVISION.load(std::sync::atomic::Ordering::Acquire)
+                || window.get_code_map_root().to_string().trim() != root.as_str()
+            {
+                settle_discarded_code_map_lifecycle_result(&window);
+                return;
+            }
             window.set_code_map_lifecycle_running(false);
             window.set_code_map_lifecycle_refresh_active(false);
             window.set_code_map_lifecycle_operation("".into());
@@ -20343,6 +20422,271 @@ fn apply_code_map_lifecycle_presentation(
     window.set_code_map_lifecycle_root_identity(presentation.root_identity.into());
     window.set_code_map_lifecycle_index_generation(presentation.index_generation.into());
     window.set_code_map_lifecycle_graph_generation(presentation.graph_generation.into());
+}
+
+fn start_code_map_impact_analysis(
+    weak: slint::Weak<MainWindow>,
+    controller: std::sync::Arc<code_map_impact_controller::CodeMapImpactController>,
+    root: String,
+    source_kind: i32,
+    base: String,
+    target: String,
+) {
+    let root = root.trim().to_owned();
+    let Some(window) = weak.upgrade() else {
+        return;
+    };
+    if root.is_empty() {
+        set_code_map_impact_error(
+            &window,
+            "Repository root required",
+            "Choose a repository root before analyzing its Git change impact.",
+        );
+        return;
+    }
+    let source = match code_map_impact_controller::CodeMapImpactSource::from_form(
+        source_kind,
+        &base,
+        &target,
+    ) {
+        Ok(source) => source,
+        Err(error) => {
+            let _ = error;
+            set_code_map_impact_error(
+                &window,
+                "Git comparison unavailable",
+                "Committed analysis requires a base and target revision.",
+            );
+            return;
+        }
+    };
+    if controller.has_active_analysis() {
+        window.set_code_map_impact_detail(
+            "A change-impact analysis is already running. Wait for its terminal receipt.".into(),
+        );
+        return;
+    }
+    let operation = match controller.begin(Path::new(&root), source) {
+        Ok(operation) => operation,
+        Err(error) => {
+            let _ = error;
+            set_code_map_impact_error(
+                &window,
+                "Repository root unavailable",
+                "Choose an existing repository directory before analysis.",
+            );
+            return;
+        }
+    };
+
+    clear_code_map_impact_receipt(&window);
+    window.set_code_map_impact_running(true);
+    window.set_code_map_impact_error(false);
+    window.set_code_map_impact_state("Analyzing selected Git diff…".into());
+    window.set_code_map_impact_detail(
+        "Reading the existing repository index and selected Git source; no index, provider, or repository state is changed."
+            .into(),
+    );
+
+    std::thread::spawn(move || {
+        let result = controller.analyze(&operation);
+        let completion = controller.finish(&operation);
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            match completion {
+                code_map_impact_controller::CodeMapImpactCompletion::Ignored => {}
+                code_map_impact_controller::CodeMapImpactCompletion::Discarded => {
+                    if controller.has_active_analysis() {
+                        return;
+                    }
+                    clear_code_map_impact_receipt(&window);
+                    window.set_code_map_impact_running(false);
+                    window.set_code_map_impact_error(false);
+                    window.set_code_map_impact_state("Change-impact result discarded".into());
+                    window.set_code_map_impact_detail(
+                        "The selected repository root or Git source changed while analysis was running. Analyze the current selection again."
+                            .into(),
+                    );
+                }
+                code_map_impact_controller::CodeMapImpactCompletion::Render => {
+                    window.set_code_map_impact_running(false);
+                    match result {
+                        Ok(analysis) => {
+                            if !impact_matches_current_lifecycle(&window, &analysis) {
+                                clear_code_map_impact_receipt(&window);
+                                window.set_code_map_impact_error(false);
+                                window.set_code_map_impact_state(
+                                    "Change-impact result discarded".into(),
+                                );
+                                window.set_code_map_impact_detail(
+                                    "Repository index evidence changed or belongs to another physical root. Inspect the selected index, then analyze again."
+                                        .into(),
+                                );
+                                return;
+                            }
+                            apply_code_map_impact_presentation(
+                                &window,
+                                panel_logic::present_code_map_impact(&analysis),
+                            );
+                        }
+                        Err(error) => {
+                            let presentation = panel_logic::present_code_map_impact_error(&error);
+                            set_code_map_impact_error(
+                                &window,
+                                presentation.state,
+                                presentation.detail,
+                            );
+                        }
+                    }
+                }
+            }
+        });
+    });
+}
+
+fn apply_code_map_impact_presentation(
+    window: &MainWindow,
+    presentation: panel_logic::CodeMapImpactPresentation,
+) {
+    let rows = presentation
+        .observed_tests
+        .into_iter()
+        .map(|row| CodeMapImpactTestRow {
+            test: row.test.into(),
+            target: row.target.into(),
+            provenance: row.provenance.into(),
+            confidence: row.confidence.into(),
+            distance: row.distance.into(),
+        })
+        .collect::<Vec<_>>();
+    window.set_code_map_impact_state(presentation.state.into());
+    window.set_code_map_impact_detail(presentation.detail.into());
+    window.set_code_map_impact_error(presentation.is_error);
+    window.set_code_map_impact_limited(presentation.is_limited);
+    window.set_code_map_impact_has_receipt(true);
+    window.set_code_map_impact_canonical_root(presentation.canonical_root.into());
+    window.set_code_map_impact_root_identity(presentation.root_identity.into());
+    window.set_code_map_impact_source(presentation.source.into());
+    window.set_code_map_impact_diff_sha256(presentation.diff_sha256.into());
+    window.set_code_map_impact_index_generation(presentation.index_generation.into());
+    window.set_code_map_impact_graph_generation(presentation.graph_generation.into());
+    window.set_code_map_impact_affected(presentation.affected.into());
+    window.set_code_map_impact_exact_seeds(presentation.exact_seeds.into());
+    window.set_code_map_impact_fallback_seeds(presentation.fallback_seeds.into());
+    window.set_code_map_impact_observed_tests_omitted(presentation.observed_tests_omitted.into());
+    window.set_code_map_impact_no_observed_test_is_not_absence(
+        presentation.no_observed_test_is_not_absence,
+    );
+    window.set_code_map_impact_observed_tests(slint::ModelRc::new(slint::VecModel::from(rows)));
+}
+
+fn clear_code_map_impact_receipt(window: &MainWindow) {
+    window.set_code_map_impact_has_receipt(false);
+    window.set_code_map_impact_limited(false);
+    window.set_code_map_impact_canonical_root("".into());
+    window.set_code_map_impact_root_identity("".into());
+    window.set_code_map_impact_source("".into());
+    window.set_code_map_impact_diff_sha256("".into());
+    window.set_code_map_impact_index_generation("".into());
+    window.set_code_map_impact_graph_generation("".into());
+    window.set_code_map_impact_affected("".into());
+    window.set_code_map_impact_exact_seeds("".into());
+    window.set_code_map_impact_fallback_seeds("".into());
+    window.set_code_map_impact_observed_tests_omitted("".into());
+    window.set_code_map_impact_no_observed_test_is_not_absence(false);
+    window.set_code_map_impact_observed_tests(slint::ModelRc::new(slint::VecModel::from(Vec::<
+        CodeMapImpactTestRow,
+    >::new(
+    ))));
+}
+
+fn set_code_map_impact_error(window: &MainWindow, state: &str, detail: &str) {
+    clear_code_map_impact_receipt(window);
+    window.set_code_map_impact_running(false);
+    window.set_code_map_impact_error(true);
+    window.set_code_map_impact_state(state.into());
+    window.set_code_map_impact_detail(detail.into());
+}
+
+fn invalidate_code_map_impact_view(
+    window: &MainWindow,
+    controller: &code_map_impact_controller::CodeMapImpactController,
+    reason: &str,
+) {
+    let invalidation = controller.invalidate_view();
+    clear_code_map_impact_receipt(window);
+    window.set_code_map_impact_error(false);
+    if invalidation.analysis_active {
+        window.set_code_map_impact_running(true);
+        window.set_code_map_impact_state(reason.into());
+        window.set_code_map_impact_detail(
+            "A prior analysis remains read-only work and will be discarded when it reaches a terminal result."
+                .into(),
+        );
+    } else {
+        window.set_code_map_impact_running(false);
+        window.set_code_map_impact_state("Choose a repository root and Git source.".into());
+        window.set_code_map_impact_detail("".into());
+    }
+}
+
+/// Root selection is shared by recall, lifecycle, and impact cards. A changed
+/// root must never leave lifecycle proof for the previous physical directory
+/// beside a new impact selection.
+fn invalidate_code_map_lifecycle_view_for_root_change(window: &MainWindow) {
+    let lifecycle_running = window.get_code_map_lifecycle_running();
+    clear_code_map_recall_receipt(window);
+    window
+        .set_code_map_status("Repository selection changed; search this repository again.".into());
+    window.set_code_map_error(false);
+    window.set_code_map_lifecycle_error(false);
+    window.set_code_map_lifecycle_refresh_active(false);
+    window.set_code_map_lifecycle_cancel_pending(false);
+    window.set_code_map_lifecycle_canonical_root("".into());
+    window.set_code_map_lifecycle_root_identity("".into());
+    window.set_code_map_lifecycle_index_generation("".into());
+    window.set_code_map_lifecycle_graph_generation("".into());
+    window.set_code_map_lifecycle_can_setup(false);
+    window.set_code_map_lifecycle_can_refresh(false);
+    window.set_code_map_lifecycle_can_force_rebuild(false);
+    window.set_code_map_lifecycle_can_repair(false);
+    if lifecycle_running {
+        window.set_code_map_lifecycle_state("Repository selection changed".into());
+        window.set_code_map_lifecycle_detail(
+            "The prior index operation will be discarded when it returns because it belongs to the earlier selection."
+                .into(),
+        );
+    } else {
+        window.set_code_map_lifecycle_operation("".into());
+        window.set_code_map_lifecycle_state("Choose this repository and inspect its index.".into());
+        window.set_code_map_lifecycle_detail("".into());
+    }
+}
+
+fn settle_discarded_code_map_lifecycle_result(window: &MainWindow) {
+    window.set_code_map_lifecycle_running(false);
+    window.set_code_map_lifecycle_refresh_active(false);
+    window.set_code_map_lifecycle_operation("".into());
+    window.set_code_map_lifecycle_cancel_pending(false);
+    window.set_code_map_lifecycle_error(false);
+    window.set_code_map_lifecycle_state("Repository index result discarded".into());
+    window.set_code_map_lifecycle_detail(
+        "The selected repository changed while the prior index operation was running. Inspect the current selection."
+            .into(),
+    );
+}
+
+fn impact_matches_current_lifecycle(
+    window: &MainWindow,
+    analysis: &code_map_impact_controller::CodeMapImpactAnalysis,
+) -> bool {
+    panel_logic::code_map_impact_matches_lifecycle(
+        analysis,
+        window.get_code_map_lifecycle_canonical_root().as_ref(),
+        window.get_code_map_lifecycle_root_identity().as_ref(),
+    )
 }
 
 fn code_map_lifecycle_runtime_summary() -> String {

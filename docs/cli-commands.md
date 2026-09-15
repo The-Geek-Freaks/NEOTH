@@ -3407,13 +3407,14 @@ Restore a previously-written backup into `~/.neoth/`
 
 AI code review (GOLD-ADOPT-15) — wraps OpenCodeReview (`ocr`)
 
-- `--from <FROM>` — Source ref to diff from (branch/merge-base mode), e.g. `main`
-- `--to <TO>` — Target ref for the diff (defaults to the current branch when `--from` is set)
-- `-c, --commit <SHA>` — Review a single commit (or tag) against its parent
-- `-b, --background <TEXT>` — Optional requirement / business context to steer the review
-- `-p, --preview` — Preview which files would be reviewed — no LLM calls (free, fast)
-- `--agent` — Agent mode: summary only, no human progress lines (for piping)
-- `--repo <DIR>` — Repository root (defaults to the current directory)
+- `--from <FROM>`
+- `--to <TO>`
+- `-c, --commit <SHA>`
+- `-b, --background <TEXT>`
+- `-p, --preview`
+- `--agent`
+- `--repo <DIR>`
+- `--impact-context` — Attach W43/W48 evidence only to one immutable, non-merge commit review
 
 ## `neoth risk-confirm`
 

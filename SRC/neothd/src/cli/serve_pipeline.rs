@@ -3972,6 +3972,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         crate::hooks::PreToolUseHookPolicy::Configured(&hooks),
                         &session_fired_once,
                         crate::hooks::PreToolUseCancellation::unbound(),
+                        config_for_handler.code_map.outline_enrichment,
                     )
                     .await
                     {

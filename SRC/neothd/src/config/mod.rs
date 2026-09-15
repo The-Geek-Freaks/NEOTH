@@ -2965,6 +2965,7 @@ mod code_map_config_tests {
             .expect("legacy freedom.yaml must deserialize");
 
         assert_eq!(config.code_map.auto_context_max_files, 0);
+        assert!(!config.code_map.outline_enrichment);
         assert_eq!(config.code_map.coding_recall_max_files, 8);
         assert_eq!(config.code_map.coding_callers_per_symbol, 3);
         assert_eq!(config.code_map.coding_summary_token_budget, 2_048);
@@ -3004,6 +3005,7 @@ mod code_map_config_tests {
             .expect("inclusive code_map bounds must validate");
 
         let maximum = CodeMapConfig {
+            outline_enrichment: true,
             auto_context_max_files: 200,
             coding_recall_max_files: 50,
             coding_callers_per_symbol: 20,

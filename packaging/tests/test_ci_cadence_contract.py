@@ -431,7 +431,8 @@ class CiCadenceContractTests(unittest.TestCase):
             "\n".join(
                 [
                     "          - os: macos-14",
-                    "            build_jobs: 4",
+                    "            # Runs 34881450745 and 34892993263 timed out compiling at four jobs.",
+                    "            build_jobs: 2",
                     "            test_threads: 4",
                     "            junit_name: macos",
                     "            test_build_timeout_minutes: 100",

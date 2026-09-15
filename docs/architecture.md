@@ -165,6 +165,30 @@ allow, result-enrichment, and block outcomes are accepted; unsupported actions
 fail closed and cannot rewrite tool arguments. This does not extend hook
 coverage to every native surface.
 
+## Review and GUI impact consumers
+
+`neoth review --impact-context --commit SHA` resolves an explicit non-merge
+commit to an immutable base/target pair and retains its canonical physical
+repository root. Bounded structural impact and observed-test evidence enter a
+private OCR background file. Prepared and terminal receipts retain hashes and
+provenance without raw diff, source, test bodies or OCR output. The impact-only
+probe and invocation disable OCR self-update in their child environment;
+ordinary review retains its existing availability and update behavior.
+
+The Code Sessions view accepts an explicit root plus working-tree, staged or
+committed-pair selection. Its read-only controller binds results to root identity
+and lifecycle operation, presents bounded rows with disclosed omissions, and
+keeps Coding/lifecycle interlocks active until the exact analysis settles.
+Repeated root or source invalidation cannot release a still-running analysis,
+and a late result cannot release a newer operation.
+
+The default-off `code_map.outline_enrichment` option adds one bounded untrusted
+sidecar only to an eligible trusted built-in `codegraph_outline` response.
+Eligibility uses the accepted immutable configuration snapshot and exact built-in
+identity. The configured pre-tool hook precedes planning; cancellation, root,
+generation and freshness are rechecked after the normal response. The sidecar
+does not rewrite arguments or extend authority to other tools.
+
 ## Diff impact and observed test evidence
 
 `neoth code-map diff-test-gaps --root PATH` selects one explicit diff source:

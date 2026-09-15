@@ -423,16 +423,8 @@ fn is_trusted_generated_codegraph_identity(
     server: &crate::mcp::McpServerConfig,
     desired: &crate::mcp::McpServerConfig,
 ) -> bool {
-    server.id == desired.id
-        && server.command == desired.command
-        && server.args == desired.args
-        && server.env.is_empty()
-        && server.enabled
-        && !server.trust_all_tools
-        && server.smart_approve
-        && server.autonomy_gate.is_none()
+    crate::mcp::codegraph_server::is_trusted_generated_codegraph_identity(server, desired)
 }
-
 // These are complete historical built-in catalogues, kept independent of the
 // evolving current `TOOL_NAMES`. A migration may add later built-ins only when
 // the persisted codegraph subset exactly matches one of these releases.
@@ -967,7 +959,14 @@ where
             reason: format!("cannot load configured PreToolUse hooks: {error}"),
         })?;
     let once_guard = crate::hooks::SessionOnceGuard::new();
-    let pre_tool_use = crate::mcp::gate::admit_pre_tool_use(
+    // One-shot CLI calls have no reload controller. Read one config snapshot
+    // from the exact instance home; an unreadable optional file preserves legacy off.
+    let outline_enrichment_enabled = crate::config::FreedomConfig::load_from_path_or_default(
+        &instance_home.join("freedom.yaml"),
+    )
+    .map(|config| config.code_map.outline_enrichment)
+    .unwrap_or(false);
+    let pre_tool_use = crate::mcp::gate::admit_pre_tool_use_with_outline(
         crate::hooks::PreToolUseOrigin::DirectCliMcp,
         cfg,
         tool,
@@ -978,6 +977,7 @@ where
         &once_guard,
         crate::hooks::PreToolUseCancellation::unbound(),
         crate::hooks::PreToolUseReplay::direct_request(),
+        outline_enrichment_enabled,
     )?;
     let mut client = spawn(cfg.clone()).await?;
     crate::mcp::gate::invoke_authorized_with_audit_sink(

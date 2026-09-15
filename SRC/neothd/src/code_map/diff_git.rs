@@ -428,7 +428,9 @@ fn read_repo_source(root: &Path, relative: &str) -> Result<String> {
     String::from_utf8(bytes).with_context(|| format!("changed source {relative:?} is not UTF-8"))
 }
 
-fn validate_git_ref(reference: &str) -> Result<()> {
+/// Validate one explicit Git selector before it enters a bounded native Git
+/// argv. Consumers that resolve a commit pair reuse this exact custody rule.
+pub(crate) fn validate_git_ref(reference: &str) -> Result<()> {
     if reference.is_empty()
         || reference.len() > 1024
         || reference.starts_with('-')
@@ -441,7 +443,10 @@ fn validate_git_ref(reference: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_git_bounded(args: &[String]) -> Result<String> {
+/// Run one read-only Git argv with the existing output and wall-clock bounds.
+/// Callers must validate every operator-controlled argument before constructing
+/// the argv and retain `--end-of-options` where Git accepts a selector.
+pub(crate) fn run_git_bounded(args: &[String]) -> Result<String> {
     let mut child = Command::new("git")
         .args(args)
         .stdin(Stdio::null())

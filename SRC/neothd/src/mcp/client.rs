@@ -358,6 +358,70 @@ async fn write_framed_with_effect<W: AsyncWrite + Unpin>(
 }
 
 impl McpClient {
+    /// Test-only constructor for a child whose startup is marked by one exact
+    /// line. It reads one byte at a time so no protocol byte after the marker
+    /// is consumed before the ordinary production handshake owns `stdout`.
+    #[cfg(test)]
+    pub(crate) async fn from_test_child(
+        server_id: &str,
+        mut child: Child,
+    ) -> Result<Self, McpError> {
+        const READY: &[u8] = b"NEOTH_W53_STDIO_READY\n";
+        let stdin = child.stdin.take().ok_or_else(|| {
+            McpError::Spawn(server_id.into(), "test child stdin unavailable".into())
+        })?;
+        let mut stdout = child.stdout.take().ok_or_else(|| {
+            McpError::Spawn(server_id.into(), "test child stdout unavailable".into())
+        })?;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut consumed = 0usize;
+            let mut matched = 0usize;
+            let mut byte = [0_u8; 1];
+            loop {
+                let read = stdout
+                    .read(&mut byte)
+                    .await
+                    .map_err(|error| McpError::Handshake(server_id.into(), error.to_string()))?;
+                if read == 0 {
+                    return Err(McpError::Handshake(
+                        server_id.into(),
+                        "test child ended before ready marker".into(),
+                    ));
+                }
+                consumed += read;
+                if consumed > 4096 {
+                    return Err(McpError::Handshake(
+                        server_id.into(),
+                        "test child startup exceeded 4KiB".into(),
+                    ));
+                }
+                if byte[0] == READY[matched] {
+                    matched += 1;
+                    if matched == READY.len() {
+                        return Ok(());
+                    }
+                } else {
+                    matched = usize::from(byte[0] == READY[0]);
+                }
+            }
+        })
+        .await
+        .map_err(|_| {
+            McpError::Handshake(server_id.into(), "test child ready marker timed out".into())
+        })??;
+        let mut client = Self {
+            server_id: server_id.into(),
+            child,
+            stdin,
+            stdout,
+            next_id: AtomicU64::new(1),
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            server_info: None,
+        };
+        client.handshake().await?;
+        Ok(client)
+    }
+
     /// Spawn the configured MCP server + complete the `initialize`
     /// handshake. Returns once the server has acknowledged.
     pub async fn spawn(config: &McpServerConfig) -> Result<Self, McpError> {

@@ -611,6 +611,7 @@ pub async fn run_loop(
             crate::hooks::PreToolUseHookPolicy::Configured(&pre_tool_hooks),
             &pre_tool_once_guard,
             crate::hooks::PreToolUseCancellation::unbound(),
+            freedom.code_map.outline_enrichment,
         )
         .await?;
 

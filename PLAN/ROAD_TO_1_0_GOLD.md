@@ -57,7 +57,7 @@ behavior. P1-17 remains partial and P1-14/P1-16 remain open.
 **W41/W44 Main/Buddy and dependency repair — PUBLISHED
 `2bf6c0fe298cdd1e1146a7c8279ab68fd92c25bb` (direct main, 56 verified paths):**
 the 230-input source receipt records the W41 native unit selection **2,108 / 0 /
-12**, six contracts **29 / 0**, Python **38**, GUIClippy02 and WasmCheck02
+12**, seven contracts **29 / 0**, Python **38**, GUIClippy02 and WasmCheck02
 passing. The W44 lock, license snapshot and dependency repair are included in the
 same published batch. This is local evidence, not native GUI interaction,
 live-provider delivery, cross-platform CI, release, or parent-roadmap closure.
@@ -76,7 +76,7 @@ two CRG-04 kernel leaves close: counts1324/1014/308/2, raw310/pre-tag309.
 W46 covers MCP, provider and direct-CLI execution; other native surfaces remain
 open. The generated CLI reference is included after its dedicated docgen gate.
 
-**W48/W49 and W51 — LOCALLY VALIDATED, 19-PATH PUBLICATION READY:** twelve
+**W48/W49 and W51 — PUBLISHED `9f042bce25f06676403899b931100f357914b3bb`, 19 verified paths:** twelve
 source changes connect bounded test-gap citations to CLI/MCP, Coding
 prompts/receipts and pre-apply advisory receipts. Doctor gains bounded,
 read-only readiness diagnostics with explicit non-coverage wording.
@@ -88,23 +88,45 @@ Final source252 and five executable hashes are retained. The 251 build inputs
 are an independently reviewed derivation from the preserved Build03 inventory
 and one pre-build dispatcher admission; the missing fresh captures and retained
 failed runs are disclosed in `docs/gold-wave48-49-51-verification.md`.
-W50repair11, W52repair03 and W53repair04 are independently approved WORK
-proposals for the next combined batch, still unadmitted/unrun. No further
-checkbox closes; counts1324/1014/308/2.
-CI34892993263 and Security34892996455 target published `ed2a8712`.
-Preflight34892970784 and Security's cargo-audit/cargo-deny jobs passed on that
-SHA. Both CodeQL analyses passed; the final alert gate found23 new findings.
-Independent per-alert review confirmed21 test-only fixtures and2 overwritten
-output/secret buffers (#471–493). Those exact alerts were dismissed with their
-specific reasons; zero open high/critical CodeQL alerts remain. Security
-34892996455 is fully successful on attempt2; no query or gate was disabled.
-Full CI Linux ran16285 tests with16284 passes/1 review-signature failure;
-W46's adjacent replay-state assignment changed one three-call fingerprint.
-Its exact baseline repair is independently reviewed and passed runtime03.
-Windows16217pass/1 failed at the same fingerprint; its single-job compile
-succeeded in42m54 without OOM. macOS compilation remains pending.
+W50repair11, W52repair03 and W53repair04 were independently approved before
+their later 23-file combined admission below. No further checkbox closes;
+counts1324/1014/308/2.
 
-**Current W41/W44 CI boundary:** full CI
+**W50/W52/W53 — IMPLEMENTED AND LOCALLY VERIFIED (2026-09-15):**
+Immutable-commit review context, the Code Sessions diff-impact/test-evidence
+surface, and default-off built-in outline enrichment are implemented. The
+reviewed 23-file feature scope includes the existing GUI `rusqlite` dependency;
+one additional headless harness import was repaired during integration.
+
+Final selected runtime: **2556 / 0 / 0** in **132.43s**, selected by 19 filters
+from 14,665 catalogued tests. This includes the real SQLite/authenticated MCP
+outline fixture and provider cost guard. Seven integration targets passed
+**746 / 0 / 0** test executions, including the production GUI controller/panel
+paths; shared module tests occur in more than one target. The final core build
+reconfirmed the identical tested executable in 1.04s. Strict native Clippy and
+GUI Clippy passed; GUI Clippy retains 14 dead-code warnings in its test target
+plus the unchanged vendor warning. CLI docgen, Python45 and GUI source lint
+passed. The 260-input source manifest and exact test/binary matrix live in
+`docs/verification/gold-wave50-52-53-{source-manifest,test-matrix}.json`;
+publication uses the checked 36-path whitelist.
+
+Earlier selected01 (2554/2/0) and the first integration run (359/1/0 in its
+first target) remain failed diagnostic evidence. The repairs corrected fixture
+configuration/caller expectations and counted both truncation ellipses in the
+GUI text-bound test; no production bound was relaxed. Final tests supersede
+those failed results. No roadmap checkbox closes: **1324 / 1014 / 308 / 2**,
+raw open 310, pre-tag open 309. Native GUI render/accessibility, live OCR,
+configured-channel delivery, clean-machine and release acceptance remain open.
+
+The earlier full CI 34892993263 failed Linux/Windows only on the cost fingerprint
+fixed in published `9f042bce25f06676403899b931100f357914b3bb`; macOS exhausted
+its 100-minute compile deadline without a Rust/OOM diagnostic. The new macOS
+two-build-job setting is an experiment awaiting full CI, with test threads and
+deadlines unchanged. Security 34892996455 succeeded on attempt 2; Preflight
+34902030359 and Quality 34902029584 passed on `9f`. They do not establish
+acceptance of this new batch. W54–W57's complete 18-file composition and helper
+package are independently approved in WORK and await canonical admission.
+**Historical W41/W44 CI boundary (superseded by later batches):** full CI
 [`34881450745`](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/34881450745)
 completed with Linux quality and Windows/macOS compilation failures; the macOS
 compile step hit its 100-minute deadline without a compiler/OOM error or test
@@ -671,7 +693,7 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   | CRG-02 structural blast radius | **NATIVE SERVICE + CLI/MCP WIRED / PRODUCT CONSUMERS PARTIAL** | `SRC/neothd/src/code_map/impact.rs`, `SRC/neothd/src/cli/code_map.rs`, `SRC/neothd/src/mcp/codegraph_server.rs`, `SRC/neothd/src/code_map/persist.rs` | **OPEN:** the generation-bound typed service, `neoth code-map impact` and seventh MCP tool are real; review/apply/decomposer/risk, config/reload, Doctor, GUI, Buddy and packaged clean-machine consumers remain. |
   | CRG-03 diff hunks to symbols | **RESEARCHED / FILE-LEVEL SUBSTRATE ONLY** | `SRC/neothd/src/code_map/risk.rs`, `SRC/neothd/src/code_map/symbols.rs`, `SRC/neothd/src/code_map/persist.rs` | **OPEN:** changed filenames exist; exact hunk ranges and durable symbol extents/intersection do not. |
   | CRG-04 `TestedBy` and test gaps | **FIRST TWO LEAVES VERIFIED** | `SRC/neothd/src/code_map/graph.rs`, `SRC/neothd/src/code_map/persist.rs` | **OPEN parent:** stable identities/migration and bounded impact-bound test discovery have root-owned green tests; consumers and product surfaces remain open. |
-  | CRG-05 tool-use enrichment | **GENERAL HOOK SUBSTRATE ADOPTED / LEAF UNWIRED** | `SRC/neothd/src/hooks/stages.rs`, `SRC/neothd/src/cli/chat.rs`, `SRC/neothd/src/mcp/codegraph_server.rs` | **OPEN:** `PreProviderCall` is not a per-tool `PreToolUse` boundary and no CRG enrichment result is consumed. |
+  | CRG-05 tool-use enrichment | **BOUNDED BUILT-IN OUTLINE SLICE IMPLEMENTED / OPEN** | `SRC/neothd/src/hooks/stages.rs`, `SRC/neothd/src/cli/chat.rs`, `SRC/neothd/src/mcp/codegraph_server.rs` | **OPEN parent:** W53 proves the default-off `codegraph_outline` route with pre-tool admission, bound SQLite/authenticated-gate fixture and post-call freshness fences; generic native Read/Grep/Glob/Bash and other surfaces remain open. |
 
   **Shared native substrate and package boundary (real, but insufficient for
   leaf closure):**
@@ -701,6 +723,10 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
 
   - [ ] **CRG-01 — prompt-targeted `code_map` context in the coding
     hemisphere: ADOPTED / WIRED-PARTIAL / OPEN for v1.0.**
+
+    **HISTORICAL source audit snapshot (pre-W3):** the following narrative
+    bullets record the July static-audit state. They are retained as forensic
+    history and are not a claim about the W3/W41/W52 implementation state.
 
     - **Ingestion -> index:** the shared `RepoMapBuilder -> extract_symbols ->
       persist_map/persist_edges -> code_map.db` path is real, root-scoped and
@@ -748,6 +774,13 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     - **Packaging:** core Rust inclusion is complete; a clean install still has
       to prove first-run index creation/refresh and all surfaces without an
       external CRG runtime.
+
+    **Current implementation boundary (W3/W41/W52):** selected-root lifecycle
+    and coding ceilings are implemented, and the admitted W52 Code Sessions
+    surface adds typed impact/test evidence. Its headless-controller integration
+    targets remain in the pending seven-contract gate. GUI/Buddy parity,
+    clean-install/package proof, remaining consumers, and the parent checkbox
+    remain open.
     - [x] Add one explicit, bounded first-index + incremental refresh lifecycle
       with root selection, watcher/debounce or equivalent invalidation,
       cancellation, restart recovery, index-generation receipt and a manual
@@ -960,7 +993,7 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
       stale/partial indexes and deterministic tie/order behavior.
 
   - [ ] **CRG-05 — per-tool codegraph enrichment:
-    TYPED MCP/PROVIDER/CLI BOUNDARY IMPLEMENTED / ENRICHMENT OPEN for v1.0.**
+    BOUNDED BUILT-IN OUTLINE SLICE IMPLEMENTED / ENRICHMENT OPEN for v1.0.**
 
     - **Trigger ingestion:** W46 adds a distinct `HookStage::PreToolUse`
       and typed context/permit for MCP, provider-emitted and direct-CLI MCP
@@ -969,18 +1002,20 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
       SmartApprove path runs the hook before catalog-process creation and still
       requires subsequent authorization. `PreProviderCall` remains separate.
       Coverage of every relevant native Read/Grep/Glob/Bash path remains open.
-    - **Index -> enrichment retrieval:** codegraph read tools exist, but no
-      dispatcher captures a tool name + typed `tool_input.pattern/path/command`
-      + bound cwd/root, calls callers/callees/relevance/tests, and returns a
-      bounded enrichment object.
-    - **Prompt/citation consumer:** W46 bounds and frames general hook
-      enrichment without rewriting tool arguments. Native codegraph retrieval
-      and a canonical result bound to the tool call, root and index generation
-      remain unimplemented; general hook output does not establish CRG
-      `enrich.py` contract parity or codegraph enrichment coverage.
-    - **Config/lifecycle/surfaces/package:** the GUI has general hook inventory,
-      but no codegraph-enrichment enablement/status/error view; CLI, Buddy and
-      Doctor lack a leaf-specific contract. No default hook/script is staged.
+    - **Index -> enrichment retrieval:** W53 implements one bounded dispatcher
+      path for default-off built-in `codegraph_outline`: it binds the exact
+      request, canonical identity, read-only launcher/database posture,
+      authenticated gate decision, root/generation/freshness checks, and one
+      untrusted sidecar. Its real SQLite/authenticated-gate fixture and cost
+      guard pass. No equivalent dispatcher exists for generic native
+      Read/Grep/Glob/Bash or other tools.
+    - **Prompt/citation consumer:** W53 preserves the original outline response
+      and adds only its bounded untrusted sidecar after post-call freshness
+      checks. It does not establish general `enrich.py` contract parity or
+      codegraph enrichment coverage beyond that built-in outline route.
+    - **Config/lifecycle/surfaces/package:** W53's configuration is default-off
+      and snapshotted for the built-in route. GUI, CLI, Buddy and Doctor retain
+      no broader leaf-specific contract; no default hook/script is staged.
       A Python script would also break the zero-friction native package
       boundary, so the CRG algorithm should be implemented in Rust unless a
       fully staged, signed, dependency-free asset is demonstrably superior.

@@ -212,6 +212,280 @@ fn apply_generation(
     presentation.graph_generation = generation.graph_generation.to_string();
 }
 
+// ── Read-only change impact and observed test evidence ─────────────────────
+
+pub const MAX_CODE_MAP_IMPACT_VISIBLE_ROWS: usize = 32;
+const MAX_CODE_MAP_IMPACT_FIELD_CHARS: usize = 160;
+const MAX_CODE_MAP_IMPACT_REF_CHARS: usize = 72;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeMapImpactTestRowPresentation {
+    pub test: String,
+    pub target: String,
+    pub provenance: String,
+    pub confidence: String,
+    pub distance: String,
+}
+
+/// Display-only projection of the exact W43 impact receipt and W48 test-gap
+/// receipt. In particular, an empty observation list is never turned into an
+/// absence claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeMapImpactPresentation {
+    pub state: String,
+    pub detail: String,
+    pub canonical_root: String,
+    pub root_identity: String,
+    pub source: String,
+    pub diff_sha256: String,
+    pub index_generation: String,
+    pub graph_generation: String,
+    pub affected: String,
+    pub exact_seeds: String,
+    pub fallback_seeds: String,
+    pub observed_tests: Vec<CodeMapImpactTestRowPresentation>,
+    pub observed_tests_omitted: String,
+    pub no_observed_test_is_not_absence: bool,
+    pub is_limited: bool,
+    pub is_error: bool,
+}
+
+/// A Slint text field is a presentation boundary. Repository paths, symbols,
+/// refs, and error chains are external text and must be compact, printable,
+/// and control-safe before they enter generated UI state.
+pub fn bounded_code_map_impact_text(input: &str, max_chars: usize) -> String {
+    let mut output = String::new();
+    let mut truncated = false;
+    for character in input.chars() {
+        if output.chars().count() == max_chars {
+            truncated = true;
+            break;
+        }
+        output.push(if character.is_control() {
+            ' '
+        } else {
+            character
+        });
+    }
+    let output = output.trim().to_owned();
+    if truncated {
+        format!("{output}…")
+    } else if output.is_empty() {
+        "—".into()
+    } else {
+        output
+    }
+}
+
+fn bounded_impact_identity(file: &str, symbol: &str) -> String {
+    format!(
+        "{}::{}",
+        bounded_code_map_impact_text(file, MAX_CODE_MAP_IMPACT_REF_CHARS),
+        bounded_code_map_impact_text(symbol, MAX_CODE_MAP_IMPACT_REF_CHARS)
+    )
+}
+
+fn bounded_impact_source(
+    source: &crate::code_map_impact_controller::CodeMapImpactSource,
+) -> String {
+    match source {
+        crate::code_map_impact_controller::CodeMapImpactSource::WorkingTree => {
+            "Working tree".into()
+        }
+        crate::code_map_impact_controller::CodeMapImpactSource::Staged => "Staged changes".into(),
+        crate::code_map_impact_controller::CodeMapImpactSource::Committed { base, target } => {
+            format!(
+                "{}..{}",
+                bounded_code_map_impact_text(base, MAX_CODE_MAP_IMPACT_REF_CHARS),
+                bounded_code_map_impact_text(target, MAX_CODE_MAP_IMPACT_REF_CHARS)
+            )
+        }
+    }
+}
+
+fn cap_code_map_impact_rows(
+    mut rows: Vec<CodeMapImpactTestRowPresentation>,
+    total_rows: usize,
+) -> (Vec<CodeMapImpactTestRowPresentation>, usize) {
+    rows.truncate(MAX_CODE_MAP_IMPACT_VISIBLE_ROWS);
+    let omitted = total_rows.saturating_sub(rows.len());
+    (rows, omitted)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeMapImpactErrorPresentation {
+    pub state: &'static str,
+    pub detail: &'static str,
+}
+
+/// Retain only a structural, operator-actionable error class. Raw error
+/// chains can contain unbounded Git, filesystem, path, or ref text and never
+/// enter Slint state.
+pub fn present_code_map_impact_error(error: &anyhow::Error) -> CodeMapImpactErrorPresentation {
+    let has = |needle: &str| {
+        error
+            .chain()
+            .any(|cause| cause.to_string().contains(needle))
+    };
+    if has("stale") {
+        CodeMapImpactErrorPresentation {
+            state: "Repository index is stale",
+            detail: "Refresh the selected repository index before analyzing its Git change.",
+        }
+    } else if has("no mappable seeds") {
+        CodeMapImpactErrorPresentation {
+            state: "No indexed change evidence",
+            detail: "The selected Git comparison did not map to an indexed symbol or file.",
+        }
+    } else if has("database is absent") || has("no persisted code-map snapshot") {
+        CodeMapImpactErrorPresentation {
+            state: "Repository index unavailable",
+            detail: "Inspect or set up the selected repository index before analysis.",
+        }
+    } else if has("Git ref") || has("git diff") {
+        CodeMapImpactErrorPresentation {
+            state: "Git comparison unavailable",
+            detail: "Check the selected Git source or committed revisions and try again.",
+        }
+    } else {
+        CodeMapImpactErrorPresentation {
+            state: "Change-impact analysis unavailable",
+            detail: "Check the selected root, Git source, and repository index.",
+        }
+    }
+}
+
+/// A populated lifecycle card is evidence for one physical repository. An
+/// impact receipt may share that evidence only when both canonical display
+/// root and physical identity agree; an empty lifecycle receipt is neutral.
+pub fn code_map_impact_matches_lifecycle(
+    analysis: &crate::code_map_impact_controller::CodeMapImpactAnalysis,
+    lifecycle_root: &str,
+    lifecycle_identity: &str,
+) -> bool {
+    if lifecycle_root.is_empty() && lifecycle_identity.is_empty() {
+        return true;
+    }
+    !lifecycle_root.is_empty()
+        && !lifecycle_identity.is_empty()
+        && lifecycle_root == analysis.impact.root.display()
+        && lifecycle_identity == analysis.impact.root.identity().as_str()
+}
+
+pub fn present_code_map_impact(
+    analysis: &crate::code_map_impact_controller::CodeMapImpactAnalysis,
+) -> CodeMapImpactPresentation {
+    use neothd::code_map::{ImpactTestGapOutcome, ImpactTestGapRejection};
+
+    let impact = &analysis.impact;
+    let gap = &analysis.test_gap;
+    let mut observed_tests = Vec::new();
+    let mut observed_test_count = 0usize;
+    let mut limited = impact.impact.truncated
+        || impact.impact.budget_truncated
+        || impact.impact.evidence_truncated
+        || gap.impact_partial
+        || gap.work_budget.capped;
+    for node in &gap.per_node {
+        let Some(coverage) = &node.coverage else {
+            limited = true;
+            continue;
+        };
+        let uncertainty = &coverage.uncertainty;
+        limited |= uncertainty.stale_graph
+            || uncertainty.partial_graph
+            || uncertainty.depth_capped
+            || uncertainty.node_capped
+            || uncertainty.edge_rows_capped
+            || uncertainty.unresolved_or_ambiguous
+            || uncertainty.unsupported_or_unclassified;
+        observed_test_count = observed_test_count.saturating_add(coverage.observed_tests.len());
+        let remaining = MAX_CODE_MAP_IMPACT_VISIBLE_ROWS.saturating_sub(observed_tests.len());
+        for observed in coverage.observed_tests.iter().take(remaining) {
+            observed_tests.push(CodeMapImpactTestRowPresentation {
+                test: bounded_impact_identity(&observed.test.file, &observed.test.symbol),
+                target: bounded_impact_identity(&observed.target.file, &observed.target.symbol),
+                provenance: "framework + conventional path".into(),
+                confidence: observed.confidence.to_string(),
+                distance: observed.distance.to_string(),
+            });
+        }
+    }
+    let (observed_tests, omitted_rows) =
+        cap_code_map_impact_rows(observed_tests, observed_test_count);
+    limited |= omitted_rows > 0;
+
+    let (state, detail, is_error) = match &gap.outcome {
+        ImpactTestGapOutcome::Complete => {
+            if limited {
+                (
+                    "Change impact analyzed with limits".into(),
+                    format!(
+                        "Affected evidence is bounded. Test evidence used {}/{} work units.",
+                        gap.work_budget.consumed_units, gap.work_budget.max_units
+                    ),
+                    false,
+                )
+            } else {
+                (
+                    "Change impact analyzed".into(),
+                    format!(
+                        "Impact and observed test evidence are bound to this repository generation ({} work units).",
+                        gap.work_budget.consumed_units
+                    ),
+                    false,
+                )
+            }
+        }
+        ImpactTestGapOutcome::RejectedInput(rejection) => {
+            let reason = match rejection {
+                ImpactTestGapRejection::Stale => "the index is stale",
+                ImpactTestGapRejection::Truncated => "the impact traversal was truncated",
+                ImpactTestGapRejection::BudgetTruncated => "the impact work budget was reached",
+                ImpactTestGapRejection::EvidenceTruncated => "impact evidence was truncated",
+            };
+            (
+                "Test evidence withheld".into(),
+                format!("No test-gap query ran because {reason}."),
+                false,
+            )
+        }
+    };
+
+    CodeMapImpactPresentation {
+        state,
+        detail,
+        canonical_root: bounded_code_map_impact_text(
+            impact.root.display(),
+            MAX_CODE_MAP_IMPACT_FIELD_CHARS,
+        ),
+        root_identity: bounded_code_map_impact_text(
+            impact.root.identity().as_str(),
+            MAX_CODE_MAP_IMPACT_FIELD_CHARS,
+        ),
+        source: bounded_impact_source(analysis.operation.source()),
+        diff_sha256: bounded_code_map_impact_text(&impact.diff_sha256, 64),
+        index_generation: impact.index_generation.to_string(),
+        graph_generation: impact.graph_generation.to_string(),
+        affected: format!(
+            "{} nodes / {} files",
+            impact.impact.impacted_nodes.len(),
+            impact.impact.impacted_files.len()
+        ),
+        exact_seeds: impact.exact_symbol_seeds.len().to_string(),
+        fallback_seeds: impact.file_fallback_seeds.len().to_string(),
+        no_observed_test_is_not_absence: gap.no_observed_test_is_not_absence,
+        observed_tests,
+        observed_tests_omitted: if omitted_rows == 0 {
+            String::new()
+        } else {
+            format!("{omitted_rows} observed test relation(s) omitted from this display.")
+        },
+        is_limited: limited,
+        is_error,
+    }
+}
+
 // ── GOLD-R3-13 — repository-local code-map recall ───────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12282,5 +12556,67 @@ mod tests {
         let before = keys.len();
         keys.dedup();
         assert_eq!(before, keys.len(), "duplicate tab key in PALETTE_CATALOG");
+    }
+
+    #[test]
+    fn impact_text_projection_is_control_safe_and_bounded() {
+        let untrusted = format!("repo/\u{0000}line\n{}", "x".repeat(1_000));
+        let displayed = bounded_code_map_impact_text(&untrusted, 24);
+        assert!(!displayed.chars().any(|character| character.is_control()));
+        assert!(displayed.chars().count() <= 25, "{displayed:?}");
+        assert!(displayed.ends_with('…'));
+
+        let identity = bounded_impact_identity(
+            &format!("src/{}\u{0007}", "path".repeat(80)),
+            &format!("{}\n", "symbol".repeat(80)),
+        );
+        assert!(!identity.chars().any(|character| character.is_control()));
+        // Each component may append its own ellipsis; the separator adds two chars.
+        let component_limit = MAX_CODE_MAP_IMPACT_REF_CHARS + 1;
+        let components: Vec<_> = identity.split("::").collect();
+        assert_eq!(components.len(), 2);
+        assert!(components.iter().all(|component| {
+            component.chars().count() <= component_limit && component.ends_with('…')
+        }));
+        assert!(identity.chars().count() <= component_limit * 2 + 2);
+    }
+
+    #[test]
+    fn impact_rows_are_capped_before_slint_models_and_report_omission() {
+        let rows = (0..(MAX_CODE_MAP_IMPACT_VISIBLE_ROWS + 7))
+            .map(|index| CodeMapImpactTestRowPresentation {
+                test: format!("test-{index}"),
+                target: format!("target-{index}"),
+                provenance: "framework + conventional path".into(),
+                confidence: "255".into(),
+                distance: "0".into(),
+            })
+            .collect::<Vec<_>>();
+        let (visible, omitted) =
+            cap_code_map_impact_rows(rows, MAX_CODE_MAP_IMPACT_VISIBLE_ROWS + 7);
+        assert_eq!(visible.len(), MAX_CODE_MAP_IMPACT_VISIBLE_ROWS);
+        assert_eq!(omitted, 7);
+    }
+
+    #[test]
+    fn impact_error_presentation_never_retains_untrusted_error_text() {
+        let raw = format!(
+            "stale {}\u{0000}\n{}",
+            "C:/repo".repeat(300),
+            "ref".repeat(300)
+        );
+        let presentation = present_code_map_impact_error(&anyhow::anyhow!(raw));
+        assert_eq!(presentation.state, "Repository index is stale");
+        assert_eq!(
+            presentation.detail,
+            "Refresh the selected repository index before analyzing its Git change."
+        );
+        assert!(!presentation.detail.contains("C:/repo"));
+        assert!(
+            !presentation
+                .detail
+                .chars()
+                .any(|character| character.is_control())
+        );
     }
 }

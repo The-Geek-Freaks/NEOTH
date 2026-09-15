@@ -40,6 +40,9 @@ arboard = { version = "3", default-features = false }
 
 # Shared deps from the workspace.
 anyhow = "1"
+# W52 read-only code-map impact consumer needs the same rusqlite package and
+# feature set as core because W43/W48 accept a typed Connection directly.
+rusqlite = { version = "0.37", features = ["bundled", "functions", "hooks", "limits"] }
 toml = "0.8"
 serde.workspace      = true
 serde_json.workspace = true

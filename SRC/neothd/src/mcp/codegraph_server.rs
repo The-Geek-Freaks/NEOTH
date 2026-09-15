@@ -55,6 +55,7 @@ use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::mcp::client::{McpContent, McpTool, ToolAnnotations, ToolCallResult};
+use crate::mcp::config::McpServerConfig;
 
 fn open_code_map_read_only(path: &Path) -> Result<rusqlite::Connection> {
     let flags =
@@ -370,7 +371,8 @@ pub fn codegraph_tools() -> Vec<McpTool> {
                         "description": "Absolute or unambiguous repo-relative path already present in the persisted code map."
                     }
                 },
-                "required": ["path"]
+                "required": ["path"],
+                "additionalProperties": false
             }),
             annotations: read_only_annotations(),
         },
@@ -1110,12 +1112,18 @@ pub(crate) fn callees_inner(
 // ── GOLD-ADAPT-CCS-04: codegraph_outline ─────────────────────────────────
 
 #[derive(Deserialize)]
-struct OutlineArgs {
-    path: String,
+#[serde(deny_unknown_fields)]
+pub(crate) struct OutlineArgs {
+    pub(crate) path: String,
+}
+
+pub(crate) fn parse_outline_args(args: &serde_json::Value) -> Result<OutlineArgs> {
+    serde_json::from_value(args.clone())
+        .context("codegraph_outline requires exactly { path: string }")
 }
 
 fn tool_outline(db_path: &Path, args: &serde_json::Value, cwd: &Path) -> ToolCallResult {
-    let parsed: OutlineArgs = match serde_json::from_value(args.clone()) {
+    let parsed: OutlineArgs = match parse_outline_args(args) {
         Ok(p) => p,
         Err(e) => return error_result(format!("bad args: {e}")),
     };
@@ -1129,6 +1137,282 @@ fn tool_outline(db_path: &Path, args: &serde_json::Value, cwd: &Path) -> ToolCal
     }
 }
 
+pub(crate) fn is_trusted_generated_codegraph_identity(
+    server: &McpServerConfig,
+    desired: &McpServerConfig,
+) -> bool {
+    server.id == desired.id
+        && server.command == desired.command
+        && server.args == desired.args
+        && server.env.is_empty()
+        && server.enabled
+        && !server.trust_all_tools
+        && server.smart_approve
+        && server.autonomy_gate.is_none()
+}
+const OUTLINE_ENRICHMENT_MAX_DEPTH: usize = 1;
+const OUTLINE_ENRICHMENT_MAX_NODES: usize = 24;
+
+#[derive(Clone)]
+pub(crate) struct BuiltinOutlineEnrichmentPlan {
+    context: crate::hooks::PreToolUseContext,
+    database_path: PathBuf,
+    root_identity: String,
+    index_generation: i64,
+    graph_generation: i64,
+    sidecar: String,
+}
+
+impl std::fmt::Debug for BuiltinOutlineEnrichmentPlan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BuiltinOutlineEnrichmentPlan")
+            .field("database_path", &"<redacted>")
+            .field("root_identity", &self.root_identity)
+            .field("index_generation", &self.index_generation)
+            .field("graph_generation", &self.graph_generation)
+            .field("sidecar_bytes", &self.sidecar.len())
+            .finish_non_exhaustive()
+    }
+}
+pub(crate) fn prepare_builtin_outline_enrichment(
+    cfg: &McpServerConfig,
+    arguments: &serde_json::Value,
+    context: &crate::hooks::PreToolUseContext,
+    enabled: bool,
+) -> Result<Option<BuiltinOutlineEnrichmentPlan>> {
+    if !enabled || context.tool() != "codegraph_outline" {
+        return Ok(None);
+    }
+    let Some(database_path) = trusted_generated_codegraph_database(cfg) else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        !context.is_cancelled() && !context.deadline_elapsed(),
+        "outline enrichment cancelled or deadline elapsed"
+    );
+    let parsed = parse_outline_args(arguments)?;
+    let conn = open_code_map_read_only(&database_path)?;
+    let Some(active) =
+        crate::code_map::recall::resolve_active_root_snapshot(&conn, context.canonical_cwd())?
+    else {
+        anyhow::bail!("outline enrichment cwd has no indexed root");
+    };
+    anyhow::ensure!(
+        active.index_generation > 0
+            && active.index_generation == active.graph_generation
+            && crate::code_map::persist::root_snapshot_complete(&conn, active.root.display())?
+            && !crate::code_map::persist::index_freshness_receipt(&conn, active.root.display())?
+                .stale,
+        "outline enrichment requires a fresh complete snapshot"
+    );
+    let relative =
+        requested_outline_relative_path(active.root.path(), Path::new(parsed.path.trim()))?;
+    let indexed = indexed_outline_file(&conn, active.root.display(), &relative)?;
+    let _ = checked_outline_path(active.root.path(), &indexed.relative_path)?;
+    let impact = crate::code_map::impact::impact_radius_for_path(
+        &conn,
+        context.canonical_cwd(),
+        &[crate::code_map::impact::ImpactSeed::file(&relative)],
+        crate::code_map::impact::ImpactOptions {
+            direction: crate::code_map::impact::ImpactDirection::Both,
+            max_depth: OUTLINE_ENRICHMENT_MAX_DEPTH,
+            max_nodes: OUTLINE_ENRICHMENT_MAX_NODES,
+            allow_stale: false,
+        },
+    )?;
+    let gaps = crate::code_map::test_coverage::test_gap_for_impact(
+        &conn,
+        &impact,
+        crate::code_map::test_coverage::TestCoverageOptions {
+            max_depth: OUTLINE_ENRICHMENT_MAX_DEPTH,
+            max_nodes: OUTLINE_ENRICHMENT_MAX_NODES,
+        },
+    )?;
+    Ok(Some(BuiltinOutlineEnrichmentPlan {
+        context: context.clone(),
+        database_path,
+        root_identity: active.root.identity().as_str().to_owned(),
+        index_generation: active.index_generation,
+        graph_generation: active.graph_generation,
+        sidecar: render_outline_enrichment(
+            active.root.identity().as_str(),
+            &relative,
+            &impact,
+            &gaps,
+            context.call_id(),
+        ),
+    }))
+}
+
+impl BuiltinOutlineEnrichmentPlan {
+    pub(crate) fn still_fresh(&self) -> Option<crate::hooks::PreToolUseEnrichment> {
+        if self.context.is_cancelled() || self.context.deadline_elapsed() {
+            return None;
+        }
+        let conn = open_code_map_read_only(&self.database_path).ok()?;
+        let active = crate::code_map::recall::resolve_active_root_snapshot(
+            &conn,
+            self.context.canonical_cwd(),
+        )
+        .ok()??;
+        let complete =
+            crate::code_map::persist::root_snapshot_complete(&conn, active.root.display()).ok()?;
+        let freshness =
+            crate::code_map::persist::index_freshness_receipt(&conn, active.root.display()).ok()?;
+        if active.root.identity().as_str() != self.root_identity
+            || active.index_generation != self.index_generation
+            || active.graph_generation != self.graph_generation
+            || !complete
+            || freshness.stale
+        {
+            return None;
+        }
+        crate::hooks::PreToolUseEnrichment::new(self.sidecar.clone()).ok()
+    }
+}
+
+fn trusted_generated_codegraph_database(cfg: &McpServerConfig) -> Option<PathBuf> {
+    if cfg.id != "neoth-codegraph"
+        || !cfg.enabled
+        || !cfg.env.is_empty()
+        || cfg.validate_launcher().is_err()
+        || cfg.trust_all_tools
+        || !cfg.smart_approve
+        || cfg.autonomy_gate.is_some()
+        || !cfg.allow_tools.as_ref().is_some_and(|tools| {
+            tools.len() == TOOL_NAMES.len()
+                && TOOL_NAMES.iter().all(|required| {
+                    tools
+                        .iter()
+                        .filter(|tool| tool.as_str() == *required)
+                        .count()
+                        == 1
+                })
+        })
+    {
+        return None;
+    }
+    let database = match cfg.args.as_slice() {
+        [mcp, serve] if mcp == "mcp" && serve == "codegraph-serve" => {
+            crate::code_map::persist::default_path()
+        }
+        [mcp, serve, flag, db]
+            if mcp == "mcp"
+                && serve == "codegraph-serve"
+                && flag == "--db"
+                && !db.is_empty()
+                && !db.contains('\0') =>
+        {
+            PathBuf::from(db)
+        }
+        _ => return None,
+    };
+    let database = database.canonicalize().ok()?;
+    let executable = std::env::current_exe().ok()?.canonicalize().ok()?;
+    let configured = PathBuf::from(&cfg.command).canonicalize().ok()?;
+    (configured == executable).then_some(database)
+}
+
+fn render_outline_enrichment(
+    root_identity: &str,
+    relative: &str,
+    impact: &crate::code_map::impact::ImpactResult,
+    gaps: &crate::code_map::test_coverage::ImpactTestGapResult,
+    call_id: crate::hooks::PreToolUseCallId,
+) -> String {
+    const LIMIT: usize = crate::hooks::pre_tool_use::MAX_PRE_TOOL_USE_ENRICHMENT_BYTES;
+    const MARKER: &str = "sidecar_truncated: ";
+    let body_limit = LIMIT.saturating_sub(MARKER.len() + "true\n".len());
+    let mut out = String::from("[untrusted built-in codegraph_outline sidecar]\n");
+    let mut truncated = false;
+    for line in [
+        format!("call_id: {:?}", call_id),
+        format!("root_identity: {root_identity}"),
+        format!("file: {relative}"),
+        "snapshot: fresh_complete=true stale=false".to_owned(),
+        format!(
+            "generations: index={} graph={}",
+            impact.index_generation, impact.graph_generation
+        ),
+        format!(
+            "impact: truncated={} budget_truncated={} evidence_truncated={} unmapped_seeds={} unmapped_edges={}",
+            impact.truncated,
+            impact.budget_truncated,
+            impact.evidence_truncated,
+            impact.unresolved_seeds.len(),
+            impact.unresolved_edges.len()
+        ),
+    ] {
+        truncated |= !append_outline_sidecar(&mut out, body_limit, &line);
+    }
+    for edge in &impact.traversed_edges {
+        let line = match edge.traversal {
+            crate::code_map::impact::ImpactDirection::Callers => format!(
+                "direct_caller: {} :: {} @{} ({}) confidence={}",
+                edge.caller.file,
+                edge.caller.symbol,
+                edge.caller.line,
+                edge.caller.kind,
+                edge.confidence
+            ),
+            crate::code_map::impact::ImpactDirection::Callees => format!(
+                "direct_callee: {} :: {} @{} ({}) confidence={}",
+                edge.callee.file,
+                edge.callee.symbol,
+                edge.callee.line,
+                edge.callee.kind,
+                edge.confidence
+            ),
+            crate::code_map::impact::ImpactDirection::Both => continue,
+        };
+        truncated |= !append_outline_sidecar(&mut out, body_limit, &line);
+    }
+    truncated |= !append_outline_sidecar(
+        &mut out,
+        body_limit,
+        &format!(
+            "test_gap: partial={} capped={} no_observed_test_is_not_absence={}",
+            gaps.impact_partial, gaps.work_budget.capped, gaps.no_observed_test_is_not_absence
+        ),
+    );
+    let mut observed = 0usize;
+    for node in &gaps.per_node {
+        if let Some(coverage) = &node.coverage {
+            for test in &coverage.observed_tests {
+                observed += 1;
+                truncated |= !append_outline_sidecar(
+                    &mut out,
+                    body_limit,
+                    &format!(
+                        "observed_test: {} :: {} confidence={} distance={}",
+                        test.test.file, test.test.symbol, test.confidence, test.distance
+                    ),
+                );
+            }
+        }
+    }
+    if observed == 0 {
+        truncated |= !append_outline_sidecar(
+            &mut out,
+            body_limit,
+            "observed_test: no observed test evidence",
+        );
+    }
+    out.push_str(MARKER);
+    out.push_str(if truncated { "true\n" } else { "false\n" });
+    out
+}
+
+fn append_outline_sidecar(out: &mut String, limit: usize, line: &str) -> bool {
+    if out.len().saturating_add(line.len()).saturating_add(1) <= limit {
+        out.push_str(line);
+        out.push('\n');
+        true
+    } else {
+        false
+    }
+}
 const OUTLINE_MAX_FILE_BYTES: u64 = crate::code_map::walker::DEFAULT_MAX_FILE_BYTES;
 
 #[derive(Debug)]
@@ -1746,6 +2030,26 @@ fn error_result(message: String) -> ToolCallResult {
         content: vec![McpContent::Text { text: message }],
         is_error: true,
     }
+}
+
+/// Test-executable entrypoint for W53's real concrete-child transport.
+#[cfg(test)]
+#[test]
+fn w53_serve_stdio_marker_child() {
+    let Ok(raw_db) = std::env::var("NEOTH_W53_SERVE_STDIO_DB") else {
+        return;
+    };
+    let db = std::path::PathBuf::from(raw_db);
+    use std::io::Write as _;
+    println!();
+    println!("NEOTH_W53_STDIO_READY");
+    std::io::stdout().flush().unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(serve_stdio(db))
+        .unwrap();
 }
 
 #[cfg(test)]
@@ -2538,6 +2842,26 @@ fn root() { alpha(); beta(); }
         assert!(text_content(&r).contains("bad args"));
     }
 
+    #[test]
+    fn outline_parser_agrees_with_advertised_live_schema() {
+        let outline = codegraph_tools()
+            .into_iter()
+            .find(|tool| tool.name == "codegraph_outline")
+            .expect("live catalogue contains codegraph_outline");
+        assert_eq!(outline.input_schema["type"], "object");
+        assert_eq!(
+            outline.input_schema["required"],
+            serde_json::json!(["path"])
+        );
+        assert_eq!(outline.input_schema["additionalProperties"], false);
+        assert_eq!(outline.input_schema["properties"]["path"]["type"], "string");
+        assert!(parse_outline_args(&serde_json::json!({"path": "src/a.rs"})).is_ok());
+        assert!(
+            parse_outline_args(&serde_json::json!({"path": "src/a.rs", "symbol": "a"})).is_err()
+        );
+        assert!(parse_outline_args(&serde_json::json!({"path": 7})).is_err());
+        assert!(parse_outline_args(&serde_json::json!({})).is_err());
+    }
     #[test]
     fn dispatch_codegraph_outline_rejects_unindexed_file() {
         let dir = tempdir().unwrap();

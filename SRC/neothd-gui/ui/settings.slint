@@ -69,6 +69,16 @@ export struct CodeMapHitRow {
     score: string,
 }
 
+/// One observed W48 test relation. Empty rows never stand for no tests; Rust
+/// carries an explicit no-absence fact beside this display-only model.
+export struct CodeMapImpactTestRow {
+    test: string,
+    target: string,
+    provenance: string,
+    confidence: string,
+    distance: string,
+}
+
 /// Canonical daemon-managed repository root rendered from a typed config
 /// readback receipt. The row is deliberately separate from recall hits.
 export struct CodeMapManagedRootRow {
@@ -954,6 +964,7 @@ export component SettingsView inherits Rectangle {
     in property <string> code-map-graph-generation: "";
     in property <[CodeMapHitRow]> code-map-hits: [];
     callback code-map-browse-clicked();
+    callback code-map-root-changed(string);
     callback code-map-search-clicked(string, string);
     // Native lifecycle state is separate from recall output. Rust obtains it
     // from the typed core service; it is never inferred from command text.
@@ -984,6 +995,31 @@ export component SettingsView inherits Rectangle {
     callback code-map-lifecycle-cancel-clicked();
     callback code-map-lifecycle-config-apply-clicked(bool, string, string);
     callback code-map-lifecycle-managed-root-remove-clicked(string);
+    // W52 — explicit-root, Git-only, read-only change impact and W48 observed
+    // test evidence. No optional stale-analysis path is exposed here.
+    in-out property <int> code-map-impact-source-index: 0;
+    in-out property <string> code-map-impact-base: "";
+    in-out property <string> code-map-impact-target: "HEAD";
+    in property <bool> code-map-impact-running: false;
+    in property <bool> code-map-impact-error: false;
+    in property <bool> code-map-impact-has-receipt: false;
+    in property <bool> code-map-impact-limited: false;
+    in property <bool> code-map-impact-no-observed-test-is-not-absence: false;
+    in property <string> code-map-impact-state: "Choose a repository root and Git source.";
+    in property <string> code-map-impact-detail: "";
+    in property <string> code-map-impact-canonical-root: "";
+    in property <string> code-map-impact-root-identity: "";
+    in property <string> code-map-impact-source: "";
+    in property <string> code-map-impact-diff-sha256: "";
+    in property <string> code-map-impact-index-generation: "";
+    in property <string> code-map-impact-graph-generation: "";
+    in property <string> code-map-impact-affected: "";
+    in property <string> code-map-impact-exact-seeds: "";
+    in property <string> code-map-impact-fallback-seeds: "";
+    in property <[CodeMapImpactTestRow]> code-map-impact-observed-tests: [];
+    in property <string> code-map-impact-observed-tests-omitted: "";
+    callback code-map-impact-analyze-clicked(string, int, string, string);
+    callback code-map-impact-view-changed();
     // Native coding runs use the explicit repository root above. The GUI
     // supplies only operator intent; the shared service owns providers,
     // context preparation, SQLite, progress, cancellation, and receipts.
@@ -4795,13 +4831,14 @@ export component SettingsView inherits Rectangle {
                             NeothLineEdit {
                                 text <=> root.code-map-root;
                                 placeholder-text: "Repository root (required; never inferred from GUI CWD)";
-                                enabled: !root.code-map-running && !root.code-map-lifecycle-running && !root.native-coding-running;
+                                enabled: !root.code-map-running && !root.code-map-lifecycle-running && !root.code-map-impact-running && !root.native-coding-running;
+                                edited(updated-root) => { root.code-map-root-changed(updated-root); }
                                 horizontal-stretch: 1;
                             }
                             NeothButton {
                                 label: "Browse…";
                                 size: "sm";
-                                enabled: !root.code-map-running && !root.code-map-lifecycle-running && !root.native-coding-running;
+                                enabled: !root.code-map-running && !root.code-map-lifecycle-running && !root.code-map-impact-running && !root.native-coding-running;
                                 clicked => { root.code-map-browse-clicked(); }
                             }
                         }
@@ -4950,34 +4987,34 @@ export component SettingsView inherits Rectangle {
                             NeothButton {
                                 label: "Inspect";
                                 size: "sm";
-                                enabled: !root.code-map-lifecycle-running && root.code-map-root != "";
+                                enabled: !root.code-map-lifecycle-running && !root.code-map-impact-running && root.code-map-root != "";
                                 clicked => { root.code-map-lifecycle-inspect-clicked(root.code-map-root); }
                             }
                             NeothButton {
                                 label: "Set up";
                                 size: "sm";
                                 primary: true;
-                                enabled: !root.code-map-lifecycle-running && root.code-map-lifecycle-can-setup;
+                                enabled: !root.code-map-lifecycle-running && !root.code-map-impact-running && root.code-map-lifecycle-can-setup;
                                 clicked => { root.code-map-lifecycle-refresh-clicked(root.code-map-root, false, false); }
                             }
                             NeothButton {
                                 label: "Refresh";
                                 size: "sm";
                                 primary: true;
-                                enabled: !root.code-map-lifecycle-running && root.code-map-lifecycle-can-refresh;
+                                enabled: !root.code-map-lifecycle-running && !root.code-map-impact-running && root.code-map-lifecycle-can-refresh;
                                 clicked => { root.code-map-lifecycle-refresh-clicked(root.code-map-root, false, false); }
                             }
                             NeothButton {
                                 label: "Force rebuild";
                                 size: "sm";
-                                enabled: !root.code-map-lifecycle-running && root.code-map-lifecycle-can-force-rebuild;
+                                enabled: !root.code-map-lifecycle-running && !root.code-map-impact-running && root.code-map-lifecycle-can-force-rebuild;
                                 clicked => { root.code-map-lifecycle-refresh-clicked(root.code-map-root, true, false); }
                             }
                             NeothButton {
                                 label: "Repair corrupt index";
                                 size: "sm";
                                 danger: true;
-                                enabled: !root.code-map-lifecycle-running && root.code-map-lifecycle-can-repair;
+                                enabled: !root.code-map-lifecycle-running && !root.code-map-impact-running && root.code-map-lifecycle-can-repair;
                                 clicked => { root.code-map-lifecycle-refresh-clicked(root.code-map-root, true, true); }
                             }
                             NeothButton {
@@ -4986,6 +5023,163 @@ export component SettingsView inherits Rectangle {
                                 danger: true;
                                 enabled: root.code-map-lifecycle-refresh-active && !root.code-map-lifecycle-cancel-pending;
                                 clicked => { root.code-map-lifecycle-cancel-clicked(); }
+                            }
+                        }
+                    }
+                }
+
+                Card {
+                    shimmer: root.code-map-impact-running;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: "CHANGE IMPACT AND TEST EVIDENCE";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                font-weight: Theme.weight-medium;
+                                letter-spacing: Theme.letter-spacing-tight;
+                                color: Theme.accent-cyan;
+                                horizontal-stretch: 1;
+                                vertical-alignment: center;
+                            }
+                            if root.code-map-impact-running: Text {
+                                text: "ANALYZING…";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.accent-amber;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Text {
+                            text: "Reads this selected repository index and Git comparison only. It does not refresh the index, alter Git state, or start a Coding/provider run.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            NeothComboBox {
+                                model: ["Working tree", "Staged changes", "Committed range"];
+                                current-index <=> root.code-map-impact-source-index;
+                                enabled: !root.code-map-impact-running && !root.code-map-lifecycle-running && !root.native-coding-running;
+                                selected(_) => { root.code-map-impact-view-changed(); }
+                                horizontal-stretch: 1;
+                            }
+                            NeothButton {
+                                label: root.code-map-impact-running ? "Analyzing…" : "Analyze";
+                                size: "sm";
+                                primary: true;
+                                enabled: !root.code-map-impact-running
+                                    && !root.code-map-lifecycle-running
+                                    && !root.native-coding-running
+                                    && root.code-map-root != ""
+                                    && (root.code-map-impact-source-index != 2
+                                        || (root.code-map-impact-base != "" && root.code-map-impact-target != ""));
+                                clicked => {
+                                    root.code-map-impact-analyze-clicked(
+                                        root.code-map-root,
+                                        root.code-map-impact-source-index,
+                                        root.code-map-impact-base,
+                                        root.code-map-impact-target,
+                                    );
+                                }
+                            }
+                        }
+                        if root.code-map-impact-source-index == 2: HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            NeothLineEdit {
+                                text <=> root.code-map-impact-base;
+                                placeholder-text: "Base revision, for example HEAD~1";
+                                enabled: !root.code-map-impact-running && !root.code-map-lifecycle-running && !root.native-coding-running;
+                                edited(_) => { root.code-map-impact-view-changed(); }
+                                horizontal-stretch: 1;
+                            }
+                            NeothLineEdit {
+                                text <=> root.code-map-impact-target;
+                                placeholder-text: "Target revision, for example HEAD";
+                                enabled: !root.code-map-impact-running && !root.code-map-lifecycle-running && !root.native-coding-running;
+                                edited(_) => { root.code-map-impact-view-changed(); }
+                                horizontal-stretch: 1;
+                            }
+                        }
+                        Text {
+                            text: root.code-map-impact-state;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: root.code-map-impact-error ? Theme.accent-pink
+                                 : root.code-map-impact-running || root.code-map-impact-limited ? Theme.accent-amber
+                                 : root.code-map-impact-has-receipt ? Theme.accent-cyan
+                                 : Theme.text-secondary;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: root.code-map-impact-detail;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            color: root.code-map-impact-error ? Theme.accent-pink
+                                 : root.code-map-impact-limited ? Theme.accent-amber
+                                 : Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        if root.code-map-impact-has-receipt: VerticalBox {
+                            spacing: Theme.space-1;
+                            Text {
+                                text: "root  " + root.code-map-impact-canonical-root
+                                    + "\nsource  " + root.code-map-impact-source
+                                    + "\ndiff  " + root.code-map-impact-diff-sha256
+                                    + "\nidentity  " + root.code-map-impact-root-identity
+                                    + "\nindex " + root.code-map-impact-index-generation
+                                    + "   graph " + root.code-map-impact-graph-generation
+                                    + "\naffected  " + root.code-map-impact-affected
+                                    + "   exact seeds " + root.code-map-impact-exact-seeds
+                                    + "   file fallback seeds " + root.code-map-impact-fallback-seeds;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: root.code-map-impact-limited ? Theme.accent-amber : Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                            if root.code-map-impact-no-observed-test-is-not-absence: Text {
+                                text: "No observed test evidence is not proof of absence.";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.accent-amber;
+                                wrap: word-wrap;
+                            }
+                            if root.code-map-impact-observed-tests.length == 0: Text {
+                                text: "No observed test relations were returned for this bounded analysis.";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                            if root.code-map-impact-observed-tests-omitted != "": Text {
+                                text: root.code-map-impact-observed-tests-omitted;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.accent-amber;
+                                wrap: word-wrap;
+                            }
+                            for observed in root.code-map-impact-observed-tests: VerticalBox {
+                                spacing: Theme.space-1;
+                                Text {
+                                    text: observed.test + "  →  " + observed.target;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    color: Theme.text-primary;
+                                    wrap: word-wrap;
+                                }
+                                Text {
+                                    text: observed.provenance + "   confidence " + observed.confidence
+                                        + "   distance " + observed.distance;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    color: Theme.accent-cyan;
+                                    wrap: word-wrap;
+                                }
                             }
                         }
                     }

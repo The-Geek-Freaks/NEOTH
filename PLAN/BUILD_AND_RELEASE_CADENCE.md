@@ -77,7 +77,13 @@ cache. The execution step retains the platform's test-thread setting and adds
 
 Windows uses one Cargo build job and one test thread after the four-job build
 in CI `34881450745` exhausted the runner's memory before tests could start.
-macOS retains four Cargo build jobs and four test threads. Both platforms keep
+macOS uses two Cargo build jobs and four test threads. This is a bounded
+concurrency experiment after runs `34881450745` and `34892993263` both exhausted
+the existing 100-minute compile limit at four jobs. Their logs contain no Rust
+diagnostic, explicit OOM report, or completed test result; they do not establish
+the underlying cause. The compile, execution and job deadlines stay unchanged,
+and the next full CI run must establish whether two build jobs complete.
+Both platforms keep
 the existing pinned toolchain, locked dependency graph, `ci` profile, and full
 workspace coverage. The second invocation still checks Cargo freshness and
 reuses the artifacts from the compile phase.

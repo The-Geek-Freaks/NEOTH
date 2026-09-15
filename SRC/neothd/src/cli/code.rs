@@ -1861,6 +1861,7 @@ mod tests {
     fn coding_code_map_config_applies_to_real_recall_and_summary() {
         let (_dir, repo, conn) = real_code_map_fixture();
         let config = crate::config::CodeMapConfig {
+            outline_enrichment: false,
             coding_recall_max_files: 1,
             coding_callers_per_symbol: 0,
             coding_summary_token_budget: 128,

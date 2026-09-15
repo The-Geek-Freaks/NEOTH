@@ -402,6 +402,7 @@ pub(crate) struct McpInvocationPreflight {
 /// the typed hook between authorization and a cold client spawn.
 pub(crate) struct AdmittedPreToolUse {
     enrichment: Option<crate::hooks::PreToolUseEnrichment>,
+    builtin_outline_plan: Option<crate::mcp::codegraph_server::BuiltinOutlineEnrichmentPlan>,
     server_id: String,
     tool: String,
     request_binding_sha256: String,
@@ -890,7 +891,11 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
         }
     }
 
-    let enrichment = pre_tool_use.enrichment;
+    let AdmittedPreToolUse {
+        enrichment,
+        builtin_outline_plan,
+        ..
+    } = pre_tool_use;
 
     let mut result = call_tool_with_success_audit(
         client,
@@ -904,6 +909,13 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
         authorized.request_binding_sha256.as_deref(),
     )
     .await?;
+    if !result.is_error
+        && let Some(enrichment) = builtin_outline_plan.and_then(|plan| plan.still_fresh())
+    {
+        result.content.push(crate::mcp::client::McpContent::Text {
+            text: enrichment.as_str().to_owned(),
+        });
+    }
     if let Some(enrichment) = enrichment {
         result.content.push(crate::mcp::client::McpContent::Text {
             text: enrichment.as_str().to_owned(),
@@ -912,6 +924,9 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
     Ok(result)
 }
 
+/// Test-only default-off wrapper for admission fixtures that do not exercise
+/// outline enrichment. Production callers use `admit_pre_tool_use_with_outline`.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)] // Keep the typed invocation and authorization bindings explicit.
 pub(crate) fn admit_pre_tool_use(
     origin: crate::hooks::PreToolUseOrigin,
@@ -924,6 +939,37 @@ pub(crate) fn admit_pre_tool_use(
     once_guard: &crate::hooks::SessionOnceGuard,
     cancellation: crate::hooks::PreToolUseCancellation,
     replay: crate::hooks::PreToolUseReplay,
+) -> Result<AdmittedPreToolUse, GateError> {
+    admit_pre_tool_use_with_outline(
+        origin,
+        cfg,
+        tool,
+        arguments,
+        instance_home,
+        request_binding_sha256,
+        hook_policy,
+        once_guard,
+        cancellation,
+        replay,
+        false,
+    )
+}
+
+/// W53 outline-aware admission entrypoint. Production callers snapshot
+/// `FreedomConfig.code_map.outline_enrichment` for each invocation.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn admit_pre_tool_use_with_outline(
+    origin: crate::hooks::PreToolUseOrigin,
+    cfg: &McpServerConfig,
+    tool: &str,
+    arguments: &Value,
+    instance_home: &std::path::Path,
+    request_binding_sha256: &str,
+    hook_policy: crate::hooks::PreToolUseHookPolicy<'_>,
+    once_guard: &crate::hooks::SessionOnceGuard,
+    cancellation: crate::hooks::PreToolUseCancellation,
+    replay: crate::hooks::PreToolUseReplay,
+    outline_enrichment_enabled: bool,
 ) -> Result<AdmittedPreToolUse, GateError> {
     let cwd = std::env::current_dir().map_err(|error| {
         GateError::PreToolUseContext(crate::hooks::PreToolUseContextError::CanonicalPath {
@@ -942,15 +988,29 @@ pub(crate) fn admit_pre_tool_use(
         cancellation,
         replay,
     )?;
+    let native_plan = || {
+        crate::mcp::codegraph_server::prepare_builtin_outline_enrichment(
+            cfg,
+            arguments,
+            &context,
+            outline_enrichment_enabled,
+        )
+        .unwrap_or_else(|error| {
+            tracing::debug!(error = %error, server = %cfg.id, tool, "outline enrichment unavailable");
+            None
+        })
+    };
     match crate::hooks::run_pre_tool_use(&context, hook_policy, once_guard) {
         crate::hooks::PreToolUseDisposition::Continue => Ok(AdmittedPreToolUse {
             enrichment: None,
+            builtin_outline_plan: native_plan(),
             server_id: cfg.id.clone(),
             tool: tool.to_owned(),
             request_binding_sha256: request_binding_sha256.to_owned(),
         }),
         crate::hooks::PreToolUseDisposition::Enrich(enrichment) => Ok(AdmittedPreToolUse {
             enrichment: Some(enrichment),
+            builtin_outline_plan: native_plan(),
             server_id: cfg.id.clone(),
             tool: tool.to_owned(),
             request_binding_sha256: request_binding_sha256.to_owned(),
@@ -1374,7 +1434,7 @@ mod tests {
             crate::hooks::PreToolUseOrigin::ProviderEmittedMcp,
             crate::hooks::PreToolUseOrigin::DirectCliMcp,
         ] {
-            let error = admit_pre_tool_use(
+            let error = admit_pre_tool_use_with_outline(
                 origin,
                 &base_cfg(Some(vec!["read"])),
                 "read",
@@ -1385,11 +1445,246 @@ mod tests {
                 &once_guard,
                 crate::hooks::PreToolUseCancellation::unbound(),
                 crate::hooks::PreToolUseReplay::direct_request(),
+                true,
             )
             .err()
             .expect("block returns before call_tool_with_success_audit");
             assert!(matches!(error, GateError::PreToolUseBlocked { .. }));
+            // `true` reaches the shared native producer parameter, but the configured block above returns before any eligibility/SQLite work.
         }
+    }
+
+    const W53_GATE_CHILD: &str = "NEOTH_W53_GATE_CHILD";
+    const W53_GATE_DATABASE: &str = "NEOTH_W53_GATE_DATABASE";
+    const W53_GATE_HOME: &str = "NEOTH_W53_GATE_HOME";
+
+    fn w53_builtin_codegraph_config(database: &std::path::Path) -> McpServerConfig {
+        McpServerConfig {
+            id: "neoth-codegraph".into(),
+            description: None,
+            command: std::env::current_exe()
+                .expect("current test executable")
+                .canonicalize()
+                .expect("canonical current test executable")
+                .to_string_lossy()
+                .into_owned(),
+            args: vec![
+                "mcp".into(),
+                "codegraph-serve".into(),
+                "--db".into(),
+                database.to_string_lossy().into_owned(),
+            ],
+            env: HashMap::new(),
+            enabled: true,
+            allow_tools: Some(
+                crate::mcp::codegraph_server::TOOL_NAMES
+                    .iter()
+                    .map(|tool| (*tool).to_owned())
+                    .collect(),
+            ),
+            trust_all_tools: false,
+            smart_approve: true,
+            autonomy_gate: None,
+        }
+    }
+
+    /// Process-isolated half of the W53 native success fixture. Its cwd is
+    /// supplied by the outer test process, so the production admission path
+    /// resolves the fixture repository without mutating this process's cwd.
+    #[test]
+    fn w53_outline_enrichment_gate_child() {
+        if std::env::var(W53_GATE_CHILD).as_deref() != Ok("1") {
+            return;
+        }
+        let database = std::path::PathBuf::from(
+            std::env::var(W53_GATE_DATABASE).expect("gate child database path"),
+        );
+        let home =
+            std::path::PathBuf::from(std::env::var(W53_GATE_HOME).expect("gate child home path"));
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("gate child runtime")
+            .block_on(async move {
+                let cfg = w53_builtin_codegraph_config(&database);
+                let tool = "codegraph_outline";
+                let arguments = serde_json::json!({"path": "outline.rs"});
+                let binding = mcp_request_binding(&cfg, tool, &arguments)
+                    .expect("exact built-in request binding");
+                let wal = home.join("wal");
+                std::fs::create_dir_all(&wal).expect("gate child WAL directory");
+                let segment = crate::wal::writer::unique_standalone_segment_path(&wal, "w53");
+                let (writer, writer_join) = crate::wal::writer::spawn_for_home(segment, home.clone())
+                    .expect("authenticated gate child WAL writer");
+                let preflight = preflight_with_audit_sink(
+                    &cfg,
+                    tool,
+                    crate::permissions::AutonomyLevel::Full,
+                    McpAuditSink::Writer(&writer),
+                    1_700_000_000,
+                    None,
+                    Some(&binding),
+                )
+                .await
+                .expect("authenticated full admission preflight");
+                let authorized = authorize_preflight_with_audit_sink(
+                    preflight,
+                    &cfg,
+                    tool,
+                    McpAuditSink::Writer(&writer),
+                    None,
+                    1_700_000_000,
+                    None,
+                    &home,
+                )
+                .await
+                .expect("authenticated full admission authorization");
+                let permit = admit_pre_tool_use_with_outline(
+                    crate::hooks::PreToolUseOrigin::DirectCliMcp,
+                    &cfg,
+                    tool,
+                    &arguments,
+                    &home,
+                    &binding,
+                    crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+                    &crate::hooks::SessionOnceGuard::new(),
+                    crate::hooks::PreToolUseCancellation::unbound(),
+                    crate::hooks::PreToolUseReplay::direct_request(),
+                    true,
+                )
+                .expect("admit production outline sidecar plan");
+                let executable = std::env::current_exe()
+                    .expect("current test executable")
+                    .canonicalize()
+                    .expect("canonical current test executable");
+                let mut command = tokio::process::Command::new(executable);
+                command
+                    .arg("--exact")
+                    .arg("mcp::codegraph_server::w53_serve_stdio_marker_child")
+                    .arg("--nocapture")
+                    .env_clear()
+                    .env("NEOTH_W53_SERVE_STDIO_DB", &database)
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped());
+                let child = command.spawn().expect("spawn nested production stdio child");
+                let mut client = McpClient::from_test_child(&cfg.id, child)
+                    .await
+                    .expect("nested production stdio handshake");
+                let result = invoke_authorized_with_audit_sink(
+                    &mut client,
+                    &cfg,
+                    tool,
+                    arguments,
+                    authorized,
+                    McpAuditSink::Writer(&writer),
+                    None,
+                    1_700_000_001,
+                    Some(&binding),
+                    permit,
+                )
+                .await
+                .expect("real codegraph outline invocation");
+                assert!(!result.is_error, "ordinary outline result must succeed: {result:?}");
+                assert_eq!(result.content.len(), 2, "ordinary outline plus exactly one sidecar: {result:?}");
+                assert!(
+                    matches!(&result.content[0], McpContent::Text { text } if text.contains("outline_target")),
+                    "first result must be the ordinary outline for the original path: {result:?}"
+                );
+                assert!(
+                    matches!(&result.content[1], McpContent::Text { text } if text.contains("[untrusted built-in codegraph_outline sidecar]") && text.contains("file: outline.rs")),
+                    "second result must be the generated sidecar: {result:?}"
+                );
+                drop(client);
+                drop(writer);
+                writer_join.await.expect("flush authenticated gate child WAL");
+            });
+    }
+
+    #[test]
+    fn w53_outline_enrichment_real_gate_success_has_one_called_receipt() {
+        let dir = tempfile::tempdir().expect("outer W53 fixture directory");
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).expect("outer W53 fixture repository");
+        std::fs::write(repo.join("outline.rs"), "pub fn outline_target() {}\n")
+            .expect("outer W53 indexed source");
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo)
+            .expect("canonical outer W53 fixture root");
+        let database = dir.path().join("code_map.db");
+        crate::code_map::rebuild_snapshot(&root, &database, Default::default())
+            .expect("publish complete outer W53 SQLite snapshot");
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).expect("outer W53 instance home");
+        let executable = std::env::current_exe()
+            .expect("current test executable")
+            .canonicalize()
+            .expect("canonical current test executable");
+        let output = std::process::Command::new(executable)
+            .current_dir(&repo)
+            .arg("--exact")
+            .arg("mcp::gate::tests::w53_outline_enrichment_gate_child")
+            .arg("--nocapture")
+            .env_clear()
+            .env(W53_GATE_CHILD, "1")
+            .env(W53_GATE_DATABASE, &database)
+            .env(W53_GATE_HOME, &home)
+            .output()
+            .expect("launch isolated W53 gate child");
+        assert!(
+            output.status.success(),
+            "isolated W53 gate child failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let cfg = w53_builtin_codegraph_config(&database);
+        let arguments = serde_json::json!({"path": "outline.rs"});
+        let expected_binding = mcp_request_binding(&cfg, "codegraph_outline", &arguments)
+            .expect("reconstruct exact W53 request binding");
+        let ledger = crate::permissions::trust_ledger::TrustLedger::replay_subject_at_home(
+            &home,
+            crate::permissions::trust_ledger::LOCAL_SUBJECT,
+        )
+        .expect("replay authenticated W53 decision evidence");
+        let decisions: Vec<_> = ledger
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.event.action == crate::permissions::ActionKind::McpToolInvocation
+                    && entry.event.outcome
+                        == crate::permissions::trust_ledger::TrustOutcome::Allowed
+                    && entry.event.request_binding_sha256.as_deref()
+                        == Some(expected_binding.as_str())
+            })
+            .collect();
+        assert_eq!(
+            decisions.len(),
+            1,
+            "exactly one authenticated admitted decision must bind the original outline arguments: {decisions:?}"
+        );
+        assert_eq!(
+            decisions[0].event.request_binding_sha256.as_deref(),
+            Some(expected_binding.as_str())
+        );
+        let mut called = Vec::new();
+        crate::wal::scan::for_each_frame_at_home(
+            &home,
+            crate::wal::scan::supported_home_scan_limits(),
+            |_, frame| {
+                if frame.header.event_type == EVENT_TYPE_MCP_TOOL_CALLED {
+                    called
+                        .push(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+                }
+                Ok(())
+            },
+        )
+        .expect("scan authenticated W53 gate child WAL");
+        assert_eq!(
+            called.len(),
+            1,
+            "exactly one successful tools/call receipt: {called:?}"
+        );
+        assert_eq!(called[0]["server_id"].as_str(), Some("neoth-codegraph"));
+        assert_eq!(called[0]["tool"].as_str(), Some("codegraph_outline"));
+        assert_eq!(called[0]["is_error"].as_bool(), Some(false));
     }
 
     fn pre_tool_replace(template: &str) -> crate::hooks::schema::HookDef {

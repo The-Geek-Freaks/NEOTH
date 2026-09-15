@@ -616,6 +616,10 @@ impl Default for AutoUpdateConfig {
 /// reads are local SQLite — no LLM cost — and need their own knob.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CodeMapConfig {
+    /// Opt-in bounded sidecar for the exact generated `codegraph_outline`
+    /// MCP server. It never enables generic filesystem tools.
+    #[serde(default)]
+    pub outline_enrichment: bool,
     /// Max files to surface in the auto-injected `<repo-context>`
     /// block. `0` (default) disables auto-injection. Recommended
     /// production value: 3-5 — large enough to surface the obvious
@@ -931,6 +935,7 @@ where
 impl Default for CodeMapConfig {
     fn default() -> Self {
         Self {
+            outline_enrichment: false,
             auto_context_max_files: default_auto_context_max_files(),
             coding_recall_max_files: default_coding_recall_max_files(),
             coding_callers_per_symbol: default_coding_callers_per_symbol(),

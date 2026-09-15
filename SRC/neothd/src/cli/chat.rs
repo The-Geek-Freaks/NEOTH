@@ -5592,6 +5592,7 @@ pub(super) async fn dispatch_provider(
                         },
                         once_guard,
                         cancellation.pre_tool_use_cancellation(),
+                        config.code_map.outline_enrichment,
                     )
                     .await
                     {
@@ -12362,6 +12363,8 @@ pub(crate) async fn run_mcp_dispatch_loop(
     pre_tool_hook_policy: crate::hooks::PreToolUseHookPolicy<'_>,
     pre_tool_once_guard: &crate::hooks::SessionOnceGuard,
     pre_tool_cancellation: crate::hooks::PreToolUseCancellation,
+    // Immutable FreedomConfig snapshot selected by this provider turn.
+    outline_enrichment_enabled: bool,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -12466,6 +12469,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         pre_tool_hook_policy,
         pre_tool_once_guard,
         pre_tool_cancellation,
+        outline_enrichment_enabled,
     )
     .await
 }

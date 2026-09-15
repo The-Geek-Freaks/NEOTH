@@ -1374,6 +1374,7 @@ mod tests {
         let yaml_path = dir.path().join("freedom.yaml");
         let initial = fresh_config();
         let mut changed = initial.clone();
+        changed.code_map.outline_enrichment = true;
         changed.provider_endpoint = Some("https://provider.example.invalid".into());
         write_yaml(&yaml_path, &serde_yaml::to_string(&changed).unwrap());
 
@@ -1479,6 +1480,7 @@ mod tests {
         let initial = fresh_config();
         let mut changed = initial.clone();
         changed.code_map.auto_context_max_files = 5;
+        changed.code_map.outline_enrichment = true;
         changed.code_map.coding_recall_max_files = 12;
         changed.code_map.coding_callers_per_symbol = 0;
         changed.code_map.coding_summary_token_budget = 4_096;
@@ -1495,6 +1497,7 @@ mod tests {
 
         let latest = ctrl.latest();
         assert_eq!(latest.code_map.auto_context_max_files, 5);
+        assert!(latest.code_map.outline_enrichment);
         assert_eq!(latest.code_map.coding_recall_max_files, 12);
         assert_eq!(latest.code_map.coding_callers_per_symbol, 0);
         assert_eq!(latest.code_map.coding_summary_token_budget, 4_096);
@@ -1518,6 +1521,7 @@ mod tests {
         );
         assert!(error.contains("coding_summary_token_budget"), "{error}");
         assert_eq!(ctrl.latest().code_map.coding_summary_token_budget, 2_048);
+        assert!(!ctrl.latest().code_map.outline_enrichment);
         assert_eq!(*generation.borrow(), 0);
     }
 

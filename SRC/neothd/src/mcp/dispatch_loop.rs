@@ -230,6 +230,7 @@ where
         crate::hooks::PreToolUseHookPolicy::Configured(&pre_tool_hooks),
         &pre_tool_once_guard,
         crate::hooks::PreToolUseCancellation::unbound(),
+        false,
     )
     .await
 }
@@ -298,6 +299,9 @@ pub(crate) async fn run_tool_loop_with_budget<D, P>(
     pre_tool_hook_policy: crate::hooks::PreToolUseHookPolicy<'_>,
     pre_tool_once_guard: &crate::hooks::SessionOnceGuard,
     pre_tool_cancellation: crate::hooks::PreToolUseCancellation,
+    // W53: immutable config snapshot owned by the outer request. Never reread
+    // freedom.yaml inside a live provider loop.
+    outline_enrichment_enabled: bool,
 ) -> Result<LoopOutcome>
 where
     D: CompletionDriver + Send,
@@ -1106,6 +1110,7 @@ where
                     attempt: iterations,
                     replayed: response_was_harness_replay,
                 },
+                outline_enrichment_enabled,
             )
             .await
             {
@@ -1999,6 +2004,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
     pre_tool_once_guard: &crate::hooks::SessionOnceGuard,
     pre_tool_cancellation: crate::hooks::PreToolUseCancellation,
     pre_tool_replay: crate::hooks::PreToolUseReplay,
+    outline_enrichment_enabled: bool,
 ) -> std::result::Result<DispatchedToolResult, String> {
     let Some(cfg) = servers.get_enabled(&call.server) else {
         return Err(format!(
@@ -2031,7 +2037,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
     // catalogue spawn merely to discover that the caller rejected the tool.
     // The opaque permit remains single-use and is consumed only by the
     // subsequently authorized invocation below.
-    let pre_tool_use = crate::mcp::gate::admit_pre_tool_use(
+    let pre_tool_use = crate::mcp::gate::admit_pre_tool_use_with_outline(
         crate::hooks::PreToolUseOrigin::ProviderEmittedMcp,
         cfg,
         &call.tool,
@@ -2042,6 +2048,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
         pre_tool_once_guard,
         pre_tool_cancellation.clone(),
         pre_tool_replay,
+        outline_enrichment_enabled,
     )
     .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
 
@@ -2842,6 +2849,7 @@ mod tests {
             &once_guard,
             crate::hooks::PreToolUseCancellation::unbound(),
             crate::hooks::PreToolUseReplay::direct_request(),
+            false,
         )
         .await
         .err()
@@ -2890,6 +2898,7 @@ mod tests {
             &crate::hooks::SessionOnceGuard::new(),
             crate::hooks::PreToolUseCancellation::unbound(),
             crate::hooks::PreToolUseReplay::direct_request(),
+            false,
         )
         .await
         .err()
@@ -2935,6 +2944,7 @@ mod tests {
             &crate::hooks::SessionOnceGuard::new(),
             crate::hooks::PreToolUseCancellation::from_chat_turn(cancelled),
             crate::hooks::PreToolUseReplay::direct_request(),
+            false,
         )
         .await
         .err()
@@ -2977,6 +2987,7 @@ mod tests {
                 &once,
                 crate::hooks::PreToolUseCancellation::unbound(),
                 crate::hooks::PreToolUseReplay::direct_request(),
+                false,
             )
             .await
             .expect("SmartApprove retained fixture call");
@@ -3022,6 +3033,7 @@ mod tests {
             &crate::hooks::SessionOnceGuard::new(),
             crate::hooks::PreToolUseCancellation::unbound(),
             crate::hooks::PreToolUseReplay::direct_request(),
+            false,
         )
         .await
         .expect("normal fixture call");
@@ -3061,6 +3073,7 @@ mod tests {
             &once,
             crate::hooks::PreToolUseCancellation::unbound(),
             crate::hooks::PreToolUseReplay::direct_request(),
+            false,
         )
         .await;
         assert!(first.is_err());
@@ -3078,6 +3091,7 @@ mod tests {
             &once,
             crate::hooks::PreToolUseCancellation::unbound(),
             crate::hooks::PreToolUseReplay::direct_request(),
+            false,
         )
         .await;
         assert!(second.is_ok());
@@ -3103,6 +3117,7 @@ mod tests {
             &crate::hooks::SessionOnceGuard::new(),
             crate::hooks::PreToolUseCancellation::unbound(),
             crate::hooks::PreToolUseReplay::direct_request(),
+            false,
         )
         .await
         .err()
@@ -3150,6 +3165,7 @@ mod tests {
             &crate::hooks::SessionOnceGuard::new(),
             crate::hooks::PreToolUseCancellation::unbound(),
             crate::hooks::PreToolUseReplay::direct_request(),
+            false,
         )
         .await
         .err()
@@ -3174,6 +3190,7 @@ mod tests {
             &crate::hooks::SessionOnceGuard::new(),
             crate::hooks::PreToolUseCancellation::unbound(),
             crate::hooks::PreToolUseReplay::direct_request(),
+            false,
         )
         .await
         .err()
@@ -3207,6 +3224,7 @@ mod tests {
             &crate::hooks::SessionOnceGuard::new(),
             crate::hooks::PreToolUseCancellation::unbound(),
             crate::hooks::PreToolUseReplay::direct_request(),
+            false,
         )
         .await
         .err()
@@ -3235,6 +3253,7 @@ mod tests {
                 &crate::hooks::SessionOnceGuard::new(),
                 crate::hooks::PreToolUseCancellation::unbound(),
                 crate::hooks::PreToolUseReplay::direct_request(),
+                false,
             )
             .await
             .err()
@@ -3319,6 +3338,7 @@ mod tests {
             &crate::hooks::SessionOnceGuard::new(),
             crate::hooks::PreToolUseCancellation::unbound(),
             crate::hooks::PreToolUseReplay::direct_request(),
+            false,
         )
         .await
         .err()
@@ -4669,6 +4689,7 @@ mod tests {
             crate::hooks::PreToolUseHookPolicy::Configured(&[]),
             &pre_tool_once_guard,
             crate::hooks::PreToolUseCancellation::unbound(),
+            false,
         )
         .await
         .unwrap();

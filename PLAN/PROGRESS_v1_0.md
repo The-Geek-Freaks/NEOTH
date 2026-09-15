@@ -1,6 +1,6 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-09-14
+**Created:** 2026-05-24  **Last updated:** 2026-09-15
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
 > **Waves 39 and 40 sealed daemon chat and native CLI version probe — PUBLISHED
@@ -54,7 +54,7 @@
 > leaves close. Current counts1324/1014/308/2, raw310/pre-tag309.
 > W46 covers MCP/provider/direct-CLI; other native surfaces remain open.
 >
-> **W48/W49 and W51 — LOCALLY VALIDATED, 19-PATH PUBLICATION READY:** twelve
+> **W48/W49 and W51 — PUBLISHED `9f042bce25f06676403899b931100f357914b3bb`, 19 verified paths:** twelve
 > source changes connect CLI/MCP, Coding and pre-apply advisory receipts plus
 > bounded read-only Doctor readiness. Build04 passed4m16
 > (min206.31GiB/peak10.85GiB); runtime04 passed2119/0/0 in124.30s from14649
@@ -64,21 +64,46 @@
 > reviewed derivation from the preserved Build03 inventory and the single
 > pre-build dispatcher repair; missing fresh captures are disclosed in
 > `docs/gold-wave48-49-51-verification.md`. Earlier failed runs remain diagnostic
-> evidence only. W50repair11, W52repair03 and W53repair04 are independently
-> approved WORK proposals for the next combined batch, still unadmitted/unrun.
-> No further checkbox closes; counts1324/1014/308/2.
-> CI34892993263 and Security34892996455 target published `ed2a8712`. Preflight
-> 34892970784 plus cargo-audit/cargo-deny and both CodeQL analyses passed.
-> Security's final alert gate found23 new findings (#471–493). Independent
-> per-alert review confirmed21 test-only fixtures and2 overwritten buffers;
-> those exact instances were dismissed with specific reasons. Open high/critical
-> count is zero; Security34892996455 SUCCESS attempt2. No gate/query disabled.
-> Full CI Linux16284pass/1 review-signature failure; its reviewed three-call
-> context fingerprint repair passed runtime03. Windows16217pass/1 failed at
-> that same fingerprint; its single-job compile succeeded in42m54 without OOM.
-> macOS compilation remains pending.
+> evidence only. W50repair11, W52repair03 and W53repair04 were independently
+> approved before their later 23-file combined admission below. No further
+> checkbox closes; counts1324/1014/308/2.
 >
-> **Current W41/W44 CI boundary:** CI34881450745 completed with Linux quality
+> **W50/W52/W53 — IMPLEMENTED AND LOCALLY VERIFIED (2026-09-15):**
+> Immutable-commit review context, the Code Sessions diff-impact/test-evidence
+> surface, and default-off built-in outline enrichment are implemented. The
+> reviewed 23-file feature scope includes the existing GUI `rusqlite` dependency;
+> one additional headless harness import was repaired during integration.
+>
+> Final selected runtime: **2556 / 0 / 0** in **132.43s**, selected by 19 filters
+> from 14,665 catalogued tests. This includes the real SQLite/authenticated MCP
+> outline fixture and provider cost guard. Seven integration targets passed
+> **746 / 0 / 0** test executions, including the production GUI controller/panel
+> paths; shared module tests occur in more than one target. The final core build
+> reconfirmed the identical tested executable in 1.04s. Strict native Clippy and
+> GUI Clippy passed; GUI Clippy retains 14 dead-code warnings in its test target
+> plus the unchanged vendor warning. CLI docgen, Python45 and GUI source lint
+> passed. The 260-input source manifest and exact test/binary matrix live in
+> `docs/verification/gold-wave50-52-53-{source-manifest,test-matrix}.json`;
+> publication uses the checked 36-path whitelist.
+>
+> Earlier selected01 (2554/2/0) and the first integration run (359/1/0 in its
+> first target) remain failed diagnostic evidence. The repairs corrected fixture
+> configuration/caller expectations and counted both truncation ellipses in the
+> GUI text-bound test; no production bound was relaxed. Final tests supersede
+> those failed results. No roadmap checkbox closes: **1324 / 1014 / 308 / 2**,
+> raw open 310, pre-tag open 309. Native GUI render/accessibility, live OCR,
+> configured-channel delivery, clean-machine and release acceptance remain open.
+>
+> The earlier full CI 34892993263 failed Linux/Windows only on the cost fingerprint
+> fixed in published `9f042bce25f06676403899b931100f357914b3bb`; macOS exhausted
+> its 100-minute compile deadline without a Rust/OOM diagnostic. The new macOS
+> two-build-job setting is an experiment awaiting full CI, with test threads and
+> deadlines unchanged. Security 34892996455 succeeded on attempt 2; Preflight
+> 34902030359 and Quality 34902029584 passed on `9f`. They do not establish
+> acceptance of this new batch. W54–W57's complete 18-file composition and helper
+> package are independently approved in WORK and await canonical admission.
+>
+> **Historical W41/W44 CI boundary (superseded by later batches):** CI34881450745 completed with Linux quality
 > and Windows/macOS compilation failures. macOS hit its 100-minute compile
 > deadline with no compiler/OOM error or test result; its limits stay unchanged.
 > Security34881453920 completed with the two Rustls failures. Both CodeQL

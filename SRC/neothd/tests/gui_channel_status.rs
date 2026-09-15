@@ -5,6 +5,9 @@
 //! core test gate exercises the same account-status and account-test binding
 //! code that the desktop will use.
 
+#[path = "../../neothd-gui/src/code_map_impact_controller.rs"]
+pub mod code_map_impact_controller;
+
 #[expect(
     dead_code,
     reason = "headless harness omits desktop callers checked by the GUI gate"

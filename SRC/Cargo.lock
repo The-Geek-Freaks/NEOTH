@@ -7461,6 +7461,7 @@ dependencies = [
  "libc",
  "neoth",
  "rfd",
+ "rusqlite",
  "serde",
  "serde_json",
  "serde_yaml",

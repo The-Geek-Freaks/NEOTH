@@ -140,6 +140,7 @@ code_map:
   coding_recall_max_files: 8      # recalled files per code invocation; 1..50
   coding_callers_per_symbol: 3    # depth-one callers per symbol; 0..20
   coding_summary_token_budget: 2048 # generic repo-map summary; 128..12000
+  outline_enrichment: false       # built-in codegraph outline sidecar; explicit opt-in
 ```
 
 `coding_callers_per_symbol: 0` disables only caller enrichment. It does
@@ -149,6 +150,13 @@ the full combined coding context. The graph-memory caps and decomposer's 12k
 input guard remain in force. The targeted selection and generic summary share
 a 64-KiB rendered-context ceiling and bounded metadata storage; their receipt
 reports source selection limits and later decomposer truncation separately.
+
+`code_map.outline_enrichment` defaults to `false`. When explicitly enabled, it
+can add one bounded, untrusted sidecar only to an eligible built-in
+`codegraph_outline` request after its normal response. It does not enable a
+generic native file-read, Grep, or Bash enrichment path. After an accepted
+`neoth reload`, the next request resolves the accepted immutable configuration
+snapshot; an invocation already in progress keeps its own snapshot.
 
 After an accepted reload, each daemon Chat or Channel message resolves a fresh
 configuration snapshot. A one-shot `neoth code` command resolves these limits
