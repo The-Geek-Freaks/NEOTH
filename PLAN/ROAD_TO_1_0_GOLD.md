@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W101 selector caller compile repair (2026-09-16):** W99 source `ac281eb6`
+passed Preflight `35111313338` and Code Quality `35111313695`. Full CI
+`35111462773` then found two production callers missing the new selector
+argument (E0061/E0308): channel processing and the loop engine. Both now pass
+`enrichment_selectors.clone()` from their existing accepted configuration,
+between the master switch and impact policy. No reload or empty-list bypass is
+introduced. The invalid-source CI and preview `35111467760` were cancelled;
+neither supplies runtime acceptance. Fresh exact-source compilation and the
+58 native / 7 GUI obligations remain pending on GitHub. No local validation.
+Counts stay **1324/1015/307/2**, raw309/pre-tag308; no checkbox closes.
+
 **W99 measured preview recovery and fixture follow-up (2026-09-16):** preview
 `35100765685` exhausted its 45-minute GUI step after completing the core compile
 late in that step. The next current-source attempt has a 60-minute GUI bound

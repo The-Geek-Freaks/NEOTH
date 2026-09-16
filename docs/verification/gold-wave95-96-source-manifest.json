@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W99-configured-read-coverage-runtime-repairs-and-preview-recovery",
-  "base": "5abf0458894c0fe21ac99eae2026b4962c761540",
-  "capturedUtc": "2026-09-16T14:49:01.1995026Z",
+  "item": "GOLD-W95-W101-configured-read-coverage-runtime-repairs-and-caller-compile-fix",
+  "base": "ac281eb6251940c8b2a871c8e5d69e793585d162",
+  "capturedUtc": "2026-09-16T15:03:09.7873093Z",
   "validationStatus": "REVIEWED_SOURCE_NEW_REMOTE_GATES_PENDING",
-  "scopeNote": "293 cumulative inputs. W99 exact remote formatting follow-up, reviewed test-only real-call counter/borrow correction, and measured preview60/330 bounds. Unchanged entries inherit committed bindings; all execution gates GitHub-only.",
+  "scopeNote": "293 cumulative inputs. W101 repairs exactly two missing same-snapshot selector arguments exposed by remote E0061/E0308. Source reviewed; fresh full compile, strict lint, runtime and portable acceptance pending GitHub-only.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -613,8 +613,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "bytes": 405667,
-      "sha256": "45C7672E651852D06C9A6D00B2E2667CBC82702E39C99F91B060B61548CF42E1"
+      "bytes": 405749,
+      "sha256": "53983E0661E4761D9F125A526AE88962575BEA278B598F8261F7A2D66A5C76BE"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
@@ -988,8 +988,8 @@
     },
     {
       "path": "SRC/neothd/src/loop_engine/engine.rs",
-      "bytes": 59970,
-      "sha256": "A514B48DDA346924C98D98D23A4D1B7C734BC89F106C98ABF7ADC3794A634FCC"
+      "bytes": 60029,
+      "sha256": "EBB46092F56B7F3EEC48B84396C5CA0626B4DDD967E96EAF7ACE1DAF2129A324"
     },
     {
       "path": "SRC/neothd/src/mcp/catalogue.rs",

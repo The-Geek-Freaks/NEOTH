@@ -612,6 +612,7 @@ pub async fn run_loop(
             &pre_tool_once_guard,
             crate::hooks::PreToolUseCancellation::unbound(),
             freedom.code_map.outline_enrichment,
+            freedom.code_map.enrichment_selectors.clone(),
             freedom.code_map.impact_policy,
             freedom.code_map.requested_context_policy()?,
         )

@@ -1,4 +1,22 @@
-# W95-W99 - configured MCP local reads and observed runtime repairs
+# W95-W101 - configured MCP local reads and observed runtime repairs
+
+The latest full compiler run exposed two missing production call arguments.
+[CI 35111462773](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35111462773)
+on `ac281eb6251940c8b2a871c8e5d69e793585d162` reports E0061/E0308 in
+`loop_engine/engine.rs` and `cli/serve_pipeline.rs`. W101 supplies the configured
+selector list from each caller's existing accepted configuration, in the same
+position used by the chat path. This introduces no reload or default-empty
+workaround and preserves the W96 identity fixtures. Bounded source inspection
+also covered all current dispatch-loop and tool-loop callers.
+
+That source had passed [Preflight 35111313338](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35111313338)
+and [Code Quality 35111313695](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35111313695);
+those lightweight checks do not compile the workspace. The invalid-source full
+CI and [preview 35111467760](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35111467760)
+were cancelled after the shared compile blocker was established. Neither is
+runtime or portable-artifact acceptance. The repaired source requires fresh
+GitHub-hosted compilation, strict lint, 58 native and 7 GUI test identities,
+and actual portable acceptance. All local validation remains suspended.
 
 W95 extends the existing bounded code-map sidecar to explicitly configured MCP
 local path reads. `code_map.outline_enrichment` remains false by default and

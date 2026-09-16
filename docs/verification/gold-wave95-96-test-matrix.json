@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W99_REVIEWED_SOURCE_REMOTE_EXECUTION_PENDING",
-  "base": "5abf0458894c0fe21ac99eae2026b4962c761540",
+  "status": "W95_W101_REVIEWED_SOURCE_REMOTE_EXECUTION_PENDING",
+  "base": "ac281eb6251940c8b2a871c8e5d69e793585d162",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 50773,
-    "sha256": "EDB48A2852DE2A8350AE6EE0A5092FDEAFDE117B7A936ED41857664BE9758B96"
+    "bytes": 50767,
+    "sha256": "6C3D902FF04AE9F57B71A8E5558AD8E0C7B58A273DF27F8CCEFBE373801060CF"
   },
   "sourceInputs": 293,
   "requiredNativeTests": [
@@ -246,7 +246,7 @@
     {
       "test": "cli::serve_pipeline::tests::build_pipeline_handler_retains_selected_generation_through_truthful_retry_before_final_channel_result",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "45C7672E651852D06C9A6D00B2E2667CBC82702E39C99F91B060B61548CF42E1",
+      "sourceSha256": "53983E0661E4761D9F125A526AE88962575BEA278B598F8261F7A2D66A5C76BE",
       "junitClass": "neoth"
     },
     {
@@ -258,7 +258,7 @@
     {
       "test": "cli::serve_pipeline::tests::build_pipeline_handler_retains_context_through_direct_local_shadow_cloud_fallback_final_result",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "45C7672E651852D06C9A6D00B2E2667CBC82702E39C99F91B060B61548CF42E1",
+      "sourceSha256": "53983E0661E4761D9F125A526AE88962575BEA278B598F8261F7A2D66A5C76BE",
       "junitClass": "neoth"
     },
     {
@@ -428,6 +428,12 @@
       "sha256": "74181CCA51FCD60B01F66F52D5DD78B3F7BC27A07CDF13A32570427BDC34DC6C",
       "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
       "executionClaim": false
+    },
+    {
+      "record": "work/gold-20260906/wave101-selector-caller-compile-01/INDEPENDENT-REVIEW.md",
+      "sha256": "7869DDA241DD5481AC04F54FA8700682527031590710A2C86BA363275EC32DD0",
+      "verdict": "APPROVE_FOR_REMOTE_COMPILE_ADMISSION",
+      "executionClaim": false
     }
   ],
   "priorCi": {
@@ -453,9 +459,9 @@
     "otherPassingJobs": 11
   },
   "priorLightRemote": {
-    "headSha": "4141894037d092e128286bd386e664e12e8a22ed",
-    "preflight": 35100677231,
-    "codeQuality": 35100676058,
+    "headSha": "ac281eb6251940c8b2a871c8e5d69e793585d162",
+    "preflight": 35111313338,
+    "codeQuality": 35111313695,
     "conclusion": "success",
     "appliesToCurrentSource": false
   },
@@ -476,7 +482,7 @@
       "reserveMinutes": 28,
       "cargoJobs": 1,
       "reason": "Observed45minuteGUIdeadline on35100765685; latestcore/GUIsourceschanged",
-      "dispatched": false
+      "dispatched": true
     }
   },
   "nativeExecutionStatus": "PENDING_FRESH_EXACT_SOURCE_GITHUB_CI",
@@ -524,7 +530,27 @@
     "runId": 35111056985,
     "headSha": "5abf0458894c0fe21ac99eae2026b4962c761540",
     "change": "One exact remote Rustfmt line wrap in counter write; no behavior change",
-    "rerun": "PENDING",
+    "rerun": "PASS_PREFLIGHT_35111313338_ON_AC281EB6",
     "localFormatterRan": false
+  },
+  "compileRepair": {
+    "failedHead": "ac281eb6251940c8b2a871c8e5d69e793585d162",
+    "runId": 35111462773,
+    "linuxJob": 104845962426,
+    "sshJob": 104845962602,
+    "errors": [
+      "E0061",
+      "E0308"
+    ],
+    "callers": [
+      "SRC/neothd/src/loop_engine/engine.rs",
+      "SRC/neothd/src/cli/serve_pipeline.rs"
+    ],
+    "change": "Pass existing accepted code_map.enrichment_selectors.clone() between outline_enrichment and impact_policy",
+    "ciConclusion": "cancelled",
+    "previewRun": 35111467760,
+    "previewConclusion": "cancelled",
+    "noRuntimeAcceptance": true,
+    "newSourceValidation": "PENDING_GITHUB_ONLY"
   }
 }
