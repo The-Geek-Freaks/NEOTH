@@ -365,7 +365,51 @@ jobs:
         working-directory: SRC
         run: |
           rm -f target/nextest/ci/junit.xml
-          cargo nextest run --workspace --locked --profile ci --no-run
+          if [[ "$RUNNER_OS" != "macOS" ]]; then
+            cargo nextest run --workspace --locked --profile ci --no-run
+            exit 0
+          fi
+
+          diagnostic_log="$RUNNER_TEMP/macos-nextest-compile-observability.log"
+          : > "$diagnostic_log"
+          cargo nextest run --workspace --locked --profile ci --no-run &
+          cargo_pid=$!
+          sleeper_pid=""
+          cleanup_observer() {
+            if [[ -n "$sleeper_pid" ]] && kill -0 "$sleeper_pid" 2>/dev/null; then
+              kill "$sleeper_pid" 2>/dev/null || true
+              wait "$sleeper_pid" 2>/dev/null || true
+            fi
+          }
+          trap cleanup_observer EXIT
+          next_snapshot=0
+          while kill -0 "$cargo_pid" 2>/dev/null; do
+            if (( SECONDS >= next_snapshot )); then
+              {
+                echo "=== $(date -u +%FT%TZ) ==="
+                sysctl vm.swapusage || true
+                vm_stat || true
+                echo "pid ppid cpu_percent rss_kib elapsed role"
+                ps -axo pid=,ppid=,%cpu=,rss=,etime=,comm= \
+                  | awk '{ role = $6; sub(/^.*\//, "", role); if (role == "cargo" || role == "cargo-nextest" || role == "rustc" || role == "clang" || role == "ld") print $1, $2, $3, $4, $5, role }' || true
+              } >> "$diagnostic_log"
+              next_snapshot=$((SECONDS + 60))
+            fi
+            sleep 1 &
+            sleeper_pid=$!
+            wait "$sleeper_pid" || true
+            sleeper_pid=""
+          done
+          wait "$cargo_pid"
+
+      - name: Upload macOS compile observability
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-nextest-compile-observability
+          path: ${{ runner.temp }}/macos-nextest-compile-observability.log
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Save completed Cargo registry + target
         if: ${{ !cancelled() && steps.compile-tests.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true' }}

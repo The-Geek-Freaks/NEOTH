@@ -7252,6 +7252,8 @@ fn build_channel_handler_inner(
         views_conn: shared_views_conn.clone(),
         views_executor,
         confirm_bus,
+        #[cfg(test)]
+        abliterated_loader: None,
     })
 }
 

@@ -14045,32 +14045,10 @@ fn main() -> Result<()> {
             approved,
         );
     });
-    let weak_buddy_native_coding_start = window.as_weak();
-    let buddy_native_coding_start_controller = std::sync::Arc::clone(&native_coding_controller);
-    window.on_buddy_native_coding_start(move || {
-        let Some(window) = weak_buddy_native_coding_start.upgrade() else {
-            return;
-        };
-        window.set_nav_active("coding".into());
-        start_native_coding_run(
-            weak_buddy_native_coding_start.clone(),
-            std::sync::Arc::clone(&buddy_native_coding_start_controller),
-            window.get_native_coding_prompt().to_string(),
-            window.get_code_map_root().to_string(),
-            "buddy".into(),
-            window.get_native_coding_no_assign(),
-            window.get_native_coding_dispatch(),
-            window.get_native_coding_apply(),
-        );
-    });
-    let weak_buddy_native_coding_cancel = window.as_weak();
-    let buddy_native_coding_cancel_controller = std::sync::Arc::clone(&native_coding_controller);
-    window.on_buddy_native_coding_cancel(move || {
-        request_native_coding_cancel(
-            weak_buddy_native_coding_cancel.clone(),
-            std::sync::Arc::clone(&buddy_native_coding_cancel_controller),
-        );
-    });
+    register_buddy_native_coding_callbacks(
+        &window,
+        std::sync::Arc::clone(&native_coding_controller),
+    );
 
     // GOLD-R3-13 — repository-local code-map recall. Root selection is an
     // explicit operator input; this path never consults the GUI process CWD.
@@ -21095,7 +21073,7 @@ fn start_native_coding_run(
                     .and_then(|runtime| runtime.block_on(started.wait_terminal_and_join()));
                 let accepted = controller.finish(revision, run_id);
                 let _ = slint::invoke_from_event_loop(move || {
-                    if !accepted || !native_coding_ui_revision_matches(revision) {
+                    if !native_coding_terminal_bridge_accepts(revision, accepted) {
                         return;
                     }
                     let Some(window) = weak.upgrade() else {
@@ -21137,6 +21115,38 @@ fn start_native_coding_run(
                 });
             }
         }
+    });
+}
+
+/// Buddy's menu actions share the native coding operation controller with the
+/// coding page. Keeping this registration together lets generated-component
+/// acceptance exercise the production callbacks without reproducing a second
+/// start/cancel policy in tests.
+fn register_buddy_native_coding_callbacks(
+    window: &MainWindow,
+    controller: std::sync::Arc<coding_controller::CodingController>,
+) {
+    let weak_start = window.as_weak();
+    let start_controller = std::sync::Arc::clone(&controller);
+    window.on_buddy_native_coding_start(move || {
+        let Some(window) = weak_start.upgrade() else {
+            return;
+        };
+        window.set_nav_active("coding".into());
+        start_native_coding_run(
+            weak_start.clone(),
+            std::sync::Arc::clone(&start_controller),
+            window.get_native_coding_prompt().to_string(),
+            window.get_code_map_root().to_string(),
+            "buddy".into(),
+            window.get_native_coding_no_assign(),
+            window.get_native_coding_dispatch(),
+            window.get_native_coding_apply(),
+        );
+    });
+    let weak_cancel = window.as_weak();
+    window.on_buddy_native_coding_cancel(move || {
+        request_native_coding_cancel(weak_cancel.clone(), std::sync::Arc::clone(&controller));
     });
 }
 
@@ -21551,6 +21561,14 @@ fn native_coding_ui_revision_matches(revision: u64) -> bool {
     NATIVE_CODING_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) == revision
 }
 
+/// The terminal bridge may only apply a receipt after the controller accepted
+/// its exact run and the UI still belongs to that revision. Keeping this
+/// predicate separate makes the queued-callback fence observable in the
+/// generated-component runtime fixture without fabricating provider delivery.
+fn native_coding_terminal_bridge_accepts(revision: u64, controller_accepted: bool) -> bool {
+    controller_accepted && native_coding_ui_revision_matches(revision)
+}
+
 fn native_coding_event_text(event: &neothd::coding::CodingRunEvent) -> (&'static str, String) {
     match event {
         neothd::coding::CodingRunEvent::Phase(phase) => (
@@ -21704,7 +21722,10 @@ fn apply_native_coding_terminal(window: &MainWindow, result: &neothd::coding::Co
         neothd::coding::CodingRunResult::Cancelled { .. } => {
             window.set_native_coding_error(false);
             window.set_native_coding_state("Coding run cancelled".into());
-            buddy(window, GuiActivity::NativeCodingComplete);
+            // A joined cancellation is an authoritative terminal receipt, but
+            // it is not a successful coding result. Keep Buddy's activity
+            // boundary aligned with the cancelled terminal state.
+            buddy(window, GuiActivity::NativeCodingFailed);
         }
         neothd::coding::CodingRunResult::Failed { .. } => {
             window.set_native_coding_error(true);
@@ -36892,19 +36913,28 @@ mod dream_cron_gui_tests {
 mod w58_gui_callback_runtime_tests {
     use std::{
         cell::Cell,
+        io::{Read, Write},
+        net::{TcpListener, TcpStream},
         path::Path,
         rc::Rc,
-        sync::{Arc, Mutex},
+        sync::{
+            Arc, Mutex,
+            mpsc::{self, Receiver, Sender},
+        },
         time::Duration,
     };
 
+    use sha2::{Digest, Sha256};
     use slint::ComponentHandle as _;
     use tempfile::TempDir;
 
     use super::{
         CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION, CODE_MAP_ROOT_SELECTION_REVISION, MainWindow,
+        NATIVE_CODING_UI_REVISION,
         code_map_controller::{AutomaticContextPresentationController, CodeMapLifecycleController},
-        register_buddy_code_map_status_callback, start_code_map_lifecycle_config_apply,
+        coding_controller::CodingController,
+        native_coding_terminal_bridge_accepts, register_buddy_code_map_status_callback,
+        register_buddy_native_coding_callbacks, start_code_map_lifecycle_config_apply,
         start_code_map_lifecycle_refresh,
     };
 
@@ -37163,5 +37193,523 @@ mod w58_gui_callback_runtime_tests {
             "existing index setup, refresh, or repair action",
         );
         assert!(unreadable.contains("unreadable_store"));
+    }
+
+    struct LoopbackProvider {
+        endpoint: String,
+        requests: Receiver<Vec<serde_json::Value>>,
+        join: std::thread::JoinHandle<()>,
+    }
+
+    fn read_openai_request(socket: &mut TcpStream) -> serde_json::Value {
+        let mut received = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        let header_end = loop {
+            let count = socket.read(&mut buffer).expect("read loopback request");
+            assert_ne!(count, 0, "loopback request must include HTTP headers");
+            received.extend_from_slice(&buffer[..count]);
+            if let Some(position) = received.windows(4).position(|part| part == b"\r\n\r\n") {
+                break position + 4;
+            }
+        };
+        let headers = std::str::from_utf8(&received[..header_end]).expect("ASCII headers");
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then_some(value.trim())
+            })
+            .expect("OpenAI request content length")
+            .parse::<usize>()
+            .expect("numeric request content length");
+        while received.len() < header_end + content_length {
+            let count = socket
+                .read(&mut buffer)
+                .expect("read loopback request body");
+            assert_ne!(count, 0, "loopback request must include complete body");
+            received.extend_from_slice(&buffer[..count]);
+        }
+        serde_json::from_slice(&received[header_end..header_end + content_length])
+            .expect("OpenAI-compatible request JSON")
+    }
+
+    fn loopback_response(content: &str) -> String {
+        serde_json::json!({
+            "id": "wave73-buddy-loopback",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        })
+        .to_string()
+    }
+
+    fn write_loopback_response(socket: &mut TcpStream, response: &str) {
+        let wire = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            response.len(),
+            response
+        );
+        socket
+            .write_all(wire.as_bytes())
+            .expect("write loopback response");
+    }
+
+    fn worker_envelope_context(prompt: &str) -> String {
+        let envelope_line = prompt
+            .lines()
+            .find(|line| line.contains("\"purpose\":\"coding_provider_worker_task\""))
+            .expect("canonical ProviderWorker envelope line");
+        let envelope: serde_json::Value =
+            serde_json::from_str(envelope_line).expect("canonical ProviderWorker envelope JSON");
+        envelope["fields"]
+            .as_array()
+            .expect("canonical ProviderWorker fields")
+            .iter()
+            .find(|field| field["kind"].as_str() == Some("worker_code_map_context"))
+            .expect("prepared code-map context field")["data"]
+            .as_str()
+            .expect("prepared code-map context data")
+            .to_owned()
+    }
+
+    fn scripted_provider(responses: Vec<String>) -> LoopbackProvider {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback provider");
+        let endpoint = format!(
+            "http://{}",
+            listener.local_addr().expect("loopback address")
+        );
+        let (requests_tx, requests) = mpsc::channel();
+        let join = std::thread::spawn(move || {
+            let mut observed = Vec::new();
+            for response in responses {
+                let (mut socket, _) = listener.accept().expect("accept provider request");
+                observed.push(read_openai_request(&mut socket));
+                write_loopback_response(&mut socket, &response);
+            }
+            requests_tx
+                .send(observed)
+                .expect("return provider requests");
+        });
+        LoopbackProvider {
+            endpoint,
+            requests,
+            join,
+        }
+    }
+
+    fn setup_buddy_coding_controller(
+        home: &Path,
+        repository: &Path,
+        endpoint: &str,
+    ) -> Arc<CodingController> {
+        let canonical = neothd::code_map::CanonicalRepoRoot::discover(repository)
+            .expect("discover selected fixture root");
+        let code_map_database = home.join("code-map.db");
+        neothd::code_map::rebuild_snapshot(&canonical, &code_map_database, Default::default())
+            .expect("seed selected-root code-map snapshot");
+        let consent_route = neothd::consent::ConsentRoute::new(
+            neothd::config::ProviderKind::OpenaiCompat,
+            Some(endpoint),
+        );
+        let marker = neothd::consent::marker_path(home, neothd::config::ProviderKind::OpenaiCompat);
+        std::fs::create_dir_all(marker.parent().expect("consent marker parent"))
+            .expect("create selected-home consent directory");
+        let mut endpoints = std::collections::BTreeMap::new();
+        endpoints.insert(endpoint.to_owned(), "1");
+        std::fs::write(
+            &marker,
+            serde_json::to_vec_pretty(&serde_json::json!({"version": 1, "endpoints": endpoints}))
+                .expect("serialize selected-home consent marker"),
+        )
+        .expect("write selected-home consent marker");
+        assert!(neothd::consent::is_route_granted(home, &consent_route));
+
+        let config_path = home.join("freedom.yaml");
+        let mut config = neothd::config::FreedomConfig {
+            autonomy: neothd::permissions::AutonomyLevel::Full,
+            provider_kind: Some(neothd::config::ProviderKind::OpenaiCompat),
+            provider_endpoint: Some(endpoint.to_owned()),
+            provider_model: Some("gpt-4o".to_owned()),
+            ..Default::default()
+        };
+        config.code_map.auto_context_max_files = 1;
+        config.code_map.coding_recall_max_files = 1;
+        config.code_map.coding_callers_per_symbol = 1;
+        config.code_map.coding_summary_token_budget = 128;
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&config).expect("serialize config"),
+        )
+        .expect("write selected-home config");
+        let service = neothd::coding::CodingService::spawn(neothd::coding::CodingServiceConfig {
+            database_path: home.join("views.db"),
+            code_map_database_path: code_map_database,
+            neoth_home: home.to_path_buf(),
+            freedom_config_path: config_path,
+            freedom_config: neothd::config::FreedomConfig::default(),
+        })
+        .expect("spawn real CodingService");
+        Arc::new(CodingController::with_service(service))
+    }
+
+    fn pump_native_coding_until(
+        window: &MainWindow,
+        label: &'static str,
+        condition: impl Fn(&MainWindow) -> bool + 'static,
+    ) {
+        let complete = Rc::new(Cell::new(false));
+        let ticks = Rc::new(Cell::new(0_u16));
+        let complete_observer = Rc::clone(&complete);
+        let ticks_observer = Rc::clone(&ticks);
+        let condition = Rc::new(condition);
+        let condition_observer = Rc::clone(&condition);
+        let weak = window.as_weak();
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                let Some(window) = weak.upgrade() else {
+                    let _ = slint::quit_event_loop();
+                    return;
+                };
+                if condition_observer(&window) {
+                    complete_observer.set(true);
+                    let _ = slint::quit_event_loop();
+                    return;
+                }
+                let next = ticks_observer.get().saturating_add(1);
+                ticks_observer.set(next);
+                if next >= 700 {
+                    let _ = slint::quit_event_loop();
+                }
+            },
+        );
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("run bounded Slint event loop");
+        drop(timer);
+        assert!(
+            complete.get(),
+            "timed out waiting for {label}; state={} detail={} receipt={}",
+            window.get_native_coding_state(),
+            window.get_native_coding_detail(),
+            window.get_native_coding_terminal_receipt()
+        );
+    }
+
+    #[test]
+    fn w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance() {
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial GUI fixture environment");
+        let home = TempDir::new().expect("temporary selected NEOTH home");
+        let repository = home.path().join("selected-repository");
+        std::fs::create_dir_all(repository.join("src")).expect("create selected repository");
+        std::fs::write(
+            repository.join("src/auth.rs"),
+            "pub fn verify_token(token: &str) -> bool { !token.is_empty() }\n",
+        )
+        .expect("write selected source");
+        let _home = NeothHomeGuard::install(home.path());
+        let provider = scripted_provider(vec![
+            loopback_response(
+                r#"{"tasks":[{"title":"Add tests for verify_token","task_type":"tests","depends_on":[]}],"clarifying_question":null,"estimated_session_complexity":"fast"}"#,
+            ),
+            loopback_response("APPROVED: loopback plan review accepts the prepared task."),
+            loopback_response(
+                "```diff\n--- a/src/auth.rs\n+++ b/src/auth.rs\n@@ -1 +1,7 @@\n pub fn verify_token(token: &str) -> bool { !token.is_empty() }\n+\n+#[cfg(test)]\n+mod tests {\n+    #[test]\n+    fn empty_token_is_rejected() { assert!(!super::verify_token(\"\")); }\n+}\n```\nSUMMARY: Buddy ProviderWorker added the empty-token regression test",
+            ),
+        ]);
+        let controller =
+            setup_buddy_coding_controller(home.path(), &repository, &provider.endpoint);
+        let window = MainWindow::new().expect("construct generated MainWindow");
+        window.set_code_map_root(repository.display().to_string().into());
+        window.set_native_coding_prompt("add tests for verify_token".into());
+        window.set_native_coding_no_assign(false);
+        window.set_native_coding_dispatch(true);
+        window.set_native_coding_apply(false);
+        register_buddy_native_coding_callbacks(&window, Arc::clone(&controller));
+        window.invoke_buddy_native_coding_start();
+        assert_eq!(window.get_nav_active().to_string(), "coding");
+        pump_native_coding_until(&window, "completed Buddy coding terminal", |w| {
+            !w.get_native_coding_running()
+                && w.get_native_coding_state().to_string() == "Coding run complete"
+        });
+        assert!(!window.get_native_coding_run_id().is_empty());
+        assert!(
+            window
+                .get_native_coding_terminal_receipt()
+                .to_string()
+                .contains("Completed")
+        );
+        assert_eq!(window.get_buddy_mood().to_string(), "success");
+
+        let requests = provider
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .expect("real provider requests");
+        provider.join.join().expect("join completed provider");
+        assert_eq!(
+            requests.len(),
+            3,
+            "one decomposer, plan review, and actual ProviderWorker request"
+        );
+        let serialized = serde_json::to_string(&requests).expect("serialize observed requests");
+        assert!(
+            serialized.contains("buddy"),
+            "observed CodingStartRequest source channel is Buddy"
+        );
+        assert!(
+            serialized.contains(
+                &repository
+                    .canonicalize()
+                    .expect("canonical selected root")
+                    .display()
+                    .to_string()
+            ),
+            "selected root, never CWD/default home, reaches the real provider envelope"
+        );
+        let worker_prompt = requests[2]["messages"]
+            .as_array()
+            .expect("worker messages")
+            .iter()
+            .find_map(|message| {
+                message["content"]
+                    .as_str()
+                    .filter(|content| content.contains("coding_provider_worker_task"))
+            })
+            .expect("actual ProviderWorker envelope");
+        assert!(worker_prompt.contains("src/auth.rs") && worker_prompt.contains("verify_token"));
+        let observed_context = worker_envelope_context(worker_prompt);
+
+        let connection = neothd::memory::store::open(&home.path().join("views.db"))
+            .expect("open real service database");
+        let session = neothd::coding::store::get_session(
+            &connection,
+            neothd::coding::KanbanSessionId(
+                connection
+                    .query_row("SELECT session_id FROM idx_kanban_session", [], |row| {
+                        row.get(0)
+                    })
+                    .expect("one persisted Buddy session"),
+            ),
+        )
+        .expect("read persisted Buddy session")
+        .expect("one persisted Buddy session");
+        assert_eq!(session.source_channel, "buddy");
+        let receipt =
+            neothd::coding::store::load_code_map_receipts(&connection, session.session_id)
+                .expect("load prepared receipt")
+                .pop()
+                .expect("prepared receipt");
+        let task = neothd::coding::store::list_tasks_for_session(&connection, session.session_id)
+            .expect("load Worker task")
+            .pop()
+            .expect("persisted Worker task");
+        let provenance = task
+            .worker_result_provenance
+            .expect("W70 accepted Worker result provenance");
+        assert_eq!(
+            provenance.submitted_context_sha256,
+            receipt.submitted_context_sha256
+        );
+        assert_eq!(
+            provenance.submitted_context_bytes,
+            receipt.submitted_context_bytes
+        );
+        assert_eq!(
+            provenance.sources[0].root_identity,
+            receipt.sources[0].root_identity
+        );
+        assert_eq!(
+            provenance.sources[0].index_generation,
+            receipt.sources[0].index_generation
+        );
+        assert_eq!(
+            provenance.sources[0].graph_generation,
+            receipt.sources[0].graph_generation
+        );
+        assert_eq!(observed_context.len(), receipt.submitted_context_bytes);
+        assert_eq!(
+            format!("{:x}", Sha256::digest(observed_context.as_bytes())),
+            receipt.submitted_context_sha256
+        );
+        let runtime = super::coding_bridge_runtime().expect("coding bridge runtime");
+        runtime
+            .block_on(controller.shutdown_and_join())
+            .expect("join injected real service");
+    }
+
+    #[test]
+    fn w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint() {
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial GUI fixture environment");
+        let home = TempDir::new().expect("temporary selected NEOTH home");
+        let repository = home.path().join("selected-repository");
+        std::fs::create_dir_all(repository.join("src")).expect("create selected repository");
+        std::fs::write(
+            repository.join("src/lib.rs"),
+            "pub fn buddy_cancel_fixture() {}\n",
+        )
+        .expect("write selected source");
+        let _home = NeothHomeGuard::install(home.path());
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind blocking loopback provider");
+        let endpoint = format!(
+            "http://{}",
+            listener.local_addr().expect("loopback address")
+        );
+        let (blocked_tx, blocked_rx): (Sender<()>, Receiver<()>) = mpsc::channel();
+        let (release_tx, release_rx): (Sender<()>, Receiver<()>) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut decomposer, _) = listener.accept().expect("accept decomposer request");
+            let _ = read_openai_request(&mut decomposer);
+            write_loopback_response(
+                &mut decomposer,
+                &loopback_response(
+                    r#"{"tasks":[{"title":"Hold Buddy cancellation","task_type":"tests","depends_on":[]}],"clarifying_question":null,"estimated_session_complexity":"fast"}"#,
+                ),
+            );
+            let (mut blocked, _) = listener
+                .accept()
+                .expect("accept blocked plan-review request");
+            let _ = read_openai_request(&mut blocked);
+            blocked_tx
+                .send(())
+                .expect("report provider is blocked before terminal work");
+            release_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("release late provider response");
+            // The service may have closed this socket while joining cancellation.
+            // This response only releases the fixture peer for teardown; it is
+            // deliberately not evidence of delivery to ProviderWorker.
+            let response = loopback_response("APPROVED: deliberately late after cancellation.");
+            let wire = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            );
+            let _ = blocked.write_all(wire.as_bytes());
+        });
+        let controller = setup_buddy_coding_controller(home.path(), &repository, &endpoint);
+        let window = MainWindow::new().expect("construct generated MainWindow");
+        window.set_code_map_root(repository.display().to_string().into());
+        window.set_native_coding_prompt("hold this Buddy run for cancellation".into());
+        window.set_native_coding_no_assign(false);
+        window.set_native_coding_dispatch(true);
+        window.set_native_coding_apply(false);
+        register_buddy_native_coding_callbacks(&window, Arc::clone(&controller));
+        window.invoke_buddy_native_coding_start();
+        pump_native_coding_until(&window, "real service run id", |w| {
+            w.get_native_coding_running() && !w.get_native_coding_run_id().is_empty()
+        });
+        blocked_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("real provider reached blocking pre-terminal request");
+        let run_id = window.get_native_coding_run_id().to_string();
+        window.invoke_buddy_native_coding_cancel();
+        assert!(
+            window.get_native_coding_cancel_pending(),
+            "Buddy cancel marks the real active run pending before terminal settlement"
+        );
+        assert_eq!(window.get_buddy_mood().to_string(), "alert");
+        pump_native_coding_until(&window, "cancelled Buddy coding terminal", |w| {
+            !w.get_native_coding_running()
+                && w.get_native_coding_state().to_string() == "Coding run cancelled"
+        });
+        let cancelled_receipt = window.get_native_coding_terminal_receipt().to_string();
+        assert!(cancelled_receipt.contains("Cancelled"));
+        assert_eq!(
+            window.get_native_coding_run_id().to_string(),
+            run_id,
+            "cancel targets the Buddy-created run"
+        );
+        assert_eq!(
+            window.get_buddy_mood().to_string(),
+            "error",
+            "cancelled terminal cannot claim successful completion"
+        );
+
+        release_tx
+            .send(())
+            .expect("release blocked fixture peer for teardown");
+        server.join().expect("join blocking loopback provider");
+        let runtime = super::coding_bridge_runtime().expect("coding bridge runtime");
+        runtime
+            .block_on(controller.shutdown_and_join())
+            .expect("join injected real service");
+    }
+
+    #[test]
+    fn w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it() {
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial GUI fixture environment");
+        let window = MainWindow::new().expect("construct generated MainWindow");
+        window.set_native_coding_state("Coding run cancelled".into());
+        window.set_native_coding_terminal_receipt("Cancelled: joined real run.".into());
+        window.set_buddy_mood("error".into());
+        let late_revision = 701_u64;
+        let current_revision = late_revision + 1;
+        let previous =
+            NATIVE_CODING_UI_REVISION.swap(late_revision, std::sync::atomic::Ordering::AcqRel);
+        let (callback_tx, callback_rx) = mpsc::channel();
+        // Queue the same production predicate on Slint's event loop, then
+        // advance ownership before it is dispatched. Receipt delivery is not
+        // simulated here: the handshake proves this queued callback executed
+        // and the real bridge revision gate rejected it.
+        slint::invoke_from_event_loop(move || {
+            callback_tx
+                .send(native_coding_terminal_bridge_accepts(late_revision, true))
+                .expect("report queued bridge callback decision");
+        })
+        .expect("queue late terminal bridge callback");
+        NATIVE_CODING_UI_REVISION.store(current_revision, std::sync::atomic::Ordering::Release);
+        let callback_result = Rc::new(Cell::new(None));
+        let callback_result_observer = Rc::clone(&callback_result);
+        let ticks = Rc::new(Cell::new(0_u8));
+        let ticks_observer = Rc::clone(&ticks);
+        let wait_timer = slint::Timer::default();
+        wait_timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                if let Ok(decision) = callback_rx.try_recv() {
+                    callback_result_observer.set(Some(decision));
+                    let _ = slint::quit_event_loop();
+                    return;
+                }
+                let next = ticks_observer.get().saturating_add(1);
+                ticks_observer.set(next);
+                if next >= 100 {
+                    let _ = slint::quit_event_loop();
+                }
+            },
+        );
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("pump queued terminal bridge callback");
+        drop(wait_timer);
+        assert_eq!(
+            callback_result.get(),
+            Some(false),
+            "queued terminal callback must execute and be rejected by the newer UI revision"
+        );
+        assert_eq!(
+            window.get_native_coding_state().to_string(),
+            "Coding run cancelled"
+        );
+        assert_eq!(
+            window.get_native_coding_terminal_receipt().to_string(),
+            "Cancelled: joined real run."
+        );
+        assert_eq!(window.get_buddy_mood().to_string(), "error");
+        NATIVE_CODING_UI_REVISION.store(previous, std::sync::atomic::Ordering::Release);
     }
 }

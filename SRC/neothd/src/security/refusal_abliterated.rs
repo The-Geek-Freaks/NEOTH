@@ -59,10 +59,14 @@ pub(crate) struct AbliteratedFallbackOptions<'a> {
     pub(crate) model: Option<&'a str>,
     pub(crate) writer: Option<&'a WalWriterHandle>,
     pub(crate) now_unix: i64,
+    #[cfg(test)]
+    /// Per-invocation fixture dependency. This stays crate-private and is
+    /// absent from production builds; it cannot alter another turn's loader.
+    pub(crate) loader_override: Option<&'a dyn AbliteratedProviderLoader>,
 }
 
 #[async_trait::async_trait]
-trait AbliteratedProviderLoader: Send + Sync {
+pub(crate) trait AbliteratedProviderLoader: Send + Sync {
     async fn load(&self, model: &str) -> Result<Box<dyn Provider>>;
 }
 
@@ -241,6 +245,19 @@ pub(crate) async fn try_abliterated_fallback(
     options: AbliteratedFallbackOptions<'_>,
     attempt_budget: &mut crate::security::refusal_recovery::RecoveryAttemptBudget,
 ) -> Result<AbliteratedOutcome> {
+    #[cfg(test)]
+    if let Some(loader) = options.loader_override {
+        return try_abliterated_fallback_with_loader(
+            loader,
+            cloud,
+            authorizer,
+            original_req,
+            refused_completion,
+            options,
+            attempt_budget,
+        )
+        .await;
+    }
     let loader = RuntimeAbliteratedProviderLoader;
     try_abliterated_fallback_with_loader(
         &loader,
@@ -268,6 +285,8 @@ async fn try_abliterated_fallback_with_loader(
         model,
         writer,
         now_unix,
+        #[cfg(test)]
+            loader_override: _,
     } = options;
     let prompt_hash = format!(
         "{:016x}",
@@ -801,6 +820,7 @@ mod tests {
                 model: None,
                 writer: None,
                 now_unix: 0,
+                loader_override: None,
             },
             &mut attempt_budget,
         )
@@ -834,6 +854,7 @@ mod tests {
                 model: Some("some-model-id"),
                 writer: None,
                 now_unix: 0,
+                loader_override: None,
             },
             &mut attempt_budget,
         )
@@ -864,6 +885,7 @@ mod tests {
                 model: Some("nonexistent-model"),
                 writer: None,
                 now_unix: 0,
+                loader_override: None,
             },
             &mut attempt_budget,
         )
@@ -977,6 +999,7 @@ mod tests {
                 model: Some("operator-selected-abliterated-model"),
                 writer: None,
                 now_unix: 0,
+                loader_override: None,
             },
             &mut attempt_budget,
         )

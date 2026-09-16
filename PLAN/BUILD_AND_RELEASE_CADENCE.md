@@ -3,6 +3,22 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+## Workstation stability constraint — 2026-09-16
+
+Heavy Rust compilation on Shadow-PC is suspended after repeated reported
+bluescreens and confirmed unexpected Windows restarts. Job-count, process
+priority and free-memory limits did not establish safe operation on this host.
+Do not restart local Cargo build, test compilation, Clippy or linker workloads.
+Use lightweight formatting/parser, metadata and Python/source checks locally;
+run the remaining build and behavior gates on GitHub-hosted CI from reviewed
+commits on `main`. A commit with pending remote gates must say so explicitly and
+cannot satisfy a release gate. This host-specific restriction supersedes the
+local compile portions of the evidence ladder below; it does not waive them.
+
+The macOS compile step records bounded memory, swap and compiler-process metrics,
+preserves Cargo's actual exit status, and uploads diagnostics even on failure.
+The observer changes neither compile deadlines nor the workspace test graph.
+
 ## Evidence ladder
 
 NEOTH tests every shipped capability and every advertised platform contract,

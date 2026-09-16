@@ -318,6 +318,25 @@ substituting an accepted empty value. The GUI coding acceptance follows the real
 selected-home service route, requires the valid nonempty diff, and compares the
 captured context root/generations and SHA/bytes with the durable commitments.
 
+Chat and channel consumers create one retained code-map binding from the
+canonical pre-provider audit and reuse that same in-memory binding for the
+prepared final result. They do not reconstruct accepted provenance from a later
+database read. Truthful retry and fallback keep the selected request context;
+the final receipt hashes the result body actually returned by that route.
+
+The turn-wide recovery cap still counts the initial provider call. A truthful
+retry followed by a local shadow may exhaust the remaining dispatch budget and
+return the shadow directly; when reframing is disabled, the same budget can
+permit a local shadow followed by cloud continuation. Observational context
+binding does not increase that budget or grant another provider dispatch.
+
+Buddy coding starts use the same CodingService, prepared-context path and durable
+worker-result commitments with source channel `buddy`. A cancelled terminal
+publishes failure activity, and a queued terminal callback must still own the
+current bridge revision before publishing UI state. Self-improvement QA carries
+candidate diff, verification output and typed analysis in one private versioned
+JSON payload; the sub-agent runtime supplies the sole outer prompt boundary.
+
 Dispatch-loop and utility-provider compaction wrap complete older-history data
 with the canonical `UntrustedContext::ModelOutput` renderer. Neither silently
 truncates a history payload to fit the class ceiling. Dispatch-loop compaction

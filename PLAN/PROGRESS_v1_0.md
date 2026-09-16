@@ -3,6 +3,20 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-16
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **W72/W73/W74/W75 reviewed source batch (2026-09-16):** nine independently
+> reviewed owners add typed QA data, macOS CI diagnostics, Buddy coding/cancellation
+> fixtures, retained binding across Chat/Channel retry and final result, and
+> budget-correct fallback fixtures. All 279 scoped inputs are recorded. Focused
+> rustfmt (7 Rust files), Python45/CI matrix and GUI source lint passed. Compilation
+> and behavior are **pending GitHub CI**; 42 native and 5 GUI acceptance identities
+> are expected in the full run. Earlier native passes do not validate these changed
+> sources. See [the W72-W75 report](../docs/gold-wave72-75-verification.md).
+>
+> W70/W71 is on `main` as `c1f34a27`; its exact-commit Preflight and Code Quality
+> passed. Remaining GUI/full-CI obligations are included in the next complete CI
+> run. No heavy local Rust compilation and no ROAD checkbox closure. Counts remain
+> **1324/1015/307/2**, raw309/pre-tag308.
+>
 > **W70/W71 source and partial local validation (2026-09-16):** the 15 reviewed
 > source changes bind accepted decomposer attempts and durable worker context/output
 > provenance. Native Clippy and test build passed; the selected binary passed

@@ -126,12 +126,12 @@ def mapping_block(mapping: str, key: str, indent: int) -> str:
 
 def step_run_command(step: str) -> str:
     match = re.search(
-        r"(?m)^        run: \|\n(?P<run>(?:^          [^\n]*(?:\n|\Z))*)",
+        r"(?m)^        run: \|\n(?P<run>(?:^          [^\n]*(?:\n|\Z)|^\n)*)",
         step,
     )
     if match is None:
         raise AssertionError("workflow step has no block run command")
-    return "\n".join(line[10:] for line in match.group("run").splitlines())
+    return "\n".join(line[10:] for line in match.group("run").splitlines()).rstrip("\n")
 
 
 def job_dependencies(body: str) -> set[str]:
@@ -498,10 +498,68 @@ class CiCadenceContractTests(unittest.TestCase):
             "\n".join(
                 [
                     "rm -f target/nextest/ci/junit.xml",
-                    "cargo nextest run --workspace --locked --profile ci --no-run",
+                    'if [[ "$RUNNER_OS" != "macOS" ]]; then',
+                    "  cargo nextest run --workspace --locked --profile ci --no-run",
+                    "  exit 0",
+                    "fi",
+                    "",
+                    'diagnostic_log="$RUNNER_TEMP/macos-nextest-compile-observability.log"',
+                    ': > "$diagnostic_log"',
+                    "cargo nextest run --workspace --locked --profile ci --no-run &",
+                    "cargo_pid=$!",
+                    'sleeper_pid=""',
+                    "cleanup_observer() {",
+                    '  if [[ -n "$sleeper_pid" ]] && kill -0 "$sleeper_pid" 2>/dev/null; then',
+                    '    kill "$sleeper_pid" 2>/dev/null || true',
+                    '    wait "$sleeper_pid" 2>/dev/null || true',
+                    "  fi",
+                    "}",
+                    "trap cleanup_observer EXIT",
+                    "next_snapshot=0",
+                    'while kill -0 "$cargo_pid" 2>/dev/null; do',
+                    "  if (( SECONDS >= next_snapshot )); then",
+                    "    {",
+                    '      echo "=== $(date -u +%FT%TZ) ==="',
+                    "      sysctl vm.swapusage || true",
+                    "      vm_stat || true",
+                    '      echo "pid ppid cpu_percent rss_kib elapsed role"',
+                    "      ps -axo pid=,ppid=,%cpu=,rss=,etime=,comm= \\",
+                    "        | awk '{ role = $6; sub(/^.*\\//, \"\", role); if (role == \"cargo\" || role == \"cargo-nextest\" || role == \"rustc\" || role == \"clang\" || role == \"ld\") print $1, $2, $3, $4, $5, role }' || true",
+                    '    } >> "$diagnostic_log"',
+                    "    next_snapshot=$((SECONDS + 60))",
+                    "  fi",
+                    "  sleep 1 &",
+                    "  sleeper_pid=$!",
+                    '  wait "$sleeper_pid" || true',
+                    '  sleeper_pid=""',
+                    "done",
+                    'wait "$cargo_pid"',
                 ]
             ),
         )
+        self.assertEqual(
+            step_run_command(build).count(
+                "cargo nextest run --workspace --locked --profile ci --no-run"
+            ),
+            2,
+            "non-macOS stays direct while macOS runs the identical Cargo argv as an owned child",
+        )
+        observability = steps["Upload macOS compile observability"]
+        self.assertEqual(
+            direct_mapping_keys(observability, 8), ["if", "uses", "with"]
+        )
+        self.assertIn("if: always() && runner.os == 'macOS'", observability)
+        self.assertIn(
+            "uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+            observability,
+        )
+        self.assertIn("name: macos-nextest-compile-observability", observability)
+        self.assertIn(
+            "path: ${{ runner.temp }}/macos-nextest-compile-observability.log",
+            observability,
+        )
+        self.assertIn("if-no-files-found: warn", observability)
+        self.assertIn("retention-days: 14", observability)
         self.assertEqual(
             step_run_command(execute),
             "cargo nextest run --workspace --locked --profile ci --test-threads ${{ matrix.test_threads }} --no-tests=fail",

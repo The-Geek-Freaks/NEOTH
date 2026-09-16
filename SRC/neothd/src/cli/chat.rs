@@ -6034,6 +6034,9 @@ pub(super) async fn run_post_reply_pipelines(
     canary_token: std::sync::Arc<crate::security::injection_tracker::CanaryToken>,
     cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
     turn_effect_gate: Option<std::sync::Arc<dyn crate::providers::ChatTurnEffectGate>>,
+    #[cfg(test)] abliterated_loader: Option<
+        &dyn crate::security::refusal_abliterated::AbliteratedProviderLoader,
+    >,
     mut stream_plan: PostReplyStreamPlan<'_>,
     retained_code_map_binding: Option<&RetainedCodeMapBinding>,
     correlation: Option<&str>,
@@ -6496,6 +6499,8 @@ pub(super) async fn run_post_reply_pipelines(
                 model: config.refusal_recovery.abliterated_model.as_deref(),
                 writer: Some(&writer),
                 now_unix: now_unix() as i64,
+                #[cfg(test)]
+                loader_override: abliterated_loader,
             },
             &mut recovery_attempt_budget,
         )
@@ -8139,6 +8144,8 @@ async fn finish_chat_turn_preparation(
                 slash_skill_name,
                 explicit_route_requested,
             },
+            #[cfg(test)]
+            abliterated_loader: None,
             deferred_failure_output: None,
             deferred_terminal: None,
         },
@@ -10726,13 +10733,8 @@ fn retained_code_map_binding(
     })
 }
 
-fn repo_context_recall_audit_payload(
-    receipt: &crate::code_map::recall::RecallReceipt,
-    prompt: &str,
-    block: &str,
-    surface: &'static str,
-) -> Result<Vec<u8>> {
-    let audit = retained_recall_audit_v1(receipt, prompt, block, surface);
+fn repo_context_recall_audit_payload(binding: &RetainedCodeMapBinding) -> Result<Vec<u8>> {
+    let audit = &binding.audit_payload;
     serde_json::to_vec(&serde_json::json!({
         "schema": "neoth.code_map.recall.audit.v1",
         "status": "retained_in_provider_request",
@@ -10749,6 +10751,7 @@ fn repo_context_recall_audit_payload(
         "context_hash_sha256": audit.context_hash_sha256,
         "context_hash_truncated": audit.context_hash_truncated,
         "context_bytes": audit.context_bytes,
+        "binding_sha256": binding.binding_sha256,
         "ts_unix": crate::time::now_unix_i64(),
     }))
     .context("serialize repository recall audit payload")
@@ -10839,12 +10842,9 @@ pub(crate) async fn emit_repo_context_unavailable_audit(
 
 pub(crate) async fn emit_repo_context_recall_audit(
     writer: &crate::wal::writer::WalWriterHandle,
-    receipt: &crate::code_map::recall::RecallReceipt,
-    prompt: &str,
-    block: &str,
-    surface: &'static str,
+    binding: &RetainedCodeMapBinding,
 ) -> Result<()> {
-    let payload = repo_context_recall_audit_payload(receipt, prompt, block, surface)?;
+    let payload = repo_context_recall_audit_payload(binding)?;
     let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8)
         .build();
@@ -10901,14 +10901,10 @@ pub(crate) async fn emit_retained_code_map_audits(
 
     let mut binding = None;
     if let Some(recall) = repo_recall {
-        emit_repo_context_recall_audit(writer, &recall.receipt, prompt, &recall.block, surface)
-            .await?;
-        binding = Some(retained_code_map_binding(
-            &recall.receipt,
-            prompt,
-            &recall.block,
-            surface,
-        )?);
+        let retained_binding =
+            retained_code_map_binding(&recall.receipt, prompt, &recall.block, surface)?;
+        emit_repo_context_recall_audit(writer, &retained_binding).await?;
+        binding = Some(retained_binding);
     }
     if let Some(context) = architecture_recall {
         emit_architecture_findings_audit(writer, context, surface).await?;
@@ -20174,9 +20170,9 @@ modes:
         };
         assert!(recall.receipt.snapshot.index_generation > 0);
         assert!(recall.receipt.snapshot.graph_generation > 0);
-        let payload =
-            repo_context_recall_audit_payload(&recall.receipt, prompt, &recall.block, "cli")
-                .unwrap();
+        let binding =
+            retained_code_map_binding(&recall.receipt, prompt, &recall.block, "cli").unwrap();
+        let payload = repo_context_recall_audit_payload(&binding).unwrap();
         let payload_text = String::from_utf8(payload.clone()).unwrap();
 
         for forbidden in [
@@ -20198,6 +20194,7 @@ modes:
         assert!(value["root_identity_hash_sha256"].as_str().is_some());
         assert!(value["query_hash_sha256"].as_str().is_some());
         assert!(value["context_hash_sha256"].as_str().is_some());
+        assert_eq!(value["binding_sha256"], binding.binding_sha256());
         assert_eq!(value["query_hash_truncated"], false);
         assert_eq!(value["context_hash_truncated"], false);
     }
