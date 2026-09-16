@@ -915,6 +915,7 @@ fn verify_tool_call_succeeded(result: &ToolCallResult, server_id: &str, tool: &s
 /// regression-testable ordering contract. All static and Confirm policy paths
 /// resolve before `spawn` is invoked; the opaque authorization proof is then
 /// consumed by the exact configured call.
+#[cfg(test)]
 async fn invoke_cli_call_with_spawner<F, Fut>(
     cfg: &crate::mcp::McpServerConfig,
     tool: &str,
@@ -944,6 +945,7 @@ where
 /// from the default-home adapter lets regression tests exercise the real
 /// daemon-or-standalone selection and bounded finalizer without mutating the
 /// process environment.
+#[cfg(test)]
 async fn invoke_cli_call_with_spawner_at_home<F, Fut>(
     cfg: &crate::mcp::McpServerConfig,
     tool: &str,
@@ -1017,6 +1019,7 @@ where
 /// only sink from `RequiredPermissionAudit`, while tests exercise the exact
 /// home-WAL boundary without provider network access.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 async fn invoke_cli_call_with_spawner_and_audit_sink<F, Fut>(
     cfg: &crate::mcp::McpServerConfig,
     tool: &str,
@@ -1587,6 +1590,172 @@ code_map:
                 assert!(!matches!(&result.content[0], crate::mcp::client::McpContent::Text { text } if text.contains("[untrusted configured MCP ReadPath sidecar]")), "{label}: sidecar leaked");
             }
         });
+    }
+
+    // W102 covers the policy boundaries which run before a configured external
+    // ReadPath child exists. W95 owns the successful selected child call and
+    // W97 owns selector/argument rejection; this test must keep the selected
+    // provider on the same immutable snapshot while exercising the real CLI
+    // authorization core and its durable audit order.
+    #[test]
+    fn w102_selected_read_preserves_authority_gates_before_child_start() {
+        let _env = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build W102 selected-read runtime")
+            .block_on(async {
+                let home = tempfile::tempdir().expect("W102 selected-read home");
+                let database = home.path().join("code-map.sqlite");
+                let root = home.path().join("root");
+                crate::mcp::codegraph_server::w59_seed_real_sqlite_root(
+                    &database,
+                    &root,
+                    "w102",
+                );
+                let executable = std::env::current_exe()
+                    .expect("W102 executable")
+                    .canonicalize()
+                    .expect("canonical W102 executable");
+                let trusted = codegraph_server_config(
+                    &executable,
+                    Some(database.canonicalize().expect("canonical W102 map")),
+                );
+                let mut selected = trusted.clone();
+                selected.id = "w102-selected-read".into();
+                let snapshot = McpServers {
+                    smart_loading: true,
+                    servers: vec![trusted, selected],
+                };
+                let selected = snapshot
+                    .get_enabled("w102-selected-read")
+                    .expect("selected descriptor belongs to immutable snapshot");
+                let trusted = snapshot
+                    .get_enabled("neoth-codegraph")
+                    .expect("trusted descriptor belongs to immutable snapshot");
+                let selector_config = "code_map:\n  outline_enrichment: true\n  enrichment_selectors:\n    - server_id: w102-selected-read\n      tool: codegraph_outline\n      kind: ReadPath\n      path_field: path\n";
+                let prior = std::env::current_dir().expect("capture W102 cwd");
+                struct Restore(std::path::PathBuf);
+                impl Drop for Restore {
+                    fn drop(&mut self) {
+                        std::env::set_current_dir(&self.0).expect("restore W102 cwd");
+                    }
+                }
+                std::env::set_current_dir(&root).expect("enter W102 root");
+                let _restore = Restore(prior);
+                let arguments = serde_json::json!({"path":"x.rs"});
+
+                for (label, policy, expected) in [
+                    (
+                        "allowlist",
+                        crate::permissions::AutonomyPolicySnapshot::builtin(
+                            crate::permissions::AutonomyLevel::Full,
+                        )
+                        .expect("W102 Full policy"),
+                        "allowlist",
+                    ),
+                    (
+                        "confirm",
+                        crate::permissions::AutonomyPolicySnapshot::builtin(
+                            crate::permissions::AutonomyLevel::Standard,
+                        )
+                        .expect("W102 Standard policy"),
+                        "confirm",
+                    ),
+                ] {
+                    let case_home = tempfile::tempdir().expect("W102 authority case home");
+                    std::fs::write(case_home.path().join("freedom.yaml"), selector_config)
+                        .expect("write W102 authority selector config");
+                    let (writer, join) = home_audit_writer(case_home.path());
+                    let mut blocked = selected.clone();
+                    if label == "allowlist" {
+                        blocked.allow_tools = Some(Vec::new());
+                    }
+                    let binding = cli_mcp_request_binding(&blocked, "codegraph_outline", &arguments)
+                        .expect("bind exact selected request");
+                    let attempts = Arc::new(AtomicUsize::new(0));
+                    let count = Arc::clone(&attempts);
+                    let error = invoke_cli_call_with_spawner_and_audit_sink_with_trusted_codegraph_descriptor(
+                        &blocked,
+                        Some(trusted),
+                        "codegraph_outline",
+                        arguments.clone(),
+                        policy,
+                        1_700_000_102,
+                        crate::mcp::gate::McpAuditSink::Writer(&writer),
+                        case_home.path(),
+                        move |_| {
+                            count.fetch_add(1, Ordering::SeqCst);
+                            async { panic!("{label}: authority rejection reached selected child start") }
+                        },
+                    )
+                    .await
+                    .expect_err("W102 authority boundary rejects before the selected child");
+                    assert_eq!(attempts.load(Ordering::SeqCst), 0, "{label}: no child means no tools/call or sidecar");
+                    match expected {
+                        "allowlist" => assert!(matches!(error, GateError::NotInAllowlist { .. })),
+                        "confirm" => assert!(matches!(error, GateError::ConfirmRequired { .. })),
+                        _ => unreachable!("fixed W102 case labels"),
+                    }
+                    let entries = home_trust_entries(case_home.path(), writer, join).await;
+                    assert_eq!(entries.len(), 1, "{label}: one final durable denial");
+                    assert_eq!(
+                        entries[0].event.outcome,
+                        crate::permissions::trust_ledger::TrustOutcome::Denied,
+                        "{label}: selected ReadPath keeps the existing denial audit"
+                    );
+                    assert_eq!(
+                        entries[0].event.request_binding_sha256.as_deref(),
+                        Some(binding.as_str()),
+                        "{label}: audit remains bound to the selected request"
+                    );
+                }
+
+                let hook_home = tempfile::tempdir().expect("W102 configured hook home");
+                std::fs::write(hook_home.path().join("freedom.yaml"), selector_config)
+                    .expect("write W102 hook selector config");
+                let hooks = hook_home.path().join("hooks");
+                std::fs::create_dir_all(&hooks).expect("create W102 hooks directory");
+                std::fs::write(
+                    hooks.join("block.toml"),
+                    "name = \"w102-selected-block\"\nstage = \"pre_tool_use\"\n[action]\nkind = \"block\"\nreason = \"selected ReadPath test block\"\n",
+                )
+                .expect("write W102 selected PreToolUse block");
+                let (writer, join) = home_audit_writer(hook_home.path());
+                let binding = cli_mcp_request_binding(selected, "codegraph_outline", &arguments)
+                    .expect("bind configured PreToolUse request");
+                let attempts = Arc::new(AtomicUsize::new(0));
+                let count = Arc::clone(&attempts);
+                let error = invoke_cli_call_with_spawner_and_audit_sink_with_trusted_codegraph_descriptor(
+                    selected,
+                    Some(trusted),
+                    "codegraph_outline",
+                    arguments,
+                    crate::permissions::AutonomyPolicySnapshot::builtin(
+                        crate::permissions::AutonomyLevel::Full,
+                    )
+                    .expect("W102 Full policy for PreToolUse"),
+                    1_700_000_102,
+                    crate::mcp::gate::McpAuditSink::Writer(&writer),
+                    hook_home.path(),
+                    move |_| {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        async { panic!("configured selected ReadPath block reached child start") }
+                    },
+                )
+                .await
+                .expect_err("configured selected PreToolUse block is final before child");
+                assert!(matches!(error, GateError::PreToolUseBlocked { .. }));
+                assert_eq!(attempts.load(Ordering::SeqCst), 0, "PreToolUse block has no child, tools/call, or sidecar");
+                let entries = home_trust_entries(hook_home.path(), writer, join).await;
+                assert_eq!(entries.len(), 1, "pre-tool boundary keeps one policy audit entry");
+                assert_eq!(
+                    entries[0].event.outcome,
+                    crate::permissions::trust_ledger::TrustOutcome::Allowed,
+                    "policy authorization remains auditable before the configured hook boundary"
+                );
+                assert_eq!(entries[0].event.request_binding_sha256.as_deref(), Some(binding.as_str()));
+            });
     }
 
     const W97_POST_CALL_MUTATE_ROOT: &str = "NEOTH_W97_POST_CALL_MUTATE_ROOT";

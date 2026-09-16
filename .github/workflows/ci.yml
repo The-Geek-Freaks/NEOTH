@@ -204,6 +204,11 @@ jobs:
           restore-keys: |
             linux-1.91-cargo-
 
+      # A failed format/lint/compile phase must not upload a cached older run's
+      # JUnit file as if this job had executed Nextest.
+      - name: Discard restored Linux test receipt
+        run: rm -f SRC/target/nextest/ci/junit.xml
+
       - name: Install cargo-nextest
         uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:

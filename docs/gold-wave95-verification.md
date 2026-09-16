@@ -1,4 +1,25 @@
-# W95-W101 - configured MCP local reads and observed runtime repairs
+# W95-W103 - configured MCP local reads and observed runtime repairs
+
+W102 adds a real direct-CLI regression for an explicitly selected external
+ReadPath tool. Per-server allowlist denial, required confirmation and a
+configured PreToolUse block each retain their typed error and prevent entry to
+the injected child-start closure. The fixture checks the durable request-bound
+trust outcome: static gates record `Denied`; the existing authorization-before-
+hook order records `Allowed` before the hook blocks execution. It does not claim
+that an authorization audit means a tool ran. Disabled-server selection remains
+upstream and direct-CLI cancellation remains intentionally unbound; neither is
+claimed by this fixture.
+
+[Full CI 35113128375](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35113128375)
+on `5e353a168db45234383cfbf735c7835a9ef17300` progressed beyond the W101 argument
+errors. Strict Linux lint then found three wrappers used only by tests. W103
+limits exactly those wrappers to `cfg(test)` while production keeps its trusted-
+descriptor entry points. The failed Linux job also uploaded a restored older
+JUnit file although Nextest never ran. The workflow now discards that file
+immediately after restoring its Cargo cache, before any format/lint failure can
+reach the always-run upload. The old uploaded report is not accepted as evidence.
+These source corrections require fresh GitHub validation; other running platform
+and preview jobs retain their value for the earlier source only.
 
 The latest full compiler run exposed two missing production call arguments.
 [CI 35111462773](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35111462773)

@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W101-configured-read-coverage-runtime-repairs-and-caller-compile-fix",
-  "base": "ac281eb6251940c8b2a871c8e5d69e793585d162",
-  "capturedUtc": "2026-09-16T15:03:09.7873093Z",
+  "item": "GOLD-W95-W103-configured-read-authority-and-observed-runtime-repairs",
+  "base": "5e353a168db45234383cfbf735c7835a9ef17300",
+  "capturedUtc": "2026-09-16T15:18:02.8101557Z",
   "validationStatus": "REVIEWED_SOURCE_NEW_REMOTE_GATES_PENDING",
-  "scopeNote": "293 cumulative inputs. W101 repairs exactly two missing same-snapshot selector arguments exposed by remote E0061/E0308. Source reviewed; fresh full compile, strict lint, runtime and portable acceptance pending GitHub-only.",
+  "scopeNote": "293 cumulative inputs. W102 adds selected direct-CLI allowlist/confirmation/PreToolUse denials with exact audit binding and zero child starts. W103 gates three test-only helpers and discards cached Linux JUnit before lint. Independently reviewed; fresh GitHub gates pending. W100 readiness remains separate WORK.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -13,8 +13,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "bytes": 35176,
-      "sha256": "84F1DE912E26DAFEE47243F58CDB330A7826597F37E3670D4BEF91FE8A193EAC"
+      "bytes": 35414,
+      "sha256": "81872A003214182D29CF483F3AB507B3C885F0F4A319951655D1CB38C17D3A48"
     },
     {
       "path": ".github/workflows/preflight.yml",
@@ -588,8 +588,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mcp.rs",
-      "bytes": 135494,
-      "sha256": "63FCD955F4FBE39F4A5578CF288434A659856F5CAB6B9872FA77C73469B4D5E0"
+      "bytes": 144719,
+      "sha256": "6ABF931F1B00D9C902ABB65B278A428F4320391CBBC6AA0354B2E2FF3EF4A98F"
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
