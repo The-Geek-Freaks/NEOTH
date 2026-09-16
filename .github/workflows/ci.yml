@@ -373,7 +373,7 @@ jobs:
 
           diagnostic_log="$RUNNER_TEMP/macos-nextest-compile-observability.log"
           : > "$diagnostic_log"
-          cargo nextest run --workspace --locked --profile ci --no-run &
+          cargo nextest run --workspace --locked --profile ci --features neothd-gui/macos-native-gui-test --no-run &
           cargo_pid=$!
           sleeper_pid=""
           cleanup_observer() {
@@ -412,6 +412,15 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Verify macOS native GUI fixture discovery
+        if: runner.os == 'macOS'
+        shell: bash
+        working-directory: SRC
+        run: |
+          fixture_list="$RUNNER_TEMP/macos-nextest-fixture-list.json"
+          cargo nextest list --workspace --locked --profile ci --features neothd-gui/macos-native-gui-test --message-format json > "$fixture_list"
+          python3 ../packaging/tests/verify_macos_native_gui_fixture_discovery.py "$fixture_list"
+
       - name: Save completed Cargo registry + target
         if: ${{ !cancelled() && steps.compile-tests.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -444,7 +453,11 @@ jobs:
           # Exercise the same real callback/event-loop path with Slint's compiled software renderer.
           SLINT_BACKEND: ${{ runner.os == 'Windows' && 'software' || '' }}
         run: |
-          cargo nextest run --workspace --locked --profile ci --test-threads ${{ matrix.test_threads }} --no-tests=fail
+          nextest_features=()
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            nextest_features=(--features neothd-gui/macos-native-gui-test)
+          fi
+          cargo nextest run --workspace --locked --profile ci "${nextest_features[@]}" --test-threads ${{ matrix.test_threads }} --no-tests=fail
 
       - name: Upload JUnit report
         if: always()

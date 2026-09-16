@@ -5,15 +5,18 @@ evidence required for the public `v1.0.0` tag.
 
 ## Workstation stability constraint — 2026-09-16
 
-Heavy Rust compilation on Shadow-PC is suspended after repeated reported
-bluescreens and confirmed unexpected Windows restarts. Job-count, process
-priority and free-memory limits did not establish safe operation on this host.
-Do not restart local Cargo build, test compilation, Clippy or linker workloads.
-Use lightweight formatting/parser, metadata and Python/source checks locally;
-run the remaining build and behavior gates on GitHub-hosted CI from reviewed
-commits on `main`. A commit with pending remote gates must say so explicitly and
-cannot satisfy a release gate. This host-specific restriction supersedes the
-local compile portions of the evidence ladder below; it does not waive them.
+All local validation workloads on Shadow-PC are suspended after another reported
+bluescreen and a confirmed unexpected restart at 14:31 local time on 2026-09-16.
+The event records a bugcheck, but its cause has not been established. Earlier
+job-count, priority and free-memory limits did not establish safe operation.
+Do not run local Cargo, rustc, rustfmt, Clippy, linkers, Python/PowerShell tests,
+Git test fixtures, product executables or GUI probes. Use bounded source/metadata
+reads, file edits and serialized Git/GitHub operations only. Run formatting,
+contracts, builds and behavior gates on GitHub-hosted CI from reviewed commits
+on `main`. Prior local results remain historical evidence, not authorization to
+repeat them. A commit with pending remote gates must say so explicitly and cannot
+satisfy a release gate. This host-specific restriction supersedes all local
+validation portions of the evidence ladder below; it does not waive the gates.
 
 The macOS compile step records bounded memory, swap and compiler-process metrics,
 preserves Cargo's actual exit status, and uploads diagnostics even on failure.
@@ -134,6 +137,20 @@ fixtures** to the admitted source before execution. The GUI identity uses packag
 route, three provider turns, a valid nonempty diff, and durable context/output
 commitment assertions. Focused acceptance does not replace broader consumer,
 provider, apply, delivery or release gates.
+
+The macOS generated-Slint callback fixtures need the native event loop on the
+process main thread. Its CI compile, discovery and execution commands therefore
+enable `neothd-gui/macos-native-gui-test`. The custom `harness = false` target
+exposes the same five W58 test names to Nextest and runs the selected fixture
+directly from `main`; the sixth controller fixture remains ordinary libtest.
+Discovery must bind all five names to the custom binary and reject missing or
+duplicate registrations before execution. These remain actual Winit/AppKit
+fixtures. Test helpers are compiled only under `cfg(test)`; the normal application
+entry is unchanged. A custom-target invocation on another platform must never
+start the GUI. Windows and Linux keep their ordinary callback test registrations.
+The macOS custom target is intended for Nextest; unsupported direct invocations
+fail rather than launch the application. Compilation, discovery and fresh JUnit
+execution must all pass before this harness supplies acceptance evidence.
 
 The macOS and Windows CI jobs compile the locked workspace test profile with
 `cargo nextest run --workspace --locked --profile ci --no-run`, then execute

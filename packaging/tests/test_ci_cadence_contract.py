@@ -4,6 +4,17 @@ from pathlib import Path
 import re
 import unittest
 
+from verify_macos_native_gui_fixture_discovery import (
+    CONTROLLER_OWNERS,
+    CONTROLLER_TEST,
+    CUSTOM_BINARY_ID,
+    CUSTOM_TESTS,
+    verify_fixture_discovery,
+)
+
+
+DISCOVERED_CASE = {"ignored": False, "filter-match": {"status": "matches"}}
+
 
 ROOT = Path(__file__).parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -486,6 +497,7 @@ class CiCadenceContractTests(unittest.TestCase):
 
         steps = workflow_steps(platform_tests)
         build = steps["Compile nextest workspace test binaries"]
+        discovery = steps["Verify macOS native GUI fixture discovery"]
         execute = steps["Run nextest workspace tests"]
         self.assertIn("id: compile-tests", build)
         self.assertEqual(
@@ -496,6 +508,11 @@ class CiCadenceContractTests(unittest.TestCase):
             direct_mapping_keys(execute, 8),
             ["timeout-minutes", "shell", "working-directory", "env", "run"],
         )
+        self.assertEqual(
+            direct_mapping_keys(discovery, 8),
+            ["if", "shell", "working-directory", "run"],
+        )
+        self.assertIn("if: runner.os == 'macOS'", discovery)
         self.assertIn(
             "timeout-minutes: ${{ matrix.test_build_timeout_minutes }}", build
         )
@@ -527,7 +544,7 @@ class CiCadenceContractTests(unittest.TestCase):
                     "",
                     'diagnostic_log="$RUNNER_TEMP/macos-nextest-compile-observability.log"',
                     ': > "$diagnostic_log"',
-                    "cargo nextest run --workspace --locked --profile ci --no-run &",
+                    "cargo nextest run --workspace --locked --profile ci --features neothd-gui/macos-native-gui-test --no-run &",
                     "cargo_pid=$!",
                     'sleeper_pid=""',
                     "cleanup_observer() {",
@@ -563,8 +580,15 @@ class CiCadenceContractTests(unittest.TestCase):
             step_run_command(build).count(
                 "cargo nextest run --workspace --locked --profile ci --no-run"
             ),
-            2,
-            "non-macOS stays direct while macOS runs the identical Cargo argv as an owned child",
+            1,
+            "non-macOS stays on the ordinary workspace command",
+        )
+        self.assertEqual(
+            step_run_command(build).count(
+                "cargo nextest run --workspace --locked --profile ci --features neothd-gui/macos-native-gui-test --no-run"
+            ),
+            1,
+            "only the macOS owned child enables the native harness feature",
         )
         observability = steps["Upload macOS compile observability"]
         self.assertEqual(
@@ -583,23 +607,43 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertIn("if-no-files-found: warn", observability)
         self.assertIn("retention-days: 14", observability)
         self.assertEqual(
+            step_run_command(discovery),
+            "\n".join(
+                [
+                    'fixture_list="$RUNNER_TEMP/macos-nextest-fixture-list.json"',
+                    "cargo nextest list --workspace --locked --profile ci --features neothd-gui/macos-native-gui-test --message-format json > \"$fixture_list\"",
+                    'python3 ../packaging/tests/verify_macos_native_gui_fixture_discovery.py "$fixture_list"',
+                ]
+            ),
+        )
+        self.assertEqual(
             step_run_command(execute),
-            "cargo nextest run --workspace --locked --profile ci --test-threads ${{ matrix.test_threads }} --no-tests=fail",
+            "\n".join(
+                [
+                    "nextest_features=()",
+                    'if [[ "$RUNNER_OS" == "macOS" ]]; then',
+                    "  nextest_features=(--features neothd-gui/macos-native-gui-test)",
+                    "fi",
+                    'cargo nextest run --workspace --locked --profile ci "${nextest_features[@]}" --test-threads ${{ matrix.test_threads }} --no-tests=fail',
+                ]
+            ),
         )
         self.assertNotIn("--no-run", step_run_command(execute))
         self.assertNotIn("junit.xml", step_run_command(execute))
         compile_step = platform_tests.index("Compile nextest workspace test binaries")
         junit_cleanup = platform_tests.index("rm -f target/nextest/ci/junit.xml")
         compile_command = platform_tests.index(
-            "cargo nextest run --workspace --locked --profile ci --no-run"
+            "cargo nextest run --workspace --locked --profile ci --features neothd-gui/macos-native-gui-test --no-run"
         )
+        discovery_step = platform_tests.index("Verify macOS native GUI fixture discovery")
         runtime_step = platform_tests.index("Run nextest workspace tests")
         runtime_command = platform_tests.index(
-            "cargo nextest run --workspace --locked --profile ci --test-threads ${{ matrix.test_threads }} --no-tests=fail"
+            'cargo nextest run --workspace --locked --profile ci "${nextest_features[@]}" --test-threads ${{ matrix.test_threads }} --no-tests=fail'
         )
         self.assertLess(compile_step, junit_cleanup)
         self.assertLess(junit_cleanup, compile_command)
-        self.assertLess(compile_command, runtime_step)
+        self.assertLess(compile_command, discovery_step)
+        self.assertLess(discovery_step, runtime_step)
         self.assertLess(runtime_step, runtime_command)
 
         cache_restore = steps["Restore Cargo registry + target"]
@@ -665,6 +709,80 @@ class CiCadenceContractTests(unittest.TestCase):
         junit = steps["Upload JUnit report"]
         self.assertIn("if: always()", junit)
         self.assertIn("path: SRC/target/nextest/ci/junit.xml", junit)
+
+    def test_macos_native_gui_discovery_requires_exact_suite_ownership(self) -> None:
+        suites = {
+            CUSTOM_BINARY_ID: {
+                "binary-id": CUSTOM_BINARY_ID,
+                "testcases": {test_name: dict(DISCOVERED_CASE) for test_name in CUSTOM_TESTS},
+            }
+        }
+        suites.update(
+            {
+                binary_id: {
+                    "binary-id": binary_id,
+                    "testcases": {CONTROLLER_TEST: dict(DISCOVERED_CASE)},
+                }
+                for binary_id in CONTROLLER_OWNERS
+            }
+        )
+        verify_fixture_discovery({"rust-suites": suites})
+
+    def test_macos_native_gui_discovery_rejects_w58_duplicate(self) -> None:
+        duplicate = next(iter(CUSTOM_TESTS))
+        suites = {
+            CUSTOM_BINARY_ID: {
+                "binary-id": CUSTOM_BINARY_ID,
+                "testcases": {test_name: dict(DISCOVERED_CASE) for test_name in CUSTOM_TESTS},
+            },
+            "unexpected::copy": {
+                "binary-id": "unexpected::copy",
+                "testcases": {duplicate: dict(DISCOVERED_CASE)},
+            },
+            **{
+                binary_id: {
+                    "binary-id": binary_id,
+                    "testcases": {CONTROLLER_TEST: dict(DISCOVERED_CASE)},
+                }
+                for binary_id in CONTROLLER_OWNERS
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "unexpected W58 fixture ownership"):
+            verify_fixture_discovery({"rust-suites": suites})
+
+    def test_macos_native_gui_discovery_rejects_unrunnable_w58_case(self) -> None:
+        unrunnable = next(iter(CUSTOM_TESTS))
+        cases = {test_name: dict(DISCOVERED_CASE) for test_name in CUSTOM_TESTS}
+        cases[unrunnable] = {"ignored": True, "filter-match": {"status": "matches"}}
+        suites = {
+            CUSTOM_BINARY_ID: {
+                "binary-id": CUSTOM_BINARY_ID,
+                "testcases": cases,
+            },
+            **{
+                binary_id: {
+                    "binary-id": binary_id,
+                    "testcases": {CONTROLLER_TEST: dict(DISCOVERED_CASE)},
+                }
+                for binary_id in CONTROLLER_OWNERS
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "custom W58 fixture is not runnable"):
+            verify_fixture_discovery({"rust-suites": suites})
+
+    def test_macos_native_gui_discovery_rejects_missing_ordinary_owner(self) -> None:
+        suites = {
+            CUSTOM_BINARY_ID: {
+                "binary-id": CUSTOM_BINARY_ID,
+                "testcases": {test_name: dict(DISCOVERED_CASE) for test_name in CUSTOM_TESTS},
+            },
+            "neothd-gui::bin/neothd-gui": {
+                "binary-id": "neothd-gui::bin/neothd-gui",
+                "testcases": {CONTROLLER_TEST: dict(DISCOVERED_CASE)},
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "ordinary GUI controller fixture ownership"):
+            verify_fixture_discovery({"rust-suites": suites})
 
 
 if __name__ == "__main__":

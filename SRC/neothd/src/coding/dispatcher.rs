@@ -3580,7 +3580,9 @@ mod tests {
             let (name, email) = AUTHORS[revision % AUTHORS.len()];
             source.push_str(&format!("// W88 structural-risk history {revision}\n"));
             let parent = if revision == 0 {
-                head_ref.as_str().to_owned()
+                // fast-import refuses a branch ref as its own first parent;
+                // `^0` resolves the pre-import commit that the branch names.
+                format!("{head_ref}^0")
             } else {
                 format!(":{revision}")
             };

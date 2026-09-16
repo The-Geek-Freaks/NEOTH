@@ -1736,6 +1736,15 @@ fn unchanged_board_snapshot_does_not_emit_activity_change() {
 }
 
 fn main() -> Result<()> {
+    #[cfg(all(test, feature = "macos-native-gui-test"))]
+    // `CARGO_CRATE_NAME` is a compile-time environment value, not a cfg flag.
+    // Only the explicit `[[test]]` target owns this process entry. A production
+    // binary built with the feature keeps the normal application path below.
+    if option_env!("CARGO_CRATE_NAME") == Some("neothd_gui_macos_native") {
+        return w58_gui_callback_runtime_tests::run_macos_native_harness()
+            .map_err(anyhow::Error::msg);
+    }
+
     // Must run before tracing, Slint, or any GUI state: the private probe
     // guardian is an internal fixed-mode child and must never fall through
     // into normal application initialisation on malformed control input.
@@ -37140,7 +37149,7 @@ mod w58_gui_callback_runtime_tests {
         rendered
     }
 
-    #[test]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w58_buddy_status_callback_publishes_selected_root_readiness() {
         let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("GUI callback env lock");
         let home = TempDir::new().expect("temporary NEOTH home");
@@ -37273,7 +37282,7 @@ mod w58_gui_callback_runtime_tests {
         assert!(unreadable.contains("unreadable_store"));
     }
 
-    #[test]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w80_buddy_impact_callback_renders_selected_git_receipt() {
         let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("GUI callback env lock");
         let home = TempDir::new().expect("temporary NEOTH home");
@@ -37681,7 +37690,7 @@ mod w58_gui_callback_runtime_tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance() {
         let _environment = GUI_CALLBACK_ENV_LOCK
             .lock()
@@ -37822,7 +37831,7 @@ mod w58_gui_callback_runtime_tests {
             .expect("join injected real service");
     }
 
-    #[test]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint() {
         let _environment = GUI_CALLBACK_ENV_LOCK
             .lock()
@@ -37924,7 +37933,7 @@ mod w58_gui_callback_runtime_tests {
             .expect("join injected real service");
     }
 
-    #[test]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it() {
         let _environment = GUI_CALLBACK_ENV_LOCK
             .lock()
@@ -37988,5 +37997,93 @@ mod w58_gui_callback_runtime_tests {
         );
         assert_eq!(window.get_buddy_mood().to_string(), "error");
         NATIVE_CODING_UI_REVISION.store(previous, std::sync::atomic::Ordering::Release);
+    }
+
+    #[cfg(target_os = "macos")]
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 5] = [
+        "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
+        "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
+        "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
+        "w58_gui_callback_runtime_tests::w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint",
+        "w58_gui_callback_runtime_tests::w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it",
+    ];
+
+    /// Native macOS Nextest bridge. Keep its stdout restricted to the libtest
+    /// terse-list protocol; command errors return to the crate entry point.
+    pub(super) fn run_macos_native_harness() -> std::result::Result<(), String> {
+        let argument_storage = std::env::args().skip(1).collect::<Vec<_>>();
+        let arguments = argument_storage
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            // `[[test]]` targets exist on every platform when `--all-features`
+            // is used. This executable must never fall through to the GUI app
+            // on platforms whose ordinary libtest fixtures remain registered.
+            return match arguments.as_slice() {
+                [] | ["--list", "--format", "terse"] => Ok(()),
+                ignored_list
+                    if ignored_list.len() == 4
+                        && ignored_list.iter().any(|argument| *argument == "--list")
+                        && ignored_list.iter().any(|argument| *argument == "--format")
+                        && ignored_list.iter().any(|argument| *argument == "terse")
+                        && ignored_list.iter().any(|argument| *argument == "--ignored") =>
+                {
+                    Ok(())
+                }
+                _ => Err(format!(
+                    "macOS native GUI harness is unavailable on this platform: {arguments:?}"
+                )),
+            };
+        }
+
+        #[cfg(target_os = "macos")]
+        match arguments.as_slice() {
+            [list, format, terse]
+                if *list == "--list" && *format == "--format" && *terse == "terse" =>
+            {
+                for test_name in MACOS_NATIVE_HARNESS_TESTS {
+                    println!("{test_name}: test");
+                }
+                Ok(())
+            }
+            ignored_list
+                if ignored_list.len() == 4
+                    && ignored_list.iter().any(|argument| *argument == "--list")
+                    && ignored_list.iter().any(|argument| *argument == "--format")
+                    && ignored_list.iter().any(|argument| *argument == "terse")
+                    && ignored_list.iter().any(|argument| *argument == "--ignored") =>
+            {
+                Ok(())
+            }
+            [test_name, no_capture, exact]
+                if *no_capture == "--nocapture" && *exact == "--exact" =>
+            {
+                match *test_name {
+                    "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness" => {
+                        w58_buddy_status_callback_publishes_selected_root_readiness()
+                    }
+                    "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt" => {
+                        w80_buddy_impact_callback_renders_selected_git_receipt()
+                    }
+                    "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance" => {
+                        w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance()
+                    }
+                    "w58_gui_callback_runtime_tests::w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint" => {
+                        w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint()
+                    }
+                    "w58_gui_callback_runtime_tests::w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it" => {
+                        w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it()
+                    }
+                    _ => return Err(format!("unknown macOS native GUI test {test_name:?}")),
+                }
+                Ok(())
+            }
+            _ => Err(format!(
+                "unsupported macOS native GUI harness arguments: {arguments:?}"
+            )),
+        }
     }
 }

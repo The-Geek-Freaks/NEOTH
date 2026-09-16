@@ -20,6 +20,15 @@ gui-loop = []
 # Forward the signed desktop-release capability contract into the embedded
 # core. Development builds stay slim unless the release bundle is requested.
 release-desktop = ["neothd/release-desktop"]
+# Builds only the explicit macOS Nextest target below. It never changes the
+# production binary's entry path.
+macos-native-gui-test = []
+
+[[test]]
+name = "neothd-gui-macos-native"
+path = "src/main.rs"
+harness = false
+required-features = ["macos-native-gui-test"]
 
 [dependencies]
 # Slint native — pure-Rust Femtovg backend on Windows + Linux, system

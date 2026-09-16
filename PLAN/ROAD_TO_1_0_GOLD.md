@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W89 native macOS test entry and W88 fixture correction (2026-09-16):** the
+five generated-Slint callback fixtures use a test-only custom main-thread entry
+on macOS. CI retains their exact names and checks structured discovery before
+execution; Windows/Linux registrations and the ordinary controller fixture
+remain. The W88 fast-import first-parent correction passed an isolated Git-only
+probe (201 commits, expected authors, clean checkout). Rust/runtime acceptance
+is pending GitHub CI; no local compiler ran. See [the W89 report](../docs/gold-wave89-verification.md)
+and updated build cadence. After the further confirmed 14:31 local restart,
+all validation (including formatting, contracts and runtime probes) is GitHub-only.
+Counts remain **1324/1015/307/2**, raw309/pre-tag308.
+
 **W88/W90 risk-refusal evidence and shared test import (2026-09-16):** early
 structural-risk refusals now retain the existing pre-apply advisory in the
 `PATCH_APPLY_FAILED` receipt without changing risk/lease authority. Its real
