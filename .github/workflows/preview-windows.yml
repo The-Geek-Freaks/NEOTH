@@ -11,13 +11,19 @@ env:
   CARGO_INCREMENTAL: 0
   CARGO_BUILD_JOBS: '1'
   RUSTFLAGS: '-C target-feature=+crt-static'
+  CARGO_PROFILE_RELEASE_OPT_LEVEL: '1'
+  CARGO_PROFILE_RELEASE_DEBUG: '0'
+  CARGO_PROFILE_RELEASE_LTO: 'false'
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
   NEOTH_SOURCE_HEAD: ${{ github.sha }}
 
 jobs:
   preview-windows-x64:
     name: Build unreleased Windows x64 CLI and GUI preview
     runs-on: windows-2022
-    timeout-minutes: 100
+    # The preview keeps the release feature/profile identity but deliberately
+    # uses preview-fast-v1 Cargo overrides for bounded feedback only.
+    timeout-minutes: 240
     steps:
       - name: Checkout exact preview source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -30,29 +36,85 @@ jobs:
           toolchain: '1.93.0'
           targets: x86_64-pc-windows-msvc
 
-      - name: Cache Cargo
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore versioned preview Cargo registry cache
+        timeout-minutes: 5
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            SRC/target/
-          key: preview-windows-x64-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          key: preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-registry-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            preview-windows-x64-cargo-
+            preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-registry-${{ hashFiles('SRC/Cargo.lock') }}-
+
+      # Cargo fingerprints source and compile environment before reuse. The
+      # cache namespace pins toolchain, CRT mode, preview profile, and lock;
+      # interrupted entries are lower-priority recovery inputs, never complete.
+      - name: Restore compatible Rust target cache
+        timeout-minutes: 5
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: SRC/target/
+          key: preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-all-rust-complete-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-all-rust-complete-${{ hashFiles('SRC/Cargo.lock') }}-
+            preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-aux-complete-${{ hashFiles('SRC/Cargo.lock') }}-
+            preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-cli-complete-${{ hashFiles('SRC/Cargo.lock') }}-
+            preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-interrupted-${{ hashFiles('SRC/Cargo.lock') }}-
 
       - name: Build native CLI and compatibility executables
+        timeout-minutes: 90
         working-directory: SRC/neothd
         run: cargo build --release --locked --bins --features release-desktop --target x86_64-pc-windows-msvc
 
+      - name: Save completed CLI Cargo cache
+        if: ${{ success() }}
+        timeout-minutes: 5
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            SRC/target/
+          key: preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-cli-complete-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save completed preview Cargo registry cache
+        if: ${{ success() }}
+        timeout-minutes: 5
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-registry-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
       - name: Build native migration and relay executables
+        timeout-minutes: 15
         working-directory: SRC
         run: cargo build --release --locked -p neoth-migrate -p neoth-relay --target x86_64-pc-windows-msvc
 
+      - name: Save completed migration and relay Cargo cache
+        if: ${{ success() }}
+        timeout-minutes: 5
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            SRC/target/
+          key: preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-aux-complete-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
       - name: Build native desktop GUI
+        timeout-minutes: 25
         working-directory: SRC
         run: cargo build --release --locked -p neothd-gui --features release-desktop --target x86_64-pc-windows-msvc
+
+      - name: Save completed GUI Cargo cache
+        if: ${{ success() }}
+        timeout-minutes: 5
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            SRC/target/
+          key: preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-all-rust-complete-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Setup Node.js for Keet companion
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -60,6 +122,7 @@ jobs:
           node-version: '22.16.0'
 
       - name: Build version-locked Keet standalone
+        timeout-minutes: 20
         working-directory: bridges/keet
         shell: bash
         run: |
@@ -70,6 +133,7 @@ jobs:
           test -s out/win32-x64/neoth-keet-bridge.exe
 
       - name: Stage unreleased preview with source and payload inventory
+        timeout-minutes: 10
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -117,7 +181,13 @@ jobs:
             source_sha = $env:GITHUB_SHA
             workflow = 'preview-windows.yml'
             target = $target
+            toolchain = '1.93.0'
             build_profile = 'release'
+            optimization_profile = 'preview-fast-v1'
+            cargo_profile_release_opt_level = '1'
+            cargo_profile_release_debug = '0'
+            cargo_profile_release_lto = 'false'
+            cargo_profile_release_codegen_units = '16'
             crt_mode = 'static-msvc-v1'
             signing = 'none'
             github_release = 'not_created'
@@ -131,6 +201,7 @@ jobs:
             '',
             "Source commit: $env:GITHUB_SHA",
             'This artifact is an unsigned, unreleased portable preview.',
+            'Build profile: release; preview-fast-v1 overrides opt-level=1, debug=0, lto=false, codegen-units=16.',
             'It is neither a GitHub Release asset nor installed-product evidence.',
             'It intentionally excludes release-bound self-knowledge and does not include an installer.'
           ) | Set-Content -LiteralPath (Join-Path $stage 'UNRELEASED-PREVIEW.md') -Encoding utf8
@@ -152,6 +223,7 @@ jobs:
           "$zipHash  $(Split-Path -Leaf $zip)" | Set-Content -LiteralPath "$zip.sha256" -Encoding ascii
 
       - name: Upload unreleased preview artifact
+        timeout-minutes: 10
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: neoth-unreleased-preview-windows-x64-${{ github.sha }}
@@ -160,3 +232,12 @@ jobs:
             dist/neoth-unreleased-preview-windows-x64-${{ github.sha }}.zip.sha256
           if-no-files-found: error
           retention-days: 7
+
+      - name: Save interrupted preview Cargo cache
+        if: ${{ always() && (failure() || cancelled()) }}
+        timeout-minutes: 5
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            SRC/target/
+          key: preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-interrupted-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}

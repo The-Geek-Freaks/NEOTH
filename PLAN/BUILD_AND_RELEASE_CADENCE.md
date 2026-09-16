@@ -29,6 +29,20 @@ notices. Matrix 0.18 requires Rust 1.93, so the main release build matrix uses
 the same pin for both desktop and server feature bundles. Default-feature CI,
 metadata parsing and the isolated signer retain Rust 1.91. The preview sets
 static MSVC CRT linkage and the full source SHA for every native Cargo build.
+The preview alone sets `preview-fast-v1` Cargo release-profile overrides:
+`opt-level=1`, `debug=0`, `lto=false`, and `codegen-units=16`. The final release
+profile in `SRC/Cargo.toml` and the release workflow remain unchanged. Preview
+provenance records Rust 1.93.0 and all four overrides; it is not evidence of
+optimized-release performance.
+
+The preview job has a 240-minute outer bound. Its CLI, migration/relay and GUI
+build steps have independent 90/15/25-minute bounds. All declared bounded steps
+total 205 minutes, leaving setup and recovery reserve. Compatible cache prefixes
+include the compiler, static CRT, preview profile and lock hash. Run/attempt keys
+are immutable; completed phases have priority over interrupted recovery inputs.
+Only a successful build phase can save its completed cache. An interrupted cache
+does not prove a completed binary or any acceptance result.
+
 The artifact records the full source commit, each payload file SHA-256 and a
 separate ZIP checksum. It is unsigned and unreleased. It does not create a tag,
 GitHub Release, installer or release-bound self-knowledge snapshot. Its runtime

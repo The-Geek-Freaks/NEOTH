@@ -8,6 +8,16 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W86 remote preview feedback repair (2026-09-16):** preview `35069306601`
+hit its 100-minute job deadline during compilation and produced no artifact.
+The reviewed replacement uses preview-only optimization overrides, explicit
+compiler/profile provenance, separate bounded build phases and compatible
+completed/interrupted cache recovery. Production release settings, desktop
+features, static CRT and one Cargo worker remain unchanged. The new build and
+portable acceptance are pending. See [the W86 report](../docs/gold-wave86-verification.md)
+and updated build cadence. No local compilation or checkbox closure; counts
+**1324/1015/307/2**, raw309/pre-tag308.
+
 **W85 Buddy runtime fixture repair (2026-09-16):** Windows CI on the earlier
 `389b5038` source finished **16,731 passed / 7 failed**, plus 22 skipped and one
 leaky passing test. Five failures are covered by W83. The two additional Buddy
