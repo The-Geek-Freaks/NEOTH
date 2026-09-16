@@ -835,7 +835,69 @@ pub struct CodingCodeMapReceipt {
     pub sources: Vec<CodeMapContextSource>,
 }
 
+/// Bounded, content-free link from an accepted decomposition result to the
+/// exact prepared provider input used for its successful attempt. This is not
+/// a provider-delivery receipt and never contains prompt, context, reply, or
+/// repository-path text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodingCodeMapResultEvidence {
+    pub schema: String,
+    pub prepared_attempt: u8,
+    pub submitted_context_sha256: String,
+    pub submitted_context_bytes: usize,
+    pub context_truncated: bool,
+    pub accepted_result_sha256: String,
+    pub accepted_task_count: usize,
+}
+
+impl CodingCodeMapResultEvidence {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.schema == "neoth.coding.code_map_result_evidence.v1",
+            "unsupported coding code-map result evidence schema"
+        );
+        ensure!(
+            matches!(self.prepared_attempt, 1 | 2),
+            "result evidence attempt must be one or two"
+        );
+        ensure!(
+            self.submitted_context_bytes <= MAX_CONTEXT_BYTES,
+            "result evidence submitted context exceeds bound"
+        );
+        for (name, digest) in [
+            ("submitted context", &self.submitted_context_sha256),
+            ("accepted result", &self.accepted_result_sha256),
+        ] {
+            ensure!(
+                is_lowercase_sha256(digest),
+                "{name} digest is not lowercase SHA-256"
+            );
+        }
+        Ok(())
+    }
+}
+
 impl CodingCodeMapReceipt {
+    pub fn result_evidence(
+        &self,
+        accepted_result_sha256: String,
+        accepted_task_count: usize,
+    ) -> Result<CodingCodeMapResultEvidence> {
+        self.validate()?;
+        let evidence = CodingCodeMapResultEvidence {
+            schema: "neoth.coding.code_map_result_evidence.v1".to_owned(),
+            prepared_attempt: self.attempt,
+            submitted_context_sha256: self.submitted_context_sha256.clone(),
+            submitted_context_bytes: self.submitted_context_bytes,
+            context_truncated: self.context_truncated,
+            accepted_result_sha256,
+            accepted_task_count,
+        };
+        evidence.validate()?;
+        Ok(evidence)
+    }
+
     /// Validate a receipt loaded from persistence or supplied by a caller.
     /// No fallback is allowed: malformed receipts are evidence of corruption.
     pub fn validate(&self) -> Result<()> {

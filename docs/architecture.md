@@ -294,6 +294,30 @@ required `worker_code_map_context` field. Missing context produces an explicit
 empty field, and an expanded-over-cap value prevents selector and task dispatch
 without another database lookup or root acquisition.
 
+A prepared coding request is not an accepted decomposer result. After a parsed
+clarification or committed task insertion, the decomposer binds the retained
+receipt for that exact first attempt; a repair replaces it with the already
+persisted second-attempt receipt before its provider call. Malformed replies,
+receipt-store failures, cancellation and failed paths create no accepted-result
+evidence and do not reread receipts to infer completion.
+
+An accepted ProviderWorker output may carry a content-free, crate-sealed result
+context commitment: submitted-context digest, byte count and truncation; canonical
+root identity with index and graph generations; and canonical accepted-output
+digest and byte count. The output projection binds task ID, the parsed patch
+digest/bytes, test counters and summary digest. Custom and legacy workers retain
+`None`; they cannot create a ProviderWorker commitment. The commitment proves
+only association of a parsed worker output with its prepared request before
+accepted-result persistence. It does not prove provider completion, verified
+tests, patch application or delivery.
+
+Task persistence stores nullable worker provenance atomically with accepted
+artifact, test summary and status before optional worktree apply. Existing rows
+retain `None`; migration and readback reject corrupt provenance rather than
+substituting an accepted empty value. The GUI coding acceptance follows the real
+selected-home service route, requires the valid nonempty diff, and compares the
+captured context root/generations and SHA/bytes with the durable commitments.
+
 Dispatch-loop and utility-provider compaction wrap complete older-history data
 with the canonical `UntrustedContext::ModelOutput` renderer. Neither silently
 truncates a history payload to fit the class ceiling. Dispatch-loop compaction

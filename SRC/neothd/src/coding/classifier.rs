@@ -176,6 +176,7 @@ mod tests {
             completed_ns: None,
             patch_path: None,
             test_summary: None,
+            worker_result_provenance: None,
         }
     }
 

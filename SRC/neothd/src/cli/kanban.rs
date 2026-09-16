@@ -1228,41 +1228,18 @@ fn select_one_task(conn: &Connection, task_id: KanbanTaskId) -> Result<KanbanTas
         .prepare(
             "SELECT task_id, session_id, status, title, description, task_type, \
                     hemisphere, worker, parent_task_id, created_ns, started_ns, \
-                    eta_ns, completed_ns, patch_path, test_summary \
+                    eta_ns, completed_ns, patch_path, test_summary, worker_result_provenance \
              FROM idx_kanban_task WHERE task_id = ?1",
         )
         .context("prepare select_one_task")?;
     let mut rows = stmt
-        .query_map([task_id.raw()], decode_task_row)
+        .query_map([task_id.raw()], store::row_to_task)
         .context("query select_one_task")?;
     match rows.next() {
         Some(Ok(t)) => Ok(t),
         Some(Err(e)) => Err(e.into()),
         None => Err(anyhow!("task #{} not found", task_id.raw())),
     }
-}
-
-fn decode_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<KanbanTask> {
-    let raw_status: String = row.get(2)?;
-    let raw_hemi: String = row.get(6)?;
-    let test_summary_json: Option<String> = row.get(14)?;
-    Ok(KanbanTask {
-        task_id: KanbanTaskId(row.get(0)?),
-        session_id: KanbanSessionId(row.get(1)?),
-        status: TaskStatus::from_wire(&raw_status).unwrap_or(TaskStatus::Blocked),
-        title: row.get(3)?,
-        description: row.get(4)?,
-        task_type: row.get(5)?,
-        hemisphere: Hemisphere::from_wire(&raw_hemi).unwrap_or(Hemisphere::Unassigned),
-        worker: row.get(7)?,
-        parent_task_id: row.get::<_, Option<i64>>(8)?.map(KanbanTaskId),
-        created_ns: row.get::<_, i64>(9)? as u64,
-        started_ns: row.get::<_, Option<i64>>(10)?.map(|v| v as u64),
-        eta_ns: row.get::<_, Option<i64>>(11)?.map(|v| v as u64),
-        completed_ns: row.get::<_, Option<i64>>(12)?.map(|v| v as u64),
-        patch_path: row.get::<_, Option<String>>(13)?.map(PathBuf::from),
-        test_summary: test_summary_json.and_then(|s| serde_json::from_str(&s).ok()),
-    })
 }
 
 /// Render a kanban-style ASCII board grouping tasks by status. Pure
@@ -1408,6 +1385,63 @@ mod tests {
         let conn = memstore::open(&path).expect("open views.db");
         store::ensure_schema(&conn).expect("ensure schema");
         (dir, conn)
+    }
+
+    #[test]
+    fn task_detail_loads_worker_result_provenance_and_rejects_tampering() {
+        let (_dir, conn) = fresh_db();
+        let session = store::insert_session(&conn, 1, "prompt", "hash", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session, 2, "task", None, "ui", None).unwrap();
+        let valid = serde_json::json!({
+            "schema": crate::coding::worker::WorkerResultContextCommitment::SCHEMA,
+            "task_id": task_id.raw(),
+            "submitted_context_sha256": "a".repeat(64),
+            "submitted_context_bytes": 0,
+            "context_truncated": false,
+            "sources": [{
+                "root_identity": "test-root",
+                "index_generation": 1,
+                "graph_generation": 1,
+            }],
+            "accepted_output_sha256": "b".repeat(64),
+            "accepted_output_bytes": 0,
+        })
+        .to_string();
+        conn.execute(
+            "UPDATE idx_kanban_task SET worker_result_provenance = ?1 WHERE task_id = ?2",
+            rusqlite::params![valid, task_id.raw()],
+        )
+        .unwrap();
+        assert!(
+            select_one_task(&conn, task_id)
+                .unwrap()
+                .worker_result_provenance
+                .is_some(),
+            "task detail must preserve valid worker result provenance"
+        );
+
+        let structurally_invalid = serde_json::json!({
+            "schema": crate::coding::worker::WorkerResultContextCommitment::SCHEMA,
+            "task_id": task_id.raw(),
+            "submitted_context_sha256": "a".repeat(64),
+            "submitted_context_bytes": 0,
+            "context_truncated": false,
+            "sources": [],
+            "accepted_output_sha256": "b".repeat(64),
+            "accepted_output_bytes": 0,
+        })
+        .to_string();
+        for tampered in ["{not-json".to_owned(), structurally_invalid] {
+            conn.execute(
+                "UPDATE idx_kanban_task SET worker_result_provenance = ?1 WHERE task_id = ?2",
+                rusqlite::params![tampered, task_id.raw()],
+            )
+            .unwrap();
+            assert!(
+                select_one_task(&conn, task_id).is_err(),
+                "tampered worker provenance must not become a None fallback"
+            );
+        }
     }
 
     #[test]

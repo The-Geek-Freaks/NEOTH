@@ -967,9 +967,11 @@ mod tests {
             .wait_terminal()
             .await
             .expect("real coding run terminal");
-        let session_id = match result {
+        let (session_id, task_ids, evidence) = match result {
             CodingRunResult::Completed {
                 session_id,
+                task_ids,
+                code_map_result_evidence: Some(evidence),
                 dispatch: Some(dispatch),
                 ..
             } => {
@@ -977,7 +979,7 @@ mod tests {
                     dispatch.tasks_completed, 1,
                     "real dispatch completes the seeded task; dispatch={dispatch:?}"
                 );
-                session_id
+                (session_id, task_ids, evidence)
             }
             other => panic!("expected completed dispatched GUI coding run, got {other:?}"),
         };
@@ -1020,6 +1022,7 @@ mod tests {
             3,
             "exactly the decomposer, default plan review, and real ProviderWorker calls may reach the loopback"
         );
+
         let decomposer_envelope = requests[0]["messages"]
             .as_array()
             .expect("decomposer request messages")
@@ -1083,6 +1086,31 @@ mod tests {
             receipts[0].assembled_context_sha256, receipts[0].submitted_context_sha256,
             "receipt must commit the untruncated prepared snapshot"
         );
+        assert_eq!(evidence.prepared_attempt, 1);
+        assert_eq!(
+            evidence.submitted_context_sha256,
+            receipts[0].submitted_context_sha256
+        );
+        assert_eq!(
+            evidence.submitted_context_bytes,
+            receipts[0].submitted_context_bytes
+        );
+        assert_eq!(evidence.accepted_task_count, task_ids.len());
+        let accepted_result = serde_json::json!({
+            "schema": "neoth.coding.accepted_decomposition.v1",
+            "task_ids": task_ids.iter().map(|id| id.raw()).collect::<Vec<_>>(),
+            "clarifying_question_sha256": serde_json::Value::Null,
+            "session_complexity": "fast",
+            "input_truncated": false,
+        });
+        assert_eq!(
+            evidence.accepted_result_sha256,
+            sha256_hex(
+                &serde_json::to_string(&accepted_result)
+                    .expect("serialize accepted result commitment")
+            ),
+            "terminal evidence binds the accepted decomposer result, not only its prepared context"
+        );
 
         let task_envelope = requests[2]["messages"]
             .as_array()
@@ -1121,6 +1149,50 @@ mod tests {
             sha256_hex(&alternate_symbol_context),
             receipts[0].submitted_context_sha256,
             "a different context with the same selected filename must not satisfy the receipt binding"
+        );
+        let task = neothd::coding::store::list_tasks_for_session(&conn, session_id)
+            .expect("load persisted worker task")
+            .pop()
+            .expect("one persisted worker task");
+        let provenance = task
+            .worker_result_provenance
+            .expect("accepted ProviderWorker result has durable provenance");
+        assert_eq!(
+            provenance.submitted_context_sha256,
+            sha256_hex(&worker_code_map_context)
+        );
+        assert_eq!(
+            provenance.submitted_context_bytes,
+            worker_code_map_context.len()
+        );
+        assert!(!provenance.context_truncated);
+        assert_eq!(provenance.sources.len(), 1);
+        assert_eq!(provenance.sources[0].root_identity, source.root_identity);
+        assert_eq!(
+            provenance.sources[0].index_generation,
+            source.index_generation
+        );
+        assert_eq!(
+            provenance.sources[0].graph_generation,
+            source.graph_generation
+        );
+        assert!(!task.test_summary.expect("dispatcher test summary").applied);
+        let accepted_worker_patch = "--- a/src/auth.rs\n+++ b/src/auth.rs\n@@ -1 +1,7 @@\n pub fn verify_token(token: &str) -> bool { !token.is_empty() }\n+\n+#[cfg(test)]\n+mod tests {\n+    #[test]\n+    fn empty_token_is_rejected() { assert!(!super::verify_token(\"\")); }\n+}";
+        let accepted_worker_output = serde_json::json!({
+            "schema": "neoth.coding.accepted_worker_output.v1",
+            "task_id": task.task_id.raw(),
+            "patch_sha256": sha256_hex(accepted_worker_patch),
+            "patch_bytes": accepted_worker_patch.len(),
+            "tests": {"added": 0, "total": 0, "passing": 0, "failing": 0, "skipped": 0},
+            "summary_sha256": sha256_hex("loopback ProviderWorker added the empty-token regression test"),
+        });
+        assert_eq!(
+            provenance.accepted_output_sha256,
+            sha256_hex(
+                &serde_json::to_string(&accepted_worker_output)
+                    .expect("serialize accepted worker output")
+            ),
+            "durable task provenance binds the accepted provider output before any apply receipt"
         );
     }
 

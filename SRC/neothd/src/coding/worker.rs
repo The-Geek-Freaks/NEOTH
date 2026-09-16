@@ -16,8 +16,11 @@
 use std::{ffi::OsString, path::PathBuf};
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::coding::types::{KanbanTask, TestSummary};
+use crate::coding::{CodeMapContextSource, PreparedCodeMapContext};
 
 /// Maximum byte envelope accepted for one worker result. This mirrors the
 /// provider completion cap, but sits at the dispatcher boundary as well so a
@@ -98,6 +101,7 @@ pub enum WorkerContractViolation {
     ClaimedPatchPath,
     ArtifactPathUnsafe,
     ArtifactWriteFailed,
+    ResultContextCommitment,
 }
 
 impl WorkerContractViolation {
@@ -118,6 +122,7 @@ impl WorkerContractViolation {
             Self::ClaimedPatchPath => "claimed_patch_path",
             Self::ArtifactPathUnsafe => "artifact_path_unsafe",
             Self::ArtifactWriteFailed => "artifact_write_failed",
+            Self::ResultContextCommitment => "result_context_commitment",
         }
     }
 }
@@ -236,6 +241,11 @@ impl WorkerContract {
         if !outcome.patch_path.as_os_str().is_empty() {
             return Err(WorkerContractViolation::ClaimedPatchPath);
         }
+        if let Some(commitment) = &outcome.result_context_commitment {
+            commitment
+                .validate_for(task, &outcome)
+                .map_err(|_| WorkerContractViolation::ResultContextCommitment)?;
+        }
 
         let patch_path = match patch_state {
             WorkerPatchState::NoPatch => None,
@@ -347,9 +357,188 @@ pub struct WorkerOutcome {
     /// feed rendering stays clean; longer worker prose belongs in a
     /// `KANBAN_TASK_COMMENT` frame.
     pub summary: String,
+    /// Optional content-free binding from a provider-generated accepted result
+    /// to the exact prepared code-map context submitted with that task.  Custom
+    /// and legacy workers intentionally retain `None`.
+    /// Crate-sealed: a custom worker can return an ordinary result, but only
+    /// ProviderWorker may attach an evidence claim that the dispatcher stores.
+    pub(crate) result_context_commitment: Option<WorkerResultContextCommitment>,
+}
+
+/// Durable, content-free evidence for one accepted provider worker result.
+/// It commits hashes, byte counts, and immutable root generations only; it
+/// never retains source context, prompts, provider text, patch bytes, summary,
+/// or a filesystem path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerResultContextCommitment {
+    pub schema: String,
+    pub task_id: i64,
+    pub submitted_context_sha256: String,
+    pub submitted_context_bytes: usize,
+    pub context_truncated: bool,
+    pub sources: Vec<WorkerResultContextSource>,
+    pub accepted_output_sha256: String,
+    pub accepted_output_bytes: usize,
+}
+
+/// Root/generation identity copied from the already validated prepared context.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerResultContextSource {
+    pub root_identity: String,
+    pub index_generation: i64,
+    pub graph_generation: i64,
+}
+
+impl WorkerResultContextCommitment {
+    pub const SCHEMA: &'static str = "neoth.coding.worker_result_context.v1";
+
+    pub(crate) fn from_prepared(
+        task: &KanbanTask,
+        prepared: &PreparedCodeMapContext,
+        submitted_context: &str,
+        outcome: &WorkerOutcome,
+    ) -> anyhow::Result<Self> {
+        let sources = prepared
+            .sources()
+            .iter()
+            .map(WorkerResultContextSource::from_source)
+            .collect();
+        let projection = accepted_output_projection(task, outcome);
+        let commitment = Self {
+            schema: Self::SCHEMA.to_owned(),
+            task_id: task.task_id.raw(),
+            submitted_context_sha256: sha256_hex(submitted_context),
+            submitted_context_bytes: submitted_context.len(),
+            context_truncated: submitted_context != prepared.text(),
+            sources,
+            accepted_output_sha256: sha256_hex(&projection),
+            accepted_output_bytes: projection.len(),
+        };
+        commitment.validate_for(task, outcome)?;
+        Ok(commitment)
+    }
+
+    pub(crate) fn validate_for(
+        &self,
+        task: &KanbanTask,
+        outcome: &WorkerOutcome,
+    ) -> anyhow::Result<()> {
+        self.validate_persisted()?;
+        anyhow::ensure!(
+            self.task_id == task.task_id.raw(),
+            "worker result context task differs from dispatch task"
+        );
+        let projection = accepted_output_projection(task, outcome);
+        anyhow::ensure!(
+            self.accepted_output_bytes == projection.len(),
+            "worker accepted output byte count differs from canonical projection"
+        );
+        anyhow::ensure!(
+            self.accepted_output_sha256 == sha256_hex(&projection),
+            "worker accepted output digest differs from canonical projection"
+        );
+        Ok(())
+    }
+
+    pub(crate) fn validate_persisted(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.schema == Self::SCHEMA,
+            "unsupported worker result context schema"
+        );
+        anyhow::ensure!(self.task_id > 0, "worker result context task id is invalid");
+        anyhow::ensure!(
+            is_lowercase_sha256(&self.submitted_context_sha256),
+            "worker submitted context digest is invalid"
+        );
+        anyhow::ensure!(
+            is_lowercase_sha256(&self.accepted_output_sha256),
+            "worker accepted output digest is invalid"
+        );
+        anyhow::ensure!(
+            self.submitted_context_bytes <= MAX_WORKER_RESULT_BYTES,
+            "worker submitted context exceeds bounded result envelope"
+        );
+        anyhow::ensure!(
+            !self.sources.is_empty() && self.sources.len() <= 3,
+            "worker result context has invalid source count"
+        );
+        for source in &self.sources {
+            anyhow::ensure!(
+                !source.root_identity.is_empty() && source.root_identity.len() <= 4096,
+                "worker result source root identity is invalid"
+            );
+            anyhow::ensure!(
+                !source.root_identity.contains('/')
+                    && !source.root_identity.contains('\\')
+                    && !source.root_identity.chars().any(char::is_control)
+                    && crate::security::redact::sanitize_tool_output(&source.root_identity)
+                        == source.root_identity,
+                "worker result source root identity is not canonical metadata"
+            );
+            anyhow::ensure!(
+                source.index_generation > 0 && source.index_generation == source.graph_generation,
+                "worker result source generations are invalid"
+            );
+        }
+        Ok(())
+    }
+}
+
+impl WorkerResultContextSource {
+    fn from_source(source: &CodeMapContextSource) -> Self {
+        Self {
+            root_identity: source.root_identity.clone(),
+            index_generation: source.index_generation,
+            graph_generation: source.graph_generation,
+        }
+    }
+}
+
+fn accepted_output_projection(task: &KanbanTask, outcome: &WorkerOutcome) -> String {
+    serde_json::json!({
+        "schema": "neoth.coding.accepted_worker_output.v1",
+        "task_id": task.task_id.raw(),
+        "patch_sha256": sha256_hex(&outcome.patch_text),
+        "patch_bytes": outcome.patch_text.len(),
+        "tests": {
+            "added": outcome.tests.added,
+            "total": outcome.tests.total,
+            "passing": outcome.tests.passing,
+            "failing": outcome.tests.failing,
+            "skipped": outcome.tests.skipped,
+        },
+        "summary_sha256": sha256_hex(&outcome.summary),
+    })
+    .to_string()
+}
+
+fn sha256_hex(value: &str) -> String {
+    format!("{:x}", Sha256::digest(value.as_bytes()))
+}
+
+fn is_lowercase_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 impl WorkerOutcome {
+    /// Construct a public/custom-worker result with no ProviderWorker context
+    /// claim. This is the supported compatibility path after the sealed field
+    /// was introduced; `None` remains semantically identical to older results.
+    pub fn without_result_context(patch_text: String, tests: TestSummary, summary: String) -> Self {
+        Self {
+            patch_text,
+            patch_path: PathBuf::new(),
+            tests,
+            summary,
+            result_context_commitment: None,
+        }
+    }
+
     /// Explicitly classify the patch payload before a dispatcher decides
     /// whether there is any worktree material to apply.
     pub fn patch_state(&self) -> WorkerPatchState {
@@ -397,6 +586,7 @@ mod tests {
             completed_ns: None,
             patch_path: None,
             test_summary: None,
+            worker_result_provenance: None,
         }
     }
 
@@ -426,6 +616,7 @@ mod tests {
                 applied: false,
             },
             summary: "safe change".into(),
+            result_context_commitment: None,
         }
     }
 
@@ -457,6 +648,7 @@ mod tests {
             patch_path: PathBuf::new(),
             tests: TestSummary::ZERO,
             summary: "worker had nothing to add".into(),
+            result_context_commitment: None,
         };
         assert!(o.failed());
         assert!(!o.review_ready());
@@ -472,6 +664,7 @@ mod tests {
             patch_path: PathBuf::new(),
             tests: TestSummary::ZERO,
             summary: "added a line".into(),
+            result_context_commitment: None,
         };
         assert!(o.review_ready());
         assert!(!o.failed());
@@ -493,6 +686,7 @@ mod tests {
                 applied: false,
             },
             summary: "added 3 regression tests".into(),
+            result_context_commitment: None,
         };
         assert!(o.review_ready());
     }
@@ -507,6 +701,7 @@ mod tests {
             patch_path: PathBuf::new(),
             tests: TestSummary::ZERO,
             summary: "test".into(),
+            result_context_commitment: None,
         };
         let w = CannedWorker {
             name_: "test-worker",

@@ -42,7 +42,8 @@
 
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::types::{KanbanSessionId, KanbanTaskId};
 
@@ -166,6 +167,46 @@ pub struct DecompositionResult {
     /// [`MAX_INPUT_TOKENS`]. Operator should know their prompt /
     /// codemap was clipped before they read the result.
     pub input_truncated: bool,
+    /// Present only when an accepted provider response was parsed and its task
+    /// insertion committed. It links this result to the exact prepared input,
+    /// without retaining untrusted provider text.
+    pub code_map_result_evidence: Option<super::code_map_receipt::CodingCodeMapResultEvidence>,
+}
+
+#[derive(Serialize)]
+struct AcceptedDecompositionCommitment<'a> {
+    schema: &'static str,
+    task_ids: Vec<i64>,
+    clarifying_question_sha256: Option<String>,
+    session_complexity: &'a str,
+    input_truncated: bool,
+}
+
+impl DecompositionResult {
+    fn bind_prepared_result(
+        mut self,
+        prepared_receipt: Option<super::code_map_receipt::CodingCodeMapReceipt>,
+    ) -> Result<Self> {
+        let Some(receipt) = prepared_receipt else {
+            return Ok(self);
+        };
+        let canonical = serde_json::to_vec(&AcceptedDecompositionCommitment {
+            schema: "neoth.coding.accepted_decomposition.v1",
+            task_ids: self.task_ids.iter().map(|id| id.raw()).collect(),
+            clarifying_question_sha256: self
+                .clarifying_question
+                .as_deref()
+                .map(|question| format!("{:x}", Sha256::digest(question.as_bytes()))),
+            session_complexity: self.session_complexity.as_str(),
+            input_truncated: self.input_truncated,
+        })
+        .context("serialize accepted decomposition commitment")?;
+        self.code_map_result_evidence = Some(receipt.result_evidence(
+            format!("{:x}", Sha256::digest(canonical)),
+            self.task_ids.len(),
+        )?);
+        Ok(self)
+    }
 }
 
 /// Typed error tree. `thiserror` per `rules/rust/coding-style.md`
@@ -735,7 +776,7 @@ async fn decompose_inner(
         .context("decomposer prompt rejected")?;
 
     ensure_not_cancelled(cancellation, DecompositionCancelled::BeforeProvider)?;
-    record_prepared_code_map_receipt(
+    let mut prepared_receipt = record_prepared_code_map_receipt(
         conn,
         prepared_code_map_context,
         session_id,
@@ -760,7 +801,7 @@ async fn decompose_inner(
                 build_repair_prompt(operator_prompt, ctx_clamped.as_deref(), &raw_response)
                     .map_err(anyhow::Error::new)
                     .context("decomposer repair prompt rejected")?;
-            record_prepared_code_map_receipt(
+            prepared_receipt = record_prepared_code_map_receipt(
                 conn,
                 prepared_code_map_context,
                 session_id,
@@ -787,6 +828,7 @@ async fn decompose_inner(
                         ),
                         session_complexity: SessionComplexity::Mixed,
                         input_truncated: was_truncated,
+                        code_map_result_evidence: None,
                     });
                 }
             }
@@ -800,12 +842,14 @@ async fn decompose_inner(
             .clarifying_question
             .clone()
             .ok_or(DecomposerError::NeitherTasksNorQuestion)?;
-        return Ok(DecompositionResult {
+        return DecompositionResult {
             task_ids: Vec::new(),
             clarifying_question: Some(question),
             session_complexity: parsed.estimated_session_complexity,
             input_truncated: was_truncated,
-        });
+            code_map_result_evidence: None,
+        }
+        .bind_prepared_result(prepared_receipt);
     }
 
     validate_tasks(&parsed.tasks).map_err(anyhow::Error::from)?;
@@ -858,12 +902,14 @@ async fn decompose_inner(
     tx.commit()
         .context("commit atomic decomposer task insertion")?;
 
-    Ok(DecompositionResult {
+    DecompositionResult {
         task_ids: inserted,
         clarifying_question: parsed.clarifying_question,
         session_complexity: parsed.estimated_session_complexity,
         input_truncated: was_truncated,
-    })
+        code_map_result_evidence: None,
+    }
+    .bind_prepared_result(prepared_receipt)
 }
 
 /// Synchronous cancellation observation used only at durable/provider
@@ -902,9 +948,9 @@ fn record_prepared_code_map_receipt(
     operator_prompt: &str,
     submitted_context: &str,
     provider_prompt: &str,
-) -> Result<()> {
+) -> Result<Option<super::code_map_receipt::CodingCodeMapReceipt>> {
     let Some(prepared_code_map_context) = prepared_code_map_context else {
-        return Ok(());
+        return Ok(None);
     };
     let receipt = prepared_code_map_context
         .receipt(
@@ -916,7 +962,8 @@ fn record_prepared_code_map_receipt(
         )
         .context("prepare code-map decomposition input receipt")?;
     super::store::record_code_map_receipt(conn, session_id, &receipt)
-        .context("persist code-map decomposition input receipt")
+        .context("persist code-map decomposition input receipt")?;
+    Ok(Some(receipt))
 }
 
 #[cfg(test)]
@@ -1368,6 +1415,10 @@ mod tests {
         assert!(result.task_ids.is_empty());
         assert!(result.clarifying_question.is_some());
         assert!(result.input_truncated);
+        assert!(
+            result.code_map_result_evidence.is_none(),
+            "two malformed provider responses cannot claim an accepted result"
+        );
         let prompts = llm.captured_prompts();
         assert_eq!(prompts.len(), 2, "one initial and one repair call");
         for prompt in &prompts {
@@ -1551,6 +1602,12 @@ mod tests {
 
         assert_eq!(llm.calls(), 1);
         assert_eq!(result.task_ids.len(), 1);
+        let evidence = result
+            .code_map_result_evidence
+            .as_ref()
+            .expect("accepted task insertion retains its exact prepared attempt");
+        assert_eq!(evidence.prepared_attempt, 1);
+        assert_eq!(evidence.accepted_task_count, result.task_ids.len());
         let prompts = llm.captured_prompts();
         let receipts = crate::coding::store::load_code_map_receipts(&conn, session_id).unwrap();
         assert_eq!(receipts.len(), 1);
@@ -1568,6 +1625,39 @@ mod tests {
             )
             .unwrap();
         assert_eq!(persisted_session, session_id.raw());
+    }
+
+    #[tokio::test]
+    async fn accepted_repair_result_binds_attempt_two_without_rereading_receipts() {
+        let (conn, session_id) = prepared_session();
+        let prepared = prepared_code_map_context("selected context".to_owned());
+        let llm = CapturingLlm::new(vec![
+            "not valid JSON".to_owned(),
+            r#"{"tasks":[{"title":"Repair selected change","task_type":"tests","depends_on":[]}],"clarifying_question":null,"estimated_session_complexity":"fast"}"#.to_owned(),
+        ]);
+        let result = decompose_with_code_map_context(
+            &llm,
+            &conn,
+            session_id,
+            "repair selected change",
+            Some(&prepared),
+            42,
+        )
+        .await
+        .expect("second provider response is accepted");
+
+        let evidence = result
+            .code_map_result_evidence
+            .expect("accepted repair has result evidence");
+        assert_eq!(llm.calls(), 2);
+        assert_eq!(evidence.prepared_attempt, 2);
+        assert_eq!(evidence.accepted_task_count, 1);
+        assert_eq!(
+            crate::coding::store::load_code_map_receipts(&conn, session_id)
+                .expect("inspect durable history only after terminal evidence was built")
+                .len(),
+            2
+        );
     }
 
     #[tokio::test]

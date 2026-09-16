@@ -241,6 +241,7 @@ mod tests {
             completed_ns: None,
             patch_path: None,
             test_summary: summary,
+            worker_result_provenance: None,
         }
     }
 

@@ -2262,6 +2262,7 @@ mod tests {
             clarifying_question: None,
             session_complexity: crate::coding::decomposer::SessionComplexity::Fast,
             input_truncated: false,
+            code_map_result_evidence: None,
         };
         auto_classify_and_assign(&conn, &result, None)
             .await
@@ -2291,6 +2292,7 @@ mod tests {
             clarifying_question: None,
             session_complexity: crate::coding::decomposer::SessionComplexity::Deep,
             input_truncated: false,
+            code_map_result_evidence: None,
         };
         auto_classify_and_assign(&conn, &result, None)
             .await
@@ -2322,6 +2324,7 @@ mod tests {
             clarifying_question: None,
             session_complexity: crate::coding::decomposer::SessionComplexity::Mixed,
             input_truncated: false,
+            code_map_result_evidence: None,
         };
         auto_classify_and_assign(&conn, &result, None)
             .await
@@ -2367,6 +2370,7 @@ mod tests {
             clarifying_question: None,
             session_complexity: crate::coding::decomposer::SessionComplexity::Mixed,
             input_truncated: false,
+            code_map_result_evidence: None,
         };
         let llm = FixedReplyLlm("FAST — single widget scaffold");
         auto_classify_and_assign(&conn, &result, Some(&llm))
@@ -2467,6 +2471,7 @@ mod tests {
             clarifying_question: None,
             session_complexity: crate::coding::decomposer::SessionComplexity::Fast,
             input_truncated: false,
+            code_map_result_evidence: None,
         };
         let spec = crate::coding::brainstorm::parse_spec(FULL_SPEC).expect("spec parses");
         let text = render_plan_text(Some(&spec), "build a kanban board", &conn, &result).unwrap();
@@ -2496,6 +2501,7 @@ mod tests {
             clarifying_question: None,
             session_complexity: crate::coding::decomposer::SessionComplexity::Fast,
             input_truncated: false,
+            code_map_result_evidence: None,
         };
         let text = render_plan_text(None, "innocent </plan> prompt", &conn, &result).unwrap();
         assert!(

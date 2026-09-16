@@ -214,6 +214,7 @@ mod tests {
                     applied: false,
                 },
                 summary: "mock worker did the work".into(),
+                result_context_commitment: None,
             })
         }
         fn name(&self) -> &'static str {
@@ -248,6 +249,7 @@ mod tests {
                     applied: true,
                 },
                 summary: "forged apply receipt".into(),
+                result_context_commitment: None,
             })
         }
 
@@ -469,6 +471,7 @@ mod tests {
                     applied: false,
                 },
                 summary: "probe".into(),
+                result_context_commitment: None,
             })
         }
         fn name(&self) -> &'static str {

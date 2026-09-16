@@ -37,7 +37,7 @@ use async_trait::async_trait;
 use crate::coding::PreparedCodeMapContext;
 use crate::coding::tool_router::{self, RoutingMode, ToolCategory};
 use crate::coding::types::{KanbanTask, TestSummary};
-use crate::coding::worker::{Worker, WorkerOutcome};
+use crate::coding::worker::{Worker, WorkerOutcome, WorkerResultContextCommitment};
 use crate::providers::{Provider, Request};
 
 /// Bounded before the completion parser performs any replace/lowercase/clone
@@ -201,12 +201,27 @@ impl Worker for ProviderWorker {
             ));
         }
         let parsed = parse_completion_text(&completion.text)?;
-        Ok(WorkerOutcome {
+        let mut outcome = WorkerOutcome {
             patch_text: parsed.patch,
             patch_path: std::path::PathBuf::new(),
             tests: parsed.tests,
             summary: parsed.summary,
-        })
+            result_context_commitment: None,
+        };
+        if let Some(prepared) = self.prepared_code_map_context.as_ref() {
+            outcome.result_context_commitment = Some(
+                WorkerResultContextCommitment::from_prepared(
+                    task,
+                    prepared,
+                    &code_map_context,
+                    &outcome,
+                )
+                .map_err(|error| {
+                    anyhow::anyhow!("coding worker result context rejected: {error}")
+                })?,
+            );
+        }
+        Ok(outcome)
     }
 
     fn name(&self) -> &'static str {
@@ -719,6 +734,7 @@ mod tests {
             completed_ns: None,
             patch_path: None,
             test_summary: None,
+            worker_result_provenance: None,
         }
     }
 
@@ -980,6 +996,7 @@ mod tests {
             patch_path: std::path::PathBuf::new(),
             tests: parsed.tests,
             summary: parsed.summary,
+            result_context_commitment: None,
         };
         assert!(outcome.patch_path.as_os_str().is_empty());
     }
@@ -1227,7 +1244,17 @@ mod tests {
             prepared_worker_context(raw_context),
         );
 
-        worker.execute(&sample_task()).await.unwrap();
+        let outcome = worker.execute(&sample_task()).await.unwrap();
+        let commitment = outcome
+            .result_context_commitment
+            .as_ref()
+            .expect("prepared ProviderWorker context produces a commitment");
+        let mut tampered = outcome.clone();
+        tampered.summary.push('!');
+        assert!(
+            commitment.validate_for(&sample_task(), &tampered).is_err(),
+            "a changed accepted output cannot retain the original commitment"
+        );
         let prompts = provider.captured_prompts();
         assert_eq!(prompts.len(), 2, "selector plus task request");
         assert!(

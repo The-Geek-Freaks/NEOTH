@@ -79,6 +79,15 @@ suite with one test thread; a same-binary catalogue accounts for every `ok` and
 loopback and the W58 Buddy callback fixture to pass. This is software-renderer
 runtime evidence only. It does not establish visual or accessibility acceptance.
 
+For coding-result provenance changes, the focused native route uses Cargo package
+`neoth` with `--lib` (whose library target is `neothd`); `-p neothd` is not a
+substitute. The selection retains **25 filters** and binds all **35 mandatory
+fixtures** to the admitted source before execution. The GUI identity uses package
+`neothd-gui` and binary `neothd-gui`; it exercises the selected-home service
+route, three provider turns, a valid nonempty diff, and durable context/output
+commitment assertions. Focused acceptance does not replace broader consumer,
+provider, apply, delivery or release gates.
+
 The macOS and Windows CI jobs compile the locked workspace test profile with
 `cargo nextest run --workspace --locked --profile ci --no-run`, then execute
 the complete suite in a separate step against the same checkout and target

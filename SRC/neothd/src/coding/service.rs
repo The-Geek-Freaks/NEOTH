@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, Notify, broadcast, oneshot, watch};
 
 use super::classifier::{Complexity, classify_heuristic};
-use super::code_map_receipt::PreparedCodeMapContext;
+use super::code_map_receipt::{CodingCodeMapResultEvidence, PreparedCodeMapContext};
 use super::decomposer::{
     DecomposerLlm, DecompositionCancellation, DecompositionCancelled,
     decompose_with_code_map_context_cancellable,
@@ -198,6 +198,9 @@ pub enum CodingRunResult {
         clarifying_question: Option<String>,
         session_complexity: String,
         input_truncated: bool,
+        /// Present only for an accepted decomposition that retained the exact
+        /// prepared provider-input attempt used for that result.
+        code_map_result_evidence: Option<CodingCodeMapResultEvidence>,
         dispatch: Option<CodingDispatchSummary>,
     },
     Cancelled {
@@ -918,6 +921,7 @@ impl CodingRunWorker for StoredDecompositionWorker {
                 clarifying_question: result.clarifying_question,
                 session_complexity: result.session_complexity.as_str().to_owned(),
                 input_truncated: result.input_truncated,
+                code_map_result_evidence: result.code_map_result_evidence,
                 dispatch: None,
             };
         }
@@ -1092,6 +1096,7 @@ impl CodingRunWorker for StoredDecompositionWorker {
             clarifying_question: result.clarifying_question,
             session_complexity: result.session_complexity.as_str().to_owned(),
             input_truncated: result.input_truncated,
+            code_map_result_evidence: result.code_map_result_evidence,
             dispatch,
         }
     }

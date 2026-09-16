@@ -8,6 +8,24 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W70/W71 source and partial local validation (2026-09-16):** the 15 reviewed
+source changes bind accepted decomposer attempts and durable worker context/output
+provenance. Native Clippy and test build passed; the selected binary passed
+**2925 tests, 0 failed, 1 ignored** (2926/14750; all 35 required fixtures), and
+seven integration targets passed **750 tests**. CLI docgen, Python45/CI matrix
+and fresh GUI source lint passed. The 276 pre-docgen / 277 post-docgen source
+hashes were rechecked after the host restart. See
+[the W70/W71 report](../docs/gold-wave70-71-verification.md).
+
+**Host constraint:** further heavy Rust compilation on this workstation is
+suspended after repeated reported bluescreens and confirmed unexpected Windows
+restarts. GUI build02 failed with `LNK1127` for a damaged local `.rlib`; this is
+not a successful GUI gate or evidence of a Rust source defect. Remaining GUI
+build/runtime/Clippy and full integration run on GitHub-hosted CI. The exact
+crash cause is not established. The published evidence explicitly says
+`PARTIAL_LOCAL_PENDING_REMOTE_CI`; no release, installation, visual acceptance
+or ROAD checkbox closes. Counts remain **1324/1015/307/2**, raw309/pre-tag308.
+
 **W66/W67/W68/W69 local Source09 validation (2026-09-15):** eleven manual source
 paths plus reviewed generated `Cargo.lock` cover 270 pre-docgen / **271**
 post-docgen inputs, **25** filters, **27** mandatory fixtures and 19 commit paths.

@@ -31,6 +31,7 @@ use super::types::{
     SessionStatus, TaskDep, TaskEvent, TaskStatus, TestSummary,
 };
 use crate::coding::feed::FeedEntry;
+use crate::coding::worker::WorkerResultContextCommitment;
 
 const CODE_MAP_RECEIPT_STORAGE_SCHEMA: &str = "neoth.coding.code_map_receipt_storage.v1";
 
@@ -133,7 +134,35 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(SCHEMA_SQL)
         .context("create idx_kanban_* tables in views.db")?;
     ensure_code_map_receipts_column(conn)?;
+    ensure_worker_result_provenance_column(conn)?;
     Ok(())
+}
+
+fn ensure_worker_result_provenance_column(conn: &Connection) -> Result<()> {
+    if has_worker_result_provenance_column(conn)? {
+        return Ok(());
+    }
+    match conn.execute(
+        "ALTER TABLE idx_kanban_task ADD COLUMN worker_result_provenance TEXT",
+        [],
+    ) {
+        Ok(_) => Ok(()),
+        Err(_) if has_worker_result_provenance_column(conn)? => Ok(()),
+        Err(error) => Err(error).context("add idx_kanban_task.worker_result_provenance"),
+    }
+}
+
+fn has_worker_result_provenance_column(conn: &Connection) -> Result<bool> {
+    let mut columns = conn.prepare("PRAGMA table_info(idx_kanban_task)")?;
+    columns
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect idx_kanban_task columns")
+        .map(|columns| {
+            columns
+                .iter()
+                .any(|name| name == "worker_result_provenance")
+        })
 }
 
 /// Upgrade installations created before code-map receipt persistence. The
@@ -406,7 +435,8 @@ CREATE TABLE IF NOT EXISTS idx_kanban_task (
     eta_ns         INTEGER,
     completed_ns   INTEGER,
     patch_path     TEXT,
-    test_summary   TEXT
+    test_summary   TEXT,
+    worker_result_provenance TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_kanban_task_session
     ON idx_kanban_task (session_id);
@@ -797,6 +827,86 @@ pub fn attach_task_artifact(
     Ok(())
 }
 
+/// Atomically persist the dispatcher-owned accepted result boundary. The
+/// provenance remains distinct from self-reported tests and apply receipts.
+pub fn persist_task_result(
+    conn: &Connection,
+    task_id: KanbanTaskId,
+    patch_path: Option<&PathBuf>,
+    test_summary: Option<TestSummary>,
+    provenance: Option<&WorkerResultContextCommitment>,
+    status: TaskStatus,
+    _now_ns: u64,
+) -> Result<()> {
+    if let Some(provenance) = provenance {
+        provenance.validate_persisted()?;
+        anyhow::ensure!(
+            provenance.task_id == task_id.raw(),
+            "worker result provenance task differs from storage task"
+        );
+    }
+    let path_str = patch_path.map(|path| path.to_string_lossy().into_owned());
+    let summary_json = test_summary
+        .map(|summary| serde_json::to_string(&summary))
+        .transpose()
+        .context("serialise task result test summary")?;
+    let provenance_json = provenance
+        .map(serde_json::to_string)
+        .transpose()
+        .context("serialise worker result provenance")?;
+    let tx = conn
+        .unchecked_transaction()
+        .context("begin persist task result transaction")?;
+    let changed = tx.execute(
+        "UPDATE idx_kanban_task SET patch_path = ?1, test_summary = ?2, worker_result_provenance = ?3, status = ?4 WHERE task_id = ?5",
+        params![path_str, summary_json, provenance_json, status.as_str(), task_id.raw()],
+    ).context("persist task result boundary")?;
+    anyhow::ensure!(
+        changed == 1,
+        "persist_task_result: no row for task_id={}",
+        task_id.raw()
+    );
+    tx.commit()
+        .context("commit persist task result transaction")?;
+    let readback = load_task_worker_result_provenance(conn, task_id)?;
+    anyhow::ensure!(
+        readback.as_ref() == provenance,
+        "worker result provenance readback mismatch"
+    );
+    Ok(())
+}
+
+/// Load one nullable task-output provenance record. Corrupt stored data is an
+/// error, never a legacy `None` fallback.
+pub fn load_task_worker_result_provenance(
+    conn: &Connection,
+    task_id: KanbanTaskId,
+) -> Result<Option<WorkerResultContextCommitment>> {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT worker_result_provenance FROM idx_kanban_task WHERE task_id = ?1",
+            params![task_id.raw()],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("load worker result provenance")?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "load_task_worker_result_provenance: no row for task_id={}",
+                task_id.raw()
+            )
+        })?;
+    raw.map(|value| {
+        let provenance: WorkerResultContextCommitment =
+            serde_json::from_str(&value).context("decode stored worker result provenance")?;
+        provenance
+            .validate_persisted()
+            .context("validate stored worker result provenance")?;
+        Ok(provenance)
+    })
+    .transpose()
+}
+
 /// All tasks for a session, ordered by `task_id` ASC (insertion order
 /// = decomposition order). The GUI's 5-column view groups by `status`
 /// after this call returns.
@@ -808,7 +918,7 @@ pub fn list_tasks_for_session(
         .prepare(
             "SELECT task_id, session_id, status, title, description, task_type, \
                     hemisphere, worker, parent_task_id, created_ns, started_ns, \
-                    eta_ns, completed_ns, patch_path, test_summary \
+                    eta_ns, completed_ns, patch_path, test_summary, worker_result_provenance \
              FROM idx_kanban_task WHERE session_id = ?1 ORDER BY task_id ASC",
         )
         .context("prepare list_tasks_for_session")?;
@@ -832,7 +942,7 @@ pub fn list_backlog_tasks_for_session(
         .prepare(
             "SELECT task_id, session_id, status, title, description, task_type, \
                     hemisphere, worker, parent_task_id, created_ns, started_ns, \
-                    eta_ns, completed_ns, patch_path, test_summary \
+                    eta_ns, completed_ns, patch_path, test_summary, worker_result_provenance \
              FROM idx_kanban_task WHERE session_id = ?1 AND status = ?2 ORDER BY task_id ASC",
         )
         .context("prepare list_backlog_tasks_for_session")?;
@@ -1094,11 +1204,32 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<KanbanSession> {
     })
 }
 
-fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<KanbanTask> {
+pub(crate) fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<KanbanTask> {
     let raw_status: String = row.get(2)?;
     let raw_hemi: String = row.get(6)?;
     let test_summary_json: Option<String> = row.get(14)?;
     let test_summary = test_summary_json.and_then(|s| serde_json::from_str::<TestSummary>(&s).ok());
+    let provenance_json: Option<String> = row.get(15)?;
+    let worker_result_provenance = provenance_json
+        .map(|value| {
+            let provenance = serde_json::from_str::<WorkerResultContextCommitment>(&value)
+                .map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        15,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+            provenance.validate_persisted().map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    15,
+                    rusqlite::types::Type::Text,
+                    error.into_boxed_dyn_error(),
+                )
+            })?;
+            Ok::<_, rusqlite::Error>(provenance)
+        })
+        .transpose()?;
     Ok(KanbanTask {
         task_id: KanbanTaskId(row.get(0)?),
         session_id: KanbanSessionId(row.get(1)?),
@@ -1115,6 +1246,7 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<KanbanTask> {
         completed_ns: row.get::<_, Option<i64>>(12)?.map(|v| v as u64),
         patch_path: row.get::<_, Option<String>>(13)?.map(PathBuf::from),
         test_summary,
+        worker_result_provenance,
     })
 }
 
@@ -1290,6 +1422,60 @@ mod tests {
             nullable, 0,
             "old sessions must migrate with a NULL receipt field"
         );
+    }
+
+    #[test]
+    fn ensure_schema_migrates_existing_task_rows_with_nullable_worker_result_provenance() {
+        let conn = open_memory_db();
+        conn.execute_batch(
+            "CREATE TABLE idx_kanban_session (session_id INTEGER PRIMARY KEY, created_ns INTEGER NOT NULL, prompt TEXT NOT NULL, prompt_hash TEXT NOT NULL, source_channel TEXT NOT NULL, operator_id TEXT, status TEXT NOT NULL, artifact_path TEXT, summary TEXT);
+             CREATE TABLE idx_kanban_task (task_id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL, status TEXT NOT NULL, title TEXT NOT NULL, description TEXT, task_type TEXT NOT NULL, hemisphere TEXT NOT NULL DEFAULT 'unassigned', worker TEXT, parent_task_id INTEGER, created_ns INTEGER NOT NULL, started_ns INTEGER, eta_ns INTEGER, completed_ns INTEGER, patch_path TEXT, test_summary TEXT);
+             INSERT INTO idx_kanban_session VALUES (1, 1, 'p', 'h', 'cli', NULL, 'planning', NULL, NULL);
+             INSERT INTO idx_kanban_task VALUES (7, 1, 'backlog', 'legacy', NULL, 'ui', 'left', NULL, NULL, 1, NULL, NULL, NULL, NULL, NULL);",
+        ).unwrap();
+        ensure_schema(&conn).expect("migrate existing task table");
+        assert!(has_worker_result_provenance_column(&conn).unwrap());
+        assert_eq!(
+            load_task_worker_result_provenance(&conn, KanbanTaskId(7)).unwrap(),
+            None
+        );
+        assert_eq!(
+            list_tasks_for_session(&conn, KanbanSessionId(1)).unwrap()[0].worker_result_provenance,
+            None
+        );
+    }
+
+    #[test]
+    fn worker_result_provenance_readback_rejects_tampered_json_without_none_fallback() {
+        let conn = prepared_db();
+        let session_id = insert_session(&conn, 1, "prompt", "hash", "cli", None).unwrap();
+        let task_id = insert_task(&conn, session_id, 2, "task", None, "ui", None).unwrap();
+        let structurally_invalid = serde_json::json!({
+            "schema": WorkerResultContextCommitment::SCHEMA,
+            "task_id": task_id.raw(),
+            "submitted_context_sha256": "a".repeat(64),
+            "submitted_context_bytes": 0,
+            "context_truncated": false,
+            "sources": [],
+            "accepted_output_sha256": "b".repeat(64),
+            "accepted_output_bytes": 0,
+        })
+        .to_string();
+        for tampered in ["{not-json".to_owned(), structurally_invalid] {
+            conn.execute(
+                "UPDATE idx_kanban_task SET worker_result_provenance = ?1 WHERE task_id = ?2",
+                params![tampered, task_id.raw()],
+            )
+            .unwrap();
+            assert!(
+                load_task_worker_result_provenance(&conn, task_id).is_err(),
+                "tampered worker provenance must not downgrade to None"
+            );
+            assert!(
+                list_tasks_for_session(&conn, session_id).is_err(),
+                "task list readback must fail closed on tampered worker provenance"
+            );
+        }
     }
 
     #[test]

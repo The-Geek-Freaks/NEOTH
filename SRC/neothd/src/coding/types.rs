@@ -322,6 +322,9 @@ pub struct KanbanTask {
     pub completed_ns: Option<u64>,
     pub patch_path: Option<PathBuf>,
     pub test_summary: Option<TestSummary>,
+    /// Optional content-free ProviderWorker input/output commitment. Legacy
+    /// rows and custom workers preserve `None`.
+    pub worker_result_provenance: Option<crate::coding::worker::WorkerResultContextCommitment>,
 }
 
 /// GOLD-ADAPT-HERMES-08 — one row in `idx_kanban_task_event`.

@@ -2051,16 +2051,17 @@ fn apply_outcome(
     } else {
         TaskStatus::Blocked
     };
-    store::attach_task_artifact(
+    let now_ns = now_unix_ns();
+    store::persist_task_result(
         conn,
         task.task_id,
         outcome.patch_path(),
         Some(outcome.tests),
+        outcome.result_context_commitment.as_ref(),
+        target,
+        now_ns,
     )
-    .context("attach_task_artifact on worker outcome")?;
-    let now_ns = now_unix_ns();
-    store::patch_task_status(conn, task.task_id, target, now_ns)
-        .context("transition InProgress → Review/Blocked")?;
+    .context("persist accepted worker result boundary")?;
     Ok(())
 }
 
@@ -2622,6 +2623,7 @@ mod tests {
                 applied: false,
             },
             summary: "ok".into(),
+            result_context_commitment: None,
         }
     }
 
@@ -2642,6 +2644,7 @@ mod tests {
             completed_ns: None,
             patch_path: None,
             test_summary: None,
+            worker_result_provenance: None,
         }
     }
 
@@ -3270,6 +3273,7 @@ mod tests {
                 applied: false,
             },
             summary: "applied".into(),
+            result_context_commitment: None,
         }
     }
 
@@ -5062,6 +5066,7 @@ mod tests {
                 patch_path: std::path::PathBuf::new(),
                 tests: TestSummary::ZERO,
                 summary: "refused".into(),
+                result_context_commitment: None,
             })
         }
         fn name(&self) -> &'static str {
@@ -5107,6 +5112,81 @@ mod tests {
         assert_eq!(task.status, TaskStatus::Blocked);
     }
 
+    #[tokio::test]
+    async fn legacy_worker_outcome_keeps_nullable_result_provenance_empty() {
+        let (_dir, conn) = fresh_db();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: green_outcome(),
+                name: "legacy-none",
+            }),
+        );
+        dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            store::load_task_worker_result_provenance(&conn, task_id).unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn privileged_internal_forged_output_binding_never_materializes_or_persists() {
+        let (_dir, conn) = fresh_db();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+        let mut forged = green_outcome();
+        forged.result_context_commitment =
+            Some(crate::coding::worker::WorkerResultContextCommitment {
+                schema: crate::coding::worker::WorkerResultContextCommitment::SCHEMA.to_owned(),
+                task_id: task_id.raw(),
+                submitted_context_sha256: "a".repeat(64),
+                submitted_context_bytes: 1,
+                context_truncated: false,
+                sources: vec![crate::coding::worker::WorkerResultContextSource {
+                    root_identity: "forged-root-identity".to_owned(),
+                    index_generation: 1,
+                    graph_generation: 1,
+                }],
+                accepted_output_sha256: "b".repeat(64),
+                accepted_output_bytes: 1,
+            });
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: forged,
+                name: "forged-context",
+            }),
+        );
+        dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
+            .await
+            .unwrap();
+        let task = store::list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(task.status, TaskStatus::Blocked);
+        assert_eq!(
+            task.patch_path, None,
+            "forged claim cannot materialize an artifact"
+        );
+        assert_eq!(
+            task.test_summary, None,
+            "forged claim cannot persist a task result"
+        );
+        assert_eq!(
+            store::load_task_worker_result_provenance(&conn, task_id).unwrap(),
+            None
+        );
+    }
+
     /// Worker that returns an empty outcome (no patch, no tests) but
     /// stashes a refusal in the summary field. Drives the
     /// failed-outcome → handle_retryable_failure → greeting-regression
@@ -5121,6 +5201,7 @@ mod tests {
                 patch_path: std::path::PathBuf::new(),
                 tests: TestSummary::ZERO,
                 summary: "Sorry, I can't help with that request.".into(),
+                result_context_commitment: None,
             })
         }
         fn name(&self) -> &'static str {
@@ -5167,6 +5248,7 @@ mod tests {
                 patch_path: std::path::PathBuf::new(),
                 tests: TestSummary::ZERO,
                 summary: "no diff produced".into(),
+                result_context_commitment: None,
             })
         }
         fn name(&self) -> &'static str {
@@ -5219,6 +5301,7 @@ mod tests {
             patch_path: std::path::PathBuf::new(),
             tests: TestSummary::ZERO,
             summary: "one-liner".into(),
+            result_context_commitment: None,
         };
         let text = worker_output_text(&o);
         assert!(text.contains("one-liner"));
