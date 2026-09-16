@@ -37315,10 +37315,11 @@ mod w58_gui_callback_runtime_tests {
         neothd::code_map::rebuild_snapshot(&canonical, &code_map_database, Default::default())
             .expect("seed selected-root code-map snapshot");
         let consent_route = neothd::consent::ConsentRoute::new(
-            neothd::config::ProviderKind::OpenaiCompat,
+            neothd::cli::init::ProviderKind::OpenaiCompat,
             Some(endpoint),
         );
-        let marker = neothd::consent::marker_path(home, neothd::config::ProviderKind::OpenaiCompat);
+        let marker =
+            neothd::consent::marker_path(home, neothd::cli::init::ProviderKind::OpenaiCompat);
         std::fs::create_dir_all(marker.parent().expect("consent marker parent"))
             .expect("create selected-home consent directory");
         let mut endpoints = std::collections::BTreeMap::new();
@@ -37334,7 +37335,7 @@ mod w58_gui_callback_runtime_tests {
         let config_path = home.join("freedom.yaml");
         let mut config = neothd::config::FreedomConfig {
             autonomy: neothd::permissions::AutonomyLevel::Full,
-            provider_kind: Some(neothd::config::ProviderKind::OpenaiCompat),
+            provider_kind: Some(neothd::cli::init::ProviderKind::OpenaiCompat),
             provider_endpoint: Some(endpoint.to_owned()),
             provider_model: Some("gpt-4o".to_owned()),
             ..Default::default()

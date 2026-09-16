@@ -354,6 +354,153 @@ function Assert-Payload {
     }
 }
 
+# W62 — exercise only the installed public CLI against a child of this
+# smoke's private root. This is artifact/lifecycle evidence; it does not
+# claim GUI, Buddy, provider, channel, or cancellation interaction.
+function Invoke-InstalledNeothJson {
+    param(
+        [Parameter(Mandatory = $true)][string]$Executable,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$Label,
+        [switch]$ExpectFailure
+    )
+
+    $process = $null
+    try {
+        # ArgumentList preserves each array member as exactly one native argv
+        # value, including this smoke root's deliberately space-containing path.
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $Executable
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        foreach ($argument in $Arguments) {
+            [void]$startInfo.ArgumentList.Add($argument)
+        }
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $startInfo
+        if (-not $process.Start()) {
+            Stop-Smoke "$Label did not start"
+        }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(120000)) {
+            $process.Kill($true)
+            $process.WaitForExit()
+            $body = $stdoutTask.GetAwaiter().GetResult()
+            $errorText = $stderrTask.GetAwaiter().GetResult()
+            Stop-Smoke "$Label timed out after 120 seconds: $body $errorText"
+        }
+        $body = $stdoutTask.GetAwaiter().GetResult()
+        $errorText = $stderrTask.GetAwaiter().GetResult()
+        if ($ExpectFailure) {
+            if ($process.ExitCode -eq 0) {
+                Stop-Smoke "$Label unexpectedly succeeded"
+            }
+        } elseif ($process.ExitCode -ne 0) {
+            Stop-Smoke "$Label exited $($process.ExitCode): $errorText"
+        }
+        try {
+            return [pscustomobject]@{
+                ExitCode = $process.ExitCode
+                Json = $body | ConvertFrom-Json -ErrorAction Stop
+            }
+        } catch {
+            Stop-Smoke "$Label did not emit one JSON document: $body $errorText"
+        }
+    } finally {
+        if ($null -ne $process) {
+            $process.Dispose()
+        }
+    }
+}
+
+function Assert-CodeMapGeneration {
+    param(
+        [Parameter(Mandatory = $true)]$Generation,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    if ($null -eq $Generation -or
+        $Generation.index_generation -le 0 -or
+        $Generation.graph_generation -le 0 -or
+        $Generation.index_generation -ne $Generation.graph_generation) {
+        Stop-Smoke "$Label did not contain equal positive index/graph generations"
+    }
+}
+
+function Invoke-InstalledCodeMapLifecycleSmoke {
+    param([Parameter(Mandatory = $true)][string]$Directory)
+
+    $executable = Join-Path $Directory 'neoth.exe'
+    $fixture = Join-Path $root 'installed-code-map-lifecycle'
+    $home = Join-Path $fixture 'code-map-home'
+    $repoA = Join-Path $fixture 'repo-a'
+    $repoB = Join-Path $fixture 'repo-b'
+    $database = Join-Path $home 'code_map.db'
+    $previousNeothHome = $env:NEOTH_HOME
+    try {
+        New-Item -ItemType Directory -Path $home, $repoA, $repoB -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $repoA 'fixture.rs') -Value 'fn stable() {}' -Encoding utf8
+        Set-Content -LiteralPath (Join-Path $repoB 'other.rs') -Value 'fn isolated() {}' -Encoding utf8
+        $env:NEOTH_HOME = $home
+
+        $absent = Invoke-InstalledNeothJson -Executable $executable -Arguments @('--output', 'json', 'code-map', 'status', $repoA) -Label 'installed code-map absent status'
+        if ($absent.Json.lifecycle.state.kind -ne 'absent' -or (Test-Path -LiteralPath $database)) {
+            Stop-Smoke 'installed absent status was not read-only absent truth'
+        }
+
+        $first = Invoke-InstalledNeothJson -Executable $executable -Arguments @('--output', 'json', 'code-map', 'refresh', $repoA) -Label 'installed code-map first refresh'
+        if ($first.Json.outcome -ne 'indexed_first_time') {
+            Stop-Smoke "installed first refresh reported $($first.Json.outcome), expected indexed_first_time"
+        }
+        Assert-CodeMapGeneration -Generation $first.Json.published_generation -Label 'installed first refresh'
+        $firstGeneration = [int64]$first.Json.published_generation.index_generation
+
+        $fresh = Invoke-InstalledNeothJson -Executable $executable -Arguments @('--output', 'json', 'code-map', 'status', $repoA) -Label 'installed code-map fresh status'
+        if ($fresh.Json.lifecycle.state.kind -ne 'fresh' -or
+            $fresh.Json.lifecycle.state.snapshot.index_generation -ne $firstGeneration) {
+            Stop-Smoke 'installed fresh status did not retain the published generation'
+        }
+        Assert-CodeMapGeneration -Generation $fresh.Json.lifecycle.state.snapshot -Label 'installed fresh status'
+
+        Add-Content -LiteralPath (Join-Path $repoA 'fixture.rs') -Value "`nfn changed() {}" -Encoding utf8
+        $stale = Invoke-InstalledNeothJson -Executable $executable -Arguments @('--output', 'json', 'code-map', 'status', $repoA) -Label 'installed code-map stale status'
+        if ($stale.Json.lifecycle.state.kind -ne 'stale') {
+            Stop-Smoke 'installed edit did not become visible as stale'
+        }
+        $refreshed = Invoke-InstalledNeothJson -Executable $executable -Arguments @('--output', 'json', 'code-map', 'refresh', $repoA) -Label 'installed code-map stale refresh'
+        if ($refreshed.Json.outcome -ne 'refreshed_stale') {
+            Stop-Smoke "installed stale refresh reported $($refreshed.Json.outcome), expected refreshed_stale"
+        }
+        Assert-CodeMapGeneration -Generation $refreshed.Json.published_generation -Label 'installed stale refresh'
+
+        Set-Content -LiteralPath $database -Value 'not a sqlite database' -Encoding ascii
+        $corrupt = Invoke-InstalledNeothJson -Executable $executable -Arguments @('--output', 'json', 'code-map', 'status', $repoA) -Label 'installed code-map corrupt status'
+        if ($corrupt.Json.lifecycle.state.kind -ne 'corrupt' -or
+            [string]::IsNullOrWhiteSpace([string]$corrupt.Json.lifecycle.state.diagnostic)) {
+            Stop-Smoke 'installed corrupt database was not visibly corrupt'
+        }
+        $corruptHash = (Get-FileHash -LiteralPath $database -Algorithm SHA256).Hash
+        $normal = Invoke-InstalledNeothJson -Executable $executable -Arguments @('--output', 'json', 'code-map', 'refresh', $repoA) -Label 'installed code-map normal corrupt refresh' -ExpectFailure
+        if ($normal.Json.outcome -ne 'corrupt_repair_required' -or
+            [string]::IsNullOrWhiteSpace([string]$normal.Json.failure_diagnostic) -or
+            (Get-FileHash -LiteralPath $database -Algorithm SHA256).Hash -cne $corruptHash) {
+            Stop-Smoke 'normal installed refresh did not preserve corrupt-repair provenance'
+        }
+        $repaired = Invoke-InstalledNeothJson -Executable $executable -Arguments @('--output', 'json', 'code-map', 'refresh', $repoA, '--repair-corrupt') -Label 'installed code-map explicit corrupt repair'
+        Assert-CodeMapGeneration -Generation $repaired.Json.published_generation -Label 'installed explicit corrupt repair'
+
+        $other = Invoke-InstalledNeothJson -Executable $executable -Arguments @('--output', 'json', 'code-map', 'status', $repoB) -Label 'installed code-map second-root status'
+        if ($other.Json.lifecycle.state.kind -ne 'unmapped') {
+            Stop-Smoke 'unindexed second root did not remain isolated from repo-a'
+        }
+    } finally {
+        $env:NEOTH_HOME = $previousNeothHome
+    }
+}
+
 function Get-InstalledReleaseFingerprint {
     param([Parameter(Mandatory = $true)][string]$Directory)
 
@@ -683,6 +830,7 @@ try {
         }
     }
     Assert-Payload -Directory $ownedDirectory
+    Invoke-InstalledCodeMapLifecycleSmoke -Directory $ownedDirectory
     # Installer-owned PATH: the marker must survive an in-place upgrade and
     # authorize removal of exactly the entry NEOTH added.
     if ((Test-PathEntry -Scope User -Expected $ownedDirectory) -ne 1) {

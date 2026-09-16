@@ -1,5 +1,11 @@
 # W72-W75 - reviewed consumer and CI batch
 
+Update: the first full remote run on `669e38c0` failed in Linux Clippy and
+GUI test compilation. The four-file repair, original errors and renewed
+validation boundary are documented in [W76](gold-wave76-verification.md).
+The W72-W75 manifest and matrix below remain the original source snapshot;
+their pending status is historical, not a later passing result.
+
 Status on 2026-09-16: **static review and lightweight checks passed; GitHub-hosted
 compilation and runtime acceptance pending**. No local heavy Rust build was
 started for this batch after the repeated host crashes.

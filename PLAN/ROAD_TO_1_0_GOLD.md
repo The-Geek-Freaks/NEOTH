@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W76 CI repair and remote Windows preview (2026-09-16):** the first full
+CI run on `669e38c0` failed Linux Clippy/test compilation: three private
+`ProviderKind` paths, a private test constructor, two fixture lock scopes and
+one compressed adjacent-`if` statement. The four Rust files have focused,
+independently reviewed corrections; 54 Python contracts, four-file rustfmt,
+GUI source lint and the installer PowerShell parser pass locally. The new
+manual Windows workflow builds an unsigned portable CLI/GUI preview on GitHub
+with one Cargo job and SHA-256 inventory. The reviewed installed-CLI lifecycle
+smoke is now wired, but installed acceptance has not run. All 281 scoped source
+inputs and the unchanged 42 native / 5 GUI required test identities are recorded
+in [the W76 report](../docs/gold-wave76-verification.md). Fresh CI and preview
+build/runtime results are pending; no local heavy compilation and no ROAD
+checkbox closure. Counts remain **1324/1015/307/2**, raw309/pre-tag308.
+
 **W72/W73/W74/W75 reviewed source batch (2026-09-16):** nine independently
 reviewed owners add typed QA data, macOS CI diagnostics, Buddy coding/cancellation
 fixtures, retained binding across Chat/Channel retry and final result, and

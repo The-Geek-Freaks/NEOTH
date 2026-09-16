@@ -1,0 +1,159 @@
+name: Unreleased Windows x64 Preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_BUILD_JOBS: '1'
+
+jobs:
+  preview-windows-x64:
+    name: Build unreleased Windows x64 CLI and GUI preview
+    runs-on: windows-2022
+    timeout-minutes: 100
+    steps:
+      - name: Checkout exact preview source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: preview-windows-x64-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          restore-keys: |
+            preview-windows-x64-cargo-
+
+      - name: Build native CLI and compatibility executables
+        working-directory: SRC/neothd
+        run: cargo build --release --locked --bins --features release-desktop --target x86_64-pc-windows-msvc
+
+      - name: Build native migration and relay executables
+        working-directory: SRC
+        run: cargo build --release --locked -p neoth-migrate -p neoth-relay --target x86_64-pc-windows-msvc
+
+      - name: Build native desktop GUI
+        working-directory: SRC
+        run: cargo build --release --locked -p neothd-gui --features release-desktop --target x86_64-pc-windows-msvc
+
+      - name: Setup Node.js for Keet companion
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.16.0'
+
+      - name: Build version-locked Keet standalone
+        working-directory: bridges/keet
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.32.1 --activate
+          pnpm install --frozen-lockfile
+          pnpm run make:win32-x64
+          test -s out/win32-x64/neoth-keet-bridge.exe
+
+      - name: Stage unreleased preview with source and payload inventory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = 'x86_64-pc-windows-msvc'
+          $previewName = "neoth-unreleased-preview-windows-x64-$env:GITHUB_SHA"
+          $workspace = [System.IO.Path]::GetFullPath($env:GITHUB_WORKSPACE)
+          $dist = [System.IO.Path]::GetFullPath((Join-Path $workspace 'dist'))
+          $stage = [System.IO.Path]::GetFullPath((Join-Path $dist $previewName))
+          $zip = [System.IO.Path]::GetFullPath((Join-Path $dist "$previewName.zip"))
+          $zipSidecar = "$zip.sha256"
+          $distPrefix = $dist.TrimEnd([char[]]@('\', '/')) + [System.IO.Path]::DirectorySeparatorChar
+          foreach ($candidate in @($stage, $zip, $zipSidecar)) {
+            if (-not $candidate.StartsWith($distPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+              throw "Refusing to write outside the preview dist directory: $candidate"
+            }
+            if (Test-Path -LiteralPath $candidate) {
+              throw "Refusing to overwrite preexisting preview output: $candidate"
+            }
+          }
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          $payload = @{
+            'neoth.exe' = "SRC/target/$target/release/neoth.exe"
+            'neothd.exe' = "SRC/target/$target/release/neothd.exe"
+            'neothd-gui.exe' = "SRC/target/$target/release/neothd-gui.exe"
+            'neoth-migrate.exe' = "SRC/target/$target/release/neoth-migrate.exe"
+            'neoth-relay.exe' = "SRC/target/$target/release/neoth-relay.exe"
+            'neoth-keet-bridge.exe' = 'bridges/keet/out/win32-x64/neoth-keet-bridge.exe'
+            'freedom.yaml.example' = 'SRC/freedom.yaml.example'
+            'import-manifest.example.yaml' = 'SRC/neoth-migrate/examples/import-manifest.example.yaml'
+            'README.md' = 'README.md'
+            'LICENSE-MIT' = 'LICENSE-MIT'
+            'LICENSE-APACHE' = 'LICENSE-APACHE'
+            'THIRD_PARTY_LICENSES' = 'THIRD_PARTY_LICENSES'
+          }
+          foreach ($entry in $payload.GetEnumerator()) {
+            $source = Join-Path $env:GITHUB_WORKSPACE $entry.Value
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf) -or (Get-Item -LiteralPath $source).Length -eq 0) {
+              throw "preview payload source missing or empty: $($entry.Value)"
+            }
+            Copy-Item -LiteralPath $source -Destination (Join-Path $stage $entry.Key) -Force
+          }
+          $provenance = [ordered]@{
+            schema_version = 1
+            artifact_kind = 'unreleased_windows_x64_preview'
+            source_sha = $env:GITHUB_SHA
+            workflow = 'preview-windows.yml'
+            target = $target
+            build_profile = 'release'
+            signing = 'none'
+            github_release = 'not_created'
+            installer = 'not_created'
+            installed_acceptance = 'not_run'
+            self_knowledge_snapshot = 'not_included; release-bound generation requires Graphify credentials'
+          }
+          $provenance | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $stage 'PREVIEW-PROVENANCE.json') -Encoding utf8
+          @(
+            '# Unreleased Windows Preview',
+            '',
+            "Source commit: $env:GITHUB_SHA",
+            'This artifact is an unsigned, unreleased portable preview.',
+            'It is neither a GitHub Release asset nor installed-product evidence.',
+            'It intentionally excludes release-bound self-knowledge and does not include an installer.'
+          ) | Set-Content -LiteralPath (Join-Path $stage 'UNRELEASED-PREVIEW.md') -Encoding utf8
+          $inventory = Get-ChildItem -LiteralPath $stage -File -Recurse | Sort-Object FullName | ForEach-Object {
+            [ordered]@{
+              path = $_.FullName.Substring($stage.Length + 1).Replace('\', '/')
+              bytes = $_.Length
+              sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+          }
+          [ordered]@{
+            schema_version = 1
+            source_sha = $env:GITHUB_SHA
+            files = @($inventory)
+            excludes = @('SHA256SUMS.json')
+          } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $stage 'SHA256SUMS.json') -Encoding utf8
+          Compress-Archive -LiteralPath $stage -DestinationPath $zip -CompressionLevel Optimal
+          $zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$zipHash  $(Split-Path -Leaf $zip)" | Set-Content -LiteralPath "$zip.sha256" -Encoding ascii
+
+      - name: Upload unreleased preview artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: neoth-unreleased-preview-windows-x64-${{ github.sha }}
+          path: |
+            dist/neoth-unreleased-preview-windows-x64-${{ github.sha }}.zip
+            dist/neoth-unreleased-preview-windows-x64-${{ github.sha }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 7

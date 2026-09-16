@@ -126,7 +126,7 @@ impl CodingController {
     }
 
     #[cfg(test)]
-    fn with_service(service: CodingService) -> Self {
+    pub(crate) fn with_service(service: CodingService) -> Self {
         Self {
             service: Mutex::new(Some(service)),
             state: Mutex::new(ControllerState::default()),

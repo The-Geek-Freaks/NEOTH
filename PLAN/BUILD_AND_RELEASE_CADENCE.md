@@ -19,6 +19,19 @@ The macOS compile step records bounded memory, swap and compiler-process metrics
 preserves Cargo's actual exit status, and uploads diagnostics even on failure.
 The observer changes neither compile deadlines nor the workspace test graph.
 
+## Unreleased Windows preview
+
+`.github/workflows/preview-windows.yml` is a manual GitHub-hosted x64 build for
+portable CLI/GUI acceptance while local compilation is suspended. It uses one
+Cargo job and the locked desktop release feature profile, then packages the
+native binaries, Keet companion, configuration examples and license notices.
+The artifact records the full source commit, each payload file SHA-256 and a
+separate ZIP checksum. It is unsigned and unreleased. It does not create a tag,
+GitHub Release, installer or release-bound self-knowledge snapshot. Its runtime
+acceptance must use the downloaded, hash-verified bytes and is separate from
+installed-product and final release acceptance. Push preflight checks the
+workflow contract without compiling Rust.
+
 ## Evidence ladder
 
 NEOTH tests every shipped capability and every advertised platform contract,

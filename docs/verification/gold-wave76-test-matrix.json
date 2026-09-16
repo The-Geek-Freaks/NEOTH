@@ -1,0 +1,333 @@
+{
+  "schema": "neoth-gold-remote-pending-test-matrix/v1",
+  "status": "LIGHT_CHECKS_PASSED_REMOTE_COMPILE_AND_RUNTIME_PENDING",
+  "base": "669e38c0bcee4a57e0b4961909ec3b0b4cdf6fda",
+  "sourceManifest": {
+    "path": "docs/verification/gold-wave76-source-manifest.json",
+    "bytes": 48467,
+    "sha256": "9AB73E8FA33F2DFBB2E0F9C3CF17DED7A5C5BFF553EEEC862E1806FD6BBC4B16"
+  },
+  "sourceInputs": 281,
+  "requiredNativeTests": [
+    {
+      "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
+      "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "sourceSha256": "E87CB5CFD14B4F9D6DDF634AF172A594132EE3EE215A0AA253AD362C6EFD746E"
+    },
+    {
+      "test": "mcp::gate::tests::w61_called_audit_precedes_invalid_direct_context_metadata",
+      "sourcePath": "SRC/neothd/src/mcp/gate.rs",
+      "sourceSha256": "DA86E9112C5A695FA2673109D65224660E749C46A57A20575DD1CF59F82585AE"
+    },
+    {
+      "test": "cli::mcp::tests::w61_direct_cli_generated_stdio_receipts_bind_child_metadata_before_return",
+      "sourcePath": "SRC/neothd/src/cli/mcp.rs",
+      "sourceSha256": "574321C5E0DCAF48E6047BB16D4A58EA07981E75B265CA06CFD148CB1ED09D7F"
+    },
+    {
+      "test": "cli::mcp::tests::w61_direct_cli_invalid_child_binding_fails_after_called_without_receipt",
+      "sourcePath": "SRC/neothd/src/cli/mcp.rs",
+      "sourceSha256": "574321C5E0DCAF48E6047BB16D4A58EA07981E75B265CA06CFD148CB1ED09D7F"
+    },
+    {
+      "test": "cli::mcp::tests::w61_direct_cli_generated_is_error_returns_only_the_child_error_without_final_claim",
+      "sourcePath": "SRC/neothd/src/cli/mcp.rs",
+      "sourceSha256": "574321C5E0DCAF48E6047BB16D4A58EA07981E75B265CA06CFD148CB1ED09D7F"
+    },
+    {
+      "test": "cli::mcp::tests::w61_direct_cli_nongenerated_child_success_retains_legacy_no_receipt_behavior",
+      "sourcePath": "SRC/neothd/src/cli/mcp.rs",
+      "sourceSha256": "574321C5E0DCAF48E6047BB16D4A58EA07981E75B265CA06CFD148CB1ED09D7F"
+    },
+    {
+      "test": "cli::mcp::tests::w61_direct_cli_final_receipt_append_failure_returns_error_after_real_child_called_audit",
+      "sourcePath": "SRC/neothd/src/cli/mcp.rs",
+      "sourceSha256": "574321C5E0DCAF48E6047BB16D4A58EA07981E75B265CA06CFD148CB1ED09D7F"
+    },
+    {
+      "test": "cli::mcp::tests::w61_direct_cli_receipt_uses_the_child_selected_root_for_empty_and_nonempty_results",
+      "sourcePath": "SRC/neothd/src/cli/mcp.rs",
+      "sourceSha256": "574321C5E0DCAF48E6047BB16D4A58EA07981E75B265CA06CFD148CB1ED09D7F"
+    },
+    {
+      "test": "daemon::audit_rpc::tests::w61_live_audit_rpc_accepts_only_durable_code_map_result_receipt",
+      "sourcePath": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "sourceSha256": "B53D525EAACC89577B5AC1EF476E2D9108A2CE05902330738FBB6CD68AEE6218"
+    },
+    {
+      "test": "security::prompt_envelope::tests::coding_worker_context_field_is_required_and_has_one_fixed_position",
+      "sourcePath": "SRC/neothd/src/security/prompt_envelope.rs",
+      "sourceSha256": "A141274A9B3509AA074D5F8FEBA4D410A949E6562F1D6A5DE9C647670B0D6C7C"
+    },
+    {
+      "test": "coding::provider_worker::tests::direct_model_skips_selector",
+      "sourcePath": "SRC/neothd/src/coding/provider_worker.rs",
+      "sourceSha256": "F283458E5E563DBFB74D04431C53D2945C515D7D91E1CA84AA1B96838505A096"
+    },
+    {
+      "test": "coding::provider_worker::tests::two_stage_worker_keeps_selector_context_free_and_binds_prepared_context_to_task",
+      "sourcePath": "SRC/neothd/src/coding/provider_worker.rs",
+      "sourceSha256": "F283458E5E563DBFB74D04431C53D2945C515D7D91E1CA84AA1B96838505A096"
+    },
+    {
+      "test": "coding::provider_worker::tests::oversized_worker_context_blocks_before_selector_or_task_provider_call",
+      "sourcePath": "SRC/neothd/src/coding/provider_worker.rs",
+      "sourceSha256": "F283458E5E563DBFB74D04431C53D2945C515D7D91E1CA84AA1B96838505A096"
+    },
+    {
+      "test": "coding::service::tests::dispatch_workers_receive_the_same_prepared_context_snapshot_as_the_request",
+      "sourcePath": "SRC/neothd/src/coding/service.rs",
+      "sourceSha256": "8769A59E896C53908A0BE2F7423D4E0A36C64CC66E4468F9C07CA17371ED335D"
+    },
+    {
+      "test": "mcp::dispatch_loop::tests::compact_if_needed_summarizes_over_threshold",
+      "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
+      "sourceSha256": "97FB822C3D65433CD71FF9FC46957FF70283D846A2C9DD338240294DEA8EA9B3"
+    },
+    {
+      "test": "mcp::dispatch_loop::tests::compact_if_needed_sends_canonical_outer_history_to_the_driver",
+      "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
+      "sourceSha256": "97FB822C3D65433CD71FF9FC46957FF70283D846A2C9DD338240294DEA8EA9B3"
+    },
+    {
+      "test": "mcp::dispatch_loop::tests::compact_if_needed_blocks_oversized_fanout_before_the_first_call",
+      "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
+      "sourceSha256": "97FB822C3D65433CD71FF9FC46957FF70283D846A2C9DD338240294DEA8EA9B3"
+    },
+    {
+      "test": "mcp::dispatch_loop::tests::compact_if_needed_is_noop_under_threshold",
+      "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
+      "sourceSha256": "97FB822C3D65433CD71FF9FC46957FF70283D846A2C9DD338240294DEA8EA9B3"
+    },
+    {
+      "test": "providers::compactor::tests::utility_compaction_request_wraps_old_zone_as_one_canonical_envelope",
+      "sourcePath": "SRC/neothd/src/providers/compactor.rs",
+      "sourceSha256": "12A338599D8F1A89E64D82E8A6F496C0CCB21AF8594BA00E03A2E3D85D8542A0"
+    },
+    {
+      "test": "providers::compactor::tests::no_fire_when_under_threshold",
+      "sourcePath": "SRC/neothd/src/providers/compactor.rs",
+      "sourceSha256": "12A338599D8F1A89E64D82E8A6F496C0CCB21AF8594BA00E03A2E3D85D8542A0"
+    },
+    {
+      "test": "providers::compactor::tests::oversize_old_zone_fails_before_utility_or_inner_dispatch",
+      "sourcePath": "SRC/neothd/src/providers/compactor.rs",
+      "sourceSha256": "12A338599D8F1A89E64D82E8A6F496C0CCB21AF8594BA00E03A2E3D85D8542A0"
+    },
+    {
+      "test": "daemon::session_sort_cron::tests::group_titles_sends_card_text_as_one_canonical_data_envelope",
+      "sourcePath": "SRC/neothd/src/daemon/session_sort_cron.rs",
+      "sourceSha256": "538086DC510B98E8D6D458DE47BFE6576E0EEB1CE3C95AE1853E7708CB5118CB"
+    },
+    {
+      "test": "daemon::session_sort_cron::tests::group_titles_rejects_oversize_card_list_before_provider_call",
+      "sourcePath": "SRC/neothd/src/daemon/session_sort_cron.rs",
+      "sourceSha256": "538086DC510B98E8D6D458DE47BFE6576E0EEB1CE3C95AE1853E7708CB5118CB"
+    },
+    {
+      "test": "cli::chat::tests::council_leaf_wraps_role_recall_as_single_canonical_memory_context",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs",
+      "sourceSha256": "BEB16012FC12DEC0F965D02E6CD3DF976FF600FF05C063C4157A4CFD4D5DFC1A"
+    },
+    {
+      "test": "code_map::lifecycle::tests::stale_published_orphan_is_interrupted_then_rebuilt",
+      "sourcePath": "SRC/neothd/src/code_map/lifecycle.rs",
+      "sourceSha256": "14C2BFBDD966ED4880182BEA13731099F433B8CAD14CE90E3738FEB0D11847F9"
+    },
+    {
+      "test": "code_map::lifecycle_watcher_tests::edit_add_and_remove_rebuild_the_managed_root_without_touching_a_sibling",
+      "sourcePath": "SRC/neothd/src/code_map/lifecycle_watcher_tests.rs",
+      "sourceSha256": "1CE354F7B307155FB5BDB1486780EADD0959EC5DC6BF757600F20A6031429B14"
+    },
+    {
+      "test": "coding::decomposer::tests::code_map_context_valid_output_persists_receipt_and_session_tasks",
+      "sourcePath": "SRC/neothd/src/coding/decomposer.rs",
+      "sourceSha256": "CFF2484229A6B5C3BE5D26CC5C3CC6832429ECCF4124DC8778AE573AD5EF8930"
+    },
+    {
+      "test": "coding::decomposer::tests::accepted_repair_result_binds_attempt_two_without_rereading_receipts",
+      "sourcePath": "SRC/neothd/src/coding/decomposer.rs",
+      "sourceSha256": "CFF2484229A6B5C3BE5D26CC5C3CC6832429ECCF4124DC8778AE573AD5EF8930"
+    },
+    {
+      "test": "coding::decomposer::tests::code_map_receipts_bind_clamped_context_across_two_malformed_attempts",
+      "sourcePath": "SRC/neothd/src/coding/decomposer.rs",
+      "sourceSha256": "CFF2484229A6B5C3BE5D26CC5C3CC6832429ECCF4124DC8778AE573AD5EF8930"
+    },
+    {
+      "test": "coding::store::tests::ensure_schema_migrates_existing_task_rows_with_nullable_worker_result_provenance",
+      "sourcePath": "SRC/neothd/src/coding/store.rs",
+      "sourceSha256": "FBF4055D5FC810A3832C2AB0C1867693D24D9996D2320C83BE99E5F5333A7C85"
+    },
+    {
+      "test": "coding::store::tests::worker_result_provenance_readback_rejects_tampered_json_without_none_fallback",
+      "sourcePath": "SRC/neothd/src/coding/store.rs",
+      "sourceSha256": "FBF4055D5FC810A3832C2AB0C1867693D24D9996D2320C83BE99E5F5333A7C85"
+    },
+    {
+      "test": "coding::dispatcher::tests::legacy_worker_outcome_keeps_nullable_result_provenance_empty",
+      "sourcePath": "SRC/neothd/src/coding/dispatcher.rs",
+      "sourceSha256": "B9FFE979D84395572FA32C52CCBDCB863AF4308638E9C464FD0576BBD14BC4BF"
+    },
+    {
+      "test": "coding::dispatcher::tests::privileged_internal_forged_output_binding_never_materializes_or_persists",
+      "sourcePath": "SRC/neothd/src/coding/dispatcher.rs",
+      "sourceSha256": "B9FFE979D84395572FA32C52CCBDCB863AF4308638E9C464FD0576BBD14BC4BF"
+    },
+    {
+      "test": "coding::service::runtime_tests::audited_coding_worker_one_shot_wal_binds_to_selected_home",
+      "sourcePath": "SRC/neothd/src/coding/service_runtime_tests.rs",
+      "sourceSha256": "09CF64EFBE8891E7F702F7F8FA6A436DA9DE63B5125749525EC4AD57DD24E5F1"
+    },
+    {
+      "test": "cli::kanban::tests::task_detail_loads_worker_result_provenance_and_rejects_tampering",
+      "sourcePath": "SRC/neothd/src/cli/kanban.rs",
+      "sourceSha256": "3E0985624488843DE6E7337157F8A82E62BDE71A718F71765B8864FA86EF58E4"
+    },
+    {
+      "test": "cli::self_improve::tests::qa_candidate_preserves_hostile_data_without_inner_prompt_frames",
+      "sourcePath": "SRC/neothd/src/cli/self_improve.rs",
+      "sourceSha256": "58621E88B00520D0A92D283E169C6366C91DCE8B7014F55B20E1DD7B00C02032"
+    },
+    {
+      "test": "cli::self_improve::tests::qa_candidate_carries_the_exact_persisted_typed_analysis_as_json_data",
+      "sourcePath": "SRC/neothd/src/cli/self_improve.rs",
+      "sourceSha256": "58621E88B00520D0A92D283E169C6366C91DCE8B7014F55B20E1DD7B00C02032"
+    },
+    {
+      "test": "sub_agents::runtime::tests::initial_qa_and_retry_keep_adversarial_values_inside_typed_fields",
+      "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
+      "sourceSha256": "6154CA0973E6CDF230D35F81B525F0494C64AB02ED5D04ADD892C2F7AB82111E"
+    },
+    {
+      "test": "cli::chat_turn_pipeline::tests::prepared_turn_retains_seeded_context_through_truthful_retry_before_final_receipt_and_terminal",
+      "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "sourceSha256": "6D20F014E0A36F7479CB3438521BB11860CDF8C67F6097521A17EF419A10D445"
+    },
+    {
+      "test": "cli::serve_pipeline::tests::build_pipeline_handler_retains_selected_generation_through_truthful_retry_before_final_channel_result",
+      "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "sourceSha256": "64569AFF9F6D8A5D46207F1B995D8960FCF7BE34AEA78FC9A0BE57F1635DC309"
+    },
+    {
+      "test": "cli::chat_turn_pipeline::tests::prepared_turn_retains_context_through_truthful_refusal_then_local_shadow_final_result",
+      "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "sourceSha256": "6D20F014E0A36F7479CB3438521BB11860CDF8C67F6097521A17EF419A10D445"
+    },
+    {
+      "test": "cli::serve_pipeline::tests::build_pipeline_handler_retains_context_through_direct_local_shadow_cloud_fallback_final_result",
+      "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "sourceSha256": "64569AFF9F6D8A5D46207F1B995D8960FCF7BE34AEA78FC9A0BE57F1635DC309"
+    }
+  ],
+  "requiredGuiTests": [
+    "coding_controller::tests::gui_reserved_start_reaches_real_provider_worker_with_prepared_code_map_context",
+    "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
+    "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
+    "w58_gui_callback_runtime_tests::w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint",
+    "w58_gui_callback_runtime_tests::w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it"
+  ],
+  "nativeExecutionStatus": "PENDING_REPAIRED_COMMIT_GITHUB_CI",
+  "guiExecutionStatus": "PENDING_REPAIRED_COMMIT_GITHUB_CI",
+  "previewExecutionStatus": "PENDING_MANUAL_GITHUB_BUILD",
+  "installedAcceptanceStatus": "NOT_RUN",
+  "releaseReady": false,
+  "priorFailedRun": {
+    "headSha": "669e38c0bcee4a57e0b4961909ec3b0b4cdf6fda",
+    "runId": 35065955859,
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35065955859",
+    "linuxJob": 104696164426,
+    "linuxConclusion": "failure",
+    "errors": [
+      "E0603 private ProviderKind path at three GUI fixture sites",
+      "E0624 private cfg(test) controller constructor",
+      "Two await_holding_lock fixture scopes",
+      "One possible_missing_else in fixture WAL scan"
+    ],
+    "boundary": "No native or GUI behavior pass is inferred from uploaded reports when their producing test step did not run. Other platform jobs were still compiling at admission.",
+    "log": {
+      "path": "work/gold-20260906/wave72-75-ci-linux-job-01.log",
+      "bytes": 89425,
+      "sha256": "F06714BB28F87A7D955A489A46CFC62177EB867D25E669A39FF45338675B36F1"
+    }
+  },
+  "reviews": [
+    {
+      "path": "work/gold-20260906/wave76-ci-repair-review.md",
+      "bytes": 2552,
+      "sha256": "BF3EB6A3F15C36674273017CCC7DFCA2DFD5313FE5A3EA0D43A008F5834CAFC1"
+    },
+    {
+      "path": "work/gold-20260906/wave76-preview-windows-01/REVIEW.md",
+      "bytes": 5116,
+      "sha256": "889E7D6F225B418DBA2DED01F5CCA475D9C573DD148EB200653EC49428420F71"
+    },
+    {
+      "path": "work/gold-20260906/wave62-installed-cli-03/REVIEW.md",
+      "bytes": 1362,
+      "sha256": "D0E6E7C9D1580D4B3284175845759B1CA5AD27A1BD987B8CBC8A371BE5244AD6"
+    }
+  ],
+  "lightChecks": {
+    "pythonPassed": 54,
+    "pythonFailed": 0,
+    "python": [
+      {
+        "path": "work/gold-20260906/wave76-test_lost_feature_integrity.log",
+        "bytes": 123,
+        "sha256": "892F780F99376267DE1A338C93A1632C25E8A64DD227ACCC6BEC1BE0EFAA8ECA",
+        "passed": 19,
+        "failed": 0
+      },
+      {
+        "path": "work/gold-20260906/wave76-test_roadmap_release_gate.log",
+        "bytes": 115,
+        "sha256": "6849EAC38500EA3EC63F9FD09F5E3061E648875515ACF963D92A2D8249A7B51C",
+        "passed": 11,
+        "failed": 0
+      },
+      {
+        "path": "work/gold-20260906/wave76-test_release_gate_contract.log",
+        "bytes": 111,
+        "sha256": "B8BD88D3C6AEEC16810A381FA32B41D615655D14847290EA407C6BCD42AA8D4B",
+        "passed": 8,
+        "failed": 0
+      },
+      {
+        "path": "work/gold-20260906/wave76-test_ci_cadence_contract.log",
+        "bytes": 110,
+        "sha256": "2EB35367949DCB17B045DC1DAA273B61F58712BC969A71F99ED5348C84D62E9F",
+        "passed": 7,
+        "failed": 0
+      },
+      {
+        "path": "work/gold-20260906/wave76-test_release_capability_contract.log",
+        "bytes": 109,
+        "sha256": "9FFFDEA0EFCD3158E0CCB98821834C20FD1BAE324487987A4E66293ADE84AB8B",
+        "passed": 6,
+        "failed": 0
+      },
+      {
+        "path": "work/gold-20260906/wave76-test_preview_windows_workflow_contract.log",
+        "bytes": 106,
+        "sha256": "8EE4669655AAED29BBC70E28A8EF25F73D1EBE2B002448E637699B5A2CBCAA41",
+        "passed": 3,
+        "failed": 0
+      }
+    ],
+    "focusedRustfmt": {
+      "path": "work/gold-20260906/wave76-rustfmt.log",
+      "bytes": 0,
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+      "files": 4,
+      "exitCode": 0
+    },
+    "guiSourceLint": {
+      "path": "work/gold-20260906/wave76-gui-lint.log",
+      "bytes": 22,
+      "sha256": "F4C4F787C595450083D4FE54802890D1A8E88FFB659A14ACFE92C05A9AE92B61"
+    },
+    "installerPowerShellParser": "PASS"
+  },
+  "hostConstraint": "No local Cargo build, test compilation, Clippy or linker. All heavy validation runs on GitHub-hosted workers."
+}

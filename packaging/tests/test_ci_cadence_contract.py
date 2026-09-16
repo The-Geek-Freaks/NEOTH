@@ -240,6 +240,7 @@ class CiCadenceContractTests(unittest.TestCase):
                 "\n".join(
                     [
                         "python3 packaging/tests/test_ci_cadence_contract.py",
+                        "python3 packaging/tests/test_preview_windows_workflow_contract.py",
                         "python3 packaging/tests/test_generate_release_manifests.py",
                         "python3 packaging/tests/test_openclaw_provider_parity.py",
                         "python3 packaging/tests/test_publish_crates_contract.py",

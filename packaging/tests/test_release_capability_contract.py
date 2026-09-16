@@ -13,6 +13,7 @@ RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 UNIX_SOURCE_INSTALLER = ROOT / "scripts" / "install.sh"
 WINDOWS_INSTALLER = ROOT / "SRC" / "install.ps1"
+WINDOWS_SMOKE = ROOT / "packaging" / "windows" / "smoke-installer.ps1"
 
 DESKTOP_TARGETS = {
     "x86_64-unknown-linux-gnu",
@@ -71,6 +72,7 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
         cls.ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
         cls.unix_source_installer = UNIX_SOURCE_INSTALLER.read_text(encoding="utf-8")
         cls.windows_installer = WINDOWS_INSTALLER.read_text(encoding="utf-8")
+        cls.windows_smoke = WINDOWS_SMOKE.read_text(encoding="utf-8")
 
     def test_desktop_bundle_selects_the_exact_iroh_feature_leaf(self) -> None:
         features = self.manifest["features"]
@@ -180,6 +182,46 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
             "-p neothd-gui -p neoth-migrate",
             self.windows_installer,
         )
+
+    def test_windows_clean_machine_code_map_lifecycle_uses_only_the_installed_cli(self) -> None:
+        smoke = self.windows_smoke
+        installed_call = "Invoke-InstalledCodeMapLifecycleSmoke -Directory $ownedDirectory"
+
+        self.assertIn("function Invoke-InstalledCodeMapLifecycleSmoke", smoke)
+        self.assertIn("function Invoke-InstalledNeothJson", smoke)
+        self.assertIn("WaitForExit(120000)", smoke)
+        self.assertIn("[System.Diagnostics.ProcessStartInfo]::new()", smoke)
+        self.assertIn("$startInfo.ArgumentList.Add($argument)", smoke)
+        self.assertIn("$startInfo.CreateNoWindow = $true", smoke)
+        self.assertIn("$startInfo.RedirectStandardOutput = $true", smoke)
+        self.assertIn("$process.StandardOutput.ReadToEndAsync()", smoke)
+        self.assertIn("$process.StandardError.ReadToEndAsync()", smoke)
+        self.assertIn("$process.Kill($true)", smoke)
+        self.assertIn("$env:NEOTH_HOME = $home", smoke)
+        self.assertIn("$env:NEOTH_HOME = $previousNeothHome", smoke)
+        self.assertIn("Join-Path $Directory 'neoth.exe'", smoke)
+        self.assertIn("'code-map', 'status', $repoA", smoke)
+        self.assertIn("'code-map', 'refresh', $repoA", smoke)
+        self.assertIn("'--repair-corrupt'", smoke)
+        self.assertIn("'code-map', 'status', $repoB", smoke)
+        self.assertIn("lifecycle.state.kind -ne 'absent'", smoke)
+        self.assertIn("lifecycle.state.kind -ne 'fresh'", smoke)
+        self.assertIn("lifecycle.state.snapshot.index_generation", smoke)
+        self.assertIn("lifecycle.state.kind -ne 'stale'", smoke)
+        self.assertIn("lifecycle.state.kind -ne 'corrupt'", smoke)
+        self.assertIn("lifecycle.state.kind -ne 'unmapped'", smoke)
+        self.assertIn("'indexed_first_time'", smoke)
+        self.assertIn("'refreshed_stale'", smoke)
+        self.assertIn("'corrupt_repair_required'", smoke)
+        self.assertNotIn("'IndexedFirstTime'", smoke)
+        self.assertNotIn("'RefreshedStale'", smoke)
+        self.assertNotIn("'CorruptRepairRequired'", smoke)
+        self.assertLess(smoke.index("Assert-Payload -Directory $ownedDirectory"), smoke.index(installed_call))
+        self.assertLess(smoke.index(installed_call), smoke.index("Invoke-Uninstall -Directory $ownedDirectory"))
+        helper = smoke[smoke.index("function Invoke-InstalledNeothJson"):smoke.index("function Assert-CodeMapGeneration")]
+        self.assertNotIn("Start-Process", helper)
+        self.assertNotIn("-ArgumentList $Arguments", helper)
+        self.assertNotIn("neothd-gui.exe') `\n            -ArgumentList '--runtime-probe'", smoke[smoke.index("function Invoke-InstalledCodeMapLifecycleSmoke"):])
 
 
 if __name__ == "__main__":
