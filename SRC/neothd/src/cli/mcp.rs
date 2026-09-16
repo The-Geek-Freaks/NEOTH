@@ -1554,6 +1554,84 @@ code_map:
             });
     }
 
+    #[test]
+    fn w97_direct_cli_selected_read_negatives_preserve_child_result_without_sidecar() {
+        let _env = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread().enable_all().build().expect("W97 runtime").block_on(async {
+            let home = tempfile::tempdir().expect("W97 home");
+            let database = home.path().join("code-map.sqlite");
+            let root = home.path().join("root");
+            crate::mcp::codegraph_server::w59_seed_real_sqlite_root(&database, &root, "w97");
+            let executable = std::env::current_exe().expect("W97 executable").canonicalize().expect("canonical W97 executable");
+            let trusted = codegraph_server_config(&executable, Some(database.canonicalize().expect("canonical W97 map")));
+            let mut selected = trusted.clone(); selected.id = "w97-cli-configured-read".into();
+            let snapshot = McpServers { smart_loading: true, servers: vec![trusted, selected] };
+            let selected = snapshot.get_enabled("w97-cli-configured-read").expect("selected snapshot descriptor");
+            let trusted = snapshot.get_enabled("neoth-codegraph").expect("trusted snapshot descriptor");
+            let prior = std::env::current_dir().expect("W97 cwd");
+            struct Restore(std::path::PathBuf); impl Drop for Restore { fn drop(&mut self) { std::env::set_current_dir(&self.0).expect("restore W97 cwd"); } }
+            std::env::set_current_dir(&root).expect("enter W97 root"); let _restore = Restore(prior);
+            let policy = crate::permissions::AutonomyPolicySnapshot::builtin(crate::permissions::AutonomyLevel::Full).expect("W97 full policy");
+            let cases = [
+                ("master_off", "code_map:\n  outline_enrichment: false\n  enrichment_selectors:\n    - server_id: w97-cli-configured-read\n      tool: codegraph_outline\n      kind: ReadPath\n      path_field: path\n", serde_json::json!({"path":"x.rs"}), false),
+                ("empty_selectors", "code_map:\n  outline_enrichment: true\n  enrichment_selectors: []\n", serde_json::json!({"path":"x.rs"}), false),
+                ("pair_mismatch", "code_map:\n  outline_enrichment: true\n  enrichment_selectors:\n    - server_id: w97-cli-configured-read\n      tool: codegraph_outline_other\n      kind: ReadPath\n      path_field: path\n", serde_json::json!({"path":"x.rs"}), false),
+                ("extra_path", "code_map:\n  outline_enrichment: true\n  enrichment_selectors:\n    - server_id: w97-cli-configured-read\n      tool: codegraph_outline\n      kind: ReadPath\n      path_field: path\n", serde_json::json!({"path":"x.rs","extra":true}), true),
+                ("malformed_path", "code_map:\n  outline_enrichment: true\n  enrichment_selectors:\n    - server_id: w97-cli-configured-read\n      tool: codegraph_outline\n      kind: ReadPath\n      path_field: path\n", serde_json::json!({"path":7}), true),
+            ];
+            for (label, config, arguments, expected_error) in cases {
+                std::fs::write(home.path().join("freedom.yaml"), config).expect("write W97 config");
+                let result = invoke_cli_call_with_spawner_and_audit_sink_with_trusted_codegraph_descriptor(selected, Some(trusted), "codegraph_outline", arguments, policy.clone(), 1_700_000_097, crate::mcp::gate::McpAuditSink::None, home.path(), |fixture| async move { McpClient::spawn(&fixture).await }).await.expect("negative case retains child MCP result");
+                assert_eq!(result.is_error, expected_error, "{label}: child result shape changed");
+                assert_eq!(result.content.len(), 1, "{label}: configured sidecar must not be appended");
+                assert!(!matches!(&result.content[0], crate::mcp::client::McpContent::Text { text } if text.contains("[untrusted configured MCP ReadPath sidecar]")), "{label}: sidecar leaked");
+            }
+        });
+    }
+
+    const W97_POST_CALL_MUTATE_ROOT: &str = "NEOTH_W97_POST_CALL_MUTATE_ROOT";
+    const W97_POST_CALL_COUNT: &str = "NEOTH_W97_POST_CALL_COUNT";
+
+    #[test]
+    fn w97_post_call_mutating_wire_child() {
+        let (Some(root), Some(count)) = (
+            std::env::var_os(W97_POST_CALL_MUTATE_ROOT),
+            std::env::var_os(W97_POST_CALL_COUNT),
+        ) else { return; };
+        use std::io::{BufRead as _, Write as _};
+        println!("NEOTH_W53_STDIO_READY"); std::io::stdout().flush().expect("W97 ready");
+        for line in std::io::stdin().lock().lines() {
+            let request: serde_json::Value = serde_json::from_str(&line.expect("W97 request")).expect("W97 JSON");
+            if request["method"] == "initialize" {
+                println!("{}", serde_json::json!({"jsonrpc":"2.0","id":request["id"].clone(),"result":{"protocolVersion":crate::mcp::client::MCP_PROTOCOL_VERSION,"capabilities":{}}}));
+            } else if request["method"] == "tools/call" {
+                std::fs::write(std::path::PathBuf::from(root).join("x.rs"), "fn leaf_w97_mutated() {}\n").expect("mutate indexed source after actual call");
+                std::fs::write(&count, "1").expect("record one actual tools/call");
+                println!("{}", serde_json::json!({"jsonrpc":"2.0","id":request["id"].clone(),"result":{"content":[{"type":"text","text":"ordinary external result survives freshness fence"}],"isError":false}}));
+            }
+            std::io::stdout().flush().expect("flush W97 response");
+        }
+    }
+
+    #[test]
+    fn w97_selected_call_suppresses_sidecar_after_post_call_source_freshness_change() {
+        let _env = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread().enable_all().build().expect("W97 freshness runtime").block_on(async {
+            let home = tempfile::tempdir().expect("W97 freshness home"); let database = home.path().join("code-map.sqlite"); let root = home.path().join("root");
+            crate::mcp::codegraph_server::w59_seed_real_sqlite_root(&database, &root, "w97_freshness");
+            let executable = std::env::current_exe().expect("W97 executable").canonicalize().expect("canonical executable");
+            let trusted = codegraph_server_config(&executable, Some(database.canonicalize().expect("canonical map"))); let mut selected = trusted.clone(); selected.id = "w97-post-call-read".into();
+            let snapshot = McpServers { smart_loading: true, servers: vec![trusted, selected] }; let selected = snapshot.get_enabled("w97-post-call-read").unwrap(); let trusted = snapshot.get_enabled("neoth-codegraph").unwrap();
+            std::fs::write(home.path().join("freedom.yaml"), "code_map:\n  outline_enrichment: true\n  enrichment_selectors:\n    - server_id: w97-post-call-read\n      tool: codegraph_outline\n      kind: ReadPath\n      path_field: path\n").unwrap();
+            let prior = std::env::current_dir().unwrap(); struct Restore(std::path::PathBuf); impl Drop for Restore { fn drop(&mut self){std::env::set_current_dir(&self.0).unwrap();} } std::env::set_current_dir(&root).unwrap(); let _restore = Restore(prior);
+            let count = home.path().join("tools-call-count"); let child_root = root.clone(); let child_count = count.clone(); let policy = crate::permissions::AutonomyPolicySnapshot::builtin(crate::permissions::AutonomyLevel::Full).unwrap();
+            let result = invoke_cli_call_with_spawner_and_audit_sink_with_trusted_codegraph_descriptor(selected, Some(trusted), "codegraph_outline", serde_json::json!({"path":"x.rs"}), policy, 1_700_000_097, crate::mcp::gate::McpAuditSink::None, home.path(), |_| async move {
+                let mut child = tokio::process::Command::new(std::env::current_exe().unwrap()); child.args(["--exact", "cli::mcp::tests::w97_post_call_mutating_wire_child", "--nocapture"]).env(W97_POST_CALL_MUTATE_ROOT, &child_root).env(W97_POST_CALL_COUNT, &child_count).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()); McpClient::from_test_child("w97-post-call-read", child.spawn().unwrap()).await
+            }).await.expect("ordinary child result survives post-call freshness fence");
+            assert!(!result.is_error); assert_eq!(result.content.len(), 1); assert!(matches!(&result.content[0], crate::mcp::client::McpContent::Text { text } if text == "ordinary external result survives freshness fence")); assert_eq!(std::fs::read_to_string(count).unwrap(), "1");
+        });
+    }
+
     #[tokio::test]
     async fn cli_call_production_wrapper_finalizes_owned_home_wal_after_audited_spawn() {
         let home = tempfile::tempdir().unwrap();

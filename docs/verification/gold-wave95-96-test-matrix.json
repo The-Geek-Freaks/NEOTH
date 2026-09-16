@@ -1,60 +1,60 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W96_REVIEWED_SOURCE_REMOTE_EXECUTION_PENDING",
-  "base": "4141894037d092e128286bd386e664e12e8a22ed",
+  "status": "W95_W98_REVIEWED_SOURCE_REMOTE_EXECUTION_PENDING",
+  "base": "9e197616ff218a33d293e61040c64797887db349",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 50719,
-    "sha256": "6CFFBECD9B9ECA8C89EAA011F4D183EB25797DAA9DB40E182993445E5AFCC3D5"
+    "bytes": 50766,
+    "sha256": "108AA396DC4787310B747E556CA6E57C80AFA90DCD5F41C4F1BEFB3D7B0A042F"
   },
   "sourceInputs": 293,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
       "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "sourceSha256": "30CE85A95A04D53BA145F2F9D3E8B97A8E2FE08CB01CA287D948BEAE57F62F56",
+      "sourceSha256": "2144957026FB0E657615A4B251C85A9C7301DD1D4A9B864DD8511576D64E33FD",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::gate::tests::w61_called_audit_precedes_invalid_direct_context_metadata",
       "sourcePath": "SRC/neothd/src/mcp/gate.rs",
-      "sourceSha256": "61724C97732D181F1D47D1D058A4088D8A0A12114454FAF67AAB900176B0F363",
+      "sourceSha256": "1C3105F45DA803A723EF8E0C4D248766DE68B014D97823C3341EB575D6D2E5D5",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_generated_stdio_receipts_bind_child_metadata_before_return",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "0F350E3A159DB3D3DE33BDA62704E50BFE1D488F20A52C1784193F8EF68F37FE",
+      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_invalid_child_binding_fails_after_called_without_receipt",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "0F350E3A159DB3D3DE33BDA62704E50BFE1D488F20A52C1784193F8EF68F37FE",
+      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_generated_is_error_returns_only_the_child_error_without_final_claim",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "0F350E3A159DB3D3DE33BDA62704E50BFE1D488F20A52C1784193F8EF68F37FE",
+      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_nongenerated_child_success_retains_legacy_no_receipt_behavior",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "0F350E3A159DB3D3DE33BDA62704E50BFE1D488F20A52C1784193F8EF68F37FE",
+      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_final_receipt_append_failure_returns_error_after_real_child_called_audit",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "0F350E3A159DB3D3DE33BDA62704E50BFE1D488F20A52C1784193F8EF68F37FE",
+      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_receipt_uses_the_child_selected_root_for_empty_and_nonempty_results",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "0F350E3A159DB3D3DE33BDA62704E50BFE1D488F20A52C1784193F8EF68F37FE",
+      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
       "junitClass": "neoth"
     },
     {
@@ -96,25 +96,25 @@
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_summarizes_over_threshold",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "63EFCC93896CDDA719484188D72C52672BEDE9A652F19A1CB2DEF9F7BBF03262",
+      "sourceSha256": "8EF0CE87862ED632049BAEDD83CED6B73886223F9F6F86C8452CA9EF84167050",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_sends_canonical_outer_history_to_the_driver",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "63EFCC93896CDDA719484188D72C52672BEDE9A652F19A1CB2DEF9F7BBF03262",
+      "sourceSha256": "8EF0CE87862ED632049BAEDD83CED6B73886223F9F6F86C8452CA9EF84167050",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_blocks_oversized_fanout_before_the_first_call",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "63EFCC93896CDDA719484188D72C52672BEDE9A652F19A1CB2DEF9F7BBF03262",
+      "sourceSha256": "8EF0CE87862ED632049BAEDD83CED6B73886223F9F6F86C8452CA9EF84167050",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_is_noop_under_threshold",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "63EFCC93896CDDA719484188D72C52672BEDE9A652F19A1CB2DEF9F7BBF03262",
+      "sourceSha256": "8EF0CE87862ED632049BAEDD83CED6B73886223F9F6F86C8452CA9EF84167050",
       "junitClass": "neoth"
     },
     {
@@ -264,13 +264,13 @@
     {
       "test": "config::ops::tests::impact_policy_converts_validated_bounds_without_widening",
       "sourcePath": "SRC/neothd/src/config/ops.rs",
-      "sourceSha256": "11DC02D97A2F1B272CAA9E081562F2D759FFAF455BEAC68DF638C9C212F76E9E",
+      "sourceSha256": "BEE079C1CE9F0EA1C05C1D5552E7F2BF7382248234CF5B75B8ACA141DB9D07BC",
       "junitClass": "neoth"
     },
     {
       "test": "config::ops::tests::impact_policy_invalid_values_reject_before_dispatch_conversion",
       "sourcePath": "SRC/neothd/src/config/ops.rs",
-      "sourceSha256": "11DC02D97A2F1B272CAA9E081562F2D759FFAF455BEAC68DF638C9C212F76E9E",
+      "sourceSha256": "BEE079C1CE9F0EA1C05C1D5552E7F2BF7382248234CF5B75B8ACA141DB9D07BC",
       "junitClass": "neoth"
     },
     {
@@ -282,13 +282,13 @@
     {
       "test": "mcp::gate::tests::w53_outline_enrichment_real_gate_success_has_one_called_receipt",
       "sourcePath": "SRC/neothd/src/mcp/gate.rs",
-      "sourceSha256": "61724C97732D181F1D47D1D058A4088D8A0A12114454FAF67AAB900176B0F363",
+      "sourceSha256": "1C3105F45DA803A723EF8E0C4D248766DE68B014D97823C3341EB575D6D2E5D5",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::gate::tests::w79_outline_enrichment_real_gate_retains_distinct_configured_sidecar",
       "sourcePath": "SRC/neothd/src/mcp/gate.rs",
-      "sourceSha256": "61724C97732D181F1D47D1D058A4088D8A0A12114454FAF67AAB900176B0F363",
+      "sourceSha256": "1C3105F45DA803A723EF8E0C4D248766DE68B014D97823C3341EB575D6D2E5D5",
       "junitClass": "neoth"
     },
     {
@@ -306,7 +306,7 @@
     {
       "test": "config::tests::configured_mcp_read_path_selectors_are_exact_and_bounded",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "A3A0DF9F3C71C355C765397FA41B64DB6A02CE048882717FDC822DF2D9410E6C",
+      "sourceSha256": "298BC4BD9F92A3DF2A2C6B739305DDB8CF1E2FB2466D04B86DFE876EA9D33DB9",
       "junitClass": "neoth"
     },
     {
@@ -324,25 +324,37 @@
     {
       "test": "cli::mcp::tests::w95_direct_cli_configured_read_path_keeps_selected_results_and_same_snapshot_descriptor",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "0F350E3A159DB3D3DE33BDA62704E50BFE1D488F20A52C1784193F8EF68F37FE",
+      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::w95_configured_read_path_provider_loop_uses_same_loaded_server_snapshot",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "63EFCC93896CDDA719484188D72C52672BEDE9A652F19A1CB2DEF9F7BBF03262",
+      "sourceSha256": "8EF0CE87862ED632049BAEDD83CED6B73886223F9F6F86C8452CA9EF84167050",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::gate::tests::w79_exact_sidecar_dedup_requires_identical_provenance",
       "sourcePath": "SRC/neothd/src/mcp/gate.rs",
-      "sourceSha256": "61724C97732D181F1D47D1D058A4088D8A0A12114454FAF67AAB900176B0F363",
+      "sourceSha256": "1C3105F45DA803A723EF8E0C4D248766DE68B014D97823C3341EB575D6D2E5D5",
       "junitClass": "neoth"
     },
     {
-      "test": "cli::doctor::checks::integrations::tests::outline_enrichment_warns_for_stale_map_and_reports_fresh_physical_generation",
+      "test": "cli::doctor::checks::integrations::omi_tests::outline_enrichment_warns_for_stale_map_and_reports_fresh_physical_generation",
       "sourcePath": "SRC/neothd/src/cli/doctor/checks/integrations.rs",
-      "sourceSha256": "0BBEEFB2986A7A00727F7CCE3D41CCFD4F2E41A4C51870164CFB63E4F7C1AB0D",
+      "sourceSha256": "67F4B463EA9B82F8AAA3CED99A6C5BF02A5A704DD1BA478751657287C9F86A54",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::mcp::tests::w97_direct_cli_selected_read_negatives_preserve_child_result_without_sidecar",
+      "sourcePath": "SRC/neothd/src/cli/mcp.rs",
+      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::mcp::tests::w97_selected_call_suppresses_sidecar_after_post_call_source_freshness_change",
+      "sourcePath": "SRC/neothd/src/cli/mcp.rs",
+      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
       "junitClass": "neoth"
     }
   ],
@@ -398,6 +410,12 @@
       "sha256": "A0CD2D9C2DB31592570A12ECE86900AFA8F506FB31FB362F8B526E270DC5E2C8",
       "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
       "executionClaim": false
+    },
+    {
+      "record": "work/gold-20260906/wave97-configured-read-negative-01/INDEPENDENT-REVIEW.md",
+      "sha256": "2C97EB6AC29E9A4A0679DCD6F0383A668E5963BA4BE017A26BB02457967EB855",
+      "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
+      "executionClaim": false
     }
   ],
   "priorCi": {
@@ -435,34 +453,43 @@
     "helperFunctionChecks": "PASS",
     "cliCompile": "PASS33m18s",
     "auxCompile": "PASS20s",
-    "guiCompile": "IN_PROGRESS_AT_RECORD",
-    "artifactAcceptance": "PENDING",
-    "appliesToCurrentSource": false
+    "guiCompile": "FAILED_45_MINUTE_STEP_DEADLINE",
+    "artifactAcceptance": "NOT_RUN_NO_ARTIFACT",
+    "appliesToCurrentSource": false,
+    "interruptedCache": "Saved2026-09-16T14:38:27Z;1907517860bytes; no compiler-error/OOM diagnosis"
   },
   "nativeExecutionStatus": "PENDING_FRESH_EXACT_SOURCE_GITHUB_CI",
   "guiExecutionStatus": "PENDING_FRESH_EXACT_SOURCE_GITHUB_CI",
   "hostConstraint": "ALL_LOCAL_VALIDATION_SUSPENDED; bounded source/metadata reads, edits and serialized Git/GitHub only",
   "releaseReady": false,
   "pending": [
-    "Remote Rustfmt/static contracts/strict Clippy/actual workspace Nextest on newly published source",
-    "W97 configured-selector negatives and strict schema bounds remain a separate unadmitted proposal",
-    "Portable, installed, visual and provider-live acceptance for the final source; no ROAD checkbox closes"
+    "Fresh exact-source GitHub Rustfmt/static contracts/strict Clippy/actual workspace Nextest for58native and7GUIidentities",
+    "Selected-route authority/confirmation/cancel dedicated matrix remains supplemental; existing pre-selection shared gate regressions remain required",
+    "Portable, installed, visual and provider-live acceptance for final source; no ROAD checkbox closes"
   ],
   "guiSourceBindings": [
     {
       "path": "SRC/neothd-gui/src/coding_controller.rs",
-      "bytes": 54779,
-      "sha256": "ABE42730A7CA800DFBEAF76A5E2137EDE12DEF8635F3A94800E0EDC4FE40952E"
+      "bytes": 54825,
+      "sha256": "3ED2CD5BE7F325761922C7151E03CC53B6F61D5C32C49450E6C83F8E140A5336"
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1627499,
-      "sha256": "AC3390F5095F41CE86F99C27100E98FE5D2B0411FAEFC6FF8B58F6F2C3DACE9D"
+      "bytes": 1627475,
+      "sha256": "1B30598CB8D31B9E1D6DA6BD0B7E30700B56502F1DD467F96842F378891DE916"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
       "bytes": 490678,
       "sha256": "D4C7678937217289502091EA122075607561F39FA4ACB5FF467CBCA4C4E0FB47"
     }
-  ]
+  ],
+  "remoteFormatCorrection": {
+    "runId": 35108731972,
+    "headSha": "9e197616ff218a33d293e61040c64797887db349",
+    "finding": "Rustfmt layout differences",
+    "change": "Only exact logged formatter layouts/import order, preserving W97 behavior",
+    "rerun": "PENDING",
+    "localFormatterRan": false
+  }
 }

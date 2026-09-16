@@ -1836,12 +1836,15 @@ pub(crate) fn prepare_configured_mcp_path_read_enrichment(
     }
     if let Some(selector) = selector {
         anyhow::ensure!(
-            matches!(selector.kind, crate::config::ConfiguredMcpPathReadKind::ReadPath)
-                && selector.path_field == "path",
+            matches!(
+                selector.kind,
+                crate::config::ConfiguredMcpPathReadKind::ReadPath
+            ) && selector.path_field == "path",
             "configured MCP ReadPath selector failed exact validated projection"
         );
     }
-    let Some(database_path) = trusted_codegraph_cfg.and_then(trusted_generated_codegraph_database) else {
+    let Some(database_path) = trusted_codegraph_cfg.and_then(trusted_generated_codegraph_database)
+    else {
         return Ok(None);
     };
     anyhow::ensure!(
@@ -1977,7 +1980,9 @@ fn render_outline_enrichment(
         format!("call_id: {:?}", call_id),
         configured_selector
             .map(|(server_id, tool)| format!("configured_mcp: server_id={server_id} tool={tool}"))
-            .unwrap_or_else(|| "configured_mcp: built_in=neoth-codegraph/codegraph_outline".to_owned()),
+            .unwrap_or_else(|| {
+                "configured_mcp: built_in=neoth-codegraph/codegraph_outline".to_owned()
+            }),
         format!("root_identity: {root_identity}"),
         format!("file: {relative}"),
         "snapshot: fresh_complete=true stale=false".to_owned(),

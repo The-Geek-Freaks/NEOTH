@@ -1,4 +1,4 @@
-# W95-W96 - configured MCP local reads and observed runtime repairs
+# W95-W98 - configured MCP local reads and observed runtime repairs
 
 W95 extends the existing bounded code-map sidecar to explicitly configured MCP
 local path reads. `code_map.outline_enrichment` remains false by default and
@@ -54,17 +54,28 @@ W96 repairs the concrete failures observed in the completed Windows/macOS run:
 No local formatter, parser, test, compiler or product runtime was executed.
 The [source manifest](verification/gold-wave95-96-source-manifest.json) and
 [test matrix](verification/gold-wave95-96-test-matrix.json) distinguish reviewed
-source from pending execution. W97 separately addresses remaining dedicated
-configured-selector negative-call and configuration-bound fixtures; those are
-not counted as implemented or passed in this batch.
+source from pending execution. W97 now rejects unknown selector fields and adds
+exact list/byte-bound fixtures. Its real selected-call matrix covers master-off,
+empty selectors, pair mismatch and invalid arguments without a sidecar. A real
+selected child also changes the indexed source before replying: the parent
+requires the ordinary result, exactly one call and no sidecar after the shared
+post-call freshness check. Independent review approved these additions.
+
+Preflight [35108731972](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35108731972)
+on the first W95/W96 publication failed at Rustfmt. W98 applies only the layouts
+printed by that remote formatter; it was not run locally. The updated matrix
+also corrects the Doctor fixture's actual module identity, `omi_tests`. Fresh
+remote formatting, static contracts, strict lint and runtime proof remain pending.
 
 The preceding W93 source `4141894037d092e128286bd386e664e12e8a22ed` passed
 [Preflight 35100677231](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35100677231)
 and [Code Quality 35100676058](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35100676058).
 Its [preview 35100765685](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35100765685)
 passed the actual empty-input receipt/hash checks, compiled the CLI in 33m18s
-and migration/relay binaries in 20s, then entered GUI compilation. That source
-and any resulting artifact are distinct from the W95 candidate.
+and migration/relay binaries in 20s. GUI compilation then reached its 45-minute
+step deadline without an artifact. The run saved a newer compatible interrupted
+cache; no compiler error or OOM cause was established. That source is distinct
+from the current candidate, and portable acceptance has not run yet.
 
 The completed [full CI 35097577183](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35097577183)
 failed on `cc387be72092dc62da1b1965e0a3bf6634b9567c`.

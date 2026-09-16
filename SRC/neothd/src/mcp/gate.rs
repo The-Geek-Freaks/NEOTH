@@ -1685,7 +1685,10 @@ mod tests {
             "only identical full sidecars deduplicate"
         );
         assert!(
-            hook_sidecar_is_distinct_from_configured_path_read(Some(&configured), &distinct_call_id),
+            hook_sidecar_is_distinct_from_configured_path_read(
+                Some(&configured),
+                &distinct_call_id
+            ),
             "different admission call IDs preserve both provenance-bound sidecars"
         );
         assert!(

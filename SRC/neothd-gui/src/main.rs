@@ -38059,9 +38059,7 @@ mod w58_gui_callback_runtime_tests {
             {
                 Ok(())
             }
-            ["--exact", test_name, "--nocapture"]
-            | [test_name, "--nocapture", "--exact"] =>
-            {
+            ["--exact", test_name, "--nocapture"] | [test_name, "--nocapture", "--exact"] => {
                 match *test_name {
                     "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness" => {
                         w58_buddy_status_callback_publishes_selected_root_readiness()

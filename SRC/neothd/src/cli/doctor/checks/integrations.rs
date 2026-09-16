@@ -1852,7 +1852,11 @@ mod omi_tests {
         write_generated_outline_registration(fresh_home.path(), &fresh_database);
         let fresh = check_codegraph_outline_enrichment(fresh_home.path());
         assert_eq!(fresh.status, CheckStatus::Pass, "{fresh:?}");
-        assert!(fresh.detail.contains("existing built-in neoth-codegraph/codegraph_outline route"));
+        assert!(
+            fresh
+                .detail
+                .contains("existing built-in neoth-codegraph/codegraph_outline route")
+        );
         assert!(fresh.detail.contains("fresh complete managed root(s)"));
         assert!(fresh.detail.contains("index_generation="));
         assert!(fresh.detail.contains("Doctor did not enrich a request"));
@@ -1861,7 +1865,11 @@ mod omi_tests {
         write_enabled_configured_read_path_selector(fresh_home.path(), fresh_repository.path());
         let selected = check_codegraph_outline_enrichment(fresh_home.path());
         assert_eq!(selected.status, CheckStatus::Pass, "{selected:?}");
-        assert!(selected.detail.contains("1 exact configured ReadPath selector(s)"));
+        assert!(
+            selected
+                .detail
+                .contains("1 exact configured ReadPath selector(s)")
+        );
         assert!(selected.detail.contains("built-in route"));
     }
 

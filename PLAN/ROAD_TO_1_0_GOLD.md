@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W97/W98 selected-call regression coverage (2026-09-16):** selectors reject
+unknown fields; schema fixtures cover the exact 32-entry and 4096-byte bounds.
+Real selected MCP calls cover master-off, empty selectors, exact-pair mismatch
+and invalid arguments without adding a sidecar. Another real child changes the
+indexed source after receiving the call: the result remains, one call is counted,
+and the post-call freshness fence suppresses stale context. Independent review
+approved this source. W98 applies only the Rustfmt layouts printed by GitHub
+Preflight `35108731972`; all current execution gates remain pending remotely.
+See the [updated W95-W98 report](../docs/gold-wave95-verification.md).
+Counts remain **1324/1015/307/2**, raw309/pre-tag308; no local validation.
+
 **W95/W96 configured reads and observed runtime repairs (2026-09-16):** the
 reviewed MCP extension selects exact configured local `ReadPath` calls using
 one accepted server/config snapshot, with default-off policy and preserved

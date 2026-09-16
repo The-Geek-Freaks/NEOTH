@@ -1139,11 +1139,11 @@ pub use features::{
 };
 pub use memory::{MemoryConfig, VectorBackend, VectorIndexConfig};
 pub use ops::{
-    AutoUpdateConfig, CodeMapConfig, CodeMapImpactPolicy, CodeMapLifecycleConfig,
-    ConfiguredMcpPathRead, ConfiguredMcpPathReadKind, CodingConfig,
-    CommunicationProfileConfig, CommunicationPromptExport, DoctorConfig, PluginsConfig,
-    ProfileConfig, RefusalRecoveryConfig, ReleaseChannel, RequestedContextPolicy, SupervisorConfig,
-    SupervisorKind, TaskEngineConfig, UpdaterConfig, WasmPluginsConfig,
+    AutoUpdateConfig, CodeMapConfig, CodeMapImpactPolicy, CodeMapLifecycleConfig, CodingConfig,
+    CommunicationProfileConfig, CommunicationPromptExport, ConfiguredMcpPathRead,
+    ConfiguredMcpPathReadKind, DoctorConfig, PluginsConfig, ProfileConfig, RefusalRecoveryConfig,
+    ReleaseChannel, RequestedContextPolicy, SupervisorConfig, SupervisorKind, TaskEngineConfig,
+    UpdaterConfig, WasmPluginsConfig,
 };
 pub use policy::{
     CompactionConfig, CompressionConfig, DangerousPolicy, EgressMode, EgressPolicy, FeedEntry,
@@ -3062,6 +3062,7 @@ mod code_map_config_tests {
         for source in [
             "code_map:\n  enrichment_selectors:\n    - server_id: neoth-codegraph\n      tool: codegraph_outline\n      kind: GrepPathPattern\n",
             "code_map:\n  enrichment_selectors:\n    - server_id: neoth-codegraph\n      tool: codegraph_outline\n      path_field: remote_path\n",
+            "code_map:\n  enrichment_selectors:\n    - server_id: neoth-codegraph\n      tool: codegraph_outline\n      path_filed: path\n",
             "code_map:\n  enrichment_selectors:\n    - server_id: neoth-codegraph\n      tool: codegraph_outline\n    - server_id: neoth-codegraph\n      tool: codegraph_outline\n",
         ] {
             assert!(
@@ -3075,6 +3076,37 @@ mod code_map_config_tests {
             "code_map:\n  enrichment_selectors:\n    - server_id: {oversized}\n      tool: codegraph_outline\n"
         );
         assert!(serde_yaml::from_str::<FreedomConfig>(&source).is_err());
+
+        let selectors = (0..32)
+            .map(|index| format!("    - server_id: server-{index:02}\n      tool: read-{index:02}\n"))
+            .collect::<String>();
+        let at_count = format!("code_map:\n  enrichment_selectors:\n{selectors}");
+        assert!(serde_yaml::from_str::<FreedomConfig>(&at_count).is_ok());
+        let over_count = format!(
+            "{at_count}    - server_id: server-33\n      tool: read-33\n"
+        );
+        assert!(serde_yaml::from_str::<FreedomConfig>(&over_count).is_err());
+
+        // Each row is 128 server-id + 124 tool + fixed 4-byte `path` = 256;
+        // sixteen rows are exactly the 4096-byte validation ceiling.
+        let exact_total_selectors = (0..16)
+            .map(|index| {
+                let server_id = format!("s{index:03}{}", "x".repeat(124));
+                let tool = format!("t{}", "y".repeat(123));
+                format!("    - server_id: {server_id}\n      tool: {tool}\n")
+            })
+            .collect::<String>();
+        let exact_total = format!("code_map:\n  enrichment_selectors:\n{exact_total_selectors}");
+        assert!(serde_yaml::from_str::<FreedomConfig>(&exact_total).is_ok());
+        let over_total_selectors = (0..16)
+            .map(|index| {
+                let server_id = format!("s{index:03}{}", "x".repeat(124));
+                let tool = format!("t{}", "y".repeat(124));
+                format!("    - server_id: {server_id}\n      tool: {tool}\n")
+            })
+            .collect::<String>();
+        let over_total = format!("code_map:\n  enrichment_selectors:\n{over_total_selectors}");
+        assert!(serde_yaml::from_str::<FreedomConfig>(&over_total).is_err());
     }
 
     #[test]

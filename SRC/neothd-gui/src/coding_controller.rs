@@ -1186,7 +1186,10 @@ mod tests {
         for (provenance_source, receipt_source) in
             provenance.sources.iter().zip(receipts[0].sources.iter())
         {
-            assert_eq!(provenance_source.root_identity, receipt_source.root_identity);
+            assert_eq!(
+                provenance_source.root_identity,
+                receipt_source.root_identity
+            );
             assert_eq!(
                 provenance_source.index_generation,
                 receipt_source.index_generation

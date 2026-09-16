@@ -3094,8 +3094,7 @@ mod tests {
             return;
         }
         let database = std::path::PathBuf::from(
-            std::env::var(W95_PROVIDER_LOOP_DATABASE)
-                .expect("provider-loop child database path"),
+            std::env::var(W95_PROVIDER_LOOP_DATABASE).expect("provider-loop child database path"),
         );
         let home = std::path::PathBuf::from(
             std::env::var(W95_PROVIDER_LOOP_HOME).expect("provider-loop child home path"),
@@ -3177,14 +3176,27 @@ mod tests {
                 assert_eq!(outcome.successful_calls, 1, "one actual tools/call");
                 assert_eq!(outcome.failed_calls, 0);
                 assert_eq!(outcome.tool_call_records.len(), 1);
-                assert_eq!(outcome.tool_call_records[0].server, "w95-provider-configured-read");
+                assert_eq!(
+                    outcome.tool_call_records[0].server,
+                    "w95-provider-configured-read"
+                );
                 assert_eq!(outcome.tool_call_records[0].tool, "codegraph_outline");
                 assert!(outcome.tool_call_records[0].success);
-                assert_eq!(outcome.final_text, "provider received the configured ReadPath result");
+                assert_eq!(
+                    outcome.final_text,
+                    "provider received the configured ReadPath result"
+                );
 
                 let prompts = driver.seen_prompts.lock().expect("provider prompt capture");
-                assert_eq!(prompts.len(), 2, "one dispatched result reaches the next provider turn");
-                assert!(prompts[1].contains("outline_target"), "ordinary external result survives");
+                assert_eq!(
+                    prompts.len(),
+                    2,
+                    "one dispatched result reaches the next provider turn"
+                );
+                assert!(
+                    prompts[1].contains("outline_target"),
+                    "ordinary external result survives"
+                );
                 assert!(prompts[1].contains(
                     "configured_mcp: server_id=w95-provider-configured-read tool=codegraph_outline"
                 ));

@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W96-configured-mcp-read-and-observed-runtime-repairs",
-  "base": "4141894037d092e128286bd386e664e12e8a22ed",
-  "capturedUtc": "2026-09-16T14:24:18.2677981Z",
+  "item": "GOLD-W95-W98-configured-mcp-read-runtime-repairs-and-negative-coverage",
+  "base": "9e197616ff218a33d293e61040c64797887db349",
+  "capturedUtc": "2026-09-16T14:38:09.6494075Z",
   "validationStatus": "REVIEWED_SOURCE_NEW_REMOTE_GATES_PENDING",
-  "scopeNote": "Changed entries are exact admitted W95/W96 bytes, including Doctor correction. Unchanged entries inherit committed W91-W93 bindings. All execution gates are GitHub-only; W97 is not admitted.",
+  "scopeNote": "293 cumulative inputs. W97 reviewed schema/negative-call/post-call freshness fixtures and W98 exact remote Rustfmt layouts admitted after W95/W96. Unchanged entries retain committed bindings. All execution gates are GitHub-only.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -238,8 +238,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/coding_controller.rs",
-      "bytes": 54779,
-      "sha256": "ABE42730A7CA800DFBEAF76A5E2137EDE12DEF8635F3A94800E0EDC4FE40952E"
+      "bytes": 54825,
+      "sha256": "3ED2CD5BE7F325761922C7151E03CC53B6F61D5C32C49450E6C83F8E140A5336"
     },
     {
       "path": "SRC/neothd-gui/src/gui_action.rs",
@@ -258,8 +258,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1627499,
-      "sha256": "AC3390F5095F41CE86F99C27100E98FE5D2B0411FAEFC6FF8B58F6F2C3DACE9D"
+      "bytes": 1627475,
+      "sha256": "1B30598CB8D31B9E1D6DA6BD0B7E30700B56502F1DD467F96842F378891DE916"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
@@ -548,8 +548,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/integrations.rs",
-      "bytes": 93502,
-      "sha256": "0BBEEFB2986A7A00727F7CCE3D41CCFD4F2E41A4C51870164CFB63E4F7C1AB0D"
+      "bytes": 93614,
+      "sha256": "67F4B463EA9B82F8AAA3CED99A6C5BF02A5A704DD1BA478751657287C9F86A54"
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/providers.rs",
@@ -588,8 +588,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mcp.rs",
-      "bytes": 126754,
-      "sha256": "0F350E3A159DB3D3DE33BDA62704E50BFE1D488F20A52C1784193F8EF68F37FE"
+      "bytes": 135147,
+      "sha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F"
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
@@ -793,13 +793,13 @@
     },
     {
       "path": "SRC/neothd/src/config/mod.rs",
-      "bytes": 143104,
-      "sha256": "A3A0DF9F3C71C355C765397FA41B64DB6A02CE048882717FDC822DF2D9410E6C"
+      "bytes": 144933,
+      "sha256": "298BC4BD9F92A3DF2A2C6B739305DDB8CF1E2FB2466D04B86DFE876EA9D33DB9"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",
-      "bytes": 68506,
-      "sha256": "11DC02D97A2F1B272CAA9E081562F2D759FFAF455BEAC68DF638C9C212F76E9E"
+      "bytes": 68733,
+      "sha256": "BEE079C1CE9F0EA1C05C1D5552E7F2BF7382248234CF5B75B8ACA141DB9D07BC"
     },
     {
       "path": "SRC/neothd/src/config/reload.rs",
@@ -1003,8 +1003,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "bytes": 176106,
-      "sha256": "30CE85A95A04D53BA145F2F9D3E8B97A8E2FE08CB01CA287D948BEAE57F62F56"
+      "bytes": 176172,
+      "sha256": "2144957026FB0E657615A4B251C85A9C7301DD1D4A9B864DD8511576D64E33FD"
     },
     {
       "path": "SRC/neothd/src/mcp/config.rs",
@@ -1013,13 +1013,13 @@
     },
     {
       "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "bytes": 303970,
-      "sha256": "63EFCC93896CDDA719484188D72C52672BEDE9A652F19A1CB2DEF9F7BBF03262"
+      "bytes": 304205,
+      "sha256": "8EF0CE87862ED632049BAEDD83CED6B73886223F9F6F86C8452CA9EF84167050"
     },
     {
       "path": "SRC/neothd/src/mcp/gate.rs",
-      "bytes": 107355,
-      "sha256": "61724C97732D181F1D47D1D058A4088D8A0A12114454FAF67AAB900176B0F363"
+      "bytes": 107401,
+      "sha256": "1C3105F45DA803A723EF8E0C4D248766DE68B014D97823C3341EB575D6D2E5D5"
     },
     {
       "path": "SRC/neothd/src/mcp/goal_judge.rs",

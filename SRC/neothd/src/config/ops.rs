@@ -624,8 +624,10 @@ const MAX_CONFIGURED_MCP_PATH_READ_TOTAL_BYTES: usize = 4_096;
 /// allowlists, request binding, and cancellation remain responsible for whether
 /// a call may happen. `path_field` is deliberately fixed to `path`; retaining
 /// it in the persisted form makes an attempted future schema projection reject
-/// instead of being silently accepted.
+/// instead of being silently accepted. Unknown selector keys are rejected so a
+/// typo cannot silently default to the fixed `path` contract.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConfiguredMcpPathRead {
     pub server_id: String,
     pub tool: String,
@@ -675,7 +677,8 @@ impl ConfiguredMcpPathRead {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CodeMapConfig {
     /// Opt-in bounded sidecar for the exact generated `codegraph_outline`
-    /// MCP server. It never enables generic filesystem tools.
+    /// route and operator-selected configured providers. It never enables a
+    /// server, tool, or generic filesystem capability.
     #[serde(default)]
     pub outline_enrichment: bool,
     /// Exact configured-provider local-path projections eligible for the
@@ -1189,7 +1192,8 @@ impl CodeMapConfig {
             anyhow::ensure!(
                 self.enrichment_selectors[..index]
                     .iter()
-                    .all(|previous| previous.server_id != selector.server_id || previous.tool != selector.tool),
+                    .all(|previous| previous.server_id != selector.server_id
+                        || previous.tool != selector.tool),
                 "code_map.enrichment_selectors contains duplicate ({}, {})",
                 selector.server_id,
                 selector.tool,
