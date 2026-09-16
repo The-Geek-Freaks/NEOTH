@@ -315,7 +315,6 @@ pub(crate) fn check_codegraph_outline_enrichment(home: &Path) -> CheckOutcome {
             detail: "disabled by freedom.yaml — no outline enrichment readiness is expected and no SQLite database was opened".into(),
         };
     }
-
     let registry_path = home.join("mcp_servers.yaml");
     let servers = match crate::mcp::McpServers::load_from(&registry_path) {
         Ok(servers) => servers,
@@ -398,11 +397,20 @@ pub(crate) fn check_codegraph_outline_enrichment(home: &Path) -> CheckOutcome {
     } else {
         String::new()
     };
+    let selection = if config.code_map.enrichment_selectors.is_empty() {
+        "the existing built-in neoth-codegraph/codegraph_outline route".to_owned()
+    } else {
+        format!(
+            "the built-in route and {} exact configured ReadPath selector(s)",
+            config.code_map.enrichment_selectors.len(),
+        )
+    };
     CheckOutcome {
         name: NAME,
         status: CheckStatus::Pass,
         detail: format!(
-            "ready for a next eligible built-in codegraph_outline attempt across {} fresh complete managed root(s): {}{}; Doctor did not enrich a request",
+            "ready for a next eligible attempt through {} across {} fresh complete managed root(s): {}{}; Doctor did not enrich a request",
+            selection,
             ready.len(),
             ready.join(", "),
             suffix
@@ -1322,19 +1330,20 @@ pub(crate) const DOCS: &[CheckDoc] = &[
     },
     CheckDoc {
         name: "codegraph outline enrichment",
-        purpose: "Read-only readiness for the opt-in built-in `codegraph_outline` \
-                  sidecar. Doctor first accepts only the exact generated \
+        purpose: "Read-only readiness for the opt-in local `ReadPath` \
+                  sidecar. With only the master switch, Doctor assesses the existing built-in route; no selector is \
+                  required. Exact selectors add configured-provider routes. Doctor accepts only the exact generated \
                   `neoth-codegraph` registration, then inspects at most the eight \
                   configured managed roots using the existing lifecycle rules. A pass \
-                  means a future eligible built-in call can attempt enrichment; it \
+                  means a future eligible call can attempt enrichment; it \
                   does not claim any request was enriched.",
         common_failures: "The feature is disabled by default; freedom.yaml or \
                   mcp_servers.yaml is malformed; a custom/lookalike registration \
                   replaced the generated descriptor; the selected database is absent \
                   or corrupt; or every managed root is absent, incomplete, stale, or \
                   otherwise not fresh.",
-        fix: "Enable `code_map.outline_enrichment` only with the generated \
-              `neoth-codegraph` registration intact, then use the normal \
+        fix: "Enable `code_map.outline_enrichment` and keep the generated registration intact for the built-in route. \
+              Add an exact `ReadPath` selector only when a configured provider should receive a sidecar, then use the normal \
               `neoth code-map refresh <absolute-root>` lifecycle path until at least \
               one managed physical root is fresh and complete. Doctor never starts \
               codegraph-serve, calls tools/list, migrates, rebuilds, repairs, or \
@@ -1393,6 +1402,26 @@ mod omi_tests {
             serde_yaml::to_string(&config).expect("serialize outline fixture config"),
         )
         .expect("write outline fixture config");
+    }
+
+    fn write_enabled_configured_read_path_selector(home: &Path, root: &Path) {
+        write_enabled_outline_enrichment(home, root);
+        let config_path = home.join("freedom.yaml");
+        let mut config = serde_yaml::from_slice::<crate::config::FreedomConfig>(
+            &std::fs::read(&config_path).expect("read outline fixture config"),
+        )
+        .expect("deserialize outline fixture config");
+        config.code_map.enrichment_selectors = vec![crate::config::ConfiguredMcpPathRead {
+            server_id: "w95-doctor-configured-read".into(),
+            tool: "read_path".into(),
+            kind: crate::config::ConfiguredMcpPathReadKind::ReadPath,
+            path_field: "path".into(),
+        }];
+        std::fs::write(
+            config_path,
+            serde_yaml::to_string(&config).expect("serialize configured selector fixture config"),
+        )
+        .expect("write configured selector fixture config");
     }
 
     fn write_generated_outline_registration(home: &Path, database: &Path) {
@@ -1823,10 +1852,17 @@ mod omi_tests {
         write_generated_outline_registration(fresh_home.path(), &fresh_database);
         let fresh = check_codegraph_outline_enrichment(fresh_home.path());
         assert_eq!(fresh.status, CheckStatus::Pass, "{fresh:?}");
+        assert!(fresh.detail.contains("existing built-in neoth-codegraph/codegraph_outline route"));
         assert!(fresh.detail.contains("fresh complete managed root(s)"));
         assert!(fresh.detail.contains("index_generation="));
         assert!(fresh.detail.contains("Doctor did not enrich a request"));
         assert_valid_read_only_wal_artifacts(fresh_home.path());
+
+        write_enabled_configured_read_path_selector(fresh_home.path(), fresh_repository.path());
+        let selected = check_codegraph_outline_enrichment(fresh_home.path());
+        assert_eq!(selected.status, CheckStatus::Pass, "{selected:?}");
+        assert!(selected.detail.contains("1 exact configured ReadPath selector(s)"));
+        assert!(selected.detail.contains("built-in route"));
     }
 
     #[test]

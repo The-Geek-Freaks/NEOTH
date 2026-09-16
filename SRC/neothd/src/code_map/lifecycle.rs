@@ -682,7 +682,12 @@ fn receipt(
     }
 }
 
-fn root_identity_sha256(root: &CanonicalRepoRoot) -> String {
+/// Domain-separated UI-safe identity for a physical repository root.
+///
+/// Lifecycle receipts retain this digest instead of exposing the OS-backed raw
+/// identity. Other typed GUI receipts must compare this representation, not
+/// the raw identity they keep internally for persistence validation.
+pub fn root_identity_sha256(root: &CanonicalRepoRoot) -> String {
     let mut digest = Sha256::new();
     digest.update(b"neoth.code-map.root-identity.v1\0");
     digest.update(root.identity().as_str().as_bytes());

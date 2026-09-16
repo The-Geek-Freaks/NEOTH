@@ -1784,7 +1784,7 @@ const OUTLINE_ENRICHMENT_MAX_DEPTH: usize = 1;
 const OUTLINE_ENRICHMENT_MAX_NODES: usize = 24;
 
 #[derive(Clone)]
-pub(crate) struct BuiltinOutlineEnrichmentPlan {
+pub(crate) struct ConfiguredMcpPathReadEnrichmentPlan {
     context: crate::hooks::PreToolUseContext,
     database_path: PathBuf,
     root_identity: String,
@@ -1793,10 +1793,10 @@ pub(crate) struct BuiltinOutlineEnrichmentPlan {
     sidecar: String,
 }
 
-impl std::fmt::Debug for BuiltinOutlineEnrichmentPlan {
+impl std::fmt::Debug for ConfiguredMcpPathReadEnrichmentPlan {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("BuiltinOutlineEnrichmentPlan")
+            .debug_struct("ConfiguredMcpPathReadEnrichmentPlan")
             .field("database_path", &"<redacted>")
             .field("root_identity", &self.root_identity)
             .field("index_generation", &self.index_generation)
@@ -1805,16 +1805,43 @@ impl std::fmt::Debug for BuiltinOutlineEnrichmentPlan {
             .finish_non_exhaustive()
     }
 }
-pub(crate) fn prepare_builtin_outline_enrichment(
-    cfg: &McpServerConfig,
+/// Builds the W53 retrieval plan for its existing built-in outline route or
+/// one operator-pinned `path` projection. The selector does not grant an MCP
+/// permission and it never maps a remote path: the exact generated local
+/// codegraph descriptor remains a separate mandatory condition before its
+/// database is opened.
+pub(crate) fn prepare_configured_mcp_path_read_enrichment(
+    trusted_codegraph_cfg: Option<&McpServerConfig>,
     arguments: &serde_json::Value,
     context: &crate::hooks::PreToolUseContext,
     enabled: bool,
-) -> Result<Option<BuiltinOutlineEnrichmentPlan>> {
-    if !enabled || context.tool() != "codegraph_outline" {
+    selectors: &[crate::config::ConfiguredMcpPathRead],
+) -> Result<Option<ConfiguredMcpPathReadEnrichmentPlan>> {
+    if !enabled {
         return Ok(None);
     }
-    let Some(database_path) = trusted_generated_codegraph_database(cfg) else {
+    // W53 stays intact: its exact generated built-in outline is still selected
+    // by the existing master switch. W95 only adds an operator-pinned external
+    // pair; it cannot replace the built-in path or turn selectors into grants.
+    let builtin_outline = context.server() == "neoth-codegraph"
+        && context.tool() == "codegraph_outline"
+        && trusted_codegraph_cfg
+            .and_then(trusted_generated_codegraph_database)
+            .is_some();
+    let selector = selectors
+        .iter()
+        .find(|selector| selector.server_id == context.server() && selector.tool == context.tool());
+    if !builtin_outline && selector.is_none() {
+        return Ok(None);
+    }
+    if let Some(selector) = selector {
+        anyhow::ensure!(
+            matches!(selector.kind, crate::config::ConfiguredMcpPathReadKind::ReadPath)
+                && selector.path_field == "path",
+            "configured MCP ReadPath selector failed exact validated projection"
+        );
+    }
+    let Some(database_path) = trusted_codegraph_cfg.and_then(trusted_generated_codegraph_database) else {
         return Ok(None);
     };
     anyhow::ensure!(
@@ -1859,7 +1886,7 @@ pub(crate) fn prepare_builtin_outline_enrichment(
             max_nodes: OUTLINE_ENRICHMENT_MAX_NODES,
         },
     )?;
-    Ok(Some(BuiltinOutlineEnrichmentPlan {
+    Ok(Some(ConfiguredMcpPathReadEnrichmentPlan {
         context: context.clone(),
         database_path,
         root_identity: active.root.identity().as_str().to_owned(),
@@ -1871,11 +1898,12 @@ pub(crate) fn prepare_builtin_outline_enrichment(
             &impact,
             &gaps,
             context.call_id(),
+            selector.map(|selector| (selector.server_id.as_str(), selector.tool.as_str())),
         ),
     }))
 }
 
-impl BuiltinOutlineEnrichmentPlan {
+impl ConfiguredMcpPathReadEnrichmentPlan {
     pub(crate) fn still_fresh(&self) -> Option<crate::hooks::PreToolUseEnrichment> {
         if self.context.is_cancelled() || self.context.deadline_elapsed() {
             return None;
@@ -1935,14 +1963,21 @@ fn render_outline_enrichment(
     impact: &crate::code_map::impact::ImpactResult,
     gaps: &crate::code_map::test_coverage::ImpactTestGapResult,
     call_id: crate::hooks::PreToolUseCallId,
+    configured_selector: Option<(&str, &str)>,
 ) -> String {
     const LIMIT: usize = crate::hooks::pre_tool_use::MAX_PRE_TOOL_USE_ENRICHMENT_BYTES;
     const MARKER: &str = "sidecar_truncated: ";
     let body_limit = LIMIT.saturating_sub(MARKER.len() + "true\n".len());
-    let mut out = String::from("[untrusted built-in codegraph_outline sidecar]\n");
+    let mut out = match configured_selector {
+        Some(_) => String::from("[untrusted configured MCP ReadPath sidecar]\n"),
+        None => String::from("[untrusted built-in codegraph_outline sidecar]\n"),
+    };
     let mut truncated = false;
     for line in [
         format!("call_id: {:?}", call_id),
+        configured_selector
+            .map(|(server_id, tool)| format!("configured_mcp: server_id={server_id} tool={tool}"))
+            .unwrap_or_else(|| "configured_mcp: built_in=neoth-codegraph/codegraph_outline".to_owned()),
         format!("root_identity: {root_identity}"),
         format!("file: {relative}"),
         "snapshot: fresh_complete=true stale=false".to_owned(),

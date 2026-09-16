@@ -62,7 +62,7 @@ pub use impact::{
 pub use lifecycle::{
     CodeMapLifecycleReceipt, CodeMapLifecycleState, CodeMapLifecycleStatus, LifecycleCancellation,
     LifecycleGeneration, LifecycleRefreshOptions, RefreshCause, RefreshOutcome, inspect, reconcile,
-    refresh,
+    refresh, root_identity_sha256,
 };
 pub use lifecycle_config::{
     CodeMapLifecycleConfigApplyReceipt, CodeMapLifecycleConfigPatch,

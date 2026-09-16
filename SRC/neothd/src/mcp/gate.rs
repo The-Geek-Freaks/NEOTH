@@ -453,7 +453,8 @@ pub(crate) struct McpInvocationPreflight {
 /// the typed hook between authorization and a cold client spawn.
 pub(crate) struct AdmittedPreToolUse {
     enrichment: Option<crate::hooks::PreToolUseEnrichment>,
-    builtin_outline_plan: Option<crate::mcp::codegraph_server::BuiltinOutlineEnrichmentPlan>,
+    configured_path_read_plan:
+        Option<crate::mcp::codegraph_server::ConfiguredMcpPathReadEnrichmentPlan>,
     server_id: String,
     tool: String,
     request_binding_sha256: String,
@@ -983,7 +984,7 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
 
     let AdmittedPreToolUse {
         enrichment,
-        builtin_outline_plan,
+        configured_path_read_plan,
         ..
     } = pre_tool_use;
 
@@ -1000,10 +1001,10 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
         require_context_binding,
     )
     .await?;
-    let builtin_enrichment = (!response.result.is_error)
-        .then(|| builtin_outline_plan.and_then(|plan| plan.still_fresh()))
+    let configured_path_read_enrichment = (!response.result.is_error)
+        .then(|| configured_path_read_plan.and_then(|plan| plan.still_fresh()))
         .flatten();
-    if let Some(enrichment) = builtin_enrichment.as_ref() {
+    if let Some(enrichment) = configured_path_read_enrichment.as_ref() {
         response
             .result
             .content
@@ -1012,9 +1013,10 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
             });
     }
     if let Some(enrichment) = enrichment
-        && builtin_enrichment
-            .as_ref()
-            .is_none_or(|builtin| builtin.as_str() != enrichment.as_str())
+        && hook_sidecar_is_distinct_from_configured_path_read(
+            configured_path_read_enrichment.as_ref(),
+            &enrichment,
+        )
     {
         response
             .result
@@ -1026,8 +1028,19 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
     Ok(response)
 }
 
+/// W79 dedup is byte-exact. Provenance fields such as `call_id` deliberately
+/// make independently admitted sidecars distinct, even when their retrieval
+/// payloads otherwise match.
+fn hook_sidecar_is_distinct_from_configured_path_read(
+    configured: Option<&crate::hooks::PreToolUseEnrichment>,
+    hook: &crate::hooks::PreToolUseEnrichment,
+) -> bool {
+    configured.is_none_or(|sidecar| sidecar.as_str() != hook.as_str())
+}
+
 /// Test-only default-off wrapper for admission fixtures that do not exercise
-/// outline enrichment. Production callers use `admit_pre_tool_use_with_outline`.
+/// configured ReadPath enrichment. Production callers use
+/// `admit_pre_tool_use_with_configured_path_read`.
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)] // Keep the typed invocation and authorization bindings explicit.
 pub(crate) fn admit_pre_tool_use(
@@ -1042,9 +1055,10 @@ pub(crate) fn admit_pre_tool_use(
     cancellation: crate::hooks::PreToolUseCancellation,
     replay: crate::hooks::PreToolUseReplay,
 ) -> Result<AdmittedPreToolUse, GateError> {
-    admit_pre_tool_use_with_outline(
+    admit_pre_tool_use_with_configured_path_read(
         origin,
         cfg,
+        None,
         tool,
         arguments,
         instance_home,
@@ -1054,15 +1068,17 @@ pub(crate) fn admit_pre_tool_use(
         cancellation,
         replay,
         false,
+        &[],
     )
 }
 
-/// W53 outline-aware admission entrypoint. Production callers snapshot
-/// `FreedomConfig.code_map.outline_enrichment` for each invocation.
+/// W95 configured-ReadPath-aware admission entrypoint. Production callers
+/// snapshot both the master switch and selector vector once per invocation.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn admit_pre_tool_use_with_outline(
+pub(crate) fn admit_pre_tool_use_with_configured_path_read(
     origin: crate::hooks::PreToolUseOrigin,
     cfg: &McpServerConfig,
+    trusted_codegraph_cfg: Option<&McpServerConfig>,
     tool: &str,
     arguments: &Value,
     instance_home: &std::path::Path,
@@ -1072,6 +1088,7 @@ pub(crate) fn admit_pre_tool_use_with_outline(
     cancellation: crate::hooks::PreToolUseCancellation,
     replay: crate::hooks::PreToolUseReplay,
     outline_enrichment_enabled: bool,
+    enrichment_selectors: &[crate::config::ConfiguredMcpPathRead],
 ) -> Result<AdmittedPreToolUse, GateError> {
     let cwd = std::env::current_dir().map_err(|error| {
         GateError::PreToolUseContext(crate::hooks::PreToolUseContextError::CanonicalPath {
@@ -1091,28 +1108,29 @@ pub(crate) fn admit_pre_tool_use_with_outline(
         replay,
     )?;
     let native_plan = || {
-        crate::mcp::codegraph_server::prepare_builtin_outline_enrichment(
-            cfg,
+        crate::mcp::codegraph_server::prepare_configured_mcp_path_read_enrichment(
+            trusted_codegraph_cfg,
             arguments,
             &context,
             outline_enrichment_enabled,
+            enrichment_selectors,
         )
         .unwrap_or_else(|error| {
-            tracing::debug!(error = %error, server = %cfg.id, tool, "outline enrichment unavailable");
+            tracing::debug!(error = %error, server = %cfg.id, tool, "configured MCP ReadPath enrichment unavailable");
             None
         })
     };
     match crate::hooks::run_pre_tool_use(&context, hook_policy, once_guard) {
         crate::hooks::PreToolUseDisposition::Continue => Ok(AdmittedPreToolUse {
             enrichment: None,
-            builtin_outline_plan: native_plan(),
+            configured_path_read_plan: native_plan(),
             server_id: cfg.id.clone(),
             tool: tool.to_owned(),
             request_binding_sha256: request_binding_sha256.to_owned(),
         }),
         crate::hooks::PreToolUseDisposition::Enrich(enrichment) => Ok(AdmittedPreToolUse {
             enrichment: Some(enrichment),
-            builtin_outline_plan: native_plan(),
+            configured_path_read_plan: native_plan(),
             server_id: cfg.id.clone(),
             tool: tool.to_owned(),
             request_binding_sha256: request_binding_sha256.to_owned(),
@@ -1594,9 +1612,10 @@ mod tests {
             crate::hooks::PreToolUseOrigin::ProviderEmittedMcp,
             crate::hooks::PreToolUseOrigin::DirectCliMcp,
         ] {
-            let error = admit_pre_tool_use_with_outline(
+            let error = admit_pre_tool_use_with_configured_path_read(
                 origin,
                 &base_cfg(Some(vec!["read"])),
+                None,
                 "read",
                 &arguments,
                 home.path(),
@@ -1606,6 +1625,7 @@ mod tests {
                 crate::hooks::PreToolUseCancellation::unbound(),
                 crate::hooks::PreToolUseReplay::direct_request(),
                 true,
+                &[],
             )
             .err()
             .expect("block returns before call_tool_with_success_audit");
@@ -1647,6 +1667,31 @@ mod tests {
             smart_approve: true,
             autonomy_gate: None,
         }
+    }
+
+    #[test]
+    fn w79_exact_sidecar_dedup_requires_identical_provenance() {
+        let configured = crate::hooks::PreToolUseEnrichment::new(
+            "[untrusted configured MCP ReadPath sidecar]\ncall_id: PreToolUseCallId(2)\n".into(),
+        )
+        .expect("bounded configured sidecar");
+        let equal_hook = configured.clone();
+        let distinct_call_id = crate::hooks::PreToolUseEnrichment::new(
+            "[untrusted configured MCP ReadPath sidecar]\ncall_id: PreToolUseCallId(1)\n".into(),
+        )
+        .expect("bounded distinct sidecar");
+        assert!(
+            !hook_sidecar_is_distinct_from_configured_path_read(Some(&configured), &equal_hook),
+            "only identical full sidecars deduplicate"
+        );
+        assert!(
+            hook_sidecar_is_distinct_from_configured_path_read(Some(&configured), &distinct_call_id),
+            "different admission call IDs preserve both provenance-bound sidecars"
+        );
+        assert!(
+            hook_sidecar_is_distinct_from_configured_path_read(None, &equal_hook),
+            "an ordinary hook enrichment is retained when no configured sidecar exists"
+        );
     }
 
     /// Process-isolated half of the W53 native success fixture. Its cwd is
@@ -1700,9 +1745,10 @@ mod tests {
                 )
                 .await
                 .expect("authenticated full admission authorization");
-                let unconfigured_permit = admit_pre_tool_use_with_outline(
+                let unconfigured_permit = admit_pre_tool_use_with_configured_path_read(
                     crate::hooks::PreToolUseOrigin::DirectCliMcp,
                     &cfg,
+                    Some(&cfg),
                     tool,
                     &arguments,
                     &home,
@@ -1712,17 +1758,11 @@ mod tests {
                     crate::hooks::PreToolUseCancellation::unbound(),
                     crate::hooks::PreToolUseReplay::direct_request(),
                     true,
+                    &[],
                 )
                 .expect("admit production outline sidecar plan");
                 let configured_enrichment = std::env::var(W79_GATE_CONFIGURED_ENRICHMENT).ok();
                 let configured_body = match configured_enrichment.as_deref() {
-                    Some("matching") => unconfigured_permit
-                        .builtin_outline_plan
-                        .as_ref()
-                        .and_then(|plan| plan.still_fresh())
-                        .expect("fresh sealed outline plan for matching configured body")
-                        .as_str()
-                        .to_owned(),
                     Some("distinct") => "W79 configured enrichment remains distinct".to_owned(),
                     Some(other) => panic!("unknown W79 configured enrichment mode: {other}"),
                     None => String::new(),
@@ -1730,9 +1770,10 @@ mod tests {
                 let hooks = (!configured_body.is_empty())
                     .then(|| [pre_tool_replace(&configured_body)]);
                 let permit = if let Some(hooks) = hooks.as_ref() {
-                    admit_pre_tool_use_with_outline(
+                    admit_pre_tool_use_with_configured_path_read(
                         crate::hooks::PreToolUseOrigin::DirectCliMcp,
                         &cfg,
+                        Some(&cfg),
                         tool,
                         &arguments,
                         &home,
@@ -1742,6 +1783,7 @@ mod tests {
                         crate::hooks::PreToolUseCancellation::unbound(),
                         crate::hooks::PreToolUseReplay::direct_request(),
                         true,
+                        &[],
                     )
                     .expect("admit configured outline sidecar plan")
                 } else {
@@ -1836,7 +1878,6 @@ mod tests {
             .env(W53_GATE_CHILD, "1")
             .env(W53_GATE_DATABASE, &database)
             .env(W53_GATE_HOME, &home)
-            .env(W79_GATE_CONFIGURED_ENRICHMENT, "matching")
             .output()
             .expect("launch isolated W53 gate child");
         assert!(

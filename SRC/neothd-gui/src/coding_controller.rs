@@ -1173,7 +1173,29 @@ mod tests {
             worker_code_map_context.len()
         );
         assert!(!provenance.context_truncated);
-        assert_eq!(provenance.sources.len(), 1);
+        assert_eq!(
+            provenance.sources.len(),
+            receipts[0].sources.len(),
+            "worker provenance must retain every service-prepared source"
+        );
+        assert_eq!(
+            provenance.sources.len(),
+            2,
+            "the fixture's targeted recall and bounded repo summary are separate, same-snapshot sources"
+        );
+        for (provenance_source, receipt_source) in
+            provenance.sources.iter().zip(receipts[0].sources.iter())
+        {
+            assert_eq!(provenance_source.root_identity, receipt_source.root_identity);
+            assert_eq!(
+                provenance_source.index_generation,
+                receipt_source.index_generation
+            );
+            assert_eq!(
+                provenance_source.graph_generation,
+                receipt_source.graph_generation
+            );
+        }
         assert_eq!(provenance.sources[0].root_identity, source.root_identity);
         assert_eq!(
             provenance.sources[0].index_generation,

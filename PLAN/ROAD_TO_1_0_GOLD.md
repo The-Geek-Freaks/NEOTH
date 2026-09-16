@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W95/W96 configured reads and observed runtime repairs (2026-09-16):** the
+reviewed MCP extension selects exact configured local `ReadPath` calls using
+one accepted server/config snapshot, with default-off policy and preserved
+built-in outline behavior. Real direct-CLI/provider fixtures and the corrected
+legacy Doctor readiness path are admitted. Windows CI completed 16735 pass /
+7 fail / 22 skip; macOS completed 16789 pass / 10 fail / 23 skip. W96 addresses
+those observed channel identity fixtures, provenance-sensitive sidecar fixture,
+GUI source-count/Windows JSON assertions, the actual Buddy root-digest comparison
+bug and the macOS Nextest argument order. New-source execution remains pending
+GitHub gates. See the [W95/W96 report](../docs/gold-wave95-verification.md).
+Counts remain **1324/1015/307/2**, raw309/pre-tag308; local validation is suspended.
+
 **W93 strict harness lint and preview binding follow-up (2026-09-16):** Linux CI
 `35097577183` stopped before runtime on six strict-Clippy errors in the new custom
 GUI test entry. The reviewed fix uses a tail match and slice `contains`; one
@@ -1011,7 +1023,7 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   | CRG-02 structural blast radius | **NATIVE SERVICE + CLI/MCP WIRED / PRODUCT CONSUMERS PARTIAL** | `SRC/neothd/src/code_map/impact.rs`, `SRC/neothd/src/cli/code_map.rs`, `SRC/neothd/src/mcp/codegraph_server.rs`, `SRC/neothd/src/code_map/persist.rs` | **OPEN:** the generation-bound typed service, `neoth code-map impact` and seventh MCP tool are real; review/apply/decomposer/risk, config/reload, Doctor, GUI, Buddy and packaged clean-machine consumers remain. |
   | CRG-03 diff hunks to symbols | **RESEARCHED / FILE-LEVEL SUBSTRATE ONLY** | `SRC/neothd/src/code_map/risk.rs`, `SRC/neothd/src/code_map/symbols.rs`, `SRC/neothd/src/code_map/persist.rs` | **OPEN:** changed filenames exist; exact hunk ranges and durable symbol extents/intersection do not. |
   | CRG-04 `TestedBy` and test gaps | **FIRST TWO LEAVES VERIFIED** | `SRC/neothd/src/code_map/graph.rs`, `SRC/neothd/src/code_map/persist.rs` | **OPEN parent:** stable identities/migration and bounded impact-bound test discovery have root-owned green tests; consumers and product surfaces remain open. |
-  | CRG-05 tool-use enrichment | **BOUNDED BUILT-IN OUTLINE SLICE IMPLEMENTED / OPEN** | `SRC/neothd/src/hooks/stages.rs`, `SRC/neothd/src/cli/chat.rs`, `SRC/neothd/src/mcp/codegraph_server.rs` | **OPEN parent:** W53 proves the default-off `codegraph_outline` route with pre-tool admission, bound SQLite/authenticated-gate fixture and post-call freshness fences; generic native Read/Grep/Glob/Bash and other surfaces remain open. |
+  | CRG-05 tool-use enrichment | **BUILT-IN + CONFIGURED MCP READ SLICES / REMOTE ACCEPTANCE OPEN** | `SRC/neothd/src/hooks/stages.rs`, `SRC/neothd/src/cli/chat.rs`, `SRC/neothd/src/mcp/codegraph_server.rs` | **OPEN parent:** W53 covers the default-off built-in outline route; W95 adds exact configured MCP local ReadPath selection with same-snapshot descriptor and real CLI/provider fixtures. W95/W96 remote execution is pending; generic native Read/Grep/Glob/Bash and broader surfaces remain open. |
 
   **Shared native substrate and package boundary (real, but insufficient for
   leaf closure):**
@@ -1326,7 +1338,7 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
       stale/partial indexes and deterministic tie/order behavior.
 
   - [ ] **CRG-05 — per-tool codegraph enrichment:
-    BOUNDED BUILT-IN OUTLINE SLICE IMPLEMENTED / ENRICHMENT OPEN for v1.0.**
+    BUILT-IN AND CONFIGURED MCP READ SLICES / ENRICHMENT OPEN for v1.0.**
 
     - **Trigger ingestion:** W46 adds a distinct `HookStage::PreToolUse`
       and typed context/permit for MCP, provider-emitted and direct-CLI MCP
@@ -1353,7 +1365,12 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
       and package acceptance. No external Python hook/script is required by the
       implemented native route. W79 adds exact duplicate suppression between
       built-in and configured sidecars; its real-gate runtime acceptance is pending.
-      A wider typed enrichment selector remains open. Read/Grep/Glob/Bash hints
+      W95 adds a default-empty typed selector for an exact configured MCP
+      local ReadPath pair; direct CLI/provider real-call fixtures, reload and
+      legacy-preserving Doctor readiness are admitted with remote execution
+      pending. W96 corrects the observed W53 test's different-call-ID assumption
+      without weakening exact sidecar dedup. Wider native selectors and surface
+      acceptance remain open. Read/Grep/Glob/Bash hints
       in the coding router do not define a native provider executor or schema;
       direct operator CLI tools have separate OS/PTY gates and are not silently
       relabeled as provider tools.

@@ -37746,17 +37746,6 @@ mod w58_gui_callback_runtime_tests {
             3,
             "one decomposer, plan review, and actual ProviderWorker request"
         );
-        let serialized = serde_json::to_string(&requests).expect("serialize observed requests");
-        assert!(
-            serialized.contains(
-                &repository
-                    .canonicalize()
-                    .expect("canonical selected root")
-                    .display()
-                    .to_string()
-            ),
-            "selected root, never CWD/default home, reaches the real provider envelope"
-        );
         let worker_prompt = requests[2]["messages"]
             .as_array()
             .expect("worker messages")
@@ -37769,6 +37758,16 @@ mod w58_gui_callback_runtime_tests {
             .expect("actual ProviderWorker envelope");
         assert!(worker_prompt.contains("src/auth.rs") && worker_prompt.contains("verify_token"));
         let observed_context = worker_envelope_context(worker_prompt);
+        assert!(
+            observed_context.contains(
+                &repository
+                    .canonicalize()
+                    .expect("canonical selected root")
+                    .display()
+                    .to_string()
+            ),
+            "the decoded worker_code_map_context carries the selected root, never CWD/default home"
+        );
 
         let connection = neothd::memory::store::open(&home.path().join("views.db"))
             .expect("open real service database");
@@ -38060,8 +38059,8 @@ mod w58_gui_callback_runtime_tests {
             {
                 Ok(())
             }
-            [test_name, no_capture, exact]
-                if *no_capture == "--nocapture" && *exact == "--exact" =>
+            ["--exact", test_name, "--nocapture"]
+            | [test_name, "--nocapture", "--exact"] =>
             {
                 match *test_name {
                     "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness" => {

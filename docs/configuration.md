@@ -141,7 +141,8 @@ code_map:
   coding_callers_per_symbol: 3    # depth-one callers per symbol; 0..20
   coding_summary_token_budget: 2048 # generic repo-map summary; 128..12000
   requested_context_max_bfs_depth: 20 # explicit MCP callers/callees only; 1..20
-  outline_enrichment: false       # built-in codegraph outline sidecar; explicit opt-in
+  outline_enrichment: false       # master switch for the configured ReadPath sidecar
+  enrichment_selectors: []        # default: no MCP call is selected
   impact_policy:
     max_depth: 3                  # impact/default ceiling; 1..32
     max_nodes: 250                # impact/default ceiling; 1..10000
@@ -179,12 +180,34 @@ input guard remain in force. The targeted selection and generic summary share
 a 64-KiB rendered-context ceiling and bounded metadata storage; their receipt
 reports source selection limits and later decomposer truncation separately.
 
-`code_map.outline_enrichment` defaults to `false`. When explicitly enabled, it
-can add one bounded, untrusted sidecar only to an eligible built-in
-`codegraph_outline` request after its normal response. It does not enable a
-generic native file-read, Grep, or Bash enrichment path. After an accepted
-`neoth reload`, the next request resolves the accepted immutable configuration
-snapshot; an invocation already in progress keeps its own snapshot.
+`code_map.outline_enrichment` defaults to `false`, and
+`code_map.enrichment_selectors` defaults to an empty list. The existing W53
+built-in `neoth-codegraph`/`codegraph_outline` route remains governed by the
+master switch. A W95 configured-provider call additionally requires one exact,
+typed selector:
+
+```yaml
+code_map:
+  outline_enrichment: true
+  enrichment_selectors:
+    - server_id: workspace-reader
+      tool: read_path
+      kind: ReadPath
+      path_field: path
+```
+
+It pins the exact configured `(server_id, tool)` pair and accepts only one
+strict `{ path: string }` projection. The example is a configured external
+provider pair. A selector does not enable the server or tool, change its
+allowlist, trust a provider input schema, or grant filesystem authority. The
+generated local `neoth-codegraph` descriptor remains a separate requirement
+from the same accepted MCP configuration snapshot as the selected provider
+tool; remote MCP entries such as `hex-ssh` are never mapped to a local code-map
+root merely because they also contain a `path` argument. `Grep`,
+`Glob`, `Bash`, aliases, case-folded matching, and tool-name guessing are not
+configured variants. After an accepted `neoth reload`, the next request uses
+the accepted immutable snapshot; an invocation already in progress keeps its
+own snapshot.
 
 After an accepted reload, each daemon Chat or Channel message resolves a fresh
 configuration snapshot. A one-shot `neoth code` command resolves these limits

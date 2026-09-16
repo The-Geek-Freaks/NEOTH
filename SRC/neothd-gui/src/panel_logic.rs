@@ -386,7 +386,14 @@ pub fn code_map_impact_matches_lifecycle(
     !lifecycle_root.is_empty()
         && !lifecycle_identity.is_empty()
         && lifecycle_root == analysis.impact.root.display()
-        && lifecycle_identity == analysis.impact.root.identity().as_str()
+        && lifecycle_identity_matches_impact_root(lifecycle_identity, &analysis.impact.root)
+}
+
+fn lifecycle_identity_matches_impact_root(
+    lifecycle_identity: &str,
+    impact_root: &neothd::code_map::CanonicalRepoRoot,
+) -> bool {
+    lifecycle_identity == neothd::code_map::root_identity_sha256(impact_root)
 }
 
 pub fn present_code_map_impact(
@@ -7789,6 +7796,26 @@ pub fn parse_cron_jobs(json: &str) -> Vec<CronJobRow> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lifecycle_impact_identity_uses_the_redacted_digest_and_rejects_another_root() {
+        let selected = tempfile::tempdir().expect("create selected physical root");
+        let other = tempfile::tempdir().expect("create other physical root");
+        let selected = neothd::code_map::CanonicalRepoRoot::discover(selected.path())
+            .expect("discover selected physical root");
+        let other = neothd::code_map::CanonicalRepoRoot::discover(other.path())
+            .expect("discover other physical root");
+        let selected_digest = neothd::code_map::root_identity_sha256(&selected);
+
+        assert!(lifecycle_identity_matches_impact_root(
+            &selected_digest,
+            &selected
+        ));
+        assert!(
+            !lifecycle_identity_matches_impact_root(&selected_digest, &other),
+            "a lifecycle digest for one physical root must not admit another root"
+        );
+    }
 
     #[test]
     fn automatic_context_presentation_keeps_disabled_and_eligible_distinct() {

@@ -770,8 +770,9 @@ async fn run_call(
     // `neoth mcp call` is an explicit operator one-shot — no SmartApprove
     // (the operator is invoking the tool deliberately). Static policy and
     // confirmation resolution happen before the spawn closure is touched.
-    let result = match invoke_cli_call_with_spawner(
+    let result = match invoke_cli_call_with_spawner_and_trusted_codegraph_descriptor(
         cfg,
+        servers.get_enabled("neoth-codegraph"),
         tool,
         args,
         autonomy_policy.clone(),
@@ -869,6 +870,36 @@ async fn run_call(
     Ok(())
 }
 
+/// Production-only direct-CLI path: the selected call and the optional local
+/// codegraph descriptor both come from the same already-loaded `McpServers`
+/// snapshot. It never reloads the registry while a request is in flight.
+async fn invoke_cli_call_with_spawner_and_trusted_codegraph_descriptor<F, Fut>(
+    cfg: &crate::mcp::McpServerConfig,
+    trusted_codegraph_cfg: Option<&crate::mcp::McpServerConfig>,
+    tool: &str,
+    arguments: serde_json::Value,
+    policy: crate::permissions::AutonomyPolicySnapshot,
+    now_unix: i64,
+    spawn: F,
+) -> Result<ToolCallResult, GateError>
+where
+    F: FnOnce(crate::mcp::McpServerConfig) -> Fut,
+    Fut: std::future::Future<Output = Result<McpClient, McpError>>,
+{
+    let instance_home = crate::config::FreedomConfig::default_neoth_home();
+    invoke_cli_call_with_spawner_at_home_and_trusted_codegraph_descriptor(
+        cfg,
+        trusted_codegraph_cfg,
+        tool,
+        arguments,
+        policy,
+        now_unix,
+        &instance_home,
+        spawn,
+    )
+    .await
+}
+
 /// MCP encodes tool-level failures in a successful JSON-RPC response. Keep the
 /// structured result on stdout for automation, but make the process exit
 /// non-zero so GUI and shell callers cannot mistake `isError: true` for a
@@ -946,12 +977,78 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn invoke_cli_call_with_spawner_at_home_and_trusted_codegraph_descriptor<F, Fut>(
+    cfg: &crate::mcp::McpServerConfig,
+    trusted_codegraph_cfg: Option<&crate::mcp::McpServerConfig>,
+    tool: &str,
+    arguments: serde_json::Value,
+    policy: crate::permissions::AutonomyPolicySnapshot,
+    now_unix: i64,
+    instance_home: &std::path::Path,
+    spawn: F,
+) -> Result<ToolCallResult, GateError>
+where
+    F: FnOnce(crate::mcp::McpServerConfig) -> Fut,
+    Fut: std::future::Future<Output = Result<McpClient, McpError>>,
+{
+    let audit = RequiredPermissionAudit::open(instance_home, "mcp-call").map_err(GateError::Wal)?;
+    let result = invoke_cli_call_with_spawner_and_audit_sink_with_trusted_codegraph_descriptor(
+        cfg,
+        trusted_codegraph_cfg,
+        tool,
+        arguments,
+        policy,
+        now_unix,
+        crate::mcp::gate::McpAuditSink::from_permission_sink(audit.sink()),
+        instance_home,
+        spawn,
+    )
+    .await;
+    let finish = audit.finish().await.map_err(GateError::Wal);
+    match (result, finish) {
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Ok(result), Ok(())) => Ok(result),
+    }
+}
+
 /// The audit-aware core is deliberately injectable: production obtains its
 /// only sink from `RequiredPermissionAudit`, while tests exercise the exact
 /// home-WAL boundary without provider network access.
 #[allow(clippy::too_many_arguments)]
 async fn invoke_cli_call_with_spawner_and_audit_sink<F, Fut>(
     cfg: &crate::mcp::McpServerConfig,
+    tool: &str,
+    arguments: serde_json::Value,
+    policy: crate::permissions::AutonomyPolicySnapshot,
+    now_unix: i64,
+    sink: crate::mcp::gate::McpAuditSink<'_>,
+    instance_home: &std::path::Path,
+    spawn: F,
+) -> Result<ToolCallResult, GateError>
+where
+    F: FnOnce(crate::mcp::McpServerConfig) -> Fut,
+    Fut: std::future::Future<Output = Result<McpClient, McpError>>,
+{
+    invoke_cli_call_with_spawner_and_audit_sink_with_trusted_codegraph_descriptor(
+        cfg,
+        None,
+        tool,
+        arguments,
+        policy,
+        now_unix,
+        sink,
+        instance_home,
+        spawn,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn invoke_cli_call_with_spawner_and_audit_sink_with_trusted_codegraph_descriptor<F, Fut>(
+    cfg: &crate::mcp::McpServerConfig,
+    trusted_codegraph_cfg: Option<&crate::mcp::McpServerConfig>,
     tool: &str,
     arguments: serde_json::Value,
     policy: crate::permissions::AutonomyPolicySnapshot,
@@ -1031,9 +1128,11 @@ where
         })?;
     let once_guard = crate::hooks::SessionOnceGuard::new();
     let outline_enrichment_enabled = config.code_map.outline_enrichment;
-    let pre_tool_use = crate::mcp::gate::admit_pre_tool_use_with_outline(
+    let enrichment_selectors = &config.code_map.enrichment_selectors;
+    let pre_tool_use = crate::mcp::gate::admit_pre_tool_use_with_configured_path_read(
         crate::hooks::PreToolUseOrigin::DirectCliMcp,
         cfg,
+        trusted_codegraph_cfg,
         tool,
         &arguments,
         instance_home,
@@ -1043,6 +1142,7 @@ where
         crate::hooks::PreToolUseCancellation::unbound(),
         crate::hooks::PreToolUseReplay::direct_request(),
         outline_enrichment_enabled,
+        enrichment_selectors,
     )?;
     let mut client = spawn(cfg.clone()).await?;
     let require_context_binding = exact_generated_descriptor && direct_context_binding_tool(tool);
@@ -1338,6 +1438,120 @@ reason = "test block before external call"
         .expect("real CLI core uses fixture client");
         assert!(!result.is_error);
         assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
+    }
+
+    // One direct-CLI regression owns W95's actual configured-provider path.
+    // W53/W79 retain their native built-in gate fixtures. The selected provider
+    // and the trusted generated descriptor are both borrowed from `snapshot`.
+    #[test]
+    fn w95_direct_cli_configured_read_path_keeps_selected_results_and_same_snapshot_descriptor() {
+        let _env = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build W95 direct CLI runtime")
+            .block_on(async {
+                let home = tempfile::tempdir().expect("W95 direct CLI home");
+                let database = home.path().join("code-map.sqlite");
+                let root = home.path().join("canonical-root");
+                crate::mcp::codegraph_server::w59_seed_real_sqlite_root(&database, &root, "w95");
+                let database = database.canonicalize().expect("canonical W95 SQLite map");
+                let executable = std::env::current_exe()
+                    .expect("W95 executable")
+                    .canonicalize()
+                    .expect("canonical W95 executable");
+                let trusted = codegraph_server_config(&executable, Some(database));
+                let mut selected = trusted.clone();
+                selected.id = "w95-cli-read-fixture".into();
+                let snapshot = McpServers {
+                    smart_loading: true,
+                    servers: vec![trusted, selected],
+                };
+                let selected = snapshot
+                    .get_enabled("w95-cli-read-fixture")
+                    .expect("selected configured provider from the immutable snapshot");
+                let trusted = snapshot
+                    .get_enabled("neoth-codegraph")
+                    .expect("trusted generated descriptor from that immutable snapshot");
+                std::fs::write(
+                    home.path().join("freedom.yaml"),
+                    r#"
+code_map:
+  outline_enrichment: true
+  enrichment_selectors:
+    - server_id: w95-cli-read-fixture
+      tool: codegraph_outline
+      kind: ReadPath
+      path_field: path
+"#,
+                )
+                .expect("write W95 exact selector config");
+                let prior_cwd = std::env::current_dir().expect("capture W95 current directory");
+                struct RestoreCwd(std::path::PathBuf);
+                impl Drop for RestoreCwd {
+                    fn drop(&mut self) {
+                        std::env::set_current_dir(&self.0).expect("restore W95 current directory");
+                    }
+                }
+                std::env::set_current_dir(&root).expect("enter W95 canonical root");
+                let _restore_cwd = RestoreCwd(prior_cwd);
+                let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+                    crate::permissions::AutonomyLevel::Full,
+                )
+                .expect("Full policy authorizes W95 direct CLI fixture");
+
+                let selected_success = invoke_cli_call_with_spawner_and_audit_sink_with_trusted_codegraph_descriptor(
+                    selected,
+                    Some(trusted),
+                    "codegraph_outline",
+                    serde_json::json!({"path":"x.rs"}),
+                    policy.clone(),
+                    1_700_000_095,
+                    crate::mcp::gate::McpAuditSink::None,
+                    home.path(),
+                    |fixture| async move { McpClient::spawn(&fixture).await },
+                )
+                .await
+                .expect("exact selected ReadPath returns its ordinary result and sidecar");
+                assert!(!selected_success.is_error);
+                assert_eq!(selected_success.content.len(), 2);
+                assert!(matches!(&selected_success.content[0], crate::mcp::client::McpContent::Text { text } if text.contains("leaf_w95")));
+                assert!(matches!(&selected_success.content[1], crate::mcp::client::McpContent::Text { text } if text.contains("[untrusted configured MCP ReadPath sidecar]") && text.contains("file: x.rs")));
+
+                let unconfigured = invoke_cli_call_with_spawner_and_audit_sink_with_trusted_codegraph_descriptor(
+                    selected,
+                    Some(trusted),
+                    "codegraph_relevant_files",
+                    serde_json::json!({"prompt":"leaf_w95","limit":1}),
+                    policy.clone(),
+                    1_700_000_095,
+                    crate::mcp::gate::McpAuditSink::None,
+                    home.path(),
+                    |fixture| async move { McpClient::spawn(&fixture).await },
+                )
+                .await
+                .expect("unconfigured tool keeps its ordinary result");
+                assert!(!unconfigured.is_error);
+                assert_eq!(unconfigured.content.len(), 1);
+                assert!(!matches!(&unconfigured.content[0], crate::mcp::client::McpContent::Text { text } if text.contains("[untrusted configured MCP ReadPath sidecar]")));
+
+                let malformed = invoke_cli_call_with_spawner_and_audit_sink_with_trusted_codegraph_descriptor(
+                    selected,
+                    Some(trusted),
+                    "codegraph_outline",
+                    serde_json::json!({"path":7}),
+                    policy,
+                    1_700_000_095,
+                    crate::mcp::gate::McpAuditSink::None,
+                    home.path(),
+                    |fixture| async move { McpClient::spawn(&fixture).await },
+                )
+                .await
+                .expect("malformed selected arguments retain the child MCP error result");
+                assert!(malformed.is_error);
+                assert_eq!(malformed.content.len(), 1);
+                assert!(!matches!(&malformed.content[0], crate::mcp::client::McpContent::Text { text } if text.contains("[untrusted configured MCP ReadPath sidecar]")));
+            });
     }
 
     #[tokio::test]

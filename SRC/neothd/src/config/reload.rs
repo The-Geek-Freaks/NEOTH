@@ -1481,6 +1481,12 @@ mod tests {
         let mut changed = initial.clone();
         changed.code_map.auto_context_max_files = 5;
         changed.code_map.outline_enrichment = true;
+        changed.code_map.enrichment_selectors = vec![crate::config::ConfiguredMcpPathRead {
+            server_id: "neoth-codegraph".into(),
+            tool: "codegraph_outline".into(),
+            kind: crate::config::ConfiguredMcpPathReadKind::ReadPath,
+            path_field: "path".into(),
+        }];
         changed.code_map.coding_recall_max_files = 12;
         changed.code_map.coding_callers_per_symbol = 0;
         changed.code_map.coding_summary_token_budget = 4_096;
@@ -1501,6 +1507,7 @@ mod tests {
         let latest = ctrl.latest();
         assert_eq!(latest.code_map.auto_context_max_files, 5);
         assert!(latest.code_map.outline_enrichment);
+        assert_eq!(latest.code_map.enrichment_selectors.len(), 1);
         assert_eq!(latest.code_map.coding_recall_max_files, 12);
         assert_eq!(latest.code_map.coding_callers_per_symbol, 0);
         assert_eq!(latest.code_map.coding_summary_token_budget, 4_096);
@@ -1530,6 +1537,7 @@ mod tests {
         assert_eq!(ctrl.latest().code_map.coding_summary_token_budget, 2_048);
         assert_eq!(ctrl.latest().code_map.requested_context_max_bfs_depth, 20);
         assert!(!ctrl.latest().code_map.outline_enrichment);
+        assert!(ctrl.latest().code_map.enrichment_selectors.is_empty());
         assert_eq!(*generation.borrow(), 0);
 
         write_yaml(
@@ -1551,6 +1559,16 @@ mod tests {
             "zero BFS depth must not publish"
         );
         assert_eq!(ctrl.latest().code_map.requested_context_max_bfs_depth, 20);
+
+        write_yaml(
+            &ctrl.source_path,
+            "code_map:\n  enrichment_selectors:\n    - server_id: neoth-codegraph\n      tool: codegraph_outline\n      path_field: remote_path\n",
+        );
+        assert!(
+            ctrl.try_reload().is_err(),
+            "invalid ReadPath selector must not publish"
+        );
+        assert!(ctrl.latest().code_map.enrichment_selectors.is_empty());
         write_yaml(
             &ctrl.source_path,
             "code_map:\n  requested_context_max_bfs_depth: 21\n",

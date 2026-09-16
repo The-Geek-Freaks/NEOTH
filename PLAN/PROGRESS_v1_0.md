@@ -3,6 +3,18 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-16
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **W95/W96 configured reads and observed runtime repairs (2026-09-16):** the
+> reviewed MCP extension selects exact configured local `ReadPath` calls using
+> one accepted server/config snapshot, with default-off policy and preserved
+> built-in outline behavior. Real direct-CLI/provider fixtures and the corrected
+> legacy Doctor readiness path are admitted. Windows CI completed 16735 pass /
+> 7 fail / 22 skip; macOS completed 16789 pass / 10 fail / 23 skip. W96 addresses
+> those observed channel identity fixtures, provenance-sensitive sidecar fixture,
+> GUI source-count/Windows JSON assertions, the actual Buddy root-digest comparison
+> bug and the macOS Nextest argument order. New-source execution remains pending
+> GitHub gates. See the [W95/W96 report](../docs/gold-wave95-verification.md).
+> Counts remain **1324/1015/307/2**, raw309/pre-tag308; local validation is suspended.
+>
 > **W93 strict harness lint and preview binding follow-up (2026-09-16):** Linux CI
 > `35097577183` stopped before runtime on six strict-Clippy errors in the new custom
 > GUI test entry. The reviewed fix uses a tail match and slice `contains`; one

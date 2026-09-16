@@ -1139,7 +1139,8 @@ pub use features::{
 };
 pub use memory::{MemoryConfig, VectorBackend, VectorIndexConfig};
 pub use ops::{
-    AutoUpdateConfig, CodeMapConfig, CodeMapImpactPolicy, CodeMapLifecycleConfig, CodingConfig,
+    AutoUpdateConfig, CodeMapConfig, CodeMapImpactPolicy, CodeMapLifecycleConfig,
+    ConfiguredMcpPathRead, ConfiguredMcpPathReadKind, CodingConfig,
     CommunicationProfileConfig, CommunicationPromptExport, DoctorConfig, PluginsConfig,
     ProfileConfig, RefusalRecoveryConfig, ReleaseChannel, RequestedContextPolicy, SupervisorConfig,
     SupervisorKind, TaskEngineConfig, UpdaterConfig, WasmPluginsConfig,
@@ -2966,6 +2967,7 @@ mod code_map_config_tests {
 
         assert_eq!(config.code_map.auto_context_max_files, 0);
         assert!(!config.code_map.outline_enrichment);
+        assert!(config.code_map.enrichment_selectors.is_empty());
         assert_eq!(
             config.code_map.impact_policy,
             CodeMapImpactPolicy::default()
@@ -3016,6 +3018,7 @@ mod code_map_config_tests {
 
         let maximum = CodeMapConfig {
             outline_enrichment: true,
+            enrichment_selectors: Vec::new(),
             impact_policy: CodeMapImpactPolicy::default(),
             auto_context_max_files: 200,
             coding_recall_max_files: 50,
@@ -3045,6 +3048,33 @@ mod code_map_config_tests {
             policy.max_bfs_depth, 20,
             "caller row count is not BFS depth"
         );
+    }
+
+    #[test]
+    fn configured_mcp_read_path_selectors_are_exact_and_bounded() {
+        let config: FreedomConfig = serde_yaml::from_str(
+            "code_map:\n  outline_enrichment: true\n  enrichment_selectors:\n    - server_id: neoth-codegraph\n      tool: codegraph_outline\n      kind: ReadPath\n      path_field: path\n",
+        )
+        .expect("one exact ReadPath selector must deserialize");
+        assert!(config.code_map.outline_enrichment);
+        assert_eq!(config.code_map.enrichment_selectors.len(), 1);
+
+        for source in [
+            "code_map:\n  enrichment_selectors:\n    - server_id: neoth-codegraph\n      tool: codegraph_outline\n      kind: GrepPathPattern\n",
+            "code_map:\n  enrichment_selectors:\n    - server_id: neoth-codegraph\n      tool: codegraph_outline\n      path_field: remote_path\n",
+            "code_map:\n  enrichment_selectors:\n    - server_id: neoth-codegraph\n      tool: codegraph_outline\n    - server_id: neoth-codegraph\n      tool: codegraph_outline\n",
+        ] {
+            assert!(
+                serde_yaml::from_str::<FreedomConfig>(source).is_err(),
+                "invalid configured ReadPath selector unexpectedly deserialized: {source}"
+            );
+        }
+
+        let oversized = "x".repeat(129);
+        let source = format!(
+            "code_map:\n  enrichment_selectors:\n    - server_id: {oversized}\n      tool: codegraph_outline\n"
+        );
+        assert!(serde_yaml::from_str::<FreedomConfig>(&source).is_err());
     }
 
     #[test]

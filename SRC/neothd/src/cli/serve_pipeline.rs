@@ -6548,6 +6548,34 @@ mod tests {
         }
     }
 
+    fn views_conn_with_authenticated_inbound(
+        home: &std::path::Path,
+        binding: &AuthenticatedInboundBinding,
+        inbound: &InboundMessage,
+        human_uuid: &str,
+    ) -> Arc<tokio::sync::Mutex<rusqlite::Connection>> {
+        let conn = store::open(&home.join("views.db"))
+            .expect("open authenticated retained-channel views database");
+        conn.execute(
+            "INSERT INTO idx_human_identity (uuid, created_at_unix) VALUES (?1, 1)",
+            [human_uuid],
+        )
+        .expect("seed authenticated retained-channel human identity");
+        conn.execute(
+            "INSERT INTO idx_human_identity_aliases_v2 \
+             (uuid, channel, account_id, sender_id, chat_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                human_uuid,
+                binding.channel_ref.channel_id.as_str(),
+                binding.channel_ref.account_id.as_str(),
+                inbound.sender_id,
+                inbound.chat_id,
+            ],
+        )
+        .expect("seed account-qualified retained-channel operator identity");
+        Arc::new(tokio::sync::Mutex::new(conn))
+    }
+
     #[test]
     fn communication_subject_shares_only_the_proven_pinned_operator_profile() {
         let mut msg = inbound(Some("hi"), None);
@@ -8238,10 +8266,18 @@ mod tests {
                 config.channel_weights.operator_human_uuid =
                     Some("retained-channel-operator".to_owned());
                 let provider = Arc::new(RetainedChannelRetryProvider::default());
+                let inbound_binding = AuthenticatedInboundBinding::for_account(
+                    ChannelRef::default_account(ChannelId::Telegram),
+                );
+                let channel_inbound = inbound(Some("find retained_channel_marker"), None);
+                let views_conn = views_conn_with_authenticated_inbound(
+                    &home,
+                    &inbound_binding,
+                    &channel_inbound,
+                    "retained-channel-operator",
+                );
                 let handler = build_pipeline_handler(PipelineHandlerDeps {
-                    inbound_binding: AuthenticatedInboundBinding::for_account(
-                        ChannelRef::default_account(ChannelId::Telegram),
-                    ),
+                    inbound_binding,
                     provider: provider.clone(),
                     live_channel: None,
                     writer: writer.clone(),
@@ -8258,13 +8294,11 @@ mod tests {
                         config,
                         home.join("freedom.yaml"),
                     )),
-                    views_conn: None,
+                    views_conn: Some(views_conn),
                     views_executor: None,
                     confirm_bus: None,
                     abliterated_loader: None,
                 });
-                let mut channel_inbound = inbound(Some("find retained_channel_marker"), None);
-                channel_inbound.human_uuid = Some("retained-channel-operator".to_owned());
                 let outbound = handler(channel_inbound)
                     .await
                     .expect("channel handler accepts recovered provider reply")
@@ -8389,8 +8423,10 @@ mod tests {
             let (writer, writer_join) = crate::wal::spawn_for_home(wal_path.clone(), home.clone()).expect("spawn fallback channel WAL");
             let mut config = FreedomConfig::default(); config.autonomy = crate::permissions::AutonomyLevel::Full; config.council.disabled = Some(true); config.memory.recall_shortcut = false; config.code_map.auto_context_max_files = 1; config.refusal_recovery.enabled = true; config.refusal_recovery.max_attempts = 0; config.refusal_recovery.abliterated_fallback_enabled = true; config.refusal_recovery.abliterated_model = Some("fixture-channel-local-abliterated-model".to_owned()); config.refusal_recovery.teacher_escalation_enabled = false; config.channel_weights.operator_human_uuid = Some("retained-channel-fallback-operator".to_owned());
             let local_requests = Arc::new(std::sync::Mutex::new(Vec::new())); let loader = Arc::new(RetainedChannelFallbackLoader { local_requests: Arc::clone(&local_requests) }); let provider = Arc::new(RetainedChannelFallbackCloudProvider::default());
-            let handler = build_pipeline_handler(PipelineHandlerDeps { inbound_binding: AuthenticatedInboundBinding::for_account(ChannelRef::default_account(ChannelId::Telegram)), provider: provider.clone(), live_channel: None, writer: writer.clone(), operator_id: Some("retained-channel-fallback-operator".to_owned()), goal_max_turns: 1, meter: crate::providers::meter::Meter::with_default_window(), rate_limiter: Arc::new(crate::channels::rate_limit::RateLimiter::with_defaults()), segment_path: wal_path.clone(), neoth_home: home.clone(), profile_config: crate::config::ProfileConfig::default(), reload_controller: Arc::new(crate::config::reload::ReloadController::new(config, home.join("freedom.yaml"))), views_conn: None, views_executor: None, confirm_bus: None, abliterated_loader: Some(loader) });
-            let mut message = inbound(Some("find retained_channel_fallback_marker"), None); message.human_uuid = Some("retained-channel-fallback-operator".to_owned());
+            let inbound_binding = AuthenticatedInboundBinding::for_account(ChannelRef::default_account(ChannelId::Telegram));
+            let message = inbound(Some("find retained_channel_fallback_marker"), None);
+            let views_conn = views_conn_with_authenticated_inbound(&home, &inbound_binding, &message, "retained-channel-fallback-operator");
+            let handler = build_pipeline_handler(PipelineHandlerDeps { inbound_binding, provider: provider.clone(), live_channel: None, writer: writer.clone(), operator_id: Some("retained-channel-fallback-operator".to_owned()), goal_max_turns: 1, meter: crate::providers::meter::Meter::with_default_window(), rate_limiter: Arc::new(crate::channels::rate_limit::RateLimiter::with_defaults()), segment_path: wal_path.clone(), neoth_home: home.clone(), profile_config: crate::config::ProfileConfig::default(), reload_controller: Arc::new(crate::config::reload::ReloadController::new(config, home.join("freedom.yaml"))), views_conn: Some(views_conn), views_executor: None, confirm_bus: None, abliterated_loader: Some(loader) });
             let recovered = "recovered channel reply after local shadow and cloud continuation"; let outbound = handler(message).await.expect("fallback channel route completes").expect("fallback channel emits outbound"); assert_eq!(outbound.text, recovered);
             {
                 let requests = provider.requests.lock().expect("read fallback channel cloud requests");

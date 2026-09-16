@@ -614,12 +614,76 @@ impl Default for AutoUpdateConfig {
 /// policy. Lives on `FreedomConfig::code_map`. Independent from
 /// `CouncilConfig::max_calls_per_user_message` because code-map
 /// reads are local SQLite — no LLM cost — and need their own knob.
+const MAX_CONFIGURED_MCP_PATH_READ_SELECTORS: usize = 32;
+const MAX_CONFIGURED_MCP_PATH_READ_IDENTIFIER_BYTES: usize = 128;
+const MAX_CONFIGURED_MCP_PATH_READ_TOTAL_BYTES: usize = 4_096;
+
+/// The only externally-configured code-map sidecar projection in this slice.
+///
+/// This is selection data, not authority: `McpServerConfig` preflight,
+/// allowlists, request binding, and cancellation remain responsible for whether
+/// a call may happen. `path_field` is deliberately fixed to `path`; retaining
+/// it in the persisted form makes an attempted future schema projection reject
+/// instead of being silently accepted.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ConfiguredMcpPathRead {
+    pub server_id: String,
+    pub tool: String,
+    #[serde(default)]
+    pub kind: ConfiguredMcpPathReadKind,
+    #[serde(default = "default_configured_mcp_path_read_path_field")]
+    pub path_field: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub enum ConfiguredMcpPathReadKind {
+    #[default]
+    #[serde(rename = "ReadPath", alias = "read_path")]
+    ReadPath,
+}
+
+fn default_configured_mcp_path_read_path_field() -> String {
+    "path".to_owned()
+}
+
+impl ConfiguredMcpPathRead {
+    fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.server_id.is_empty()
+                && self.server_id.len() <= MAX_CONFIGURED_MCP_PATH_READ_IDENTIFIER_BYTES,
+            "code_map.enrichment_selectors server_id must contain 1..={} UTF-8 bytes",
+            MAX_CONFIGURED_MCP_PATH_READ_IDENTIFIER_BYTES,
+        );
+        anyhow::ensure!(
+            !self.tool.is_empty()
+                && self.tool.len() <= MAX_CONFIGURED_MCP_PATH_READ_IDENTIFIER_BYTES,
+            "code_map.enrichment_selectors tool must contain 1..={} UTF-8 bytes",
+            MAX_CONFIGURED_MCP_PATH_READ_IDENTIFIER_BYTES,
+        );
+        anyhow::ensure!(
+            matches!(self.kind, ConfiguredMcpPathReadKind::ReadPath),
+            "code_map.enrichment_selectors kind must be ReadPath",
+        );
+        anyhow::ensure!(
+            self.path_field == "path",
+            "code_map.enrichment_selectors path_field must be exactly `path`",
+        );
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CodeMapConfig {
     /// Opt-in bounded sidecar for the exact generated `codegraph_outline`
     /// MCP server. It never enables generic filesystem tools.
     #[serde(default)]
     pub outline_enrichment: bool,
+    /// Exact configured-provider local-path projections eligible for the
+    /// opt-in sidecar. The empty default selects no configured-provider call,
+    /// even while `outline_enrichment` is true; it does not disable W53's
+    /// existing generated built-in outline route.
+    #[serde(default)]
+    pub enrichment_selectors: Vec<ConfiguredMcpPathRead>,
     #[serde(default)]
     pub impact_policy: CodeMapImpactPolicy,
     /// Max files to surface in the auto-injected `<repo-context>`
@@ -1084,6 +1148,7 @@ impl Default for CodeMapConfig {
     fn default() -> Self {
         Self {
             outline_enrichment: false,
+            enrichment_selectors: Vec::new(),
             impact_policy: CodeMapImpactPolicy::default(),
             auto_context_max_files: default_auto_context_max_files(),
             coding_recall_max_files: default_coding_recall_max_files(),
@@ -1109,6 +1174,32 @@ impl CodeMapConfig {
     /// Reject invalid programmatically-built values that bypassed the
     /// YAML field deserializers. Call this before a caller performs IO.
     pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.enrichment_selectors.len() <= MAX_CONFIGURED_MCP_PATH_READ_SELECTORS,
+            "code_map.enrichment_selectors supports at most {} entries",
+            MAX_CONFIGURED_MCP_PATH_READ_SELECTORS,
+        );
+        let mut selector_bytes = 0usize;
+        for (index, selector) in self.enrichment_selectors.iter().enumerate() {
+            selector.validate()?;
+            selector_bytes = selector_bytes
+                .saturating_add(selector.server_id.len())
+                .saturating_add(selector.tool.len())
+                .saturating_add(selector.path_field.len());
+            anyhow::ensure!(
+                self.enrichment_selectors[..index]
+                    .iter()
+                    .all(|previous| previous.server_id != selector.server_id || previous.tool != selector.tool),
+                "code_map.enrichment_selectors contains duplicate ({}, {})",
+                selector.server_id,
+                selector.tool,
+            );
+        }
+        anyhow::ensure!(
+            selector_bytes <= MAX_CONFIGURED_MCP_PATH_READ_TOTAL_BYTES,
+            "code_map.enrichment_selectors exceeds {} total UTF-8 bytes",
+            MAX_CONFIGURED_MCP_PATH_READ_TOTAL_BYTES,
+        );
         if self.auto_context_max_files > 200 {
             anyhow::bail!("auto_context_max_files must be between 0 and 200");
         }

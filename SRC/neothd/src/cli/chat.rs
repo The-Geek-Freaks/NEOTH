@@ -5646,6 +5646,7 @@ pub(super) async fn dispatch_provider(
                         once_guard,
                         cancellation.pre_tool_use_cancellation(),
                         config.code_map.outline_enrichment,
+                        config.code_map.enrichment_selectors.clone(),
                         config.code_map.impact_policy,
                         config.code_map.requested_context_policy()?,
                     )
@@ -12931,6 +12932,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
     pre_tool_cancellation: crate::hooks::PreToolUseCancellation,
     // Immutable FreedomConfig snapshot selected by this provider turn.
     outline_enrichment_enabled: bool,
+    enrichment_selectors: Vec<crate::config::ConfiguredMcpPathRead>,
     impact_policy: crate::config::CodeMapImpactPolicy,
     requested_context_policy: crate::config::RequestedContextPolicy,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
@@ -13038,6 +13040,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         pre_tool_once_guard,
         pre_tool_cancellation,
         outline_enrichment_enabled,
+        enrichment_selectors,
         impact_policy,
         requested_context_policy,
     )

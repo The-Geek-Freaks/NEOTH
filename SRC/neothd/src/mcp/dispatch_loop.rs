@@ -231,6 +231,7 @@ where
         &pre_tool_once_guard,
         crate::hooks::PreToolUseCancellation::unbound(),
         false,
+        Vec::new(),
         crate::config::CodeMapImpactPolicy::default(),
         crate::config::CodeMapConfig::default()
             .requested_context_policy()
@@ -306,6 +307,7 @@ pub(crate) async fn run_tool_loop_with_budget<D, P>(
     // W53: immutable config snapshot owned by the outer request. Never reread
     // freedom.yaml inside a live provider loop.
     outline_enrichment_enabled: bool,
+    enrichment_selectors: Vec<crate::config::ConfiguredMcpPathRead>,
     impact_policy: crate::config::CodeMapImpactPolicy,
     // W59: accepted once at the outer turn boundary; never reload config in
     // the provider loop or in dispatch.
@@ -1100,7 +1102,7 @@ where
                 iteration_made_progress = true;
                 continue;
             }
-            match dispatch_one(
+            match dispatch_one_configured_path_read(
                 call,
                 servers,
                 policy,
@@ -1119,6 +1121,7 @@ where
                     replayed: response_was_harness_replay,
                 },
                 outline_enrichment_enabled,
+                &enrichment_selectors,
                 impact_policy,
                 requested_context_policy,
             )
@@ -2003,7 +2006,7 @@ struct DispatchedToolResult {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn dispatch_one<P: PolicyArgument + Copy>(
+async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
     call: &ParsedToolCall,
     servers: &McpServers,
     policy: P,
@@ -2020,6 +2023,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
     pre_tool_cancellation: crate::hooks::PreToolUseCancellation,
     pre_tool_replay: crate::hooks::PreToolUseReplay,
     outline_enrichment_enabled: bool,
+    enrichment_selectors: &[crate::config::ConfiguredMcpPathRead],
     impact_policy: crate::config::CodeMapImpactPolicy,
     requested_context_policy: crate::config::RequestedContextPolicy,
 ) -> std::result::Result<DispatchedToolResult, String> {
@@ -2068,9 +2072,10 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
     // catalogue spawn merely to discover that the caller rejected the tool.
     // The opaque permit remains single-use and is consumed only by the
     // subsequently authorized invocation below.
-    let pre_tool_use = crate::mcp::gate::admit_pre_tool_use_with_outline(
+    let pre_tool_use = crate::mcp::gate::admit_pre_tool_use_with_configured_path_read(
         crate::hooks::PreToolUseOrigin::ProviderEmittedMcp,
         base_cfg,
+        servers.get_enabled("neoth-codegraph"),
         &call.tool,
         &call.arguments,
         instance_home,
@@ -2080,6 +2085,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
         pre_tool_cancellation.clone(),
         pre_tool_replay,
         outline_enrichment_enabled,
+        enrichment_selectors,
     )
     .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
 
@@ -2223,6 +2229,51 @@ fn record_rpc_outcome(
         success,
     });
     is_error
+}
+
+/// Compatibility wrapper for test and narrow internal callers that intentionally
+/// exercise no configured selector. Production chat/channel paths call the
+/// snapshot-aware implementation above.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_one<P: PolicyArgument + Copy>(
+    call: &ParsedToolCall,
+    servers: &McpServers,
+    policy: P,
+    writer: Option<&WalWriterHandle>,
+    rollback_policy: Option<&crate::config::RollbackConfig>,
+    smart_approve: Option<&mut crate::mcp::smart_approve::SmartApproveSession>,
+    subject: Option<&str>,
+    turn_effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
+    instance_home: &std::path::Path,
+    pre_tool_hook_policy: crate::hooks::PreToolUseHookPolicy<'_>,
+    pre_tool_once_guard: &crate::hooks::SessionOnceGuard,
+    pre_tool_cancellation: crate::hooks::PreToolUseCancellation,
+    pre_tool_replay: crate::hooks::PreToolUseReplay,
+    outline_enrichment_enabled: bool,
+    impact_policy: crate::config::CodeMapImpactPolicy,
+    requested_context_policy: crate::config::RequestedContextPolicy,
+) -> std::result::Result<DispatchedToolResult, String> {
+    dispatch_one_configured_path_read(
+        call,
+        servers,
+        policy,
+        writer,
+        rollback_policy,
+        smart_approve,
+        subject,
+        turn_effect_gate,
+        instance_home,
+        pre_tool_hook_policy,
+        pre_tool_once_guard,
+        pre_tool_cancellation,
+        pre_tool_replay,
+        outline_enrichment_enabled,
+        &[],
+        impact_policy,
+        requested_context_policy,
+    )
+    .await
 }
 
 fn format_success(call: &ParsedToolCall, result: &crate::mcp::client::ToolCallResult) -> String {
@@ -3028,6 +3079,159 @@ mod tests {
             smart_approve: true,
             autonomy_gate: None,
         }
+    }
+
+    const W95_PROVIDER_LOOP_CHILD: &str = "NEOTH_W95_PROVIDER_LOOP_CHILD";
+    const W95_PROVIDER_LOOP_DATABASE: &str = "NEOTH_W95_PROVIDER_LOOP_DATABASE";
+    const W95_PROVIDER_LOOP_HOME: &str = "NEOTH_W95_PROVIDER_LOOP_HOME";
+
+    /// Runs under an outer process with the indexed fixture repository as its
+    /// cwd. The production admission path therefore resolves the real active
+    /// root without changing this test process's cwd.
+    #[test]
+    fn w95_configured_read_path_provider_loop_child() {
+        if std::env::var(W95_PROVIDER_LOOP_CHILD).as_deref() != Ok("1") {
+            return;
+        }
+        let database = std::path::PathBuf::from(
+            std::env::var(W95_PROVIDER_LOOP_DATABASE)
+                .expect("provider-loop child database path"),
+        );
+        let home = std::path::PathBuf::from(
+            std::env::var(W95_PROVIDER_LOOP_HOME).expect("provider-loop child home path"),
+        );
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("provider-loop child runtime")
+            .block_on(async move {
+                let trusted_codegraph = w56_generated_codegraph_config(&database);
+                let mut configured_read = trusted_codegraph.clone();
+                configured_read.id = "w95-provider-configured-read".into();
+                // This is the selected configured external call. It deliberately
+                // cannot become the trusted generated descriptor by identity.
+                configured_read.smart_approve = false;
+                let servers = McpServers {
+                    servers: vec![configured_read.clone(), trusted_codegraph.clone()],
+                    smart_loading: true,
+                };
+                let selectors = vec![crate::config::ConfiguredMcpPathRead {
+                    server_id: configured_read.id.clone(),
+                    tool: "codegraph_outline".into(),
+                    kind: crate::config::ConfiguredMcpPathReadKind::ReadPath,
+                    path_field: "path".into(),
+                }];
+                let first_reply = format!(
+                    "```mcp-tool-call\\n{}\\n```",
+                    serde_json::json!({
+                        "server": configured_read.id.clone(),
+                        "tool": "codegraph_outline",
+                        "arguments": {"path": "outline.rs"}
+                    })
+                );
+                let mut driver = ScriptedDriver::new(vec![
+                    first_reply.as_str(),
+                    "provider received the configured ReadPath result",
+                ]);
+                let mut compaction_budget = CompactionBudget::default();
+                let once = crate::hooks::SessionOnceGuard::new();
+                let outcome = run_tool_loop_with_budget(
+                    &mut driver,
+                    "inspect the indexed outline".into(),
+                    &servers,
+                    AutonomyLevel::Full,
+                    None,
+                    None,
+                    &McpToolScope::default(),
+                    4,
+                    &crate::config::SecurityPolicy::default(),
+                    None,
+                    crate::mcp::goal_tracker::GoalContext {
+                        goal: None,
+                        grind: None,
+                    },
+                    false,
+                    crate::context::compaction::CompactionPolicy::disabled(),
+                    None,
+                    None,
+                    &crate::cli::elicitation::ElicitationHandler::Disabled,
+                    &crate::config::tools::McpHarnessConfig::default(),
+                    &mut compaction_budget,
+                    None,
+                    None,
+                    &home,
+                    crate::hooks::PreToolUseHookPolicy::Configured(&[]),
+                    &once,
+                    crate::hooks::PreToolUseCancellation::unbound(),
+                    true,
+                    selectors,
+                    crate::config::CodeMapImpactPolicy::default(),
+                    crate::config::CodeMapConfig::default()
+                        .requested_context_policy()
+                        .expect("default requested context policy"),
+                )
+                .await
+                .expect("configured ReadPath provider-loop dispatch");
+
+                assert_eq!(outcome.iterations, 2);
+                assert_eq!(outcome.successful_calls, 1, "one actual tools/call");
+                assert_eq!(outcome.failed_calls, 0);
+                assert_eq!(outcome.tool_call_records.len(), 1);
+                assert_eq!(outcome.tool_call_records[0].server, "w95-provider-configured-read");
+                assert_eq!(outcome.tool_call_records[0].tool, "codegraph_outline");
+                assert!(outcome.tool_call_records[0].success);
+                assert_eq!(outcome.final_text, "provider received the configured ReadPath result");
+
+                let prompts = driver.seen_prompts.lock().expect("provider prompt capture");
+                assert_eq!(prompts.len(), 2, "one dispatched result reaches the next provider turn");
+                assert!(prompts[1].contains("outline_target"), "ordinary external result survives");
+                assert!(prompts[1].contains(
+                    "configured_mcp: server_id=w95-provider-configured-read tool=codegraph_outline"
+                ));
+                assert_eq!(
+                    prompts[1]
+                        .matches("[untrusted configured MCP ReadPath sidecar]")
+                        .count(),
+                    1,
+                    "the captured trusted descriptor contributes exactly one sidecar"
+                );
+            });
+    }
+
+    #[test]
+    fn w95_configured_read_path_provider_loop_uses_same_loaded_server_snapshot() {
+        let dir = tempfile::tempdir().expect("outer provider-loop fixture directory");
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).expect("outer provider-loop fixture repository");
+        std::fs::write(repo.join("outline.rs"), "pub fn outline_target() {}\\n")
+            .expect("outer provider-loop indexed source");
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo)
+            .expect("canonical outer provider-loop root");
+        let database = dir.path().join("code_map.db");
+        crate::code_map::rebuild_snapshot(&root, &database, Default::default())
+            .expect("publish complete outer provider-loop SQLite snapshot");
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).expect("outer provider-loop instance home");
+        let executable = std::env::current_exe()
+            .expect("current test executable")
+            .canonicalize()
+            .expect("canonical current test executable");
+        let output = std::process::Command::new(executable)
+            .current_dir(&repo)
+            .arg("--exact")
+            .arg("mcp::dispatch_loop::tests::w95_configured_read_path_provider_loop_child")
+            .arg("--nocapture")
+            .env_clear()
+            .env(W95_PROVIDER_LOOP_CHILD, "1")
+            .env(W95_PROVIDER_LOOP_DATABASE, &database)
+            .env(W95_PROVIDER_LOOP_HOME, &home)
+            .output()
+            .expect("launch isolated configured ReadPath provider-loop child");
+        assert!(
+            output.status.success(),
+            "isolated configured ReadPath provider-loop child failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
@@ -5440,6 +5644,7 @@ mod tests {
             &pre_tool_once_guard,
             crate::hooks::PreToolUseCancellation::unbound(),
             false,
+            Vec::new(),
             crate::config::CodeMapImpactPolicy::default(),
             crate::config::CodeMapConfig::default()
                 .requested_context_policy()
