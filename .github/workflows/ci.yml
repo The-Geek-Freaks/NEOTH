@@ -292,8 +292,8 @@ jobs:
           # execution independently bounded so a cold compile cannot consume
           # the suite's runtime budget.
           - os: macos-14
-            # Runs 34881450745 and 34892993263 timed out compiling at four jobs.
-            build_jobs: 2
+            # CI 35070262418 reached the 100-minute compile boundary under sustained paging; one job bounds the next experiment.
+            build_jobs: 1
             test_threads: 4
             junit_name: macos
             test_build_timeout_minutes: 100

@@ -3,6 +3,16 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-16
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **W87 measured macOS compile adjustment (2026-09-16):** full CI `35070262418`
+> reached its 100-minute macOS compile limit before tests. The observer recorded
+> 6,164.12 MiB peak swap and sustained paging; the interrupted cache saved
+> successfully. The next bounded attempt uses one Cargo build job while retaining
+> four test threads, all test selection, existing time limits and compatible
+> cache recovery. No OOM termination or compiler diagnostic is claimed. Current
+> runtime acceptance remains pending. See [the W87 report](../docs/gold-wave87-verification.md).
+> The W86 portable preview runs separately at `35080018852`. No local compilation
+> or checkbox closure; counts **1324/1015/307/2**, raw309/pre-tag308.
+>
 > **W86 remote preview feedback repair (2026-09-16):** preview `35069306601`
 > hit its 100-minute job deadline during compilation and produced no artifact.
 > The reviewed replacement uses preview-only optimization overrides, explicit

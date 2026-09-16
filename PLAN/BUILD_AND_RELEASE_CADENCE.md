@@ -148,12 +148,16 @@ cache. The execution step retains the platform's test-thread setting and adds
 
 Windows uses one Cargo build job and one test thread after the four-job build
 in CI `34881450745` exhausted the runner's memory before tests could start.
-macOS uses two Cargo build jobs and four test threads. This is a bounded
-concurrency experiment after runs `34881450745` and `34892993263` both exhausted
-the existing 100-minute compile limit at four jobs. Their logs contain no Rust
-diagnostic, explicit OOM report, or completed test result; they do not establish
-the underlying cause. The compile, execution and job deadlines stay unchanged,
-and the next full CI run must establish whether two build jobs complete.
+macOS uses one Cargo build job and four test threads. Runs `34881450745` and
+`34892993263` exhausted the existing 100-minute compile limit at four jobs.
+The measured two-job experiment, CI `35070262418`, again reached the 100-minute
+compile boundary before tests while the observer recorded a 6,164.12 MiB swap
+peak out of 7,168 MiB and sustained paging with active `rustc` processes. Its
+completed job log establishes neither an OOM termination nor a compiler
+diagnostic. One build job is therefore the next bounded concurrency experiment;
+the compile, execution and job deadlines stay unchanged. The compatible
+interrupted cache from that attempt remains a recovery input only: Cargo
+freshness is rechecked, and neither that cache nor this tuning is acceptance.
 Both platforms keep
 the existing pinned toolchain, locked dependency graph, `ci` profile, and full
 workspace coverage. The second invocation still checks Cargo freshness and
