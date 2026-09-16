@@ -1,0 +1,159 @@
+{
+  "schema": "neoth-preview-build-repair/v1",
+  "base": "69d9c15b43f925cac9ad6c7eb6974835462e20d7",
+  "recordedUtc": "2026-09-16T07:33:28.104693+00:00",
+  "status": "REVIEW_AND_LIGHT_CHECKS_PASS_REPLACEMENT_PREVIEW_PENDING",
+  "releaseReady": false,
+  "priorSourceManifest": {
+    "path": "docs/verification/gold-wave76-source-manifest.json",
+    "bytes": 48467,
+    "sha256": "9AB73E8FA33F2DFBB2E0F9C3CF17DED7A5C5BFF553EEEC862E1806FD6BBC4B16"
+  },
+  "changedInputs": [
+    {
+      "path": ".github/release-tools/test-release-isolation.py",
+      "bytes": 27857,
+      "sha256": "08608B852A26724AB2BA7001440CB203CEE76F3A6339D0338E88816E0A590A0C"
+    },
+    {
+      "path": ".github/workflows/preview-windows.yml",
+      "bytes": 7455,
+      "sha256": "66677961F73374D0A8C5E28E06E7399F508DD522B10409F8CCAEB7D931FF6C54"
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "bytes": 136384,
+      "sha256": "788752BEAB1C5D84FF23EB1CED7DC6D893E89AEE972531830C2F53A1E9AB8967"
+    },
+    {
+      "path": "packaging/tests/test_preview_windows_workflow_contract.py",
+      "bytes": 3890,
+      "sha256": "7A9E4A168A3D05F8462A87A9660FC8D7ECDC47C32F27B83EA0836341E53A8477"
+    },
+    {
+      "path": "packaging/tests/test_release_capability_contract.py",
+      "bytes": 11056,
+      "sha256": "4D5ED61175EE172C04F52B8EB2D1F9FCE1F11C07CD563C2557B3DD5D646719D2"
+    },
+    {
+      "path": "packaging/windows/smoke-installer.ps1",
+      "bytes": 46147,
+      "sha256": "869BAEA8D03493377E8590789CD6A3CF17C6FBF2F53036EC467247B037C1C2AF"
+    },
+    {
+      "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+      "bytes": 13468,
+      "sha256": "A00155FDC8946F864181A36C11F7791C3B5EA6C064BBE34CB017892913C0765D"
+    },
+    {
+      "path": "PLAN/PROGRESS_v1_0.md",
+      "bytes": 928478,
+      "sha256": "4D0808BA91D3141C531A728CEB93DB4544A7A9B71D4E1ADDAAC578C48F8CF3AE"
+    },
+    {
+      "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+      "bytes": 1521697,
+      "sha256": "5581CA694ED6D3BBCA213FFAD6B27AB4720F43C25AFDA9C59BF088EB98831D7F"
+    },
+    {
+      "path": "README.md",
+      "bytes": 35468,
+      "sha256": "0E612B4A62427C2B3F169ADDBACED55F19E26220DB1F6A0AD0183CA5DC24C7E7"
+    },
+    {
+      "path": "docs/channels.md",
+      "bytes": 39659,
+      "sha256": "603E7EBA7413F21C138D3F34F8524447BD5A1F6755F6DF7C501A4E20960651B1"
+    },
+    {
+      "path": "docs/getting-started.md",
+      "bytes": 10582,
+      "sha256": "751845CE160152F5A1F2EBC32756052949635EF7504B557D01FE4E9FC2C6B522"
+    },
+    {
+      "path": "docs/gold-wave76-verification.md",
+      "bytes": 4822,
+      "sha256": "4641182C045B5914D1834CDCAFF7FA241A414C1C172D28478D47B4FED66C8E8F"
+    },
+    {
+      "path": "docs/install.md",
+      "bytes": 13637,
+      "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
+    },
+    {
+      "path": "docs/troubleshooting.md",
+      "bytes": 6429,
+      "sha256": "FB69D3C6B39849F62FE83C8CEEB2D614077E812577B473F7C39E0E385A60C6BC"
+    }
+  ],
+  "review": {
+    "path": "work/gold-20260906/wave76-preview-msrv-review.md",
+    "bytes": 2433,
+    "sha256": "C2CA1F8A5CAC0E0FB7038707EA5D3E897FACCE927DAF2F1D3A4FEA7906019BBC"
+  },
+  "failedPreview": {
+    "runId": 35067944350,
+    "headSha": "69d9c15b43f925cac9ad6c7eb6974835462e20d7",
+    "url": "https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35067944350",
+    "failure": "Matrix 0.18 requires Rust 1.93; Rust 1.91 selection rejected before compilation",
+    "log": {
+      "path": "work/gold-20260906/wave76-preview-build-01-failure.log",
+      "bytes": 146941,
+      "sha256": "2CB59B5FCA86D7BB51D20D18550D1FCE541A507B43136C5E949F3109AD70DCC2"
+    }
+  },
+  "validation": {
+    "pythonPassed": 25,
+    "pythonFailed": 0,
+    "checks": [
+      {
+        "path": "work/gold-20260906/wave76-followup-test_preview_windows_workflow_contract.log",
+        "bytes": 106,
+        "sha256": "45F9EFF500276D5F54B97829BDFC267CE1D5C61DDC5C3C8B1B3B7817BE27C615",
+        "passed": 3,
+        "failed": 0
+      },
+      {
+        "path": "work/gold-20260906/wave76-followup-test_release_capability_contract.log",
+        "bytes": 110,
+        "sha256": "74B4BA017176ACA1AD04B0BAA4365C29C5CB8B5360E0020D520599DD351EEF97",
+        "passed": 7,
+        "failed": 0
+      },
+      {
+        "path": "work/gold-20260906/wave76-followup-test_release_gate_contract.log",
+        "bytes": 111,
+        "sha256": "6F4B69226E1DA006D05172474ADEC2D1085ECB4B09FB9F8EC664793BB37DB5F4",
+        "passed": 8,
+        "failed": 0
+      },
+      {
+        "path": "work/gold-20260906/wave76-followup-test_ci_cadence_contract.log",
+        "bytes": 110,
+        "sha256": "980D70E0B97B819FF7C7E2171D8605A09245F287CDA76FAB272F8C1E5DBEB0A6",
+        "passed": 7,
+        "failed": 0
+      },
+      {
+        "path": "work/gold-20260906/wave76-followup-test-release-isolation.log",
+        "bytes": 53,
+        "sha256": "5BA5097631DE6656745C7CD0ACF3BB277048DE81DA7EBB4CD371D63E79EF8774"
+      }
+    ],
+    "releaseIsolation": "PASS",
+    "installerPowerShellParseAndReservedAssignments": "PASS",
+    "reservedHomePriorSourceRegression": "REJECTED_AS_EXPECTED"
+  },
+  "nativeCi": {
+    "runId": 35067941794,
+    "headSha": "69d9c15b43f925cac9ad6c7eb6974835462e20d7",
+    "boundary": "Continues on unchanged SRC sources; no claim this parent run used a later packaging commit"
+  },
+  "buildContract": {
+    "releaseBundleRust": "1.93.0",
+    "defaultAndParserSignerRust": "1.91.0",
+    "previewCrt": "static-msvc-v1",
+    "sourceHead": "Explicit github.sha env for every preview Cargo invocation"
+  },
+  "hostConstraint": "No local Rust compilation; remote build required"
+}

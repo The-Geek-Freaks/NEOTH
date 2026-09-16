@@ -67,6 +67,8 @@
 > compatible signed release is published; `cargo install neoth --locked --features release-desktop`
 > becomes valid
 > only after the ordered SDK + core crates.io publication completes.
+> Default source builds require Rust 1.91; the Matrix-enabled `release-desktop`
+> and `release-server` bundles require Rust 1.93.
 > Until that first signed tag and publication, the `neothd` Rust-library API is
 > not frozen; daemon-internal modules may still be narrowed or removed. The
 > separately versioned `neoth-plugin-sdk` is the intended external extension

@@ -609,7 +609,8 @@ recorded as metadata-only gate events.
 ## Matrix
 
 Matrix is opt-in at build time because the adapter includes the Matrix E2EE and
-SQLite crypto-store stack:
+SQLite crypto-store stack. It requires Rust 1.93 (default builds that omit
+`matrix-channel` remain supported on Rust 1.91):
 
 ```bash
 cargo build -p neoth --features matrix-channel

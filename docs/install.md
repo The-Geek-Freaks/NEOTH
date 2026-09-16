@@ -6,6 +6,9 @@ public path is a source checkout. After publication, normal users should prefer
 the verified release installer; Rust users may use
 `cargo install neoth --locked --features release-desktop`.
 
+Default source builds require Rust 1.91. The Matrix-enabled `release-desktop`
+and `release-server` bundles require Rust 1.93.
+
 ## Install paths
 
 | Path | Best for |
@@ -206,6 +209,9 @@ only package-owned files. It never removes `~/.neoth`, the materialized NEOTH
 Wiki, or `User Overlays`.
 
 ## Path F: build from source
+
+This full desktop command set selects the Matrix-enabled `release-desktop`
+bundle and therefore requires Rust 1.93.
 
 ```bash
 git clone https://github.com/The-Geek-Freaks/NEOTH ~/.local/src/neoth

@@ -20,6 +20,9 @@ cd NEOTH
 NEOTH_SRC_DIR="$PWD" bash scripts/install.sh
 ```
 
+The full desktop source build needs Rust 1.93 or newer because its Matrix
+channel dependency requires it. Default-feature core builds retain Rust 1.91.
+
 The source-wide installer needs Node.js 22.16+ only to build the Keet
 standalone. Published desktop archives include it and need no Node.js.
 

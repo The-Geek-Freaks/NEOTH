@@ -435,16 +435,16 @@ function Invoke-InstalledCodeMapLifecycleSmoke {
 
     $executable = Join-Path $Directory 'neoth.exe'
     $fixture = Join-Path $root 'installed-code-map-lifecycle'
-    $home = Join-Path $fixture 'code-map-home'
+    $codeMapHome = Join-Path $fixture 'code-map-home'
     $repoA = Join-Path $fixture 'repo-a'
     $repoB = Join-Path $fixture 'repo-b'
-    $database = Join-Path $home 'code_map.db'
+    $database = Join-Path $codeMapHome 'code_map.db'
     $previousNeothHome = $env:NEOTH_HOME
     try {
-        New-Item -ItemType Directory -Path $home, $repoA, $repoB -Force | Out-Null
+        New-Item -ItemType Directory -Path $codeMapHome, $repoA, $repoB -Force | Out-Null
         Set-Content -LiteralPath (Join-Path $repoA 'fixture.rs') -Value 'fn stable() {}' -Encoding utf8
         Set-Content -LiteralPath (Join-Path $repoB 'other.rs') -Value 'fn isolated() {}' -Encoding utf8
-        $env:NEOTH_HOME = $home
+        $env:NEOTH_HOME = $codeMapHome
 
         $absent = Invoke-InstalledNeothJson -Executable $executable -Arguments @('--output', 'json', 'code-map', 'status', $repoA) -Label 'installed code-map absent status'
         if ($absent.Json.lifecycle.state.kind -ne 'absent' -or (Test-Path -LiteralPath $database)) {

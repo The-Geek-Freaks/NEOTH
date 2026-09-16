@@ -3,6 +3,16 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-16
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **W76 preview build repair (2026-09-16):** remote preview run `35067944350`
+> on `69d9c15b` failed before compilation because the locked Matrix 0.18 packages
+> require Rust 1.93. Only Matrix-containing release/preview build jobs move to
+> 1.93.0; default CI, release metadata parsing and signer stay at 1.91. The preview
+> now also sets static MSVC CRT linkage and its exact source commit at compile
+> time. The installed lifecycle helper uses a non-reserved PowerShell home
+> variable. Full CI `35067941794` continues on unchanged Rust sources at `69d9c15b`;
+> its Preflight and Code Quality passed. The replacement portable build and actual
+> artifact acceptance remain pending. No local heavy compilation or ROAD closure.
+>
 > **W76 CI repair and remote Windows preview (2026-09-16):** the first full
 > CI run on `669e38c0` failed Linux Clippy/test compilation: three private
 > `ProviderKind` paths, a private test constructor, two fixture lock scopes and

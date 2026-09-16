@@ -57,3 +57,25 @@ Heavy Rust compilation on this workstation remains suspended after repeated
 unexpected restarts. No new local Cargo build, test compilation, Clippy or
 linker ran for W76. Release readiness is false. ROAD counts remain
 1324 total / 1015 checked / 307 open / 2 partial (raw309, pre-tag308).
+
+## Preview build follow-up
+
+The first preview run, [35067944350](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35067944350),
+failed before compilation at commit `69d9c15b`: the locked optional Matrix 0.18
+family requires Rust 1.93. Both named release capability bundles select it.
+Release/preview build jobs now pin Rust 1.93.0 while default-feature CI, metadata
+parsing and the isolated signer retain 1.91. No dependency, lockfile or Rust
+product source changed. The release-isolation test still binds every job to its
+specific approved toolchain.
+
+The preview also now uses the release's static MSVC CRT flag and an explicit
+`NEOTH_SOURCE_HEAD` for all native binaries. Its provenance states the CRT mode;
+no self-knowledge hash is fabricated. The installed lifecycle smoke avoids the
+reserved PowerShell `$HOME` variable; its regression guard rejects that assignment.
+
+The original 281-file snapshot and pending matrix above remain historical W76
+admission evidence. The [follow-up record](verification/gold-wave76-preview-build-repair.json)
+binds these later packaging changes. Full CI run `35067941794` continues to test
+unchanged Rust sources on parent commit `69d9c15b`; a workflow-only push does not
+claim that this parent run used a later commit. Replacement preview build and
+portable runtime acceptance are still required.

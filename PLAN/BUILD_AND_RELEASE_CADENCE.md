@@ -23,8 +23,12 @@ The observer changes neither compile deadlines nor the workspace test graph.
 
 `.github/workflows/preview-windows.yml` is a manual GitHub-hosted x64 build for
 portable CLI/GUI acceptance while local compilation is suspended. It uses one
-Cargo job and the locked desktop release feature profile, then packages the
-native binaries, Keet companion, configuration examples and license notices.
+Cargo job and the locked desktop release feature profile on Rust 1.93.0, then
+packages the native binaries, Keet companion, configuration examples and license
+notices. Matrix 0.18 requires Rust 1.93, so the main release build matrix uses
+the same pin for both desktop and server feature bundles. Default-feature CI,
+metadata parsing and the isolated signer retain Rust 1.91. The preview sets
+static MSVC CRT linkage and the full source SHA for every native Cargo build.
 The artifact records the full source commit, each payload file SHA-256 and a
 separate ZIP checksum. It is unsigned and unreleased. It does not create a tag,
 GitHub Release, installer or release-bound self-knowledge snapshot. Its runtime

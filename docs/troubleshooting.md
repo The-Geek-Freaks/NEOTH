@@ -67,6 +67,15 @@ rustc --version    # verify 1.91+
 cargo build --release
 ```
 
+**Matrix or release bundle needs a newer Rust:** `matrix-channel`,
+`release-server`, and `release-desktop` require Rust 1.93 because of the
+Matrix SDK. Update Rust, then retry the same locked command:
+
+```
+rustup update stable
+rustc --version    # verify 1.93+
+```
+
 **Missing system dependencies (Linux):**
 
 ```

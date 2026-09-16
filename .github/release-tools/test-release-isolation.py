@@ -54,6 +54,12 @@ RUST_MSRV_PIN = (
     "        with:\n"
     f"          toolchain: '{RELEASE_RUST_VERSION}'"
 )
+RELEASE_BUILD_RUST_VERSION = "1.93.0"
+RELEASE_BUILD_RUST_PIN = (
+    f"{RUST_TOOLCHAIN_ACTION} # stable\n"
+    "        with:\n"
+    f"          toolchain: '{RELEASE_BUILD_RUST_VERSION}'"
+)
 DEPENDENCY_TABLES = {"dependencies", "dev-dependencies", "build-dependencies"}
 PATH_ATTRIBUTE = re.compile(r"#\s*\[[^\]]*\bpath\s*=", re.DOTALL)
 INCLUDE_MACRO = re.compile(
@@ -134,10 +140,18 @@ require(
     "workspace.package.rust-version is missing or invalid",
 )
 require(
-    TEXT.count(RUST_TOOLCHAIN_ACTION) == TEXT.count(RUST_MSRV_PIN),
-    "a SHA-pinned rust-toolchain action does not select the workspace MSRV "
-    f"({RELEASE_RUST_VERSION})",
+    job("build").count(RUST_TOOLCHAIN_ACTION) == 1
+    and job("build").count(RELEASE_BUILD_RUST_PIN) == 1,
+    "the release build matrix does not select Rust "
+    f"{RELEASE_BUILD_RUST_VERSION} for the Matrix-enabled release bundles",
 )
+for name, body in JOBS.items():
+    if name != "build":
+        require(
+            body.count(RUST_TOOLCHAIN_ACTION) == body.count(RUST_MSRV_PIN),
+            f"release job {name} does not select the workspace MSRV "
+            f"({RELEASE_RUST_VERSION})",
+        )
 
 # Guard the guards against the concrete source-escape forms this contract
 # exists to reject, including cfg_attr-based path indirection.
@@ -433,6 +447,11 @@ require("secrets.NEOTH_RELEASE_MINISIGN_SECRET" in minisign, "minisign secret is
 require("neoth release sign" not in minisign, "minisign job executes the product signer")
 require("tar xzf" not in minisign, "minisign job extracts a product archive")
 require("--version" not in minisign, "minisign job executes a product version probe")
+require(
+    build_signer.count(RUST_TOOLCHAIN_ACTION) == 1
+    and build_signer.count(RUST_MSRV_PIN) == 1,
+    "isolated signer must retain exactly one workspace-MSRV Rust setup",
+)
 require("persist-credentials: false" in build_signer, "signer-build checkout persists credentials")
 require("secrets." not in build_signer, "signer-build runner receives a secret")
 require("signer_sha256" in build_signer, "isolated signer transfer is not byte-bound")

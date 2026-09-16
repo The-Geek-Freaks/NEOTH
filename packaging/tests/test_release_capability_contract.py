@@ -149,6 +149,22 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
             cross,
         )
 
+    def test_matrix_enabled_release_bundles_use_their_required_rust_version(self) -> None:
+        features = self.manifest["features"]
+        matrix_sdk = self.manifest["dependencies"]["matrix-sdk"]
+        build_job = re.search(
+            r"(?ms)^  build:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+            self.workflow,
+        )
+
+        self.assertEqual(self.manifest["package"]["rust-version"], "1.91")
+        self.assertIn("matrix-channel", features["release-server"])
+        self.assertIn("release-server", features["release-desktop"])
+        self.assertEqual(matrix_sdk["version"], "0.18")
+        self.assertIs(matrix_sdk["optional"], True)
+        self.assertIsNotNone(build_job)
+        self.assertIn("toolchain: '1.93.0'", build_job.group("body"))
+
     def test_gui_embeds_the_desktop_release_bundle_everywhere(self) -> None:
         gui_features = self.gui_manifest["features"]
         core_dependency = self.gui_manifest["dependencies"]["neothd"]
@@ -197,7 +213,7 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
         self.assertIn("$process.StandardOutput.ReadToEndAsync()", smoke)
         self.assertIn("$process.StandardError.ReadToEndAsync()", smoke)
         self.assertIn("$process.Kill($true)", smoke)
-        self.assertIn("$env:NEOTH_HOME = $home", smoke)
+        self.assertIn("$env:NEOTH_HOME = $codeMapHome", smoke)
         self.assertIn("$env:NEOTH_HOME = $previousNeothHome", smoke)
         self.assertIn("Join-Path $Directory 'neoth.exe'", smoke)
         self.assertIn("'code-map', 'status', $repoA", smoke)
@@ -219,6 +235,8 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
         self.assertLess(smoke.index("Assert-Payload -Directory $ownedDirectory"), smoke.index(installed_call))
         self.assertLess(smoke.index(installed_call), smoke.index("Invoke-Uninstall -Directory $ownedDirectory"))
         helper = smoke[smoke.index("function Invoke-InstalledNeothJson"):smoke.index("function Assert-CodeMapGeneration")]
+        lifecycle_helper = smoke[smoke.index("function Invoke-InstalledCodeMapLifecycleSmoke"):smoke.index("function Get-InstalledReleaseFingerprint")]
+        self.assertIsNone(re.search(r"(?i)\$home\s*=", lifecycle_helper))
         self.assertNotIn("Start-Process", helper)
         self.assertNotIn("-ArgumentList $Arguments", helper)
         self.assertNotIn("neothd-gui.exe') `\n            -ArgumentList '--runtime-probe'", smoke[smoke.index("function Invoke-InstalledCodeMapLifecycleSmoke"):])
