@@ -8,6 +8,21 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W79/W80 outline deduplication and Buddy impact entry (2026-09-16):**
+The actual authenticated MCP response now suppresses a configured sidecar only
+when it exactly matches the freshly appended built-in outline sidecar. Distinct
+content, original response order, error/stale behavior and authorization stay
+unchanged. Buddy adds an `Analyze change impact` action through the existing
+read-only selected-root/Git analysis and receipt view. Real MCP/WAL and generated
+UI callback fixtures cover these paths; their runtime results remain pending.
+The three reviewed source owners pass focused rustfmt and GUI source lint.
+The cumulative manifest still covers 288 inputs and requires 47 native / 6 GUI
+identities in the next remote gate. Earlier CI `35070262418` has passed pinned
+Linux Clippy and doctests, but covers W77 sources only. Portable preview
+`35069306601` is an earlier source too. See
+[the W79/W80 report](../docs/gold-wave79-80-verification.md). No local heavy
+compilation or ROAD checkbox closure; counts **1324/1015/307/2**, raw309/pre-tag308.
+
 **W78 source-to-roadmap reconciliation (2026-09-16):** the current
 `389b5038` source already wires bounded hunk/symbol impact and calibrated
 observed-test evidence through CLI/MCP, Coding, Review and advisory Apply.
@@ -1158,7 +1173,10 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
       diff/ref/index-generation citations and visible partial/unmapped results.
       **Partial:** canonical service, CLI/MCP and explicit Coding/Review/Apply
       consumers exist. Current runtime acceptance and remaining structural-risk
-      and surface contracts are still open; see the W78 scope report.
+      and surface contracts are still open; see the W78 scope report. The normal
+      Coding GUI impact/test-evidence form and read-only Doctor analysis-readiness
+      probe already exist. W80 adds the missing Buddy entry to the same analysis;
+      generated-callback runtime, visual and package acceptance are still pending.
     - [ ] Add config/reload, stale-index lifecycle, Doctor, GUI diff-to-symbol
       inspection/progress/error state, Buddy explain/recompute and release
       packaging smoke tests.
@@ -1228,9 +1246,12 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
       disabled/invalid policy, registration and stale/fresh physical generations.
       This does not establish generic-tool parity or broader GUI/Buddy controls
       and package acceptance. No external Python hook/script is required by the
-      implemented native route. A wider native enrichment selector and exact
-      duplicate suppression between built-in and configured sidecars remain
-      concrete source gaps at the audited `389b5038` baseline.
+      implemented native route. W79 adds exact duplicate suppression between
+      built-in and configured sidecars; its real-gate runtime acceptance is pending.
+      A wider typed enrichment selector remains open. Read/Grep/Glob/Bash hints
+      in the coding router do not define a native provider executor or schema;
+      direct operator CLI tools have separate OS/PTY gates and are not silently
+      relabeled as provider tools.
     - [ ] Introduce one real typed `PreToolUse` boundary that every relevant
       native, MCP and provider-emitted tool execution crosses exactly once,
       carrying call id, tool kind, schema-validated input, canonical cwd/root,

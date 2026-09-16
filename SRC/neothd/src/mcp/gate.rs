@@ -1000,9 +1000,10 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
         require_context_binding,
     )
     .await?;
-    if !response.result.is_error
-        && let Some(enrichment) = builtin_outline_plan.and_then(|plan| plan.still_fresh())
-    {
+    let builtin_enrichment = (!response.result.is_error)
+        .then(|| builtin_outline_plan.and_then(|plan| plan.still_fresh()))
+        .flatten();
+    if let Some(enrichment) = builtin_enrichment.as_ref() {
         response
             .result
             .content
@@ -1010,7 +1011,11 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
                 text: enrichment.as_str().to_owned(),
             });
     }
-    if let Some(enrichment) = enrichment {
+    if let Some(enrichment) = enrichment
+        && builtin_enrichment
+            .as_ref()
+            .is_none_or(|builtin| builtin.as_str() != enrichment.as_str())
+    {
         response
             .result
             .content
@@ -1612,6 +1617,7 @@ mod tests {
     const W53_GATE_CHILD: &str = "NEOTH_W53_GATE_CHILD";
     const W53_GATE_DATABASE: &str = "NEOTH_W53_GATE_DATABASE";
     const W53_GATE_HOME: &str = "NEOTH_W53_GATE_HOME";
+    const W79_GATE_CONFIGURED_ENRICHMENT: &str = "NEOTH_W79_GATE_CONFIGURED_ENRICHMENT";
 
     fn w53_builtin_codegraph_config(database: &std::path::Path) -> McpServerConfig {
         McpServerConfig {
@@ -1694,7 +1700,7 @@ mod tests {
                 )
                 .await
                 .expect("authenticated full admission authorization");
-                let permit = admit_pre_tool_use_with_outline(
+                let unconfigured_permit = admit_pre_tool_use_with_outline(
                     crate::hooks::PreToolUseOrigin::DirectCliMcp,
                     &cfg,
                     tool,
@@ -1708,6 +1714,39 @@ mod tests {
                     true,
                 )
                 .expect("admit production outline sidecar plan");
+                let configured_enrichment = std::env::var(W79_GATE_CONFIGURED_ENRICHMENT).ok();
+                let configured_body = match configured_enrichment.as_deref() {
+                    Some("matching") => unconfigured_permit
+                        .builtin_outline_plan
+                        .as_ref()
+                        .and_then(|plan| plan.still_fresh())
+                        .expect("fresh sealed outline plan for matching configured body")
+                        .as_str()
+                        .to_owned(),
+                    Some("distinct") => "W79 configured enrichment remains distinct".to_owned(),
+                    Some(other) => panic!("unknown W79 configured enrichment mode: {other}"),
+                    None => String::new(),
+                };
+                let hooks = (!configured_body.is_empty())
+                    .then(|| [pre_tool_replace(&configured_body)]);
+                let permit = if let Some(hooks) = hooks.as_ref() {
+                    admit_pre_tool_use_with_outline(
+                        crate::hooks::PreToolUseOrigin::DirectCliMcp,
+                        &cfg,
+                        tool,
+                        &arguments,
+                        &home,
+                        &binding,
+                        crate::hooks::PreToolUseHookPolicy::Configured(hooks),
+                        &crate::hooks::SessionOnceGuard::new(),
+                        crate::hooks::PreToolUseCancellation::unbound(),
+                        crate::hooks::PreToolUseReplay::direct_request(),
+                        true,
+                    )
+                    .expect("admit configured outline sidecar plan")
+                } else {
+                    unconfigured_permit
+                };
                 let executable = std::env::current_exe()
                     .expect("current test executable")
                     .canonicalize()
@@ -1741,7 +1780,15 @@ mod tests {
                 .await
                 .expect("real codegraph outline invocation");
                 assert!(!result.is_error, "ordinary outline result must succeed: {result:?}");
-                assert_eq!(result.content.len(), 2, "ordinary outline plus exactly one sidecar: {result:?}");
+                assert_eq!(
+                    result.content.len(),
+                    if configured_enrichment.as_deref() == Some("distinct") {
+                        3
+                    } else {
+                        2
+                    },
+                    "ordinary outline plus configured/built-in sidecars: {result:?}"
+                );
                 assert!(
                     matches!(&result.content[0], McpContent::Text { text } if text.contains("outline_target")),
                     "first result must be the ordinary outline for the original path: {result:?}"
@@ -1750,6 +1797,12 @@ mod tests {
                     matches!(&result.content[1], McpContent::Text { text } if text.contains("[untrusted built-in codegraph_outline sidecar]") && text.contains("file: outline.rs")),
                     "second result must be the generated sidecar: {result:?}"
                 );
+                if configured_enrichment.as_deref() == Some("distinct") {
+                    assert!(
+                        matches!(&result.content[2], McpContent::Text { text } if text == "W79 configured enrichment remains distinct"),
+                        "distinct configured enrichment must remain after the built-in sidecar: {result:?}"
+                    );
+                }
                 drop(client);
                 drop(writer);
                 writer_join.await.expect("flush authenticated gate child WAL");
@@ -1783,6 +1836,7 @@ mod tests {
             .env(W53_GATE_CHILD, "1")
             .env(W53_GATE_DATABASE, &database)
             .env(W53_GATE_HOME, &home)
+            .env(W79_GATE_CONFIGURED_ENRICHMENT, "matching")
             .output()
             .expect("launch isolated W53 gate child");
         assert!(
@@ -1840,6 +1894,43 @@ mod tests {
         assert_eq!(called[0]["server_id"].as_str(), Some("neoth-codegraph"));
         assert_eq!(called[0]["tool"].as_str(), Some("codegraph_outline"));
         assert_eq!(called[0]["is_error"].as_bool(), Some(false));
+    }
+
+    #[test]
+    fn w79_outline_enrichment_real_gate_retains_distinct_configured_sidecar() {
+        let dir = tempfile::tempdir().expect("outer W79 distinct fixture directory");
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).expect("outer W79 distinct fixture repository");
+        std::fs::write(repo.join("outline.rs"), "pub fn outline_target() {}\n")
+            .expect("outer W79 indexed source");
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo)
+            .expect("canonical outer W79 fixture root");
+        let database = dir.path().join("code_map.db");
+        crate::code_map::rebuild_snapshot(&root, &database, Default::default())
+            .expect("publish complete outer W79 SQLite snapshot");
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).expect("outer W79 instance home");
+        let executable = std::env::current_exe()
+            .expect("current test executable")
+            .canonicalize()
+            .expect("canonical current test executable");
+        let output = std::process::Command::new(executable)
+            .current_dir(&repo)
+            .arg("--exact")
+            .arg("mcp::gate::tests::w53_outline_enrichment_gate_child")
+            .arg("--nocapture")
+            .env_clear()
+            .env(W53_GATE_CHILD, "1")
+            .env(W53_GATE_DATABASE, &database)
+            .env(W53_GATE_HOME, &home)
+            .env(W79_GATE_CONFIGURED_ENRICHMENT, "distinct")
+            .output()
+            .expect("launch isolated W79 distinct gate child");
+        assert!(
+            output.status.success(),
+            "isolated W79 distinct gate child failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     fn pre_tool_replace(template: &str) -> crate::hooks::schema::HookDef {

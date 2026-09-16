@@ -1410,6 +1410,7 @@ export component MainWindow inherits Window {
     callback buddy-code-map-setup;
     callback buddy-code-map-rebuild;
     callback buddy-code-map-cancel;
+    callback buddy-code-map-impact;
     in-out property <string> native-coding-prompt: "";
     in-out property <string> native-coding-source-channel: "gui";
     in-out property <bool> native-coding-no-assign: false;
@@ -5207,7 +5208,7 @@ export component MainWindow inherits Window {
     if root.buddy-menu-open: ContextMenu {
         width: 100%; height: 100%;
         menu-x: root.width - 250px;
-        menu-y: root.height - 510px;
+        menu-y: root.height - 560px;
         items: [
             { label: "Open chat", glyph: "💬", danger: false },
             { label: "Minimize to companion", glyph: "⊟", danger: false },
@@ -5219,6 +5220,7 @@ export component MainWindow inherits Window {
             { label: root.code-map-lifecycle-refresh-active ? "Cancel index refresh" : "No index refresh active", glyph: "×", danger: root.code-map-lifecycle-refresh-active },
             { label: root.native-coding-running ? "Coding run is active" : root.native-coding-prompt == "" ? "Enter a coding prompt first" : root.code-map-root == "" ? "Select a repository root first" : "Start coding run", glyph: "⌁", danger: false },
             { label: root.native-coding-running ? "Cancel coding run" : "No coding run active", glyph: "×", danger: root.native-coding-running },
+            { label: root.code-map-root == "" ? "Select a repository root first" : "Analyze change impact", glyph: "⌕", danger: false },
         ];
         picked(i) => {
             root.buddy-menu-open = false;
@@ -5236,6 +5238,7 @@ export component MainWindow inherits Window {
             if (i == 7) { root.buddy-code-map-cancel(); }
             if (i == 8) { root.buddy-native-coding-start(); }
             if (i == 9) { root.buddy-native-coding-cancel(); }
+            if (i == 10) { root.buddy-code-map-impact(); }
         }
         dismissed => { root.buddy-menu-open = false; }
     }

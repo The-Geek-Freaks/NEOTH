@@ -3,6 +3,21 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-16
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **W79/W80 outline deduplication and Buddy impact entry (2026-09-16):**
+> The actual authenticated MCP response now suppresses a configured sidecar only
+> when it exactly matches the freshly appended built-in outline sidecar. Distinct
+> content, original response order, error/stale behavior and authorization stay
+> unchanged. Buddy adds an `Analyze change impact` action through the existing
+> read-only selected-root/Git analysis and receipt view. Real MCP/WAL and generated
+> UI callback fixtures cover these paths; their runtime results remain pending.
+> The three reviewed source owners pass focused rustfmt and GUI source lint.
+> The cumulative manifest still covers 288 inputs and requires 47 native / 6 GUI
+> identities in the next remote gate. Earlier CI `35070262418` has passed pinned
+> Linux Clippy and doctests, but covers W77 sources only. Portable preview
+> `35069306601` is an earlier source too. See
+> [the W79/W80 report](../docs/gold-wave79-80-verification.md). No local heavy
+> compilation or ROAD checkbox closure; counts **1324/1015/307/2**, raw309/pre-tag308.
+>
 > **W78 source-to-roadmap reconciliation (2026-09-16):** the current
 > `389b5038` source already wires bounded hunk/symbol impact and calibrated
 > observed-test evidence through CLI/MCP, Coding, Review and advisory Apply.

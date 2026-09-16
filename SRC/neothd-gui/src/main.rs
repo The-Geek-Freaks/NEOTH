@@ -14008,6 +14008,10 @@ fn main() -> Result<()> {
             std::sync::Arc::clone(&buddy_cancel_controller),
         );
     });
+    register_buddy_code_map_impact_callback(
+        &window,
+        std::sync::Arc::clone(&code_map_impact_controller),
+    );
 
     // Native Coding service callbacks. Settings and Buddy use this exact
     // controller; the GUI supplies explicit operator intent only.
@@ -20169,6 +20173,29 @@ fn register_buddy_code_map_status_callback(
             weak_buddy_code_map_status.clone(),
             std::sync::Arc::clone(&controller),
             window.get_code_map_root().to_string(),
+        );
+    });
+}
+
+/// Registers the Buddy entrypoint for the existing read-only Coding impact
+/// analysis. The generated callback only forwards the current form selection.
+fn register_buddy_code_map_impact_callback(
+    window: &MainWindow,
+    controller: std::sync::Arc<code_map_impact_controller::CodeMapImpactController>,
+) {
+    let weak = window.as_weak();
+    window.on_buddy_code_map_impact(move || {
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        window.set_nav_active("coding".into());
+        start_code_map_impact_analysis(
+            weak.clone(),
+            std::sync::Arc::clone(&controller),
+            window.get_code_map_root().to_string(),
+            window.get_code_map_impact_source_index(),
+            window.get_code_map_impact_base().to_string(),
+            window.get_code_map_impact_target().to_string(),
         );
     });
 }
@@ -36925,17 +36952,18 @@ mod w58_gui_callback_runtime_tests {
     };
 
     use sha2::{Digest, Sha256};
-    use slint::ComponentHandle as _;
+    use slint::{ComponentHandle as _, Model as _};
     use tempfile::TempDir;
 
     use super::{
         CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION, CODE_MAP_ROOT_SELECTION_REVISION, MainWindow,
         NATIVE_CODING_UI_REVISION,
         code_map_controller::{AutomaticContextPresentationController, CodeMapLifecycleController},
+        code_map_impact_controller::CodeMapImpactController,
         coding_controller::CodingController,
-        native_coding_terminal_bridge_accepts, register_buddy_code_map_status_callback,
-        register_buddy_native_coding_callbacks, start_code_map_lifecycle_config_apply,
-        start_code_map_lifecycle_refresh,
+        native_coding_terminal_bridge_accepts, register_buddy_code_map_impact_callback,
+        register_buddy_code_map_status_callback, register_buddy_native_coding_callbacks,
+        start_code_map_lifecycle_config_apply, start_code_map_lifecycle_refresh,
     };
 
     static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -37005,6 +37033,44 @@ mod w58_gui_callback_runtime_tests {
             window.get_code_map_lifecycle_config_status(),
             window.get_code_map_lifecycle_config_running(),
             window.get_code_map_lifecycle_runtime(),
+        );
+    }
+
+    fn pump_until_impact_receipt(window: &MainWindow) {
+        let completed = Rc::new(Cell::new(false));
+        let ticks = Rc::new(Cell::new(0_u16));
+        let observed_completed = completed.clone();
+        let observed_ticks = ticks.clone();
+        let weak = window.as_weak();
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                let Some(window) = weak.upgrade() else {
+                    let _ = slint::quit_event_loop();
+                    return;
+                };
+                if window.get_code_map_impact_has_receipt() {
+                    observed_completed.set(true);
+                    let _ = slint::quit_event_loop();
+                    return;
+                }
+                let next_tick = observed_ticks.get().saturating_add(1);
+                observed_ticks.set(next_tick);
+                if next_tick >= 500 {
+                    let _ = slint::quit_event_loop();
+                }
+            },
+        );
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("run bounded Slint impact callback event loop");
+        drop(timer);
+        assert!(
+            completed.get(),
+            "timed out waiting for Buddy impact receipt: state={}; detail={}",
+            window.get_code_map_impact_state(),
+            window.get_code_map_impact_detail(),
         );
     }
 
@@ -37193,6 +37259,118 @@ mod w58_gui_callback_runtime_tests {
             "existing index setup, refresh, or repair action",
         );
         assert!(unreadable.contains("unreadable_store"));
+    }
+
+    #[test]
+    fn w80_buddy_impact_callback_renders_selected_git_receipt() {
+        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("GUI callback env lock");
+        let home = TempDir::new().expect("temporary NEOTH home");
+        let repository = TempDir::new().expect("temporary Git repository");
+        for args in [
+            vec!["init"],
+            vec!["config", "user.email", "w80@example.invalid"],
+            vec!["config", "user.name", "W80 Fixture"],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .current_dir(repository.path())
+                    .args(args)
+                    .status()
+                    .expect("run Git fixture setup")
+                    .success()
+            );
+        }
+        std::fs::write(repository.path().join("lib.rs"), "pub fn before() {}\n")
+            .expect("write initial Git fixture source");
+        for args in [vec!["add", "lib.rs"], vec!["commit", "-m", "before"]] {
+            assert!(
+                std::process::Command::new("git")
+                    .current_dir(repository.path())
+                    .args(args)
+                    .status()
+                    .expect("commit initial Git fixture source")
+                    .success()
+            );
+        }
+        std::fs::write(repository.path().join("lib.rs"), "pub fn after() {}\n")
+            .expect("write changed Git fixture source");
+        for args in [vec!["add", "lib.rs"], vec!["commit", "-m", "after"]] {
+            assert!(
+                std::process::Command::new("git")
+                    .current_dir(repository.path())
+                    .args(args)
+                    .status()
+                    .expect("commit changed Git fixture source")
+                    .success()
+            );
+        }
+        let _home = NeothHomeGuard::install(home.path());
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&neothd::config::FreedomConfig::default())
+                .expect("serialize default freedom config"),
+        )
+        .expect("seed default freedom config");
+        let window = MainWindow::new().expect("construct generated MainWindow");
+        window.set_code_map_root(repository.path().display().to_string().into());
+        let database = neothd::code_map::persist::default_path();
+        let lifecycle = Arc::new(CodeMapLifecycleController::new(database.clone()));
+        let presentation = Arc::new(AutomaticContextPresentationController::default());
+        apply_typed_lifecycle_config(
+            &window,
+            presentation,
+            true,
+            3,
+            "unavailable (missing_store)",
+        );
+        start_code_map_lifecycle_refresh(
+            window.as_weak(),
+            lifecycle,
+            repository.path().display().to_string(),
+            false,
+            false,
+        );
+        pump_until_automatic_context(&window, "eligible for this root");
+        window.set_code_map_impact_source_index(2);
+        window.set_code_map_impact_base("HEAD~1".into());
+        window.set_code_map_impact_target("HEAD".into());
+        register_buddy_code_map_impact_callback(
+            &window,
+            Arc::new(CodeMapImpactController::new(database)),
+        );
+        window.invoke_buddy_code_map_impact();
+        pump_until_impact_receipt(&window);
+        assert_eq!(window.get_nav_active().to_string(), "coding");
+        assert!(window.get_code_map_impact_has_receipt());
+        assert!(!window.get_code_map_impact_running());
+        assert!(!window.get_code_map_impact_error());
+        assert_eq!(
+            window.get_code_map_impact_canonical_root().to_string(),
+            expected_canonical_root(repository.path())
+        );
+        assert_eq!(
+            window.get_code_map_impact_source().to_string(),
+            "HEAD~1..HEAD"
+        );
+        assert_eq!(
+            window.get_code_map_impact_diff_sha256().to_string().len(),
+            64
+        );
+        let index_generation = window
+            .get_code_map_impact_index_generation()
+            .to_string()
+            .parse::<u64>()
+            .expect("rendered impact index generation");
+        let graph_generation = window
+            .get_code_map_impact_graph_generation()
+            .to_string()
+            .parse::<u64>()
+            .expect("rendered impact graph generation");
+        assert!(index_generation > 0);
+        assert_eq!(index_generation, graph_generation);
+        assert_eq!(window.get_code_map_impact_exact_seeds().to_string(), "1");
+        assert_eq!(window.get_code_map_impact_observed_tests().row_count(), 0);
+        assert!(window.get_code_map_impact_no_observed_test_is_not_absence());
     }
 
     struct LoopbackProvider {
