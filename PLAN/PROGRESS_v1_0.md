@@ -10,6 +10,8 @@
 > The next remote Rustfmt output is applied to W97 fixtures. Its wire child now
 > borrows the root across reads and records an incremented actual-call counter;
 > the parent still requires exactly one call and stale-sidecar suppression.
+> Preflight `35111056985` requested one final line wrap in that counter fixture;
+> its exact formatting output is applied without a behavioral change.
 > New-source GitHub checks and portable acceptance remain pending. Counts stay
 > **1324/1015/307/2**, raw309/pre-tag308; no local validation or checkbox closure.
 >

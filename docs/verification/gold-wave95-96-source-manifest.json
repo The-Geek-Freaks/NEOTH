@@ -1,8 +1,8 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W99-configured-read-coverage-runtime-repairs-and-preview-recovery",
-  "base": "41ce63d0ac665d1584bd701c3c4a9c51ed4bfe18",
-  "capturedUtc": "2026-09-16T14:46:42.4256991Z",
+  "base": "5abf0458894c0fe21ac99eae2026b4962c761540",
+  "capturedUtc": "2026-09-16T14:49:01.1995026Z",
   "validationStatus": "REVIEWED_SOURCE_NEW_REMOTE_GATES_PENDING",
   "scopeNote": "293 cumulative inputs. W99 exact remote formatting follow-up, reviewed test-only real-call counter/borrow correction, and measured preview60/330 bounds. Unchanged entries inherit committed bindings; all execution gates GitHub-only.",
   "files": [
@@ -588,8 +588,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mcp.rs",
-      "bytes": 135473,
-      "sha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3"
+      "bytes": 135494,
+      "sha256": "63FCD955F4FBE39F4A5578CF288434A659856F5CAB6B9872FA77C73469B4D5E0"
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",

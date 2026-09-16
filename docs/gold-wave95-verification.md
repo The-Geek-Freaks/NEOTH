@@ -74,6 +74,9 @@ root across loop iterations and replaced its constant counter-file value with
 an incremented count of actual calls; the parent still requires exactly one.
 These fixture changes do not alter production behavior or weaken the freshness
 assertion. Remote execution remains required.
+Preflight [35111056985](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35111056985)
+then requested only a final line wrap for the counter write; that exact remote
+formatting output is applied with no further behavioral change.
 
 The preceding W93 source `4141894037d092e128286bd386e664e12e8a22ed` passed
 [Preflight 35100677231](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35100677231)

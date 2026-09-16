@@ -1619,7 +1619,8 @@ code_map:
                 )
                 .expect("mutate indexed source after actual call");
                 tool_calls += 1;
-                std::fs::write(&count, tool_calls.to_string()).expect("record actual tools/call count");
+                std::fs::write(&count, tool_calls.to_string())
+                    .expect("record actual tools/call count");
                 println!(
                     "{}",
                     serde_json::json!({"jsonrpc":"2.0","id":request["id"].clone(),"result":{"content":[{"type":"text","text":"ordinary external result survives freshness fence"}],"isError":false}})

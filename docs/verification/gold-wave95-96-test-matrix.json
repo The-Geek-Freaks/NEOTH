@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W95_W99_REVIEWED_SOURCE_REMOTE_EXECUTION_PENDING",
-  "base": "41ce63d0ac665d1584bd701c3c4a9c51ed4bfe18",
+  "base": "5abf0458894c0fe21ac99eae2026b4962c761540",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 50773,
-    "sha256": "B62F148229471AE55639746371DB4A41BB85D36B9BA66B0090A234263DFACBDF"
+    "sha256": "EDB48A2852DE2A8350AE6EE0A5092FDEAFDE117B7A936ED41857664BE9758B96"
   },
   "sourceInputs": 293,
   "requiredNativeTests": [
@@ -24,37 +24,37 @@
     {
       "test": "cli::mcp::tests::w61_direct_cli_generated_stdio_receipts_bind_child_metadata_before_return",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
+      "sourceSha256": "63FCD955F4FBE39F4A5578CF288434A659856F5CAB6B9872FA77C73469B4D5E0",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_invalid_child_binding_fails_after_called_without_receipt",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
+      "sourceSha256": "63FCD955F4FBE39F4A5578CF288434A659856F5CAB6B9872FA77C73469B4D5E0",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_generated_is_error_returns_only_the_child_error_without_final_claim",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
+      "sourceSha256": "63FCD955F4FBE39F4A5578CF288434A659856F5CAB6B9872FA77C73469B4D5E0",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_nongenerated_child_success_retains_legacy_no_receipt_behavior",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
+      "sourceSha256": "63FCD955F4FBE39F4A5578CF288434A659856F5CAB6B9872FA77C73469B4D5E0",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_final_receipt_append_failure_returns_error_after_real_child_called_audit",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
+      "sourceSha256": "63FCD955F4FBE39F4A5578CF288434A659856F5CAB6B9872FA77C73469B4D5E0",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_receipt_uses_the_child_selected_root_for_empty_and_nonempty_results",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
+      "sourceSha256": "63FCD955F4FBE39F4A5578CF288434A659856F5CAB6B9872FA77C73469B4D5E0",
       "junitClass": "neoth"
     },
     {
@@ -324,7 +324,7 @@
     {
       "test": "cli::mcp::tests::w95_direct_cli_configured_read_path_keeps_selected_results_and_same_snapshot_descriptor",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
+      "sourceSha256": "63FCD955F4FBE39F4A5578CF288434A659856F5CAB6B9872FA77C73469B4D5E0",
       "junitClass": "neoth"
     },
     {
@@ -348,13 +348,13 @@
     {
       "test": "cli::mcp::tests::w97_direct_cli_selected_read_negatives_preserve_child_result_without_sidecar",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
+      "sourceSha256": "63FCD955F4FBE39F4A5578CF288434A659856F5CAB6B9872FA77C73469B4D5E0",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w97_selected_call_suppresses_sidecar_after_post_call_source_freshness_change",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
+      "sourceSha256": "63FCD955F4FBE39F4A5578CF288434A659856F5CAB6B9872FA77C73469B4D5E0",
       "junitClass": "neoth"
     }
   ],
@@ -517,6 +517,13 @@
     "runId": 35110334725,
     "headSha": "41ce63d0ac665d1584bd701c3c4a9c51ed4bfe18",
     "change": "Exact remote W97 fixture layout plus separately reviewed child borrow and real counter correction",
+    "rerun": "PENDING",
+    "localFormatterRan": false
+  },
+  "finalFormatFollowup": {
+    "runId": 35111056985,
+    "headSha": "5abf0458894c0fe21ac99eae2026b4962c761540",
+    "change": "One exact remote Rustfmt line wrap in counter write; no behavior change",
     "rerun": "PENDING",
     "localFormatterRan": false
   }
