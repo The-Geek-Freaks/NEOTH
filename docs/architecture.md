@@ -202,7 +202,8 @@ raw diff and source/test bodies do not enter the response or citation projection
 Coding carries the same root, generations and impact digest in a typed nested
 test-gap citation, its bounded provider prompt and durable attempt receipts.
 Before applying a patch, the dispatcher can obtain a bounded, read-only advisory
-using an explicit database path and physical repository root. Missing, stale or
+using an explicit database path, physical repository root and the same validated
+impact-policy limits captured by the CodingService or CLI run. Missing, stale or
 unavailable results are typed advisory outcomes; they neither authorize apply
 nor create, migrate or refresh a store.
 

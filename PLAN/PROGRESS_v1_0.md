@@ -3,6 +3,21 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-16
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **W77 Apply impact policy and final GUI lint repair (2026-09-16):**
+> CodingService and CLI Apply now pass the validated per-run impact policy to the
+> read-only pre-apply advisory instead of resetting it to defaults. The reviewed
+> four-file change adds conversion/validation fixtures and a real narrow-versus-
+> wide Apply/WAL regression while preserving approval and risk-gate authority.
+> Two GUI test comparisons also remove owned-string copies rejected by pinned
+> Rust 1.91 Clippy in CI `35067941794`; that run did not pass Linux quality.
+> Five-file rustfmt, 55 Python contracts and GUI source lint pass. The cumulative
+> source manifest now covers 288 inputs, including the seven packaging/doc inputs
+> previously held in the separate W76 preview follow-up. Fresh GitHub CI must
+> prove 45 native and 5 GUI required identities. Preview `35069306601` remains an
+> earlier `e6f24af8` artifact; it cannot prove this new Apply behavior. See
+> [the W77 report](../docs/gold-wave77-verification.md). No local heavy compilation
+> and no ROAD closure; counts **1324/1015/307/2**, raw309/pre-tag308.
+>
 > **W76 preview build repair (2026-09-16):** remote preview run `35067944350`
 > on `69d9c15b` failed before compilation because the locked Matrix 0.18 packages
 > require Rust 1.93. Only Matrix-containing release/preview build jobs move to

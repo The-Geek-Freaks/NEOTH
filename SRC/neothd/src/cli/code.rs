@@ -1144,7 +1144,11 @@ async fn run_pending_phase(args: &CodeArgs) -> Result<()> {
             .unwrap_or(false)
         {
             let root = crate::code_map::CanonicalRepoRoot::discover(repo)?;
-            c = c.with_pre_apply_impact_advisory(code_map_database_path, root);
+            c = c.with_pre_apply_impact_advisory(
+                code_map_database_path,
+                root,
+                cfg.code_map.impact_policy.impact_options(),
+            );
         }
         if let Some(cmd) = cfg.coding.test_cmd.as_deref() {
             c = c

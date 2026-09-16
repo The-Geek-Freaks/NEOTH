@@ -8,6 +8,21 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W77 Apply impact policy and final GUI lint repair (2026-09-16):**
+CodingService and CLI Apply now pass the validated per-run impact policy to the
+read-only pre-apply advisory instead of resetting it to defaults. The reviewed
+four-file change adds conversion/validation fixtures and a real narrow-versus-
+wide Apply/WAL regression while preserving approval and risk-gate authority.
+Two GUI test comparisons also remove owned-string copies rejected by pinned
+Rust 1.91 Clippy in CI `35067941794`; that run did not pass Linux quality.
+Five-file rustfmt, 55 Python contracts and GUI source lint pass. The cumulative
+source manifest now covers 288 inputs, including the seven packaging/doc inputs
+previously held in the separate W76 preview follow-up. Fresh GitHub CI must
+prove 45 native and 5 GUI required identities. Preview `35069306601` remains an
+earlier `e6f24af8` artifact; it cannot prove this new Apply behavior. See
+[the W77 report](../docs/gold-wave77-verification.md). No local heavy compilation
+and no ROAD closure; counts **1324/1015/307/2**, raw309/pre-tag308.
+
 **W76 preview build repair (2026-09-16):** remote preview run `35067944350`
 on `69d9c15b` failed before compilation because the locked Matrix 0.18 packages
 require Rust 1.93. Only Matrix-containing release/preview build jobs move to
@@ -1072,12 +1087,15 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
       `codegraph_impact_radius` MCP tool, then wire it into code review/apply,
       coding decomposition and risk summaries with root/index-generation
       citations. **Partial:** canonical service, CLI, MCP, generations and
-      digest are implemented; all named product consumers remain.
+      digest, code review, explicit coding decomposition and advisory Apply
+      consumers are implemented. W77 fixes Apply policy propagation; runtime
+      acceptance and the remaining structural-risk/surface evidence stay open.
     - [ ] Add validated caps/config/reload, lifecycle/staleness handling,
       Doctor, GUI graph/list + progress/error state and Buddy
       explain/recompute actions; prove all surfaces return the same ordered
-      result. **Partial:** hard safety caps and fail-closed staleness exist;
-      operator config/reload and the remaining surfaces do not.
+      result. **Partial:** hard safety caps, fail-closed staleness and validated
+      operator policy/config reload exist. Remaining surface parity and packaged
+      acceptance have not been established by this batch.
     - [ ] Add adversarial tests for cycles, diamonds, duplicate names,
       multi-root indexes, huge fan-out, depth zero/caps, deleted nodes,
       unresolved calls, stale generations and packaged clean-machine use.

@@ -572,6 +572,7 @@ async fn build_dispatch_plan(
         apply = apply.with_pre_apply_impact_advisory(
             code_map_database_path,
             advisory_root.expect("apply dispatch has an advisory root"),
+            config.code_map.impact_policy.impact_options(),
         );
         if request.apply_confirmation == ApplyConfirmation::LocalCliFlag {
             apply = apply.with_local_cli_confirmation();

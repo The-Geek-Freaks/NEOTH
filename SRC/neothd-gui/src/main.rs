@@ -37440,8 +37440,7 @@ mod w58_gui_callback_runtime_tests {
         window.invoke_buddy_native_coding_start();
         assert_eq!(window.get_nav_active().to_string(), "coding");
         pump_native_coding_until(&window, "completed Buddy coding terminal", |w| {
-            !w.get_native_coding_running()
-                && w.get_native_coding_state().to_string() == "Coding run complete"
+            !w.get_native_coding_running() && w.get_native_coding_state() == "Coding run complete"
         });
         assert!(!window.get_native_coding_run_id().is_empty());
         assert!(
@@ -37622,8 +37621,7 @@ mod w58_gui_callback_runtime_tests {
         );
         assert_eq!(window.get_buddy_mood().to_string(), "alert");
         pump_native_coding_until(&window, "cancelled Buddy coding terminal", |w| {
-            !w.get_native_coding_running()
-                && w.get_native_coding_state().to_string() == "Coding run cancelled"
+            !w.get_native_coding_running() && w.get_native_coding_state() == "Coding run cancelled"
         });
         let cancelled_receipt = window.get_native_coding_terminal_receipt().to_string();
         assert!(cancelled_receipt.contains("Cancelled"));

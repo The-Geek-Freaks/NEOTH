@@ -719,6 +719,17 @@ impl Default for CodeMapImpactPolicy {
 }
 
 impl CodeMapImpactPolicy {
+    /// Convert the already validated operator policy into the bounded impact
+    /// request options consumed by production code-map clients.
+    pub fn impact_options(&self) -> crate::code_map::ImpactOptions {
+        crate::code_map::ImpactOptions {
+            max_depth: self.max_depth as usize,
+            max_nodes: self.max_nodes as usize,
+            allow_stale: self.allow_stale,
+            ..Default::default()
+        }
+    }
+
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             (1..=crate::code_map::impact::MAX_IMPACT_DEPTH as u32).contains(&self.max_depth),
@@ -1514,4 +1525,55 @@ fn default_profile_allow_cloud_fallback() -> bool {
 /// `profile.extract_window_chars: 12000` in freedom.yaml.
 fn default_profile_extract_window_chars() -> usize {
     32_000
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn impact_policy_converts_validated_bounds_without_widening() {
+        let default_policy = CodeMapImpactPolicy::default();
+        let default_options = default_policy.impact_options();
+        assert_eq!(default_options.max_depth, default_policy.max_depth as usize);
+        assert_eq!(default_options.max_nodes, default_policy.max_nodes as usize);
+        assert!(!default_options.allow_stale);
+
+        let maximum_policy = CodeMapImpactPolicy {
+            max_depth: crate::code_map::impact::MAX_IMPACT_DEPTH as u32,
+            max_nodes: crate::code_map::impact::MAX_IMPACT_NODES as u32,
+            allow_stale: false,
+        };
+        maximum_policy.validate().unwrap();
+        let maximum_options = maximum_policy.impact_options();
+        assert_eq!(
+            maximum_options.max_depth,
+            crate::code_map::impact::MAX_IMPACT_DEPTH
+        );
+        assert_eq!(
+            maximum_options.max_nodes,
+            crate::code_map::impact::MAX_IMPACT_NODES
+        );
+        assert!(!maximum_options.allow_stale);
+    }
+
+    #[test]
+    fn impact_policy_invalid_values_reject_before_dispatch_conversion() {
+        for policy in [
+            CodeMapImpactPolicy {
+                max_depth: 0,
+                ..CodeMapImpactPolicy::default()
+            },
+            CodeMapImpactPolicy {
+                max_nodes: 0,
+                ..CodeMapImpactPolicy::default()
+            },
+            CodeMapImpactPolicy {
+                allow_stale: true,
+                ..CodeMapImpactPolicy::default()
+            },
+        ] {
+            assert!(policy.validate().is_err());
+        }
+    }
 }

@@ -153,6 +153,9 @@ code_map:
 only tighten them. A daemon supplies the same accepted immutable limits only to
 its exact generated `neoth-codegraph` child. Generic `neoth mcp codegraph-serve`
 remains static-default and never reads `freedom.yaml`.
+CodingService and CLI Apply also freeze this policy with their selected database
+and physical root for the pre-apply advisory; they do not replace it with default
+impact limits. The advisory cannot grant approval or alter risk-gate decisions.
 
 `coding_callers_per_symbol: 0` disables only caller enrichment. It does
 not disable targeted recall. `coding_summary_token_budget` is a local heuristic
