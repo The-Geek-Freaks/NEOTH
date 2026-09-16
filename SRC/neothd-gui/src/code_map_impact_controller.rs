@@ -338,7 +338,7 @@ fn same_operation(left: &CodeMapImpactOperation, right: &CodeMapImpactOperation)
 mod tests {
     use super::{
         CodeMapImpactCompletion, CodeMapImpactController, CodeMapImpactSource,
-        CodeMapImpactViewInvalidation,
+        CodeMapImpactViewInvalidation, ImpactOptions,
     };
 
     #[test]

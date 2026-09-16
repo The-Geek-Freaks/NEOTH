@@ -2657,17 +2657,17 @@ pub const EVENT_TYPE_SELF_UPDATE_APPLIED: u8 = 0xD2;
 pub const EVENT_TYPE_PATCH_APPLIED: u8 = 0xD3;
 
 /// `0xD4 PATCH_APPLY_FAILED` — companion to
-/// `EVENT_TYPE_PATCH_APPLIED`. Fires when `git apply --check`
-/// (or the apply itself) rejected the patch OR the test command
-/// failed inside the worktree. The dispatcher transitions the
+/// `EVENT_TYPE_PATCH_APPLIED`. Fires when structural risk blocks the edit,
+/// `git apply --check` (or the apply itself) rejects the patch, or the test
+/// command fails inside the worktree. The dispatcher transitions the
 /// task to Blocked after one retry (per the Chorus verdict's
 /// conservative-for-v0.2 stance); future v0.3 may raise to 3
 /// retries via WorkerRetryPolicy.
 ///
 /// Payload (JSON): `{task_id, session_id, worktree_path,
 /// stage, reason, ts_unix}`. `stage` is one of
-/// `"apply_check"`, `"apply"`, `"tests"` so the operator can
-/// tell whether the diff conflicted vs the tests failed.
+/// `"risk"`, `"apply_check"`, `"apply"`, `"tests"` so the operator can
+/// distinguish a risk refusal, a conflicting diff, and a test failure.
 pub const EVENT_TYPE_PATCH_APPLY_FAILED: u8 = 0xD4;
 
 /// W-08 (2026-05-26): wizard finished its system-detection step.

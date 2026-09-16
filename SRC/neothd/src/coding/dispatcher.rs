@@ -1731,7 +1731,7 @@ fn apply_admitted_patch_in_worktree(
                             "⛔ BLOCKED high-risk edit — grant an override lease to allow \
                              (`neoth lease grant operator dangerous_command --ttl 300`)",
                         );
-                        return Err(format!(
+                        let msg = format!(
                             "risk gate blocked edit of `{}` for task {} \
                          (risk={:.2}, autonomy={autonomy_level:?}) — \
                          grant an override lease to allow: \
@@ -1739,7 +1739,20 @@ fn apply_admitted_patch_in_worktree(
                             w.file,
                             task.task_id.raw(),
                             w.risk_score,
-                        ));
+                        );
+                        // The immutable admitted patch was analyzed before this
+                        // structural-risk decision. Persist that bounded advisory
+                        // with the refusal; it remains evidence only and does not
+                        // change risk score, override authority, or this error.
+                        emit_patch_apply_failed_wal(
+                            cfg.wal_writer.as_deref(),
+                            task,
+                            &wt_path,
+                            "risk",
+                            &msg,
+                            impact_advisory.as_ref(),
+                        );
+                        return Err(msg);
                     }
                 }
             }
@@ -1876,7 +1889,7 @@ fn emit_patch_applied_wal(
 }
 
 /// Emit `0xD4 PATCH_APPLY_FAILED` into the WAL when a writer is
-/// wired. `stage` is `"apply_check"`, `"apply"`, or `"tests"` per
+/// wired. `stage` is `"risk"`, `"apply_check"`, `"apply"`, or `"tests"` per
 /// the event-code doc-comment.
 fn emit_patch_apply_failed_wal(
     writer: Option<&crate::wal::writer::WalWriterHandle>,
@@ -3529,8 +3542,346 @@ mod tests {
         assert!(status.success());
     }
 
+    /// Create enough real, multi-author history on the exact file changed by
+    /// `accepted_patch_with_sentinel` to cross the production Full-autonomy
+    /// structural-risk threshold. The risk gate reads `git log` itself; this
+    /// is deliberately not a mocked warning or a test-only authority seam.
+    fn add_real_high_risk_history(repo: &std::path::Path) -> crate::code_map::risk::RiskWarning {
+        const AUTHORS: [(&str, &str); 3] = [
+            ("Ada", "ada@example.com"),
+            ("Blaise", "blaise@example.com"),
+            ("Chien", "chien@example.com"),
+        ];
+        // `assess_edit_risk` reads actual `git log` ownership and churn, so
+        // the fixture still needs 200 real revisions. Build them through one
+        // bounded fast-import stream instead of 400 add/commit child starts;
+        // `head_ref` is the initialized repository's actual branch, never a
+        // guessed `main`/`master` name.
+        let head_ref = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["rev-parse", "--symbolic-full-name", "HEAD"])
+            .output()
+            .unwrap();
+        assert!(head_ref.status.success());
+        let head_ref = String::from_utf8(head_ref.stdout)
+            .unwrap()
+            .trim()
+            .to_owned();
+        assert!(
+            head_ref.starts_with("refs/heads/"),
+            "fixture must update the initialized branch, got {head_ref:?}"
+        );
+
+        let mut source = std::fs::read_to_string(repo.join("src/lib.rs")).unwrap();
+        let mut stream = Vec::new();
+        let first_timestamp = crate::time::now_unix_i64();
+        for revision in 0..200 {
+            let (name, email) = AUTHORS[revision % AUTHORS.len()];
+            source.push_str(&format!("// W88 structural-risk history {revision}\n"));
+            let parent = if revision == 0 {
+                head_ref.as_str().to_owned()
+            } else {
+                format!(":{revision}")
+            };
+            let timestamp = first_timestamp + revision as i64;
+            stream.extend_from_slice(
+                format!(
+                    "commit {head_ref}\nmark :{}\nauthor {name} <{email}> {timestamp} +0000\ncommitter {name} <{email}> {timestamp} +0000\ndata 12\nrisk history\nfrom {parent}\nM 100644 inline src/lib.rs\ndata {}\n",
+                    revision + 1,
+                    source.len(),
+                )
+                .as_bytes(),
+            );
+            stream.extend_from_slice(source.as_bytes());
+        }
+        stream.extend_from_slice(b"done\n");
+        let mut import = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .arg("fast-import")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        {
+            use std::io::Write as _;
+            import.stdin.as_mut().unwrap().write_all(&stream).unwrap();
+        }
+        let import = import.wait_with_output().unwrap();
+        assert!(
+            import.status.success(),
+            "git fast-import must create the real risk history: {}",
+            String::from_utf8_lossy(&import.stderr)
+        );
+        // fast-import updates the branch ref but does not update the primary
+        // worktree/index. The advisory snapshots the filesystem while the
+        // dispatcher later creates a worktree from HEAD, so synchronize them.
+        let reset = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["reset", "--hard", "HEAD"])
+            .output()
+            .unwrap();
+        assert!(
+            reset.status.success(),
+            "git reset must synchronize the imported fixture history: {}",
+            String::from_utf8_lossy(&reset.stderr)
+        );
+        let warnings = crate::code_map::risk::assess_edit_risk(repo, &["src/lib.rs".to_owned()]);
+        let warning = warnings
+            .iter()
+            .find(|warning| warning.file == "src/lib.rs")
+            .expect("real indexed fixture must produce a structural-risk warning");
+        assert!(
+            warning.risk_score >= crate::code_map::risk::HIGH_RISK_THRESHOLD,
+            "history must reach the production Full-autonomy block threshold: {warning:?}"
+        );
+        assert_eq!(
+            crate::code_map::risk::risk_gate_action(
+                crate::permissions::AutonomyLevel::Full,
+                warning.risk_score,
+                false,
+            ),
+            crate::code_map::risk::RiskGateAction::Block,
+            "fixture must take the real no-override structural-risk branch"
+        );
+        warning.clone()
+    }
+
+    async fn apply_direct_risk_refusal(
+        conn: &Connection,
+        session_id: KanbanSessionId,
+        audit_root: &std::path::Path,
+        cfg: &DispatchApplyConfig,
+        provider_sentinel: &str,
+    ) -> (KanbanTaskId, String) {
+        let task_id = store::insert_task(conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(conn, task_id, Hemisphere::Left, None, None).unwrap();
+        let task = store::list_tasks_for_session(conn, session_id)
+            .unwrap()
+            .into_iter()
+            .find(|task| task.task_id == task_id)
+            .unwrap();
+        let mut worker_outcome = accepted_patch_with_sentinel();
+        worker_outcome.summary = provider_sentinel.to_owned();
+        let worker = CannedWorker {
+            outcome: worker_outcome,
+            name: "w88-real-risk-refusal",
+        };
+        let accepted = WorkerContract::for_dispatch(&task, &worker, audit_root)
+            .validate_and_materialize(&task, &worker, worker.outcome.clone())
+            .expect("fixture outcome crosses the immutable accepted-patch boundary");
+        let admission = authorize_patch_apply_before_worktree(&task, &accepted, cfg)
+            .await
+            .expect("permission gate admits the exact local CLI request")
+            .expect("fixture has a patch to apply");
+        let error = apply_admitted_patch_in_worktree(admission, &task, &accepted, cfg, None)
+            .expect_err("real structural-risk gate must refuse the accepted patch");
+        let worktree = cfg
+            .repo_root
+            .parent()
+            .unwrap()
+            .join(format!(".neoth-task-{}", task_id.raw()));
+        assert!(
+            !worktree.exists(),
+            "risk refusal must clean its pre-edit worktree without applying a patch"
+        );
+        (task_id, error)
+    }
+
     fn accepted_patch_with_capped_impact() -> WorkerOutcome {
         accepted_patch_with_sentinel()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn risk_block_emits_preapply_advisory_receipt_without_changing_risk_authority() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        // The production risk gate reads the process-default NEOTH_HOME for
+        // override leases. Serialize and isolate it so this fixture proves the
+        // no-override Block branch without inheriting an ambient lease.
+        let _env = crate::test_env::lock();
+        let previous_home = std::env::var_os("NEOTH_HOME");
+        struct RestoreNeothHome(Option<std::ffi::OsString>);
+        impl Drop for RestoreNeothHome {
+            fn drop(&mut self) {
+                unsafe {
+                    match self.0.take() {
+                        Some(home) => std::env::set_var("NEOTH_HOME", home),
+                        None => std::env::remove_var("NEOTH_HOME"),
+                    }
+                }
+            }
+        }
+
+        let (dir, conn) = fresh_db();
+        let home = dir.path().join("neoth-home");
+        unsafe { std::env::set_var("NEOTH_HOME", &home) };
+        let _restore_home = RestoreNeothHome(previous_home);
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo).unwrap();
+        add_rust_impact_edge_fixture(&repo);
+        let risk_warning = add_real_high_risk_history(&repo);
+        let root = crate::code_map::CanonicalRepoRoot::discover(&repo).unwrap();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let (writer, writer_join) = authenticated_apply_writer(&home);
+        let available = indexed_pre_apply_advisory(
+            &repo,
+            dir.path().join("available-code-map.db"),
+            crate::code_map::ImpactOptions::default(),
+        );
+        let expected_patch = accepted_patch_with_sentinel().patch_text;
+        let read_only = crate::code_map::persist::open_read_only(&available.database_path).unwrap();
+        let expected_impact = crate::code_map::analyze_diff_impact(
+            &read_only,
+            &crate::code_map::DiffImpactRequest {
+                repo_root: available.root.path().to_path_buf(),
+                input: crate::code_map::DiffImpactInput::stdin(expected_patch),
+                options: available.impact_options,
+            },
+        )
+        .unwrap();
+        let expected_gap = crate::code_map::test_coverage::test_gap_for_impact(
+            &read_only,
+            &expected_impact.impact,
+            crate::code_map::test_coverage::TestCoverageOptions::default(),
+        )
+        .unwrap();
+
+        let available_cfg = local_test_apply_config(&repo, &writer).with_pre_apply_impact_advisory(
+            available.database_path.clone(),
+            available.root.clone(),
+            available.impact_options,
+        );
+        let (available_task, available_error) = apply_direct_risk_refusal(
+            &conn,
+            session_id,
+            dir.path(),
+            &available_cfg,
+            "W88_PROVIDER_TEXT_MUST_NOT_REACH_WAL_AVAILABLE",
+        )
+        .await;
+        drop(available_cfg);
+
+        let stale_database = dir.path().join("stale-code-map.db");
+        crate::code_map::rebuild_snapshot(&root, &stale_database, Default::default()).unwrap();
+        std::fs::write(repo.join("README.md"), "initial\nmake advisory stale\n").unwrap();
+        let stale_cfg = local_test_apply_config(&repo, &writer).with_pre_apply_impact_advisory(
+            stale_database,
+            root.clone(),
+            crate::code_map::ImpactOptions::default(),
+        );
+        let (stale_task, stale_error) = apply_direct_risk_refusal(
+            &conn,
+            session_id,
+            dir.path(),
+            &stale_cfg,
+            "W88_PROVIDER_TEXT_MUST_NOT_REACH_WAL_STALE",
+        )
+        .await;
+        drop(stale_cfg);
+
+        let missing_cfg = local_test_apply_config(&repo, &writer).with_pre_apply_impact_advisory(
+            dir.path().join("missing-code-map.db"),
+            root,
+            crate::code_map::ImpactOptions::default(),
+        );
+        let (missing_task, missing_error) = apply_direct_risk_refusal(
+            &conn,
+            session_id,
+            dir.path(),
+            &missing_cfg,
+            "W88_PROVIDER_TEXT_MUST_NOT_REACH_WAL_MISSING",
+        )
+        .await;
+        drop(missing_cfg);
+
+        let expected_risk_error = |task_id: KanbanTaskId| {
+            format!(
+                "risk gate blocked edit of `src/lib.rs` for task {} \
+                 (risk={:.2}, autonomy=Full) — \
+                 grant an override lease to allow: \
+                 `neoth lease grant operator dangerous_command --ttl 300`",
+                task_id.raw(),
+                risk_warning.risk_score,
+            )
+        };
+        assert_eq!(available_error, expected_risk_error(available_task));
+        assert_eq!(stale_error, expected_risk_error(stale_task));
+        assert_eq!(missing_error, expected_risk_error(missing_task));
+        assert!(
+            !std::fs::read_to_string(repo.join("src/lib.rs"))
+                .unwrap()
+                .contains("W49_RAW_PATCH_SENTINEL_MUST_NOT_REACH_WAL"),
+            "risk refusal must not apply the immutable accepted patch to the repository"
+        );
+
+        drop(writer);
+        writer_join.await.unwrap();
+        let payloads =
+            decoded_wal_payloads(&home, crate::wal::events::EVENT_TYPE_PATCH_APPLY_FAILED);
+        for task_id in [available_task, stale_task, missing_task] {
+            assert_eq!(
+                payloads
+                    .iter()
+                    .filter(|payload| payload["task_id"].as_i64() == Some(task_id.raw()))
+                    .count(),
+                1,
+                "one actual refusal must write exactly one PATCH_APPLY_FAILED receipt"
+            );
+        }
+        let by_task = |task_id: KanbanTaskId| {
+            payloads
+                .iter()
+                .find(|payload| payload["task_id"].as_i64() == Some(task_id.raw()))
+                .unwrap()
+        };
+        let available_payload = by_task(available_task);
+        assert_eq!(available_payload["stage"].as_str(), Some("risk"));
+        let receipt = &available_payload["pre_apply_impact_advisory"];
+        assert_eq!(receipt["state"].as_str(), Some("available"));
+        let citation = &receipt["citation"];
+        assert_eq!(
+            citation["root_identity"].as_str(),
+            Some(available.root.identity().as_str())
+        );
+        assert!(citation["index_generation"].as_i64().unwrap() > 0);
+        assert_eq!(citation["index_generation"], citation["graph_generation"]);
+        assert_eq!(
+            citation["impact_digest"].as_str(),
+            Some(expected_impact.impact.digest.as_str())
+        );
+        assert_eq!(
+            citation["outcome"],
+            serde_json::to_value(&expected_gap.outcome).unwrap()
+        );
+        assert_eq!(
+            citation["no_observed_test_is_not_absence"].as_bool(),
+            Some(expected_gap.no_observed_test_is_not_absence)
+        );
+
+        let stale_payload = by_task(stale_task);
+        let stale_receipt = &stale_payload["pre_apply_impact_advisory"];
+        assert_eq!(stale_payload["stage"].as_str(), Some("risk"));
+        assert_eq!(receipt_unavailable_reason(stale_receipt), "stale");
+        assert!(stale_receipt["citation"].is_null());
+        let missing_payload = by_task(missing_task);
+        let missing_receipt = &missing_payload["pre_apply_impact_advisory"];
+        assert_eq!(missing_payload["stage"].as_str(), Some("risk"));
+        assert_eq!(
+            receipt_unavailable_reason(missing_receipt),
+            "database_unavailable"
+        );
+        assert!(missing_receipt["citation"].is_null());
+
+        let serialized = serde_json::to_string(&payloads).unwrap();
+        assert!(!serialized.contains("W49_RAW_PATCH_SENTINEL_MUST_NOT_REACH_WAL"));
+        assert!(!serialized.contains("W88_PROVIDER_TEXT_MUST_NOT_REACH_WAL"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

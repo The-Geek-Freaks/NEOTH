@@ -3,6 +3,17 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-16
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **W88/W90 risk-refusal evidence and shared test import (2026-09-16):** early
+> structural-risk refusals now retain the existing pre-apply advisory in the
+> `PATCH_APPLY_FAILED` receipt without changing risk/lease authority. Its real
+> Git/WAL fixture covers available, stale and missing advisory states. The four
+> shared GUI-test `ImpactOptions` import errors from CI `35080927314` are corrected
+> at their common source. That obsolete CI run was cancelled after the confirmed
+> compile failures; it supplied no fresh runtime verdict. W89's macOS main-thread
+> fixture correction remains separate WORK. See [the W88/W90 report](../docs/gold-wave88-90-verification.md).
+> New-source remote execution and portable acceptance remain pending. No local
+> compilation or checkbox closure; counts **1324/1015/307/2**, raw309/pre-tag308.
+>
 > **W87 measured macOS compile adjustment (2026-09-16):** full CI `35070262418`
 > reached its 100-minute macOS compile limit before tests. The observer recorded
 > 6,164.12 MiB peak swap and sustained paging; the interrupted cache saved
