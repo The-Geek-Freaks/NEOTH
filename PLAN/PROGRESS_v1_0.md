@@ -3,6 +3,18 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-16
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **W78 source-to-roadmap reconciliation (2026-09-16):** the current
+> `389b5038` source already wires bounded hunk/symbol impact and calibrated
+> observed-test evidence through CLI/MCP, Coding, Review and advisory Apply.
+> The built-in outline route also has default-off configuration, reload and
+> Doctor checks. The CRG-03/04/05 descriptions below now reflect these implemented
+> paths. Broader surfaces, runtime and package acceptance remain open; source
+> inspection does not close their checkboxes. CI `35070262418` validates W77;
+> preview `35069306601` builds the earlier `e6f24af8` source. See
+> [the W78 scope report](../docs/gold-wave78-source-reconciliation.md).
+> Counts remain **1324/1015/307/2**, raw309/pre-tag308. Local heavy compilation
+> remains suspended.
+>
 > **W77 Apply impact policy and final GUI lint repair (2026-09-16):**
 > CodingService and CLI Apply now pass the validated per-run impact policy to the
 > read-only pre-apply advisory instead of resetting it to defaults. The reviewed

@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W78 source-to-roadmap reconciliation (2026-09-16):** the current
+`389b5038` source already wires bounded hunk/symbol impact and calibrated
+observed-test evidence through CLI/MCP, Coding, Review and advisory Apply.
+The built-in outline route also has default-off configuration, reload and
+Doctor checks. The CRG-03/04/05 descriptions below now reflect these implemented
+paths. Broader surfaces, runtime and package acceptance remain open; source
+inspection does not close their checkboxes. CI `35070262418` validates W77;
+preview `35069306601` builds the earlier `e6f24af8` source. See
+[the W78 scope report](../docs/gold-wave78-source-reconciliation.md).
+Counts remain **1324/1015/307/2**, raw309/pre-tag308. Local heavy compilation
+remains suspended.
+
 **W77 Apply impact policy and final GUI lint repair (2026-09-16):**
 CodingService and CLI Apply now pass the validated per-run impact policy to the
 read-only pre-apply advisory instead of resetting it to defaults. The reviewed
@@ -1081,8 +1093,9 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
       roots visibly, and define direction semantics (callers, callees or both)
       plus treatment of unresolved/Reference edges. **Partial:** changed files,
       exact file/symbol seeds, visible rejection, directions and conservative
-      unresolved/Reference evidence are implemented; CRG-03 hunk-derived seeds
-      remain.
+      unresolved/Reference evidence are implemented. CRG-03 also supplies
+      hunk-derived exact-symbol seeds with separate conservative file fallback;
+      its remaining consumer/surface acceptance is tracked below.
     - [ ] Expose one canonical typed service through CLI and a
       `codegraph_impact_radius` MCP tool, then wire it into code review/apply,
       coding decomposition and risk summaries with root/index-generation
@@ -1104,27 +1117,25 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
       clean-machine coverage remains.
 
   - [ ] **CRG-03 — git diff hunks to function-level nodes:
-    RESEARCHED / FILE-LEVEL SUBSTRATE ONLY / OPEN for v1.0.**
+    PARSER/EXTENTS AND CONSUMER SOURCE IMPLEMENTED / ACCEPTANCE OPEN for v1.0.**
 
-    - **Ingestion:** `SRC/neothd/src/code_map/risk.rs:240-263`
-      `patch_changed_files` reads an already-created patch and extracts only
-      deduplicated `+++ b/<path>` filenames. It does not parse `@@` hunk ranges,
-      invoke a bounded/safe `git diff --unified=0`, model old/new ranges, or
-      represent deletes/renames/binary patches. Its read/parse errors silently
-      become an empty set.
-    - **Index/intersection:** `Symbol` stores only the declaration start
-      (`code_map/symbols.rs:83-88`) and `code_map_symbols` persists only
-      `line` (`code_map/persist.rs:46-52`). `code_map/outline.rs` estimates
-      `line_end` from the next symbol while reading source; that query-time
-      estimate is neither a durable exact extent nor a
-      `nodes_in_line_range` index contract. The side document's claim that line
-      ranges were already persisted is therefore corrected by this ledger.
-    - **Retrieval -> prompt/citation:** no `code_map/diff.rs`,
-      `nodes_in_line_range`, diff-derived CRG-02 seed, `code-intel --diff`,
-      MCP tool, prompt block or citation/receipt consumer exists.
-    - **Config/lifecycle/surfaces/package:** no ref/base/worktree mode, byte/hunk
-      cap, timeout, rename policy, refresh rule, GUI diff inspector, Buddy
-      action, Doctor probe or packaged workflow exists.
+    - **Ingestion:** `code_map/diff.rs` provides typed bounded diff acquisition
+      and parsing, explicit root/ref authority, old/new hunk ranges and
+      additions/modifications/deletions/renames/binary classification. The old
+      filename-only risk helper is not the current diff-analysis service.
+    - **Index/intersection:** schema-v8 parser-certified nullable symbol end
+      lines support exact range intersection. Missing exact extents retain
+      conservative file evidence instead of inventing function boundaries.
+    - **Retrieval -> prompt/citation:** `code_map/diff_impact.rs` binds canonical
+      physical root, generation and fingerprint, maps hunk-intersecting symbols
+      to CRG-02 seeds and preserves fallback separately. CLI/MCP expose this
+      typed result; explicit Coding, committed Review and in-memory Apply
+      consumers retain diff/impact/test-gap citations and reject inadmissible
+      provider context. Apply evidence remains advisory, without risk authority.
+    - **Config/lifecycle/surfaces/package:** bounded acquisition and stale/root
+      rejection are implemented. The remaining GUI/Buddy/Doctor, policy and
+      packaged acceptance must be audited against their actual entry points;
+      their unchecked rows are not evidence that the core parser is absent.
     - [x] Port the useful behavior of CRG
       `changes.py::parse_git_diff_ranges` into a native typed parser/runner:
       safe bounded argv (no shell), explicit repo/root/ref authority,
@@ -1145,6 +1156,9 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     - [ ] Feed resulting concrete nodes into CRG-02 and expose one canonical
       CLI/MCP service; wire review/apply/decomposer/risk prompt consumers with
       diff/ref/index-generation citations and visible partial/unmapped results.
+      **Partial:** canonical service, CLI/MCP and explicit Coding/Review/Apply
+      consumers exist. Current runtime acceptance and remaining structural-risk
+      and surface contracts are still open; see the W78 scope report.
     - [ ] Add config/reload, stale-index lifecycle, Doctor, GUI diff-to-symbol
       inspection/progress/error state, Buddy explain/recompute and release
       packaging smoke tests.
@@ -1154,7 +1168,7 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
       unchanged-index races.
 
   - [ ] **CRG-04 — `TestedBy` edge and transitive test-gap detection:
-    FIRST TWO LEAVES VERIFIED / CONSUMERS AND SURFACES OPEN for v1.0.**
+    KERNEL VERIFIED / CONSUMER SOURCE WIRED / ACCEPTANCE OPEN for v1.0.**
 
     - **Kernel boundary:** W43–47 NativeTestBuild04/05, strict Clippy05 and
       the 1,913/0/0 selected runtime04 validate supported Rust/Python framework
@@ -1177,6 +1191,9 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     - [ ] Wire the same service into risk/review/apply/decomposer prompt and
       citation receipts, expose CLI/MCP, and make “no test found” a calibrated
       evidence state rather than proof that no test exists.
+      **Partial:** Coding/Review/Apply and CLI/MCP carry the shared calibrated
+      projection and citation receipts. Apply is advisory; broader structural-
+      risk, surface and current runtime acceptance remain open.
     - [ ] Add config/reload, incremental invalidation/rebuild/recovery, Doctor,
       GUI affected-tests/test-gap/progress/error views, Buddy
       explain/run-suggested-tests actions and release packaging checks.
@@ -1206,12 +1223,14 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
       and adds only its bounded untrusted sidecar after post-call freshness
       checks. It does not establish general `enrich.py` contract parity or
       codegraph enrichment coverage beyond that built-in outline route.
-    - **Config/lifecycle/surfaces/package:** W53's configuration is default-off
-      and snapshotted for the built-in route. GUI, CLI, Buddy and Doctor retain
-      no broader leaf-specific contract; no default hook/script is staged.
-      A Python script would also break the zero-friction native package
-      boundary, so the CRG algorithm should be implemented in Rust unless a
-      fully staged, signed, dependency-free asset is demonstrably superior.
+    - **Config/lifecycle/surfaces/package:** the built-in outline route has
+      default-off configuration, next-snapshot reload and Doctor checks for
+      disabled/invalid policy, registration and stale/fresh physical generations.
+      This does not establish generic-tool parity or broader GUI/Buddy controls
+      and package acceptance. No external Python hook/script is required by the
+      implemented native route. A wider native enrichment selector and exact
+      duplicate suppression between built-in and configured sidecars remain
+      concrete source gaps at the audited `389b5038` baseline.
     - [ ] Introduce one real typed `PreToolUse` boundary that every relevant
       native, MCP and provider-emitted tool execution crosses exactly once,
       carrying call id, tool kind, schema-validated input, canonical cwd/root,
@@ -1229,6 +1248,8 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
       config/reload, setup/uninstall/recovery, Doctor and audit receipts; expose
       identical CLI status/test, GUI configure/status/error and Buddy
       explain/enable/disable/test controls.
+      **Partial:** default-off outline policy, reload and Doctor exist; the
+      wider surface/lifecycle contract has not been accepted.
     - [ ] Add end-to-end tests proving actual Read/Grep/Glob/Bash-like and MCP
       calls cross the boundary, unrelated tools no-op, malformed/oversized hook
       output fails visibly according to policy, prompt injection stays inert,
