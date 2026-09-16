@@ -37,7 +37,7 @@ class PreviewWindowsWorkflowContractTest(unittest.TestCase):
         self.assertIn("preview-windows-x64:", self.workflow)
         self.assertEqual(self.workflow.count("\n  preview-windows-x64:"), 1)
         self.assertIn("runs-on: windows-2022", self.workflow)
-        self.assertIn("timeout-minutes: 240", self.workflow)
+        self.assertIn("timeout-minutes: 315", self.workflow)
         self.assertIn("toolchain: '1.93.0'", self.workflow)
         self.assertNotIn("push:", self.workflow)
         self.assertNotIn("tags:", self.workflow)
@@ -91,7 +91,7 @@ class PreviewWindowsWorkflowContractTest(unittest.TestCase):
         for step_name, timeout in (
             ("Build native CLI and compatibility executables", 90),
             ("Build native migration and relay executables", 15),
-            ("Build native desktop GUI", 25),
+            ("Build native desktop GUI", 45),
         ):
             self.assertIn(f"timeout-minutes: {timeout}", self.step(step_name))
 
@@ -106,26 +106,18 @@ class PreviewWindowsWorkflowContractTest(unittest.TestCase):
 
         restore = self.step("Restore compatible Rust target cache")
         self.assertIn("actions/cache/restore@", restore)
-        self.assertIn(
-            "preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-all-rust-complete-"
-            + lock_key,
-            restore,
-        )
+        all_rust_prefix = "preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-all-rust-complete-"
+        interrupted_prefix = "preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-interrupted-"
+        aux_prefix = "preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-aux-complete-"
+        cli_prefix = "preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-cli-complete-"
+        self.assertIn(all_rust_prefix + lock_key, restore)
         self.assertIn("${{ github.run_id }}-${{ github.run_attempt }}", restore)
-        for phase in ("all-rust", "aux", "cli"):
-            self.assertIn(
-                f"preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-{phase}-complete-",
-                restore,
-            )
-        interrupted_prefix = (
-            "preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-interrupted-"
-        )
-        self.assertIn(interrupted_prefix, restore)
+        for prefix in (all_rust_prefix, interrupted_prefix, aux_prefix, cli_prefix):
+            self.assertIn(prefix, restore)
         self.assertIn(interrupted_prefix + lock_key + "-", restore)
-        self.assertLess(
-            restore.index("preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-cli-complete-"),
-            restore.index(interrupted_prefix),
-        )
+        self.assertLess(restore.index(all_rust_prefix), restore.index(interrupted_prefix))
+        self.assertLess(restore.index(interrupted_prefix), restore.index(aux_prefix))
+        self.assertLess(restore.index(aux_prefix), restore.index(cli_prefix))
 
         completed = (
             ("Save completed CLI Cargo cache", "cli"),
@@ -150,6 +142,51 @@ class PreviewWindowsWorkflowContractTest(unittest.TestCase):
             interrupted_prefix + lock_key + "-${{ github.run_id }}-${{ github.run_attempt }}",
             interrupted,
         )
+
+    def test_portable_acceptance_is_remote_bounded_post_stage_and_receipted(self) -> None:
+        self.assertIn("PORTABLE_ACCEPTANCE_RECEIPTS: ${{ runner.temp }}\\neoth portable acceptance receipts", self.workflow)
+
+        ast = self.step("Parse portable acceptance helpers")
+        self.assertIn("if: ${{ runner.os == 'Windows' }}", ast)
+        self.assertIn("timeout-minutes: 2", ast)
+        self.assertIn("System.Management.Automation.Language.Parser]::ParseFile", ast)
+        self.assertIn("portable_acceptance_ast_preflight", ast)
+        self.assertIn("packaging/tests/Test-PortablePreview.ps1", ast)
+        self.assertIn("packaging/tests/Test-PortableDiffImpact.ps1", ast)
+
+        lifecycle = self.step("Portable preview lifecycle acceptance")
+        self.assertIn("id: portable_preview_lifecycle", lifecycle)
+        self.assertIn("if: ${{ runner.os == 'Windows' }}", lifecycle)
+        self.assertIn("timeout-minutes: 30", lifecycle)
+        self.assertIn("SLINT_BACKEND: software", lifecycle)
+        self.assertIn("dist/neoth-unreleased-preview-windows-x64-$env:GITHUB_SHA.zip", lifecycle)
+        self.assertIn("-ArchiveSha256 $sidecar", lifecycle)
+        self.assertIn("-ExpectedSourceSha $env:GITHUB_SHA", lifecycle)
+        self.assertIn("-GuiRuntimeProbe", lifecycle)
+        self.assertIn("portable_preview_lifecycle_ci", lifecycle)
+        self.assertIn("neoth_executable=$neoth", lifecycle)
+        self.assertIn("packaging/tests/Test-PortablePreview.ps1", lifecycle)
+
+        diff_impact = self.step("Portable diff-impact acceptance")
+        self.assertIn("if: ${{ runner.os == 'Windows' }}", diff_impact)
+        self.assertIn("timeout-minutes: 25", diff_impact)
+        self.assertIn("${{ steps.portable_preview_lifecycle.outputs.neoth_executable }}", diff_impact)
+        self.assertIn("packaging/tests/Test-PortableDiffImpact.ps1", diff_impact)
+        self.assertIn("portable_diff_impact_ci", diff_impact)
+
+        receipt_upload = self.step("Upload portable acceptance receipts")
+        self.assertIn("if: ${{ always() && runner.os == 'Windows' }}", receipt_upload)
+        self.assertIn("timeout-minutes: 5", receipt_upload)
+        self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", receipt_upload)
+        self.assertIn("path: ${{ env.PORTABLE_ACCEPTANCE_RECEIPTS }}", receipt_upload)
+        self.assertIn("if-no-files-found: warn", receipt_upload)
+
+        self.assertLess(self.workflow.index("- name: Checkout exact preview source"), self.workflow.index("- name: Parse portable acceptance helpers"))
+        self.assertLess(self.workflow.index("- name: Parse portable acceptance helpers"), self.workflow.index("- name: Setup Rust stable"))
+        self.assertLess(self.workflow.index("- name: Stage unreleased preview with source and payload inventory"), self.workflow.index("- name: Portable preview lifecycle acceptance"))
+        self.assertLess(self.workflow.index("- name: Portable preview lifecycle acceptance"), self.workflow.index("- name: Portable diff-impact acceptance"))
+        self.assertLess(self.workflow.index("- name: Portable diff-impact acceptance"), self.workflow.index("- name: Upload unreleased preview artifact"))
+        self.assertLess(self.workflow.index("- name: Upload unreleased preview artifact"), self.workflow.index("- name: Upload portable acceptance receipts"))
 
     def test_preview_has_exact_provenance_and_never_claims_installed_acceptance(self) -> None:
         self.assertIn("source_sha = $env:GITHUB_SHA", self.workflow)

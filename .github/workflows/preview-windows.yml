@@ -23,12 +23,54 @@ jobs:
     runs-on: windows-2022
     # The preview keeps the release feature/profile identity but deliberately
     # uses preview-fast-v1 Cargo overrides for bounded feedback only.
-    timeout-minutes: 240
+    timeout-minutes: 315
+    env:
+      PORTABLE_ACCEPTANCE_RECEIPTS: ${{ runner.temp }}\neoth portable acceptance receipts ${{ github.run_id }} ${{ github.run_attempt }}
     steps:
       - name: Checkout exact preview source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+
+      - name: Parse portable acceptance helpers
+        if: ${{ runner.os == 'Windows' }}
+        timeout-minutes: 2
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $receiptRoot = $env:PORTABLE_ACCEPTANCE_RECEIPTS
+          New-Item -ItemType Directory -Path $receiptRoot -Force | Out-Null
+          $targets = @(
+            'packaging/tests/Test-PortablePreview.ps1',
+            'packaging/tests/Test-PortableDiffImpact.ps1'
+          )
+          $errors = @()
+          try {
+            foreach ($relative in $targets) {
+              $path = Join-Path $env:GITHUB_WORKSPACE $relative
+              $tokens = $null
+              $parseErrors = $null
+              [void][System.Management.Automation.Language.Parser]::ParseFile(
+                $path, [ref]$tokens, [ref]$parseErrors)
+              $errors += @($parseErrors | ForEach-Object {
+                [ordered]@{ file = $relative; message = $_.Message; line = $_.Extent.StartLineNumber }
+              })
+            }
+            $status = if ($errors.Count -eq 0) { 'passed' } else { 'failed' }
+          } catch {
+            $status = 'failed'
+            $errors += [ordered]@{ file = ''; message = $_.Exception.Message; line = 0 }
+          }
+          [ordered]@{
+            schema_version = 1
+            kind = 'portable_acceptance_ast_preflight'
+            status = $status
+            source_sha = $env:GITHUB_SHA
+            targets = $targets
+            errors = $errors
+            remote_only = $true
+          } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $receiptRoot 'ast-preflight.json') -Encoding utf8
+          if ($status -ne 'passed') { throw 'portable acceptance helper parse errors' }
 
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
@@ -49,8 +91,10 @@ jobs:
             preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-registry-${{ hashFiles('SRC/Cargo.lock') }}-
 
       # Cargo fingerprints source and compile environment before reuse. The
-      # cache namespace pins toolchain, CRT mode, preview profile, and lock;
-      # interrupted entries are lower-priority recovery inputs, never complete.
+      # cache namespace pins toolchain, CRT mode, preview profile, and lock.
+      # An interrupted cache is a compatible recovery input only; Cargo itself
+      # must reject stale fingerprints and only successful GUI completion writes
+      # all-rust-complete.
       - name: Restore compatible Rust target cache
         timeout-minutes: 5
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -59,9 +103,9 @@ jobs:
           key: preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-all-rust-complete-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-all-rust-complete-${{ hashFiles('SRC/Cargo.lock') }}-
+            preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-interrupted-${{ hashFiles('SRC/Cargo.lock') }}-
             preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-aux-complete-${{ hashFiles('SRC/Cargo.lock') }}-
             preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-cli-complete-${{ hashFiles('SRC/Cargo.lock') }}-
-            preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-interrupted-${{ hashFiles('SRC/Cargo.lock') }}-
 
       - name: Build native CLI and compatibility executables
         timeout-minutes: 90
@@ -103,7 +147,7 @@ jobs:
           key: preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-aux-complete-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Build native desktop GUI
-        timeout-minutes: 25
+        timeout-minutes: 45
         working-directory: SRC
         run: cargo build --release --locked -p neothd-gui --features release-desktop --target x86_64-pc-windows-msvc
 
@@ -222,6 +266,91 @@ jobs:
           $zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$zipHash  $(Split-Path -Leaf $zip)" | Set-Content -LiteralPath "$zip.sha256" -Encoding ascii
 
+      - name: Portable preview lifecycle acceptance
+        id: portable_preview_lifecycle
+        if: ${{ runner.os == 'Windows' }}
+        timeout-minutes: 30
+        shell: pwsh
+        env:
+          SLINT_BACKEND: software
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $receiptRoot = $env:PORTABLE_ACCEPTANCE_RECEIPTS
+          New-Item -ItemType Directory -Path $receiptRoot -Force | Out-Null
+          $workRoot = Join-Path $env:RUNNER_TEMP "neoth portable preview lifecycle $env:GITHUB_RUN_ID $env:GITHUB_RUN_ATTEMPT"
+          $zip = Join-Path $env:GITHUB_WORKSPACE "dist/neoth-unreleased-preview-windows-x64-$env:GITHUB_SHA.zip"
+          $sidecar = "$zip.sha256"
+          $helper = Join-Path $env:GITHUB_WORKSPACE 'packaging/tests/Test-PortablePreview.ps1'
+          $transcript = Join-Path $receiptRoot 'portable-preview-lifecycle.output.txt'
+          $status = 'failed'
+          $failure = $null
+          try {
+            & $helper -Archive $zip -ArchiveSha256 $sidecar -ExpectedSourceSha $env:GITHUB_SHA -WorkRoot $workRoot -GuiRuntimeProbe *>&1 |
+              Tee-Object -LiteralPath $transcript
+            $status = 'passed'
+          } catch {
+            $failure = $_.Exception.Message
+            $_ | Out-String | Add-Content -LiteralPath $transcript -Encoding utf8
+          }
+          [ordered]@{
+            schema_version = 1
+            kind = 'portable_preview_lifecycle_ci'
+            status = $status
+            source_sha = $env:GITHUB_SHA
+            archive = $zip
+            archive_sha256_sidecar = $sidecar
+            work_root = $workRoot
+            helper = $helper
+            gui_runtime_probe = 'SLINT_BACKEND=software on GitHub Windows only'
+            acceptance_scope = 'unsigned uninstalled portable preview only'
+            transcript = $transcript
+            failure = $failure
+          } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $receiptRoot 'portable-preview-lifecycle.json') -Encoding utf8
+          if ($status -ne 'passed') { throw "portable preview lifecycle acceptance failed: $failure" }
+          $neoth = Join-Path $workRoot "neoth-unreleased-preview-windows-x64-$env:GITHUB_SHA/neoth.exe"
+          if (-not (Test-Path -LiteralPath $neoth -PathType Leaf)) { throw "lifecycle receipt passed without its verified extracted neoth.exe: $neoth" }
+          "neoth_executable=$neoth" >> $env:GITHUB_OUTPUT
+
+      - name: Portable diff-impact acceptance
+        if: ${{ runner.os == 'Windows' }}
+        timeout-minutes: 25
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $receiptRoot = $env:PORTABLE_ACCEPTANCE_RECEIPTS
+          New-Item -ItemType Directory -Path $receiptRoot -Force | Out-Null
+          $workRoot = Join-Path $env:RUNNER_TEMP "neoth portable diff impact $env:GITHUB_RUN_ID $env:GITHUB_RUN_ATTEMPT"
+          $neoth = '${{ steps.portable_preview_lifecycle.outputs.neoth_executable }}'
+          $helper = Join-Path $env:GITHUB_WORKSPACE 'packaging/tests/Test-PortableDiffImpact.ps1'
+          $transcript = Join-Path $receiptRoot 'portable-diff-impact.output.txt'
+          $status = 'failed'
+          $failure = $null
+          try {
+            if ([string]::IsNullOrWhiteSpace($neoth) -or -not (Test-Path -LiteralPath $neoth -PathType Leaf)) {
+              throw "verified lifecycle neoth.exe handoff is absent: $neoth"
+            }
+            & $helper -Executable $neoth -ExpectedSourceSha $env:GITHUB_SHA -WorkRoot $workRoot *>&1 |
+              Tee-Object -LiteralPath $transcript
+            $status = 'passed'
+          } catch {
+            $failure = $_.Exception.Message
+            $_ | Out-String | Add-Content -LiteralPath $transcript -Encoding utf8
+          }
+          [ordered]@{
+            schema_version = 1
+            kind = 'portable_diff_impact_ci'
+            status = $status
+            source_sha = $env:GITHUB_SHA
+            executable = $neoth
+            work_root = $workRoot
+            helper = $helper
+            lifecycle_receipt = (Join-Path $receiptRoot 'portable-preview-lifecycle.json')
+            acceptance_scope = 'unsigned uninstalled portable preview only'
+            transcript = $transcript
+            failure = $failure
+          } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $receiptRoot 'portable-diff-impact.json') -Encoding utf8
+          if ($status -ne 'passed') { throw "portable diff-impact acceptance failed: $failure" }
+
       - name: Upload unreleased preview artifact
         timeout-minutes: 10
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -231,6 +360,16 @@ jobs:
             dist/neoth-unreleased-preview-windows-x64-${{ github.sha }}.zip
             dist/neoth-unreleased-preview-windows-x64-${{ github.sha }}.zip.sha256
           if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload portable acceptance receipts
+        if: ${{ always() && runner.os == 'Windows' }}
+        timeout-minutes: 5
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: neoth-portable-acceptance-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ env.PORTABLE_ACCEPTANCE_RECEIPTS }}
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Save interrupted preview Cargo cache

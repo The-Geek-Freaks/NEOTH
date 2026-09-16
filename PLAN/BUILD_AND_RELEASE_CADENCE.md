@@ -38,20 +38,36 @@ profile in `SRC/Cargo.toml` and the release workflow remain unchanged. Preview
 provenance records Rust 1.93.0 and all four overrides; it is not evidence of
 optimized-release performance.
 
-The preview job has a 240-minute outer bound. Its CLI, migration/relay and GUI
-build steps have independent 90/15/25-minute bounds. All declared bounded steps
-total 205 minutes, leaving setup and recovery reserve. Compatible cache prefixes
-include the compiler, static CRT, preview profile and lock hash. Run/attempt keys
-are immutable; completed phases have priority over interrupted recovery inputs.
-Only a successful build phase can save its completed cache. An interrupted cache
-does not prove a completed binary or any acceptance result.
+The preview job has a 315-minute outer bound. Its CLI, migration/relay and GUI
+build steps have independent 90/15/45-minute bounds. Declared bounded steps total
+287 minutes, including remote acceptance, leaving 28 minutes for setup and runner
+overhead. Compatible cache prefixes include the compiler, static CRT, preview
+profile and lock hash. Restore order is fully completed Rust, interrupted,
+completed auxiliary, then completed CLI. The interrupted snapshot from the prior
+GUI timeout includes work absent from the earlier auxiliary snapshot; Cargo must
+still validate fingerprints and complete each ordinary build command. Only a
+successful build phase writes its completed cache. Recovery inputs never prove
+a completed binary or an acceptance result.
+
+Tracked `packaging/tests/Test-PortablePreview.ps1` and `Test-PortableDiffImpact.ps1`
+are parsed on the GitHub Windows runner before any compilation (2-minute bound).
+After normal ZIP/sidecar staging, lifecycle acceptance (30 minutes) verifies the
+archive checksum, source/profile provenance and every inventory entry before
+extraction. It then exercises read-only absence, refresh/fresh/stale, corrupt
+state with explicit repair, root isolation and the software-rendered GUI runtime
+probe. Diff-impact acceptance (25 minutes) receives only that verified extracted
+CLI and exercises real Git/source indexing, exact symbols/callers, observed-test
+provenance and stale-input rejection. Both use fresh spaced runner-temp paths,
+isolated `NEOTH_HOME` and 120-second child-process limits. Receipt upload runs even
+on failure (5 minutes); upload success alone is not an acceptance result.
 
 The artifact records the full source commit, each payload file SHA-256 and a
 separate ZIP checksum. It is unsigned and unreleased. It does not create a tag,
-GitHub Release, installer or release-bound self-knowledge snapshot. Its runtime
-acceptance must use the downloaded, hash-verified bytes and is separate from
-installed-product and final release acceptance. Push preflight checks the
-workflow contract without compiling Rust.
+GitHub Release, installer or release-bound self-knowledge snapshot. Runtime
+acceptance uses the actual hash-verified staged ZIP on the runner and is separate
+from downloaded-artifact custody, visual/accessibility, installed-product and
+final release acceptance. Push preflight checks the workflow contract without
+compiling Rust. On the affected workstation none of these helpers may run locally.
 
 ## Evidence ladder
 

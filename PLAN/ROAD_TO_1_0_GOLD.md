@@ -8,6 +8,21 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W91/W92 preview recovery and remote portable acceptance (2026-09-16):**
+preview `35080018852` completed CLI compilation (81m22s) and auxiliary binaries
+(2m38s), then hit the GUI step's 25-minute deadline. Its saved GUI recovery cache
+was shadowed by the older auxiliary cache. The corrected restore order prefers
+that compatible interrupted cache after a fully completed cache; GUI compilation
+has a 45-minute bound and the full job has 315 minutes. Tracked PowerShell helpers
+now gate the actual staged ZIP on GitHub: checksum/inventory/provenance, code-map
+lifecycle and corrupt repair, GUI runtime probe, exact diff impact and observed
+test evidence. The second helper receives only the verified extracted CLI.
+Source review is separate from execution; fresh preview acceptance is pending.
+W89 Preflight `35097555802` and Code Quality `35097554326` passed for `cc387be7`;
+full CI `35097577183` remains in progress on that Rust source. All local validation
+remains suspended. See [the W91/W92 report](../docs/gold-wave91-92-verification.md).
+Counts remain **1324/1015/307/2**, raw309/pre-tag308; no checkbox closes.
+
 **W89 native macOS test entry and W88 fixture correction (2026-09-16):** the
 five generated-Slint callback fixtures use a test-only custom main-thread entry
 on macOS. CI retains their exact names and checks structured discovery before

@@ -1,0 +1,513 @@
+{
+  "schema": "neoth-gold-remote-pending-test-matrix/v1",
+  "status": "SOURCE_REVIEW_PASS_REMOTE_PREVIEW_PENDING_RUST_CI_IN_PROGRESS",
+  "base": "cc387be72092dc62da1b1965e0a3bf6634b9567c",
+  "sourceManifest": {
+    "path": "docs/verification/gold-wave91-92-source-manifest.json",
+    "bytes": 50755,
+    "sha256": "F9FE40CD1D62D933D0B870C18757ACAC52805229B7DA5190BB3F8153DD5AD222"
+  },
+  "sourceInputs": 293,
+  "requiredNativeTests": [
+    {
+      "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
+      "sourcePath": "SRC/neothd/src/mcp/codegraph_server.rs",
+      "sourceSha256": "E87CB5CFD14B4F9D6DDF634AF172A594132EE3EE215A0AA253AD362C6EFD746E",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "mcp::gate::tests::w61_called_audit_precedes_invalid_direct_context_metadata",
+      "sourcePath": "SRC/neothd/src/mcp/gate.rs",
+      "sourceSha256": "401DF6EE6DEBD9544BD61BB2389EEDB092D7BCFF9C1D1E993749184126335AE4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::mcp::tests::w61_direct_cli_generated_stdio_receipts_bind_child_metadata_before_return",
+      "sourcePath": "SRC/neothd/src/cli/mcp.rs",
+      "sourceSha256": "574321C5E0DCAF48E6047BB16D4A58EA07981E75B265CA06CFD148CB1ED09D7F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::mcp::tests::w61_direct_cli_invalid_child_binding_fails_after_called_without_receipt",
+      "sourcePath": "SRC/neothd/src/cli/mcp.rs",
+      "sourceSha256": "574321C5E0DCAF48E6047BB16D4A58EA07981E75B265CA06CFD148CB1ED09D7F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::mcp::tests::w61_direct_cli_generated_is_error_returns_only_the_child_error_without_final_claim",
+      "sourcePath": "SRC/neothd/src/cli/mcp.rs",
+      "sourceSha256": "574321C5E0DCAF48E6047BB16D4A58EA07981E75B265CA06CFD148CB1ED09D7F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::mcp::tests::w61_direct_cli_nongenerated_child_success_retains_legacy_no_receipt_behavior",
+      "sourcePath": "SRC/neothd/src/cli/mcp.rs",
+      "sourceSha256": "574321C5E0DCAF48E6047BB16D4A58EA07981E75B265CA06CFD148CB1ED09D7F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::mcp::tests::w61_direct_cli_final_receipt_append_failure_returns_error_after_real_child_called_audit",
+      "sourcePath": "SRC/neothd/src/cli/mcp.rs",
+      "sourceSha256": "574321C5E0DCAF48E6047BB16D4A58EA07981E75B265CA06CFD148CB1ED09D7F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::mcp::tests::w61_direct_cli_receipt_uses_the_child_selected_root_for_empty_and_nonempty_results",
+      "sourcePath": "SRC/neothd/src/cli/mcp.rs",
+      "sourceSha256": "574321C5E0DCAF48E6047BB16D4A58EA07981E75B265CA06CFD148CB1ED09D7F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::audit_rpc::tests::w61_live_audit_rpc_accepts_only_durable_code_map_result_receipt",
+      "sourcePath": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
+      "sourceSha256": "B53D525EAACC89577B5AC1EF476E2D9108A2CE05902330738FBB6CD68AEE6218",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "security::prompt_envelope::tests::coding_worker_context_field_is_required_and_has_one_fixed_position",
+      "sourcePath": "SRC/neothd/src/security/prompt_envelope.rs",
+      "sourceSha256": "A141274A9B3509AA074D5F8FEBA4D410A949E6562F1D6A5DE9C647670B0D6C7C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::provider_worker::tests::direct_model_skips_selector",
+      "sourcePath": "SRC/neothd/src/coding/provider_worker.rs",
+      "sourceSha256": "F283458E5E563DBFB74D04431C53D2945C515D7D91E1CA84AA1B96838505A096",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::provider_worker::tests::two_stage_worker_keeps_selector_context_free_and_binds_prepared_context_to_task",
+      "sourcePath": "SRC/neothd/src/coding/provider_worker.rs",
+      "sourceSha256": "F283458E5E563DBFB74D04431C53D2945C515D7D91E1CA84AA1B96838505A096",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::provider_worker::tests::oversized_worker_context_blocks_before_selector_or_task_provider_call",
+      "sourcePath": "SRC/neothd/src/coding/provider_worker.rs",
+      "sourceSha256": "F283458E5E563DBFB74D04431C53D2945C515D7D91E1CA84AA1B96838505A096",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::service::tests::dispatch_workers_receive_the_same_prepared_context_snapshot_as_the_request",
+      "sourcePath": "SRC/neothd/src/coding/service.rs",
+      "sourceSha256": "C5AEB4B3DA2B01610499EC9E6D69BEEEF3F356972C25C15844F929FE12429DBB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "mcp::dispatch_loop::tests::compact_if_needed_summarizes_over_threshold",
+      "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
+      "sourceSha256": "97FB822C3D65433CD71FF9FC46957FF70283D846A2C9DD338240294DEA8EA9B3",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "mcp::dispatch_loop::tests::compact_if_needed_sends_canonical_outer_history_to_the_driver",
+      "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
+      "sourceSha256": "97FB822C3D65433CD71FF9FC46957FF70283D846A2C9DD338240294DEA8EA9B3",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "mcp::dispatch_loop::tests::compact_if_needed_blocks_oversized_fanout_before_the_first_call",
+      "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
+      "sourceSha256": "97FB822C3D65433CD71FF9FC46957FF70283D846A2C9DD338240294DEA8EA9B3",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "mcp::dispatch_loop::tests::compact_if_needed_is_noop_under_threshold",
+      "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
+      "sourceSha256": "97FB822C3D65433CD71FF9FC46957FF70283D846A2C9DD338240294DEA8EA9B3",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::compactor::tests::utility_compaction_request_wraps_old_zone_as_one_canonical_envelope",
+      "sourcePath": "SRC/neothd/src/providers/compactor.rs",
+      "sourceSha256": "12A338599D8F1A89E64D82E8A6F496C0CCB21AF8594BA00E03A2E3D85D8542A0",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::compactor::tests::no_fire_when_under_threshold",
+      "sourcePath": "SRC/neothd/src/providers/compactor.rs",
+      "sourceSha256": "12A338599D8F1A89E64D82E8A6F496C0CCB21AF8594BA00E03A2E3D85D8542A0",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::compactor::tests::oversize_old_zone_fails_before_utility_or_inner_dispatch",
+      "sourcePath": "SRC/neothd/src/providers/compactor.rs",
+      "sourceSha256": "12A338599D8F1A89E64D82E8A6F496C0CCB21AF8594BA00E03A2E3D85D8542A0",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::session_sort_cron::tests::group_titles_sends_card_text_as_one_canonical_data_envelope",
+      "sourcePath": "SRC/neothd/src/daemon/session_sort_cron.rs",
+      "sourceSha256": "538086DC510B98E8D6D458DE47BFE6576E0EEB1CE3C95AE1853E7708CB5118CB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::session_sort_cron::tests::group_titles_rejects_oversize_card_list_before_provider_call",
+      "sourcePath": "SRC/neothd/src/daemon/session_sort_cron.rs",
+      "sourceSha256": "538086DC510B98E8D6D458DE47BFE6576E0EEB1CE3C95AE1853E7708CB5118CB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::chat::tests::council_leaf_wraps_role_recall_as_single_canonical_memory_context",
+      "sourcePath": "SRC/neothd/src/cli/chat.rs",
+      "sourceSha256": "BEB16012FC12DEC0F965D02E6CD3DF976FF600FF05C063C4157A4CFD4D5DFC1A",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "code_map::lifecycle::tests::stale_published_orphan_is_interrupted_then_rebuilt",
+      "sourcePath": "SRC/neothd/src/code_map/lifecycle.rs",
+      "sourceSha256": "14C2BFBDD966ED4880182BEA13731099F433B8CAD14CE90E3738FEB0D11847F9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "code_map::lifecycle_watcher_tests::edit_add_and_remove_rebuild_the_managed_root_without_touching_a_sibling",
+      "sourcePath": "SRC/neothd/src/code_map/lifecycle_watcher_tests.rs",
+      "sourceSha256": "1CE354F7B307155FB5BDB1486780EADD0959EC5DC6BF757600F20A6031429B14",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::decomposer::tests::code_map_context_valid_output_persists_receipt_and_session_tasks",
+      "sourcePath": "SRC/neothd/src/coding/decomposer.rs",
+      "sourceSha256": "CFF2484229A6B5C3BE5D26CC5C3CC6832429ECCF4124DC8778AE573AD5EF8930",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::decomposer::tests::accepted_repair_result_binds_attempt_two_without_rereading_receipts",
+      "sourcePath": "SRC/neothd/src/coding/decomposer.rs",
+      "sourceSha256": "CFF2484229A6B5C3BE5D26CC5C3CC6832429ECCF4124DC8778AE573AD5EF8930",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::decomposer::tests::code_map_receipts_bind_clamped_context_across_two_malformed_attempts",
+      "sourcePath": "SRC/neothd/src/coding/decomposer.rs",
+      "sourceSha256": "CFF2484229A6B5C3BE5D26CC5C3CC6832429ECCF4124DC8778AE573AD5EF8930",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::store::tests::ensure_schema_migrates_existing_task_rows_with_nullable_worker_result_provenance",
+      "sourcePath": "SRC/neothd/src/coding/store.rs",
+      "sourceSha256": "FBF4055D5FC810A3832C2AB0C1867693D24D9996D2320C83BE99E5F5333A7C85",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::store::tests::worker_result_provenance_readback_rejects_tampered_json_without_none_fallback",
+      "sourcePath": "SRC/neothd/src/coding/store.rs",
+      "sourceSha256": "FBF4055D5FC810A3832C2AB0C1867693D24D9996D2320C83BE99E5F5333A7C85",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::dispatcher::tests::legacy_worker_outcome_keeps_nullable_result_provenance_empty",
+      "sourcePath": "SRC/neothd/src/coding/dispatcher.rs",
+      "sourceSha256": "92C0BB6BD8066B0DF23937477E65F51F9904D904AAD6F15AA54C42A3C5A559C1",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::dispatcher::tests::privileged_internal_forged_output_binding_never_materializes_or_persists",
+      "sourcePath": "SRC/neothd/src/coding/dispatcher.rs",
+      "sourceSha256": "92C0BB6BD8066B0DF23937477E65F51F9904D904AAD6F15AA54C42A3C5A559C1",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::service::runtime_tests::audited_coding_worker_one_shot_wal_binds_to_selected_home",
+      "sourcePath": "SRC/neothd/src/coding/service_runtime_tests.rs",
+      "sourceSha256": "09CF64EFBE8891E7F702F7F8FA6A436DA9DE63B5125749525EC4AD57DD24E5F1",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::kanban::tests::task_detail_loads_worker_result_provenance_and_rejects_tampering",
+      "sourcePath": "SRC/neothd/src/cli/kanban.rs",
+      "sourceSha256": "3E0985624488843DE6E7337157F8A82E62BDE71A718F71765B8864FA86EF58E4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::self_improve::tests::qa_candidate_preserves_hostile_data_without_inner_prompt_frames",
+      "sourcePath": "SRC/neothd/src/cli/self_improve.rs",
+      "sourceSha256": "58621E88B00520D0A92D283E169C6366C91DCE8B7014F55B20E1DD7B00C02032",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::self_improve::tests::qa_candidate_carries_the_exact_persisted_typed_analysis_as_json_data",
+      "sourcePath": "SRC/neothd/src/cli/self_improve.rs",
+      "sourceSha256": "58621E88B00520D0A92D283E169C6366C91DCE8B7014F55B20E1DD7B00C02032",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "sub_agents::runtime::tests::initial_qa_and_retry_keep_adversarial_values_inside_typed_fields",
+      "sourcePath": "SRC/neothd/src/sub_agents/runtime.rs",
+      "sourceSha256": "6154CA0973E6CDF230D35F81B525F0494C64AB02ED5D04ADD892C2F7AB82111E",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::chat_turn_pipeline::tests::prepared_turn_retains_seeded_context_through_truthful_retry_before_final_receipt_and_terminal",
+      "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "sourceSha256": "3367904C740D872E907B26EC0632BD229619BCA277E94E37F8323AE5EE3872EF",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve_pipeline::tests::build_pipeline_handler_retains_selected_generation_through_truthful_retry_before_final_channel_result",
+      "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "sourceSha256": "4E2333F2599C2CD7F29EF35243D802B10C76D3C751B171BE9CCC0D87A17DE6F1",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::chat_turn_pipeline::tests::prepared_turn_retains_context_through_truthful_refusal_then_local_shadow_final_result",
+      "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "sourceSha256": "3367904C740D872E907B26EC0632BD229619BCA277E94E37F8323AE5EE3872EF",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve_pipeline::tests::build_pipeline_handler_retains_context_through_direct_local_shadow_cloud_fallback_final_result",
+      "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "sourceSha256": "4E2333F2599C2CD7F29EF35243D802B10C76D3C751B171BE9CCC0D87A17DE6F1",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::ops::tests::impact_policy_converts_validated_bounds_without_widening",
+      "sourcePath": "SRC/neothd/src/config/ops.rs",
+      "sourceSha256": "183C60EF69E526C1088AA9A69FEA3D0453EC914CF0ADA0232670AECA6F905D73",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::ops::tests::impact_policy_invalid_values_reject_before_dispatch_conversion",
+      "sourcePath": "SRC/neothd/src/config/ops.rs",
+      "sourceSha256": "183C60EF69E526C1088AA9A69FEA3D0453EC914CF0ADA0232670AECA6F905D73",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "coding::dispatcher::tests::apply_wal_advisory_uses_narrow_and_wide_configured_impact_policies",
+      "sourcePath": "SRC/neothd/src/coding/dispatcher.rs",
+      "sourceSha256": "92C0BB6BD8066B0DF23937477E65F51F9904D904AAD6F15AA54C42A3C5A559C1",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "mcp::gate::tests::w53_outline_enrichment_real_gate_success_has_one_called_receipt",
+      "sourcePath": "SRC/neothd/src/mcp/gate.rs",
+      "sourceSha256": "401DF6EE6DEBD9544BD61BB2389EEDB092D7BCFF9C1D1E993749184126335AE4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "mcp::gate::tests::w79_outline_enrichment_real_gate_retains_distinct_configured_sidecar",
+      "sourcePath": "SRC/neothd/src/mcp/gate.rs",
+      "sourceSha256": "401DF6EE6DEBD9544BD61BB2389EEDB092D7BCFF9C1D1E993749184126335AE4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "admitted_limits_remain_bound_to_real_analysis_until_the_next_operation",
+      "sourcePath": "SRC/neothd/tests/gui_code_map_impact_controller.rs",
+      "sourceSha256": "0B0CBD489D8329F3191DEF67A23B3B03C9FB9D6494420312843D4005A26D57AA",
+      "junitClass": "neoth::gui_code_map_impact_controller"
+    },
+    {
+      "test": "coding::dispatcher::tests::risk_block_emits_preapply_advisory_receipt_without_changing_risk_authority",
+      "sourcePath": "SRC/neothd/src/coding/dispatcher.rs",
+      "junitClass": "neoth",
+      "sourceSha256": "92C0BB6BD8066B0DF23937477E65F51F9904D904AAD6F15AA54C42A3C5A559C1"
+    }
+  ],
+  "requiredGuiTests": [
+    "coding_controller::tests::gui_reserved_start_reaches_real_provider_worker_with_prepared_code_map_context",
+    "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
+    "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
+    "w58_gui_callback_runtime_tests::w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint",
+    "w58_gui_callback_runtime_tests::w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it",
+    "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt"
+  ],
+  "requiredGuiClass": "neothd-gui::bin/neothd-gui",
+  "additionalGuiCopies": {
+    "coding_controller::tests::gui_reserved_start_reaches_real_provider_worker_with_prepared_code_map_context": "neoth::gui_coding_controller"
+  },
+  "reviews": [
+    {
+      "path": "work/gold-20260906/wave91-preview-gui-recovery-01/REVIEW.md",
+      "bytes": 2873,
+      "sha256": "3E54BB7D833F001B1109F5356A59151502FD143337612A9D9080D6C483AB2605",
+      "verdict": "APPROVE_SOURCE_ONLY; canonical LF transfer approved"
+    }
+  ],
+  "priorRemoteCI": {
+    "headSha": "389b5038264562ccd0e438e8d0a6eed450784a0d",
+    "jobId": 104710011937,
+    "jobName": "Linux quality / Rust 1.91",
+    "jobConclusion": "failure",
+    "testStep": {
+      "completedAt": "2026-09-16T08:35:00Z",
+      "conclusion": "failure",
+      "name": "cargo nextest workspace (Linux)",
+      "number": 14,
+      "startedAt": "2026-09-16T08:08:05Z",
+      "status": "completed"
+    },
+    "xmlSha256": "C4664F631DAC5C963FF761727D364286280FF3510B8BD5B06039FEAF08E46546",
+    "counts": {
+      "passed": 16796,
+      "failed": 9,
+      "error": 0,
+      "skipped": 0
+    },
+    "caseCount": 16805,
+    "runId": 35070262418,
+    "requiredNativePassed": 42,
+    "requiredNativeTotal": 45,
+    "requiredGuiPassed": 0,
+    "requiredGuiTotal": 5,
+    "boundary": "Earlier W77 sources; no proof for updated sources. Nextest separately reported 20 skipped tests outside JUnit."
+  },
+  "preview": {
+    "priorRunId": 35080018852,
+    "priorSource": "c736c37621e9f0eed4a2819883ad0cc2c3176089",
+    "priorStatus": "GUI25mdeadline; noartifact",
+    "currentStatus": "REVIEWED_RECOVERY_PENDING_EXACT_HEAD_DISPATCH",
+    "guiCapMinutes": 45,
+    "lifecycleCapMinutes": 30,
+    "diffImpactCapMinutes": 25,
+    "jobCapMinutes": 315,
+    "declaredPhaseMaxMinutes": 287,
+    "setupReserveMinutes": 28,
+    "acceptance": "NOT_RUN; no installed/release claim"
+  },
+  "nativeExecutionStatus": "PENDING_CURRENT_SOURCE_GITHUB_CI",
+  "guiExecutionStatus": "PENDING_CURRENT_SOURCE_GITHUB_CI; macOS five W58 classes must bind custom native target",
+  "linuxPackageExecutionStatus": "PASS_ON_IDENTICAL_PACKAGE_SOURCES_5deea77a",
+  "releaseReady": false,
+  "hostConstraint": "ALL LOCAL VALIDATION SUSPENDED; bounded source/metadata reads, edits and serialized Git/GitHub only",
+  "checks": {
+    "executionPolicy": "GitHub only; no local formatting, parsers, contracts, fixtures or executables",
+    "sourceReview": "Independent APPROVE after fixing runtime helper paths, regex escaping and diff timeout",
+    "rawToAdmittedLf": [
+      {
+        "path": ".github/workflows/preview-windows.yml",
+        "reviewedRawSha256": "80E738A098AAD0BC548FDDA539601AD104ABFE3592AD0BC6B7CDA9B82184C5F4",
+        "admittedLfSha256": "80E738A098AAD0BC548FDDA539601AD104ABFE3592AD0BC6B7CDA9B82184C5F4",
+        "bytes": 18711,
+        "transformation": "CRLF to LF only; source review approved canonicalization"
+      },
+      {
+        "path": "packaging/tests/test_preview_windows_workflow_contract.py",
+        "reviewedRawSha256": "7B0FB3AF9BF8FEA1637D8328112FA0315C0FC26411F47535C1B776FC6347E33A",
+        "admittedLfSha256": "7B0FB3AF9BF8FEA1637D8328112FA0315C0FC26411F47535C1B776FC6347E33A",
+        "bytes": 11934,
+        "transformation": "CRLF to LF only; source review approved canonicalization"
+      },
+      {
+        "path": "packaging/tests/Test-PortablePreview.ps1",
+        "reviewedRawSha256": "ADBB222B9BF9907CA65A1B5C5C1304DB303413ACD432F1B57BD85A05321E6D8A",
+        "admittedLfSha256": "ADBB222B9BF9907CA65A1B5C5C1304DB303413ACD432F1B57BD85A05321E6D8A",
+        "bytes": 19599,
+        "transformation": "CRLF to LF only; source review approved canonicalization"
+      },
+      {
+        "path": "packaging/tests/Test-PortableDiffImpact.ps1",
+        "reviewedRawSha256": "829D58DBCAF18902260EAF714A5ACFEC7F6DF1D578D3B87B5B6565AE600239D8",
+        "admittedLfSha256": "829D58DBCAF18902260EAF714A5ACFEC7F6DF1D578D3B87B5B6565AE600239D8",
+        "bytes": 16801,
+        "transformation": "CRLF to LF only; source review approved canonicalization"
+      }
+    ]
+  },
+  "priorWindowsCI": {
+    "headSha": "389b5038264562ccd0e438e8d0a6eed450784a0d",
+    "jobId": 104710011788,
+    "jobName": "windows-2022 tests / Rust 1.91",
+    "jobConclusion": "failure",
+    "testStep": {
+      "completedAt": "2026-09-16T09:04:28Z",
+      "conclusion": "failure",
+      "name": "Run nextest workspace tests",
+      "number": 11,
+      "startedAt": "2026-09-16T08:37:57Z",
+      "status": "completed"
+    },
+    "xmlSha256": "DE0C40DFF65BE72B6B8754C0AF86C4CCD7E314E0B781DB7D735AB0F64F9826C1",
+    "counts": {
+      "passed": 16731,
+      "failed": 7,
+      "error": 0,
+      "skipped": 0
+    },
+    "caseCount": 16738,
+    "runId": 35070262418,
+    "skippedOutsideJunit": 22,
+    "leakyPassingTests": 1,
+    "pending": "All seven observed failures now have reviewed W83/W85 fixture corrections; actual new-source execution remains pending"
+  },
+  "priorLightRemote": {
+    "headSha": "cc387be72092dc62da1b1965e0a3bf6634b9567c",
+    "preflightRun": 35097555802,
+    "codeQualityRun": 35097554326,
+    "conclusion": "success"
+  },
+  "portableAcceptanceHelpers": [
+    {
+      "path": "packaging/tests/Test-PortablePreview.ps1",
+      "bytes": 19599,
+      "sha256": "ADBB222B9BF9907CA65A1B5C5C1304DB303413ACD432F1B57BD85A05321E6D8A"
+    },
+    {
+      "path": "packaging/tests/Test-PortableDiffImpact.ps1",
+      "bytes": 16801,
+      "sha256": "829D58DBCAF18902260EAF714A5ACFEC7F6DF1D578D3B87B5B6565AE600239D8"
+    }
+  ],
+  "priorMacosCI": {
+    "runId": 35070262418,
+    "jobId": 104710011774,
+    "headSha": "389b5038264562ccd0e438e8d0a6eed450784a0d",
+    "compileStep": "failure after100m06s",
+    "testExecution": "skipped after compile deadline; no runtime verdict",
+    "diagnosis": "fresh observability awaiting analysis; no OOM or compiler cause claimed",
+    "completedLog": {
+      "path": "work/gold-20260906/wave77-macos-ci-failure.log",
+      "bytes": 61494,
+      "sha256": "F1501FB4F558C02C6470C55FBD115CA479801FC83674301F6FED529EEB665D13"
+    },
+    "interruptedCache": "saved successfully09:30:32UTC",
+    "sampledPeakSwapMiB": 6164.12,
+    "classification": "100-minute compile deadline with observed paging; no OOM termination or compiler diagnostic established",
+    "nextRunChange": "macOS Cargo jobs2→1; compatible caches preserved"
+  },
+  "priorCiCompileFailure": {
+    "runId": 35080927314,
+    "headSha": "5a8540f5c3d206011c2868bb377ac29db65d00e3",
+    "conclusion": "cancelled_after_three_completed_compile_failures",
+    "error": "Four undeclared ImpactOptions uses in shared nested test module; fixed by W90",
+    "jobs": [
+      104744485120,
+      104744484999,
+      104744485158
+    ],
+    "windowsMacos": "Cancelled before runtime; uploaded cached JUnit not accepted; no new cancelled cache saved",
+    "logs": [
+      {
+        "path": "work/gold-20260906/wave87-job-104744485120.log",
+        "bytes": 81773,
+        "sha256": "E5E0C9F3BFA9CD166BC9C3ABCBD9D71E90BC3182A7E2E03622934C37C4CD73FF"
+      },
+      {
+        "path": "work/gold-20260906/wave87-job-104744484999.log",
+        "bytes": 327172,
+        "sha256": "F7EA124B43BFF5D92C4258A940604425E1A993176A3881A12C627D263005B4DA"
+      },
+      {
+        "path": "work/gold-20260906/wave87-job-104744485158.log",
+        "bytes": 178457,
+        "sha256": "BEC9F4427705B5C85CCCA66158D762556002B6F29156E31325E7103CAD1E9ED3"
+      }
+    ]
+  },
+  "previewSnapshotBoundary": "A new preview must bind the published W91/W92 commit. Older c736c376 run produced no artifact; cc387be7 full CI covers unchanged Rust sources but is not exact-head preview acceptance.",
+  "requiredGuiClassesByPlatform": {
+    "macOS": {
+      "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness": "neothd-gui::neothd-gui-macos-native",
+      "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance": "neothd-gui::neothd-gui-macos-native",
+      "w58_gui_callback_runtime_tests::w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint": "neothd-gui::neothd-gui-macos-native",
+      "w58_gui_callback_runtime_tests::w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it": "neothd-gui::neothd-gui-macos-native",
+      "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt": "neothd-gui::neothd-gui-macos-native"
+    }
+  },
+  "currentRustCI": {
+    "runId": 35097577183,
+    "headSha": "cc387be72092dc62da1b1965e0a3bf6634b9567c",
+    "status": "in_progress",
+    "boundary": "Same Rust source family; does not verify the new preview workflow/helpers"
+  }
+}
