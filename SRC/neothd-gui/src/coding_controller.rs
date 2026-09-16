@@ -724,6 +724,15 @@ mod tests {
 
     use super::{CodingCancelState, CodingController, native_coding_request};
 
+    #[derive(serde::Serialize)]
+    struct AcceptedDecompositionCommitment {
+        schema: &'static str,
+        task_ids: Vec<i64>,
+        clarifying_question_sha256: Option<String>,
+        session_complexity: &'static str,
+        input_truncated: bool,
+    }
+
     fn test_run_id(raw: u64) -> CodingRunId {
         serde_json::from_str(&raw.to_string()).expect("test CodingRunId json")
     }
@@ -1096,19 +1105,17 @@ mod tests {
             receipts[0].submitted_context_bytes
         );
         assert_eq!(evidence.accepted_task_count, task_ids.len());
-        let accepted_result = serde_json::json!({
-            "schema": "neoth.coding.accepted_decomposition.v1",
-            "task_ids": task_ids.iter().map(|id| id.raw()).collect::<Vec<_>>(),
-            "clarifying_question_sha256": serde_json::Value::Null,
-            "session_complexity": "fast",
-            "input_truncated": false,
-        });
+        let accepted_result = serde_json::to_vec(&AcceptedDecompositionCommitment {
+            schema: "neoth.coding.accepted_decomposition.v1",
+            task_ids: task_ids.iter().map(|id| id.raw()).collect(),
+            clarifying_question_sha256: None,
+            session_complexity: "fast",
+            input_truncated: false,
+        })
+        .expect("serialize accepted result commitment");
         assert_eq!(
             evidence.accepted_result_sha256,
-            sha256_hex(
-                &serde_json::to_string(&accepted_result)
-                    .expect("serialize accepted result commitment")
-            ),
+            format!("{:x}", Sha256::digest(accepted_result)),
             "terminal evidence binds the accepted decomposer result, not only its prepared context"
         );
 

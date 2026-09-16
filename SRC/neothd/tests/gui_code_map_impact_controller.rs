@@ -27,7 +27,7 @@ use code_map_impact_controller::{
     CodeMapImpactViewInvalidation,
 };
 use neothd::code_map::{
-    CanonicalRepoRoot, DiffImpactSourceDescriptor, RebuildOptions, rebuild_snapshot,
+    CanonicalRepoRoot, DiffImpactSourceDescriptor, ImpactOptions, RebuildOptions, rebuild_snapshot,
 };
 
 struct GitImpactFixture {
@@ -137,7 +137,11 @@ fn working_staged_and_committed_sources_use_real_git_and_read_only_core_receipts
     let controller = fixture.controller();
 
     let working = controller
-        .begin(&fixture.repo, CodeMapImpactSource::WorkingTree)
+        .begin(
+            &fixture.repo,
+            CodeMapImpactSource::WorkingTree,
+            ImpactOptions::default(),
+        )
         .expect("claim working-tree analysis");
     let working_analysis = controller.analyze(&working).expect("analyze working tree");
     assert!(matches!(
@@ -149,7 +153,11 @@ fn working_staged_and_committed_sources_use_real_git_and_read_only_core_receipts
 
     fixture.stage_change();
     let staged = controller
-        .begin(&fixture.repo, CodeMapImpactSource::Staged)
+        .begin(
+            &fixture.repo,
+            CodeMapImpactSource::Staged,
+            ImpactOptions::default(),
+        )
         .expect("claim staged analysis");
     let staged_analysis = controller.analyze(&staged).expect("analyze staged diff");
     assert!(matches!(
@@ -167,6 +175,7 @@ fn working_staged_and_committed_sources_use_real_git_and_read_only_core_receipts
                 base: "HEAD~1".into(),
                 target: "HEAD".into(),
             },
+            ImpactOptions::default(),
         )
         .expect("claim committed analysis");
     let committed_analysis = controller
@@ -188,7 +197,11 @@ fn late_completion_with_a_changed_git_source_cannot_repaint_the_current_view() {
     let fixture = GitImpactFixture::new();
     let controller = fixture.controller();
     let operation = controller
-        .begin(&fixture.repo, CodeMapImpactSource::WorkingTree)
+        .begin(
+            &fixture.repo,
+            CodeMapImpactSource::WorkingTree,
+            ImpactOptions::default(),
+        )
         .expect("claim real working-tree analysis");
     let analysis = controller.analyze(&operation).expect("real core analysis");
     assert_observed_test(&analysis);
@@ -217,7 +230,11 @@ fn stale_index_is_rejected_without_a_gui_stale_opt_in() {
     .expect("make indexed source stale");
     let controller = fixture.controller();
     let operation = controller
-        .begin(&fixture.repo, CodeMapImpactSource::WorkingTree)
+        .begin(
+            &fixture.repo,
+            CodeMapImpactSource::WorkingTree,
+            ImpactOptions::default(),
+        )
         .expect("claim stale analysis");
     let error = controller
         .analyze(&operation)
@@ -240,7 +257,11 @@ fn two_delayed_folder_picker_completions_preserve_interlocks_until_discarded_ter
     std::fs::create_dir_all(&replacement_root).expect("replacement root");
     let controller = fixture.controller();
     let operation = controller
-        .begin(&fixture.repo, CodeMapImpactSource::WorkingTree)
+        .begin(
+            &fixture.repo,
+            CodeMapImpactSource::WorkingTree,
+            ImpactOptions::default(),
+        )
         .expect("claim old-root analysis");
     let analysis = controller
         .analyze(&operation)
@@ -292,7 +313,11 @@ fn real_impact_receipt_caps_display_rows_and_reports_omissions() {
     let fixture = GitImpactFixture::new();
     let controller = fixture.controller();
     let operation = controller
-        .begin(&fixture.repo, CodeMapImpactSource::WorkingTree)
+        .begin(
+            &fixture.repo,
+            CodeMapImpactSource::WorkingTree,
+            ImpactOptions::default(),
+        )
         .expect("claim analysis");
     let analysis = controller.analyze(&operation).expect("real core analysis");
     assert_observed_test(&analysis);
@@ -321,7 +346,11 @@ fn completed_impact_requires_matching_lifecycle_root_and_physical_identity() {
     let fixture = GitImpactFixture::new();
     let controller = fixture.controller();
     let operation = controller
-        .begin(&fixture.repo, CodeMapImpactSource::WorkingTree)
+        .begin(
+            &fixture.repo,
+            CodeMapImpactSource::WorkingTree,
+            ImpactOptions::default(),
+        )
         .expect("claim analysis");
     let analysis = controller.analyze(&operation).expect("real core analysis");
     let root = analysis.impact.root.display().to_owned();
@@ -350,4 +379,36 @@ fn completed_impact_requires_matching_lifecycle_root_and_physical_identity() {
         controller.finish(&operation),
         CodeMapImpactCompletion::Render
     );
+}
+
+#[test]
+fn admitted_limits_remain_bound_to_real_analysis_until_the_next_operation() {
+    let fixture = GitImpactFixture::new();
+    let controller = fixture.controller();
+    let mut accepted = ImpactOptions {
+        max_nodes: 1,
+        ..ImpactOptions::default()
+    };
+    let frozen = controller
+        .begin(&fixture.repo, CodeMapImpactSource::WorkingTree, accepted)
+        .expect("admit narrow snapshot");
+    accepted.max_nodes = 8;
+    let narrow = controller
+        .analyze(&frozen)
+        .expect("analyze admitted narrow policy after caller changed limits");
+    assert_eq!(narrow.impact.impact.impacted_nodes.len(), 1);
+    assert!(narrow.impact.impact.truncated);
+    assert_eq!(controller.finish(&frozen), CodeMapImpactCompletion::Render);
+    let next = controller
+        .begin(&fixture.repo, CodeMapImpactSource::WorkingTree, accepted)
+        .expect("admit wider subsequent operation");
+    let wide = controller
+        .analyze(&next)
+        .expect("analyze subsequent wide policy");
+    assert!(wide.impact.impact.impacted_nodes.len() > narrow.impact.impact.impacted_nodes.len());
+    assert_eq!(wide.impact.root, narrow.impact.root);
+    assert_eq!(wide.impact.diff_sha256, narrow.impact.diff_sha256);
+    assert_eq!(wide.impact.index_generation, narrow.impact.index_generation);
+    assert_eq!(wide.impact.graph_generation, narrow.impact.graph_generation);
+    assert_eq!(controller.finish(&next), CodeMapImpactCompletion::Render);
 }

@@ -66,6 +66,7 @@ pub struct CodeMapImpactOperation {
     requested_root: PathBuf,
     root: PathBuf,
     source: CodeMapImpactSource,
+    impact_options: ImpactOptions,
 }
 
 impl CodeMapImpactOperation {
@@ -140,6 +141,7 @@ impl CodeMapImpactController {
         &self,
         requested_root: &Path,
         source: CodeMapImpactSource,
+        impact_options: ImpactOptions,
     ) -> Result<CodeMapImpactOperation> {
         let requested_root = requested_root.to_path_buf();
         let root = requested_root.canonicalize().with_context(|| {
@@ -167,6 +169,7 @@ impl CodeMapImpactController {
             requested_root,
             root,
             source,
+            impact_options,
         };
         state.current_view = Some(operation.clone());
         state.active = Some(ActiveOperation {
@@ -214,7 +217,7 @@ impl CodeMapImpactController {
             let request = DiffImpactRequest {
                 repo_root: operation.root.clone(),
                 input: operation.source.to_core_input(),
-                options: ImpactOptions::default(),
+                options: operation.impact_options,
             };
             let impact = analyze_diff_impact(&connection, &request)?;
             ensure!(
@@ -344,7 +347,11 @@ mod tests {
         let repository = tempfile::tempdir().unwrap();
         let controller = CodeMapImpactController::new(database_home.path().join("code_map.db"));
         let operation = controller
-            .begin(repository.path(), CodeMapImpactSource::WorkingTree)
+            .begin(
+                repository.path(),
+                CodeMapImpactSource::WorkingTree,
+                ImpactOptions::default(),
+            )
             .unwrap();
 
         assert!(controller.analyze(&operation).is_err());
@@ -372,11 +379,19 @@ mod tests {
         let database = database_home.path().join("code_map.db");
         let controller = CodeMapImpactController::new(database.clone());
         let first = controller
-            .begin(first_root.path(), CodeMapImpactSource::WorkingTree)
+            .begin(
+                first_root.path(),
+                CodeMapImpactSource::WorkingTree,
+                ImpactOptions::default(),
+            )
             .unwrap();
 
         let error = controller
-            .begin(second_root.path(), CodeMapImpactSource::Staged)
+            .begin(
+                second_root.path(),
+                CodeMapImpactSource::Staged,
+                ImpactOptions::default(),
+            )
             .expect_err("second analysis must not enter core");
         assert!(error.to_string().contains("already running"));
         assert!(
@@ -403,7 +418,11 @@ mod tests {
         let repository = tempfile::tempdir().unwrap();
         let controller = CodeMapImpactController::new(database_home.path().join("code_map.db"));
         let operation = controller
-            .begin(repository.path(), CodeMapImpactSource::WorkingTree)
+            .begin(
+                repository.path(),
+                CodeMapImpactSource::WorkingTree,
+                ImpactOptions::default(),
+            )
             .unwrap();
 
         assert_eq!(

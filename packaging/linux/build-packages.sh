@@ -356,6 +356,7 @@ done
 shlib_line="$(cd -- "$work" && dpkg-shlibdeps -O "${shlib_args[@]}")" || die "dpkg-shlibdeps failed"
 depends=${shlib_line#shlibs:Depends=}
 [[ -n $depends && $depends != "$shlib_line" ]] || die "dpkg-shlibdeps returned no dependency contract"
+depends="$depends, libxkbcommon-x11-0"
 installed_size="$(du -sk -- "$deb_root/usr" | awk '{print $1}')"
 
 cat >"$deb_root/DEBIAN/control" <<EOF
@@ -416,6 +417,7 @@ URL: https://github.com/The-Geek-Freaks/NEOTH
 Source0: %{name}-%{version}.tar.gz
 BuildArch: $rpm_arch
 AutoReqProv: yes
+Requires: libxkbcommon-x11
 
 %description
 NEOTH combines a CLI, desktop GUI, migration utility, relay, compatibility

@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W82-W84 GUI policy and CI/runtime dependency repairs (2026-09-16):**
+The shared Coding/Buddy impact action now admits the validated configured policy
+once per operation. Invalid configuration produces a visible error before a
+worker starts; real narrow/wide analysis fixtures bind the accepted limits.
+Earlier-source Linux CI `35070262418` passed strict Clippy and doctests, then
+reported **16,796 passed / 9 failed** executed tests. Reviewed repairs address
+three stale retry fixtures, two copies of one GUI digest expectation and four
+GUI tests missing the X11 runtime. CI adds `libxkbcommon-x11-0`; DEB/RPM package
+metadata now declares the dynamic dependency while retaining automatic ELF
+dependencies. The existing Linux packaging contract joins offline push preflight.
+No test is disabled. New-source Rust/runtime and Linux package-contract execution
+remain pending. The refreshed manifest covers **290 inputs / 48 native + 6 GUI
+identities**. See [the W82-W84 report](../docs/gold-wave82-84-verification.md).
+No local heavy compilation or ROAD closure; counts **1324/1015/307/2**,
+raw309/pre-tag308.
+
 **W79/W80 outline deduplication and Buddy impact entry (2026-09-16):**
 The actual authenticated MCP response now suppresses a configured sidecar only
 when it exactly matches the freshly appended built-in outline sidecar. Distinct

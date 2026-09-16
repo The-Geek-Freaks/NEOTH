@@ -251,6 +251,7 @@ class CiCadenceContractTests(unittest.TestCase):
                         "python3 packaging/test_bootstrap_verifier.py",
                         "python3 .github/release-tools/test-release-isolation.py",
                         "python3 scripts/test_lost_feature_integrity.py",
+                        "bash packaging/linux/test-contracts.sh",
                     ]
                 ),
                 "\n".join(
@@ -422,6 +423,26 @@ class CiCadenceContractTests(unittest.TestCase):
             )
         self.assertIn('-f head_sha="$RELEASE_SHA"', RELEASE_TEXT)
         self.assertIn('and .conclusion == "success"', RELEASE_TEXT)
+
+
+    def test_linux_gui_runtime_keeps_xkbcommon_x11_and_xvfb(self) -> None:
+        linux_quality = workflow_jobs(CI_TEXT)["linux-quality"]
+        steps = workflow_steps(linux_quality)
+        dependencies = step_run_command(
+            steps["Install Linux build deps (fontconfig + X11 + Xvfb)"]
+        )
+        self.assertIn("libxkbcommon-x11-0", dependencies)
+        self.assertIn("xauth", dependencies)
+        self.assertIn("xvfb", dependencies)
+        self.assertEqual(
+            step_run_command(steps["cargo nextest workspace (Linux)"]),
+            "\n".join(
+                [
+                    "rm -f target/nextest/ci/junit.xml",
+                    "xvfb-run --auto-servernum cargo nextest run --workspace --locked --profile ci",
+                ]
+            ),
+        )
 
     def test_platform_test_compilation_and_execution_have_separate_budgets(self) -> None:
         platform_tests = workflow_jobs(CI_TEXT)["platform-tests"]

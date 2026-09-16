@@ -20672,7 +20672,19 @@ fn start_code_map_impact_analysis(
         );
         return;
     }
-    let operation = match controller.begin(Path::new(&root), source) {
+    let impact_options = match neothd::config::FreedomConfig::load_from_default_path_or_default() {
+        Ok(config) => config.code_map.impact_policy.impact_options(),
+        Err(error) => {
+            let _ = error;
+            set_code_map_impact_error(
+                &window,
+                "Impact policy unavailable",
+                "Load a valid Freedom configuration before analyzing change impact.",
+            );
+            return;
+        }
+    };
+    let operation = match controller.begin(Path::new(&root), source, impact_options) {
         Ok(operation) => operation,
         Err(error) => {
             let _ = error;
@@ -37280,8 +37292,11 @@ mod w58_gui_callback_runtime_tests {
                     .success()
             );
         }
-        std::fs::write(repository.path().join("lib.rs"), "pub fn before() {}\n")
-            .expect("write initial Git fixture source");
+        std::fs::write(
+            repository.path().join("lib.rs"),
+            "pub fn leaf() {}\npub fn caller_one() { leaf(); }\npub fn caller_two() { leaf(); }\n",
+        )
+        .expect("write initial Git fixture source");
         for args in [vec!["add", "lib.rs"], vec!["commit", "-m", "before"]] {
             assert!(
                 std::process::Command::new("git")
@@ -37292,7 +37307,10 @@ mod w58_gui_callback_runtime_tests {
                     .success()
             );
         }
-        std::fs::write(repository.path().join("lib.rs"), "pub fn after() {}\n")
+        std::fs::write(
+            repository.path().join("lib.rs"),
+            "pub fn leaf() { let changed = true; }\npub fn caller_one() { leaf(); }\npub fn caller_two() { leaf(); }\n",
+        )
             .expect("write changed Git fixture source");
         for args in [vec!["add", "lib.rs"], vec!["commit", "-m", "after"]] {
             assert!(
@@ -37334,12 +37352,26 @@ mod w58_gui_callback_runtime_tests {
         window.set_code_map_impact_source_index(2);
         window.set_code_map_impact_base("HEAD~1".into());
         window.set_code_map_impact_target("HEAD".into());
-        register_buddy_code_map_impact_callback(
-            &window,
-            Arc::new(CodeMapImpactController::new(database)),
-        );
+        let impact_controller = Arc::new(CodeMapImpactController::new(database));
+        register_buddy_code_map_impact_callback(&window, Arc::clone(&impact_controller));
+        let mut narrow_config = neothd::config::FreedomConfig::default();
+        narrow_config.code_map.impact_policy.max_nodes = 1;
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&narrow_config).expect("serialize narrow impact policy"),
+        )
+        .expect("write narrow impact policy");
         window.invoke_buddy_code_map_impact();
         pump_until_impact_receipt(&window);
+        let narrow_affected_text = window.get_code_map_impact_affected().to_string();
+        let (narrow_nodes, narrow_files) = narrow_affected_text
+            .split_once(" nodes / ")
+            .expect("rendered node/file count");
+        let narrow_affected = narrow_nodes
+            .parse::<usize>()
+            .expect("narrow affected nodes");
+        assert_eq!(narrow_files, "1 files");
+        assert!(window.get_code_map_impact_limited());
         assert_eq!(window.get_nav_active().to_string(), "coding");
         assert!(window.get_code_map_impact_has_receipt());
         assert!(!window.get_code_map_impact_running());
@@ -37371,6 +37403,72 @@ mod w58_gui_callback_runtime_tests {
         assert_eq!(window.get_code_map_impact_exact_seeds().to_string(), "1");
         assert_eq!(window.get_code_map_impact_observed_tests().row_count(), 0);
         assert!(window.get_code_map_impact_no_observed_test_is_not_absence());
+
+        let narrow_digest = window.get_code_map_impact_diff_sha256();
+        assert_eq!(narrow_affected, 1);
+        let mut wide_config = neothd::config::FreedomConfig::default();
+        wide_config.code_map.impact_policy.max_nodes = 8;
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&wide_config).expect("serialize wide impact policy"),
+        )
+        .expect("write wide impact policy");
+        window.invoke_buddy_code_map_impact();
+        pump_until_impact_receipt(&window);
+        let wide_affected_text = window.get_code_map_impact_affected().to_string();
+        let (wide_nodes, wide_files) = wide_affected_text
+            .split_once(" nodes / ")
+            .expect("rendered node/file count");
+        let wide_affected = wide_nodes.parse::<usize>().expect("wide affected nodes");
+        assert_eq!(wide_files, "1 files");
+        assert!(!window.get_code_map_impact_limited());
+        assert!(wide_affected > narrow_affected);
+        assert!(window.get_code_map_impact_has_receipt());
+        assert!(!window.get_code_map_impact_running());
+        assert!(!window.get_code_map_impact_error());
+        assert!(!impact_controller.has_active_analysis());
+        assert_eq!(
+            window.get_code_map_impact_canonical_root().to_string(),
+            expected_canonical_root(repository.path())
+        );
+        assert_eq!(window.get_code_map_impact_source(), "HEAD~1..HEAD");
+        assert_eq!(window.get_code_map_impact_diff_sha256(), narrow_digest);
+        assert_eq!(
+            window
+                .get_code_map_impact_index_generation()
+                .parse::<u64>()
+                .expect("wide index generation"),
+            index_generation
+        );
+        assert_eq!(
+            window
+                .get_code_map_impact_graph_generation()
+                .parse::<u64>()
+                .expect("wide graph generation"),
+            graph_generation
+        );
+        assert_eq!(window.get_code_map_impact_exact_seeds(), "1");
+        assert_eq!(window.get_code_map_impact_observed_tests().row_count(), 0);
+        assert!(window.get_code_map_impact_no_observed_test_is_not_absence());
+
+        wide_config.code_map.impact_policy.max_nodes = 0;
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&wide_config).expect("serialize invalid impact policy"),
+        )
+        .expect("write invalid impact policy");
+        window.invoke_buddy_code_map_impact();
+        assert_eq!(
+            window.get_code_map_impact_state(),
+            "Impact policy unavailable"
+        );
+        assert!(window.get_code_map_impact_error());
+        assert!(!window.get_code_map_impact_has_receipt());
+        assert!(!window.get_code_map_impact_running());
+        assert!(
+            !impact_controller.has_active_analysis(),
+            "invalid policy must fail before admitting a worker"
+        );
     }
 
     struct LoopbackProvider {

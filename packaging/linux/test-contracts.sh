@@ -36,6 +36,14 @@ diff -u <(sed 's/\r$//' "$SCRIPT_DIR/fixtures/expected-layout.txt") <("$BUILDER"
 grep -F 'NEOTH-${version}-${target}.deb' "$BUILDER" >/dev/null || fail "stable DEB asset name drifted"
 grep -F 'NEOTH-${version}-${target}.rpm' "$BUILDER" >/dev/null || fail "stable RPM asset name drifted"
 grep -F '"sha256": "$checksum"' "$BUILDER" >/dev/null || fail "machine-readable checksum sidecar is missing"
+grep -Fx 'shlib_line="$(cd -- "$work" && dpkg-shlibdeps -O "${shlib_args[@]}")" || die "dpkg-shlibdeps failed"' "$BUILDER" >/dev/null ||
+  fail "DEB must retain dpkg-shlibdeps automatic dependency discovery"
+grep -Fx 'depends="$depends, libxkbcommon-x11-0"' "$BUILDER" >/dev/null ||
+  fail "DEB must explicitly require the xkbcommon X11 dlopen runtime"
+grep -Fx 'AutoReqProv: yes' "$BUILDER" >/dev/null ||
+  fail "RPM must retain automatic dependency generation"
+grep -Fx 'Requires: libxkbcommon-x11' "$BUILDER" >/dev/null ||
+  fail "RPM must explicitly require the xkbcommon X11 dlopen runtime"
 grep -Fx 'Exec=/usr/bin/neothd-gui --product-launcher' "$SCRIPT_DIR/neoth.desktop" >/dev/null ||
   fail "desktop launch must honor the saved GUI/CLI product preference"
 if grep -Fx 'Exec=/usr/bin/neothd-gui' "$SCRIPT_DIR/neoth.desktop" >/dev/null; then
