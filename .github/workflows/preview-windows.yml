@@ -23,7 +23,7 @@ jobs:
     runs-on: windows-2022
     # The preview keeps the release feature/profile identity but deliberately
     # uses preview-fast-v1 Cargo overrides for bounded feedback only.
-    timeout-minutes: 315
+    timeout-minutes: 330
     env:
       PORTABLE_ACCEPTANCE_RECEIPTS: neoth portable acceptance receipts ${{ github.run_id }} ${{ github.run_attempt }}
     steps:
@@ -180,7 +180,7 @@ jobs:
           key: preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-aux-complete-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Build native desktop GUI
-        timeout-minutes: 45
+        timeout-minutes: 60
         working-directory: SRC
         run: cargo build --release --locked -p neothd-gui --features release-desktop --target x86_64-pc-windows-msvc
 

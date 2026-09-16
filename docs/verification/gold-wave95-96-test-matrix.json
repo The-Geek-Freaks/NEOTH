@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W98_REVIEWED_SOURCE_REMOTE_EXECUTION_PENDING",
-  "base": "9e197616ff218a33d293e61040c64797887db349",
+  "status": "W95_W99_REVIEWED_SOURCE_REMOTE_EXECUTION_PENDING",
+  "base": "41ce63d0ac665d1584bd701c3c4a9c51ed4bfe18",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 50766,
-    "sha256": "108AA396DC4787310B747E556CA6E57C80AFA90DCD5F41C4F1BEFB3D7B0A042F"
+    "bytes": 50773,
+    "sha256": "B62F148229471AE55639746371DB4A41BB85D36B9BA66B0090A234263DFACBDF"
   },
   "sourceInputs": 293,
   "requiredNativeTests": [
@@ -24,37 +24,37 @@
     {
       "test": "cli::mcp::tests::w61_direct_cli_generated_stdio_receipts_bind_child_metadata_before_return",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
+      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_invalid_child_binding_fails_after_called_without_receipt",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
+      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_generated_is_error_returns_only_the_child_error_without_final_claim",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
+      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_nongenerated_child_success_retains_legacy_no_receipt_behavior",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
+      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_final_receipt_append_failure_returns_error_after_real_child_called_audit",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
+      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_receipt_uses_the_child_selected_root_for_empty_and_nonempty_results",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
+      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
       "junitClass": "neoth"
     },
     {
@@ -306,7 +306,7 @@
     {
       "test": "config::tests::configured_mcp_read_path_selectors_are_exact_and_bounded",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "298BC4BD9F92A3DF2A2C6B739305DDB8CF1E2FB2466D04B86DFE876EA9D33DB9",
+      "sourceSha256": "B407B49312AF7BA66D93F8FD588A1EB370DAD29E579D9980580385FB36A83D30",
       "junitClass": "neoth"
     },
     {
@@ -324,7 +324,7 @@
     {
       "test": "cli::mcp::tests::w95_direct_cli_configured_read_path_keeps_selected_results_and_same_snapshot_descriptor",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
+      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
       "junitClass": "neoth"
     },
     {
@@ -348,13 +348,13 @@
     {
       "test": "cli::mcp::tests::w97_direct_cli_selected_read_negatives_preserve_child_result_without_sidecar",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
+      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w97_selected_call_suppresses_sidecar_after_post_call_source_freshness_change",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F",
+      "sourceSha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3",
       "junitClass": "neoth"
     }
   ],
@@ -416,6 +416,18 @@
       "sha256": "2C97EB6AC29E9A4A0679DCD6F0383A668E5963BA4BE017A26BB02457967EB855",
       "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
       "executionClaim": false
+    },
+    {
+      "record": "work/gold-20260906/wave99-preview-current-head-recovery-01/REVIEW-CHILD.md",
+      "sha256": "5A2378B6FC805807EDB26B5A4633EFD635010BC6AB2F00DDF757707916181E02",
+      "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
+      "executionClaim": false
+    },
+    {
+      "record": "work/gold-20260906/wave99-preview-current-head-recovery-01/REVIEW-BUDGET.md",
+      "sha256": "74181CCA51FCD60B01F66F52D5DD78B3F7BC27A07CDF13A32570427BDC34DC6C",
+      "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
+      "executionClaim": false
     }
   ],
   "priorCi": {
@@ -456,7 +468,16 @@
     "guiCompile": "FAILED_45_MINUTE_STEP_DEADLINE",
     "artifactAcceptance": "NOT_RUN_NO_ARTIFACT",
     "appliesToCurrentSource": false,
-    "interruptedCache": "Saved2026-09-16T14:38:27Z;1907517860bytes; no compiler-error/OOM diagnosis"
+    "interruptedCache": "Saved2026-09-16T14:38:27Z;1907517860bytes; no compiler-error/OOM diagnosis",
+    "nextBudget": {
+      "guiMinutes": 60,
+      "jobMinutes": 330,
+      "explicitlyCappedMinutes": 302,
+      "reserveMinutes": 28,
+      "cargoJobs": 1,
+      "reason": "Observed45minuteGUIdeadline on35100765685; latestcore/GUIsourceschanged",
+      "dispatched": false
+    }
   },
   "nativeExecutionStatus": "PENDING_FRESH_EXACT_SOURCE_GITHUB_CI",
   "guiExecutionStatus": "PENDING_FRESH_EXACT_SOURCE_GITHUB_CI",
@@ -489,6 +510,13 @@
     "headSha": "9e197616ff218a33d293e61040c64797887db349",
     "finding": "Rustfmt layout differences",
     "change": "Only exact logged formatter layouts/import order, preserving W97 behavior",
+    "rerun": "PENDING",
+    "localFormatterRan": false
+  },
+  "additionalFormatCorrection": {
+    "runId": 35110334725,
+    "headSha": "41ce63d0ac665d1584bd701c3c4a9c51ed4bfe18",
+    "change": "Exact remote W97 fixture layout plus separately reviewed child borrow and real counter correction",
     "rerun": "PENDING",
     "localFormatterRan": false
   }

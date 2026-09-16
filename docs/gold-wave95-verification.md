@@ -1,4 +1,4 @@
-# W95-W98 - configured MCP local reads and observed runtime repairs
+# W95-W99 - configured MCP local reads and observed runtime repairs
 
 W95 extends the existing bounded code-map sidecar to explicitly configured MCP
 local path reads. `code_map.outline_enrichment` remains false by default and
@@ -67,6 +67,14 @@ printed by that remote formatter; it was not run locally. The updated matrix
 also corrects the Doctor fixture's actual module identity, `omi_tests`. Fresh
 remote formatting, static contracts, strict lint and runtime proof remain pending.
 
+The next [Preflight 35110334725](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35110334725)
+reported formatting in the newly added W97 fixture bodies. W99 applies those
+printed layouts. Source inspection also corrected ownership of the child's
+root across loop iterations and replaced its constant counter-file value with
+an incremented count of actual calls; the parent still requires exactly one.
+These fixture changes do not alter production behavior or weaken the freshness
+assertion. Remote execution remains required.
+
 The preceding W93 source `4141894037d092e128286bd386e664e12e8a22ed` passed
 [Preflight 35100677231](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35100677231)
 and [Code Quality 35100676058](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35100676058).
@@ -76,6 +84,15 @@ and migration/relay binaries in 20s. GUI compilation then reached its 45-minute
 step deadline without an artifact. The run saved a newer compatible interrupted
 cache; no compiler error or OOM cause was established. That source is distinct
 from the current candidate, and portable acceptance has not run yet.
+
+The measured W99 recovery raises the next current-source GUI bound from 45 to
+60 minutes and the outer job from 315 to 330. Explicit bounded phases now total
+302 minutes, retaining the same 28-minute reserve. One Cargo worker, Rust 1.93,
+static CRT, locked package-specific commands, preview profile, cache compatibility
+and all portable-helper limits remain. The prior run spent about 21m28s in the
+GUI feature's core compile, leaving only about eleven minutes after the final
+dependency messages. The additional fifteen minutes is a bounded recovery
+allowance, not evidence of a completed or predicted build duration.
 
 The completed [full CI 35097577183](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35097577183)
 failed on `cc387be72092dc62da1b1965e0a3bf6634b9567c`.

@@ -3078,13 +3078,13 @@ mod code_map_config_tests {
         assert!(serde_yaml::from_str::<FreedomConfig>(&source).is_err());
 
         let selectors = (0..32)
-            .map(|index| format!("    - server_id: server-{index:02}\n      tool: read-{index:02}\n"))
+            .map(|index| {
+                format!("    - server_id: server-{index:02}\n      tool: read-{index:02}\n")
+            })
             .collect::<String>();
         let at_count = format!("code_map:\n  enrichment_selectors:\n{selectors}");
         assert!(serde_yaml::from_str::<FreedomConfig>(&at_count).is_ok());
-        let over_count = format!(
-            "{at_count}    - server_id: server-33\n      tool: read-33\n"
-        );
+        let over_count = format!("{at_count}    - server_id: server-33\n      tool: read-33\n");
         assert!(serde_yaml::from_str::<FreedomConfig>(&over_count).is_err());
 
         // Each row is 128 server-id + 124 tool + fixed 4-byte `path` = 256;

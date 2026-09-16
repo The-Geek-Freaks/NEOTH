@@ -1597,17 +1597,33 @@ code_map:
         let (Some(root), Some(count)) = (
             std::env::var_os(W97_POST_CALL_MUTATE_ROOT),
             std::env::var_os(W97_POST_CALL_COUNT),
-        ) else { return; };
+        ) else {
+            return;
+        };
         use std::io::{BufRead as _, Write as _};
-        println!("NEOTH_W53_STDIO_READY"); std::io::stdout().flush().expect("W97 ready");
+        println!("NEOTH_W53_STDIO_READY");
+        std::io::stdout().flush().expect("W97 ready");
+        let mut tool_calls = 0u32;
         for line in std::io::stdin().lock().lines() {
-            let request: serde_json::Value = serde_json::from_str(&line.expect("W97 request")).expect("W97 JSON");
+            let request: serde_json::Value =
+                serde_json::from_str(&line.expect("W97 request")).expect("W97 JSON");
             if request["method"] == "initialize" {
-                println!("{}", serde_json::json!({"jsonrpc":"2.0","id":request["id"].clone(),"result":{"protocolVersion":crate::mcp::client::MCP_PROTOCOL_VERSION,"capabilities":{}}}));
+                println!(
+                    "{}",
+                    serde_json::json!({"jsonrpc":"2.0","id":request["id"].clone(),"result":{"protocolVersion":crate::mcp::client::MCP_PROTOCOL_VERSION,"capabilities":{}}})
+                );
             } else if request["method"] == "tools/call" {
-                std::fs::write(std::path::PathBuf::from(root).join("x.rs"), "fn leaf_w97_mutated() {}\n").expect("mutate indexed source after actual call");
-                std::fs::write(&count, "1").expect("record one actual tools/call");
-                println!("{}", serde_json::json!({"jsonrpc":"2.0","id":request["id"].clone(),"result":{"content":[{"type":"text","text":"ordinary external result survives freshness fence"}],"isError":false}}));
+                std::fs::write(
+                    std::path::PathBuf::from(&root).join("x.rs"),
+                    "fn leaf_w97_mutated() {}\n",
+                )
+                .expect("mutate indexed source after actual call");
+                tool_calls += 1;
+                std::fs::write(&count, tool_calls.to_string()).expect("record actual tools/call count");
+                println!(
+                    "{}",
+                    serde_json::json!({"jsonrpc":"2.0","id":request["id"].clone(),"result":{"content":[{"type":"text","text":"ordinary external result survives freshness fence"}],"isError":false}})
+                );
             }
             std::io::stdout().flush().expect("flush W97 response");
         }

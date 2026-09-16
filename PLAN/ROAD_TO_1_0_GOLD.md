@@ -8,6 +8,16 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W99 measured preview recovery and fixture follow-up (2026-09-16):** preview
+`35100765685` exhausted its 45-minute GUI step after completing the core compile
+late in that step. The next current-source attempt has a 60-minute GUI bound
+and 330-minute outer bound, retaining one Cargo job and the 28-minute reserve.
+The next remote Rustfmt output is applied to W97 fixtures. Its wire child now
+borrows the root across reads and records an incremented actual-call counter;
+the parent still requires exactly one call and stale-sidecar suppression.
+New-source GitHub checks and portable acceptance remain pending. Counts stay
+**1324/1015/307/2**, raw309/pre-tag308; no local validation or checkbox closure.
+
 **W97/W98 selected-call regression coverage (2026-09-16):** selectors reject
 unknown fields; schema fixtures cover the exact 32-entry and 4096-byte bounds.
 Real selected MCP calls cover master-off, empty selectors, exact-pair mismatch

@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W98-configured-mcp-read-runtime-repairs-and-negative-coverage",
-  "base": "9e197616ff218a33d293e61040c64797887db349",
-  "capturedUtc": "2026-09-16T14:38:09.6494075Z",
+  "item": "GOLD-W95-W99-configured-read-coverage-runtime-repairs-and-preview-recovery",
+  "base": "41ce63d0ac665d1584bd701c3c4a9c51ed4bfe18",
+  "capturedUtc": "2026-09-16T14:46:42.4256991Z",
   "validationStatus": "REVIEWED_SOURCE_NEW_REMOTE_GATES_PENDING",
-  "scopeNote": "293 cumulative inputs. W97 reviewed schema/negative-call/post-call freshness fixtures and W98 exact remote Rustfmt layouts admitted after W95/W96. Unchanged entries retain committed bindings. All execution gates are GitHub-only.",
+  "scopeNote": "293 cumulative inputs. W99 exact remote formatting follow-up, reviewed test-only real-call counter/borrow correction, and measured preview60/330 bounds. Unchanged entries inherit committed bindings; all execution gates GitHub-only.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -24,7 +24,7 @@
     {
       "path": ".github/workflows/preview-windows.yml",
       "bytes": 20898,
-      "sha256": "E74A802B94A19D453D5F1659F591974048FFD72D36EB71C8D1E13F4A0DA9AFB6"
+      "sha256": "2102BF10FF47996095EBC289D05824F5970E49405D928A26210C12FB20CC091A"
     },
     {
       "path": ".github/workflows/publish-crates.yml",
@@ -94,7 +94,7 @@
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
       "bytes": 13137,
-      "sha256": "1D96EA9F989ACEAC53B8A8F8DCA947D00AB5041007059C8EF6C55C782B87532E"
+      "sha256": "58E0C2F9DC116090D3FA8859502D03294215867DF747524766EC04EEF76528D2"
     },
     {
       "path": "packaging/tests/test_publish_crates_contract.py",
@@ -128,8 +128,8 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 17370,
-      "sha256": "CE710ECCC4CEA5786B2C45FB669AABD1FE57343CE474E0D8C11613017FB1AC37"
+      "bytes": 17649,
+      "sha256": "0DFE5DCF12D9E28C8F1BB855C380C78C8B1F8BF3D5ABB6E9A5B9FC7FDF166C6A"
     },
     {
       "path": "README.md",
@@ -588,8 +588,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mcp.rs",
-      "bytes": 135147,
-      "sha256": "4A9218611745E02B69389B1243F0DFF52C76378D0292A210877F54AE8030675F"
+      "bytes": 135473,
+      "sha256": "2E58894B262958A8619C5DD4A07E65D9A4CDDEA7E347D741604BC2EBD99C3FC3"
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
@@ -793,8 +793,8 @@
     },
     {
       "path": "SRC/neothd/src/config/mod.rs",
-      "bytes": 144933,
-      "sha256": "298BC4BD9F92A3DF2A2C6B739305DDB8CF1E2FB2466D04B86DFE876EA9D33DB9"
+      "bytes": 144943,
+      "sha256": "B407B49312AF7BA66D93F8FD588A1EB370DAD29E579D9980580385FB36A83D30"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",
