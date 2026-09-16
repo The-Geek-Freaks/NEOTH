@@ -37739,10 +37739,6 @@ mod w58_gui_callback_runtime_tests {
         );
         let serialized = serde_json::to_string(&requests).expect("serialize observed requests");
         assert!(
-            serialized.contains("buddy"),
-            "observed CodingStartRequest source channel is Buddy"
-        );
-        assert!(
             serialized.contains(
                 &repository
                     .canonicalize()
@@ -37779,7 +37775,10 @@ mod w58_gui_callback_runtime_tests {
         )
         .expect("read persisted Buddy session")
         .expect("one persisted Buddy session");
-        assert_eq!(session.source_channel, "buddy");
+        assert_eq!(
+            session.source_channel, "buddy",
+            "Buddy callback persists its explicit CodingStartRequest source channel"
+        );
         let receipt =
             neothd::coding::store::load_code_map_receipts(&connection, session.session_id)
                 .expect("load prepared receipt")
@@ -37896,6 +37895,12 @@ mod w58_gui_callback_runtime_tests {
             "Buddy cancel marks the real active run pending before terminal settlement"
         );
         assert_eq!(window.get_buddy_mood().to_string(), "alert");
+        // The service joins an in-flight provider future before publishing its
+        // cancellation receipt. Release the fixture response after observing
+        // the cancellation request, then wait for that joined terminal state.
+        release_tx
+            .send(())
+            .expect("release blocked fixture peer after cancellation request");
         pump_native_coding_until(&window, "cancelled Buddy coding terminal", |w| {
             !w.get_native_coding_running() && w.get_native_coding_state() == "Coding run cancelled"
         });
@@ -37912,9 +37917,6 @@ mod w58_gui_callback_runtime_tests {
             "cancelled terminal cannot claim successful completion"
         );
 
-        release_tx
-            .send(())
-            .expect("release blocked fixture peer for teardown");
         server.join().expect("join blocking loopback provider");
         let runtime = super::coding_bridge_runtime().expect("coding bridge runtime");
         runtime

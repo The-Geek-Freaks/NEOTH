@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W85 Buddy runtime fixture repair (2026-09-16):** Windows CI on the earlier
+`389b5038` source finished **16,731 passed / 7 failed**, plus 22 skipped and one
+leaky passing test. Five failures are covered by W83. The two additional Buddy
+fixtures now verify source-channel provenance in the actual persisted session
+and release their blocked provider after cancellation admission, before awaiting
+the joined terminal receipt. Existing context, cancellation and WAL assertions
+remain. Independent review and rustfmt pass; actual updated-source execution is
+pending GitHub CI. W82-W84 Preflight `35077814742` and Code Quality `35077814791`
+passed, including the newly executed Linux package contract. See
+[the W85 report](../docs/gold-wave85-verification.md). No local compilation or
+checkbox closure; counts **1324/1015/307/2**, raw309/pre-tag308.
+
 **W82-W84 GUI policy and CI/runtime dependency repairs (2026-09-16):**
 The shared Coding/Buddy impact action now admits the validated configured policy
 once per operation. Invalid configuration produces a visible error before a
