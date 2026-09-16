@@ -144,15 +144,33 @@ class PreviewWindowsWorkflowContractTest(unittest.TestCase):
         )
 
     def test_portable_acceptance_is_remote_bounded_post_stage_and_receipted(self) -> None:
-        self.assertIn("PORTABLE_ACCEPTANCE_RECEIPTS: ${{ runner.temp }}\\neoth portable acceptance receipts", self.workflow)
+        job_prefix = self.workflow.split("\n    steps:", 1)[0]
+        self.assertIn(
+            "PORTABLE_ACCEPTANCE_RECEIPTS: neoth portable acceptance receipts "
+            "${{ github.run_id }} ${{ github.run_attempt }}",
+            job_prefix,
+        )
+        self.assertNotIn("runner.", job_prefix)
 
         ast = self.step("Parse portable acceptance helpers")
         self.assertIn("if: ${{ runner.os == 'Windows' }}", ast)
         self.assertIn("timeout-minutes: 2", ast)
         self.assertIn("System.Management.Automation.Language.Parser]::ParseFile", ast)
         self.assertIn("portable_acceptance_ast_preflight", ast)
+        self.assertIn("FunctionDefinitionAst", ast)
+        self.assertIn("$node.Name -eq 'Add-Result'", ast)
+        self.assertIn("Add-Result -Results $entries -Name 'empty_collector_binding'", ast)
+        self.assertIn("$entries.Count -ne 1", ast)
+        self.assertIn("receipt_binding_check", ast)
+        self.assertIn("$node.Name -eq 'Get-TextSha256'", ast)
+        self.assertIn("$emptySha = Get-TextSha256 -Text ''", ast)
+        self.assertIn("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", ast)
         self.assertIn("packaging/tests/Test-PortablePreview.ps1", ast)
         self.assertIn("packaging/tests/Test-PortableDiffImpact.ps1", ast)
+        self.assertIn(
+            "$receiptRoot = Join-Path $env:RUNNER_TEMP $env:PORTABLE_ACCEPTANCE_RECEIPTS",
+            ast,
+        )
 
         lifecycle = self.step("Portable preview lifecycle acceptance")
         self.assertIn("id: portable_preview_lifecycle", lifecycle)
@@ -166,6 +184,10 @@ class PreviewWindowsWorkflowContractTest(unittest.TestCase):
         self.assertIn("portable_preview_lifecycle_ci", lifecycle)
         self.assertIn("neoth_executable=$neoth", lifecycle)
         self.assertIn("packaging/tests/Test-PortablePreview.ps1", lifecycle)
+        self.assertIn(
+            "$receiptRoot = Join-Path $env:RUNNER_TEMP $env:PORTABLE_ACCEPTANCE_RECEIPTS",
+            lifecycle,
+        )
 
         diff_impact = self.step("Portable diff-impact acceptance")
         self.assertIn("if: ${{ runner.os == 'Windows' }}", diff_impact)
@@ -173,12 +195,19 @@ class PreviewWindowsWorkflowContractTest(unittest.TestCase):
         self.assertIn("${{ steps.portable_preview_lifecycle.outputs.neoth_executable }}", diff_impact)
         self.assertIn("packaging/tests/Test-PortableDiffImpact.ps1", diff_impact)
         self.assertIn("portable_diff_impact_ci", diff_impact)
+        self.assertIn(
+            "$receiptRoot = Join-Path $env:RUNNER_TEMP $env:PORTABLE_ACCEPTANCE_RECEIPTS",
+            diff_impact,
+        )
 
         receipt_upload = self.step("Upload portable acceptance receipts")
         self.assertIn("if: ${{ always() && runner.os == 'Windows' }}", receipt_upload)
         self.assertIn("timeout-minutes: 5", receipt_upload)
         self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", receipt_upload)
-        self.assertIn("path: ${{ env.PORTABLE_ACCEPTANCE_RECEIPTS }}", receipt_upload)
+        self.assertIn(
+            "path: ${{ runner.temp }}/${{ env.PORTABLE_ACCEPTANCE_RECEIPTS }}",
+            receipt_upload,
+        )
         self.assertIn("if-no-files-found: warn", receipt_upload)
 
         self.assertLess(self.workflow.index("- name: Checkout exact preview source"), self.workflow.index("- name: Parse portable acceptance helpers"))

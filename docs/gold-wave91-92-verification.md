@@ -1,4 +1,4 @@
-# W91/W92 - preview cache recovery and GitHub portable acceptance
+# W91-W93 - preview recovery, portable acceptance and strict harness lint
 
 Preview run [35080018852](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35080018852)
 on `c736c37621e9f0eed4a2819883ad0cc2c3176089` compiled CLI/compatibility binaries
@@ -53,3 +53,42 @@ is still in progress for that unchanged Rust source. W91/W92's new workflow and
 portable helpers require fresh remote gates; no portable, visual, installed or
 release acceptance is claimed from source review. No roadmap checkbox closes:
 1324 total / 1015 checked / 307 open / 2 partial, raw309 / pre-tag308.
+
+The first admitted W91/W92 commit `442a64af` passed Preflight
+[35099504321](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35099504321),
+but GitHub rejected its preview workflow before any job in
+[35099503167](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35099503167).
+The annotation identified `runner.temp` in job-level `env` (line 28), where that
+context is unavailable. The existing text contract did not cover that scope.
+The correction retains a relative receipt-directory name in job env, joins it
+to `RUNNER_TEMP` inside each PowerShell step, and resolves the upload path in
+`steps.with`, where the runner context is supported by the
+[GitHub context reference](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability).
+A focused regression rejects runner expressions before the steps boundary and
+requires every receipt producer and the uploader to use the same path.
+No acceptance helper or build setting changes in this correction. Its fresh
+remote gate and preview execution are still required; the rejected run started
+no compiler and produced no artifact.
+
+A subsequent source review identified two PowerShell parameter-binding problems:
+the first receipt appends to an empty mandatory list, and ordinary process output
+can be an empty mandatory string. The helpers now explicitly allow these two
+valid inputs without weakening path, source, inventory, exit-code or timeout
+checks. This follows the documented
+[PowerShell parameter attributes](https://learn.microsoft.com/en-us/powershell/scripting/lang-spec/chapter-12#1232-the-allowemptycollection-attribute).
+Before any Rust build, the remote preflight extracts only the real `Add-Result`
+and `Get-TextSha256` function definitions into isolated scopes. It verifies the
+first appended receipt and the known SHA-256 of empty output. It never invokes
+helper entry points, archive extraction or product processes in that early check.
+
+Meanwhile, Linux strict Clippy in full CI `35097577183` failed before tests on
+six custom-harness diagnostics: one unused shared-source entry, one unnecessary
+return and four manual membership scans. W93 replaces the scans with `contains`,
+uses a non-macOS tail match and documents a function-local dead-code exception
+for the entry that only the explicit custom test target invokes. Ordinary
+libtest compiles that same module without dispatching the entry. The five native
+macOS callbacks, sixth ordinary fixture and non-macOS no-fallthrough behavior
+remain. Independent source review approved this exact one-file correction.
+Rust source after W93 therefore needs fresh formatting, strict lint and runtime
+proof; the earlier Windows/macOS jobs are retained for diagnostic feedback and
+cannot stand in for a new exact-source release gate. No local validation ran.

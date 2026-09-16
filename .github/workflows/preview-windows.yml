@@ -25,7 +25,7 @@ jobs:
     # uses preview-fast-v1 Cargo overrides for bounded feedback only.
     timeout-minutes: 315
     env:
-      PORTABLE_ACCEPTANCE_RECEIPTS: ${{ runner.temp }}\neoth portable acceptance receipts ${{ github.run_id }} ${{ github.run_attempt }}
+      PORTABLE_ACCEPTANCE_RECEIPTS: neoth portable acceptance receipts ${{ github.run_id }} ${{ github.run_attempt }}
     steps:
       - name: Checkout exact preview source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -38,7 +38,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $receiptRoot = $env:PORTABLE_ACCEPTANCE_RECEIPTS
+          $receiptRoot = Join-Path $env:RUNNER_TEMP $env:PORTABLE_ACCEPTANCE_RECEIPTS
           New-Item -ItemType Directory -Path $receiptRoot -Force | Out-Null
           $targets = @(
             'packaging/tests/Test-PortablePreview.ps1',
@@ -50,11 +50,43 @@ jobs:
               $path = Join-Path $env:GITHUB_WORKSPACE $relative
               $tokens = $null
               $parseErrors = $null
-              [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $helperAst = [System.Management.Automation.Language.Parser]::ParseFile(
                 $path, [ref]$tokens, [ref]$parseErrors)
               $errors += @($parseErrors | ForEach-Object {
                 [ordered]@{ file = $relative; message = $_.Message; line = $_.Extent.StartLineNumber }
               })
+              if (-not $parseErrors) {
+                $collector = $helperAst.Find({ param($node)
+                  $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Add-Result'
+                }, $false)
+                if ($null -eq $collector) { throw "missing receipt collector in $relative" }
+                & {
+                  param($definition)
+                  . ([scriptblock]::Create($definition))
+                  $entries = [System.Collections.Generic.List[object]]::new()
+                  $process = [pscustomobject]@{ ExitCode = 0; StdoutSha256 = ('a' * 64); StderrSha256 = ('b' * 64) }
+                  Add-Result -Results $entries -Name 'empty_collector_binding' -Process $process
+                  if ($entries.Count -ne 1 -or $entries[0].check -cne 'empty_collector_binding' -or
+                      $entries[0].exit_code -ne 0 -or $entries[0].stdout_sha256 -cne ('a' * 64) -or
+                      $entries[0].stderr_sha256 -cne ('b' * 64)) {
+                    throw 'receipt collector did not append the first exact result'
+                  }
+                } $collector.Extent.Text
+                if ($relative.EndsWith('Test-PortableDiffImpact.ps1')) {
+                  $hasher = $helperAst.Find({ param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-TextSha256'
+                  }, $false)
+                  if ($null -eq $hasher) { throw "missing output hasher in $relative" }
+                  & {
+                    param($definition)
+                    . ([scriptblock]::Create($definition))
+                    $emptySha = Get-TextSha256 -Text ''
+                    if ($emptySha -cne 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855') {
+                      throw 'empty process output did not retain its exact SHA-256'
+                    }
+                  } $hasher.Extent.Text
+                }
+              }
             }
             $status = if ($errors.Count -eq 0) { 'passed' } else { 'failed' }
           } catch {
@@ -68,6 +100,7 @@ jobs:
             source_sha = $env:GITHUB_SHA
             targets = $targets
             errors = $errors
+            receipt_binding_check = 'empty Add-Result collector and exact empty-output SHA-256'
             remote_only = $true
           } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $receiptRoot 'ast-preflight.json') -Encoding utf8
           if ($status -ne 'passed') { throw 'portable acceptance helper parse errors' }
@@ -275,7 +308,7 @@ jobs:
           SLINT_BACKEND: software
         run: |
           $ErrorActionPreference = 'Stop'
-          $receiptRoot = $env:PORTABLE_ACCEPTANCE_RECEIPTS
+          $receiptRoot = Join-Path $env:RUNNER_TEMP $env:PORTABLE_ACCEPTANCE_RECEIPTS
           New-Item -ItemType Directory -Path $receiptRoot -Force | Out-Null
           $workRoot = Join-Path $env:RUNNER_TEMP "neoth portable preview lifecycle $env:GITHUB_RUN_ID $env:GITHUB_RUN_ATTEMPT"
           $zip = Join-Path $env:GITHUB_WORKSPACE "dist/neoth-unreleased-preview-windows-x64-$env:GITHUB_SHA.zip"
@@ -317,7 +350,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $receiptRoot = $env:PORTABLE_ACCEPTANCE_RECEIPTS
+          $receiptRoot = Join-Path $env:RUNNER_TEMP $env:PORTABLE_ACCEPTANCE_RECEIPTS
           New-Item -ItemType Directory -Path $receiptRoot -Force | Out-Null
           $workRoot = Join-Path $env:RUNNER_TEMP "neoth portable diff impact $env:GITHUB_RUN_ID $env:GITHUB_RUN_ATTEMPT"
           $neoth = '${{ steps.portable_preview_lifecycle.outputs.neoth_executable }}'
@@ -368,7 +401,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: neoth-portable-acceptance-${{ github.sha }}-${{ github.run_attempt }}
-          path: ${{ env.PORTABLE_ACCEPTANCE_RECEIPTS }}
+          path: ${{ runner.temp }}/${{ env.PORTABLE_ACCEPTANCE_RECEIPTS }}
           if-no-files-found: warn
           retention-days: 7
 

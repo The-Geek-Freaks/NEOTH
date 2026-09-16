@@ -38010,6 +38010,10 @@ mod w58_gui_callback_runtime_tests {
 
     /// Native macOS Nextest bridge. Keep its stdout restricted to the libtest
     /// terse-list protocol; command errors return to the crate entry point.
+    // This same-source function is dispatched only by the explicit `[[test]]`
+    // target. The ordinary GUI test binary compiles the module too, but its
+    // different `CARGO_CRATE_NAME` deliberately bypasses that dispatch.
+    #[allow(dead_code)]
     pub(super) fn run_macos_native_harness() -> std::result::Result<(), String> {
         let argument_storage = std::env::args().skip(1).collect::<Vec<_>>();
         let arguments = argument_storage
@@ -38018,25 +38022,23 @@ mod w58_gui_callback_runtime_tests {
             .collect::<Vec<_>>();
 
         #[cfg(not(target_os = "macos"))]
-        {
+        match arguments.as_slice() {
             // `[[test]]` targets exist on every platform when `--all-features`
             // is used. This executable must never fall through to the GUI app
             // on platforms whose ordinary libtest fixtures remain registered.
-            return match arguments.as_slice() {
-                [] | ["--list", "--format", "terse"] => Ok(()),
-                ignored_list
-                    if ignored_list.len() == 4
-                        && ignored_list.iter().any(|argument| *argument == "--list")
-                        && ignored_list.iter().any(|argument| *argument == "--format")
-                        && ignored_list.iter().any(|argument| *argument == "terse")
-                        && ignored_list.iter().any(|argument| *argument == "--ignored") =>
-                {
-                    Ok(())
-                }
-                _ => Err(format!(
-                    "macOS native GUI harness is unavailable on this platform: {arguments:?}"
-                )),
-            };
+            [] | ["--list", "--format", "terse"] => Ok(()),
+            ignored_list
+                if ignored_list.len() == 4
+                    && ignored_list.contains(&"--list")
+                    && ignored_list.contains(&"--format")
+                    && ignored_list.contains(&"terse")
+                    && ignored_list.contains(&"--ignored") =>
+            {
+                Ok(())
+            }
+            _ => Err(format!(
+                "macOS native GUI harness is unavailable on this platform: {arguments:?}"
+            )),
         }
 
         #[cfg(target_os = "macos")]
@@ -38051,10 +38053,10 @@ mod w58_gui_callback_runtime_tests {
             }
             ignored_list
                 if ignored_list.len() == 4
-                    && ignored_list.iter().any(|argument| *argument == "--list")
-                    && ignored_list.iter().any(|argument| *argument == "--format")
-                    && ignored_list.iter().any(|argument| *argument == "terse")
-                    && ignored_list.iter().any(|argument| *argument == "--ignored") =>
+                    && ignored_list.contains(&"--list")
+                    && ignored_list.contains(&"--format")
+                    && ignored_list.contains(&"terse")
+                    && ignored_list.contains(&"--ignored") =>
             {
                 Ok(())
             }

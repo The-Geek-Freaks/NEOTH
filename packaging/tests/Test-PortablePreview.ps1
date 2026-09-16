@@ -248,7 +248,7 @@ function Assert-Generation {
 
 function Add-Result {
     param(
-        [Parameter(Mandatory = $true)][System.Collections.Generic.List[object]]$Results,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$Results,
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)]$Process
     )

@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W91-W92-preview-recovery-remote-portable-acceptance",
-  "base": "cc387be72092dc62da1b1965e0a3bf6634b9567c",
-  "capturedUtc": "2026-09-16T13:00:26.4249951Z",
+  "item": "GOLD-W91-W93-remote-preview-recovery-and-harness-lint",
+  "base": "442a64af699c624942cb6b9b237fcd69f4348851",
+  "capturedUtc": "2026-09-16T13:12:33.5346242Z",
   "validationStatus": "REVIEWED_SOURCE_REMOTE_GATES_PENDING",
-  "scopeNote": "293 cumulative source inputs; two tracked portable helpers added. Changed/new metadata recomputed from reviewed admitted LF bytes; unchanged bindings retained from prior committed manifest. No local validation; all gates GitHub-hosted.",
+  "scopeNote": "293 cumulative inputs; W91 context-scope and W92 empty-input binding repairs plus W93 strict harness lint follow-up. Changed entries recomputed from exact reviewed admitted bytes; unchanged entries retain prior committed bindings. All validation GitHub-only.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -23,8 +23,8 @@
     },
     {
       "path": ".github/workflows/preview-windows.yml",
-      "bytes": 18711,
-      "sha256": "80E738A098AAD0BC548FDDA539601AD104ABFE3592AD0BC6B7CDA9B82184C5F4"
+      "bytes": 20898,
+      "sha256": "E74A802B94A19D453D5F1659F591974048FFD72D36EB71C8D1E13F4A0DA9AFB6"
     },
     {
       "path": ".github/workflows/publish-crates.yml",
@@ -93,8 +93,8 @@
     },
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
-      "bytes": 11934,
-      "sha256": "7B0FB3AF9BF8FEA1637D8328112FA0315C0FC26411F47535C1B776FC6347E33A"
+      "bytes": 13137,
+      "sha256": "1D96EA9F989ACEAC53B8A8F8DCA947D00AB5041007059C8EF6C55C782B87532E"
     },
     {
       "path": "packaging/tests/test_publish_crates_contract.py",
@@ -108,13 +108,13 @@
     },
     {
       "path": "packaging/tests/Test-PortableDiffImpact.ps1",
-      "bytes": 16801,
-      "sha256": "829D58DBCAF18902260EAF714A5ACFEC7F6DF1D578D3B87B5B6565AE600239D8"
+      "bytes": 16845,
+      "sha256": "2A70E90571092DFB1867C863CC0584DF353BDE5BC228B50DF6A1FC1DEFAF41E5"
     },
     {
       "path": "packaging/tests/Test-PortablePreview.ps1",
-      "bytes": 19599,
-      "sha256": "ADBB222B9BF9907CA65A1B5C5C1304DB303413ACD432F1B57BD85A05321E6D8A"
+      "bytes": 19623,
+      "sha256": "B13CCCB5C703837957126A2AA80EA703B41A9C9B12E683B3C4B5EACF6D1E20E6"
     },
     {
       "path": "packaging/tests/verify_macos_native_gui_fixture_discovery.py",
@@ -128,8 +128,8 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 17156,
-      "sha256": "EBB4F2BF80BB9B631EF421D6B2F32D22CADC793F2ED3988988F447EBE74C30F4"
+      "bytes": 17370,
+      "sha256": "CE710ECCC4CEA5786B2C45FB669AABD1FE57343CE474E0D8C11613017FB1AC37"
     },
     {
       "path": "README.md",
@@ -258,8 +258,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1627625,
-      "sha256": "249DD1D962BF46BC624D504466C96F786BDEBD7A008D9C63B0B5B3F54A1ED38A"
+      "bytes": 1627590,
+      "sha256": "DC48ACCA2B551608CA54CCC1EFA6D204B8B05F8A077D9496B1C3F7DEC725C1D3"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",

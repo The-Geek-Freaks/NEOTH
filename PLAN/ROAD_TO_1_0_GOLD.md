@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W93 strict harness lint and preview binding follow-up (2026-09-16):** Linux CI
+`35097577183` stopped before runtime on six strict-Clippy errors in the new custom
+GUI test entry. The reviewed fix uses a tail match and slice `contains`; one
+function-local dead-code annotation documents its deliberate shared-source
+custom-harness entry. Test identities and production behavior remain. Windows
+and macOS continue on the earlier source to retain their runtime feedback.
+The reviewed preview follow-up also fixes GitHub receipt-path context scope and
+PowerShell's first empty-result / empty-output binding. Its remote preflight
+executes the real receipt/hash functions before the long build. New-head remote
+formatting, strict lint and runtime acceptance remain pending. See the
+[updated W91-W93 report](../docs/gold-wave91-92-verification.md).
+Counts remain **1324/1015/307/2**, raw309/pre-tag308; local validation stays suspended.
+
 **W91/W92 preview recovery and remote portable acceptance (2026-09-16):**
 preview `35080018852` completed CLI compilation (81m22s) and auxiliary binaries
 (2m38s), then hit the GUI step's 25-minute deadline. Its saved GUI recovery cache
@@ -22,6 +35,13 @@ W89 Preflight `35097555802` and Code Quality `35097554326` passed for `cc387be7`
 full CI `35097577183` remains in progress on that Rust source. All local validation
 remains suspended. See [the W91/W92 report](../docs/gold-wave91-92-verification.md).
 Counts remain **1324/1015/307/2**, raw309/pre-tag308; no checkbox closes.
+
+W91/W92 remote follow-up: Preflight `35099504321` passed on `442a64af`, but
+GitHub rejected the preview workflow before scheduling a job (`35099503167`):
+`runner.temp` is unavailable in job-level `env`. The receipt path now uses a
+job-level basename and resolves `RUNNER_TEMP` inside each runner step; upload
+resolves the same path in its supported step context. A regression checks this
+scope. New-head remote validation and portable execution remain pending.
 
 **W89 native macOS test entry and W88 fixture correction (2026-09-16):** the
 five generated-Slint callback fixtures use a test-only custom main-thread entry

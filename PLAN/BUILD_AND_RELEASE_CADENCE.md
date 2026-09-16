@@ -51,6 +51,9 @@ a completed binary or an acceptance result.
 
 Tracked `packaging/tests/Test-PortablePreview.ps1` and `Test-PortableDiffImpact.ps1`
 are parsed on the GitHub Windows runner before any compilation (2-minute bound).
+The same preflight exercises only their extracted receipt/hash functions with
+an empty collector and empty process output; their script entry points remain
+unexecuted until the actual staged artifact is available.
 After normal ZIP/sidecar staging, lifecycle acceptance (30 minutes) verifies the
 archive checksum, source/profile provenance and every inventory entry before
 extraction. It then exercises read-only absence, refresh/fresh/stale, corrupt

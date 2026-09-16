@@ -18,7 +18,7 @@ function Stop-Acceptance {
 }
 
 function Get-TextSha256 {
-    param([Parameter(Mandatory = $true)][string]$Text)
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text)
 
     return ([System.BitConverter]::ToString(
         [System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($Text))
@@ -141,7 +141,7 @@ function Assert-Root {
 
 function Add-Result {
     param(
-        [Parameter(Mandatory = $true)][System.Collections.Generic.List[object]]$Results,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$Results,
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)]$Process
     )

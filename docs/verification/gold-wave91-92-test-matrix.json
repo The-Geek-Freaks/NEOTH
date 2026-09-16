@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "SOURCE_REVIEW_PASS_REMOTE_PREVIEW_PENDING_RUST_CI_IN_PROGRESS",
-  "base": "cc387be72092dc62da1b1965e0a3bf6634b9567c",
+  "status": "REVIEWED_FOLLOWUP_ALL_CURRENT_REMOTE_GATES_PENDING",
+  "base": "442a64af699c624942cb6b9b237fcd69f4348851",
   "sourceManifest": {
     "path": "docs/verification/gold-wave91-92-source-manifest.json",
-    "bytes": 50755,
-    "sha256": "F9FE40CD1D62D933D0B870C18757ACAC52805229B7DA5190BB3F8153DD5AD222"
+    "bytes": 50775,
+    "sha256": "5A5918050E98F15CB4FD283E4EE0DD381224E3E00B3966EC141F3DD79423B1E0"
   },
   "sourceInputs": 293,
   "requiredNativeTests": [
@@ -318,10 +318,16 @@
   },
   "reviews": [
     {
-      "path": "work/gold-20260906/wave91-preview-gui-recovery-01/REVIEW.md",
-      "bytes": 2873,
-      "sha256": "3E54BB7D833F001B1109F5356A59151502FD143337612A9D9080D6C483AB2605",
-      "verdict": "APPROVE_SOURCE_ONLY; canonical LF transfer approved"
+      "path": "work/gold-20260906/wave91-preview-gui-recovery-01/REVIEW-HELPER-BINDING.md",
+      "bytes": 2901,
+      "sha256": "00DD8C5D17C1BDE8735789CD36381668BA5297EE1BABA97813276F146817FEB8",
+      "verdict": "APPROVE_SOURCE_ONLY"
+    },
+    {
+      "path": "work/gold-20260906/wave93-harness-clippy-01/REVIEW.md",
+      "bytes": 2304,
+      "sha256": "1B6C326C9B91AD7AFC05DC5DE0CA66AC45D3C5906943EDCAAD6B0A3B0EBCF7CF",
+      "verdict": "APPROVE_SOURCE_ONLY"
     }
   ],
   "priorRemoteCI": {
@@ -371,38 +377,48 @@
   "releaseReady": false,
   "hostConstraint": "ALL LOCAL VALIDATION SUSPENDED; bounded source/metadata reads, edits and serialized Git/GitHub only",
   "checks": {
-    "executionPolicy": "GitHub only; no local formatting, parsers, contracts, fixtures or executables",
-    "sourceReview": "Independent APPROVE after fixing runtime helper paths, regex escaping and diff timeout",
-    "rawToAdmittedLf": [
+    "executionPolicy": "No local formatting, parsers, tests, fixtures or product processes",
+    "sourceReview": "Paired helper/context review plus Rust harness review",
+    "admittedSourceMetadata": [
       {
         "path": ".github/workflows/preview-windows.yml",
-        "reviewedRawSha256": "80E738A098AAD0BC548FDDA539601AD104ABFE3592AD0BC6B7CDA9B82184C5F4",
-        "admittedLfSha256": "80E738A098AAD0BC548FDDA539601AD104ABFE3592AD0BC6B7CDA9B82184C5F4",
-        "bytes": 18711,
-        "transformation": "CRLF to LF only; source review approved canonicalization"
+        "bytes": 20898,
+        "sha256": "E74A802B94A19D453D5F1659F591974048FFD72D36EB71C8D1E13F4A0DA9AFB6"
       },
       {
         "path": "packaging/tests/test_preview_windows_workflow_contract.py",
-        "reviewedRawSha256": "7B0FB3AF9BF8FEA1637D8328112FA0315C0FC26411F47535C1B776FC6347E33A",
-        "admittedLfSha256": "7B0FB3AF9BF8FEA1637D8328112FA0315C0FC26411F47535C1B776FC6347E33A",
-        "bytes": 11934,
-        "transformation": "CRLF to LF only; source review approved canonicalization"
+        "bytes": 13137,
+        "sha256": "1D96EA9F989ACEAC53B8A8F8DCA947D00AB5041007059C8EF6C55C782B87532E"
       },
       {
         "path": "packaging/tests/Test-PortablePreview.ps1",
-        "reviewedRawSha256": "ADBB222B9BF9907CA65A1B5C5C1304DB303413ACD432F1B57BD85A05321E6D8A",
-        "admittedLfSha256": "ADBB222B9BF9907CA65A1B5C5C1304DB303413ACD432F1B57BD85A05321E6D8A",
-        "bytes": 19599,
-        "transformation": "CRLF to LF only; source review approved canonicalization"
+        "bytes": 19623,
+        "sha256": "B13CCCB5C703837957126A2AA80EA703B41A9C9B12E683B3C4B5EACF6D1E20E6"
       },
       {
         "path": "packaging/tests/Test-PortableDiffImpact.ps1",
-        "reviewedRawSha256": "829D58DBCAF18902260EAF714A5ACFEC7F6DF1D578D3B87B5B6565AE600239D8",
-        "admittedLfSha256": "829D58DBCAF18902260EAF714A5ACFEC7F6DF1D578D3B87B5B6565AE600239D8",
-        "bytes": 16801,
-        "transformation": "CRLF to LF only; source review approved canonicalization"
+        "bytes": 16845,
+        "sha256": "2A70E90571092DFB1867C863CC0584DF353BDE5BC228B50DF6A1FC1DEFAF41E5"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 1627590,
+        "sha256": "DC48ACCA2B551608CA54CCC1EFA6D204B8B05F8A077D9496B1C3F7DEC725C1D3"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 17370,
+        "sha256": "CE710ECCC4CEA5786B2C45FB669AABD1FE57343CE474E0D8C11613017FB1AC37"
       }
-    ]
+    ],
+    "pendingRemotePreflight": "Actual receipt function empty-collection binding and actual empty-string hash vector before compilation",
+    "previousWorkflowRejection": {
+      "runId": 35099503167,
+      "headSha": "442a64af699c624942cb6b9b237fcd69f4348851",
+      "line": 28,
+      "error": "Unrecognized named-value runner in job-level env",
+      "jobsStarted": 0
+    }
   },
   "priorWindowsCI": {
     "headSha": "389b5038264562ccd0e438e8d0a6eed450784a0d",
@@ -431,21 +447,22 @@
     "pending": "All seven observed failures now have reviewed W83/W85 fixture corrections; actual new-source execution remains pending"
   },
   "priorLightRemote": {
-    "headSha": "cc387be72092dc62da1b1965e0a3bf6634b9567c",
-    "preflightRun": 35097555802,
-    "codeQualityRun": 35097554326,
-    "conclusion": "success"
+    "headSha": "442a64af699c624942cb6b9b237fcd69f4348851",
+    "preflightRun": 35099504321,
+    "codeQualityRun": 35099503761,
+    "conclusion": "success",
+    "boundary": "Previous preview context invalid despite passing text contracts; corrected source requires fresh gates"
   },
   "portableAcceptanceHelpers": [
     {
       "path": "packaging/tests/Test-PortablePreview.ps1",
-      "bytes": 19599,
-      "sha256": "ADBB222B9BF9907CA65A1B5C5C1304DB303413ACD432F1B57BD85A05321E6D8A"
+      "bytes": 19623,
+      "sha256": "B13CCCB5C703837957126A2AA80EA703B41A9C9B12E683B3C4B5EACF6D1E20E6"
     },
     {
       "path": "packaging/tests/Test-PortableDiffImpact.ps1",
-      "bytes": 16801,
-      "sha256": "829D58DBCAF18902260EAF714A5ACFEC7F6DF1D578D3B87B5B6565AE600239D8"
+      "bytes": 16845,
+      "sha256": "2A70E90571092DFB1867C863CC0584DF353BDE5BC228B50DF6A1FC1DEFAF41E5"
     }
   ],
   "priorMacosCI": {
@@ -494,7 +511,7 @@
       }
     ]
   },
-  "previewSnapshotBoundary": "A new preview must bind the published W91/W92 commit. Older c736c376 run produced no artifact; cc387be7 full CI covers unchanged Rust sources but is not exact-head preview acceptance.",
+  "previewSnapshotBoundary": "Dispatch once on the newly published W91-W93 commit; rejected442a64af workflow ran no jobs. No current portable acceptance or final release proof.",
   "requiredGuiClassesByPlatform": {
     "macOS": {
       "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness": "neothd-gui::neothd-gui-macos-native",
@@ -507,7 +524,20 @@
   "currentRustCI": {
     "runId": 35097577183,
     "headSha": "cc387be72092dc62da1b1965e0a3bf6634b9567c",
-    "status": "in_progress",
-    "boundary": "Same Rust source family; does not verify the new preview workflow/helpers"
+    "status": "Linux strict Clippy failed before runtime; Windows/macOS still compiling; 11 other jobs passed",
+    "boundary": "Older W89 GUI source. W93 corrects six strict Clippy diagnostics, requiring fresh exact-source lint/runtime. Do not cancel older native runs before their diagnostic outcome."
+  },
+  "strictClippyFailure": {
+    "runId": 35097577183,
+    "jobId": 104798651583,
+    "source": "cc387be72092dc62da1b1965e0a3bf6634b9567c",
+    "errors": [
+      "dead_code x1",
+      "needless_return x1",
+      "manual_contains x4"
+    ],
+    "runtime": "NOT_RUN",
+    "logPath": "work/gold-20260906/wave89-linux-completed-job.log",
+    "logSha256": "87266FDFC5712E01B5FD1DCFED3176482C0D8ABB5946AA27A92F7D7BB90BC0F3"
   }
 }
