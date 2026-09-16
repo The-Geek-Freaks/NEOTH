@@ -3090,13 +3090,11 @@ mod tests {
         let gui_lookalike = temp.path().join("neothd-gui-lookalike");
         std::fs::write(&gui_lookalike, b"distinct GUI diagnostic marker")
             .expect("write distinct GUI lookalike fixture");
-        let registration = w56_generated_base(&database.canonicalize().expect("canonical database"));
+        let registration =
+            w56_generated_base(&database.canonicalize().expect("canonical database"));
 
         assert!(matches!(
-            inspect_builtin_outline_registration_for_expected_executable(
-                Some(&registration),
-                &cli,
-            ),
+            inspect_builtin_outline_registration_for_expected_executable(Some(&registration), &cli,),
             BuiltinOutlineRegistrationReadiness::Exact { .. }
         ));
         assert!(matches!(

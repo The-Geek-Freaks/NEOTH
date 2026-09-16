@@ -48,6 +48,13 @@ or product execution is permitted on the affected workstation. The cumulative
 [test matrix](verification/gold-wave95-96-test-matrix.json) bind the admitted
 source and required test identities.
 
+[Preflight 35116495298](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35116495298)
+on `7d210ff8201efa59a10c6158ea139ef076ba9e41` requested formatting in four Rust
+files. W105 applies only those emitted layouts and import ordering, after source
+comparison. [Code Quality 35116495877](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35116495877)
+passed the preceding source. The updated formatting/static gate is still required;
+neither result establishes compilation or the 62 native / 7 GUI runtime identities.
+
 This advances the CRG-05 GUI status/error and Buddy test controls. Selector
 editing, Buddy enable/disable/explain controls, native Read/Grep/Glob/Bash
 integration and final package/live-provider acceptance remain open. No roadmap

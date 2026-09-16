@@ -20231,7 +20231,8 @@ fn start_code_map_enrichment_readiness_inspection(weak: slint::Weak<MainWindow>)
         .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
         .saturating_add(1);
     window.set_code_map_enrichment_readiness_error(false);
-    window.set_code_map_enrichment_readiness_state("Checking codegraph enrichment readiness…".into());
+    window
+        .set_code_map_enrichment_readiness_state("Checking codegraph enrichment readiness…".into());
     window.set_code_map_enrichment_readiness_detail(
         "Reading the configured NEOTH home and managed-root evidence without invoking MCP or repairing data."
             .into(),
@@ -20243,12 +20244,7 @@ fn start_code_map_enrichment_readiness_inspection(weak: slint::Weak<MainWindow>)
             &home,
             cli.as_deref(),
         );
-        publish_code_map_enrichment_readiness(
-            weak,
-            config_revision,
-            request_revision,
-            readiness,
-        );
+        publish_code_map_enrichment_readiness(weak, config_revision, request_revision, readiness);
     });
 }
 
@@ -20264,8 +20260,7 @@ fn publish_code_map_enrichment_readiness(
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         if CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
             != config_revision
-            || CODE_MAP_ENRICHMENT_READINESS_UI_REVISION
-                .load(std::sync::atomic::Ordering::Acquire)
+            || CODE_MAP_ENRICHMENT_READINESS_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
                 != request_revision
         {
             return;
@@ -20291,8 +20286,7 @@ fn publish_code_map_enrichment_readiness(
             neothd::code_map::EnrichmentReadiness::Unavailable { detail } => {
                 window.set_code_map_enrichment_readiness_error(true);
                 window.set_code_map_enrichment_readiness_state(
-                    "Codegraph enrichment readiness is unavailable for this NEOTH home."
-                        .into(),
+                    "Codegraph enrichment readiness is unavailable for this NEOTH home.".into(),
                 );
                 window.set_code_map_enrichment_readiness_detail(detail.into());
             }
@@ -37091,18 +37085,16 @@ mod w58_gui_callback_runtime_tests {
     use tempfile::TempDir;
 
     use super::{
-        CODE_MAP_ENRICHMENT_READINESS_UI_REVISION, CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION,
-        CODE_MAP_ENRICHMENT_READINESS_PUBLICATION_COUNT, CODE_MAP_ROOT_SELECTION_REVISION,
-        MainWindow,
+        CODE_MAP_ENRICHMENT_READINESS_PUBLICATION_COUNT, CODE_MAP_ENRICHMENT_READINESS_UI_REVISION,
+        CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION, CODE_MAP_ROOT_SELECTION_REVISION, MainWindow,
         NATIVE_CODING_UI_REVISION,
         code_map_controller::{AutomaticContextPresentationController, CodeMapLifecycleController},
         code_map_impact_controller::CodeMapImpactController,
         coding_controller::CodingController,
-        native_coding_terminal_bridge_accepts, publish_code_map_enrichment_readiness,
-        register_buddy_code_map_impact_callback,
+        native_coding_terminal_bridge_accepts, neothd_executable_names,
+        publish_code_map_enrichment_readiness, register_buddy_code_map_impact_callback,
         register_buddy_code_map_status_callback, register_buddy_native_coding_callbacks,
-        register_code_map_enrichment_readiness_callbacks,
-        neothd_executable_names, start_code_map_lifecycle_config_apply,
+        register_code_map_enrichment_readiness_callbacks, start_code_map_lifecycle_config_apply,
         start_code_map_lifecycle_refresh, which_neothd,
     };
 
@@ -37383,10 +37375,8 @@ mod w58_gui_callback_runtime_tests {
         CODE_MAP_ROOT_SELECTION_REVISION.store(0, std::sync::atomic::Ordering::Release);
         CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION.store(0, std::sync::atomic::Ordering::Release);
         CODE_MAP_ENRICHMENT_READINESS_UI_REVISION.store(0, std::sync::atomic::Ordering::Release);
-        CODE_MAP_ENRICHMENT_READINESS_PUBLICATION_COUNT.store(
-            0,
-            std::sync::atomic::Ordering::Release,
-        );
+        CODE_MAP_ENRICHMENT_READINESS_PUBLICATION_COUNT
+            .store(0, std::sync::atomic::Ordering::Release);
 
         let window = MainWindow::new().expect("construct generated MainWindow");
         window.set_code_map_root(root.path().display().to_string().into());

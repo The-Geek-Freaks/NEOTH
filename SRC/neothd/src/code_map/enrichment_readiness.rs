@@ -35,18 +35,34 @@ pub fn inspect_for_expected_executable(
     let config = match std::fs::read(&config_path) {
         Ok(bytes) => match serde_yaml::from_slice::<crate::config::FreedomConfig>(&bytes) {
             Ok(config) if config.code_map.validate().is_ok() => config,
-            _ => return unavailable("outline enrichment configuration is unavailable or invalid; Doctor did not inspect MCP registration or SQLite"),
+            _ => {
+                return unavailable(
+                    "outline enrichment configuration is unavailable or invalid; Doctor did not inspect MCP registration or SQLite",
+                );
+            }
         },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => crate::config::FreedomConfig::default(),
-        Err(_) => return unavailable("outline enrichment configuration is unavailable or invalid; Doctor did not inspect MCP registration or SQLite"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            crate::config::FreedomConfig::default()
+        }
+        Err(_) => {
+            return unavailable(
+                "outline enrichment configuration is unavailable or invalid; Doctor did not inspect MCP registration or SQLite",
+            );
+        }
     };
     if !config.code_map.outline_enrichment {
-        return disabled("disabled by freedom.yaml — no outline enrichment readiness is expected and no SQLite database was opened");
+        return disabled(
+            "disabled by freedom.yaml — no outline enrichment readiness is expected and no SQLite database was opened",
+        );
     }
     let registry_path = home.join("mcp_servers.yaml");
     let servers = match crate::mcp::McpServers::load_from(&registry_path) {
         Ok(servers) => servers,
-        Err(_) => return unavailable("enabled, but mcp_servers.yaml is unavailable or invalid; no child, provider, or SQLite inspection was attempted"),
+        Err(_) => {
+            return unavailable(
+                "enabled, but mcp_servers.yaml is unavailable or invalid; no child, provider, or SQLite inspection was attempted",
+            );
+        }
     };
     let registration = expected_executable.map_or(
         crate::mcp::codegraph_server::BuiltinOutlineRegistrationReadiness::NotExactGenerated,
@@ -56,13 +72,25 @@ pub fn inspect_for_expected_executable(
         ),
     );
     let database_path = match registration {
-        crate::mcp::codegraph_server::BuiltinOutlineRegistrationReadiness::Exact { database_path } => database_path,
-        crate::mcp::codegraph_server::BuiltinOutlineRegistrationReadiness::DatabaseUnavailable => return unavailable("enabled, but the exact generated codegraph registration names an absent or inaccessible database; Doctor did not create, migrate, or repair it"),
-        crate::mcp::codegraph_server::BuiltinOutlineRegistrationReadiness::NotExactGenerated => return unavailable("enabled, but no exact generated neoth-codegraph registration is eligible; custom or lookalike registrations are not used for outline enrichment"),
+        crate::mcp::codegraph_server::BuiltinOutlineRegistrationReadiness::Exact {
+            database_path,
+        } => database_path,
+        crate::mcp::codegraph_server::BuiltinOutlineRegistrationReadiness::DatabaseUnavailable => {
+            return unavailable(
+                "enabled, but the exact generated codegraph registration names an absent or inaccessible database; Doctor did not create, migrate, or repair it",
+            );
+        }
+        crate::mcp::codegraph_server::BuiltinOutlineRegistrationReadiness::NotExactGenerated => {
+            return unavailable(
+                "enabled, but no exact generated neoth-codegraph registration is eligible; custom or lookalike registrations are not used for outline enrichment",
+            );
+        }
     };
     let lifecycle = &config.code_map.lifecycle;
     if !lifecycle.enabled || lifecycle.managed_roots.is_empty() {
-        return unavailable("enabled with no managed code-map roots; Doctor cannot establish a fresh complete outline snapshot");
+        return unavailable(
+            "enabled with no managed code-map roots; Doctor cannot establish a fresh complete outline snapshot",
+        );
     }
 
     let mut ready_roots = Vec::new();
@@ -101,7 +129,10 @@ pub fn inspect_for_expected_executable(
         ));
     }
     let suffix = if !unavailable_roots.is_empty() {
-        format!("; other managed roots unavailable: {}", unavailable_roots.join(", "))
+        format!(
+            "; other managed roots unavailable: {}",
+            unavailable_roots.join(", ")
+        )
     } else {
         String::new()
     };
@@ -123,18 +154,26 @@ pub fn inspect_for_expected_executable(
 }
 
 fn ready(detail: &str) -> EnrichmentReadiness {
-    EnrichmentReadiness::Ready { detail: detail.to_owned() }
+    EnrichmentReadiness::Ready {
+        detail: detail.to_owned(),
+    }
 }
 
 fn disabled(detail: &str) -> EnrichmentReadiness {
-    EnrichmentReadiness::Disabled { detail: detail.to_owned() }
+    EnrichmentReadiness::Disabled {
+        detail: detail.to_owned(),
+    }
 }
 
 fn unavailable(detail: &str) -> EnrichmentReadiness {
-    EnrichmentReadiness::Unavailable { detail: detail.to_owned() }
+    EnrichmentReadiness::Unavailable {
+        detail: detail.to_owned(),
+    }
 }
 
-fn lifecycle_state_label(state: &crate::code_map::lifecycle::CodeMapLifecycleState) -> &'static str {
+fn lifecycle_state_label(
+    state: &crate::code_map::lifecycle::CodeMapLifecycleState,
+) -> &'static str {
     match state {
         crate::code_map::lifecycle::CodeMapLifecycleState::Disabled => "disabled",
         crate::code_map::lifecycle::CodeMapLifecycleState::Absent => "absent",
@@ -172,7 +211,8 @@ mod tests {
     #[test]
     fn w100_invalid_config_stops_before_mcp_or_sqlite_inspection() {
         let home = tempfile::TempDir::new().expect("temporary NEOTH home");
-        std::fs::write(home.path().join("freedom.yaml"), "code_map: [").expect("write invalid config");
+        std::fs::write(home.path().join("freedom.yaml"), "code_map: [")
+            .expect("write invalid config");
 
         let result = inspect(home.path());
 

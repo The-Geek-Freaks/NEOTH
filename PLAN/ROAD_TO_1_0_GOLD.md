@@ -20,6 +20,11 @@ See [W100 verification](../docs/gold-wave100-verification.md). All new runtime
 proof remains pending GitHub; selector editing and broader CRG-05 controls stay
 open. Counts remain **1324/1015/307/2**, raw309/pre-tag308; no local validation.
 
+W105 applies only the four Rust source layouts emitted by GitHub Preflight
+`35116495298` for W100. Code Quality `35116495877` passed that source; the fresh
+format/static rerun and the 62 native / 7 GUI runtime obligations remain pending.
+No formatter or test ran locally, and no behavior or roadmap status changes.
+
 **W102/W103 selected-read authority and remote lint repair (2026-09-16):**
 the direct-CLI regression exercises configured ReadPath allowlist denial,
 required confirmation and a configured PreToolUse block through the actual

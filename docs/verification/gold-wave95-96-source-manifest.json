@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W103-configured-read-readiness-authority-and-runtime-repairs",
-  "base": "8a999c4cd8a844977ca9b911a820978e8aa7a2f3",
-  "capturedUtc": "2026-09-16T15:33:58.5758619Z",
+  "item": "GOLD-W95-W105-configured-read-readiness-authority-and-runtime-repairs",
+  "base": "7d210ff8201efa59a10c6158ea139ef076ba9e41",
+  "capturedUtc": "2026-09-16T15:40:46.1342197Z",
   "validationStatus": "REVIEWED_SOURCE_NEW_REMOTE_GATES_PENDING",
-  "scopeNote": "295 cumulative inputs. W100 shares Doctor readiness with GUI/Buddy, typedDisabled/Ready/Unavailable, diagnostic resolvedCLI identity without changing runtimeauthority, request/config revision fences and actual late queued callback. W102/W103 prior source retained. Independent source review only; all gates GitHub-hosted.",
+  "scopeNote": "295 cumulative inputs; W100/W102/W103 source independently reviewed. W105 applies exactly four remote Rustfmt layouts from Preflight35116495298; root inspected complete source diffs. No semantic changes; all validation GitHub-hosted.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -258,8 +258,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1642942,
-      "sha256": "285EF79A5359C1D3023F28DF56585DC239C78073A71660F74C8CAC2BD093B12C"
+      "bytes": 1642812,
+      "sha256": "653C76D0EAE69B4F05F3E5E1804C0A9A6146016FF2878E37ADBCAF7C7DB69E5F"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
@@ -679,7 +679,7 @@
     {
       "path": "SRC/neothd/src/code_map/mod.rs",
       "bytes": 4869,
-      "sha256": "66576C060FB726D96B01E8C200A1B5445B9E5174A2172C4AF3B6A16782BBD74F"
+      "sha256": "B76269B19F761C0C7B99FA797539A045E6EE8EFDCAC1C0FE8E31A69D67F6A41F"
     },
     {
       "path": "SRC/neothd/src/code_map/persist.rs",
@@ -1003,8 +1003,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "bytes": 178424,
-      "sha256": "9C7C61748C883EC20EEC428CA6A99458CD4C122B11857A3A11C822953872F819"
+      "bytes": 178390,
+      "sha256": "17A6F5805D8A8CBDBC7C95D7522D1CDF98A228EBB01368602BC238A88C27F6B9"
     },
     {
       "path": "SRC/neothd/src/mcp/config.rs",
@@ -1473,8 +1473,8 @@
     },
     {
       "path": "SRC/neothd/src/code_map/enrichment_readiness.rs",
-      "bytes": 8859,
-      "sha256": "800176436334989AB95202BCD2904CE4B56C25C4744B9B88DFC1586E185A4012"
+      "bytes": 9333,
+      "sha256": "DAF7C59B7D8DF295F087D135FDC9E5A86EB4D7B3F3C48FB40011804BC653F7B4"
     },
     {
       "path": "docs/code-map-lifecycle.md",

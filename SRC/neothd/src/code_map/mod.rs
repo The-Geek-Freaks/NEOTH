@@ -52,6 +52,10 @@ pub use diff_impact::{
     DiffImpactInput, DiffImpactReceipt, DiffImpactRequest, DiffImpactSeedReceipt,
     DiffImpactSourceDescriptor, analyze_diff_impact,
 };
+pub use enrichment_readiness::{
+    EnrichmentReadiness, inspect as inspect_enrichment_readiness,
+    inspect_for_expected_executable as inspect_enrichment_readiness_for_expected_executable,
+};
 #[allow(unused_imports)]
 pub use impact::{
     ImpactDirection, ImpactEdgeEvidence, ImpactNodeId, ImpactOptions, ImpactResult, ImpactSeed,
@@ -73,10 +77,6 @@ pub use lifecycle_config::{
 pub use lifecycle_watcher::{
     CodeMapLifecycleRuntimeState, CodeMapLifecycleRuntimeStatus,
     read_active_code_map_lifecycle_status,
-};
-pub use enrichment_readiness::{
-    EnrichmentReadiness, inspect as inspect_enrichment_readiness,
-    inspect_for_expected_executable as inspect_enrichment_readiness_for_expected_executable,
 };
 #[allow(unused_imports)]
 pub use outline::{OutlineEntry, outline_file, outline_source};
