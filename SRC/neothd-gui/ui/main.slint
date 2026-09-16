@@ -1365,6 +1365,9 @@ export component MainWindow inherits Window {
     in property <string> code-map-lifecycle-operation: "";
     in property <string> code-map-lifecycle-state: "Choose a repository root to inspect its index.";
     in property <string> code-map-lifecycle-detail: "";
+    in property <string> code-map-enrichment-readiness-state: "Check the NEOTH home to inspect codegraph enrichment readiness.";
+    in property <string> code-map-enrichment-readiness-detail: "This read-only check never invokes a selector or enriches a response.";
+    in property <bool> code-map-enrichment-readiness-error: false;
     in property <string> code-map-automatic-context: "Inspect a repository root to classify automatic Chat/Channel context.";
     in property <string> code-map-lifecycle-runtime: "Daemon watcher status has not been read.";
     in property <string> code-map-lifecycle-canonical-root: "";
@@ -1383,6 +1386,7 @@ export component MainWindow inherits Window {
     callback code-map-lifecycle-cancel-clicked;
     callback code-map-lifecycle-config-apply-clicked(bool, string, string, string);
     callback code-map-lifecycle-managed-root-remove-clicked(string);
+    callback code-map-enrichment-readiness-test-clicked;
     in-out property <int> code-map-impact-source-index: 0;
     in-out property <string> code-map-impact-base: "";
     in-out property <string> code-map-impact-target: "HEAD";
@@ -1407,6 +1411,7 @@ export component MainWindow inherits Window {
     callback code-map-impact-analyze-clicked(string, int, string, string);
     callback code-map-impact-view-changed;
     callback buddy-code-map-status;
+    callback buddy-code-map-enrichment-test;
     callback buddy-code-map-setup;
     callback buddy-code-map-rebuild;
     callback buddy-code-map-cancel;
@@ -3686,6 +3691,9 @@ export component MainWindow inherits Window {
             code-map-lifecycle-operation: root.code-map-lifecycle-operation;
             code-map-lifecycle-state: root.code-map-lifecycle-state;
             code-map-lifecycle-detail: root.code-map-lifecycle-detail;
+            code-map-enrichment-readiness-state: root.code-map-enrichment-readiness-state;
+            code-map-enrichment-readiness-detail: root.code-map-enrichment-readiness-detail;
+            code-map-enrichment-readiness-error: root.code-map-enrichment-readiness-error;
             code-map-automatic-context: root.code-map-automatic-context;
             code-map-lifecycle-runtime: root.code-map-lifecycle-runtime;
             code-map-lifecycle-canonical-root: root.code-map-lifecycle-canonical-root;
@@ -3708,6 +3716,7 @@ export component MainWindow inherits Window {
             code-map-lifecycle-managed-root-remove-clicked(path) => {
                 root.code-map-lifecycle-managed-root-remove-clicked(path);
             }
+            code-map-enrichment-readiness-test-clicked => { root.code-map-enrichment-readiness-test-clicked(); }
             code-map-impact-source-index <=> root.code-map-impact-source-index;
             code-map-impact-base <=> root.code-map-impact-base;
             code-map-impact-target <=> root.code-map-impact-target;
@@ -5215,6 +5224,7 @@ export component MainWindow inherits Window {
             { label: root.cfg-quiet-hours-enabled ? "Quiet hours: on — disable" : "Quiet hours: off — enable", glyph: "☾", danger: false },
             { label: "Buddy settings", glyph: "⊙", danger: false },
             { label: root.code-map-root == "" ? "Select a repository root first" : root.code-map-automatic-context, glyph: "⌕", danger: false },
+            { label: "Check codegraph enrichment readiness", glyph: "⌕", danger: false },
             { label: root.code-map-lifecycle-refresh-active ? "Index refresh is active" : "Set up or refresh index", glyph: "↻", danger: false },
             { label: root.code-map-root == "" ? "Select a repository root first" : "Force rebuild index", glyph: "↺", danger: root.code-map-root != "" },
             { label: root.code-map-lifecycle-refresh-active ? "Cancel index refresh" : "No index refresh active", glyph: "×", danger: root.code-map-lifecycle-refresh-active },
@@ -5233,12 +5243,13 @@ export component MainWindow inherits Window {
             }
             if (i == 3) { root.nav-active = "buddyconfig"; root.step = WizardStep.settings; }
             if (i == 4) { root.buddy-code-map-status(); }
-            if (i == 5) { root.buddy-code-map-setup(); }
-            if (i == 6) { root.buddy-code-map-rebuild(); }
-            if (i == 7) { root.buddy-code-map-cancel(); }
-            if (i == 8) { root.buddy-native-coding-start(); }
-            if (i == 9) { root.buddy-native-coding-cancel(); }
-            if (i == 10) { root.buddy-code-map-impact(); }
+            if (i == 5) { root.buddy-code-map-enrichment-test(); }
+            if (i == 6) { root.buddy-code-map-setup(); }
+            if (i == 7) { root.buddy-code-map-rebuild(); }
+            if (i == 8) { root.buddy-code-map-cancel(); }
+            if (i == 9) { root.buddy-native-coding-start(); }
+            if (i == 10) { root.buddy-native-coding-cancel(); }
+            if (i == 11) { root.buddy-code-map-impact(); }
         }
         dismissed => { root.buddy-menu-open = false; }
     }

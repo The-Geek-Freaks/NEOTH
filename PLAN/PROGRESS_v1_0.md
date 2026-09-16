@@ -3,6 +3,18 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-16
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
+> now share Doctor's read-only home/managed-root readiness operation, with typed
+> disabled/ready/unavailable results separate from selected-root status. GUI
+> diagnostics use the existing resolved CLI identity; actual tool admission keeps
+> its strict current-process identity. Configuration and request revisions reject
+> late responses. The existing native-main-thread W58 callback covers disabled,
+> invalid, fresh-ready and truly late queued results; three native regressions
+> cover no-write defaults, invalid config and the distinct CLI/GUI identity.
+> See [W100 verification](../docs/gold-wave100-verification.md). All new runtime
+> proof remains pending GitHub; selector editing and broader CRG-05 controls stay
+> open. Counts remain **1324/1015/307/2**, raw309/pre-tag308; no local validation.
+>
 > **W102/W103 selected-read authority and remote lint repair (2026-09-16):**
 > the direct-CLI regression exercises configured ReadPath allowlist denial,
 > required confirmation and a configured PreToolUse block through the actual

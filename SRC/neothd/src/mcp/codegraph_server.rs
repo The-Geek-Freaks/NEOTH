@@ -660,7 +660,7 @@ fn parse_generated_codegraph_database(args: &[String]) -> Option<PathBuf> {
         .canonicalize()
         .ok()
 }
-fn is_generated_codegraph_identity(cfg: &McpServerConfig) -> bool {
+fn has_generated_codegraph_descriptor(cfg: &McpServerConfig) -> bool {
     if cfg.id != "neoth-codegraph"
         || !cfg.enabled
         || !cfg.env.is_empty()
@@ -682,10 +682,27 @@ fn is_generated_codegraph_identity(cfg: &McpServerConfig) -> bool {
     {
         return false;
     }
-    let Ok(exe) = std::env::current_exe().and_then(|path| path.canonicalize()) else {
+    true
+}
+
+fn is_generated_codegraph_identity_for_expected_executable(
+    cfg: &McpServerConfig,
+    expected_executable: &Path,
+) -> bool {
+    if !has_generated_codegraph_descriptor(cfg) {
+        return false;
+    }
+    let Ok(expected) = expected_executable.canonicalize() else {
         return false;
     };
-    PathBuf::from(&cfg.command).canonicalize().ok().as_ref() == Some(&exe)
+    PathBuf::from(&cfg.command).canonicalize().ok().as_ref() == Some(&expected)
+}
+
+fn is_generated_codegraph_identity(cfg: &McpServerConfig) -> bool {
+    let Ok(executable) = std::env::current_exe() else {
+        return false;
+    };
+    is_generated_codegraph_identity_for_expected_executable(cfg, &executable)
 }
 fn is_exact_generated_codegraph_base(cfg: &McpServerConfig) -> bool {
     is_generated_codegraph_identity(cfg) && parse_generated_codegraph_database(&cfg.args).is_some()
@@ -705,13 +722,17 @@ pub(crate) enum BuiltinOutlineRegistrationReadiness {
     Exact { database_path: PathBuf },
 }
 
-pub(crate) fn inspect_builtin_outline_registration(
+/// Diagnostic-only generated-registration inspection for another local NEOTH
+/// executable, such as the GUI's resolved CLI sibling. Runtime admission keeps
+/// using the current-process identity wrapper above.
+pub(crate) fn inspect_builtin_outline_registration_for_expected_executable(
     cfg: Option<&McpServerConfig>,
+    expected_executable: &Path,
 ) -> BuiltinOutlineRegistrationReadiness {
     let Some(cfg) = cfg else {
         return BuiltinOutlineRegistrationReadiness::NotExactGenerated;
     };
-    if !is_generated_codegraph_identity(cfg) {
+    if !is_generated_codegraph_identity_for_expected_executable(cfg, expected_executable) {
         return BuiltinOutlineRegistrationReadiness::NotExactGenerated;
     }
     match parse_generated_codegraph_database(&cfg.args) {
@@ -3055,6 +3076,40 @@ mod tests {
             smart_approve: true,
             autonomy_gate: None,
         }
+    }
+
+    #[test]
+    fn w100_diagnostic_identity_accepts_expected_cli_and_rejects_gui_lookalike() {
+        let temp = tempdir().expect("temporary diagnostic identity fixture");
+        let database = temp.path().join("code_map.db");
+        std::fs::write(&database, b"fixture database").expect("write fixture database");
+        let cli = std::env::current_exe()
+            .expect("current CLI fixture executable")
+            .canonicalize()
+            .expect("canonical CLI fixture executable");
+        let gui_lookalike = temp.path().join("neothd-gui-lookalike");
+        std::fs::write(&gui_lookalike, b"distinct GUI diagnostic marker")
+            .expect("write distinct GUI lookalike fixture");
+        let registration = w56_generated_base(&database.canonicalize().expect("canonical database"));
+
+        assert!(matches!(
+            inspect_builtin_outline_registration_for_expected_executable(
+                Some(&registration),
+                &cli,
+            ),
+            BuiltinOutlineRegistrationReadiness::Exact { .. }
+        ));
+        assert!(matches!(
+            inspect_builtin_outline_registration_for_expected_executable(
+                Some(&registration),
+                &gui_lookalike,
+            ),
+            BuiltinOutlineRegistrationReadiness::NotExactGenerated
+        ));
+        assert!(
+            is_generated_codegraph_identity(&registration),
+            "runtime current-executable identity remains the existing W53/W95 gate"
+        );
     }
 
     #[test]

@@ -26,6 +26,22 @@ An absent map is normal on a first use. Create it with:
 neoth code-map refresh C:\work\my-repository
 ```
 
+## Check enrichment readiness
+
+In the Coding panel, choose **Check enrichment readiness**, or use Buddy's
+**Check codegraph enrichment readiness** action. The result describes the
+configured NEOTH home and its managed roots. The adjacent repository status
+continues to describe only the selected root.
+
+The check distinguishes disabled enrichment, available prerequisites, and an
+unavailable or invalid configuration, registration, or snapshot. It reads the
+same readiness evidence as Doctor, using the GUI's resolved local CLI identity
+for the generated registration. It does not call an MCP tool, enrich a response,
+change configuration, refresh a map, or repair data. A ready result means a
+future eligible call may attempt enrichment; that call still needs its normal
+authorization and freshness checks. A newer check or configuration revision
+supersedes an older pending result.
+
 ## Refresh and rebuild
 
 `refresh` checks the selected root before writing. It creates a first index

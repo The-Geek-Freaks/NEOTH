@@ -209,6 +209,13 @@ configured variants. After an accepted `neoth reload`, the next request uses
 the accepted immutable snapshot; an invocation already in progress keeps its
 own snapshot.
 
+The Coding panel's **Check enrichment readiness** action and Buddy's
+**Check codegraph enrichment readiness** action inspect this policy and the
+managed-root evidence without changing either. They distinguish disabled,
+ready and unavailable states for the NEOTH home, separately from selected-root
+status. They do not invoke a selector or grant a tool permission; see
+[enrichment readiness](code-map-lifecycle.md#check-enrichment-readiness).
+
 After an accepted reload, each daemon Chat or Channel message resolves a fresh
 configuration snapshot. A one-shot `neoth code` command resolves these limits
 when its next invocation begins; an invocation already in progress keeps its

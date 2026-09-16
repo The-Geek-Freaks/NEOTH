@@ -979,6 +979,9 @@ export component SettingsView inherits Rectangle {
     in property <string> code-map-lifecycle-operation: "";
     in property <string> code-map-lifecycle-state: "Choose a repository root to inspect its index.";
     in property <string> code-map-lifecycle-detail: "";
+    in property <string> code-map-enrichment-readiness-state: "Check the NEOTH home to inspect codegraph enrichment readiness.";
+    in property <string> code-map-enrichment-readiness-detail: "This read-only check never invokes a selector or enriches a response.";
+    in property <bool> code-map-enrichment-readiness-error: false;
     in property <string> code-map-automatic-context: "Inspect a repository root to classify automatic Chat/Channel context.";
     in property <string> code-map-lifecycle-runtime: "Daemon watcher status has not been read.";
     in property <string> code-map-lifecycle-canonical-root: "";
@@ -997,6 +1000,7 @@ export component SettingsView inherits Rectangle {
     callback code-map-lifecycle-cancel-clicked();
     callback code-map-lifecycle-config-apply-clicked(bool, string, string, string);
     callback code-map-lifecycle-managed-root-remove-clicked(string);
+    callback code-map-enrichment-readiness-test-clicked;
     // W52 — explicit-root, Git-only, read-only change impact and W48 observed
     // test evidence. No optional stale-analysis path is exposed here.
     in-out property <int> code-map-impact-source-index: 0;
@@ -4974,6 +4978,45 @@ export component SettingsView inherits Rectangle {
                             color: Theme.text-secondary;
                             wrap: word-wrap;
                         }
+                        Rectangle {
+                            border-width: 1px;
+                            border-color: root.code-map-enrichment-readiness-error ? Theme.accent-pink : Theme.border-subtle;
+                            border-radius: Theme.radius-sm;
+                            background: Theme.surface-raised;
+                            VerticalBox {
+                                padding: Theme.space-tight;
+                                spacing: Theme.space-2xs;
+                                Text {
+                                    text: "CODEGRAPH ENRICHMENT READINESS · NEOTH HOME / MANAGED ROOTS";
+                                    font-family: Theme.font-display;
+                                    font-size: Theme.font-size-2xs;
+                                    font-weight: Theme.weight-medium;
+                                    color: root.code-map-enrichment-readiness-error ? Theme.accent-pink : Theme.accent-cyan;
+                                    wrap: word-wrap;
+                                }
+                                Text {
+                                    text: root.code-map-enrichment-readiness-state;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    color: root.code-map-enrichment-readiness-error ? Theme.accent-pink : Theme.text-primary;
+                                    wrap: word-wrap;
+                                }
+                                Text {
+                                    text: root.code-map-enrichment-readiness-detail;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    color: Theme.text-secondary;
+                                    wrap: word-wrap;
+                                }
+                                Text {
+                                    text: "PASS only means a future eligible call may attempt a sidecar. No selector was invoked and no response was enriched.";
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    color: Theme.text-muted;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
                         Text {
                             text: root.code-map-lifecycle-runtime;
                             font-family: Theme.font-mono;
@@ -4998,6 +5041,12 @@ export component SettingsView inherits Rectangle {
                                 size: "sm";
                                 enabled: !root.code-map-lifecycle-running && !root.code-map-impact-running && root.code-map-root != "";
                                 clicked => { root.code-map-lifecycle-inspect-clicked(root.code-map-root); }
+                            }
+                            NeothButton {
+                                label: "Check enrichment readiness";
+                                size: "sm";
+                                enabled: !root.code-map-lifecycle-running && !root.code-map-impact-running;
+                                clicked => { root.code-map-enrichment-readiness-test-clicked(); }
                             }
                             NeothButton {
                                 label: "Set up";

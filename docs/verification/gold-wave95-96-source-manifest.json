@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W103-configured-read-authority-and-observed-runtime-repairs",
-  "base": "5e353a168db45234383cfbf735c7835a9ef17300",
-  "capturedUtc": "2026-09-16T15:18:02.8101557Z",
+  "item": "GOLD-W95-W103-configured-read-readiness-authority-and-runtime-repairs",
+  "base": "8a999c4cd8a844977ca9b911a820978e8aa7a2f3",
+  "capturedUtc": "2026-09-16T15:33:58.5758619Z",
   "validationStatus": "REVIEWED_SOURCE_NEW_REMOTE_GATES_PENDING",
-  "scopeNote": "293 cumulative inputs. W102 adds selected direct-CLI allowlist/confirmation/PreToolUse denials with exact audit binding and zero child starts. W103 gates three test-only helpers and discards cached Linux JUnit before lint. Independently reviewed; fresh GitHub gates pending. W100 readiness remains separate WORK.",
+  "scopeNote": "295 cumulative inputs. W100 shares Doctor readiness with GUI/Buddy, typedDisabled/Ready/Unavailable, diagnostic resolvedCLI identity without changing runtimeauthority, request/config revision fences and actual late queued callback. W102/W103 prior source retained. Independent source review only; all gates GitHub-hosted.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -53,8 +53,8 @@
     },
     {
       "path": "docs/configuration.md",
-      "bytes": 37895,
-      "sha256": "066513C3907D8B02240FE8DD175A2AF1BD01BF7CC3C933EEE94A69062BB72E8B"
+      "bytes": 38338,
+      "sha256": "5DEC23921F36F84546560E98C852CD2E61C84DFF7B7057A534E2FB94CB809036"
     },
     {
       "path": "docs/getting-started.md",
@@ -258,8 +258,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1627475,
-      "sha256": "1B30598CB8D31B9E1D6DA6BD0B7E30700B56502F1DD467F96842F378891DE916"
+      "bytes": 1642942,
+      "sha256": "285EF79A5359C1D3023F28DF56585DC239C78073A71660F74C8CAC2BD093B12C"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
@@ -358,8 +358,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/main.slint",
-      "bytes": 300713,
-      "sha256": "6F9AE0617DC15875922C9356B58E31A36EB33F6B7A171DD2907A0D5162121A8A"
+      "bytes": 301695,
+      "sha256": "73342FB056415BF71F6190ED201D22AA7C860774440098DA9452DC7B9137A3CB"
     },
     {
       "path": "SRC/neothd-gui/ui/memory_graph.slint",
@@ -403,8 +403,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/settings.slint",
-      "bytes": 389329,
-      "sha256": "F03E4E45A4DCB1CD289B3ABF7AB46E8C299244384170A0A25AE6A728EE881AB0"
+      "bytes": 392582,
+      "sha256": "8893D6B9E0F1B0FC12788A996CB8FF9FD22B4AEA9CB2EBF0D251197E4E4BD780"
     },
     {
       "path": "SRC/neothd-gui/ui/tabs.slint",
@@ -548,8 +548,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/integrations.rs",
-      "bytes": 93614,
-      "sha256": "67F4B463EA9B82F8AAA3CED99A6C5BF02A5A704DD1BA478751657287C9F86A54"
+      "bytes": 88456,
+      "sha256": "7F305A1740214F0CA4CD88231C31331E607AA29B844479E6871DCBAF67A55513"
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/providers.rs",
@@ -678,8 +678,8 @@
     },
     {
       "path": "SRC/neothd/src/code_map/mod.rs",
-      "bytes": 4645,
-      "sha256": "910B0D6B5389F5EEC24A075A38A16C90627C97DFE652F002A6300316100CF602"
+      "bytes": 4869,
+      "sha256": "66576C060FB726D96B01E8C200A1B5445B9E5174A2172C4AF3B6A16782BBD74F"
     },
     {
       "path": "SRC/neothd/src/code_map/persist.rs",
@@ -1003,8 +1003,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "bytes": 176172,
-      "sha256": "2144957026FB0E657615A4B251C85A9C7301DD1D4A9B864DD8511576D64E33FD"
+      "bytes": 178424,
+      "sha256": "9C7C61748C883EC20EEC428CA6A99458CD4C122B11857A3A11C822953872F819"
     },
     {
       "path": "SRC/neothd/src/mcp/config.rs",
@@ -1470,6 +1470,16 @@
       "path": "THIRD_PARTY_LICENSES",
       "bytes": 2271741,
       "sha256": "4E77A7CC896F8B5EEDCEFB458199A0939522B9191F22939BE3EFD78C575D9CF7"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/enrichment_readiness.rs",
+      "bytes": 8859,
+      "sha256": "800176436334989AB95202BCD2904CE4B56C25C4744B9B88DFC1586E185A4012"
+    },
+    {
+      "path": "docs/code-map-lifecycle.md",
+      "bytes": 5677,
+      "sha256": "C551EFFBB311743FD1A91B750C66AB5E15F55AC1627723A48A73A164BBBDE548"
     }
   ]
 }

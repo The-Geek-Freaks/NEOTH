@@ -291,130 +291,18 @@ pub(crate) fn check_code_map_analysis_readiness(home: &Path) -> CheckOutcome {
 /// request that was enriched.
 pub(crate) fn check_codegraph_outline_enrichment(home: &Path) -> CheckOutcome {
     const NAME: &str = "codegraph outline enrichment";
-    let config_path = home.join("freedom.yaml");
-    let config = match std::fs::read(&config_path) {
-        Ok(bytes) => match serde_yaml::from_slice::<crate::config::FreedomConfig>(&bytes) {
-            Ok(config) if config.code_map.validate().is_ok() => config,
-            _ => return CheckOutcome {
-                name: NAME,
-                status: CheckStatus::Warn,
-                detail: "outline enrichment configuration is unavailable or invalid; Doctor did not inspect MCP registration or SQLite".into(),
-            },
-        },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => crate::config::FreedomConfig::default(),
-        Err(_) => return CheckOutcome {
-            name: NAME,
-            status: CheckStatus::Warn,
-            detail: "outline enrichment configuration is unavailable or invalid; Doctor did not inspect MCP registration or SQLite".into(),
-        },
-    };
-    if !config.code_map.outline_enrichment {
-        return CheckOutcome {
+    match crate::code_map::inspect_enrichment_readiness(home) {
+        crate::code_map::EnrichmentReadiness::Disabled { detail }
+        | crate::code_map::EnrichmentReadiness::Ready { detail } => CheckOutcome {
             name: NAME,
             status: CheckStatus::Pass,
-            detail: "disabled by freedom.yaml — no outline enrichment readiness is expected and no SQLite database was opened".into(),
-        };
-    }
-    let registry_path = home.join("mcp_servers.yaml");
-    let servers = match crate::mcp::McpServers::load_from(&registry_path) {
-        Ok(servers) => servers,
-        Err(_) => return CheckOutcome {
-            name: NAME,
-            status: CheckStatus::Warn,
-            detail: "enabled, but mcp_servers.yaml is unavailable or invalid; no child, provider, or SQLite inspection was attempted".into(),
+            detail,
         },
-    };
-    let database_path = match crate::mcp::codegraph_server::inspect_builtin_outline_registration(
-        servers.get_enabled("neoth-codegraph"),
-    ) {
-        crate::mcp::codegraph_server::BuiltinOutlineRegistrationReadiness::Exact { database_path } => database_path,
-        crate::mcp::codegraph_server::BuiltinOutlineRegistrationReadiness::DatabaseUnavailable => return CheckOutcome {
+        crate::code_map::EnrichmentReadiness::Unavailable { detail } => CheckOutcome {
             name: NAME,
             status: CheckStatus::Warn,
-            detail: "enabled, but the exact generated codegraph registration names an absent or inaccessible database; Doctor did not create, migrate, or repair it".into(),
+            detail,
         },
-        crate::mcp::codegraph_server::BuiltinOutlineRegistrationReadiness::NotExactGenerated => return CheckOutcome {
-            name: NAME,
-            status: CheckStatus::Warn,
-            detail: "enabled, but no exact generated neoth-codegraph registration is eligible; custom or lookalike registrations are not used for outline enrichment".into(),
-        },
-    };
-    let lifecycle = &config.code_map.lifecycle;
-    if !lifecycle.enabled || lifecycle.managed_roots.is_empty() {
-        return CheckOutcome {
-            name: NAME,
-            status: CheckStatus::Warn,
-            detail: "enabled with no managed code-map roots; Doctor cannot establish a fresh complete outline snapshot".into(),
-        };
-    }
-
-    let mut ready = Vec::new();
-    let mut unavailable = Vec::new();
-    // `CodeMapLifecycleConfig` validates this operator-controlled list to at
-    // most eight roots. `inspect` is read-only and preserves its normal
-    // physical-root identity, completeness, freshness, and corruption rules.
-    for root in &lifecycle.managed_roots {
-        let observed = crate::code_map::lifecycle::inspect(&database_path, root);
-        match (&observed.root, &observed.state) {
-            (
-                Some(physical_root),
-                crate::code_map::lifecycle::CodeMapLifecycleState::Fresh { snapshot },
-            ) if snapshot.index_generation > 0
-                && snapshot.index_generation == snapshot.graph_generation =>
-            {
-                ready.push(format!(
-                    "{} (index_generation={}, graph_generation={})",
-                    physical_root, snapshot.index_generation, snapshot.graph_generation
-                ));
-            }
-            (Some(physical_root), state) => unavailable.push(format!(
-                "{}: {}",
-                physical_root,
-                code_map_lifecycle_state_label(state)
-            )),
-            (None, state) => unavailable.push(format!(
-                "{}: {}",
-                root.display(),
-                code_map_lifecycle_state_label(state)
-            )),
-        }
-    }
-    if ready.is_empty() {
-        return CheckOutcome {
-            name: NAME,
-            status: CheckStatus::Warn,
-            detail: format!(
-                "enabled exact generated registration found, but no fresh complete managed map is ready ({}) ; Doctor did not rebuild, refresh, or enrich a request",
-                unavailable.join(", ")
-            ),
-        };
-    }
-    let suffix = if !unavailable.is_empty() {
-        format!(
-            "; other managed roots unavailable: {}",
-            unavailable.join(", ")
-        )
-    } else {
-        String::new()
-    };
-    let selection = if config.code_map.enrichment_selectors.is_empty() {
-        "the existing built-in neoth-codegraph/codegraph_outline route".to_owned()
-    } else {
-        format!(
-            "the built-in route and {} exact configured ReadPath selector(s)",
-            config.code_map.enrichment_selectors.len(),
-        )
-    };
-    CheckOutcome {
-        name: NAME,
-        status: CheckStatus::Pass,
-        detail: format!(
-            "ready for a next eligible attempt through {} across {} fresh complete managed root(s): {}{}; Doctor did not enrich a request",
-            selection,
-            ready.len(),
-            ready.join(", "),
-            suffix
-        ),
     }
 }
 

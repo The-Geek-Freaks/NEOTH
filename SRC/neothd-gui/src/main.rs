@@ -66,6 +66,15 @@ static CODE_MAP_RECALL_ACTIVE: std::sync::atomic::AtomicBool =
 static CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+// Readiness checks are independent read-only requests. The newest request
+// wins even while the underlying lifecycle configuration remains unchanged.
+static CODE_MAP_ENRICHMENT_READINESS_UI_REVISION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(test)]
+static CODE_MAP_ENRICHMENT_READINESS_PUBLICATION_COUNT: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 // Every selected-root mutation, including a delayed native folder-picker
 // completion, advances this revision. Lifecycle and impact workers capture it
 // before they touch core and must discard old-root terminal state.
@@ -13979,6 +13988,7 @@ fn main() -> Result<()> {
         &window,
         std::sync::Arc::clone(&code_map_lifecycle_controller),
     );
+    register_code_map_enrichment_readiness_callbacks(&window);
     let weak_buddy_code_map_setup = window.as_weak();
     let buddy_setup_controller = std::sync::Arc::clone(&code_map_lifecycle_controller);
     window.on_buddy_code_map_setup(move || {
@@ -19944,6 +19954,9 @@ fn load_code_map_lifecycle_config_view(weak: slint::Weak<MainWindow>) {
                 ),
             }
             window.set_code_map_lifecycle_runtime(runtime.into());
+            // Both successful loads and load errors need a fresh terminal
+            // readiness presentation for this same home/config revision.
+            start_code_map_enrichment_readiness_inspection(window.as_weak());
         });
     });
 }
@@ -20109,6 +20122,10 @@ fn start_code_map_lifecycle_config_apply(
                         code_map_lifecycle_runtime_summary_from,
                     );
                     window.set_code_map_lifecycle_runtime(runtime.into());
+                    // Managed roots changed in this accepted configuration
+                    // snapshot, so refresh the separate home-scoped readiness
+                    // result through its revision-fenced read-only path.
+                    start_code_map_enrichment_readiness_inspection(window.as_weak());
                     buddy(&window, GuiActivity::CodeMapLifecycleConfigSaved);
                 }
                 Err(error) => {
@@ -20183,6 +20200,103 @@ fn register_buddy_code_map_status_callback(
             std::sync::Arc::clone(&controller),
             window.get_code_map_root().to_string(),
         );
+    });
+}
+
+/// Registers the home-scoped, read-only codegraph enrichment readiness action
+/// for both the Coding panel and Buddy quick menu.
+fn register_code_map_enrichment_readiness_callbacks(window: &MainWindow) {
+    let weak_panel = window.as_weak();
+    window.on_code_map_enrichment_readiness_test_clicked(move || {
+        start_code_map_enrichment_readiness_inspection(weak_panel.clone());
+    });
+
+    let weak_buddy = window.as_weak();
+    window.on_buddy_code_map_enrichment_test(move || {
+        let Some(window) = weak_buddy.upgrade() else {
+            return;
+        };
+        window.set_nav_active("coding".into());
+        start_code_map_enrichment_readiness_inspection(weak_buddy.clone());
+    });
+}
+
+fn start_code_map_enrichment_readiness_inspection(weak: slint::Weak<MainWindow>) {
+    let Some(window) = weak.upgrade() else {
+        return;
+    };
+    let config_revision =
+        CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION.load(std::sync::atomic::Ordering::Acquire);
+    let request_revision = CODE_MAP_ENRICHMENT_READINESS_UI_REVISION
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+        .saturating_add(1);
+    window.set_code_map_enrichment_readiness_error(false);
+    window.set_code_map_enrichment_readiness_state("Checking codegraph enrichment readiness…".into());
+    window.set_code_map_enrichment_readiness_detail(
+        "Reading the configured NEOTH home and managed-root evidence without invoking MCP or repairing data."
+            .into(),
+    );
+    let home = neothd::config::FreedomConfig::default_neoth_home();
+    std::thread::spawn(move || {
+        let cli = which_neothd();
+        let readiness = neothd::code_map::inspect_enrichment_readiness_for_expected_executable(
+            &home,
+            cli.as_deref(),
+        );
+        publish_code_map_enrichment_readiness(
+            weak,
+            config_revision,
+            request_revision,
+            readiness,
+        );
+    });
+}
+
+fn publish_code_map_enrichment_readiness(
+    weak: slint::Weak<MainWindow>,
+    config_revision: u64,
+    request_revision: u64,
+    readiness: neothd::code_map::EnrichmentReadiness,
+) {
+    let _ = slint::invoke_from_event_loop(move || {
+        #[cfg(test)]
+        CODE_MAP_ENRICHMENT_READINESS_PUBLICATION_COUNT
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        if CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
+            != config_revision
+            || CODE_MAP_ENRICHMENT_READINESS_UI_REVISION
+                .load(std::sync::atomic::Ordering::Acquire)
+                != request_revision
+        {
+            return;
+        }
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        match readiness {
+            neothd::code_map::EnrichmentReadiness::Disabled { detail } => {
+                window.set_code_map_enrichment_readiness_error(false);
+                window.set_code_map_enrichment_readiness_state(
+                    "Codegraph enrichment is disabled for this NEOTH home.".into(),
+                );
+                window.set_code_map_enrichment_readiness_detail(detail.into());
+            }
+            neothd::code_map::EnrichmentReadiness::Ready { detail } => {
+                window.set_code_map_enrichment_readiness_error(false);
+                window.set_code_map_enrichment_readiness_state(
+                    "Codegraph enrichment readiness passed for this NEOTH home.".into(),
+                );
+                window.set_code_map_enrichment_readiness_detail(detail.into());
+            }
+            neothd::code_map::EnrichmentReadiness::Unavailable { detail } => {
+                window.set_code_map_enrichment_readiness_error(true);
+                window.set_code_map_enrichment_readiness_state(
+                    "Codegraph enrichment readiness is unavailable for this NEOTH home."
+                        .into(),
+                );
+                window.set_code_map_enrichment_readiness_detail(detail.into());
+            }
+        }
     });
 }
 
@@ -36977,14 +37091,19 @@ mod w58_gui_callback_runtime_tests {
     use tempfile::TempDir;
 
     use super::{
-        CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION, CODE_MAP_ROOT_SELECTION_REVISION, MainWindow,
+        CODE_MAP_ENRICHMENT_READINESS_UI_REVISION, CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION,
+        CODE_MAP_ENRICHMENT_READINESS_PUBLICATION_COUNT, CODE_MAP_ROOT_SELECTION_REVISION,
+        MainWindow,
         NATIVE_CODING_UI_REVISION,
         code_map_controller::{AutomaticContextPresentationController, CodeMapLifecycleController},
         code_map_impact_controller::CodeMapImpactController,
         coding_controller::CodingController,
-        native_coding_terminal_bridge_accepts, register_buddy_code_map_impact_callback,
+        native_coding_terminal_bridge_accepts, publish_code_map_enrichment_readiness,
+        register_buddy_code_map_impact_callback,
         register_buddy_code_map_status_callback, register_buddy_native_coding_callbacks,
-        start_code_map_lifecycle_config_apply, start_code_map_lifecycle_refresh,
+        register_code_map_enrichment_readiness_callbacks,
+        neothd_executable_names, start_code_map_lifecycle_config_apply,
+        start_code_map_lifecycle_refresh, which_neothd,
     };
 
     static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -37006,6 +37125,25 @@ mod w58_gui_callback_runtime_tests {
             match self.0.take() {
                 Some(value) => unsafe { std::env::set_var("NEOTH_HOME", value) },
                 None => unsafe { std::env::remove_var("NEOTH_HOME") },
+            }
+        }
+    }
+
+    struct PathGuard(Option<std::ffi::OsString>);
+
+    impl PathGuard {
+        fn install(directory: &Path) -> Self {
+            let previous = std::env::var_os("PATH");
+            unsafe { std::env::set_var("PATH", directory.as_os_str()) };
+            Self(previous)
+        }
+    }
+
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => unsafe { std::env::set_var("PATH", value) },
+                None => unsafe { std::env::remove_var("PATH") },
             }
         }
     }
@@ -37054,6 +37192,85 @@ mod w58_gui_callback_runtime_tests {
             window.get_code_map_lifecycle_config_status(),
             window.get_code_map_lifecycle_config_running(),
             window.get_code_map_lifecycle_runtime(),
+        );
+    }
+
+    fn pump_until_enrichment_readiness(window: &MainWindow, expected: &str) {
+        let expected_owned = expected.to_owned();
+        let completed = Rc::new(Cell::new(false));
+        let ticks = Rc::new(Cell::new(0_u16));
+        let observed_completed = completed.clone();
+        let observed_ticks = ticks.clone();
+        let weak = window.as_weak();
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                let Some(window) = weak.upgrade() else {
+                    let _ = slint::quit_event_loop();
+                    return;
+                };
+                if window
+                    .get_code_map_enrichment_readiness_state()
+                    .to_string()
+                    .contains(&expected_owned)
+                {
+                    observed_completed.set(true);
+                    let _ = slint::quit_event_loop();
+                    return;
+                }
+                let next_tick = observed_ticks.get().saturating_add(1);
+                observed_ticks.set(next_tick);
+                if next_tick >= 500 {
+                    let _ = slint::quit_event_loop();
+                }
+            },
+        );
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("run bounded enrichment readiness event loop");
+        drop(timer);
+        assert!(
+            completed.get(),
+            "timed out waiting for enrichment readiness {expected:?}: state={}; detail={}",
+            window.get_code_map_enrichment_readiness_state(),
+            window.get_code_map_enrichment_readiness_detail(),
+        );
+    }
+
+    fn drain_enrichment_readiness_publications(window: &MainWindow, expected_count: u64) {
+        let completed = Rc::new(Cell::new(false));
+        let ticks = Rc::new(Cell::new(0_u16));
+        let observed_completed = completed.clone();
+        let observed_ticks = ticks.clone();
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                if CODE_MAP_ENRICHMENT_READINESS_PUBLICATION_COUNT
+                    .load(std::sync::atomic::Ordering::Acquire)
+                    >= expected_count
+                {
+                    observed_completed.set(true);
+                    let _ = slint::quit_event_loop();
+                    return;
+                }
+                let next_tick = observed_ticks.get().saturating_add(1);
+                observed_ticks.set(next_tick);
+                if next_tick >= 500 {
+                    let _ = slint::quit_event_loop();
+                }
+            },
+        );
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("drain queued enrichment readiness publications");
+        drop(timer);
+        assert!(
+            completed.get(),
+            "timed out draining {expected_count} queued enrichment readiness publications; observed {}",
+            CODE_MAP_ENRICHMENT_READINESS_PUBLICATION_COUNT
+                .load(std::sync::atomic::Ordering::Acquire),
         );
     }
 
@@ -37165,6 +37382,11 @@ mod w58_gui_callback_runtime_tests {
         .expect("seed default freedom config");
         CODE_MAP_ROOT_SELECTION_REVISION.store(0, std::sync::atomic::Ordering::Release);
         CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION.store(0, std::sync::atomic::Ordering::Release);
+        CODE_MAP_ENRICHMENT_READINESS_UI_REVISION.store(0, std::sync::atomic::Ordering::Release);
+        CODE_MAP_ENRICHMENT_READINESS_PUBLICATION_COUNT.store(
+            0,
+            std::sync::atomic::Ordering::Release,
+        );
 
         let window = MainWindow::new().expect("construct generated MainWindow");
         window.set_code_map_root(root.path().display().to_string().into());
@@ -37172,6 +37394,44 @@ mod w58_gui_callback_runtime_tests {
         let lifecycle = Arc::new(CodeMapLifecycleController::new(database.clone()));
         let presentation = Arc::new(AutomaticContextPresentationController::default());
         register_buddy_code_map_status_callback(&window, Arc::clone(&lifecycle));
+        register_code_map_enrichment_readiness_callbacks(&window);
+
+        // Capture an old request, advance to a newer request, then queue the
+        // newer callback before the old one. The request revision must retain
+        // the newest result even though the lifecycle config revision is unchanged.
+        let old_request_revision = CODE_MAP_ENRICHMENT_READINESS_UI_REVISION
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            .saturating_add(1);
+        let new_request_revision = CODE_MAP_ENRICHMENT_READINESS_UI_REVISION
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            .saturating_add(1);
+        assert_eq!(old_request_revision, 1);
+        assert_eq!(new_request_revision, 2);
+        publish_code_map_enrichment_readiness(
+            window.as_weak(),
+            0,
+            new_request_revision,
+            neothd::code_map::EnrichmentReadiness::Unavailable {
+                detail: "newest queued unavailable result".into(),
+            },
+        );
+        publish_code_map_enrichment_readiness(
+            window.as_weak(),
+            0,
+            old_request_revision,
+            neothd::code_map::EnrichmentReadiness::Disabled {
+                detail: "older queued disabled result".into(),
+            },
+        );
+        pump_until_enrichment_readiness(&window, "unavailable for this NEOTH home");
+        drain_enrichment_readiness_publications(&window, 2);
+        assert!(
+            window
+                .get_code_map_enrichment_readiness_detail()
+                .to_string()
+                .contains("newest queued unavailable result"),
+            "the older queued publication must not overwrite the latest request"
+        );
 
         apply_typed_lifecycle_config(
             &window,
@@ -37183,6 +37443,35 @@ mod w58_gui_callback_runtime_tests {
         assert!(
             !database.exists(),
             "disabled transaction must retain absent store"
+        );
+        window.invoke_buddy_code_map_enrichment_test();
+        pump_until_enrichment_readiness(&window, "disabled for this NEOTH home");
+        assert!(
+            window
+                .get_code_map_enrichment_readiness_detail()
+                .to_string()
+                .contains("no SQLite database was opened"),
+            "Buddy must exercise the shared read-only readiness result"
+        );
+        assert_eq!(window.get_nav_active().to_string(), "coding");
+        std::fs::write(home.path().join("freedom.yaml"), "code_map: [")
+            .expect("write invalid readiness fixture config");
+        window.invoke_buddy_code_map_enrichment_test();
+        pump_until_enrichment_readiness(&window, "unavailable for this NEOTH home");
+        assert!(window.get_code_map_enrichment_readiness_error());
+        assert!(
+            window
+                .get_code_map_enrichment_readiness_detail()
+                .to_string()
+                .contains("configuration is unavailable or invalid"),
+            "Buddy must expose the typed unavailable readiness result"
+        );
+        apply_typed_lifecycle_config(
+            &window,
+            Arc::clone(&presentation),
+            false,
+            0,
+            "disabled (max files: 0)",
         );
         invoke_buddy_status_from_clear_sentinel(
             &window,
@@ -37238,6 +37527,76 @@ mod w58_gui_callback_runtime_tests {
         let graph_generation = window.get_code_map_lifecycle_graph_generation().to_string();
         assert_ne!(index_generation, "0");
         assert_eq!(index_generation, graph_generation);
+
+        let mut outline_config = neothd::config::FreedomConfig::default();
+        outline_config.code_map.outline_enrichment = true;
+        outline_config.code_map.auto_context_max_files = 3;
+        outline_config.code_map.lifecycle.enabled = true;
+        outline_config.code_map.lifecycle.managed_roots = vec![root.path().to_path_buf()];
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&outline_config).expect("serialize fresh outline config"),
+        )
+        .expect("write fresh outline config");
+        let cli_directory = home.path().join("w100-cli-marker");
+        std::fs::create_dir(&cli_directory).expect("create resolved CLI marker directory");
+        let cli_marker = cli_directory.join(neothd_executable_names()[0]);
+        std::fs::write(&cli_marker, b"W100 diagnostic-only CLI marker")
+            .expect("write resolved CLI marker");
+        let _path = PathGuard::install(&cli_directory);
+        let resolved_cli = which_neothd()
+            .expect("resolved fixture CLI fallback or sibling")
+            .canonicalize()
+            .expect("canonical resolved fixture CLI path");
+        let generated_server = neothd::mcp::McpServerConfig {
+            id: "neoth-codegraph".into(),
+            description: None,
+            command: resolved_cli.display().to_string(),
+            args: vec![
+                "mcp".into(),
+                "codegraph-serve".into(),
+                "--db".into(),
+                database.display().to_string(),
+            ],
+            env: std::collections::HashMap::new(),
+            enabled: true,
+            allow_tools: Some(
+                neothd::mcp::codegraph_server::TOOL_NAMES
+                    .iter()
+                    .map(|tool| (*tool).to_owned())
+                    .collect(),
+            ),
+            trust_all_tools: false,
+            smart_approve: true,
+            autonomy_gate: None,
+        };
+        std::fs::write(
+            home.path().join("mcp_servers.yaml"),
+            serde_yaml::to_string(&neothd::mcp::McpServers {
+                servers: vec![generated_server],
+                smart_loading: true,
+            })
+            .expect("serialize generated outline registration"),
+        )
+        .expect("write generated outline registration");
+        assert_eq!(
+            which_neothd()
+                .expect("stable resolved fixture CLI")
+                .canonicalize()
+                .expect("canonical stable resolved fixture CLI"),
+            resolved_cli,
+            "the callback must inspect the same resolved CLI identity registered by this fixture"
+        );
+        window.invoke_buddy_code_map_enrichment_test();
+        pump_until_enrichment_readiness(&window, "passed for this NEOTH home");
+        assert!(!window.get_code_map_enrichment_readiness_error());
+        assert!(
+            window
+                .get_code_map_enrichment_readiness_detail()
+                .to_string()
+                .contains("fresh complete managed root(s)"),
+            "Buddy must render the typed fresh-ready result from the generated registration"
+        );
 
         std::fs::write(
             root.path().join("lib.rs"),

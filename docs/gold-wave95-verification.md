@@ -1,5 +1,10 @@
 # W95-W103 - configured MCP local reads and observed runtime repairs
 
+The separately reviewed [W100 readiness slice](gold-wave100-verification.md)
+shares Doctor's read-only inspection with Coding settings and Buddy. The
+cumulative source manifest and test matrix below now include that slice;
+its runtime acceptance remains pending with the other current-source gates.
+
 W102 adds a real direct-CLI regression for an explicitly selected external
 ReadPath tool. Per-server allowlist denial, required confirmation and a
 configured PreToolUse block each retain their typed error and prevent entry to

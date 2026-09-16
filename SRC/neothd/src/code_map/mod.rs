@@ -21,6 +21,7 @@ pub mod diff;
 pub mod diff_git;
 // Compose with W43's proposal; that mirror supplies the module source.
 pub mod diff_impact;
+pub mod enrichment_readiness;
 pub mod graph;
 pub mod impact;
 mod incremental;
@@ -72,6 +73,10 @@ pub use lifecycle_config::{
 pub use lifecycle_watcher::{
     CodeMapLifecycleRuntimeState, CodeMapLifecycleRuntimeStatus,
     read_active_code_map_lifecycle_status,
+};
+pub use enrichment_readiness::{
+    EnrichmentReadiness, inspect as inspect_enrichment_readiness,
+    inspect_for_expected_executable as inspect_enrichment_readiness_for_expected_executable,
 };
 #[allow(unused_imports)]
 pub use outline::{OutlineEntry, outline_file, outline_source};
