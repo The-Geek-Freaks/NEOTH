@@ -211,6 +211,12 @@ export struct ChannelAccountRow {
     dm-pairing: bool,
 }
 
+// W121 — non-secret, operator-visible pending DM-pairing request metadata.
+export struct TelegramPairingRequestRow {
+    request-id: string,
+    created-at: string,
+}
+
 // GOLD-R3-04 — canonical channel probe state (never a secret).
 export struct ChannelRow {
     name: string,
@@ -1177,6 +1183,13 @@ export component SettingsView inherits Rectangle {
     callback channel-account-dm-pairing-clicked(string, string, bool);
     in property <bool> channel-account-retirement-in-flight: false;
     in property <bool> channel-account-dm-pairing-in-flight: false;
+    in property <string> channel-pairing-account: "";
+    in property <[TelegramPairingRequestRow]> channel-pairing-requests: [];
+    in property <string> channel-pairing-error: "";
+    in property <bool> channel-pairing-loaded: false;
+    in property <bool> channel-pairing-in-flight: false;
+    callback channel-pairing-list(string, string);
+    callback channel-pairing-dismiss(string, string, string);
     callback channel-remove-clicked(string);
     /// GAP-19 — Add a new channel credential from the GUI.
     /// Args: channel_type + six typed credential fields + Matrix's optional
@@ -2378,6 +2391,9 @@ export component SettingsView inherits Rectangle {
                                     if c.configured && !confirming && !retirement-confirming && !pairing-confirming: NeothButton {
                                         label: "Test";
                                         primary: false;
+                                        enabled: !root.channel-account-retirement-in-flight
+                                            && !root.channel-account-dm-pairing-in-flight
+                                            && !root.channel-pairing-in-flight;
                                         clicked => {
                                             root.channel-account-test-clicked(c.name, account.account-id);
                                         }
@@ -2385,6 +2401,9 @@ export component SettingsView inherits Rectangle {
                                     if c.configured && !confirming && !retirement-confirming && !pairing-confirming: NeothButton {
                                         label: "Edit";
                                         primary: false;
+                                        enabled: !root.channel-account-retirement-in-flight
+                                            && !root.channel-account-dm-pairing-in-flight
+                                            && !root.channel-pairing-in-flight;
                                         clicked => {
                                             add-channel-open = false;
                                             form-editing = false;
@@ -2400,7 +2419,8 @@ export component SettingsView inherits Rectangle {
                                         label: "Retire";
                                         primary: false;
                                         enabled: !root.channel-account-retirement-in-flight
-                                            && !root.channel-account-dm-pairing-in-flight;
+                                            && !root.channel-account-dm-pairing-in-flight
+                                            && !root.channel-pairing-in-flight;
                                         clicked => { retirement-confirming = true; }
                                     }
                                     if c.configured && !confirming && retirement-confirming: HorizontalLayout {
@@ -2418,7 +2438,8 @@ export component SettingsView inherits Rectangle {
                                             primary: false;
                                             loading: root.channel-account-retirement-in-flight;
                                             enabled: !root.channel-account-retirement-in-flight
-                                                && !root.channel-account-dm-pairing-in-flight;
+                                                && !root.channel-account-dm-pairing-in-flight
+                                                && !root.channel-pairing-in-flight;
                                             clicked => {
                                                 root.channel-account-remove-clicked(c.name, account.account-id);
                                             }
@@ -2427,7 +2448,8 @@ export component SettingsView inherits Rectangle {
                                             label: "Cancel";
                                             primary: false;
                                             enabled: !root.channel-account-retirement-in-flight
-                                                && !root.channel-account-dm-pairing-in-flight;
+                                                && !root.channel-account-dm-pairing-in-flight
+                                                && !root.channel-pairing-in-flight;
                                             clicked => { retirement-confirming = false; }
                                         }
                                     }
@@ -2435,7 +2457,8 @@ export component SettingsView inherits Rectangle {
                                         label: account.dm-pairing ? "Disable DM pairing" : "Enable DM pairing";
                                         primary: false;
                                         enabled: !root.channel-account-retirement-in-flight
-                                            && !root.channel-account-dm-pairing-in-flight;
+                                            && !root.channel-account-dm-pairing-in-flight
+                                            && !root.channel-pairing-in-flight;
                                         clicked => { pairing-confirming = true; }
                                     }
                                     if c.configured && !confirming && pairing-confirming: HorizontalLayout {
@@ -2456,7 +2479,8 @@ export component SettingsView inherits Rectangle {
                                             primary: false;
                                             loading: root.channel-account-dm-pairing-in-flight;
                                             enabled: !root.channel-account-retirement-in-flight
-                                                && !root.channel-account-dm-pairing-in-flight;
+                                                && !root.channel-account-dm-pairing-in-flight
+                                                && !root.channel-pairing-in-flight;
                                             clicked => {
                                                 root.channel-account-dm-pairing-clicked(
                                                     c.name,
@@ -2469,8 +2493,133 @@ export component SettingsView inherits Rectangle {
                                             label: "Cancel";
                                             primary: false;
                                             enabled: !root.channel-account-retirement-in-flight
-                                                && !root.channel-account-dm-pairing-in-flight;
+                                                && !root.channel-account-dm-pairing-in-flight
+                                                && !root.channel-pairing-in-flight;
                                             clicked => { pairing-confirming = false; }
+                                        }
+                                    }
+                                    if c.configured && account.dm-pairing && !confirming && !retirement-confirming && !pairing-confirming: NeothButton {
+                                        label: "Pending requests";
+                                        primary: false;
+                                        enabled: !root.channel-account-retirement-in-flight
+                                            && !root.channel-account-dm-pairing-in-flight
+                                            && !root.channel-pairing-in-flight;
+                                        clicked => {
+                                            root.channel-pairing-list(c.name, account.account-id);
+                                        }
+                                    }
+                                }
+                            }
+                            if c.name == "telegram" && root.channel-pairing-account != "": Card {
+                                shimmer: false;
+                                VerticalBox {
+                                    padding: Theme.space-base;
+                                    spacing: Theme.space-tight;
+                                    Text {
+                                        text: "Pending DM pairing requests · telegram/" + root.channel-pairing-account;
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-caption;
+                                        font-weight: Theme.weight-medium;
+                                        color: Theme.text-primary;
+                                    }
+                                    Text {
+                                        text: "Approval requires the sender's pairing code in the CLI. This panel can only inspect or dismiss an exact pending request.";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-tertiary;
+                                        wrap: word-wrap;
+                                    }
+                                    if root.channel-pairing-in-flight: Text {
+                                        text: "Loading pairing requests…";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.accent-amber;
+                                    }
+                                    if root.channel-pairing-error != "": Text {
+                                        text: root.channel-pairing-error;
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.accent-pink;
+                                        wrap: word-wrap;
+                                    }
+                                    if root.channel-pairing-loaded && root.channel-pairing-error == "" && root.channel-pairing-requests.length == 0: Text {
+                                        text: "No pending requests for this account.";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-tertiary;
+                                    }
+                                    for request in root.channel-pairing-requests: VerticalBox {
+                                        property <bool> dismiss-confirming: false;
+                                        spacing: Theme.space-tight;
+                                        Rectangle { height: 1px; background: Theme.border-subtle; }
+                                        Text {
+                                            text: request.request-id;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-caption;
+                                            color: Theme.text-primary;
+                                        }
+                                        Text {
+                                            text: request.created-at;
+                                            font-family: Theme.font-display;
+                                            font-size: Theme.font-size-2xs;
+                                            color: Theme.text-tertiary;
+                                        }
+                                        if !dismiss-confirming: NeothButton {
+                                            label: "Dismiss";
+                                            primary: false;
+                                            enabled: root.channel-pairing-loaded
+                                                && root.channel-pairing-error == ""
+                                                && !root.channel-account-retirement-in-flight
+                                                && !root.channel-account-dm-pairing-in-flight
+                                                && !root.channel-pairing-in-flight;
+                                            clicked => { dismiss-confirming = true; }
+                                        }
+                                        if dismiss-confirming: HorizontalLayout {
+                                            spacing: Theme.space-tight;
+                                            Text {
+                                                text: "Dismiss this exact pending request?";
+                                                font-family: Theme.font-display;
+                                                font-size: Theme.font-size-caption;
+                                                color: Theme.accent-pink;
+                                                horizontal-stretch: 1;
+                                                wrap: word-wrap;
+                                            }
+                                            NeothButton {
+                                                label: "Confirm";
+                                                primary: false;
+                                                loading: root.channel-pairing-in-flight;
+                                                enabled: root.channel-pairing-loaded
+                                                    && root.channel-pairing-error == ""
+                                                    && !root.channel-account-retirement-in-flight
+                                                    && !root.channel-account-dm-pairing-in-flight
+                                                    && !root.channel-pairing-in-flight;
+                                                clicked => {
+                                                    root.channel-pairing-dismiss(
+                                                        "telegram",
+                                                        root.channel-pairing-account,
+                                                        request.request-id,
+                                                    );
+                                                }
+                                            }
+                                            NeothButton {
+                                                label: "Cancel";
+                                                primary: false;
+                                                enabled: !root.channel-account-retirement-in-flight
+                                                    && !root.channel-account-dm-pairing-in-flight
+                                                    && !root.channel-pairing-in-flight;
+                                                clicked => { dismiss-confirming = false; }
+                                            }
+                                        }
+                                    }
+                                    NeothButton {
+                                        label: "Refresh";
+                                        primary: false;
+                                        loading: root.channel-pairing-in-flight;
+                                        enabled: !root.channel-account-retirement-in-flight
+                                            && !root.channel-account-dm-pairing-in-flight
+                                            && !root.channel-pairing-in-flight;
+                                        clicked => {
+                                            root.channel-pairing-list("telegram", root.channel-pairing-account);
                                         }
                                     }
                                 }

@@ -1,6 +1,20 @@
 # PROGRESS — v1.0 working backlog
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
+
+**W121–W123 (2026-09-21):** mapped Telegram accounts gain pending-request
+visibility and explicit exact-request dismissal through the existing scoped
+CLI. Strict receipts, serialized callback admission and separate empty/error
+states protect the displayed account. Approval stays separate. Real Clap and
+native callback regressions accompany the source. GitHub CI `35541897416` on
+`927f6894` exposed a W118 test-helper tuple mismatch; W123 repairs the call while
+preserving its policy/secret assertions. That run is confirmed cancelled and
+requires fresh native validation. The older-source Windows preview remains
+separate. See [W121](../docs/gold-wave121-verification.md),
+[W122](../docs/gold-wave122-verification.md) and
+[W123](../docs/gold-wave123-verification.md). Counts remain **1324/1015/307/2**;
+no roadmap checkbox closes and all local validation stays suspended.
+
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
 > **W107 remote regression recovery (2026-09-20):** the completed earlier-source

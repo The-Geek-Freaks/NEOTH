@@ -2973,6 +2973,163 @@ pub fn telegram_account_dm_pairing_command(
     Ok(command)
 }
 
+/// One pending direct-message pairing request for the selected Telegram
+/// account.  This deliberately contains no sender identity or pairing code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TelegramPairingRequest {
+    pub request_id: String,
+    pub created_at: i64,
+}
+
+const MAX_TELEGRAM_PAIRING_JSON_BYTES: usize = 16 * 1024;
+const MAX_TELEGRAM_PAIRING_PENDING: usize = 3;
+
+fn canonical_telegram_pairing_request_id(raw: &str) -> Result<&str, String> {
+    if raw.len() != 32 || !raw.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')) {
+        return Err("pairing request id must be 32 lowercase hexadecimal characters".to_string());
+    }
+    Ok(raw)
+}
+
+/// Build the pending-request inventory command for one explicit named Telegram
+/// account. This never infers a default account.
+pub fn telegram_pairing_list_command(
+    bin: &std::path::Path,
+    channel: &str,
+    account: &str,
+) -> Result<std::process::Command, String> {
+    if channel != "telegram" {
+        return Err("only Telegram has DM-pairing requests".to_string());
+    }
+    let account_id = canonical_telegram_account_id(account)?;
+    let mut command = std::process::Command::new(bin);
+    command
+        .arg("channel")
+        .arg("pairing")
+        .arg("list")
+        .arg("telegram")
+        .arg("--account")
+        .arg(account_id.as_str())
+        .arg("--output")
+        .arg("json");
+    Ok(command)
+}
+
+/// Build the exact-request dismissal command.  The request id is validated
+/// before it reaches argv, so a UI row cannot widen the mutation target.
+pub fn telegram_pairing_dismiss_command(
+    bin: &std::path::Path,
+    channel: &str,
+    account: &str,
+    request_id: &str,
+) -> Result<std::process::Command, String> {
+    if channel != "telegram" {
+        return Err("only Telegram has DM-pairing requests".to_string());
+    }
+    let account_id = canonical_telegram_account_id(account)?;
+    let request_id = canonical_telegram_pairing_request_id(request_id)?;
+    let mut command = std::process::Command::new(bin);
+    command
+        .arg("channel")
+        .arg("pairing")
+        .arg("dismiss")
+        .arg("telegram")
+        .arg("--account")
+        .arg(account_id.as_str())
+        .arg("--request-id")
+        .arg(request_id)
+        .arg("--output")
+        .arg("json");
+    Ok(command)
+}
+
+/// Parse the bounded, canonical request inventory emitted by `channel pairing
+/// list`.  A malformed response is rejected as a whole so the GUI cannot make
+/// a dismissal decision from a partial or mismatched snapshot.
+pub fn parse_telegram_pairing_list(
+    stdout: &[u8],
+    expected_account: &str,
+) -> Result<Vec<TelegramPairingRequest>, String> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PairingListWire {
+        channel: String,
+        account: String,
+        pending: Vec<PairingRequestWire>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PairingRequestWire {
+        request_id: String,
+        created_at: i64,
+    }
+
+    if stdout.len() > MAX_TELEGRAM_PAIRING_JSON_BYTES {
+        return Err("pairing request response exceeds 16 KiB".to_string());
+    }
+    let expected_account = canonical_telegram_account_id(expected_account)?;
+    let payload: PairingListWire = serde_json::from_slice(stdout)
+        .map_err(|_| "invalid pairing request response; refresh and try again".to_string())?;
+    if payload.channel != "telegram" {
+        return Err("pairing request response has a non-Telegram channel".to_string());
+    }
+    let returned_account = canonical_telegram_account_id(&payload.account)?;
+    if returned_account != expected_account {
+        return Err("pairing request response belongs to another account".to_string());
+    }
+    if payload.pending.len() > MAX_TELEGRAM_PAIRING_PENDING {
+        return Err("pairing request response exceeds the pending-request limit".to_string());
+    }
+    let mut ids = std::collections::HashSet::with_capacity(payload.pending.len());
+    let mut requests = Vec::with_capacity(payload.pending.len());
+    for row in payload.pending {
+        canonical_telegram_pairing_request_id(&row.request_id)?;
+        if row.created_at < 0 {
+            return Err("pairing request timestamp cannot be negative".to_string());
+        }
+        if !ids.insert(row.request_id.clone()) {
+            return Err("pairing request response contains a duplicate request id".to_string());
+        }
+        requests.push(TelegramPairingRequest {
+            request_id: row.request_id,
+            created_at: row.created_at,
+        });
+    }
+    Ok(requests)
+}
+
+/// Parse the exact dismissal receipt.  A false, malformed, foreign-account,
+/// or foreign-request acknowledgement does not authorize a GUI refresh.
+pub fn parse_telegram_pairing_dismissed(
+    stdout: &[u8],
+    expected_account: &str,
+    expected_request: &str,
+) -> Option<bool> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PairingDismissedWire {
+        channel: String,
+        account: String,
+        request_id: String,
+        dismissed: bool,
+    }
+
+    if stdout.len() > MAX_TELEGRAM_PAIRING_JSON_BYTES {
+        return None;
+    }
+    let expected_account = canonical_telegram_account_id(expected_account).ok()?;
+    let expected_request = canonical_telegram_pairing_request_id(expected_request).ok()?;
+    let receipt: PairingDismissedWire = serde_json::from_slice(stdout).ok()?;
+    let returned_account = canonical_telegram_account_id(&receipt.account).ok()?;
+    let returned_request = canonical_telegram_pairing_request_id(&receipt.request_id).ok()?;
+    (receipt.channel == "telegram"
+        && returned_account == expected_account
+        && returned_request == expected_request
+        && receipt.dismissed)
+        .then_some(true)
+}
+
 /// Parse W21's secret-free named-account acknowledgement. It binds every
 /// returned identity field before the modal may clear its entered secrets.
 pub fn parse_telegram_account_saved(stdout: &[u8], expected_account: &str) -> Option<bool> {

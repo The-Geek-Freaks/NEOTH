@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W121–W123 pairing requests and remote compile recovery (2026-09-21):**
+Settings exposes the existing account-bound pending Telegram request list and
+explicit exact-request dismissal. Loading, empty and stale/error states remain
+distinct; unconfirmed writes preserve the projection without automatic retry.
+Only an exact successful receipt triggers a same-account refresh. Approval with
+the sender's private code remains a separate CLI operation. Real CLI-parser and
+native callback regressions accompany this slice; GitHub execution and visible
+acceptance remain required. See [W121](../docs/gold-wave121-verification.md) and
+[W122](../docs/gold-wave122-verification.md). Full CI `35541897416` on `927f6894`
+found an actual W118 test-helper tuple mismatch (`E0308`); W123 corrects that
+call without weakening its assertions. The failing run is confirmed cancelled;
+its unexecuted native tests are not passes. The earlier-source Windows preview
+continues separately. See [W123](../docs/gold-wave123-verification.md).
+No R4-07/P1-16 checkbox closes; counts stay **1324/1015/307/2**, raw309/pre-tag308.
+All local validation remains suspended.
+
 **W107 remote regression recovery (2026-09-20):** the completed earlier-source
 macOS run `35113128375` executed 16810 tests: 16805 passed, five failed and
 23 were skipped. Windows reached its 50-minute compile limit before tests;

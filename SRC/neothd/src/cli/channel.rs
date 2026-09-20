@@ -5901,10 +5901,7 @@ mod tests {
     #[test]
     fn channel_status_projects_pairing_enabled_and_disabled_accounts_without_secrets() {
         let mut pair = telegram_probe_pair(
-            &[
-                ("pairing-on", 111, Some("pairing-on-secret")),
-                ("pairing-off", 222, Some("pairing-off-secret")),
-            ],
+            &[("pairing-on", 111), ("pairing-off", 222)],
             &[
                 ("pairing-on", Some("pairing-on-secret")),
                 ("pairing-off", Some("pairing-off-secret")),

@@ -58,6 +58,130 @@ fn mapped_pairing_gui_command_parses_with_the_real_cli_for_both_states() {
 }
 
 #[test]
+fn pending_pairing_gui_commands_parse_with_the_real_cli() {
+    use clap::Parser as _;
+    use neothd::cli::{ChannelAction, ChannelPairingAction, Cli, Commands, OutputFormat};
+
+    let request_id = "0123456789abcdef0123456789abcdef";
+    let commands = [
+        panel_logic::telegram_pairing_list_command(
+            std::path::Path::new("neoth"),
+            "telegram",
+            "ops_b",
+        )
+        .expect("build the production GUI list command"),
+        panel_logic::telegram_pairing_dismiss_command(
+            std::path::Path::new("neoth"),
+            "telegram",
+            "ops_b",
+            request_id,
+        )
+        .expect("build the production GUI dismiss command"),
+    ];
+
+    for command in commands {
+        let parsed =
+            Cli::try_parse_from(std::iter::once(command.get_program()).chain(command.get_args()))
+                .expect("the real CLI must accept the GUI pairing argv");
+        assert!(matches!(parsed.output, OutputFormat::Json));
+        match parsed.command {
+            Commands::Channel {
+                action: ChannelAction::Pairing(ChannelPairingAction::List { channel, account }),
+            } => {
+                assert_eq!(channel, "telegram");
+                assert_eq!(account.as_str(), "ops_b");
+            }
+            Commands::Channel {
+                action:
+                    ChannelAction::Pairing(ChannelPairingAction::Dismiss {
+                        channel,
+                        account,
+                        request_id: parsed_request,
+                    }),
+            } => {
+                assert_eq!(channel, "telegram");
+                assert_eq!(account.as_str(), "ops_b");
+                assert_eq!(parsed_request, request_id);
+            }
+            _ => panic!("GUI command must select an exact Telegram pairing action"),
+        }
+    }
+}
+
+#[test]
+fn pending_pairing_parser_and_dismissal_receipt_reject_foreign_or_malformed_data() {
+    let request_id = "0123456789abcdef0123456789abcdef";
+    let accepted = panel_logic::parse_telegram_pairing_list(
+        format!(
+            r#"{{"channel":"telegram","account":"ops_b","pending":[{{"request_id":"{request_id}","created_at":42}}]}}"#
+        )
+        .as_bytes(),
+        "ops_b",
+    )
+    .expect("canonical bounded list is accepted");
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0].request_id, request_id);
+
+    for payload in [
+        r#"{"channel":"slack","account":"ops_b","pending":[]}"#.to_owned(),
+        r#"{"channel":"telegram","account":"ops_a","pending":[]}"#.to_owned(),
+        format!(r#"{{"channel":"telegram","account":"ops_b","pending":[{{"request_id":"{request_id}","created_at":-1}}]}}"#),
+        format!(r#"{{"channel":"telegram","account":"ops_b","pending":[{{"request_id":"{request_id}","created_at":1}},{{"request_id":"{request_id}","created_at":2}}]}}"#),
+        r#"{"channel":"telegram","account":"ops_b","pending":[{"request_id":"0123456789ABCDEF0123456789abcdef","created_at":1}]}"#.to_owned(),
+        r#"{"channel":"telegram","account":"ops_b","pending":[{"request_id":"short","created_at":1}]}"#.to_owned(),
+        r#"{"channel":"telegram","account":"ops_b","pending":[{"request_id":"0123456789abcdef0123456789abcdef"}]}"#.to_owned(),
+        r#"{"channel":"telegram","account":"ops_b","pending":[],"extra":true}"#.to_owned(),
+    ] {
+        assert!(
+            panel_logic::parse_telegram_pairing_list(payload.as_bytes(), "ops_b").is_err(),
+            "invalid list payload must not supply actionable rows"
+        );
+    }
+    let oversized = vec![b' '; 16 * 1024 + 1];
+    assert!(
+        panel_logic::parse_telegram_pairing_list(&oversized, "ops_b").is_err(),
+        "responses beyond the fixed inventory budget are rejected before parsing"
+    );
+    assert!(
+        panel_logic::parse_telegram_pairing_list(
+            br#"{"channel":"telegram","account":"ops_b","pending":[
+                {"request_id":"00000000000000000000000000000000","created_at":1},
+                {"request_id":"11111111111111111111111111111111","created_at":2},
+                {"request_id":"22222222222222222222222222222222","created_at":3},
+                {"request_id":"33333333333333333333333333333333","created_at":4}
+            ]}"#,
+            "ops_b",
+        )
+        .is_err(),
+        "the GUI refuses more rows than the current backend limit"
+    );
+
+    assert_eq!(
+        panel_logic::parse_telegram_pairing_dismissed(
+            format!(r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}","dismissed":true}}"#).as_bytes(),
+            "ops_b",
+            request_id,
+        ),
+        Some(true)
+    );
+    for receipt in [
+        format!(r#"{{"channel":"telegram","account":"ops_a","request_id":"{request_id}","dismissed":true}}"#),
+        r#"{"channel":"telegram","account":"ops_b","request_id":"ffffffffffffffffffffffffffffffff","dismissed":true}"#.to_owned(),
+        format!(r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}","dismissed":false}}"#),
+        format!(r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}","dismissed":true,"extra":true}}"#),
+        format!(r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}"}}"#),
+        format!(r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}","dismissed":"true"}}"#),
+        r#"{"channel":"telegram","account":"ops_b","request_id":"0123456789ABCDEF0123456789abcdef","dismissed":true}"#.to_owned(),
+    ] {
+        assert_eq!(
+            panel_logic::parse_telegram_pairing_dismissed(receipt.as_bytes(), "ops_b", request_id),
+            None,
+            "only the exact strict dismissal receipt is actionable"
+        );
+    }
+}
+
+#[test]
 fn mapped_telegram_account_result_binds_to_the_selected_account_headlessly() {
     let result = neothd::cli::channel::ChannelTestResult {
         channel: "telegram".to_owned(),
