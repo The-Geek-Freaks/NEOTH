@@ -46,3 +46,7 @@ Focused required regression:
 The regression inspects actual Command arguments and calls the strict receipt
 parser with positive and negative payloads; it does not replace the required
 native event-loop, confirmation-layout or process/reload acceptance.
+
+## Remote formatting follow-up
+
+W114 source `098dd7e1` passed Code Quality `35538615032`. Preflight `35538615267` requested four Rustfmt layouts in `panel_logic.rs`; the follow-up applies those exact remote hunks once to the canonical source. No behavior changed and no local formatter ran. Fresh static and native gates remain required.

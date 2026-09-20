@@ -2972,7 +2972,8 @@ pub fn parse_telegram_account_removed(stdout: &[u8], expected_account: &str) -> 
     }
 
     let expected_account = canonical_telegram_account_id(expected_account).ok()?;
-    let acknowledgement: TelegramAccountRemovedAcknowledgement = serde_json::from_slice(stdout).ok()?;
+    let acknowledgement: TelegramAccountRemovedAcknowledgement =
+        serde_json::from_slice(stdout).ok()?;
     let acknowledged_account = canonical_telegram_account_id(&acknowledgement.account).ok()?;
     (acknowledgement.channel == "telegram"
         && acknowledged_account == expected_account
@@ -10235,12 +10236,9 @@ mod tests {
 
     #[test]
     fn named_telegram_account_retirement_command_and_ack_bind_the_exact_account() {
-        let command = telegram_account_remove_command(
-            std::path::Path::new("neoth"),
-            "telegram",
-            "ops_b",
-        )
-        .unwrap();
+        let command =
+            telegram_account_remove_command(std::path::Path::new("neoth"), "telegram", "ops_b")
+                .unwrap();
         let args = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -10263,11 +10261,7 @@ mod tests {
                 .is_ok(),
             "a mapped default is an explicit selected account"
         );
-        for (channel, account) in [
-            ("slack", "ops_b"),
-            ("telegram", ""),
-            ("telegram", "OPS_B"),
-        ] {
+        for (channel, account) in [("slack", "ops_b"), ("telegram", ""), ("telegram", "OPS_B")] {
             assert!(
                 telegram_account_remove_command(std::path::Path::new("neoth"), channel, account)
                     .is_err(),
@@ -10292,7 +10286,10 @@ mod tests {
             br#"{"channel":"telegram","account":"OPS_B","removed":true}"#.as_slice(),
             br#"not-json"#.as_slice(),
         ] {
-            assert_eq!(parse_telegram_account_removed(acknowledgement, "ops_b"), None);
+            assert_eq!(
+                parse_telegram_account_removed(acknowledgement, "ops_b"),
+                None
+            );
         }
         assert_eq!(
             parse_telegram_account_removed(

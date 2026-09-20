@@ -74,6 +74,8 @@ Windows run `35534405981` also completed: 16764 tests run, 16761 passed, three f
 
 **W114 mapped Telegram account retirement (2026-09-20):** Settings → Channels gains a per-account Retire → Confirm/Cancel path through the existing explicit CLI transaction. Canonical account validation and strict secret-free acknowledgement binding prevent a parent-channel or inferred-default removal. The inventory refreshes only after confirmed success; ambiguous/nonzero completion does not retry automatically. The selected identity is the visible account ID, not a new UUID-bound GUI contract. See [W114 verification](../docs/gold-wave114-verification.md). Independent source review passed after adding the callback admission guard; remote/native/visual acceptance remains required. No R4-07/P1-16 checkbox or backlog count closes.
 
+W114 source `098dd7e1` passed Code Quality `35538615032`. Preflight `35538615267` requested four Rustfmt layouts in `panel_logic.rs`; the follow-up applies those exact remote hunks once to the canonical source. No behavior changed and no local formatter ran. Fresh static and native gates remain required.
+
 **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 now share Doctor's read-only home/managed-root readiness operation, with typed
 disabled/ready/unavailable results separate from selected-root status. GUI

@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W114-channel-parity-and-CI-recovery",
-  "base": "6d8a1d6f099929265862014ddd7925c3c0e42bf7",
-  "capturedUtc": "2026-09-20T21:22:04.8037973Z",
-  "validationStatus": "W114_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
+  "base": "098dd7e146dda86e9e8e67519623fedf5b911314",
+  "capturedUtc": "2026-09-20T21:25:43.5295854Z",
+  "validationStatus": "W114_EXACT_REMOTE_FORMATTING_APPLIED_RERUN_REQUIRED",
   "scopeNote": "300 cumulative inputs; existing W108-W113 reviewed channel settings and observed CI repairs plus W114 exact mapped Telegram retirement GUI. Real generated CLI reference imported; W113 static gates passed. W114 source review approved; exact combined native/GUI acceptance remains required. No local validation or roadmap closure.",
   "files": [
     {
@@ -278,8 +278,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 505036,
-      "sha256": "6BA5938860B5ADFB73C08BA1E25D00B50D4CE373E8D5A501BC6EE598C672A0C9"
+      "bytes": 505016,
+      "sha256": "F980BF6C9D071281A78E6682A8AB20362B80886B64C37FDAC6F9DABCCEDC49C9"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
