@@ -20,6 +20,11 @@ rebuild a map, or repair a damaged store. Its result identifies whether the
 selected root is absent, unmapped, incomplete, fresh, stale, recovering, or
 corrupt, and includes an actionable next command.
 
+Machine-readable command output uses stdout. Startup and diagnostic logs use
+stderr, including when `NEOTH_LOG_FORMAT=json`, `jsonl` or `ndjson` is selected.
+`--output json` therefore remains one JSON document with logging enabled; scripts
+should capture the streams separately instead of merging diagnostics into results.
+
 An absent map is normal on a first use. Create it with:
 
 ```text

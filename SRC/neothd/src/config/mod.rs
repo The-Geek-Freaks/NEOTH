@@ -2956,7 +2956,7 @@ fn warn_if_world_readable(path: &Path) {
 
 #[cfg(test)]
 mod code_map_config_tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use super::{CodeMapConfig, CodeMapImpactPolicy, CodeMapLifecycleConfig, FreedomConfig};
 
@@ -3066,8 +3066,9 @@ mod code_map_config_tests {
             "code_map:\n  enrichment_selectors:\n    - server_id: neoth-codegraph\n      tool: codegraph_outline\n    - server_id: neoth-codegraph\n      tool: codegraph_outline\n",
         ] {
             assert!(
-                serde_yaml::from_str::<FreedomConfig>(source).is_err(),
-                "invalid configured ReadPath selector unexpectedly deserialized: {source}"
+                super::parse_public_freedom_yaml(Path::new("freedom.yaml"), source.as_bytes())
+                    .is_err(),
+                "invalid configured ReadPath selector unexpectedly passed the public config boundary: {source}"
             );
         }
 
@@ -3075,7 +3076,7 @@ mod code_map_config_tests {
         let source = format!(
             "code_map:\n  enrichment_selectors:\n    - server_id: {oversized}\n      tool: codegraph_outline\n"
         );
-        assert!(serde_yaml::from_str::<FreedomConfig>(&source).is_err());
+        assert!(super::parse_public_freedom_yaml(Path::new("freedom.yaml"), source.as_bytes()).is_err());
 
         let selectors = (0..32)
             .map(|index| {
@@ -3083,9 +3084,9 @@ mod code_map_config_tests {
             })
             .collect::<String>();
         let at_count = format!("code_map:\n  enrichment_selectors:\n{selectors}");
-        assert!(serde_yaml::from_str::<FreedomConfig>(&at_count).is_ok());
+        assert!(super::parse_public_freedom_yaml(Path::new("freedom.yaml"), at_count.as_bytes()).is_ok());
         let over_count = format!("{at_count}    - server_id: server-33\n      tool: read-33\n");
-        assert!(serde_yaml::from_str::<FreedomConfig>(&over_count).is_err());
+        assert!(super::parse_public_freedom_yaml(Path::new("freedom.yaml"), over_count.as_bytes()).is_err());
 
         // Each row is 128 server-id + 124 tool + fixed 4-byte `path` = 256;
         // sixteen rows are exactly the 4096-byte validation ceiling.
@@ -3097,7 +3098,7 @@ mod code_map_config_tests {
             })
             .collect::<String>();
         let exact_total = format!("code_map:\n  enrichment_selectors:\n{exact_total_selectors}");
-        assert!(serde_yaml::from_str::<FreedomConfig>(&exact_total).is_ok());
+        assert!(super::parse_public_freedom_yaml(Path::new("freedom.yaml"), exact_total.as_bytes()).is_ok());
         let over_total_selectors = (0..16)
             .map(|index| {
                 let server_id = format!("s{index:03}{}", "x".repeat(124));
@@ -3106,7 +3107,7 @@ mod code_map_config_tests {
             })
             .collect::<String>();
         let over_total = format!("code_map:\n  enrichment_selectors:\n{over_total_selectors}");
-        assert!(serde_yaml::from_str::<FreedomConfig>(&over_total).is_err());
+        assert!(super::parse_public_freedom_yaml(Path::new("freedom.yaml"), over_total.as_bytes()).is_err());
     }
 
     #[test]

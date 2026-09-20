@@ -478,11 +478,13 @@ fn is_interactive_wizard_invocation() -> bool {
 ///
 /// Format selection (V03-01, 2026-05-17):
 ///   - `NEOTH_LOG_FORMAT=json` (or `jsonl`) → structured JSON lines on
-///     stdout, one event per line. Each line is a single JSON object
+///     stderr, one event per line. Each line is a single JSON object
 ///     with `timestamp`, `level`, `target`, `fields`, `span` —
 ///     ingestable by Loki, Datadog, Vector, jq, etc.
 ///   - Anything else (including unset) → human-readable compact text
 ///     (current default; backward compatible).
+/// Both formats use stderr so command results and MCP protocol frames on
+/// stdout remain machine-readable even with verbose logging enabled.
 ///
 /// Filter selection: `NEOTH_LOG` env var per the standard
 /// `tracing_subscriber::EnvFilter` syntax (`info,neothd=debug`,
@@ -506,6 +508,7 @@ pub fn init_tracing() -> Result<()> {
     let json_mode = matches!(format.as_str(), "json" | "jsonl" | "ndjson");
     if json_mode {
         tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
             .with_env_filter(filter)
             .with_target(true)
             .with_thread_ids(false)
@@ -517,6 +520,7 @@ pub fn init_tracing() -> Result<()> {
             .init();
     } else {
         tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
             .with_env_filter(filter)
             .with_target(true)
             .with_thread_ids(false)

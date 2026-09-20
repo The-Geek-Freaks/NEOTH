@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W105-configured-read-readiness-authority-and-runtime-repairs",
-  "base": "7d210ff8201efa59a10c6158ea139ef076ba9e41",
-  "capturedUtc": "2026-09-16T15:40:46.1342197Z",
-  "validationStatus": "REVIEWED_SOURCE_NEW_REMOTE_GATES_PENDING",
-  "scopeNote": "295 cumulative inputs; W100/W102/W103 source independently reviewed. W105 applies exactly four remote Rustfmt layouts from Preflight35116495298; root inspected complete source diffs. No semantic changes; all validation GitHub-hosted.",
+  "item": "GOLD-W95-W107-configured-read-readiness-and-observed-runtime-repairs",
+  "base": "6a37557357b8758f5f826a9f7e655ddca0823110",
+  "capturedUtc": "2026-09-20T19:30:10.7747861Z",
+  "validationStatus": "W107_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
+  "scopeNote": "297 cumulative inputs; W107 real binary stdout regression, actual MCP child/config/GUI fixture repairs, bounded Windows CI budget. All dynamic validation GitHub-hosted. No roadmap closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -13,8 +13,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "bytes": 35414,
-      "sha256": "81872A003214182D29CF483F3AB507B3C885F0F4A319951655D1CB38C17D3A48"
+      "bytes": 35726,
+      "sha256": "A49824E7AF1DEFFEE966F9BD8A758AB64D55C8CE3281DDBEBDC31E2CC327E90A"
     },
     {
       "path": ".github/workflows/preflight.yml",
@@ -88,8 +88,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 32769,
-      "sha256": "33935EE94C6FAFC243F45A95922F4E13FF17316210CDC58FD58CBFC45686BE7B"
+      "bytes": 33173,
+      "sha256": "1D96E24BDF1827B812DDCF2BB872CA9B7B4FE63C23974DBA339E1E1F855B5ED9"
     },
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
@@ -588,8 +588,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mcp.rs",
-      "bytes": 144719,
-      "sha256": "6ABF931F1B00D9C902ABB65B278A428F4320391CBBC6AA0354B2E2FF3EF4A98F"
+      "bytes": 147671,
+      "sha256": "50C00C97979F659F5E5725C295259124ED932881A76FF1E4AC9FC88B5EB78052"
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
@@ -793,8 +793,8 @@
     },
     {
       "path": "SRC/neothd/src/config/mod.rs",
-      "bytes": 144943,
-      "sha256": "B407B49312AF7BA66D93F8FD588A1EB370DAD29E579D9980580385FB36A83D30"
+      "bytes": 145186,
+      "sha256": "ADFF561334052DF040CF541B022BCA53AC33FA9F0EB471900258471CF341F2BF"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",
@@ -1013,8 +1013,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "bytes": 304205,
-      "sha256": "8EF0CE87862ED632049BAEDD83CED6B73886223F9F6F86C8452CA9EF84167050"
+      "bytes": 304661,
+      "sha256": "D2EAF6ED77376B75CDCD7A2716E7B6BA5E43E7579460B7C773B94D16D43B8617"
     },
     {
       "path": "SRC/neothd/src/mcp/gate.rs",
@@ -1428,8 +1428,8 @@
     },
     {
       "path": "SRC/neothd/tests/gui_code_map_impact_controller.rs",
-      "bytes": 14615,
-      "sha256": "0B0CBD489D8329F3191DEF67A23B3B03C9FB9D6494420312843D4005A26D57AA"
+      "bytes": 14997,
+      "sha256": "EAF675BBFA81D8B606305428457F80DA08E8153C49A04BC81373D52684ED1754"
     },
     {
       "path": "SRC/neothd/tests/interface_binary_contract.rs",
@@ -1478,8 +1478,18 @@
     },
     {
       "path": "docs/code-map-lifecycle.md",
-      "bytes": 5677,
-      "sha256": "C551EFFBB311743FD1A91B750C66AB5E15F55AC1627723A48A73A164BBBDE548"
+      "bytes": 6001,
+      "sha256": "E8B06F5C07F7B52E3F4156A1DDDE3986C5CF53C3E5AD30757C89689B47497442"
+    },
+    {
+      "path": "SRC/neothd/src/lib.rs",
+      "bytes": 23991,
+      "sha256": "B21F57373BA4A2B988F9536C903894F6013EC45CDAF0BAD2E6C525C6629EF4D0"
+    },
+    {
+      "path": "SRC/neothd/tests/cli_binary_contract.rs",
+      "bytes": 3931,
+      "sha256": "DCC68C08723A3F1BFD306883BD51C93CB16F3FE3C0C28F459C16FC1C8B2B796F"
     }
   ]
 }

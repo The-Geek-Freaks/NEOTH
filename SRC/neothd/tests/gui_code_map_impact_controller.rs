@@ -354,11 +354,22 @@ fn completed_impact_requires_matching_lifecycle_root_and_physical_identity() {
         .expect("claim analysis");
     let analysis = controller.analyze(&operation).expect("real core analysis");
     let root = analysis.impact.root.display().to_owned();
-    let identity = analysis.impact.root.identity().as_str().to_owned();
+    let raw_identity = analysis.impact.root.identity().as_str().to_owned();
+    let lifecycle_identity = neothd::code_map::root_identity_sha256(&analysis.impact.root);
 
     assert!(panel_logic::code_map_impact_matches_lifecycle(
-        &analysis, &root, &identity,
+        &analysis,
+        &root,
+        &lifecycle_identity,
     ));
+    assert!(
+        !panel_logic::code_map_impact_matches_lifecycle(
+            &analysis,
+            &root,
+            &raw_identity,
+        ),
+        "the lifecycle card carries a redacted root digest, never the raw physical identity"
+    );
     assert!(
         !panel_logic::code_map_impact_matches_lifecycle(
             &analysis,
@@ -371,7 +382,7 @@ fn completed_impact_requires_matching_lifecycle_root_and_physical_identity() {
         !panel_logic::code_map_impact_matches_lifecycle(
             &analysis,
             "C:/different-repository",
-            &identity,
+            &lifecycle_identity,
         ),
         "a lifecycle receipt for another root cannot accompany this impact"
     );

@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W107 remote regression recovery (2026-09-20):** the completed earlier-source
+macOS run `35113128375` executed 16810 tests: 16805 passed, five failed and
+23 were skipped. Windows reached its 50-minute compile limit before tests;
+Linux stopped at the already repaired W103 lint finding, so its cached JUnit
+is not execution evidence. Preview `35113132073` built CLI, GUI and companions,
+but lifecycle acceptance rejected a startup log line mixed into JSON stdout.
+W107 directs diagnostics to stderr and adds a real public/compatibility-binary
+regression. It also repairs the observed MCP/config and GUI fixture boundaries;
+Windows retains one compiler worker with an 80-minute compile, 30-minute test
+and 120-minute job bound. See [W107 verification](../docs/gold-wave107-verification.md).
+Fresh full CI and portable acceptance remain required on the new source. No
+local validation ran and no roadmap checkbox closes. Counts stay
+**1324/1015/307/2**, raw309/pre-tag308.
 **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 now share Doctor's read-only home/managed-root readiness operation, with typed
 disabled/ready/unavailable results separate from selected-root status. GUI

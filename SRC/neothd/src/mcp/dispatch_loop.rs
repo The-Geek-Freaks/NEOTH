@@ -3105,11 +3105,13 @@ mod tests {
             .expect("provider-loop child runtime")
             .block_on(async move {
                 let trusted_codegraph = w56_generated_codegraph_config(&database);
-                let mut configured_read = trusted_codegraph.clone();
+                let counter = home.join("w95-provider-configured-read-count");
+                let mut configured_read = crate::mcp::client::stdio_fixture_config(&counter);
                 configured_read.id = "w95-provider-configured-read".into();
                 // This is the selected configured external call. It deliberately
                 // cannot become the trusted generated descriptor by identity.
                 configured_read.smart_approve = false;
+                configured_read.allow_tools = Some(vec!["codegraph_outline".into()]);
                 let servers = McpServers {
                     servers: vec![configured_read.clone(), trusted_codegraph.clone()],
                     smart_loading: true,
@@ -3174,6 +3176,11 @@ mod tests {
 
                 assert_eq!(outcome.iterations, 2);
                 assert_eq!(outcome.successful_calls, 1, "one actual tools/call");
+                assert_eq!(
+                    crate::mcp::client::stdio_fixture_call_count(&counter),
+                    1,
+                    "the external child observes exactly one tools/call"
+                );
                 assert_eq!(outcome.failed_calls, 0);
                 assert_eq!(outcome.tool_call_records.len(), 1);
                 assert_eq!(
@@ -3194,8 +3201,8 @@ mod tests {
                     "one dispatched result reaches the next provider turn"
                 );
                 assert!(
-                    prompts[1].contains("outline_target"),
-                    "ordinary external result survives"
+                    prompts[1].contains("fixture-result:{\"path\": \"outline.rs\"}"),
+                    "ordinary external configured-provider result survives"
                 );
                 assert!(prompts[1].contains(
                     "configured_mcp: server_id=w95-provider-configured-read tool=codegraph_outline"

@@ -1289,6 +1289,35 @@ mod tests {
         (error, attempts.load(Ordering::SeqCst))
     }
 
+    /// A libtest binary cannot accept the production `mcp codegraph-serve`
+    /// arguments. These W95/W97 direct-CLI fixtures therefore keep the
+    /// selected configuration and production gate path intact, but provide the
+    /// existing real NDJSON codegraph child at the injected spawn seam.
+    async fn spawn_codegraph_stdio_fixture(
+        server_id: &str,
+        database: &std::path::Path,
+        root: &std::path::Path,
+    ) -> std::result::Result<McpClient, McpError> {
+        let executable = std::env::current_exe()
+            .map_err(|error| McpError::Spawn(server_id.into(), error.to_string()))?;
+        let mut child = tokio::process::Command::new(executable);
+        child
+            .args([
+                "--exact",
+                "mcp::codegraph_server::w53_serve_stdio_marker_child",
+                "--nocapture",
+            ])
+            .env("NEOTH_W53_SERVE_STDIO_DB", database)
+            .env("NEOTH_W59_CHILD_CWD", root)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+        let child = child
+            .spawn()
+            .map_err(|error| McpError::Spawn(server_id.into(), error.to_string()))?;
+        McpClient::from_test_child(server_id, child).await
+    }
+
     fn home_audit_writer(
         home: &std::path::Path,
     ) -> (
@@ -1502,6 +1531,8 @@ code_map:
                     crate::permissions::AutonomyLevel::Full,
                 )
                 .expect("Full policy authorizes W95 direct CLI fixture");
+                let child_database = database.clone();
+                let child_root = root.clone();
 
                 let selected_success = invoke_cli_call_with_spawner_and_audit_sink_with_trusted_codegraph_descriptor(
                     selected,
@@ -1512,7 +1543,14 @@ code_map:
                     1_700_000_095,
                     crate::mcp::gate::McpAuditSink::None,
                     home.path(),
-                    |fixture| async move { McpClient::spawn(&fixture).await },
+                    move |fixture| {
+                        let child_database = child_database.clone();
+                        let child_root = child_root.clone();
+                        async move {
+                            spawn_codegraph_stdio_fixture(&fixture.id, &child_database, &child_root)
+                                .await
+                        }
+                    },
                 )
                 .await
                 .expect("exact selected ReadPath returns its ordinary result and sidecar");
@@ -1521,6 +1559,8 @@ code_map:
                 assert!(matches!(&selected_success.content[0], crate::mcp::client::McpContent::Text { text } if text.contains("leaf_w95")));
                 assert!(matches!(&selected_success.content[1], crate::mcp::client::McpContent::Text { text } if text.contains("[untrusted configured MCP ReadPath sidecar]") && text.contains("file: x.rs")));
 
+                let child_database = database.clone();
+                let child_root = root.clone();
                 let unconfigured = invoke_cli_call_with_spawner_and_audit_sink_with_trusted_codegraph_descriptor(
                     selected,
                     Some(trusted),
@@ -1530,7 +1570,14 @@ code_map:
                     1_700_000_095,
                     crate::mcp::gate::McpAuditSink::None,
                     home.path(),
-                    |fixture| async move { McpClient::spawn(&fixture).await },
+                    move |fixture| {
+                        let child_database = child_database.clone();
+                        let child_root = child_root.clone();
+                        async move {
+                            spawn_codegraph_stdio_fixture(&fixture.id, &child_database, &child_root)
+                                .await
+                        }
+                    },
                 )
                 .await
                 .expect("unconfigured tool keeps its ordinary result");
@@ -1538,6 +1585,8 @@ code_map:
                 assert_eq!(unconfigured.content.len(), 1);
                 assert!(!matches!(&unconfigured.content[0], crate::mcp::client::McpContent::Text { text } if text.contains("[untrusted configured MCP ReadPath sidecar]")));
 
+                let child_database = database.clone();
+                let child_root = root.clone();
                 let malformed = invoke_cli_call_with_spawner_and_audit_sink_with_trusted_codegraph_descriptor(
                     selected,
                     Some(trusted),
@@ -1547,7 +1596,14 @@ code_map:
                     1_700_000_095,
                     crate::mcp::gate::McpAuditSink::None,
                     home.path(),
-                    |fixture| async move { McpClient::spawn(&fixture).await },
+                    move |fixture| {
+                        let child_database = child_database.clone();
+                        let child_root = child_root.clone();
+                        async move {
+                            spawn_codegraph_stdio_fixture(&fixture.id, &child_database, &child_root)
+                                .await
+                        }
+                    },
                 )
                 .await
                 .expect("malformed selected arguments retain the child MCP error result");
@@ -1584,7 +1640,16 @@ code_map:
             ];
             for (label, config, arguments, expected_error) in cases {
                 std::fs::write(home.path().join("freedom.yaml"), config).expect("write W97 config");
-                let result = invoke_cli_call_with_spawner_and_audit_sink_with_trusted_codegraph_descriptor(selected, Some(trusted), "codegraph_outline", arguments, policy.clone(), 1_700_000_097, crate::mcp::gate::McpAuditSink::None, home.path(), |fixture| async move { McpClient::spawn(&fixture).await }).await.expect("negative case retains child MCP result");
+                let child_database = database.clone();
+                let child_root = root.clone();
+                let result = invoke_cli_call_with_spawner_and_audit_sink_with_trusted_codegraph_descriptor(selected, Some(trusted), "codegraph_outline", arguments, policy.clone(), 1_700_000_097, crate::mcp::gate::McpAuditSink::None, home.path(), move |fixture| {
+                    let child_database = child_database.clone();
+                    let child_root = child_root.clone();
+                    async move {
+                        spawn_codegraph_stdio_fixture(&fixture.id, &child_database, &child_root)
+                            .await
+                    }
+                }).await.expect("negative case retains child MCP result");
                 assert_eq!(result.is_error, expected_error, "{label}: child result shape changed");
                 assert_eq!(result.content.len(), 1, "{label}: configured sidecar must not be appended");
                 assert!(!matches!(&result.content[0], crate::mcp::client::McpContent::Text { text } if text.contains("[untrusted configured MCP ReadPath sidecar]")), "{label}: sidecar leaked");

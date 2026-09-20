@@ -22,6 +22,15 @@ The macOS compile step records bounded memory, swap and compiler-process metrics
 preserves Cargo's actual exit status, and uploads diagnostics even on failure.
 The observer changes neither compile deadlines nor the workspace test graph.
 
+W107 (2026-09-20) increases only the GitHub-hosted Windows test compile bound
+from 50 to 80 minutes after run `35113128375` exhausted the previous limit.
+The job retains one compiler worker, serial test execution and the separate
+30-minute test window; its outer bound is 120 minutes, leaving 10 minutes for
+setup/cache/upload. The prior interrupted cache remains a build input, never
+test evidence. macOS completed 16810 tests in that prior run (16805 pass, five
+fail, 23 skipped); its existing bounds remain unchanged. New-source full CI is
+required after the observed regressions are repaired.
+
 ## Unreleased Windows preview
 
 `.github/workflows/preview-windows.yml` is a manual GitHub-hosted x64 build for
@@ -67,6 +76,12 @@ CLI and exercises real Git/source indexing, exact symbols/callers, observed-test
 provenance and stale-input rejection. Both use fresh spaced runner-temp paths,
 isolated `NEOTH_HOME` and 120-second child-process limits. Receipt upload runs even
 on failure (5 minutes); upload success alone is not an acceptance result.
+
+Preview `35113132073` completed every native build and Keet staging, then failed
+the first lifecycle JSON parse because the real CLI wrote a startup log to
+stdout. W107 moves both diagnostic formats to stderr, keeping JSON acceptance
+strict. The unchanged lifecycle and diff-impact helpers must pass on the new
+artifact; completed compilation of the prior artifact does not satisfy them.
 
 The artifact records the full source commit, each payload file SHA-256 and a
 separate ZIP checksum. It is unsigned and unreleased. It does not create a tag,
