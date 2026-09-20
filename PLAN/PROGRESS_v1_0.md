@@ -68,6 +68,8 @@
 
 > Windows run `35534405981` also completed: 16764 tests run, 16761 passed, three failed and 22 skipped. Its failures match the same reference/MCP/GUI cases; both fixture corrections are reviewed and published as `91d9f732`, whose Preflight `35537801047` and Code Quality `35537800744` passed. CLI-reference run `35537571719` successfully compiled the public CLI on `cd6b4a07`; the source- and SHA-256-verified output is now imported, including all IRC flags. Full native retesting remains required.
 
+> **W114 mapped Telegram account retirement (2026-09-20):** Settings → Channels gains a per-account Retire → Confirm/Cancel path through the existing explicit CLI transaction. Canonical account validation and strict secret-free acknowledgement binding prevent a parent-channel or inferred-default removal. The inventory refreshes only after confirmed success; ambiguous/nonzero completion does not retry automatically. The selected identity is the visible account ID, not a new UUID-bound GUI contract. See [W114 verification](../docs/gold-wave114-verification.md). Independent source review passed after adding the callback admission guard; remote/native/visual acceptance remains required. No R4-07/P1-16 checkbox or backlog count closes.
+
 > **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 > now share Doctor's read-only home/managed-root readiness operation, with typed
 > disabled/ready/unavailable results separate from selected-root status. GUI

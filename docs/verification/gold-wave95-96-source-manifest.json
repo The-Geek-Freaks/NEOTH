@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W113-channel-settings-and-observed-CI-recovery",
-  "base": "91d9f732157d9ce7c50a888a7b4852625bf71854",
-  "capturedUtc": "2026-09-20T21:10:12.4182386Z",
-  "validationStatus": "W113_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
-  "scopeNote": "300 cumulative inputs. W108 Matrix, W110 LINE and W111 IRC surfaces; W112 test-lock and W113 MCP/GUI fixture repairs. Static gates passed on91d9f732; actual CLI reference from35537571719/cd6b4a07 imported. Exact combined native and GUI gates remain pending; no local validation or roadmap closure.",
+  "item": "GOLD-W95-W114-channel-parity-and-CI-recovery",
+  "base": "6d8a1d6f099929265862014ddd7925c3c0e42bf7",
+  "capturedUtc": "2026-09-20T21:22:04.8037973Z",
+  "validationStatus": "W114_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
+  "scopeNote": "300 cumulative inputs; existing W108-W113 reviewed channel settings and observed CI repairs plus W114 exact mapped Telegram retirement GUI. Real generated CLI reference imported; W113 static gates passed. W114 source review approved; exact combined native/GUI acceptance remains required. No local validation or roadmap closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -48,8 +48,8 @@
     },
     {
       "path": "docs/channels.md",
-      "bytes": 41793,
-      "sha256": "7BEE2C7CB7376834925FC4E167AC316F8CA644F26D90DEA8F5125DDDCF2B4D89"
+      "bytes": 42484,
+      "sha256": "23148E44B72ED35ADC19F4F225B601BE3F6381AE4E0E5C91B92A19D41CED3589"
     },
     {
       "path": "docs/cli-commands.md",
@@ -78,8 +78,8 @@
     },
     {
       "path": "docs/release-notes-v1.0.md",
-      "bytes": 14335,
-      "sha256": "AD61AEF3A870670A03059065226EB37C0B7C244236BC1D5E386190B77D699D6B"
+      "bytes": 14483,
+      "sha256": "7B77F2F6E5F7795DC58518533616226BCA9AF49229C4248E3B6A82A1177BCE86"
     },
     {
       "path": "docs/troubleshooting.md",
@@ -273,13 +273,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1647976,
-      "sha256": "F17DA3CE0E86CB1FFC21F1F87BC5D711432DE9888E58E3F28B572AE78A5180DB"
+      "bytes": 1652659,
+      "sha256": "6FDB6744C00DE0DE315D6371543A4839A457E3ECC4A1C1D3FED57923ECDC0845"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 500591,
-      "sha256": "41670B90EEDB96122E6B0D7C1C79399839606DEBDFB51E740937530B98A7CABA"
+      "bytes": 505036,
+      "sha256": "6BA5938860B5ADFB73C08BA1E25D00B50D4CE373E8D5A501BC6EE598C672A0C9"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
@@ -373,8 +373,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/main.slint",
-      "bytes": 302009,
-      "sha256": "DCCA94A3CA2249017EEA52F96817F1DD438617FE55E88F2315B692158F5B0F3E"
+      "bytes": 302370,
+      "sha256": "0F3A36B65675CDE46BA03A6D04F8826AD5319AD3439D78BE97933BC485B5CF8B"
     },
     {
       "path": "SRC/neothd-gui/ui/memory_graph.slint",
@@ -418,8 +418,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/settings.slint",
-      "bytes": 396043,
-      "sha256": "ECAD9D6D2759C205A0B412B98F9EA1104F8A3B4BBAB0731E4A4EAA39E95DFD0F"
+      "bytes": 398545,
+      "sha256": "6191DBEB722EA1E21E11600B42146962C94D2D87E59575782BDB1662B0C2FBDC"
     },
     {
       "path": "SRC/neothd-gui/ui/tabs.slint",

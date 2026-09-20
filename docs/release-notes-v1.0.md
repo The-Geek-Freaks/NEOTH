@@ -26,6 +26,8 @@ These are unfinished v1 contracts, not accepted post-1.0 limitations:
   evidence. Twitch still authenticates only the transport/bot and needs a
   mandatory typed audience/mention policy before release. Matrix state-store, LINE webhook-port and IRC port/TLS/nick-filter
   selection are exposed through CLI and GUI; native acceptance remains pending.
+  Mapped Telegram account rows also expose explicit confirmed retirement
+  through the existing CLI transaction, with exact-account result binding.
   Durable cross-store credential recovery, persisted
   multi-account identity, descriptor-rendered forms and OpenClaw
   apply/status/rollback plus runtime-behaviour parity remain open.

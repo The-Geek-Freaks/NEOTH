@@ -113,14 +113,15 @@ explicitly before a map is added.
 
 Settings → Channels offers **Add account** for a valid map and for the exact
 fresh Telegram state, alongside the explicit legacy **Configure** choice. Each
-account row provides **Edit** and its exact-account **Test**. A malformed map is
+account row provides **Edit**, its exact-account **Test**, and **Retire** with
+an explicit confirmation for the displayed account ID. A malformed map is
 repair-only in the CLI; the GUI neither repairs it nor silently migrates it.
 The UI's account request stays in private stdin and accepts only the exact
 secret-free acknowledgement for that account.
 
-Account removal/retirement, other account families, and remaining
-account-aware outbound routing are still separate P1-16 work. Native GUI
-acceptance and macOS CI remain separate.
+The GUI retirement surface uses the existing explicit CLI transaction. Other
+account families and remaining account-aware outbound routing are separate
+P1-16 work. Native GUI acceptance and full CI remain required.
 
 ### Mapped Telegram DM pairing (W29; locally validated)
 
@@ -162,6 +163,14 @@ name receives a fresh internal UUID, so existing leases, pending pairing
 requests, and queued work remain tied to the retired account. Historical records
 with no UUID remain compatible only when the current account remains in that
 same historical form; they are never silently relabelled as the replacement.
+Settings → Channels exposes that same operation as **Retire** on each valid
+mapped account row. Confirm shows the exact visible account ID; no default or
+sole-account fallback is inferred. Only a successful process result with a
+strict acknowledgement naming that Telegram account and `removed: true`
+allows the GUI to refresh the account list. An error or mismatched response
+leaves the operation unconfirmed and does not trigger an automatic retry.
+The GUI selects the public account ID; it does not add an internal UUID-bound
+confirmation contract to the existing CLI authority.
 Validation is pending, and P1-16 remains open.
 
 ### SelfStage verified staging (W30; enablement pending)

@@ -2915,6 +2915,32 @@ pub fn telegram_account_credential_command(
     Ok(command)
 }
 
+/// Build the exact named Telegram account retirement command. The selected
+/// account is always explicit and canonical; this surface never falls back to
+/// a legacy or sole account. Environment preparation remains the GUI
+/// launcher's responsibility.
+pub fn telegram_account_remove_command(
+    bin: &std::path::Path,
+    channel: &str,
+    account: &str,
+) -> Result<std::process::Command, String> {
+    if channel != "telegram" {
+        return Err("only Telegram has named account retirement".to_string());
+    }
+    let account_id = canonical_telegram_account_id(account)?;
+    let mut command = std::process::Command::new(bin);
+    command
+        .arg("channel")
+        .arg("account")
+        .arg("remove")
+        .arg("telegram")
+        .arg("--account")
+        .arg(account_id.as_str())
+        .arg("--output")
+        .arg("json");
+    Ok(command)
+}
+
 /// Parse W21's secret-free named-account acknowledgement. It binds every
 /// returned identity field before the modal may clear its entered secrets.
 pub fn parse_telegram_account_saved(stdout: &[u8], expected_account: &str) -> Option<bool> {
@@ -2931,6 +2957,27 @@ pub fn parse_telegram_account_saved(stdout: &[u8], expected_account: &str) -> Op
         serde_json::from_slice(stdout).ok()?;
     (acknowledgement.channel == "telegram" && acknowledgement.account == expected_account.as_str())
         .then_some(acknowledgement.saved)
+}
+
+/// Parse the exact secret-free named-account retirement receipt. Only an
+/// acknowledgement for the selected canonical Telegram account with
+/// `removed: true` permits the GUI to refresh its inventory projection.
+pub fn parse_telegram_account_removed(stdout: &[u8], expected_account: &str) -> Option<bool> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct TelegramAccountRemovedAcknowledgement {
+        channel: String,
+        account: String,
+        removed: bool,
+    }
+
+    let expected_account = canonical_telegram_account_id(expected_account).ok()?;
+    let acknowledgement: TelegramAccountRemovedAcknowledgement = serde_json::from_slice(stdout).ok()?;
+    let acknowledged_account = canonical_telegram_account_id(&acknowledgement.account).ok()?;
+    (acknowledgement.channel == "telegram"
+        && acknowledged_account == expected_account
+        && acknowledgement.removed)
+        .then_some(true)
 }
 
 fn parse_channel_test_status_for_account(
@@ -10183,6 +10230,76 @@ mod tests {
                 "ops_b"
             ),
             Some(false)
+        );
+    }
+
+    #[test]
+    fn named_telegram_account_retirement_command_and_ack_bind_the_exact_account() {
+        let command = telegram_account_remove_command(
+            std::path::Path::new("neoth"),
+            "telegram",
+            "ops_b",
+        )
+        .unwrap();
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec![
+                "channel".to_string(),
+                "account".to_string(),
+                "remove".to_string(),
+                "telegram".to_string(),
+                "--account".to_string(),
+                "ops_b".to_string(),
+                "--output".to_string(),
+                "json".to_string(),
+            ]
+        );
+        assert!(
+            telegram_account_remove_command(std::path::Path::new("neoth"), "telegram", "default")
+                .is_ok(),
+            "a mapped default is an explicit selected account"
+        );
+        for (channel, account) in [
+            ("slack", "ops_b"),
+            ("telegram", ""),
+            ("telegram", "OPS_B"),
+        ] {
+            assert!(
+                telegram_account_remove_command(std::path::Path::new("neoth"), channel, account)
+                    .is_err(),
+                "invalid or non-Telegram selection must not spawn retirement"
+            );
+        }
+
+        assert_eq!(
+            parse_telegram_account_removed(
+                br#"{"channel":"telegram","account":"ops_b","removed":true}"#,
+                "ops_b"
+            ),
+            Some(true)
+        );
+        for acknowledgement in [
+            br#"{"channel":"slack","account":"ops_b","removed":true}"#.as_slice(),
+            br#"{"channel":"telegram","account":"ops_a","removed":true}"#.as_slice(),
+            br#"{"channel":"telegram","removed":true}"#.as_slice(),
+            br#"{"channel":"telegram","account":"ops_b","removed":false}"#.as_slice(),
+            br#"{"channel":"telegram","account":"ops_b","removed":"true"}"#.as_slice(),
+            br#"{"channel":"telegram","account":"ops_b","removed":true,"ok":true}"#.as_slice(),
+            br#"{"channel":"telegram","account":"OPS_B","removed":true}"#.as_slice(),
+            br#"not-json"#.as_slice(),
+        ] {
+            assert_eq!(parse_telegram_account_removed(acknowledgement, "ops_b"), None);
+        }
+        assert_eq!(
+            parse_telegram_account_removed(
+                br#"{"channel":"telegram","account":"ops_b","removed":true}"#,
+                "OPS_B"
+            ),
+            None
         );
     }
 

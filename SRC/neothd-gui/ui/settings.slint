@@ -1171,6 +1171,8 @@ export component SettingsView inherits Rectangle {
     callback channel-test-clicked(string);
     callback channel-account-test-clicked(string, string);
     callback channel-account-save-clicked(string, string, string, int);
+    callback channel-account-remove-clicked(string, string);
+    in property <bool> channel-account-retirement-in-flight: false;
     callback channel-remove-clicked(string);
     /// GAP-19 — Add a new channel credential from the GUI.
     /// Args: channel_type + six typed credential fields + Matrix's optional
@@ -2318,6 +2320,7 @@ export component SettingsView inherits Rectangle {
                                 padding-left: Theme.space-8;
                                 spacing: Theme.space-tight;
                                 for account in c.accounts: HorizontalLayout {
+                                    property <bool> retirement-confirming: false;
                                     spacing: Theme.space-base;
                                     accessible-role: list-item;
                                     accessible-label: "Telegram account " + account.account-id
@@ -2351,14 +2354,14 @@ export component SettingsView inherits Rectangle {
                                             wrap: word-wrap;
                                         }
                                     }
-                                    if c.configured && !confirming: NeothButton {
+                                    if c.configured && !confirming && !retirement-confirming: NeothButton {
                                         label: "Test";
                                         primary: false;
                                         clicked => {
                                             root.channel-account-test-clicked(c.name, account.account-id);
                                         }
                                     }
-                                    if c.configured && !confirming: NeothButton {
+                                    if c.configured && !confirming && !retirement-confirming: NeothButton {
                                         label: "Edit";
                                         primary: false;
                                         clicked => {
@@ -2370,6 +2373,38 @@ export component SettingsView inherits Rectangle {
                                             account-user-id = "";
                                             editor-generation = editor-generation + 1;
                                             account-form-open = true;
+                                        }
+                                    }
+                                    if c.configured && !confirming && !retirement-confirming: NeothButton {
+                                        label: "Retire";
+                                        primary: false;
+                                        enabled: !root.channel-account-retirement-in-flight;
+                                        clicked => { retirement-confirming = true; }
+                                    }
+                                    if c.configured && !confirming && retirement-confirming: HorizontalLayout {
+                                        spacing: Theme.space-tight;
+                                        Text {
+                                            text: "Retire telegram/" + account.account-id + "?";
+                                            font-family: Theme.font-display;
+                                            font-size: Theme.font-size-caption;
+                                            color: Theme.accent-pink;
+                                            accessible-role: text;
+                                            accessible-label: self.text;
+                                        }
+                                        NeothButton {
+                                            label: "Confirm";
+                                            primary: false;
+                                            loading: root.channel-account-retirement-in-flight;
+                                            enabled: !root.channel-account-retirement-in-flight;
+                                            clicked => {
+                                                root.channel-account-remove-clicked(c.name, account.account-id);
+                                            }
+                                        }
+                                        NeothButton {
+                                            label: "Cancel";
+                                            primary: false;
+                                            enabled: !root.channel-account-retirement-in-flight;
+                                            clicked => { retirement-confirming = false; }
                                         }
                                     }
                                 }

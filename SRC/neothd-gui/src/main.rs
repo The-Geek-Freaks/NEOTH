@@ -10994,6 +10994,100 @@ fn main() -> Result<()> {
         }
     });
 
+    // W114 — retire one selected mapped Telegram account through the existing
+    // explicit CLI authority. No parent-channel remove or inferred account is
+    // permitted, and the inventory changes only after an exact receipt.
+    let weak_channel_account_remove = window.as_weak();
+    window.on_channel_account_remove(move |channel, account| {
+        let channel = channel.to_string();
+        let account = account.to_string();
+        let Some(w) = weak_channel_account_remove.upgrade() else {
+            return;
+        };
+        if w.get_channel_account_retirement_in_flight() {
+            return;
+        }
+        if let Err(error) = panel_logic::telegram_account_remove_command(
+            Path::new("neoth"),
+            &channel,
+            &account,
+        ) {
+            push_toast(
+                &weak_channel_account_remove,
+                "warn",
+                "Retire Telegram account",
+                &format!("Retirement refused: {error}"),
+            );
+            return;
+        }
+        w.set_channel_account_retirement_in_flight(true);
+
+        let weak = weak_channel_account_remove.clone();
+        std::thread::spawn(move || {
+            let result = which_neothd()
+                .ok_or_else(|| "NEOTH CLI not found; reinstall or repair PATH".to_string())
+                .and_then(|bin| {
+                    telegram_account_remove_command(&bin, &channel, &account)
+                        .and_then(|mut command| {
+                            command.output().map_err(|error| {
+                                format!("start Telegram account retirement: {error}")
+                            })
+                        })
+                });
+            let (toast_kind, toast_title, toast_body, refresh) = match result {
+                Ok(output) if output.status.success() => {
+                    match panel_logic::parse_telegram_account_removed(&output.stdout, &account) {
+                        Some(true) => (
+                            "success",
+                            "Telegram account retired",
+                            format!("Telegram account {account} retired. Updating the account list."),
+                            true,
+                        ),
+                        _ => (
+                            "error",
+                            "Telegram account retirement unconfirmed",
+                            format!(
+                                "Telegram account {account}: CLI response did not confirm this selected account was removed."
+                            ),
+                            false,
+                        ),
+                    }
+                }
+                Ok(output) => {
+                    let detail = String::from_utf8_lossy(&output.stderr)
+                        .lines()
+                        .map(str::trim)
+                        .find(|line| !line.is_empty())
+                        .unwrap_or("unknown error")
+                        .to_string();
+                    (
+                        "error",
+                        "Telegram account retirement unconfirmed",
+                        format!("Telegram account {account}: CLI exited without a confirmed receipt: {detail}"),
+                        false,
+                    )
+                }
+                Err(error) => (
+                    "error",
+                    "Telegram account retirement failed",
+                    format!("Telegram account {account}: {error}"),
+                    false,
+                ),
+            };
+
+            let channels = refresh.then(fetch_channel_status);
+            push_toast(&weak, toast_kind, toast_title, &toast_body);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = weak.upgrade() {
+                    window.set_channel_account_retirement_in_flight(false);
+                    if let Some(channels) = channels {
+                        apply_channels(&window, channels);
+                    }
+                }
+            });
+        });
+    });
+
     // GUI-overhaul feature parity — Memory "forget a topic". Preview runs the
     // dry-run (`neoth memory --forget <topic>`, no --confirm) and reports the
     // would-wipe summary; it mutates nothing.
@@ -18460,6 +18554,24 @@ fn telegram_account_credential_command(
     account: &str,
 ) -> Result<std::process::Command, String> {
     let mut command = panel_logic::telegram_account_credential_command(bin, account)?;
+    scrub_gui_control_environment(&mut command);
+    command
+        .env("NO_COLOR", "1")
+        .env("RUST_LOG_STYLE", "never")
+        .env("CLICOLOR", "0")
+        .env("NEOTH_LOG", "error");
+    suppress_console_window(&mut command);
+    Ok(command)
+}
+
+/// Build the named Telegram retirement command with the GUI's normal child
+/// environment, log suppression, and hidden console setup.
+fn telegram_account_remove_command(
+    bin: &Path,
+    channel: &str,
+    account: &str,
+) -> Result<std::process::Command, String> {
+    let mut command = panel_logic::telegram_account_remove_command(bin, channel, account)?;
     scrub_gui_control_environment(&mut command);
     command
         .env("NO_COLOR", "1")
