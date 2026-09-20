@@ -61,6 +61,8 @@
 > See [W111 verification](../docs/gold-wave111-verification.md). Implementation
 > and independent review are complete; actual native/connection/visual acceptance
 > remains separate. No R4-07 checkbox or backlog count closes.
+
+> W111 source `1644e74b` passed Code Quality `35536941852`; Preflight `35536941930` requested only Rustfmt layout corrections in four Rust files. The follow-up applies the exact remote hunks without local formatter execution. Fresh static gates, a generated IRC CLI reference, strict Clippy and native acceptance remain required. Earlier-source macOS completed 16821 tests: 16818 passed, three failed and 23 were skipped. The failures are generated-reference drift and two diagnosed MCP/GUI fixture defects queued as W113. Windows tests and the preview GUI build remain running.
 >
 > **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 > now share Doctor's read-only home/managed-root readiness operation, with typed

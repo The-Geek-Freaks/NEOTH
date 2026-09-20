@@ -1963,7 +1963,9 @@ fn stage_channel_add_for_id(
             {
                 Some(nick) => {
                     if nick.chars().any(|ch| ch.is_whitespace() || ch.is_control()) {
-                        anyhow::bail!("IRC allowed nick must not contain whitespace or control characters");
+                        anyhow::bail!(
+                            "IRC allowed nick must not contain whitespace or control characters"
+                        );
                     }
                     Some(nick.to_string())
                 }
@@ -5007,7 +5009,10 @@ mod tests {
         let request = parse_channel_credential_request(&valid).unwrap();
         assert_eq!(request.fields.irc_port, Some(6698));
         assert_eq!(request.fields.irc_tls, Some(false));
-        assert_eq!(request.fields.irc_allowed_nick.as_deref(), Some(" operator-nick "));
+        assert_eq!(
+            request.fields.irc_allowed_nick.as_deref(),
+            Some(" operator-nick ")
+        );
 
         let null_tls = serde_json::to_vec(&serde_json::json!({
             "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
@@ -5015,9 +5020,19 @@ mod tests {
             "fields": { "server": "irc.example.org", "nick": "neoth", "allowed_sender": "operator-account", "irc_tls": null }
         }))
         .unwrap();
-        assert_eq!(parse_channel_credential_request(&null_tls).unwrap().fields.irc_tls, None);
+        assert_eq!(
+            parse_channel_credential_request(&null_tls)
+                .unwrap()
+                .fields
+                .irc_tls,
+            None
+        );
 
-        for invalid in [serde_json::json!("false"), serde_json::json!(0), serde_json::json!(1)] {
+        for invalid in [
+            serde_json::json!("false"),
+            serde_json::json!(0),
+            serde_json::json!(1),
+        ] {
             let body = serde_json::to_vec(&serde_json::json!({
                 "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
                 "channel": "irc",
@@ -5031,7 +5046,11 @@ mod tests {
             assert!(!error.contains("false"));
         }
 
-        for invalid in [serde_json::json!("6698"), serde_json::json!(6698.5), serde_json::json!(0)] {
+        for invalid in [
+            serde_json::json!("6698"),
+            serde_json::json!(6698.5),
+            serde_json::json!(0),
+        ] {
             let body = serde_json::to_vec(&serde_json::json!({
                 "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
                 "channel": "irc",
@@ -5299,7 +5318,10 @@ mod tests {
 
     #[test]
     fn irc_public_settings_preserve_on_reconfigure_but_never_replace_account_authentication() {
-        let complete = |port: Option<u16>, tls: Option<bool>, allowed_nick: Option<&str>, account: Option<&str>| ChannelAddFields {
+        let complete = |port: Option<u16>,
+                        tls: Option<bool>,
+                        allowed_nick: Option<&str>,
+                        account: Option<&str>| ChannelAddFields {
             server: Some("irc.example.org".into()),
             nick: Some("neoth".into()),
             allowed_sender: account.map(str::to_string),
@@ -5317,7 +5339,10 @@ mod tests {
         assert_eq!(fresh.irc_port, None);
         assert_eq!(fresh.irc_tls, None);
         assert_eq!(fresh.irc_allowed_nick, None);
-        assert_eq!(fresh.irc_allowed_account.as_deref(), Some("operator-account"));
+        assert_eq!(
+            fresh.irc_allowed_account.as_deref(),
+            Some("operator-account")
+        );
 
         let base = Credentials {
             irc_port: Some(6698),
@@ -5337,33 +5362,52 @@ mod tests {
 
         let explicit = stage_channel_add(
             "irc",
-            &complete(Some(7000), Some(true), Some("  second-filter  "), Some("operator-account")),
+            &complete(
+                Some(7000),
+                Some(true),
+                Some("  second-filter  "),
+                Some("operator-account"),
+            ),
             base,
         )
         .unwrap();
         assert_eq!(explicit.irc_port, Some(7000));
         assert_eq!(explicit.irc_tls, Some(true));
         assert_eq!(explicit.irc_allowed_nick.as_deref(), Some("second-filter"));
-        assert_eq!(explicit.irc_allowed_account.as_deref(), Some("operator-account"));
+        assert_eq!(
+            explicit.irc_allowed_account.as_deref(),
+            Some("operator-account")
+        );
 
-        assert!(stage_channel_add(
-            "irc",
-            &complete(Some(0), Some(false), None, Some("operator-account")),
-            Credentials::default(),
-        )
-        .is_err());
-        assert!(stage_channel_add(
-            "irc",
-            &complete(None, None, Some("nick with space"), Some("operator-account")),
-            Credentials::default(),
-        )
-        .is_err());
-        assert!(stage_channel_add(
-            "irc",
-            &complete(None, None, Some("secondary-nick"), None),
-            Credentials::default(),
-        )
-        .is_err());
+        assert!(
+            stage_channel_add(
+                "irc",
+                &complete(Some(0), Some(false), None, Some("operator-account")),
+                Credentials::default(),
+            )
+            .is_err()
+        );
+        assert!(
+            stage_channel_add(
+                "irc",
+                &complete(
+                    None,
+                    None,
+                    Some("nick with space"),
+                    Some("operator-account")
+                ),
+                Credentials::default(),
+            )
+            .is_err()
+        );
+        assert!(
+            stage_channel_add(
+                "irc",
+                &complete(None, None, Some("secondary-nick"), None),
+                Credentials::default(),
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -34651,7 +34651,11 @@ mod tests {
             false,
             "",
             "9443",
-            panel_logic::IrcPublicSettings { port: "", tls_mode: 0, allowed_nick: "" },
+            panel_logic::IrcPublicSettings {
+                port: "",
+                tls_mode: 0,
+                allowed_nick: "",
+            },
         )
         .unwrap();
         let body: serde_json::Value = serde_json::from_slice(request.as_slice()).unwrap();
@@ -34677,7 +34681,14 @@ mod tests {
         let secret = "IRC_PROCESS_LIST_SECRET_SENTINEL";
         let request = panel_logic::build_channel_credential_request_with_public_settings(
             "irc",
-            ["irc.example.org", "neoth", secret, "#neoth", "operator-account", ""],
+            [
+                "irc.example.org",
+                "neoth",
+                secret,
+                "#neoth",
+                "operator-account",
+                "",
+            ],
             false,
             "",
             "",

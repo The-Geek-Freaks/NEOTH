@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W112-Matrix-LINE-IRC-settings-and-CI-recovery",
-  "base": "e3d4fbdac42027d43ca64ca9bbd4352afa031a55",
-  "capturedUtc": "2026-09-20T20:50:58.5206486Z",
-  "validationStatus": "W111_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
+  "base": "1644e74b9befadc9f8bb83526a38dda1a45c7655",
+  "capturedUtc": "2026-09-20T21:02:08.9031043Z",
+  "validationStatus": "W111_EXACT_REMOTE_FORMATTING_APPLIED_RERUN_REQUIRED",
   "scopeNote": "300 cumulative inputs; Matrix store, LINE port/sender and IRC port/TLS/nick/account surfaces; W112 dispatcher test-lock repair. W111 requires fresh real-binary generated CLI reference. All new-source strict lint/native gates remain pending; no local dynamic validation or roadmap closure.",
   "files": [
     {
@@ -273,13 +273,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1647187,
-      "sha256": "F4189703E730CC9693A2BA19179ACF02603D12FAEB15947E8B277EF88E17DF08"
+      "bytes": 1647359,
+      "sha256": "0AAA7E00EDCBD46FCE8B042B81C21DED483A4B15A0489DAB5ACADCC3A8D1E7AE"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 499962,
-      "sha256": "085B6D3D2A3DB63C122ADBD1C682202D88666B63F137C04A72DD6BBC99A17299"
+      "bytes": 500591,
+      "sha256": "41670B90EEDB96122E6B0D7C1C79399839606DEBDFB51E740937530B98A7CABA"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
@@ -498,8 +498,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel.rs",
-      "bytes": 291284,
-      "sha256": "BFDB816E71BD3C07841E1E5CBD3A3DEB2EB5503670611E9F73D228600E3AE60D"
+      "bytes": 291994,
+      "sha256": "9919C2A2DF3C4F1CA3D99BED286B13FBACEA988051B4B4E96431CA6EF0F704C4"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
@@ -613,8 +613,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
-      "bytes": 111242,
-      "sha256": "0EEF21DD4526F128B72B4C3E4A72903E09BF3051DF1E028C50DC05CB568DF3FD"
+      "bytes": 111332,
+      "sha256": "F1C01ACEBDD79540E3C4C1BFE5C296385341396127257881716F2B9220608058"
     },
     {
       "path": "SRC/neothd/src/cli/proactive.rs",

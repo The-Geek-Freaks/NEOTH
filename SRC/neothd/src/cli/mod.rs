@@ -2618,21 +2618,29 @@ mod default_invocation_tests {
         ));
 
         let absent_tls = Cli::try_parse_from([
-            "neoth", "channel", "add", "irc", "--server", "irc.example.org", "--nick", "neoth",
-            "--allowed-sender", "operator-account",
+            "neoth",
+            "channel",
+            "add",
+            "irc",
+            "--server",
+            "irc.example.org",
+            "--nick",
+            "neoth",
+            "--allowed-sender",
+            "operator-account",
         ])
         .unwrap();
         assert!(matches!(
             absent_tls.command,
-            Commands::Channel { action: ChannelAction::Add { irc_tls: None, .. } }
+            Commands::Channel {
+                action: ChannelAction::Add { irc_tls: None, .. }
+            }
         ));
 
         for invalid in ["0", "65536"] {
             assert!(
-                Cli::try_parse_from([
-                    "neoth", "channel", "add", "irc", "--irc-port", invalid,
-                ])
-                .is_err(),
+                Cli::try_parse_from(["neoth", "channel", "add", "irc", "--irc-port", invalid,])
+                    .is_err(),
                 "{invalid} must be rejected at the CLI boundary"
             );
         }

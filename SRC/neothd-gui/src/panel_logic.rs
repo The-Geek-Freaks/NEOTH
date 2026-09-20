@@ -2313,7 +2313,9 @@ pub fn build_channel_credential_request_with_public_settings(
                 0 => None,
                 1 => Some(true),
                 2 => Some(false),
-                _ => return Err("IRC TLS mode must be current/default, enabled, or disabled".into()),
+                _ => {
+                    return Err("IRC TLS mode must be current/default, enabled, or disabled".into());
+                }
             };
             let irc_allowed_nick = (!irc_settings.allowed_nick.trim().is_empty())
                 .then_some(irc_settings.allowed_nick.trim());
@@ -9452,7 +9454,11 @@ mod tests {
             false,
             "",
             " 9443 ",
-            IrcPublicSettings { port: "", tls_mode: 0, allowed_nick: "" },
+            IrcPublicSettings {
+                port: "",
+                tls_mode: 0,
+                allowed_nick: "",
+            },
         )
         .unwrap();
         let envelope: serde_json::Value = serde_json::from_slice(request.as_slice()).unwrap();
@@ -9466,7 +9472,11 @@ mod tests {
             false,
             "",
             " \t ",
-            IrcPublicSettings { port: "", tls_mode: 0, allowed_nick: "" },
+            IrcPublicSettings {
+                port: "",
+                tls_mode: 0,
+                allowed_nick: "",
+            },
         )
         .unwrap();
         let blank: serde_json::Value = serde_json::from_slice(blank.as_slice()).unwrap();
@@ -9483,7 +9493,11 @@ mod tests {
                     false,
                     "",
                     invalid,
-                    IrcPublicSettings { port: "", tls_mode: 0, allowed_nick: "" },
+                    IrcPublicSettings {
+                        port: "",
+                        tls_mode: 0,
+                        allowed_nick: ""
+                    },
                 )
                 .is_err(),
                 "{invalid} must not produce a LINE listener request"
@@ -9525,7 +9539,11 @@ mod tests {
             false,
             "",
             "",
-            IrcPublicSettings { port: " \t ", tls_mode: 0, allowed_nick: " " },
+            IrcPublicSettings {
+                port: " \t ",
+                tls_mode: 0,
+                allowed_nick: " ",
+            },
         )
         .unwrap();
         let blank: serde_json::Value = serde_json::from_slice(blank.as_slice()).unwrap();
@@ -9534,28 +9552,44 @@ mod tests {
         assert_eq!(blank["fields"]["irc_allowed_nick"], serde_json::Value::Null);
 
         for settings in [
-            IrcPublicSettings { port: "0", tls_mode: 0, allowed_nick: "" },
-            IrcPublicSettings { port: "6698", tls_mode: 3, allowed_nick: "" },
+            IrcPublicSettings {
+                port: "0",
+                tls_mode: 0,
+                allowed_nick: "",
+            },
+            IrcPublicSettings {
+                port: "6698",
+                tls_mode: 3,
+                allowed_nick: "",
+            },
         ] {
-            assert!(build_channel_credential_request_with_public_settings(
+            assert!(
+                build_channel_credential_request_with_public_settings(
+                    "irc",
+                    ["irc.example.org", "neoth", "", "", "operator-account", ""],
+                    false,
+                    "",
+                    "",
+                    settings,
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            build_channel_credential_request_with_public_settings(
                 "irc",
-                ["irc.example.org", "neoth", "", "", "operator-account", ""],
+                ["irc.example.org", "neoth", "", "", "", ""],
                 false,
                 "",
                 "",
-                settings,
+                IrcPublicSettings {
+                    port: "",
+                    tls_mode: 0,
+                    allowed_nick: "secondary-nick"
+                },
             )
-            .is_err());
-        }
-        assert!(build_channel_credential_request_with_public_settings(
-            "irc",
-            ["irc.example.org", "neoth", "", "", "", ""],
-            false,
-            "",
-            "",
-            IrcPublicSettings { port: "", tls_mode: 0, allowed_nick: "secondary-nick" },
-        )
-        .is_err());
+            .is_err()
+        );
     }
 
     #[test]

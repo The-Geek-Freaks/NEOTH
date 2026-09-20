@@ -48,3 +48,7 @@ Independent six-file source review found no blocking issue. The current CLI
 reference needs regeneration for the three new IRC flags and corrected
 services-account help; it is not treated as current until the actual binary
 export is imported and the ordinary docgen gate is run.
+
+## Remote formatting follow-up
+
+W111 source `1644e74b` passed Code Quality `35536941852`; Preflight `35536941930` requested only Rustfmt layout corrections in four Rust files. The follow-up applies the exact remote hunks without local formatter execution. Fresh static gates, a generated IRC CLI reference, strict Clippy and native acceptance remain required. Earlier-source macOS completed 16821 tests: 16818 passed, three failed and 23 were skipped. The failures are generated-reference drift and two diagnosed MCP/GUI fixture defects queued as W113. Windows tests and the preview GUI build remain running.
