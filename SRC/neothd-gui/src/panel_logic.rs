@@ -9322,7 +9322,10 @@ mod tests {
         let matrix: serde_json::Value = serde_json::from_slice(matrix.as_slice()).unwrap();
         assert_eq!(matrix["fields"]["token"], "matrix-secret");
         assert_eq!(matrix["fields"]["password"], serde_json::Value::Null);
-        assert_eq!(matrix["fields"]["matrix_store_path"], serde_json::Value::Null);
+        assert_eq!(
+            matrix["fields"]["matrix_store_path"],
+            serde_json::Value::Null
+        );
         assert_eq!(matrix["fields"]["allow_plaintext"], true);
     }
 
@@ -9348,10 +9351,7 @@ mod tests {
             "/srv/neoth/matrix-state"
         );
         assert_eq!(envelope["fields"]["allow_plaintext"], true);
-        assert_eq!(
-            envelope["fields"]["token"],
-            "MATRIX_GUI_SECRET_SENTINEL"
-        );
+        assert_eq!(envelope["fields"]["token"], "MATRIX_GUI_SECRET_SENTINEL");
 
         let blank = build_channel_credential_request_with_matrix_store_path(
             "matrix",
@@ -9368,7 +9368,10 @@ mod tests {
         )
         .unwrap();
         let blank: serde_json::Value = serde_json::from_slice(blank.as_slice()).unwrap();
-        assert_eq!(blank["fields"]["matrix_store_path"], serde_json::Value::Null);
+        assert_eq!(
+            blank["fields"]["matrix_store_path"],
+            serde_json::Value::Null
+        );
     }
 
     #[test]

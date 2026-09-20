@@ -1,8 +1,8 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W109-Matrix-store-parity-and-observed-compile-recovery",
-  "base": "3922ee4b7c221028e7b101685d2423f27b109040",
-  "capturedUtc": "2026-09-20T19:59:23.8439604Z",
+  "base": "af727017297d080c893da2c5f250613adc408ed6",
+  "capturedUtc": "2026-09-20T20:02:06.3206938Z",
   "validationStatus": "W108_W109_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
   "scopeNote": "297 cumulative inputs; W108 Matrix CLI/GUI store configuration and regression coverage; W109 exact observed Slint tokens and MCP fixture ownership repairs. Dynamic validation GitHub-hosted only. No roadmap closure.",
   "files": [
@@ -263,8 +263,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 493134,
-      "sha256": "C77FA63CB5A0D47C2A97B69FC367385BCDE3569A0D72F5AA2D637698AE216ED6"
+      "bytes": 493168,
+      "sha256": "A2B185F44D2C02BC6A3264B12D14F12B431EFCE4E2D23BFA4F4289A13EA043C3"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
@@ -483,8 +483,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel.rs",
-      "bytes": 275385,
-      "sha256": "00375AF21DAD472599D3995DD1C5C5BF81D3AF26A34DE7863F1CD0F0338425B5"
+      "bytes": 275402,
+      "sha256": "A0D2A913B48C9C37A907FEB91023545736ED9E0BEA761284285C9DADEACDC8AA"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",

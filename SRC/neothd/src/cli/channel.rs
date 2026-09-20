@@ -1661,8 +1661,9 @@ fn stage_channel_add_for_id(
     // Matrix state carries E2EE/session identity. Reconfiguration replaces
     // credentials and inbound policy, but a missing optional store path must
     // not abandon an already-configured state store.
-    let retained_matrix_store_path =
-        (channel_id == ChannelId::Matrix).then(|| base.matrix_store_path.clone()).flatten();
+    let retained_matrix_store_path = (channel_id == ChannelId::Matrix)
+        .then(|| base.matrix_store_path.clone())
+        .flatten();
     let (mut creds, _) = stage_channel_remove_for_id(channel_id, base)?;
     match channel_id {
         ChannelId::Telegram => {
@@ -4605,7 +4606,10 @@ mod tests {
         let mut base = Credentials::default();
         base.matrix_store_path = Some("/srv/neoth/matrix-state".into());
         let (cleared, removed) = stage_channel_remove("matrix", base).unwrap();
-        assert!(removed, "a configured Matrix state store is removable state");
+        assert!(
+            removed,
+            "a configured Matrix state store is removable state"
+        );
         assert!(cleared.matrix_store_path.is_none());
     }
 
@@ -4782,12 +4786,9 @@ mod tests {
         let blank = stage_channel_add("matrix", &complete(Some(" \t ")), base.clone()).unwrap();
         assert_eq!(blank.matrix_store_path, base.matrix_store_path);
 
-        let explicit = stage_channel_add(
-            "matrix",
-            &complete(Some("  /srv/neoth/matrix-new  ")),
-            base,
-        )
-        .unwrap();
+        let explicit =
+            stage_channel_add("matrix", &complete(Some("  /srv/neoth/matrix-new  ")), base)
+                .unwrap();
         assert_eq!(
             explicit.matrix_store_path.as_deref(),
             Some("/srv/neoth/matrix-new")

@@ -34,6 +34,8 @@ the observed Slint token and MCP test ownership failures. See
 review and GitHub execution remain separate; all local validation is suspended.
 R4-07 and all counts remain unchanged: **1324/1015/307/2**, raw309/pre-tag308.
 
+W108/W109 was published as `af727017`. Code Quality `35534187276` passed; Preflight `35534187849` requested only six assertion/layout changes in `channel.rs` and `panel_logic.rs`. This follow-up applies those exact remote Rustfmt hunks. Fresh GitHub static and runtime gates remain pending; no local formatter or tests ran.
+
 **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 now share Doctor's read-only home/managed-root readiness operation, with typed
 disabled/ready/unavailable results separate from selected-root status. GUI

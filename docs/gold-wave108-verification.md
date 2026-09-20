@@ -49,3 +49,7 @@ No local parser, formatter, compiler, test, product or GUI execution is part of
 this batch. Visual layout, keyboard/accessibility behavior and actual Matrix
 login/E2EE continuity remain separate acceptance obligations. No R4-07 or other
 roadmap checkbox closes on this source slice.
+
+## Publication and formatting follow-up
+
+W108/W109 was published as `af727017`. Code Quality `35534187276` passed; Preflight `35534187849` requested only six assertion/layout changes in `channel.rs` and `panel_logic.rs`. This follow-up applies those exact remote Rustfmt hunks. Fresh GitHub static and runtime gates remain pending; no local formatter or tests ran.
