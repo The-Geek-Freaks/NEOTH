@@ -5901,8 +5901,14 @@ mod tests {
     #[test]
     fn channel_status_projects_pairing_enabled_and_disabled_accounts_without_secrets() {
         let mut pair = telegram_probe_pair(
-            &[("pairing-on", 111, Some("pairing-on-secret")), ("pairing-off", 222, Some("pairing-off-secret"))],
-            &[("pairing-on", Some("pairing-on-secret")), ("pairing-off", Some("pairing-off-secret"))],
+            &[
+                ("pairing-on", 111, Some("pairing-on-secret")),
+                ("pairing-off", 222, Some("pairing-off-secret")),
+            ],
+            &[
+                ("pairing-on", Some("pairing-on-secret")),
+                ("pairing-off", Some("pairing-off-secret")),
+            ],
         );
         pair.config
             .channel_accounts
@@ -5925,7 +5931,10 @@ mod tests {
         );
         let encoded = serde_json::to_string(&status).unwrap();
         for forbidden in ["pairing-on-secret", "pairing-off-secret", "111", "222"] {
-            assert!(!encoded.contains(forbidden), "projection leaked {forbidden}");
+            assert!(
+                !encoded.contains(forbidden),
+                "projection leaked {forbidden}"
+            );
         }
     }
 

@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W120-account-policy-runtime-regressions-and-preview-recovery",
-  "base": "5d88e2170956d2a9f7394b8f826da478ce5fa6d8",
-  "capturedUtc": "2026-09-20T22:19:30.0220393Z",
+  "base": "27291a9df61b60c88cd4db513dbda90f7db8c326",
+  "capturedUtc": "2026-09-20T22:23:35.8714870Z",
   "validationStatus": "W116_W118_W119_W120_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
-  "scopeNote": "300 cumulative inputs. W116 native retirement callback fixture (Linux/macOS); W118 authenticated account DM-pairing projection/GUI/real CLI parser contract; W119 bounded hosted preview; W120 actual Linux MCP envelope assertion and Buddy RunID race repair. Local validation suspended. Source review and all new-source remote runtime gates remain separate; no roadmap closure.",
+  "scopeNote": "300 cumulative reviewed inputs. Five Rust files receive exactly twelve formatting/import-order hunks from Preflight35541418088 on27291a9d; CodeQuality35541417873 passed that source. Behavior/review boundaries unchanged. All new-source remote gates pending; local validation suspended; no Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -273,13 +273,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1670241,
-      "sha256": "7B2E732DBAB02883D7E28745C5CDF2013CF6B6BE6189311530B0C0EFFE575535"
+      "bytes": 1670365,
+      "sha256": "6F426B88B566B516E2EE46ED70D020A0E95DA868ED3AF3BEEC572B8E3D8A5A21"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 518500,
-      "sha256": "88116B8259DC51A5B30CB3BA3446AAE607EEDA61F5276A72E4690BD659B32234"
+      "bytes": 518567,
+      "sha256": "8937E4F0FD8DDE989E953AB11B20F48388BAAF6B4985FDCD554B234052769927"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
@@ -474,7 +474,7 @@
     {
       "path": "SRC/neothd/src/channels/probe.rs",
       "bytes": 46529,
-      "sha256": "301AD16689AE11C999E6078E2F1373F5C3C6822F59DA913DBD7216B907492F2F"
+      "sha256": "5DAE018FE80534114CBF16B33823EB60107521BDF9818D7B38B129433BB7CA93"
     },
     {
       "path": "SRC/neothd/src/channels/rate_limit.rs",
@@ -498,8 +498,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel.rs",
-      "bytes": 293724,
-      "sha256": "2EE8617DB9613E32C7A3A7C07E1A744276263C5BF04263A2E751AD0D42399187"
+      "bytes": 293864,
+      "sha256": "A89F57FEF6BD0E5067622D0E41868308850CB4E3A27F606B70C76182D5D67B4D"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
@@ -1453,8 +1453,8 @@
     },
     {
       "path": "SRC/neothd/tests/gui_channel_status.rs",
-      "bytes": 3380,
-      "sha256": "E395F5E18903AB6938D3B216773C70196C8BC8762D841DFF6E6922FB50D00479"
+      "bytes": 3377,
+      "sha256": "49847C70FCBCA9F70CA2BED046970701CC1673F346CF00A557C5A27FB6A34EB0"
     },
     {
       "path": "SRC/neothd/tests/gui_code_map_controller.rs",

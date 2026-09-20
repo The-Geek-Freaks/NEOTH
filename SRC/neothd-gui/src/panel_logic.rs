@@ -10577,10 +10577,7 @@ mod tests {
 
     #[test]
     fn named_telegram_account_dm_pairing_command_and_ack_bind_the_exact_policy() {
-        for (enabled, expected_args) in [
-            (true, vec!["--enabled"]),
-            (false, vec![]),
-        ] {
+        for (enabled, expected_args) in [(true, vec!["--enabled"]), (false, vec![])] {
             let command = telegram_account_dm_pairing_command(
                 std::path::Path::new("neoth"),
                 "telegram",
@@ -10639,12 +10636,18 @@ mod tests {
         }
         for acknowledgement in [
             br#"{"channel":"slack","account":"ops_b","dm_pairing":true,"saved":true}"#.as_slice(),
-            br#"{"channel":"telegram","account":"ops_a","dm_pairing":true,"saved":true}"#.as_slice(),
-            br#"{"channel":"telegram","account":"ops_b","dm_pairing":false,"saved":true}"#.as_slice(),
-            br#"{"channel":"telegram","account":"ops_b","dm_pairing":true,"saved":false}"#.as_slice(),
-            br#"{"channel":"telegram","account":"ops_b","dm_pairing":true,"saved":true,"ok":true}"#.as_slice(),
-            br#"{"channel":"telegram","account":"OPS_B","dm_pairing":true,"saved":true}"#.as_slice(),
-            br#"{"channel":"telegram","account":"ops_b","dm_pairing":"true","saved":true}"#.as_slice(),
+            br#"{"channel":"telegram","account":"ops_a","dm_pairing":true,"saved":true}"#
+                .as_slice(),
+            br#"{"channel":"telegram","account":"ops_b","dm_pairing":false,"saved":true}"#
+                .as_slice(),
+            br#"{"channel":"telegram","account":"ops_b","dm_pairing":true,"saved":false}"#
+                .as_slice(),
+            br#"{"channel":"telegram","account":"ops_b","dm_pairing":true,"saved":true,"ok":true}"#
+                .as_slice(),
+            br#"{"channel":"telegram","account":"OPS_B","dm_pairing":true,"saved":true}"#
+                .as_slice(),
+            br#"{"channel":"telegram","account":"ops_b","dm_pairing":"true","saved":true}"#
+                .as_slice(),
             br#"not-json"#.as_slice(),
         ] {
             assert_eq!(

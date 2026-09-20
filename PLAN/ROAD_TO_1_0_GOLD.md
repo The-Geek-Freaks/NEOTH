@@ -92,6 +92,8 @@ W115 formatting head `e168dad6` passed Preflight `35539814060` and Code Quality 
 
 W117 source `5d88e217` passed Code Quality `35540088414`. Preflight `35540088584` requested one assertion layout; the exact remote hunk is included with this combined batch. No local formatter ran.
 
+Combined source `27291a9d` passed Code Quality `35541417873`. Preflight `35541418088` requested twelve Rustfmt layouts/import-order hunks in five Rust files; this follow-up applies exactly those remote findings. No behavior changed and no local formatter ran. Fresh static, native and preview gates remain required.
+
 **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 now share Doctor's read-only home/managed-root readiness operation, with typed
 disabled/ready/unavailable results separate from selected-root status. GUI

@@ -39,3 +39,5 @@ Independent source review approved the core, GUI and callback integration. Remot
 interaction, rendering/accessibility, actual account mutation/reload and provider
 acceptance remain required. No local build, formatter, parser or tests ran.
 This slice does not close R4-07, P1-16 or the complete pairing workflow.
+
+Combined source `27291a9d` passed Code Quality `35541417873`. Preflight `35541418088` requested twelve Rustfmt layouts/import-order hunks in five Rust files; this follow-up applies exactly those remote findings. No behavior changed and no local formatter ran. Fresh static, native and preview gates remain required.

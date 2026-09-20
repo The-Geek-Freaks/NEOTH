@@ -35,10 +35,9 @@ fn mapped_pairing_gui_command_parses_with_the_real_cli_for_both_states() {
             requested,
         )
         .expect("build the production GUI command");
-        let parsed = Cli::try_parse_from(
-            std::iter::once(command.get_program()).chain(command.get_args()),
-        )
-        .expect("the real CLI must accept the GUI's enable and disable argv");
+        let parsed =
+            Cli::try_parse_from(std::iter::once(command.get_program()).chain(command.get_args()))
+                .expect("the real CLI must accept the GUI's enable and disable argv");
         assert!(matches!(parsed.output, OutputFormat::Json));
         match parsed.command {
             Commands::Channel {

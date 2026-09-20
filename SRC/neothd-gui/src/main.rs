@@ -18499,7 +18499,8 @@ fn telegram_account_dm_pairing_command(
     account: &str,
     enabled: bool,
 ) -> Result<std::process::Command, String> {
-    let mut command = panel_logic::telegram_account_dm_pairing_command(bin, channel, account, enabled)?;
+    let mut command =
+        panel_logic::telegram_account_dm_pairing_command(bin, channel, account, enabled)?;
     scrub_gui_control_environment(&mut command);
     command
         .env("NO_COLOR", "1")
@@ -37445,16 +37446,16 @@ mod w58_gui_callback_runtime_tests {
     use super::{
         CODE_MAP_ENRICHMENT_READINESS_PUBLICATION_COUNT, CODE_MAP_ENRICHMENT_READINESS_UI_REVISION,
         CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION, CODE_MAP_ROOT_SELECTION_REVISION, MainWindow,
-        NATIVE_CODING_UI_REVISION,
+        NATIVE_CODING_UI_REVISION, apply_channels,
         code_map_controller::{AutomaticContextPresentationController, CodeMapLifecycleController},
         code_map_impact_controller::CodeMapImpactController,
         coding_controller::CodingController,
-        apply_channels, native_coding_terminal_bridge_accepts, neothd_executable_names,
+        native_coding_terminal_bridge_accepts, neothd_executable_names,
         publish_code_map_enrichment_readiness, register_buddy_code_map_impact_callback,
         register_buddy_code_map_status_callback, register_buddy_native_coding_callbacks,
+        register_channel_account_retirement_callback,
         register_code_map_enrichment_readiness_callbacks, start_code_map_lifecycle_config_apply,
-        register_channel_account_retirement_callback, start_code_map_lifecycle_refresh,
-        which_neothd,
+        start_code_map_lifecycle_refresh, which_neothd,
     };
 
     static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -38927,7 +38928,10 @@ exit 72
         let _ = window.hide();
         slint::run_event_loop_until_quit().expect("pump bounded retirement callback event loop");
         drop(timer);
-        assert!(settled.get(), "timed out waiting for retirement callback settlement");
+        assert!(
+            settled.get(),
+            "timed out waiting for retirement callback settlement"
+        );
     }
 
     #[cfg(not(windows))]
@@ -38943,8 +38947,11 @@ exit 72
         let release = fixture.path().join("release");
         std::fs::write(&calls, b"").expect("initialize fixture call log");
         std::fs::write(&mode, b"blocked_malformed").expect("select blocked malformed fixture");
-        std::fs::write(fixture.path().join("inventory.json"), w116_inventory_json(&["ops_a"]))
-            .expect("write canonical refreshed inventory");
+        std::fs::write(
+            fixture.path().join("inventory.json"),
+            w116_inventory_json(&["ops_a"]),
+        )
+        .expect("write canonical refreshed inventory");
         let _path = PathGuard::install(fixture.path());
         assert_eq!(
             std::fs::canonicalize(which_neothd().expect("resolve staged retirement CLI"))
@@ -39009,7 +39016,10 @@ exit 72
             "each controlled outcome and the exact receipt launch one remove child"
         );
         assert_eq!(
-            w116_call_lines(&calls).iter().filter(|line| line.as_str() == "list").count(),
+            w116_call_lines(&calls)
+                .iter()
+                .filter(|line| line.as_str() == "list")
+                .count(),
             1,
             "only the exact receipt performs the canonical list readback"
         );

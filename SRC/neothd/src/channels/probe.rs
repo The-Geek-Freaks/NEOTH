@@ -636,8 +636,8 @@ pub fn misconfigured(v: &ChannelCredsView) -> Vec<ChannelHealth> {
 mod tests {
     use super::*;
     use crate::channels::registry::ChannelAccountId;
-    use crate::config::{TelegramAccountConfig, TelegramDmPairingConfig};
     use crate::config::credentials::{Credentials, TelegramAccountCredentials};
+    use crate::config::{TelegramAccountConfig, TelegramDmPairingConfig};
 
     fn mapped_pair(entries: &[(&str, u64, Option<&str>)]) -> crate::config::RuntimeConfigPair {
         let mut pair = crate::config::RuntimeConfigPair {
