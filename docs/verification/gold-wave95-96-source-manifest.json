@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W114-channel-parity-and-CI-recovery",
-  "base": "098dd7e146dda86e9e8e67519623fedf5b911314",
-  "capturedUtc": "2026-09-20T21:25:43.5295854Z",
-  "validationStatus": "W114_EXACT_REMOTE_FORMATTING_APPLIED_RERUN_REQUIRED",
-  "scopeNote": "300 cumulative inputs; existing W108-W113 reviewed channel settings and observed CI repairs plus W114 exact mapped Telegram retirement GUI. Real generated CLI reference imported; W113 static gates passed. W114 source review approved; exact combined native/GUI acceptance remains required. No local validation or roadmap closure.",
+  "item": "GOLD-W95-W115-channel-form-parity-and-CI-recovery",
+  "base": "78a4229f7be70ef1b62d6423ae83a269305f80f8",
+  "capturedUtc": "2026-09-20T21:40:26.4008864Z",
+  "validationStatus": "W115_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
+  "scopeNote": "300 cumulative inputs. W115 eight missing mandatory sender GUI inputs plus real builder regression. W114 static gates passed on78a4229f; full CI35538895227 still running. W116 main.rs work is not admitted in this manifest. No local validation or roadmap closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -48,8 +48,8 @@
     },
     {
       "path": "docs/channels.md",
-      "bytes": 42484,
-      "sha256": "23148E44B72ED35ADC19F4F225B601BE3F6381AE4E0E5C91B92A19D41CED3589"
+      "bytes": 43253,
+      "sha256": "4CCBAE44F33C0F26C786E755F37E5064F48BF70D9A8DD556267A9D0F88BC6F03"
     },
     {
       "path": "docs/cli-commands.md",
@@ -78,8 +78,8 @@
     },
     {
       "path": "docs/release-notes-v1.0.md",
-      "bytes": 14483,
-      "sha256": "7B77F2F6E5F7795DC58518533616226BCA9AF49229C4248E3B6A82A1177BCE86"
+      "bytes": 14641,
+      "sha256": "C9FB35DA72780881E91E5B9750C8DA197ACC25F59ABDABA4A5D57DC1BC186FAD"
     },
     {
       "path": "docs/troubleshooting.md",
@@ -278,8 +278,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 505016,
-      "sha256": "F980BF6C9D071281A78E6682A8AB20362B80886B64C37FDAC6F9DABCCEDC49C9"
+      "bytes": 508857,
+      "sha256": "FBC5BA2039B6DFACAB354F4B3EEDA06032094E8D3F198298717E65A2B37E2AEC"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
@@ -418,8 +418,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/settings.slint",
-      "bytes": 398545,
-      "sha256": "6191DBEB722EA1E21E11600B42146962C94D2D87E59575782BDB1662B0C2FBDC"
+      "bytes": 399672,
+      "sha256": "C428A024A6F815C897FE6B03698177D4F1FA00006F170BD9D8FB4780ED612E03"
     },
     {
       "path": "SRC/neothd-gui/ui/tabs.slint",

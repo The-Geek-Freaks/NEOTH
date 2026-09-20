@@ -28,6 +28,8 @@ These are unfinished v1 contracts, not accepted post-1.0 limitations:
   selection are exposed through CLI and GUI; native acceptance remains pending.
   Mapped Telegram account rows also expose explicit confirmed retirement
   through the existing CLI transaction, with exact-account result binding.
+  Eight existing setup forms now expose the mandatory inbound sender fields
+  already required by their private setup requests; no inbound policy is relaxed.
   Durable cross-store credential recovery, persisted
   multi-account identity, descriptor-rendered forms and OpenClaw
   apply/status/rollback plus runtime-behaviour parity remain open.

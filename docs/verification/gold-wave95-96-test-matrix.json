@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W114_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "098dd7e146dda86e9e8e67519623fedf5b911314",
+  "status": "W95_W115_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "base": "78a4229f7be70ef1b62d6423ae83a269305f80f8",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 52021,
-    "sha256": "53AB7ACDE4219D0CEA3CA372B21F28F309836E182E78F13206876750D049BF74"
+    "bytes": 51975,
+    "sha256": "5E9BCEEFE37858CCDF9668FB17060A0171C436669DB2298A2922406536AD079D"
   },
   "sourceInputs": 300,
   "requiredNativeTests": [
@@ -499,7 +499,8 @@
     "tests::line_port_request_uses_private_stdin_without_port_or_secrets_in_argv",
     "panel_logic::tests::private_channel_builder_routes_irc_public_settings_without_weakening_account_requirement",
     "tests::irc_public_settings_request_uses_private_stdin_without_settings_or_secret_in_argv",
-    "panel_logic::tests::named_telegram_account_retirement_command_and_ack_bind_the_exact_account"
+    "panel_logic::tests::named_telegram_account_retirement_command_and_ack_bind_the_exact_account",
+    "panel_logic::tests::required_sender_form_slots_map_to_private_allowed_sender_and_reject_blank"
   ],
   "requiredGuiClass": "neothd-gui::bin/neothd-gui",
   "additionalGuiCopies": {
@@ -704,8 +705,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 505016,
-      "sha256": "F980BF6C9D071281A78E6682A8AB20362B80886B64C37FDAC6F9DABCCEDC49C9"
+      "bytes": 508857,
+      "sha256": "FBC5BA2039B6DFACAB354F4B3EEDA06032094E8D3F198298717E65A2B37E2AEC"
     }
   ],
   "remoteFormatCorrection": {
@@ -965,7 +966,17 @@
       "codeQualityConclusion": "success",
       "change": "Four exact remote Rustfmt layouts in canonical panel_logic.rs",
       "localFormatterRan": false,
-      "rerun": "PENDING"
+      "rerun": "PASS_PREFLIGHT35538782278_CODEQUALITY35538781829_ON78A4229F"
     }
+  },
+  "wave115": {
+    "report": "docs/gold-wave115-verification.md",
+    "sourceReview": "APPROVED",
+    "scope": "Eight missing required inbound sender GUI inputs; backend policy unchanged",
+    "sourceInputs": 300,
+    "nativeRequired": 79,
+    "guiRequired": 16,
+    "execution": "PENDING_GITHUB_ONLY",
+    "localValidationRan": false
   }
 }

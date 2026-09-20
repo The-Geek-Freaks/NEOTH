@@ -29,10 +29,10 @@ NEOTH exposes the same buddy through multiple surfaces. Channels are not second-
 > (BlueBubbles), Mattermost, Google Chat, Matrix and Nostr — fail closed on
 > their named inbound identity policy but still need the common
 > operator/sender/conversation gate before they are suitable for an untrusted
-> audience. Twitch additionally authenticates only the bot transport. Setup for
-> these five (IRC/Twitch, Mattermost, Nostr, Google Chat, iMessage) is CLI-only
-> today via `neoth channel add <name>`; they have no dedicated setup section
-> below. See the [release notes](release-notes-v1.0.md) for the open items.
+> audience. Twitch additionally authenticates only the bot transport. Settings
+> includes setup fields for these adapters, including their required sender
+> identities where enforced. Native GUI and real-provider acceptance remain
+> separate. See the [release notes](release-notes-v1.0.md) for the open items.
 
 Every channel should pass through:
 
@@ -43,6 +43,20 @@ Every channel should pass through:
 - provider destination audit
 - outbound send policy
 - WAL event trail
+
+## Required inbound sender fields in Settings
+
+Settings → Channels exposes the required allowed sender for Slack, WhatsApp
+Business, Discord, Signal, BlueBubbles iMessage, Mattermost, Google Chat and
+Nostr. These values accompany the credentials during Add/Configure and are
+required by the existing private setup request. An empty value stops setup
+before any child is launched; no permissive default is created.
+
+Use the platform identity requested by the field: Slack U/W user ID, numeric
+Discord user ID, E.164 Signal number, Google Chat users/<id>, or Nostr public
+key. The channel-specific CLI validators remain authoritative. Existing saved
+credentials are not displayed while editing. Native setup and provider probes
+remain required for release qualification.
 
 ## Account identity and channel leases
 

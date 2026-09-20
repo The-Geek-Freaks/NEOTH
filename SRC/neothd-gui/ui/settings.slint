@@ -1981,6 +1981,7 @@ export component SettingsView inherits Rectangle {
                             Text { text: "Slack bot token (xoxb-…) + app-level token (xapp-…)"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "Bot token (--bot-token)"; password: ch-f1-secret; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "App token (--app-token)"; password: ch-f2-secret; text <=> ch-f2; }
+                            NeothLineEdit { placeholder-text: "Allowed Slack user ID (U… or W…)"; password: ch-f3-secret; text <=> ch-f3; }
                         }
                         // whatsapp_business: complete Cloud API send + verified inbound contract
                         if selected-channel-type == "whatsapp_business": VerticalBox {
@@ -1990,6 +1991,7 @@ export component SettingsView inherits Rectangle {
                             NeothLineEdit { placeholder-text: "Phone ID (--phone-id)"; password: ch-f2-secret; text <=> ch-f2; }
                             NeothLineEdit { placeholder-text: "Webhook verify token (--verify-token)"; password: ch-f3-secret; text <=> ch-f3; }
                             NeothLineEdit { placeholder-text: "Meta app secret (--app-secret)"; password: ch-f4-secret; text <=> ch-f4; }
+                            NeothLineEdit { placeholder-text: "Exact allowed WhatsApp sender"; password: ch-f5-secret; text <=> ch-f5; }
                         }
                         // whatsapp_baileys: authenticated sidecar + sender policy
                         if selected-channel-type == "whatsapp_baileys": VerticalBox {
@@ -2014,6 +2016,7 @@ export component SettingsView inherits Rectangle {
                             spacing: Theme.space-tight;
                             Text { text: "Discord bot token"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "Token (--token)"; password: ch-f1-secret; text <=> ch-f1; }
+                            NeothLineEdit { placeholder-text: "Allowed Discord user ID (numeric snowflake)"; password: ch-f2-secret; text <=> ch-f2; }
                         }
                         // signal: url + phone
                         if selected-channel-type == "signal": VerticalBox {
@@ -2021,6 +2024,7 @@ export component SettingsView inherits Rectangle {
                             Text { text: "signal-cli REST URL + registered phone number"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "URL (--url)  e.g. http://localhost:8080"; password: ch-f1-secret; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "Phone (--phone)  e.g. +4917…"; password: ch-f2-secret; text <=> ch-f2; }
+                            NeothLineEdit { placeholder-text: "Allowed Signal sender (E.164)"; password: ch-f3-secret; text <=> ch-f3; }
                         }
                         // line: token + password (optional)
                         if selected-channel-type == "line": VerticalBox {
@@ -2051,6 +2055,7 @@ export component SettingsView inherits Rectangle {
                             Text { text: "BlueBubbles server URL + password"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "URL (--url)  e.g. http://mac.local:1234"; password: ch-f1-secret; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "Password (--password)"; password: ch-f2-secret; text <=> ch-f2; }
+                            NeothLineEdit { placeholder-text: "Allowed iMessage sender"; password: ch-f3-secret; text <=> ch-f3; }
                         }
                         // mattermost: url + token
                         if selected-channel-type == "mattermost": VerticalBox {
@@ -2058,6 +2063,7 @@ export component SettingsView inherits Rectangle {
                             Text { text: "Mattermost server URL + personal access token"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "URL (--url)  e.g. https://chat.example.com"; password: ch-f1-secret; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "Token (--token)"; password: ch-f2-secret; text <=> ch-f2; }
+                            NeothLineEdit { placeholder-text: "Allowed Mattermost user ID"; password: ch-f3-secret; text <=> ch-f3; }
                         }
                         // gchat: service-account path + subscription
                         if selected-channel-type == "gchat": VerticalBox {
@@ -2065,6 +2071,7 @@ export component SettingsView inherits Rectangle {
                             Text { text: "Google Chat Pub/Sub service-account file + full subscription resource"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "Service-account JSON path (--url)"; password: ch-f1-secret; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "projects/<p>/subscriptions/<s> (--server)"; password: ch-f2-secret; text <=> ch-f2; }
+                            NeothLineEdit { placeholder-text: "Allowed Google Chat sender (users/<id>)"; password: ch-f3-secret; text <=> ch-f3; }
                         }
                         // matrix: encrypted by default; access token or password
                         if selected-channel-type == "matrix": VerticalBox {
@@ -2093,6 +2100,7 @@ export component SettingsView inherits Rectangle {
                             Text { text: "Nostr NIP-17 private key + secure relay URLs"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "nsec1… or 64-char hex key (--token)"; password: ch-f1-secret; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "wss:// relay URLs CSV (--channels-csv)"; password: ch-f2-secret; text <=> ch-f2; }
+                            NeothLineEdit { placeholder-text: "Allowed Nostr public key (64-char hex)"; password: ch-f3-secret; text <=> ch-f3; }
                         }
 
                         if selected-telegram-map-active: Text {

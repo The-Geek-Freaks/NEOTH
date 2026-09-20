@@ -9450,6 +9450,109 @@ mod tests {
     }
 
     #[test]
+    fn required_sender_form_slots_map_to_private_allowed_sender_and_reject_blank() {
+        struct SenderFormCase {
+            channel: &'static str,
+            fields: [&'static str; 6],
+            required_slot: usize,
+            allowed_sender: &'static str,
+        }
+
+        for case in [
+            SenderFormCase {
+                channel: "slack",
+                fields: ["xoxb-secret", "xapp-secret", "U123456", "", "", ""],
+                required_slot: 2,
+                allowed_sender: "U123456",
+            },
+            SenderFormCase {
+                channel: "whatsapp_business",
+                fields: [
+                    "meta-token",
+                    "12345",
+                    "verify-token",
+                    "app-secret",
+                    "+491701234567",
+                    "",
+                ],
+                required_slot: 4,
+                allowed_sender: "+491701234567",
+            },
+            SenderFormCase {
+                channel: "discord",
+                fields: ["discord-token", "123456789012345678", "", "", "", ""],
+                required_slot: 1,
+                allowed_sender: "123456789012345678",
+            },
+            SenderFormCase {
+                channel: "signal",
+                fields: [
+                    "http://127.0.0.1:8080",
+                    "+491701111111",
+                    "+491702222222",
+                    "",
+                    "",
+                    "",
+                ],
+                required_slot: 2,
+                allowed_sender: "+491702222222",
+            },
+            SenderFormCase {
+                channel: "imessage_bluebubbles",
+                fields: ["http://mac.local:1234", "bluebubbles-secret", "owner@example.org", "", "", ""],
+                required_slot: 2,
+                allowed_sender: "owner@example.org",
+            },
+            SenderFormCase {
+                channel: "mattermost",
+                fields: ["https://chat.example.com", "mattermost-token", "mattermost-user", "", "", ""],
+                required_slot: 2,
+                allowed_sender: "mattermost-user",
+            },
+            SenderFormCase {
+                channel: "gchat",
+                fields: [
+                    "/srv/neoth/google-chat.json",
+                    "projects/demo/subscriptions/neoth",
+                    "users/123456789",
+                    "",
+                    "",
+                    "",
+                ],
+                required_slot: 2,
+                allowed_sender: "users/123456789",
+            },
+            SenderFormCase {
+                channel: "nostr",
+                fields: [
+                    "nsec1privatekey",
+                    "wss://relay.example.org",
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                    "",
+                    "",
+                    "",
+                ],
+                required_slot: 2,
+                allowed_sender: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            },
+        ] {
+            let request = build_channel_credential_request(case.channel, case.fields, false)
+                .expect("complete visible form must produce a private request");
+            let envelope: serde_json::Value = serde_json::from_slice(request.as_slice()).unwrap();
+            assert_eq!(envelope["channel"], case.channel);
+            assert_eq!(envelope["fields"]["allowed_sender"], case.allowed_sender);
+
+            let mut blank = case.fields;
+            blank[case.required_slot] = "";
+            assert!(
+                build_channel_credential_request(case.channel, blank, false).is_err(),
+                "{} must refuse its blank required sender slot",
+                case.channel
+            );
+        }
+    }
+
+    #[test]
     fn private_channel_builder_routes_matrix_store_path_without_changing_secret_slots() {
         let request = build_channel_credential_request_with_matrix_store_path(
             "matrix",
