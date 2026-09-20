@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W95_W110_REVIEWED_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "8b7db9a59ceef1cb979cccca57c9e98b9aa2fc9c",
+  "base": "4087983f96ccee6024ee1abfb03c5bdd49ba85bc",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 51863,
-    "sha256": "FC3B1EABDBFBCF4FCA6F1E8C8F231D2CCE62BB13439B68AB7B8936E41C6CF6EE"
+    "bytes": 52146,
+    "sha256": "BC9B65607B3E4DF15AE1451159D76E0C9AA9D91E46377946A062470A85AE17F3"
   },
-  "sourceInputs": 299,
+  "sourceInputs": 300,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -583,6 +583,12 @@
       "sha256": "5A4D97779028B4EA3D455AAE9882EBD615FFA33DDE8BA1FA449983F1E1B34CC7",
       "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
       "executionClaim": false
+    },
+    {
+      "record": "work/gold-20260906/wave110-line-port/REVIEW-REFERENCE-WORKFLOW.md",
+      "sha256": "3438BAED28B7F8706D57462B4A34CA1CE8A18B5D3FC814F6CC90B127358180CE",
+      "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
+      "executionClaim": false
     }
   ],
   "priorCi": {
@@ -804,7 +810,7 @@
     "sourceReview": "APPROVED",
     "referenceExportReview": "APPROVED",
     "generatedReference": "KNOWN_DRIFT_PENDING_REAL_BINARY_EXPORT",
-    "sourceInputs": 299,
+    "sourceInputs": 300,
     "nativeRequired": 75,
     "guiRequired": 12,
     "execution": "PENDING_GITHUB_ONLY",
@@ -816,7 +822,17 @@
       "source": "8b7db9a59ceef1cb979cccca57c9e98b9aa2fc9c",
       "change": "Two exact remote assertion layouts",
       "localFormatterRan": false,
-      "rerun": "PENDING"
-    }
+      "rerun": "PASS_PREFLIGHT35535462840_CODEQUALITY35535462600_ON4087983f"
+    },
+    "referenceWorkflow": "Manual-only cli-reference.yml; reviewed; current generation pending"
+  },
+  "wave112": {
+    "failedRun": 35534405981,
+    "failedHead": "7909081e30594e17b4cb2592f0205f3ec13d6f0e",
+    "linuxJob": 106140714935,
+    "error": "clippy::await_holding_lock in coding/dispatcher.rs test",
+    "linuxTests": "NOT_RUN",
+    "repair": "SOURCE_CANDIDATE_IN_PROGRESS_NOT_INCLUDED",
+    "retainOtherUsefulRuns": true
   }
 }

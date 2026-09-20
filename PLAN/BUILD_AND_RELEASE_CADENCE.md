@@ -105,7 +105,11 @@ that exact Markdown, its SHA-256 and the full source commit. Import it only
 after matching the source commit and digest. The ordinary
 `cli_commands_md_is_up_to_date` regression remains the anti-drift authority;
 an exported artifact is not evidence that the committed documentation matches.
-This adds no compiler invocation and does not require a local product binary.
+The export within full CI adds no compiler invocation. When a newer CLI source
+needs its generated snapshot while an earlier full matrix is still running,
+the manual-only `cli-reference.yml` workflow builds just `neoth` with one Cargo
+worker, reusing the Gold smoke cache read-only. It never writes the repository
+or bypasses the docgen test. Neither path executes a local product binary.
 
 ## Evidence ladder
 

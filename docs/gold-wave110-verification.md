@@ -50,3 +50,5 @@ found no blocking issue. Their source hashes are retained in the batch records.
 ## Publication and remote formatting
 
 W110 was published as `8b7db9a5` after independent source and workflow review. Code Quality `35535343581` passed; Preflight `35535343835` requested only two assertion-layout changes. The follow-up applies those exact remote hunks. New-source static/runtime gates and generated CLI-reference refresh remain pending.
+
+W110 formatting head `4087983f` passed Preflight `35535462840` and Code Quality `35535462600`. Earlier-source CI `35534405981` now has ten successful component jobs but Linux stopped before tests on `await_holding_lock` in a dispatcher fixture; W112 is repairing that narrow test boundary. macOS/Windows and preview remain useful pending runs. A separate dispatch-only CLI-reference job builds the current CLI with one Cargo worker and exports source/digest-bound documentation without repository write access.

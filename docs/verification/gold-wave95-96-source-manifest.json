@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W110-channel-setting-parity-and-remote-generated-reference",
-  "base": "8b7db9a59ceef1cb979cccca57c9e98b9aa2fc9c",
-  "capturedUtc": "2026-09-20T20:22:58.8033774Z",
+  "base": "4087983f96ccee6024ee1abfb03c5bdd49ba85bc",
+  "capturedUtc": "2026-09-20T20:26:15.5982743Z",
   "validationStatus": "W110_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
-  "scopeNote": "299 cumulative inputs; W110 LINE port typed CLI/private GUI setting plus missing required sender field; real request regressions and remote generated-reference export. Existing docgen guard stays required; committed generated reference still pending refresh. GitHub-only validation; no roadmap closure.",
+  "scopeNote": "300 cumulative inputs; W110 LINE port typed CLI/private GUI setting plus missing required sender field; real request regressions and remote generated-reference export. Existing docgen guard stays required; committed generated reference still pending refresh. GitHub-only validation; no roadmap closure. Manual reference-only GitHub build restores existing cache without saving it; current-source generation pending.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -15,6 +15,11 @@
       "path": ".github/workflows/ci.yml",
       "bytes": 36622,
       "sha256": "D6D4E2C6EB9BB70C418ACD8C409AF91413FCA51203BBBBF3F27E250774EF7A97"
+    },
+    {
+      "path": ".github/workflows/cli-reference.yml",
+      "bytes": 2166,
+      "sha256": "5FC28BEF7823E3CB4B8D27E8354AD8DADB5C89621EB66473AB85FC7B71240561"
     },
     {
       "path": ".github/workflows/preflight.yml",
@@ -138,8 +143,8 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 19601,
-      "sha256": "11DFCF48380A49467016A18C55AA65B05687B2429D21CEC1D581BE2AB7840E0B"
+      "bytes": 19912,
+      "sha256": "342CD5C023E435F7DEF1510D685ABB14F6F9B3A34DFFC1CED5EF2681E8BF6F2C"
     },
     {
       "path": "README.md",
