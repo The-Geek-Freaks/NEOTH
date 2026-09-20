@@ -400,7 +400,7 @@ mod tests {
         rows.iter().find(|r| r.name == name).expect("row present")
     }
 
-    fn account(name: &str, runtime: Option<&str>) -> ChannelAccountStatus {
+    fn account(name: &str, runtime: Option<&str>, dm_pairing: bool) -> ChannelAccountStatus {
         ChannelAccountStatus {
             channel_ref: ChannelRef::new(
                 ChannelId::Telegram,
@@ -408,6 +408,7 @@ mod tests {
             ),
             status: ProbeStatus::Ok,
             detail: format!("{name} configured"),
+            dm_pairing,
             runtime: runtime.map(str::to_owned),
         }
     }
@@ -420,9 +421,9 @@ mod tests {
             detail: "Telegram account map configured; per-account readiness is static only."
                 .to_string(),
             accounts: vec![
-                account("default", None),
-                account("ops_a", Some("running")),
-                account("ops_b", Some("configured_not_started")),
+                account("default", None, false),
+                account("ops_a", Some("running"), true),
+                account("ops_b", Some("configured_not_started"), false),
             ],
         }])
         .pop()

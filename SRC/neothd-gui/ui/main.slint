@@ -1316,6 +1316,7 @@ export component MainWindow inherits Window {
     in property <[string]> channel-types: [];
     in property <string> channel-status-error: "";
     in-out property <bool> channel-account-retirement-in-flight: false;
+    in-out property <bool> channel-account-dm-pairing-in-flight: false;
     in-out property <int> channel-editor-completion-generation: 0;
     in-out property <bool> channel-editor-completion-is-account: false;
     in-out property <string> channel-editor-completion-account: "";
@@ -1453,6 +1454,7 @@ export component MainWindow inherits Window {
     callback channel-account-test(string, string);
     callback channel-account-save(string, string, string, int);
     callback channel-account-remove(string, string);
+    callback channel-account-dm-pairing(string, string, bool);
     callback channel-remove(string);
     callback channel-copy-name(string);
     /// GAP-19 — add a new channel credential from the GUI.
@@ -3880,6 +3882,7 @@ export component MainWindow inherits Window {
             channel-types: root.channel-types;
             channel-status-error: root.channel-status-error;
             channel-account-retirement-in-flight: root.channel-account-retirement-in-flight;
+            channel-account-dm-pairing-in-flight: root.channel-account-dm-pairing-in-flight;
             channel-editor-completion-generation: root.channel-editor-completion-generation;
             channel-editor-completion-is-account: root.channel-editor-completion-is-account;
             channel-editor-completion-account: root.channel-editor-completion-account;
@@ -3925,6 +3928,9 @@ export component MainWindow inherits Window {
             }
             channel-account-remove-clicked(channel, account) => {
                 root.channel-account-remove(channel, account);
+            }
+            channel-account-dm-pairing-clicked(channel, account, enabled) => {
+                root.channel-account-dm-pairing(channel, account, enabled);
             }
             channel-remove-clicked(name) => { root.channel-remove(name); }
             channel-add-clicked(ctype, f1, f2, f3, f4, f5, f6, matrix_store_path, line_webhook_port, irc_port, irc_tls_mode, irc_allowed_nick, flag, editor_generation) => {

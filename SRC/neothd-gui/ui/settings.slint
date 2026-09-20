@@ -207,6 +207,8 @@ export struct ChannelAccountRow {
     // Empty means the runtime projection is unknown or cannot prove this
     // exact current binding.
     runtime: string,
+    // Effective static admission policy for this exact mapped account.
+    dm-pairing: bool,
 }
 
 // GOLD-R3-04 — canonical channel probe state (never a secret).
@@ -1172,7 +1174,9 @@ export component SettingsView inherits Rectangle {
     callback channel-account-test-clicked(string, string);
     callback channel-account-save-clicked(string, string, string, int);
     callback channel-account-remove-clicked(string, string);
+    callback channel-account-dm-pairing-clicked(string, string, bool);
     in property <bool> channel-account-retirement-in-flight: false;
+    in property <bool> channel-account-dm-pairing-in-flight: false;
     callback channel-remove-clicked(string);
     /// GAP-19 — Add a new channel credential from the GUI.
     /// Args: channel_type + six typed credential fields + Matrix's optional
@@ -2331,6 +2335,7 @@ export component SettingsView inherits Rectangle {
                                 spacing: Theme.space-tight;
                                 for account in c.accounts: HorizontalLayout {
                                     property <bool> retirement-confirming: false;
+                                    property <bool> pairing-confirming: false;
                                     spacing: Theme.space-base;
                                     accessible-role: list-item;
                                     accessible-label: "Telegram account " + account.account-id
@@ -2363,15 +2368,21 @@ export component SettingsView inherits Rectangle {
                                             color: Theme.text-tertiary;
                                             wrap: word-wrap;
                                         }
+                                        Text {
+                                            text: account.dm-pairing ? "DM pairing enabled" : "DM pairing disabled";
+                                            font-family: Theme.font-display;
+                                            font-size: Theme.font-size-2xs;
+                                            color: account.dm-pairing ? Theme.accent-amber : Theme.text-tertiary;
+                                        }
                                     }
-                                    if c.configured && !confirming && !retirement-confirming: NeothButton {
+                                    if c.configured && !confirming && !retirement-confirming && !pairing-confirming: NeothButton {
                                         label: "Test";
                                         primary: false;
                                         clicked => {
                                             root.channel-account-test-clicked(c.name, account.account-id);
                                         }
                                     }
-                                    if c.configured && !confirming && !retirement-confirming: NeothButton {
+                                    if c.configured && !confirming && !retirement-confirming && !pairing-confirming: NeothButton {
                                         label: "Edit";
                                         primary: false;
                                         clicked => {
@@ -2385,10 +2396,11 @@ export component SettingsView inherits Rectangle {
                                             account-form-open = true;
                                         }
                                     }
-                                    if c.configured && !confirming && !retirement-confirming: NeothButton {
+                                    if c.configured && !confirming && !retirement-confirming && !pairing-confirming: NeothButton {
                                         label: "Retire";
                                         primary: false;
-                                        enabled: !root.channel-account-retirement-in-flight;
+                                        enabled: !root.channel-account-retirement-in-flight
+                                            && !root.channel-account-dm-pairing-in-flight;
                                         clicked => { retirement-confirming = true; }
                                     }
                                     if c.configured && !confirming && retirement-confirming: HorizontalLayout {
@@ -2405,7 +2417,8 @@ export component SettingsView inherits Rectangle {
                                             label: "Confirm";
                                             primary: false;
                                             loading: root.channel-account-retirement-in-flight;
-                                            enabled: !root.channel-account-retirement-in-flight;
+                                            enabled: !root.channel-account-retirement-in-flight
+                                                && !root.channel-account-dm-pairing-in-flight;
                                             clicked => {
                                                 root.channel-account-remove-clicked(c.name, account.account-id);
                                             }
@@ -2413,8 +2426,51 @@ export component SettingsView inherits Rectangle {
                                         NeothButton {
                                             label: "Cancel";
                                             primary: false;
-                                            enabled: !root.channel-account-retirement-in-flight;
+                                            enabled: !root.channel-account-retirement-in-flight
+                                                && !root.channel-account-dm-pairing-in-flight;
                                             clicked => { retirement-confirming = false; }
+                                        }
+                                    }
+                                    if c.configured && !confirming && !retirement-confirming && !pairing-confirming: NeothButton {
+                                        label: account.dm-pairing ? "Disable DM pairing" : "Enable DM pairing";
+                                        primary: false;
+                                        enabled: !root.channel-account-retirement-in-flight
+                                            && !root.channel-account-dm-pairing-in-flight;
+                                        clicked => { pairing-confirming = true; }
+                                    }
+                                    if c.configured && !confirming && pairing-confirming: HorizontalLayout {
+                                        spacing: Theme.space-tight;
+                                        Text {
+                                            text: account.dm-pairing
+                                                ? "Disable DM pairing for telegram/" + account.account-id + "? New pairing requests will be blocked; no sender is authorized automatically."
+                                                : "Enable DM pairing for telegram/" + account.account-id + "? Unknown Telegram DMs may submit pairing requests for later approval; no sender is authorized automatically.";
+                                            font-family: Theme.font-display;
+                                            font-size: Theme.font-size-caption;
+                                            color: Theme.accent-pink;
+                                            wrap: word-wrap;
+                                            accessible-role: text;
+                                            accessible-label: self.text;
+                                        }
+                                        NeothButton {
+                                            label: "Confirm";
+                                            primary: false;
+                                            loading: root.channel-account-dm-pairing-in-flight;
+                                            enabled: !root.channel-account-retirement-in-flight
+                                                && !root.channel-account-dm-pairing-in-flight;
+                                            clicked => {
+                                                root.channel-account-dm-pairing-clicked(
+                                                    c.name,
+                                                    account.account-id,
+                                                    !account.dm-pairing,
+                                                );
+                                            }
+                                        }
+                                        NeothButton {
+                                            label: "Cancel";
+                                            primary: false;
+                                            enabled: !root.channel-account-retirement-in-flight
+                                                && !root.channel-account-dm-pairing-in-flight;
+                                            clicked => { pairing-confirming = false; }
                                         }
                                     }
                                 }

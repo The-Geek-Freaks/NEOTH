@@ -155,6 +155,17 @@ neoth channel pairing approve telegram --account <account-id> --code <code>
 neoth channel pairing dismiss telegram --account <account-id> --request-id <id>
 ```
 
+Settings also displays each mapped account's configured DM-pairing state and
+offers an account-specific enable/disable confirmation. Enabling accepts
+eligible pairing requests for later approval; it does not automatically
+authorize a sender. Disabling blocks new pairing requests. Pairing and retirement
+controls wait while either account operation is in flight. The inventory refreshes
+only after a successful CLI exit and an exact-account receipt matching the
+requested policy; an unconfirmed result preserves the displayed state.
+The corresponding CLI disable command omits the presence flag `--enabled`.
+Pending-request list/approve/dismiss remains in the CLI. This new GUI surface
+still requires native and provider acceptance.
+
 Only a private, non-pinned direct-message sender can create a pending request.
 Requests are scoped to that account and its current binding, expire after one
 hour, and are capped at three. Pinned operator groups and the established
@@ -164,7 +175,7 @@ that account's pending state;
 another mapped account remains separate. A missing authenticated mapped receipt
 is surfaced as a failure and does not continue into the chat pipeline.
 
-The local selection, Clippy, build, AccountConfigContracts, formatting, CLI-doc
+The historical W29 CLI selection, Clippy, build, AccountConfigContracts, formatting, CLI-doc
 generation, final GUI check, and integrity checks passed. This feature does not
 provide pairing migration, physical-provider live acceptance, or complete
 multi-account readiness.

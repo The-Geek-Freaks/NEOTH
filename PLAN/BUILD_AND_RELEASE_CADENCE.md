@@ -53,13 +53,16 @@ profile in `SRC/Cargo.toml` and the release workflow remain unchanged. Preview
 provenance records Rust 1.93.0 and all four overrides; it is not evidence of
 optimized-release performance.
 
-The preview job has a 330-minute outer bound. Its CLI, migration/relay and GUI
-build steps have independent 90/15/60-minute bounds. Declared bounded steps total
-302 minutes, including remote acceptance, leaving 28 minutes for setup and runner
-overhead. Preview `35100765685` actually exhausted its previous 45-minute GUI
-limit after the core compile completed late in that step. The current-source
-recovery grants 15 additional GUI minutes while preserving the same reserve;
-it does not claim a measured warm-cache completion time. Compatible cache prefixes
+The preview job has a 360-minute outer bound. Its CLI, migration/relay and GUI
+build steps have independent 90/15/90-minute bounds. Declared bounded steps total
+332 minutes, including remote acceptance, leaving 28 minutes for setup and runner
+overhead. Preview `35534407998` on `7909081e` built the CLI in 46 minutes and
+completed migration/relay, then exhausted its 60-minute GUI bound. GUI warnings
+were still emitted about 49 minutes into that step; the log contains no compiler
+error. W119 grants 30 additional GitHub GUI minutes and the same increase to the
+outer job bound while retaining one compiler worker and the existing reserve.
+The interrupted cache and larger allowance do not prove a completed binary or
+a measured warm-cache completion time. Compatible cache prefixes
 include the compiler, static CRT, preview
 profile and lock hash. Restore order is fully completed Rust, interrupted,
 completed auxiliary, then completed CLI. The interrupted snapshot from the prior

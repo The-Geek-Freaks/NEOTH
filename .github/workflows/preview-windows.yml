@@ -23,7 +23,9 @@ jobs:
     runs-on: windows-2022
     # The preview keeps the release feature/profile identity but deliberately
     # uses preview-fast-v1 Cargo overrides for bounded feedback only.
-    timeout-minutes: 330
+    # The bounded steps total 332 minutes after the GUI allowance below;
+    # retain the existing 28-minute orchestration/cache/artifact margin.
+    timeout-minutes: 360
     env:
       PORTABLE_ACCEPTANCE_RECEIPTS: neoth portable acceptance receipts ${{ github.run_id }} ${{ github.run_attempt }}
     steps:
@@ -180,7 +182,11 @@ jobs:
           key: preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-aux-complete-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Build native desktop GUI
-        timeout-minutes: 60
+        # Preview 35534407998 reached the former 60-minute boundary while
+        # compiling with one worker and without compiler diagnostics.  Allow
+        # one bounded 30-minute recovery window; cache/profile/provenance and
+        # the separate acceptance limits remain unchanged.
+        timeout-minutes: 90
         working-directory: SRC
         run: cargo build --release --locked -p neothd-gui --features release-desktop --target x86_64-pc-windows-msvc
 

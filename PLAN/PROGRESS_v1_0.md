@@ -1,6 +1,6 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-09-20
+**Created:** 2026-05-24  **Last updated:** 2026-09-21
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
 > **W107 remote regression recovery (2026-09-20):** the completed earlier-source
@@ -79,6 +79,14 @@
 > **W117 BlueBubbles watched-chat filter (2026-09-20):** Settings now exposes the existing optional chat GUID CSV through the fourth private field. Nonblank input restricts chats; blank explicitly removes an existing filter while the mandatory sender policy remains. The real-builder regression covers trimming, null-clear and blank-sender refusal. Independent source review passed; remote execution, rendering/accessibility and actual provider acceptance remain required. See [W117 verification](../docs/gold-wave117-verification.md). No checkbox or count changes.
 >
 > W115 formatting head `e168dad6` passed Preflight `35539814060` and Code Quality `35539813948`. All local validation remains suspended. Useful earlier-source CI `35538895227` has passed strict Clippy and is executing Linux tests while macOS/Windows compile; it does not validate W115/W117.
+
+> **W116/W118 account lifecycle GUI (2026-09-21):** the native retirement fixture now invokes the real callback, resolver-selected bounded child and Slint event loop, covering duplicate admission, unconfirmed results and exact-receipt refresh on Linux/macOS. Mapped Telegram rows additionally project the authenticated account's configured DM-pairing boolean and offer exact-account enable/disable confirmation. The new GUI and existing CLI are joined by a real Clap parser regression for both presence-flag states. Missing/nonboolean policy is rejected; retirement and pairing changes mutually exclude one another. Pending request approval remains separate. See [W116](../docs/gold-wave116-verification.md) and [W118](../docs/gold-wave118-verification.md). Source review and remote/native/provider acceptance remain distinct; no checkbox closes.
+>
+> **W119 bounded preview recovery (2026-09-21):** preview `35534407998` on `7909081e` built CLI and companions but exhausted its 60-minute GUI limit without a logged compiler error. The GitHub GUI window is now 90 minutes, the job 360, with one compiler worker and the existing 28-minute reserve. Both workflow contract suites track the change. A fresh preview and its lifecycle/diff-impact acceptance remain required; see [W119](../docs/gold-wave119-verification.md).
+>
+> **W120 observed Linux recovery (2026-09-21):** source `78a4229f` in CI `35538895227` passed strict Clippy/doctests and ran 16850 Linux tests: 16848 passed, two failed, 20 skipped. One fixture expected raw MCP result JSON inside its escaped prompt envelope; it now requires the complete contiguous serialized payload. The Buddy failure exposed a fast-completion race that omitted the visible Run ID. The accepted terminal callback now republishes the same exact ID behind its existing revision fence; the failing identity/provenance assertions remain intact. See [W120](../docs/gold-wave120-verification.md). New-source GitHub execution remains required. Counts stay **1324/1015/307/2**, raw309/pre-tag308; all local validation remains suspended.
+>
+> W117 source `5d88e217` passed Code Quality `35540088414`. Preflight `35540088584` requested one assertion layout; the exact remote hunk is included with this combined batch. No local formatter ran.
 
 > **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 > now share Doctor's read-only home/managed-root readiness operation, with typed

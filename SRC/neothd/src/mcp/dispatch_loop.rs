@@ -3200,9 +3200,10 @@ mod tests {
                     2,
                     "one dispatched result reaches the next provider turn"
                 );
+                let second_prompt = &prompts[1];
                 assert!(
-                    prompts[1].contains("fixture-result:{\"path\": \"outline.rs\"}"),
-                    "ordinary external configured-provider result survives"
+                    second_prompt.contains(r#"fixture-result:{\"path\": \"outline.rs\"}"#),
+                    "ordinary external configured-provider result payload is absent from second prompt: {second_prompt}"
                 );
                 assert!(prompts[1].contains(
                     "configured_mcp: server_id=w95-provider-configured-read tool=codegraph_outline"

@@ -75,6 +75,9 @@ pub struct TelegramAccountProbe {
     pub channel_ref: ChannelRef,
     pub status: ProbeStatus,
     pub detail: String,
+    /// Exact effective inbound policy for this authenticated named account.
+    /// This is configuration only, never pairing-request or runtime state.
+    pub dm_pairing: bool,
 }
 
 /// Project the same exact account bundles that the daemon accepts, without
@@ -95,6 +98,10 @@ pub(crate) fn telegram_account_probes(
             channel_ref: account.channel_ref().clone(),
             status: ProbeStatus::Ok,
             detail: "configured account; readiness is static only".to_string(),
+            dm_pairing: matches!(
+                account.inbound_admission(),
+                crate::config::TelegramInboundAdmission::DmPairing { .. }
+            ),
         })
         .collect())
 }
@@ -629,7 +636,7 @@ pub fn misconfigured(v: &ChannelCredsView) -> Vec<ChannelHealth> {
 mod tests {
     use super::*;
     use crate::channels::registry::ChannelAccountId;
-    use crate::config::TelegramAccountConfig;
+    use crate::config::{TelegramAccountConfig, TelegramDmPairingConfig};
     use crate::config::credentials::{Credentials, TelegramAccountCredentials};
 
     fn mapped_pair(entries: &[(&str, u64, Option<&str>)]) -> crate::config::RuntimeConfigPair {
@@ -691,6 +698,33 @@ mod tests {
                 "projection leaked {forbidden}"
             );
         }
+    }
+
+    #[test]
+    fn telegram_account_projection_distinguishes_exact_pairing_policy() {
+        let mut pair = mapped_pair(&[
+            ("pairing-on", 111, Some("pairing-on-secret")),
+            ("pairing-off", 222, Some("pairing-off-secret")),
+        ]);
+        pair.config
+            .channel_accounts
+            .telegram
+            .get_mut(&ChannelAccountId::new("pairing-on").unwrap())
+            .unwrap()
+            .dm_pairing = Some(TelegramDmPairingConfig { enabled: true });
+
+        let rows = telegram_account_probes(&pair).unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|row| (row.channel_ref.account_id.as_str(), row.dm_pairing))
+                .collect::<Vec<_>>(),
+            vec![("pairing-off", false), ("pairing-on", true)]
+        );
+        let encoded = serde_json::to_string(&rows).unwrap();
+        assert!(!encoded.contains("pairing-on-secret"));
+        assert!(!encoded.contains("pairing-off-secret"));
+        assert!(!encoded.contains("111"));
+        assert!(!encoded.contains("222"));
     }
 
     #[test]

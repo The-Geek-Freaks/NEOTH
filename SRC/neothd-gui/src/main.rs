@@ -10994,99 +10994,8 @@ fn main() -> Result<()> {
         }
     });
 
-    // W114 — retire one selected mapped Telegram account through the existing
-    // explicit CLI authority. No parent-channel remove or inferred account is
-    // permitted, and the inventory changes only after an exact receipt.
-    let weak_channel_account_remove = window.as_weak();
-    window.on_channel_account_remove(move |channel, account| {
-        let channel = channel.to_string();
-        let account = account.to_string();
-        let Some(w) = weak_channel_account_remove.upgrade() else {
-            return;
-        };
-        if w.get_channel_account_retirement_in_flight() {
-            return;
-        }
-        if let Err(error) = panel_logic::telegram_account_remove_command(
-            Path::new("neoth"),
-            &channel,
-            &account,
-        ) {
-            push_toast(
-                &weak_channel_account_remove,
-                "warn",
-                "Retire Telegram account",
-                &format!("Retirement refused: {error}"),
-            );
-            return;
-        }
-        w.set_channel_account_retirement_in_flight(true);
-
-        let weak = weak_channel_account_remove.clone();
-        std::thread::spawn(move || {
-            let result = which_neothd()
-                .ok_or_else(|| "NEOTH CLI not found; reinstall or repair PATH".to_string())
-                .and_then(|bin| {
-                    telegram_account_remove_command(&bin, &channel, &account)
-                        .and_then(|mut command| {
-                            command.output().map_err(|error| {
-                                format!("start Telegram account retirement: {error}")
-                            })
-                        })
-                });
-            let (toast_kind, toast_title, toast_body, refresh) = match result {
-                Ok(output) if output.status.success() => {
-                    match panel_logic::parse_telegram_account_removed(&output.stdout, &account) {
-                        Some(true) => (
-                            "success",
-                            "Telegram account retired",
-                            format!("Telegram account {account} retired. Updating the account list."),
-                            true,
-                        ),
-                        _ => (
-                            "error",
-                            "Telegram account retirement unconfirmed",
-                            format!(
-                                "Telegram account {account}: CLI response did not confirm this selected account was removed."
-                            ),
-                            false,
-                        ),
-                    }
-                }
-                Ok(output) => {
-                    let detail = String::from_utf8_lossy(&output.stderr)
-                        .lines()
-                        .map(str::trim)
-                        .find(|line| !line.is_empty())
-                        .unwrap_or("unknown error")
-                        .to_string();
-                    (
-                        "error",
-                        "Telegram account retirement unconfirmed",
-                        format!("Telegram account {account}: CLI exited without a confirmed receipt: {detail}"),
-                        false,
-                    )
-                }
-                Err(error) => (
-                    "error",
-                    "Telegram account retirement failed",
-                    format!("Telegram account {account}: {error}"),
-                    false,
-                ),
-            };
-
-            let channels = refresh.then(fetch_channel_status);
-            push_toast(&weak, toast_kind, toast_title, &toast_body);
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(window) = weak.upgrade() {
-                    window.set_channel_account_retirement_in_flight(false);
-                    if let Some(channels) = channels {
-                        apply_channels(&window, channels);
-                    }
-                }
-            });
-        });
-    });
+    register_channel_account_retirement_callback(&window);
+    register_channel_account_dm_pairing_callback(&window);
 
     // GUI-overhaul feature parity — Memory "forget a topic". Preview runs the
     // dry-run (`neoth memory --forget <topic>`, no --confirm) and reports the
@@ -18582,6 +18491,221 @@ fn telegram_account_remove_command(
     Ok(command)
 }
 
+/// Build the named Telegram DM-pairing policy command with the GUI's normal
+/// child environment, log suppression, and hidden console setup.
+fn telegram_account_dm_pairing_command(
+    bin: &Path,
+    channel: &str,
+    account: &str,
+    enabled: bool,
+) -> Result<std::process::Command, String> {
+    let mut command = panel_logic::telegram_account_dm_pairing_command(bin, channel, account, enabled)?;
+    scrub_gui_control_environment(&mut command);
+    command
+        .env("NO_COLOR", "1")
+        .env("RUST_LOG_STYLE", "never")
+        .env("CLICOLOR", "0")
+        .env("NEOTH_LOG", "error");
+    suppress_console_window(&mut command);
+    Ok(command)
+}
+
+/// Register the named Telegram-account retirement path. The projected account
+/// inventory changes only after the selected account's exact CLI receipt.
+fn register_channel_account_retirement_callback(window: &MainWindow) {
+    let weak_channel_account_remove = window.as_weak();
+    window.on_channel_account_remove(move |channel, account| {
+        let channel = channel.to_string();
+        let account = account.to_string();
+        let Some(w) = weak_channel_account_remove.upgrade() else {
+            return;
+        };
+        if w.get_channel_account_retirement_in_flight()
+            || w.get_channel_account_dm_pairing_in_flight()
+        {
+            return;
+        }
+        if let Err(error) = panel_logic::telegram_account_remove_command(
+            Path::new("neoth"),
+            &channel,
+            &account,
+        ) {
+            push_toast(
+                &weak_channel_account_remove,
+                "warn",
+                "Retire Telegram account",
+                &format!("Retirement refused: {error}"),
+            );
+            return;
+        }
+        w.set_channel_account_retirement_in_flight(true);
+
+        let weak = weak_channel_account_remove.clone();
+        std::thread::spawn(move || {
+            let result = which_neothd()
+                .ok_or_else(|| "NEOTH CLI not found; reinstall or repair PATH".to_string())
+                .and_then(|bin| {
+                    telegram_account_remove_command(&bin, &channel, &account)
+                        .and_then(|mut command| {
+                            command.output().map_err(|error| {
+                                format!("start Telegram account retirement: {error}")
+                            })
+                        })
+                });
+            let (toast_kind, toast_title, toast_body, refresh) = match result {
+                Ok(output) if output.status.success() => {
+                    match panel_logic::parse_telegram_account_removed(&output.stdout, &account) {
+                        Some(true) => (
+                            "success",
+                            "Telegram account retired",
+                            format!("Telegram account {account} retired. Updating the account list."),
+                            true,
+                        ),
+                        _ => (
+                            "error",
+                            "Telegram account retirement unconfirmed",
+                            format!(
+                                "Telegram account {account}: CLI response did not confirm this selected account was removed."
+                            ),
+                            false,
+                        ),
+                    }
+                }
+                Ok(output) => {
+                    let detail = String::from_utf8_lossy(&output.stderr)
+                        .lines()
+                        .map(str::trim)
+                        .find(|line| !line.is_empty())
+                        .unwrap_or("unknown error")
+                        .to_string();
+                    (
+                        "error",
+                        "Telegram account retirement unconfirmed",
+                        format!("Telegram account {account}: CLI exited without a confirmed receipt: {detail}"),
+                        false,
+                    )
+                }
+                Err(error) => (
+                    "error",
+                    "Telegram account retirement failed",
+                    format!("Telegram account {account}: {error}"),
+                    false,
+                ),
+            };
+
+            let channels = refresh.then(fetch_channel_status);
+            push_toast(&weak, toast_kind, toast_title, &toast_body);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = weak.upgrade() {
+                    window.set_channel_account_retirement_in_flight(false);
+                    if let Some(channels) = channels {
+                        apply_channels(&window, channels);
+                    }
+                }
+            });
+        });
+    });
+}
+
+/// Register the named Telegram-account DM-pairing policy path. The projected
+/// account inventory changes only after the selected account's exact receipt.
+fn register_channel_account_dm_pairing_callback(window: &MainWindow) {
+    let weak_channel_account_dm_pairing = window.as_weak();
+    window.on_channel_account_dm_pairing(move |channel, account, enabled| {
+        let channel = channel.to_string();
+        let account = account.to_string();
+        let Some(w) = weak_channel_account_dm_pairing.upgrade() else {
+            return;
+        };
+        if w.get_channel_account_retirement_in_flight()
+            || w.get_channel_account_dm_pairing_in_flight()
+        {
+            return;
+        }
+        if let Err(error) = panel_logic::telegram_account_dm_pairing_command(
+            Path::new("neoth"),
+            &channel,
+            &account,
+            enabled,
+        ) {
+            push_toast(
+                &weak_channel_account_dm_pairing,
+                "warn",
+                "Set Telegram DM pairing",
+                &format!("Policy change refused: {error}"),
+            );
+            return;
+        }
+        w.set_channel_account_dm_pairing_in_flight(true);
+
+        let weak = weak_channel_account_dm_pairing.clone();
+        std::thread::spawn(move || {
+            let result = which_neothd()
+                .ok_or_else(|| "NEOTH CLI not found; reinstall or repair PATH".to_string())
+                .and_then(|bin| {
+                    telegram_account_dm_pairing_command(&bin, &channel, &account, enabled)
+                        .and_then(|mut command| {
+                            command.output().map_err(|error| {
+                                format!("start Telegram DM-pairing policy change: {error}")
+                            })
+                        })
+                });
+            let action = if enabled { "enabled" } else { "disabled" };
+            let (toast_kind, toast_title, toast_body, refresh) = match result {
+                Ok(output) if output.status.success() => match panel_logic::parse_telegram_account_dm_pairing_saved(
+                    &output.stdout,
+                    &account,
+                    enabled,
+                ) {
+                    Some(true) => (
+                        "success",
+                        "Telegram DM pairing updated",
+                        format!("Telegram DM pairing for {account} {action}. Updating the account list."),
+                        true,
+                    ),
+                    _ => (
+                        "error",
+                        "Telegram DM pairing unconfirmed",
+                        format!("Telegram account {account}: CLI response did not confirm the requested DM-pairing policy."),
+                        false,
+                    ),
+                },
+                Ok(output) => {
+                    let detail = String::from_utf8_lossy(&output.stderr)
+                        .lines()
+                        .map(str::trim)
+                        .find(|line| !line.is_empty())
+                        .unwrap_or("unknown error")
+                        .to_string();
+                    (
+                        "error",
+                        "Telegram DM pairing unconfirmed",
+                        format!("Telegram account {account}: CLI exited without a confirmed receipt: {detail}"),
+                        false,
+                    )
+                }
+                Err(error) => (
+                    "error",
+                    "Telegram DM pairing failed",
+                    format!("Telegram account {account}: {error}"),
+                    false,
+                ),
+            };
+
+            let channels = refresh.then(fetch_channel_status);
+            push_toast(&weak, toast_kind, toast_title, &toast_body);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = weak.upgrade() {
+                    window.set_channel_account_dm_pairing_in_flight(false);
+                    if let Some(channels) = channels {
+                        apply_channels(&window, channels);
+                    }
+                }
+            });
+        });
+    });
+}
+
 fn channel_remove_command(bin: &Path, channel: &str) -> std::process::Command {
     let mut command = spawn_neothd_plain(bin);
     command
@@ -21354,6 +21478,7 @@ fn start_native_coding_run(
                     let Some(window) = weak.upgrade() else {
                         return;
                     };
+                    window.set_native_coding_run_id(run_id.raw().to_string().into());
                     clear_native_coding_patch_approval(&window, None);
                     window.set_native_coding_running(false);
                     window.set_native_coding_cancel_pending(false);
@@ -24147,6 +24272,7 @@ fn apply_channels(window: &MainWindow, channels: Result<Vec<panel_logic::Channel
                         status: account.status.into(),
                         detail: account.detail.into(),
                         runtime: account.runtime.unwrap_or_default().into(),
+                        dm_pairing: account.dm_pairing,
                     })
                     .collect::<Vec<_>>(),
             )),
@@ -37303,7 +37429,7 @@ mod w58_gui_callback_runtime_tests {
         cell::Cell,
         io::{Read, Write},
         net::{TcpListener, TcpStream},
-        path::Path,
+        path::{Path, PathBuf},
         rc::Rc,
         sync::{
             Arc, Mutex,
@@ -37323,11 +37449,12 @@ mod w58_gui_callback_runtime_tests {
         code_map_controller::{AutomaticContextPresentationController, CodeMapLifecycleController},
         code_map_impact_controller::CodeMapImpactController,
         coding_controller::CodingController,
-        native_coding_terminal_bridge_accepts, neothd_executable_names,
+        apply_channels, native_coding_terminal_bridge_accepts, neothd_executable_names,
         publish_code_map_enrichment_readiness, register_buddy_code_map_impact_callback,
         register_buddy_code_map_status_callback, register_buddy_native_coding_callbacks,
         register_code_map_enrichment_readiness_callbacks, start_code_map_lifecycle_config_apply,
-        start_code_map_lifecycle_refresh, which_neothd,
+        register_channel_account_retirement_callback, start_code_map_lifecycle_refresh,
+        which_neothd,
     };
 
     static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -38589,13 +38716,314 @@ mod w58_gui_callback_runtime_tests {
         NATIVE_CODING_UI_REVISION.store(previous, std::sync::atomic::Ordering::Release);
     }
 
+    #[cfg(not(windows))]
+    struct W116ReleaseGuard {
+        path: PathBuf,
+        released: bool,
+    }
+
+    #[cfg(not(windows))]
+    impl W116ReleaseGuard {
+        fn new(path: PathBuf) -> Self {
+            Self {
+                path,
+                released: false,
+            }
+        }
+
+        fn release(&mut self) {
+            if !self.released {
+                std::fs::write(&self.path, b"release").expect("release blocked retirement fixture");
+                self.released = true;
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    impl Drop for W116ReleaseGuard {
+        fn drop(&mut self) {
+            self.release();
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn w116_inventory_json(accounts: &[&str]) -> String {
+        let descriptors = neothd::channels::registry::channel_descriptors();
+        let rows = descriptors
+            .iter()
+            .map(|descriptor| {
+                let accounts = (descriptor.id.as_str() == "telegram")
+                    .then(|| {
+                        accounts
+                            .iter()
+                            .map(|account| {
+                                serde_json::json!({
+                                    "channel_ref": {
+                                        "channel_id": "telegram",
+                                        "account_id": account,
+                                    },
+                                    "status": "ok",
+                                    "detail": "configured",
+                                    "runtime": "running",
+                                    "dm_pairing": false,
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                serde_json::json!({
+                    "name": descriptor.id.as_str(),
+                    "status": if descriptor.id.as_str() == "telegram" { "ok" } else { "not_configured" },
+                    "configured": descriptor.id.as_str() == "telegram",
+                    "detail": if descriptor.id.as_str() == "telegram" { "configured account map" } else { "not configured" },
+                    "accounts": accounts,
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({
+            "registry": {
+                "schema_version": neothd::channels::registry::CHANNEL_REGISTRY_SCHEMA_VERSION,
+                "channels": descriptors,
+            },
+            "channels": rows,
+            "configured": 1,
+            "total": descriptors.len(),
+        })
+        .to_string()
+    }
+
+    #[cfg(not(windows))]
+    fn w116_initial_channels() -> Vec<panel_logic::ChannelStatus> {
+        vec![panel_logic::ChannelStatus {
+            name: "telegram".to_string(),
+            status: "ok".to_string(),
+            configured: true,
+            detail: "existing projection".to_string(),
+            accounts: ["ops_a", "ops_b"]
+                .into_iter()
+                .map(|account_id| panel_logic::ChannelAccountStatus {
+                    account_id: account_id.to_string(),
+                    status: "ok".to_string(),
+                    detail: "configured".to_string(),
+                    runtime: Some("running".to_string()),
+                    dm_pairing: false,
+                })
+                .collect(),
+            setup_secret_mask: [false; 6],
+        }]
+    }
+
+    #[cfg(not(windows))]
+    fn w116_stage_fake_neoth(fixture: &TempDir) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let bin = fixture.path().join("neoth");
+        std::fs::write(
+            &bin,
+            r#"#!/bin/sh
+base="${0%/*}"
+mode=$(/bin/cat "$base/mode")
+if [ "$1" = channel ] && [ "$2" = account ] && [ "$3" = remove ] && [ "$4" = telegram ] && [ "$5" = --account ] && [ "$6" = ops_b ] && [ "$7" = --output ] && [ "$8" = json ] && [ "$#" -eq 8 ]; then
+  printf 'remove:%s\n' "$6" >> "$base/calls"
+  if [ "$mode" = blocked_malformed ]; then
+    remaining=500
+    while [ ! -f "$base/release" ] && [ "$remaining" -gt 0 ]; do
+      /bin/sleep 0.01
+      remaining=$((remaining - 1))
+    done
+    if [ ! -f "$base/release" ]; then
+      printf 'fixture release timeout\n' >&2
+      exit 70
+    fi
+  fi
+  case "$mode" in
+    blocked_malformed|malformed) printf 'not-json\n' ;;
+    mismatch) printf '{"channel":"telegram","account":"ops_a","removed":true}\n' ;;
+    false) printf '{"channel":"telegram","account":"ops_b","removed":false}\n' ;;
+    nonzero) printf 'controlled failure\n' >&2; exit 9 ;;
+    success) printf '{"channel":"telegram","account":"ops_b","removed":true}\n' ;;
+    *) printf 'unexpected mode: %s\n' "$mode" >&2; exit 71 ;;
+  esac
+  exit 0
+fi
+if [ "$1" = channel ] && [ "$2" = list ] && [ "$3" = --output ] && [ "$4" = json ] && [ "$#" -eq 4 ]; then
+  printf 'list\n' >> "$base/calls"
+  /bin/cat "$base/inventory.json"
+  exit 0
+fi
+printf 'unexpected argv: %s %s %s %s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" >&2
+exit 72
+"#,
+        )
+        .expect("write executable retirement fixture");
+        let mut permissions = std::fs::metadata(&bin)
+            .expect("read fixture permissions")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&bin, permissions).expect("mark retirement fixture executable");
+        bin
+    }
+
+    #[cfg(not(windows))]
+    fn w116_call_lines(path: &Path) -> Vec<String> {
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[cfg(not(windows))]
+    fn w116_account_ids(window: &MainWindow) -> Vec<String> {
+        window
+            .get_channels()
+            .row_data(0)
+            .expect("Telegram projection row")
+            .accounts
+            .iter()
+            .map(|account| account.account_id.to_string())
+            .collect()
+    }
+
+    #[cfg(not(windows))]
+    fn w116_wait_for_remove_start(calls: &Path) {
+        for _ in 0..500 {
+            if w116_call_lines(calls) == ["remove:ops_b"] {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("timed out waiting for the blocked retirement child");
+    }
+
+    #[cfg(not(windows))]
+    fn w116_pump_until_retirement_settles(window: &MainWindow) {
+        let settled = Rc::new(Cell::new(false));
+        let observed_settled = Rc::clone(&settled);
+        let weak = window.as_weak();
+        let ticks = Rc::new(Cell::new(0_u16));
+        let observed_ticks = Rc::clone(&ticks);
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                let Some(window) = weak.upgrade() else {
+                    let _ = slint::quit_event_loop();
+                    return;
+                };
+                if !window.get_channel_account_retirement_in_flight() {
+                    observed_settled.set(true);
+                    let _ = slint::quit_event_loop();
+                    return;
+                }
+                let next = observed_ticks.get().saturating_add(1);
+                observed_ticks.set(next);
+                if next >= 500 {
+                    let _ = slint::quit_event_loop();
+                }
+            },
+        );
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("pump bounded retirement callback event loop");
+        drop(timer);
+        assert!(settled.get(), "timed out waiting for retirement callback settlement");
+    }
+
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt() {
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial GUI fixture environment");
+        let fixture = TempDir::new().expect("create retirement fixture directory");
+        let bin = w116_stage_fake_neoth(&fixture);
+        let mode = fixture.path().join("mode");
+        let calls = fixture.path().join("calls");
+        let release = fixture.path().join("release");
+        std::fs::write(&calls, b"").expect("initialize fixture call log");
+        std::fs::write(&mode, b"blocked_malformed").expect("select blocked malformed fixture");
+        std::fs::write(fixture.path().join("inventory.json"), w116_inventory_json(&["ops_a"]))
+            .expect("write canonical refreshed inventory");
+        let _path = PathGuard::install(fixture.path());
+        assert_eq!(
+            std::fs::canonicalize(which_neothd().expect("resolve staged retirement CLI"))
+                .expect("canonicalize resolved retirement CLI"),
+            std::fs::canonicalize(&bin).expect("canonicalize staged retirement CLI"),
+            "the real resolver must choose this staged CLI fixture"
+        );
+
+        let window = MainWindow::new().expect("construct generated MainWindow");
+        apply_channels(&window, Ok(w116_initial_channels()));
+        register_channel_account_retirement_callback(&window);
+        let mut release_guard = W116ReleaseGuard::new(release);
+
+        window.invoke_channel_account_remove("telegram".into(), "ops_b".into());
+        assert!(window.get_channel_account_retirement_in_flight());
+        w116_wait_for_remove_start(&calls);
+        window.invoke_channel_account_remove("telegram".into(), "ops_b".into());
+        assert_eq!(w116_call_lines(&calls), ["remove:ops_b"]);
+        release_guard.release();
+        w116_pump_until_retirement_settles(&window);
+        assert_eq!(w116_call_lines(&calls), ["remove:ops_b"]);
+        assert_eq!(w116_account_ids(&window), ["ops_a", "ops_b"]);
+
+        for mode_name in ["mismatch", "false", "nonzero"] {
+            std::fs::write(&mode, mode_name).expect("select controlled retirement outcome");
+            window.invoke_channel_account_remove("telegram".into(), "ops_b".into());
+            assert!(
+                window.get_channel_account_retirement_in_flight(),
+                "{mode_name} must enter the real in-flight state before terminal settlement"
+            );
+            w116_pump_until_retirement_settles(&window);
+            assert_eq!(w116_account_ids(&window), ["ops_a", "ops_b"]);
+            assert_eq!(
+                w116_call_lines(&calls)
+                    .iter()
+                    .filter(|line| line.as_str() == "remove:ops_b")
+                    .count(),
+                match mode_name {
+                    "mismatch" => 2,
+                    "false" => 3,
+                    "nonzero" => 4,
+                    _ => unreachable!("controlled mode"),
+                },
+                "{mode_name} must launch exactly one remove child"
+            );
+            assert!(
+                !w116_call_lines(&calls).iter().any(|line| line == "list"),
+                "{mode_name} must not invoke channel list readback"
+            );
+        }
+
+        std::fs::write(&mode, b"success").expect("select exact successful fixture");
+        window.invoke_channel_account_remove("telegram".into(), "ops_b".into());
+        assert!(window.get_channel_account_retirement_in_flight());
+        w116_pump_until_retirement_settles(&window);
+        assert_eq!(
+            w116_call_lines(&calls)
+                .iter()
+                .filter(|line| line.as_str() == "remove:ops_b")
+                .count(),
+            5,
+            "each controlled outcome and the exact receipt launch one remove child"
+        );
+        assert_eq!(
+            w116_call_lines(&calls).iter().filter(|line| line.as_str() == "list").count(),
+            1,
+            "only the exact receipt performs the canonical list readback"
+        );
+        assert_eq!(w116_account_ids(&window), ["ops_a"]);
+    }
+
     #[cfg(target_os = "macos")]
-    const MACOS_NATIVE_HARNESS_TESTS: [&str; 5] = [
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 6] = [
         "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
         "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
         "w58_gui_callback_runtime_tests::w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint",
         "w58_gui_callback_runtime_tests::w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it",
+        "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt",
     ];
 
     /// Native macOS Nextest bridge. Keep its stdout restricted to the libtest
@@ -38666,6 +39094,9 @@ mod w58_gui_callback_runtime_tests {
                     }
                     "w58_gui_callback_runtime_tests::w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it" => {
                         w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it()
+                    }
+                    "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt" => {
+                        w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt()
                     }
                     _ => return Err(format!("unknown macOS native GUI test {test_name:?}")),
                 }

@@ -22,6 +22,7 @@ CI_TEXT = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
 PREFLIGHT_TEXT = (WORKFLOWS / "preflight.yml").read_text(encoding="utf-8")
 RELEASE_TEXT = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
 SECURITY_TEXT = (WORKFLOWS / "security.yml").read_text(encoding="utf-8")
+PREVIEW_WINDOWS_TEXT = (WORKFLOWS / "preview-windows.yml").read_text(encoding="utf-8")
 
 
 def trigger_block(workflow: str) -> str:
@@ -713,6 +714,23 @@ class CiCadenceContractTests(unittest.TestCase):
         junit = steps["Upload JUnit report"]
         self.assertIn("if: always()", junit)
         self.assertIn("path: SRC/target/nextest/ci/junit.xml", junit)
+
+    def test_windows_preview_gui_timeout_remains_bounded_and_serial(self) -> None:
+        preview = workflow_jobs(PREVIEW_WINDOWS_TEXT)["preview-windows-x64"]
+        self.assertIn("timeout-minutes: 360", preview)
+        self.assertIn("CARGO_BUILD_JOBS: '1'", PREVIEW_WINDOWS_TEXT)
+        self.assertIn("CARGO_PROFILE_RELEASE_OPT_LEVEL: '1'", PREVIEW_WINDOWS_TEXT)
+        self.assertIn(
+            "preview-windows-x64-rust-1.93-static-crt-preview-fast-v1-interrupted-",
+            preview,
+        )
+
+        gui_build = workflow_steps(preview)["Build native desktop GUI"]
+        self.assertIn("timeout-minutes: 90", gui_build)
+        self.assertIn(
+            "cargo build --release --locked -p neothd-gui --features release-desktop --target x86_64-pc-windows-msvc",
+            gui_build,
+        )
 
     def test_macos_native_gui_discovery_requires_exact_suite_ownership(self) -> None:
         suites = {

@@ -23,6 +23,42 @@ pub mod gui_action;
 pub mod panel_logic;
 
 #[test]
+fn mapped_pairing_gui_command_parses_with_the_real_cli_for_both_states() {
+    use clap::Parser as _;
+    use neothd::cli::{ChannelAccountAction, ChannelAction, Cli, Commands, OutputFormat};
+
+    for requested in [true, false] {
+        let command = panel_logic::telegram_account_dm_pairing_command(
+            std::path::Path::new("neoth"),
+            "telegram",
+            "ops_b",
+            requested,
+        )
+        .expect("build the production GUI command");
+        let parsed = Cli::try_parse_from(
+            std::iter::once(command.get_program()).chain(command.get_args()),
+        )
+        .expect("the real CLI must accept the GUI's enable and disable argv");
+        assert!(matches!(parsed.output, OutputFormat::Json));
+        match parsed.command {
+            Commands::Channel {
+                action:
+                    ChannelAction::Account(ChannelAccountAction::SetDmPairing {
+                        channel,
+                        account,
+                        enabled,
+                    }),
+            } => {
+                assert_eq!(channel, "telegram");
+                assert_eq!(account.as_str(), "ops_b");
+                assert_eq!(enabled, requested);
+            }
+            _ => panic!("GUI command must select the exact account pairing transaction"),
+        }
+    }
+}
+
+#[test]
 fn mapped_telegram_account_result_binds_to_the_selected_account_headlessly() {
     let result = neothd::cli::channel::ChannelTestResult {
         channel: "telegram".to_owned(),

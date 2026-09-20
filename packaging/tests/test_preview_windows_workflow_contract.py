@@ -37,7 +37,7 @@ class PreviewWindowsWorkflowContractTest(unittest.TestCase):
         self.assertIn("preview-windows-x64:", self.workflow)
         self.assertEqual(self.workflow.count("\n  preview-windows-x64:"), 1)
         self.assertIn("runs-on: windows-2022", self.workflow)
-        self.assertIn("timeout-minutes: 330", self.workflow)
+        self.assertIn("timeout-minutes: 360", self.workflow)
         self.assertIn("toolchain: '1.93.0'", self.workflow)
         self.assertNotIn("push:", self.workflow)
         self.assertNotIn("tags:", self.workflow)
@@ -91,7 +91,7 @@ class PreviewWindowsWorkflowContractTest(unittest.TestCase):
         for step_name, timeout in (
             ("Build native CLI and compatibility executables", 90),
             ("Build native migration and relay executables", 15),
-            ("Build native desktop GUI", 60),
+            ("Build native desktop GUI", 90),
         ):
             self.assertIn(f"timeout-minutes: {timeout}", self.step(step_name))
 

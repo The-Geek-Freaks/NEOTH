@@ -32,6 +32,10 @@ These are unfinished v1 contracts, not accepted post-1.0 limitations:
   already required by their private setup requests; no inbound policy is relaxed.
   BlueBubbles also exposes its optional watched-chat GUID filter in Settings,
   with explicit blank-to-clear semantics and the required sender unchanged.
+  Mapped Telegram account rows project their configured DM-pairing policy and
+  expose exact-account enable/disable confirmation through the existing CLI;
+  pending-request approval remains a separate CLI operation. Native runtime
+  and provider acceptance of the new GUI controls remain pending.
   Durable cross-store credential recovery, persisted
   multi-account identity, descriptor-rendered forms and OpenClaw
   apply/status/rollback plus runtime-behaviour parity remain open.

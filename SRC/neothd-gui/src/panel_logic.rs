@@ -2496,6 +2496,8 @@ pub struct ChannelAccountStatus {
     pub status: String,
     pub detail: String,
     pub runtime: Option<String>,
+    /// Effective static DM-pairing admission for this exact mapped account.
+    pub dm_pairing: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -2505,6 +2507,7 @@ struct ParsedChannelAccountRow {
     detail: String,
     #[serde(default)]
     runtime: Option<String>,
+    dm_pairing: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -2832,6 +2835,7 @@ fn parse_channel_accounts(
             status: row.status,
             detail: detail.to_string(),
             runtime,
+            dm_pairing: row.dm_pairing,
         });
     }
     Ok(accounts)
@@ -2941,6 +2945,34 @@ pub fn telegram_account_remove_command(
     Ok(command)
 }
 
+/// Build the exact public DM-pairing policy command for one named Telegram
+/// account. The selected account remains explicit and canonical; no default or
+/// sole-account inference is permitted.
+pub fn telegram_account_dm_pairing_command(
+    bin: &std::path::Path,
+    channel: &str,
+    account: &str,
+    enabled: bool,
+) -> Result<std::process::Command, String> {
+    if channel != "telegram" {
+        return Err("only Telegram has named DM-pairing policy".to_string());
+    }
+    let account_id = canonical_telegram_account_id(account)?;
+    let mut command = std::process::Command::new(bin);
+    command
+        .arg("channel")
+        .arg("account")
+        .arg("set-dm-pairing")
+        .arg("telegram")
+        .arg("--account")
+        .arg(account_id.as_str());
+    if enabled {
+        command.arg("--enabled");
+    }
+    command.arg("--output").arg("json");
+    Ok(command)
+}
+
 /// Parse W21's secret-free named-account acknowledgement. It binds every
 /// returned identity field before the modal may clear its entered secrets.
 pub fn parse_telegram_account_saved(stdout: &[u8], expected_account: &str) -> Option<bool> {
@@ -2978,6 +3010,34 @@ pub fn parse_telegram_account_removed(stdout: &[u8], expected_account: &str) -> 
     (acknowledgement.channel == "telegram"
         && acknowledged_account == expected_account
         && acknowledgement.removed)
+        .then_some(true)
+}
+
+/// Parse the exact secret-free DM-pairing receipt. Only the requested canonical
+/// Telegram account, requested policy value, and `saved: true` confirm a
+/// changed policy and permit an inventory refresh.
+pub fn parse_telegram_account_dm_pairing_saved(
+    stdout: &[u8],
+    expected_account: &str,
+    expected_enabled: bool,
+) -> Option<bool> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct TelegramAccountDmPairingAcknowledgement {
+        channel: String,
+        account: String,
+        dm_pairing: bool,
+        saved: bool,
+    }
+
+    let expected_account = canonical_telegram_account_id(expected_account).ok()?;
+    let acknowledgement: TelegramAccountDmPairingAcknowledgement =
+        serde_json::from_slice(stdout).ok()?;
+    let acknowledged_account = canonical_telegram_account_id(&acknowledgement.account).ok()?;
+    (acknowledgement.channel == "telegram"
+        && acknowledged_account == expected_account
+        && acknowledgement.dm_pairing == expected_enabled
+        && acknowledgement.saved)
         .then_some(true)
 }
 
@@ -9583,7 +9643,10 @@ mod tests {
         .expect("BlueBubbles sender and watched chats are complete");
         let configured: serde_json::Value = serde_json::from_slice(configured.as_slice()).unwrap();
         assert_eq!(configured["fields"]["allowed_sender"], "owner@example.org");
-        assert_eq!(configured["fields"]["channels_csv"], "chat-guid-a,chat-guid-b");
+        assert_eq!(
+            configured["fields"]["channels_csv"],
+            "chat-guid-a,chat-guid-b"
+        );
 
         let cleared = build_channel_credential_request(
             "imessage_bluebubbles",
@@ -10080,9 +10143,9 @@ mod tests {
                 "name": "telegram", "status": "ok", "configured": true,
                 "detail": "configured account map",
                 "accounts": [
-                    { "channel_ref": { "channel_id": "telegram", "account_id": "default" }, "status": "ok", "detail": "ready", "runtime": "running" },
-                    { "channel_ref": { "channel_id": "telegram", "account_id": "ops_a" }, "status": "warn", "detail": "configured", "runtime": "configured_not_started" },
-                    { "channel_ref": { "channel_id": "telegram", "account_id": "ops_b" }, "status": "error", "detail": "failed", "runtime": "failed" }
+                    { "channel_ref": { "channel_id": "telegram", "account_id": "default" }, "status": "ok", "detail": "ready", "runtime": "running", "dm_pairing": false },
+                    { "channel_ref": { "channel_id": "telegram", "account_id": "ops_a" }, "status": "warn", "detail": "configured", "runtime": "configured_not_started", "dm_pairing": true },
+                    { "channel_ref": { "channel_id": "telegram", "account_id": "ops_b" }, "status": "error", "detail": "failed", "runtime": "failed", "dm_pairing": false }
                 ]
             }],
             "configured": 1, "total": 1,
@@ -10102,6 +10165,9 @@ mod tests {
             Some("configured_not_started")
         );
         assert_eq!(rows[0].accounts[2].runtime.as_deref(), Some("failed"));
+        assert!(!rows[0].accounts[0].dm_pairing);
+        assert!(rows[0].accounts[1].dm_pairing);
+        assert!(!rows[0].accounts[2].dm_pairing);
 
         let old_payload = serde_json::json!({
             "registry": { "schema_version": 1, "channels": [registry_row("telegram", &[])] },
@@ -10160,7 +10226,7 @@ mod tests {
         let account = |channel_id: &str, account_id: &str, runtime: &str| {
             serde_json::json!({
                 "channel_ref": { "channel_id": channel_id, "account_id": account_id },
-                "status": "ok", "detail": "configured", "runtime": runtime,
+                "status": "ok", "detail": "configured", "runtime": runtime, "dm_pairing": false,
             })
         };
         let payload = |parent: &str, status: &str, accounts: Vec<serde_json::Value>| {
@@ -10237,6 +10303,44 @@ mod tests {
                 .to_string()
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn parse_channel_status_requires_boolean_dm_pairing_for_mapped_accounts() {
+        let payload = |dm_pairing: serde_json::Value| {
+            serde_json::json!({
+                "registry": { "schema_version": 1, "channels": [registry_row("telegram", &[])] },
+                "channels": [{
+                    "name": "telegram",
+                    "status": "ok",
+                    "configured": true,
+                    "detail": "configured account map",
+                    "accounts": [{
+                        "channel_ref": { "channel_id": "telegram", "account_id": "ops_a" },
+                        "status": "ok",
+                        "detail": "ready",
+                        "runtime": "running",
+                        "dm_pairing": dm_pairing,
+                    }],
+                }],
+                "configured": 1,
+                "total": 1,
+            })
+        };
+        assert!(
+            parse_channel_status(&payload(serde_json::Value::String("true".into())).to_string())
+                .is_err(),
+            "DM pairing state must not accept a string truth value"
+        );
+        let mut missing = payload(serde_json::Value::Bool(true));
+        missing["channels"][0]["accounts"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("dm_pairing");
+        assert!(
+            parse_channel_status(&missing.to_string()).is_err(),
+            "mapped rows without a pairing state must not invent disabled"
         );
     }
 
@@ -10466,6 +10570,93 @@ mod tests {
             parse_telegram_account_removed(
                 br#"{"channel":"telegram","account":"ops_b","removed":true}"#,
                 "OPS_B"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn named_telegram_account_dm_pairing_command_and_ack_bind_the_exact_policy() {
+        for (enabled, expected_args) in [
+            (true, vec!["--enabled"]),
+            (false, vec![]),
+        ] {
+            let command = telegram_account_dm_pairing_command(
+                std::path::Path::new("neoth"),
+                "telegram",
+                "ops_b",
+                enabled,
+            )
+            .unwrap();
+            let args = command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            let mut expected = vec![
+                "channel".to_string(),
+                "account".to_string(),
+                "set-dm-pairing".to_string(),
+                "telegram".to_string(),
+                "--account".to_string(),
+                "ops_b".to_string(),
+            ];
+            expected.extend(expected_args.into_iter().map(str::to_string));
+            expected.extend(["--output".to_string(), "json".to_string()]);
+            assert_eq!(args, expected);
+            assert_eq!(
+                parse_telegram_account_dm_pairing_saved(
+                    format!(
+                        r#"{{"channel":"telegram","account":"ops_b","dm_pairing":{enabled},"saved":true}}"#
+                    )
+                    .as_bytes(),
+                    "ops_b",
+                    enabled,
+                ),
+                Some(true)
+            );
+        }
+        assert!(
+            telegram_account_dm_pairing_command(
+                std::path::Path::new("neoth"),
+                "telegram",
+                "default",
+                true,
+            )
+            .is_ok(),
+            "a mapped default is explicit and never inferred"
+        );
+        for (channel, account) in [("slack", "ops_b"), ("telegram", ""), ("telegram", "OPS_B")] {
+            assert!(
+                telegram_account_dm_pairing_command(
+                    std::path::Path::new("neoth"),
+                    channel,
+                    account,
+                    true,
+                )
+                .is_err(),
+                "noncanonical or non-Telegram account selection must not spawn a policy command"
+            );
+        }
+        for acknowledgement in [
+            br#"{"channel":"slack","account":"ops_b","dm_pairing":true,"saved":true}"#.as_slice(),
+            br#"{"channel":"telegram","account":"ops_a","dm_pairing":true,"saved":true}"#.as_slice(),
+            br#"{"channel":"telegram","account":"ops_b","dm_pairing":false,"saved":true}"#.as_slice(),
+            br#"{"channel":"telegram","account":"ops_b","dm_pairing":true,"saved":false}"#.as_slice(),
+            br#"{"channel":"telegram","account":"ops_b","dm_pairing":true,"saved":true,"ok":true}"#.as_slice(),
+            br#"{"channel":"telegram","account":"OPS_B","dm_pairing":true,"saved":true}"#.as_slice(),
+            br#"{"channel":"telegram","account":"ops_b","dm_pairing":"true","saved":true}"#.as_slice(),
+            br#"not-json"#.as_slice(),
+        ] {
+            assert_eq!(
+                parse_telegram_account_dm_pairing_saved(acknowledgement, "ops_b", true),
+                None
+            );
+        }
+        assert_eq!(
+            parse_telegram_account_dm_pairing_saved(
+                br#"{"channel":"telegram","account":"ops_b","dm_pairing":true,"saved":true}"#,
+                "OPS_B",
+                true,
             ),
             None
         );

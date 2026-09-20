@@ -77,6 +77,9 @@ pub struct ChannelAccountStatus {
     pub channel_ref: ChannelRef,
     pub status: ProbeStatus,
     pub detail: String,
+    /// Exact static DM-pairing admission policy for this named account.
+    /// It never represents pending pairing requests or live adapter state.
+    pub dm_pairing: bool,
     /// Supervisor-owned local adapter state for this exact current binding.
     /// Omitted when no fresh, live projection can prove it, so configuration
     /// alone never becomes a runtime claim.
@@ -153,6 +156,7 @@ fn channel_account_status(probe: &TelegramAccountProbe) -> ChannelAccountStatus 
         channel_ref: probe.channel_ref.clone(),
         status: probe.status,
         detail: probe.detail.clone(),
+        dm_pairing: probe.dm_pairing,
         runtime: None,
     }
 }
@@ -5879,6 +5883,10 @@ mod tests {
                 .all(|account| account.runtime.is_none()),
             "the pure static helper must never infer a runtime state"
         );
+        assert!(
+            status.accounts.iter().all(|account| !account.dm_pairing),
+            "a map without explicit pairing policy must project pinned admission"
+        );
         let json = serde_json::to_value(&status).unwrap();
         assert!(
             json["accounts"]
@@ -5888,6 +5896,37 @@ mod tests {
                 .all(|account| account.get("runtime").is_none()),
             "the optional runtime child must preserve P1 static JSON until a live match exists"
         );
+    }
+
+    #[test]
+    fn channel_status_projects_pairing_enabled_and_disabled_accounts_without_secrets() {
+        let mut pair = telegram_probe_pair(
+            &[("pairing-on", 111, Some("pairing-on-secret")), ("pairing-off", 222, Some("pairing-off-secret"))],
+            &[("pairing-on", Some("pairing-on-secret")), ("pairing-off", Some("pairing-off-secret"))],
+        );
+        pair.config
+            .channel_accounts
+            .telegram
+            .get_mut(&ChannelAccountId::new("pairing-on").unwrap())
+            .unwrap()
+            .dm_pairing = Some(crate::config::TelegramDmPairingConfig { enabled: true });
+
+        let status = channel_statuses(&pair.config, &pair.credentials)
+            .into_iter()
+            .find(|row| row.name == "telegram")
+            .unwrap();
+        assert_eq!(
+            status
+                .accounts
+                .iter()
+                .map(|account| (account.channel_ref.account_id.as_str(), account.dm_pairing))
+                .collect::<Vec<_>>(),
+            vec![("pairing-off", false), ("pairing-on", true)]
+        );
+        let encoded = serde_json::to_string(&status).unwrap();
+        for forbidden in ["pairing-on-secret", "pairing-off-secret", "111", "222"] {
+            assert!(!encoded.contains(forbidden), "projection leaked {forbidden}");
+        }
     }
 
     fn account_runtime<'rows>(
