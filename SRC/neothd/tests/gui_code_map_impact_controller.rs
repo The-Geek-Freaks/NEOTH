@@ -363,11 +363,7 @@ fn completed_impact_requires_matching_lifecycle_root_and_physical_identity() {
         &lifecycle_identity,
     ));
     assert!(
-        !panel_logic::code_map_impact_matches_lifecycle(
-            &analysis,
-            &root,
-            &raw_identity,
-        ),
+        !panel_logic::code_map_impact_matches_lifecycle(&analysis, &root, &raw_identity,),
         "the lifecycle card carries a redacted root digest, never the raw physical identity"
     );
     assert!(

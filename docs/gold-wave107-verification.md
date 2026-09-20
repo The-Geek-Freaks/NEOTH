@@ -68,6 +68,12 @@ The existing workflow-contract test checks the updated bounds.
 
 ## Evidence status
 
+W107 was published as `08531fa33a2b85733ee3d5fb3d9bba5084dae838` after independent
+source review. Code Quality `35532704376` passed. Preflight `35532704971`
+requested only assertion layout changes in the configuration and shared GUI test
+files; its exact Rustfmt output is applied in the follow-up without local
+formatting or semantic changes. Fresh final-source gates remain required.
+
 All W107 formatting, strict lint, compilation, native regressions and portable
 acceptance require fresh GitHub-hosted results. No local compiler, formatter,
 parser, test, Git fixture, product binary or GUI was executed on the workstation.

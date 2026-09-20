@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W95_W107_REVIEWED_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "6a37557357b8758f5f826a9f7e655ddca0823110",
+  "base": "08531fa33a2b85733ee3d5fb3d9bba5084dae838",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 51424,
-    "sha256": "A44067AC64885126095BB7E83C432BE7A945CC0036A962262EED3EECF796B5F3"
+    "sha256": "8D22F628704118205D008F314546A50400D17D6D6F56413192A9C68D4FD5C49B"
   },
   "sourceInputs": 297,
   "requiredNativeTests": [
@@ -294,7 +294,7 @@
     {
       "test": "admitted_limits_remain_bound_to_real_analysis_until_the_next_operation",
       "sourcePath": "SRC/neothd/tests/gui_code_map_impact_controller.rs",
-      "sourceSha256": "EAF675BBFA81D8B606305428457F80DA08E8153C49A04BC81373D52684ED1754",
+      "sourceSha256": "3377088D1FFF54DE939CAA7FFD7B3EB567893B6096E6C4A271593CDDA186BFA9",
       "junitClass": "neoth::gui_code_map_impact_controller"
     },
     {
@@ -306,7 +306,7 @@
     {
       "test": "config::code_map_config_tests::configured_mcp_read_path_selectors_are_exact_and_bounded",
       "sourcePath": "SRC/neothd/src/config/mod.rs",
-      "sourceSha256": "ADFF561334052DF040CF541B022BCA53AC33FA9F0EB471900258471CF341F2BF",
+      "sourceSha256": "1306257901AD70700652386C0EFDF2DE0B8B68B59E8CFDFBC25A37A7D285FA28",
       "junitClass": "neoth"
     },
     {
@@ -391,7 +391,7 @@
       "test": "completed_impact_requires_matching_lifecycle_root_and_physical_identity",
       "sourcePath": "SRC/neothd/tests/gui_code_map_impact_controller.rs",
       "junitClass": "neoth::gui_code_map_impact_controller",
-      "sourceSha256": "EAF675BBFA81D8B606305428457F80DA08E8153C49A04BC81373D52684ED1754"
+      "sourceSha256": "3377088D1FFF54DE939CAA7FFD7B3EB567893B6096E6C4A271593CDDA186BFA9"
     }
   ],
   "requiredGuiTests": [
@@ -667,6 +667,13 @@
     "previewRun": 35113132073,
     "preview": "ALL_BUILDS_PASSED_LIFECYCLE_FAILED_STDOUT_DIAGNOSTICS",
     "newSourceGates": "PENDING_GITHUB",
-    "localValidationRan": false
+    "localValidationRan": false,
+    "formatFollowup": {
+      "run": 35532704971,
+      "codeQuality": 35532704376,
+      "codeQualityConclusion": "success",
+      "change": "Only exact remote assertion layout in config and sharedGUI tests",
+      "localFormatterRan": false
+    }
   }
 }

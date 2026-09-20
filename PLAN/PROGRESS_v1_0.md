@@ -17,6 +17,8 @@
 > local validation ran and no roadmap checkbox closes. Counts stay
 > **1324/1015/307/2**, raw309/pre-tag308.
 >
+> W107 formatting follow-up applies only the assertion layouts emitted by GitHub Preflight `35532704971`; Code Quality `35532704376` passed the preceding source. Fresh final-source gates remain required.
+>
 > **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 > now share Doctor's read-only home/managed-root readiness operation, with typed
 > disabled/ready/unavailable results separate from selected-root status. GUI

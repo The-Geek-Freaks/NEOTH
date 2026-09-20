@@ -1,8 +1,8 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W107-configured-read-readiness-and-observed-runtime-repairs",
-  "base": "6a37557357b8758f5f826a9f7e655ddca0823110",
-  "capturedUtc": "2026-09-20T19:30:10.7747861Z",
+  "base": "08531fa33a2b85733ee3d5fb3d9bba5084dae838",
+  "capturedUtc": "2026-09-20T19:33:55.3419186Z",
   "validationStatus": "W107_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
   "scopeNote": "297 cumulative inputs; W107 real binary stdout regression, actual MCP child/config/GUI fixture repairs, bounded Windows CI budget. All dynamic validation GitHub-hosted. No roadmap closure.",
   "files": [
@@ -793,8 +793,8 @@
     },
     {
       "path": "SRC/neothd/src/config/mod.rs",
-      "bytes": 145186,
-      "sha256": "ADFF561334052DF040CF541B022BCA53AC33FA9F0EB471900258471CF341F2BF"
+      "bytes": 145364,
+      "sha256": "1306257901AD70700652386C0EFDF2DE0B8B68B59E8CFDFBC25A37A7D285FA28"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",
@@ -1428,8 +1428,8 @@
     },
     {
       "path": "SRC/neothd/tests/gui_code_map_impact_controller.rs",
-      "bytes": 14997,
-      "sha256": "EAF675BBFA81D8B606305428457F80DA08E8153C49A04BC81373D52684ED1754"
+      "bytes": 14951,
+      "sha256": "3377088D1FFF54DE939CAA7FFD7B3EB567893B6096E6C4A271593CDDA186BFA9"
     },
     {
       "path": "SRC/neothd/tests/interface_binary_contract.rs",
