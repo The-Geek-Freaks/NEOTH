@@ -21,7 +21,18 @@ and 120-minute job bound. See [W107 verification](../docs/gold-wave107-verificat
 Fresh full CI and portable acceptance remain required on the new source. No
 local validation ran and no roadmap checkbox closes. Counts stay
 **1324/1015/307/2**, raw309/pre-tag308.
-W107 formatting follow-up applies only the assertion layouts emitted by GitHub Preflight `35532704971`; Code Quality `35532704376` passed the preceding source. Fresh final-source gates remain required.
+W107 source `3922ee4b` passed Preflight `35532847982` and Code Quality `35532847770`. Full CI `35532960640` then exposed two undefined Slint theme tokens and two Rust test ownership errors; nine component jobs passed. CI and Windows preview `35532961776` are confirmed cancelled after those compile failures. W109 applies the four minimal corrections; fresh native and portable acceptance remain required.
+
+**W108/W109 Matrix configuration and compile recovery (2026-09-20):**
+The Matrix setup form and `channel add matrix --matrix-store-path` now expose
+its existing state-store setting. Nonblank input replaces the path; omitted or
+blank input preserves an existing custom store during credential updates.
+Explicit removal clears the configuration without deleting or migrating the
+store. The GUI uses private stdin with unchanged secret slots. W109 corrects
+the observed Slint token and MCP test ownership failures. See
+[W108/W109 verification](../docs/gold-wave108-verification.md). Independent source
+review and GitHub execution remain separate; all local validation is suspended.
+R4-07 and all counts remain unchanged: **1324/1015/307/2**, raw309/pre-tag308.
 
 **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 now share Doctor's read-only home/managed-root readiness operation, with typed
@@ -3381,7 +3392,7 @@ evidence is Channel **69/69**, probes **14/14**, slash **56/56**, registry
 GUI/Slint check. The current GUI behavior suite is **372/372**. This closes
 registry duplication and the named
 credential/reconfiguration bypasses, not R4-07: `line_webhook_port`, `irc_port`,
-`irc_tls`, `irc_allowed_nick` and `matrix_store_path` still lack full CLI/GUI
+`irc_tls` and `irc_allowed_nick` still lack full CLI/GUI
 configuration surfaces; file publication plus OS-keychain compensation still
 needs a durable intent/recovery journal for a process crash between the two
 stores. Slack, WhatsApp Business, Discord, Signal, LINE and Twitch still

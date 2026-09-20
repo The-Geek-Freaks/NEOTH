@@ -390,7 +390,7 @@ identity or mention policy. Do not expose its tool-bearing pipeline to an
 untrusted stream audience. Transport membership is never treated as operator
 authorization for the other inbound adapters.
 
-Five advanced runtime settings are currently file-only and remain explicit
+Four advanced runtime settings are currently file-only and remain explicit
 GUI/CLI parity work for v1.0. Set them under `credentials.yaml` only when the
 safe defaults do not fit:
 
@@ -400,7 +400,6 @@ safe defaults do not fit:
 | `irc_port` | IRC server port; defaults to `6697`. |
 | `irc_tls` | IRC transport security; defaults to `true`. |
 | `irc_allowed_nick` | Optional secondary nick check; it never replaces the required authenticated `irc_allowed_account`. |
-| `matrix_store_path` | Owner-restricted Matrix crypto/session store; defaults to `~/.neoth/matrix_store/`. |
 
 These keys are documented for existing operators, not presented as a
 zero-friction setup claim. Descriptor-rendered forms for them, durable recovery
@@ -640,6 +639,16 @@ break E2EE continuity. The resulting session is stored atomically at
 `~/.neoth/matrix_store/neoth-matrix-session.json` inside the owner-restricted
 crypto-store directory. Tokens and passwords are never printed by probes or
 errors.
+
+Choose a different crypto/session directory with `neoth channel add matrix
+--matrix-store-path "C:\Matrix state"` alongside the usual account and policy
+arguments, or use the optional **State store path** field in the GUI's Matrix
+setup. Both save `matrix_store_path` through the existing channel configuration
+operation. A nonblank path replaces the configured value; omission or a blank
+field preserves an existing custom path when updating credentials. If no path
+has ever been configured, the default is `matrix_store` beneath the selected
+NEOTH home. Configuring a path does not move or migrate an existing E2EE store;
+choose the directory containing the account's intended session state.
 
 Matrix policy is fail-closed at the boundaries:
 

@@ -1300,6 +1300,10 @@ pub enum ChannelAction {
         /// Matrix room IDs (`!id:server`) or Baileys group JIDs (`…@g.us`), CSV.
         #[arg(long)]
         allowed_rooms_csv: Option<String>,
+        /// Matrix E2EE/sync-state directory. Omit to use the default or retain
+        /// an existing Matrix store during credential reconfiguration.
+        #[arg(long)]
+        matrix_store_path: Option<String>,
         /// Matrix only: explicitly permit plaintext rooms. Encrypted rooms are
         /// required when this flag is absent.
         #[arg(long)]
@@ -2206,6 +2210,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 channels_csv,
                 allowed_sender,
                 allowed_rooms_csv,
+                matrix_store_path,
                 allow_plaintext,
             } => {
                 let flags = channel::ChannelAddFlags {
@@ -2225,6 +2230,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                     channels_csv,
                     allowed_sender,
                     allowed_rooms_csv,
+                    matrix_store_path,
                     allow_plaintext,
                 };
                 channel::run_add(&ch, &flags, &global_output).await?;

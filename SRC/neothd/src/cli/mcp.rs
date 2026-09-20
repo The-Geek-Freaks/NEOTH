@@ -1492,7 +1492,7 @@ reason = "test block before external call"
                     .expect("W95 executable")
                     .canonicalize()
                     .expect("canonical W95 executable");
-                let trusted = codegraph_server_config(&executable, Some(database));
+                let trusted = codegraph_server_config(&executable, Some(database.clone()));
                 let mut selected = trusted.clone();
                 selected.id = "w95-cli-read-fixture".into();
                 let snapshot = McpServers {
@@ -1751,7 +1751,7 @@ code_map:
                         case_home.path(),
                         move |_| {
                             count.fetch_add(1, Ordering::SeqCst);
-                            async { panic!("{label}: authority rejection reached selected child start") }
+                            async move { panic!("{label}: authority rejection reached selected child start") }
                         },
                     )
                     .await

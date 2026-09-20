@@ -1173,9 +1173,10 @@ export component SettingsView inherits Rectangle {
     callback channel-account-save-clicked(string, string, string, int);
     callback channel-remove-clicked(string);
     /// GAP-19 — Add a new channel credential from the GUI.
-    /// Args: channel_type + six typed fields + one boolean policy flag. Rust
-    /// maps them to a private-stdin credential envelope for every registry channel.
-    callback channel-add-clicked(string, string, string, string, string, string, string, bool, int);
+    /// Args: channel_type + six typed credential fields + Matrix's optional
+    /// public state-store path + one boolean policy flag. Rust maps them to a
+    /// private-stdin credential envelope for every registry channel.
+    callback channel-add-clicked(string, string, string, string, string, string, string, string, bool, int);
     /// GUI-overhaul feature parity — Memory forget. Preview is a dry run
     /// (`neoth memory --forget <t>`); confirm wipes (`… --forget <t> --confirm`).
     callback memory-forget-preview-clicked(string);
@@ -1723,6 +1724,9 @@ export component SettingsView inherits Rectangle {
                 property <string> ch-f4: "";
                 property <string> ch-f5: "";
                 property <string> ch-f6: "";
+                // Matrix's E2EE/sync store is public local configuration, so
+                // it does not consume or change the six secret-mask slots.
+                property <string> ch-matrix-store-path: "";
                 property <bool> ch-flag: false;
                 // The pre-existing positional registry projection is already
                 // authoritative for the generic form's type/secret binding.
@@ -1747,6 +1751,7 @@ export component SettingsView inherits Rectangle {
                         ch-f4 = "";
                         ch-f5 = "";
                         ch-f6 = "";
+                        ch-matrix-store-path = "";
                         ch-flag = false;
                         // Reconfigure is intentionally type-locked. If its
                         // backing registry row changes, close rather than
@@ -1770,6 +1775,7 @@ export component SettingsView inherits Rectangle {
                         ch-f4 = "";
                         ch-f5 = "";
                         ch-f6 = "";
+                        ch-matrix-store-path = "";
                         ch-flag = false;
                         type-index = 0;
                     }
@@ -1812,6 +1818,7 @@ export component SettingsView inherits Rectangle {
                             ch-f4 = "";
                             ch-f5 = "";
                             ch-f6 = "";
+                            ch-matrix-store-path = "";
                             ch-flag = false;
                             account-id = "";
                             account-token = "";
@@ -2041,6 +2048,7 @@ export component SettingsView inherits Rectangle {
                             NeothLineEdit { placeholder-text: "Account password (--password, alternative)"; password: ch-f4-secret; text <=> ch-f4; }
                             NeothLineEdit { placeholder-text: "Allowed sender @user:server (--allowed-sender, optional)"; password: ch-f5-secret; text <=> ch-f5; }
                             NeothLineEdit { placeholder-text: "Allowed room IDs CSV (--allowed-rooms-csv, optional)"; password: ch-f6-secret; text <=> ch-f6; }
+                            NeothLineEdit { placeholder-text: "State store path (--matrix-store-path; blank keeps current/default)"; password: false; text <=> ch-matrix-store-path; }
                             NeothCheckBox { text: "Allow plaintext rooms (--allow-plaintext)"; checked <=> ch-flag; }
                         }
                         // twitch: user + OAuth + rooms
@@ -2094,6 +2102,7 @@ export component SettingsView inherits Rectangle {
                                     ch-f4 = "";
                                     ch-f5 = "";
                                     ch-f6 = "";
+                                    ch-matrix-store-path = "";
                                     ch-flag = false;
                                     type-index = 0;
                                 }
@@ -2107,7 +2116,7 @@ export component SettingsView inherits Rectangle {
                                 clicked => {
                                     root.channel-add-clicked(
                                         selected-channel-type,
-                                        ch-f1, ch-f2, ch-f3, ch-f4, ch-f5, ch-f6, ch-flag,
+                                        ch-f1, ch-f2, ch-f3, ch-f4, ch-f5, ch-f6, ch-matrix-store-path, ch-flag,
                                         editor-generation
                                     );
                                     // Keep values and the form open until Rust confirms
@@ -2202,6 +2211,7 @@ export component SettingsView inherits Rectangle {
                                     ch-f4 = "";
                                     ch-f5 = "";
                                     ch-f6 = "";
+                                    ch-matrix-store-path = "";
                                     ch-flag = false;
                                     account-id = "";
                                     account-token = "";
@@ -4982,10 +4992,10 @@ export component SettingsView inherits Rectangle {
                             border-width: 1px;
                             border-color: root.code-map-enrichment-readiness-error ? Theme.accent-pink : Theme.border-subtle;
                             border-radius: Theme.radius-sm;
-                            background: Theme.surface-raised;
+                            background: Theme.surface-2;
                             VerticalBox {
                                 padding: Theme.space-tight;
-                                spacing: Theme.space-2xs;
+                                spacing: Theme.space-1;
                                 Text {
                                     text: "CODEGRAPH ENRICHMENT READINESS · NEOTH HOME / MANAGED ROOTS";
                                     font-family: Theme.font-display;

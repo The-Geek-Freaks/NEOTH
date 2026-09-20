@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W107_REVIEWED_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "08531fa33a2b85733ee3d5fb3d9bba5084dae838",
+  "status": "W95_W109_REVIEWED_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "base": "3922ee4b7c221028e7b101685d2423f27b109040",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 51424,
-    "sha256": "8D22F628704118205D008F314546A50400D17D6D6F56413192A9C68D4FD5C49B"
+    "bytes": 51450,
+    "sha256": "2A01EF88BB8FC2E14C238B75344AAD421D9BE198293D74174BF101B889BE3645"
   },
   "sourceInputs": 297,
   "requiredNativeTests": [
@@ -24,37 +24,37 @@
     {
       "test": "cli::mcp::tests::w61_direct_cli_generated_stdio_receipts_bind_child_metadata_before_return",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "50C00C97979F659F5E5725C295259124ED932881A76FF1E4AC9FC88B5EB78052",
+      "sourceSha256": "629922F4442C056F83557D45AC3742643550AFFA2AB706CBB770384859229E11",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_invalid_child_binding_fails_after_called_without_receipt",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "50C00C97979F659F5E5725C295259124ED932881A76FF1E4AC9FC88B5EB78052",
+      "sourceSha256": "629922F4442C056F83557D45AC3742643550AFFA2AB706CBB770384859229E11",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_generated_is_error_returns_only_the_child_error_without_final_claim",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "50C00C97979F659F5E5725C295259124ED932881A76FF1E4AC9FC88B5EB78052",
+      "sourceSha256": "629922F4442C056F83557D45AC3742643550AFFA2AB706CBB770384859229E11",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_nongenerated_child_success_retains_legacy_no_receipt_behavior",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "50C00C97979F659F5E5725C295259124ED932881A76FF1E4AC9FC88B5EB78052",
+      "sourceSha256": "629922F4442C056F83557D45AC3742643550AFFA2AB706CBB770384859229E11",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_final_receipt_append_failure_returns_error_after_real_child_called_audit",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "50C00C97979F659F5E5725C295259124ED932881A76FF1E4AC9FC88B5EB78052",
+      "sourceSha256": "629922F4442C056F83557D45AC3742643550AFFA2AB706CBB770384859229E11",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w61_direct_cli_receipt_uses_the_child_selected_root_for_empty_and_nonempty_results",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "50C00C97979F659F5E5725C295259124ED932881A76FF1E4AC9FC88B5EB78052",
+      "sourceSha256": "629922F4442C056F83557D45AC3742643550AFFA2AB706CBB770384859229E11",
       "junitClass": "neoth"
     },
     {
@@ -324,7 +324,7 @@
     {
       "test": "cli::mcp::tests::w95_direct_cli_configured_read_path_keeps_selected_results_and_same_snapshot_descriptor",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "50C00C97979F659F5E5725C295259124ED932881A76FF1E4AC9FC88B5EB78052",
+      "sourceSha256": "629922F4442C056F83557D45AC3742643550AFFA2AB706CBB770384859229E11",
       "junitClass": "neoth"
     },
     {
@@ -348,19 +348,19 @@
     {
       "test": "cli::mcp::tests::w97_direct_cli_selected_read_negatives_preserve_child_result_without_sidecar",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "50C00C97979F659F5E5725C295259124ED932881A76FF1E4AC9FC88B5EB78052",
+      "sourceSha256": "629922F4442C056F83557D45AC3742643550AFFA2AB706CBB770384859229E11",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w97_selected_call_suppresses_sidecar_after_post_call_source_freshness_change",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "50C00C97979F659F5E5725C295259124ED932881A76FF1E4AC9FC88B5EB78052",
+      "sourceSha256": "629922F4442C056F83557D45AC3742643550AFFA2AB706CBB770384859229E11",
       "junitClass": "neoth"
     },
     {
       "test": "cli::mcp::tests::w102_selected_read_preserves_authority_gates_before_child_start",
       "sourcePath": "SRC/neothd/src/cli/mcp.rs",
-      "sourceSha256": "50C00C97979F659F5E5725C295259124ED932881A76FF1E4AC9FC88B5EB78052",
+      "sourceSha256": "629922F4442C056F83557D45AC3742643550AFFA2AB706CBB770384859229E11",
       "junitClass": "neoth"
     },
     {
@@ -392,6 +392,36 @@
       "sourcePath": "SRC/neothd/tests/gui_code_map_impact_controller.rs",
       "junitClass": "neoth::gui_code_map_impact_controller",
       "sourceSha256": "3377088D1FFF54DE939CAA7FFD7B3EB567893B6096E6C4A271593CDDA186BFA9"
+    },
+    {
+      "test": "cli::channel::tests::private_credential_request_accepts_canonical_scoped_fields",
+      "sourcePath": "SRC/neothd/src/cli/channel.rs",
+      "sourceSha256": "00375AF21DAD472599D3995DD1C5C5BF81D3AF26A34DE7863F1CD0F0338425B5",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::channel::tests::private_credential_request_rejects_alias_version_and_wrong_scope",
+      "sourcePath": "SRC/neothd/src/cli/channel.rs",
+      "sourceSha256": "00375AF21DAD472599D3995DD1C5C5BF81D3AF26A34DE7863F1CD0F0338425B5",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::channel::tests::matrix_store_path_stages_only_when_nonblank_and_preserves_existing_state",
+      "sourcePath": "SRC/neothd/src/cli/channel.rs",
+      "sourceSha256": "00375AF21DAD472599D3995DD1C5C5BF81D3AF26A34DE7863F1CD0F0338425B5",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::channel::tests::stage_remove_matrix_store_only_reports_and_clears_configuration",
+      "sourcePath": "SRC/neothd/src/cli/channel.rs",
+      "sourceSha256": "00375AF21DAD472599D3995DD1C5C5BF81D3AF26A34DE7863F1CD0F0338425B5",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::channel::tests::flags_into_fields_maps_all_fields",
+      "sourcePath": "SRC/neothd/src/cli/channel.rs",
+      "sourceSha256": "00375AF21DAD472599D3995DD1C5C5BF81D3AF26A34DE7863F1CD0F0338425B5",
+      "junitClass": "neoth"
     }
   ],
   "requiredGuiTests": [
@@ -401,7 +431,10 @@
     "w58_gui_callback_runtime_tests::w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint",
     "w58_gui_callback_runtime_tests::w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it",
     "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
-    "panel_logic::tests::lifecycle_impact_identity_uses_the_redacted_digest_and_rejects_another_root"
+    "panel_logic::tests::lifecycle_impact_identity_uses_the_redacted_digest_and_rejects_another_root",
+    "panel_logic::tests::private_channel_builder_preserves_typed_fields_without_cli_flags",
+    "panel_logic::tests::private_channel_builder_routes_matrix_store_path_without_changing_secret_slots",
+    "tests::matrix_store_path_request_uses_private_stdin_without_path_or_secret_in_argv"
   ],
   "requiredGuiClass": "neothd-gui::bin/neothd-gui",
   "additionalGuiCopies": {
@@ -494,6 +527,12 @@
       "sha256": "1B08BB1083E7A7B3D116F022F58BB72F1AD692FD7F532371679B543653F4A300",
       "verdict": "APPROVE_FOR_REMOTE_VALIDATION_ADMISSION",
       "executionClaim": false
+    },
+    {
+      "record": "work/gold-20260906/wave108-matrix-store-path/REVIEW-FINAL.md",
+      "sha256": "AF46DC5027695A2E2900712C9A86D1C4ED6DDF32E4B1EB3B0B311EFD83B5C785",
+      "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
+      "executionClaim": false
     }
   ],
   "priorCi": {
@@ -519,9 +558,9 @@
     "otherPassingJobs": 11
   },
   "priorLightRemote": {
-    "headSha": "8a999c4cd8a844977ca9b911a820978e8aa7a2f3",
-    "preflight": 35114647017,
-    "codeQuality": 35114646826,
+    "headSha": "3922ee4b7c221028e7b101685d2423f27b109040",
+    "preflight": 35532847982,
+    "codeQuality": 35532847770,
     "conclusion": "success",
     "appliesToCurrentSource": false
   },
@@ -550,7 +589,7 @@
   "hostConstraint": "ALL_LOCAL_VALIDATION_SUSPENDED; bounded source/metadata reads, edits and serialized Git/GitHub only",
   "releaseReady": false,
   "pending": [
-    "Fresh exact-source GitHub Rustfmt/static contracts/strict Clippy/actual workspace Nextest for62native and7GUIidentities",
+    "Fresh exact-source GitHub Rustfmt/static contracts/strict Clippy/actual workspace Nextest for 69 native and 10 GUI identities",
     "W58 native GUI callback now includes Disabled/Unavailable/Ready, diagnosticCLI resolution and drained late-result publication; same macOS mainthread identity",
     "Provider-loop selected-route cancellation remains outside the W102 direct-CLI fixture; direct CLI deliberately uses unbound cancellation",
     "Portable, installed, visual and provider-live acceptance for final source; selector editing/Buddy enable-disable-explain remain open; no ROAD checkbox closes"
@@ -563,13 +602,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1642812,
-      "sha256": "653C76D0EAE69B4F05F3E5E1804C0A9A6146016FF2878E37ADBCAF7C7DB69E5F"
+      "bytes": 1644144,
+      "sha256": "ECA503AE3566A170879793C3A55CA3423E8D03E6D47BD2B71E7DFB4E7DD182D9"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 490678,
-      "sha256": "D4C7678937217289502091EA122075607561F39FA4ACB5FF467CBCA4C4E0FB47"
+      "bytes": 493134,
+      "sha256": "C77FA63CB5A0D47C2A97B69FC367385BCDE3569A0D72F5AA2D637698AE216ED6"
     }
   ],
   "remoteFormatCorrection": {
@@ -675,5 +714,24 @@
       "change": "Only exact remote assertion layout in config and sharedGUI tests",
       "localFormatterRan": false
     }
+  },
+  "wave108_109": {
+    "report": "docs/gold-wave108-verification.md",
+    "previousHead": "3922ee4b7c221028e7b101685d2423f27b109040",
+    "priorFullCi": 35532960640,
+    "priorPreview": 35532961776,
+    "cancellationReadback": "BOTH_COMPLETED_CANCELLED",
+    "priorPassingComponentJobs": 9,
+    "observedErrors": [
+      "Slint unknown Theme.surface-raised",
+      "Slint unknown Theme.space-2xs",
+      "E0382 moved database",
+      "E0373 borrowed label"
+    ],
+    "changes": "Matrix optional store path via CLI and private GUI stdin; preserve absent/blank, clear on explicit removal; canonical theme tokens and test ownership repairs",
+    "nativeRequired": 69,
+    "guiRequired": 10,
+    "execution": "PENDING_GITHUB_ONLY",
+    "localValidationRan": false
   }
 }

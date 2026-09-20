@@ -72,10 +72,23 @@ W107 was published as `08531fa33a2b85733ee3d5fb3d9bba5084dae838` after independe
 source review. Code Quality `35532704376` passed. Preflight `35532704971`
 requested only assertion layout changes in the configuration and shared GUI test
 files; its exact Rustfmt output is applied in the follow-up without local
-formatting or semantic changes. Fresh final-source gates remain required.
+formatting or semantic changes.
 
-All W107 formatting, strict lint, compilation, native regressions and portable
-acceptance require fresh GitHub-hosted results. No local compiler, formatter,
+The resulting commit `3922ee4b7c221028e7b101685d2423f27b109040` passed
+[Preflight 35532847982](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35532847982)
+and [Code Quality 35532847770](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35532847770).
+[Full CI 35532960640](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35532960640)
+and [Windows preview 35532961776](https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35532961776)
+were dispatched on that exact commit. Nine component jobs passed, including
+actual-binary Gold smoke. Linux, Windows and beta GUI compilation failed on
+undefined `Theme.surface-raised` and `Theme.space-2xs`; the SSH feature job
+reported test-only `E0382` and `E0373` in `cli/mcp.rs`. Both runs are confirmed
+cancelled after those failures. The remaining platform/portable result is not
+acceptance. W109 corrects the four diagnosed source sites alongside W108;
+that combined source needs fresh static, compile, native and portable gates.
+
+W107 strict lint, compilation, native regressions and portable acceptance still
+require fresh GitHub-hosted results. No local compiler, formatter,
 parser, test, Git fixture, product binary or GUI was executed on the workstation.
 The source manifest and required-test matrix retain separate source and execution
 states. The selector test identity is corrected to the actual

@@ -31,6 +31,12 @@ test evidence. macOS completed 16810 tests in that prior run (16805 pass, five
 fail, 23 skipped); its existing bounds remain unchanged. New-source full CI is
 required after the observed regressions are repaired.
 
+W109 cancels only the known-uncompilable W107 CI/preview source after completed
+jobs expose concrete errors. Both cancellations were read back as completed.
+After the reviewed Matrix configuration and four compile repairs are published,
+new exact-source Preflight/Code Quality precede a fresh full CI and preview.
+Successful earlier-source component jobs remain historical evidence.
+
 ## Unreleased Windows preview
 
 `.github/workflows/preview-windows.yml` is a manual GitHub-hosted x64 build for

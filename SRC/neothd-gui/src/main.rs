@@ -10787,9 +10787,9 @@ fn main() -> Result<()> {
     // contains no secret values. On success the canonical channel inventory is
     // refreshed exactly like on_channel_remove.
     let weak_channel_add = window.as_weak();
-    window.on_channel_add(move |ctype, f1, f2, f3, f4, f5, f6, flag, editor_generation| {
+    window.on_channel_add(move |ctype, f1, f2, f3, f4, f5, f6, matrix_store_path, flag, editor_generation| {
         let ctype = ctype.to_string();
-        let request_result = panel_logic::build_channel_credential_request(
+        let request_result = panel_logic::build_channel_credential_request_with_matrix_store_path(
             &ctype,
             [
                 f1.as_str(),
@@ -10800,6 +10800,7 @@ fn main() -> Result<()> {
                 f6.as_str(),
             ],
             flag,
+            matrix_store_path.as_str(),
         );
 
         match request_result {
@@ -34597,6 +34598,41 @@ mod tests {
             ]
         );
         assert!(!args.iter().any(|arg| arg.contains(secret)));
+    }
+
+    #[test]
+    fn matrix_store_path_request_uses_private_stdin_without_path_or_secret_in_argv() {
+        let path = "C:/Matrix state with spaces";
+        let secret = "MATRIX_PROCESS_LIST_SECRET_SENTINEL";
+        let request = panel_logic::build_channel_credential_request_with_matrix_store_path(
+            "matrix",
+            [
+                "https://matrix.example.org",
+                "@bot:example.org",
+                secret,
+                "",
+                "@owner:example.org",
+                "",
+            ],
+            false,
+            path,
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(request.as_slice()).unwrap();
+        assert_eq!(body["fields"]["matrix_store_path"], path);
+        assert_eq!(body["fields"]["token"], secret);
+
+        let command = channel_credential_command(Path::new("neoth"));
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(args, ["channel", "set-credentials", "--output", "json"]);
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg.contains(secret) || arg.contains(path))
+        );
     }
 
     fn empty_snapshot() -> WizardSnapshot {

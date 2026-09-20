@@ -2115,10 +2115,26 @@ fn zeroize_json_strings(value: &mut serde_json::Value) {
 /// Build the strict private-stdin credential envelope for one
 /// registry-projected GUI form. This stays pure so every canonical registry ID
 /// is regression-tested without ever translating secret values into argv.
+///
+/// Production callers pass Matrix's optional state-store value explicitly;
+/// this compatibility helper keeps existing six-slot regressions focused.
+#[cfg(test)]
 pub fn build_channel_credential_request(
     channel_id: &str,
     fields: [&str; 6],
     flag: bool,
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    build_channel_credential_request_with_matrix_store_path(channel_id, fields, flag, "")
+}
+
+/// Same private-stdin builder with Matrix's optional public state-store path.
+/// It deliberately stays outside the six registry-projected credential slots:
+/// the path is not secret data and must not alter their password-mask layout.
+pub fn build_channel_credential_request_with_matrix_store_path(
+    channel_id: &str,
+    fields: [&str; 6],
+    flag: bool,
+    matrix_store_path: &str,
 ) -> Result<Zeroizing<Vec<u8>>, String> {
     let [f1, f2, f3, f4, _f5, _f6] = fields;
     let [n1, n2, n3, n4, n5, n6] = fields.map(str::trim);
@@ -2287,6 +2303,8 @@ pub fn build_channel_credential_request(
                 "password": secret_present(f4).then_some(f4),
                 "allowed_sender": (!n5.is_empty()).then_some(n5),
                 "allowed_rooms_csv": (!n6.is_empty()).then_some(n6),
+                "matrix_store_path": (!matrix_store_path.trim().is_empty())
+                    .then_some(matrix_store_path.trim()),
                 "allow_plaintext": flag,
             })
         }
@@ -9304,7 +9322,53 @@ mod tests {
         let matrix: serde_json::Value = serde_json::from_slice(matrix.as_slice()).unwrap();
         assert_eq!(matrix["fields"]["token"], "matrix-secret");
         assert_eq!(matrix["fields"]["password"], serde_json::Value::Null);
+        assert_eq!(matrix["fields"]["matrix_store_path"], serde_json::Value::Null);
         assert_eq!(matrix["fields"]["allow_plaintext"], true);
+    }
+
+    #[test]
+    fn private_channel_builder_routes_matrix_store_path_without_changing_secret_slots() {
+        let request = build_channel_credential_request_with_matrix_store_path(
+            "matrix",
+            [
+                "https://matrix.example.org",
+                "@neoth:example.org",
+                "MATRIX_GUI_SECRET_SENTINEL",
+                "",
+                "@owner:example.org",
+                "!room:example.org",
+            ],
+            true,
+            "  /srv/neoth/matrix-state  ",
+        )
+        .unwrap();
+        let envelope: serde_json::Value = serde_json::from_slice(request.as_slice()).unwrap();
+        assert_eq!(
+            envelope["fields"]["matrix_store_path"],
+            "/srv/neoth/matrix-state"
+        );
+        assert_eq!(envelope["fields"]["allow_plaintext"], true);
+        assert_eq!(
+            envelope["fields"]["token"],
+            "MATRIX_GUI_SECRET_SENTINEL"
+        );
+
+        let blank = build_channel_credential_request_with_matrix_store_path(
+            "matrix",
+            [
+                "https://matrix.example.org",
+                "@neoth:example.org",
+                "MATRIX_GUI_SECRET_SENTINEL",
+                "",
+                "@owner:example.org",
+                "!room:example.org",
+            ],
+            false,
+            " \t ",
+        )
+        .unwrap();
+        let blank: serde_json::Value = serde_json::from_slice(blank.as_slice()).unwrap();
+        assert_eq!(blank["fields"]["matrix_store_path"], serde_json::Value::Null);
     }
 
     #[test]

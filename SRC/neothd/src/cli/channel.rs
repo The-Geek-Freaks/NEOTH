@@ -1203,6 +1203,9 @@ pub struct ChannelAddFields {
     pub allowed_sender: Option<String>,
     /// Matrix room-id allowlist, comma-separated (`!id:server`).
     pub allowed_rooms_csv: Option<String>,
+    /// Matrix E2EE/sync-state directory. Public local configuration, never a
+    /// credential; a blank or omitted value preserves an existing store.
+    pub matrix_store_path: Option<String>,
     /// Matrix-only explicit opt-out from the encrypted-room requirement.
     pub allow_plaintext: bool,
 }
@@ -1261,6 +1264,7 @@ struct ChannelCredentialWireFields {
     channels_csv: Option<String>,
     allowed_sender: Option<String>,
     allowed_rooms_csv: Option<String>,
+    matrix_store_path: Option<String>,
     allow_plaintext: Option<bool>,
 }
 
@@ -1320,6 +1324,9 @@ impl ChannelCredentialWireFields {
         if self.allowed_rooms_csv.is_some() {
             names.push("allowed_rooms_csv");
         }
+        if self.matrix_store_path.is_some() {
+            names.push("matrix_store_path");
+        }
         if self.allow_plaintext.is_some() {
             names.push("allow_plaintext");
         }
@@ -1344,6 +1351,7 @@ impl ChannelCredentialWireFields {
             channels_csv: self.channels_csv,
             allowed_sender: self.allowed_sender,
             allowed_rooms_csv: self.allowed_rooms_csv,
+            matrix_store_path: self.matrix_store_path,
             allow_plaintext: self.allow_plaintext.unwrap_or(false),
         }
     }
@@ -1382,6 +1390,7 @@ fn private_fields_for(channel_id: ChannelId) -> &'static [&'static str] {
             "token",
             "allowed_sender",
             "allowed_rooms_csv",
+            "matrix_store_path",
             "allow_plaintext",
         ],
         ChannelId::Twitch => &["nick", "token", "channels_csv"],
@@ -1649,6 +1658,11 @@ fn stage_channel_add_for_id(
     // with stale optional values. This prevents an omitted IRC password from
     // following a new server, and applies the same rule to LINE secrets,
     // Matrix allowlists, and every other channel-specific optional field.
+    // Matrix state carries E2EE/session identity. Reconfiguration replaces
+    // credentials and inbound policy, but a missing optional store path must
+    // not abandon an already-configured state store.
+    let retained_matrix_store_path =
+        (channel_id == ChannelId::Matrix).then(|| base.matrix_store_path.clone()).flatten();
     let (mut creds, _) = stage_channel_remove_for_id(channel_id, base)?;
     match channel_id {
         ChannelId::Telegram => {
@@ -1953,6 +1967,16 @@ fn stage_channel_add_for_id(
                     "Matrix requires at least one inbound sender or room allowlist; NEOTH refuses an open adapter"
                 );
             }
+            if let Some(store_path) = fields
+                .matrix_store_path
+                .as_ref()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+            {
+                creds.matrix_store_path = Some(store_path.to_string());
+            } else {
+                creds.matrix_store_path = retained_matrix_store_path;
+            }
             creds.matrix_require_encryption = Some(!fields.allow_plaintext);
         }
         ChannelId::Twitch => {
@@ -2029,6 +2053,7 @@ pub struct ChannelAddFlags {
     pub channels_csv: Option<String>,
     pub allowed_sender: Option<String>,
     pub allowed_rooms_csv: Option<String>,
+    pub matrix_store_path: Option<String>,
     pub allow_plaintext: bool,
 }
 
@@ -2051,6 +2076,7 @@ impl ChannelAddFlags {
             || self.channels_csv.is_some()
             || self.allowed_sender.is_some()
             || self.allowed_rooms_csv.is_some()
+            || self.matrix_store_path.is_some()
             || self.allow_plaintext
     }
 
@@ -2072,6 +2098,7 @@ impl ChannelAddFlags {
             channels_csv: self.channels_csv,
             allowed_sender: self.allowed_sender,
             allowed_rooms_csv: self.allowed_rooms_csv,
+            matrix_store_path: self.matrix_store_path,
             allow_plaintext: self.allow_plaintext,
         }
     }
@@ -2097,7 +2124,7 @@ fn required_flags_for(channel_id: ChannelId) -> &'static str {
         ChannelId::Mattermost => "--url --token --allowed-sender",
         ChannelId::GoogleChat => "--url --server --allowed-sender",
         ChannelId::Matrix => {
-            "--url (homeserver) --nick (user_id) [--password | --token (access_token)] [--allowed-sender] [--allowed-rooms-csv] [--allow-plaintext]"
+            "--url (homeserver) --nick (user_id) [--password | --token (access_token)] [--allowed-sender] [--allowed-rooms-csv] [--matrix-store-path] [--allow-plaintext]"
         }
         ChannelId::Twitch => "--nick --token --channels-csv",
         ChannelId::Nostr => {
@@ -3554,6 +3581,7 @@ fn stage_channel_remove_for_id(
                 || creds.matrix_user_id.is_some()
                 || creds.matrix_password.is_some()
                 || creds.matrix_access_token.is_some()
+                || creds.matrix_store_path.is_some()
                 || creds.matrix_allowed_user_id.is_some()
                 || creds.matrix_allowed_room_ids.is_some()
                 || creds.matrix_require_encryption.is_some();
@@ -4573,6 +4601,15 @@ mod tests {
     }
 
     #[test]
+    fn stage_remove_matrix_store_only_reports_and_clears_configuration() {
+        let mut base = Credentials::default();
+        base.matrix_store_path = Some("/srv/neoth/matrix-state".into());
+        let (cleared, removed) = stage_channel_remove("matrix", base).unwrap();
+        assert!(removed, "a configured Matrix state store is removable state");
+        assert!(cleared.matrix_store_path.is_none());
+    }
+
+    #[test]
     fn stage_remove_baileys_clears_only_baileys_fields() {
         let mut base = Credentials::default();
         base.whatsapp_token = Some(SecretString::from("meta"));
@@ -4663,6 +4700,7 @@ mod tests {
             channels_csv: Some("c".into()),
             allowed_sender: Some("@alice:example.org".into()),
             allowed_rooms_csv: Some("!safe:example.org".into()),
+            matrix_store_path: Some("/srv/neoth/matrix".into()),
             allow_plaintext: true,
         };
         let f = flags.into_fields();
@@ -4682,6 +4720,7 @@ mod tests {
         assert_eq!(f.channels_csv.as_deref(), Some("c"));
         assert_eq!(f.allowed_sender.as_deref(), Some("@alice:example.org"));
         assert_eq!(f.allowed_rooms_csv.as_deref(), Some("!safe:example.org"));
+        assert_eq!(f.matrix_store_path.as_deref(), Some("/srv/neoth/matrix"));
         assert!(f.allow_plaintext);
     }
 
@@ -4694,6 +4733,7 @@ mod tests {
                 "url": "https://matrix.example.org",
                 "nick": "@neoth:example.org",
                 "token": "MATRIX_PRIVATE_TOKEN_SENTINEL",
+                "matrix_store_path": "  /var/lib/neoth/matrix-state  ",
                 "allow_plaintext": false
             }
         }))
@@ -4705,7 +4745,53 @@ mod tests {
             request.fields.token.as_ref().map(SecretString::expose),
             Some("MATRIX_PRIVATE_TOKEN_SENTINEL")
         );
+        assert_eq!(
+            request.fields.matrix_store_path.as_deref(),
+            Some("  /var/lib/neoth/matrix-state  ")
+        );
         assert!(!request.fields.allow_plaintext);
+    }
+
+    #[test]
+    fn matrix_store_path_stages_only_when_nonblank_and_preserves_existing_state() {
+        let mut base = Credentials::default();
+        base.matrix_store_path = Some("/srv/neoth/matrix-existing".into());
+
+        let complete = |matrix_store_path: Option<&str>| ChannelAddFields {
+            url: Some("https://matrix.example.org".into()),
+            nick: Some("@neoth:example.org".into()),
+            token: Some(SecretString::from("matrix-token")),
+            allowed_sender: Some("@operator:example.org".into()),
+            matrix_store_path: matrix_store_path.map(str::to_string),
+            ..Default::default()
+        };
+
+        for path in [None, Some(" \t ")] {
+            let fresh =
+                stage_channel_add("matrix", &complete(path), Credentials::default()).unwrap();
+            assert!(fresh.matrix_store_path.is_none());
+        }
+
+        let omitted = stage_channel_add("matrix", &complete(None), base.clone()).unwrap();
+        assert_eq!(
+            omitted.matrix_store_path.as_deref(),
+            Some("/srv/neoth/matrix-existing"),
+            "ordinary credential updates must retain Matrix E2EE/session state"
+        );
+
+        let blank = stage_channel_add("matrix", &complete(Some(" \t ")), base.clone()).unwrap();
+        assert_eq!(blank.matrix_store_path, base.matrix_store_path);
+
+        let explicit = stage_channel_add(
+            "matrix",
+            &complete(Some("  /srv/neoth/matrix-new  ")),
+            base,
+        )
+        .unwrap();
+        assert_eq!(
+            explicit.matrix_store_path.as_deref(),
+            Some("/srv/neoth/matrix-new")
+        );
     }
 
     #[test]
@@ -4748,6 +4834,19 @@ mod tests {
             .to_string();
         assert!(scope_error.contains("not valid for `slack`: token"));
         assert!(!scope_error.contains("WRONG_SCOPE_SECRET_SENTINEL"));
+
+        let matrix_path_on_discord = serde_json::to_vec(&serde_json::json!({
+            "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+            "channel": "discord",
+            "fields": { "matrix_store_path": "MATRIX_PATH_SCOPE_SENTINEL" }
+        }))
+        .unwrap();
+        let error = parse_channel_credential_request(&matrix_path_on_discord)
+            .err()
+            .expect("Matrix-only path must be rejected for other channels")
+            .to_string();
+        assert!(error.contains("not valid for `discord`: matrix_store_path"));
+        assert!(!error.contains("MATRIX_PATH_SCOPE_SENTINEL"));
     }
 
     #[test]
