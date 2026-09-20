@@ -36,6 +36,20 @@ R4-07 and all counts remain unchanged: **1324/1015/307/2**, raw309/pre-tag308.
 
 W108/W109 was published as `af727017`. Code Quality `35534187276` passed; Preflight `35534187849` requested only six assertion/layout changes in `channel.rs` and `panel_logic.rs`. This follow-up applies those exact remote Rustfmt hunks. Fresh GitHub static and runtime gates remain pending; no local formatter or tests ran.
 
+W108/W109 formatting commit `7909081e` passed Preflight `35534327534` and Code Quality `35534327432`. Full CI `35534405981` and Windows preview `35534407998` were dispatched and verified on that exact commit; native, GUI and portable acceptance remain pending.
+
+**W110 LINE webhook-port surface (2026-09-20):** `channel add line
+--line-webhook-port` and the optional GUI port field expose the existing
+loopback listener setting. Ports are restricted to 1–65535; omitted/blank
+input preserves an existing custom port, while fresh configuration keeps the
+8444 runtime default. Explicit removal handles port-only configuration.
+Private stdin carries the GUI value alongside the existing credential fields.
+The existing signature, sender-policy and loopback boundaries remain in place.
+The Gold smoke job now exports the generated CLI reference from its actual
+binary with source/digest binding; the docgen anti-drift test remains required.
+See [W110 verification](../docs/gold-wave110-verification.md). Independent review passed; new
+remote execution is required before acceptance. No checkbox or count changes.
+
 **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 now share Doctor's read-only home/managed-root readiness operation, with typed
 disabled/ready/unavailable results separate from selected-root status. GUI
@@ -3393,7 +3407,7 @@ evidence is Channel **69/69**, probes **14/14**, slash **56/56**, registry
 **6/6**, credentials **30/30**, Audit-RPC **14/14**, strict Core Clippy and the
 GUI/Slint check. The current GUI behavior suite is **372/372**. This closes
 registry duplication and the named
-credential/reconfiguration bypasses, not R4-07: `line_webhook_port`, `irc_port`,
+credential/reconfiguration bypasses, not R4-07: `irc_port`,
 `irc_tls` and `irc_allowed_nick` still lack full CLI/GUI
 configuration surfaces; file publication plus OS-keychain compensation still
 needs a durable intent/recovery journal for a process crash between the two

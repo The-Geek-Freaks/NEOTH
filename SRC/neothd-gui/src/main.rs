@@ -10787,9 +10787,9 @@ fn main() -> Result<()> {
     // contains no secret values. On success the canonical channel inventory is
     // refreshed exactly like on_channel_remove.
     let weak_channel_add = window.as_weak();
-    window.on_channel_add(move |ctype, f1, f2, f3, f4, f5, f6, matrix_store_path, flag, editor_generation| {
+    window.on_channel_add(move |ctype, f1, f2, f3, f4, f5, f6, matrix_store_path, line_webhook_port, flag, editor_generation| {
         let ctype = ctype.to_string();
-        let request_result = panel_logic::build_channel_credential_request_with_matrix_store_path(
+        let request_result = panel_logic::build_channel_credential_request_with_public_settings(
             &ctype,
             [
                 f1.as_str(),
@@ -10801,6 +10801,7 @@ fn main() -> Result<()> {
             ],
             flag,
             matrix_store_path.as_str(),
+            line_webhook_port.as_str(),
         );
 
         match request_result {
@@ -34632,6 +34633,36 @@ mod tests {
             !args
                 .iter()
                 .any(|arg| arg.contains(secret) || arg.contains(path))
+        );
+    }
+
+    #[test]
+    fn line_port_request_uses_private_stdin_without_port_or_secrets_in_argv() {
+        let token = "LINE_PROCESS_LIST_TOKEN_SENTINEL";
+        let secret = "LINE_PROCESS_LIST_SECRET_SENTINEL";
+        let request = panel_logic::build_channel_credential_request_with_public_settings(
+            "line",
+            [token, secret, "U123456", "", "", ""],
+            false,
+            "",
+            "9443",
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(request.as_slice()).unwrap();
+        assert_eq!(body["fields"]["line_webhook_port"], 9443);
+        assert_eq!(body["fields"]["token"], token);
+        assert_eq!(body["fields"]["password"], secret);
+
+        let command = channel_credential_command(Path::new("neoth"));
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(args, ["channel", "set-credentials", "--output", "json"]);
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg.contains(token) || arg.contains(secret) || arg.contains("9443"))
         );
     }
 

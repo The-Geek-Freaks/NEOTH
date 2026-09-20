@@ -390,13 +390,12 @@ identity or mention policy. Do not expose its tool-bearing pipeline to an
 untrusted stream audience. Transport membership is never treated as operator
 authorization for the other inbound adapters.
 
-Four advanced runtime settings are currently file-only and remain explicit
+Three advanced runtime settings are currently file-only and remain explicit
 GUI/CLI parity work for v1.0. Set them under `credentials.yaml` only when the
 safe defaults do not fit:
 
 | Field | Current behavior |
 | :-- | :-- |
-| `line_webhook_port` | Loopback webhook port; defaults to `8444`. |
 | `irc_port` | IRC server port; defaults to `6697`. |
 | `irc_tls` | IRC transport security; defaults to `true`. |
 | `irc_allowed_nick` | Optional secondary nick check; it never replaces the required authenticated `irc_allowed_account`. |
@@ -599,6 +598,14 @@ neoth channel add line \
   --password "$LINE_CHANNEL_SECRET" \
   --allowed-sender U0123456789abcdef
 ```
+
+Use `--line-webhook-port 9443` with the command above, or the optional
+**Webhook port** field in the GUI, to select a listener port from `1` through
+`65535`. Zero and out-of-range values are rejected. An omitted flag or blank
+GUI field preserves an existing custom port during credential updates; a new
+configuration without a port uses `8444`. The listener still binds only to
+`127.0.0.1`, behind your reverse proxy. Saving the setting does not by itself
+rebind a running listener; it applies when the channel starts.
 
 The webhook must pass `X-Line-Signature` verification and the decoded source
 must equal `line_allowed_sender`. Signature validity alone never authorizes a

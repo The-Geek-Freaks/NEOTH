@@ -742,6 +742,25 @@ jobs:
         working-directory: SRC
         run: cargo build -p neoth --bins --locked
 
+      # Keep the generated command reference recoverable when local product
+      # execution is suspended. The existing docgen test still rejects drift.
+      - name: Export generated CLI reference from the compiled source
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          reference_dir="$RUNNER_TEMP/neoth-cli-reference"
+          mkdir -p "$reference_dir"
+          SRC/target/debug/neoth completions --reference > "$reference_dir/cli-commands.md"
+          printf '%s\n' "$GITHUB_SHA" > "$reference_dir/source-head.txt"
+          (cd "$reference_dir" && sha256sum cli-commands.md > SHA256SUMS)
+
+      - name: Upload generated CLI reference
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: generated-cli-reference
+          path: ${{ runner.temp }}/neoth-cli-reference/
+          if-no-files-found: error
+
       - name: Run gold-smoke eval suite
         timeout-minutes: 10
         working-directory: SRC

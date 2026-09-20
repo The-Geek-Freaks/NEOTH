@@ -1206,12 +1206,31 @@ pub struct ChannelAddFields {
     /// Matrix E2EE/sync-state directory. Public local configuration, never a
     /// credential; a blank or omitted value preserves an existing store.
     pub matrix_store_path: Option<String>,
+    /// LINE's loopback webhook listener port. Omitted input keeps the runtime
+    /// default for a fresh setup or the existing value while reconfiguring.
+    pub line_webhook_port: Option<u16>,
     /// Matrix-only explicit opt-out from the encrypted-room requirement.
     pub allow_plaintext: bool,
 }
 
 const CHANNEL_CREDENTIAL_SCHEMA_VERSION: u32 = 1;
 const MAX_CHANNEL_CREDENTIAL_STDIN_BYTES: u64 = 8 * 1024;
+
+/// Parse LINE's explicit listener-port override at the CLI boundary. Zero is
+/// never a listener port; omission leaves the runtime default (8444) intact.
+pub fn parse_line_webhook_port(value: &str) -> std::result::Result<u16, String> {
+    let port = value
+        .parse::<u16>()
+        .map_err(|_| "LINE webhook port must be an integer from 1 to 65535".to_string())?;
+    validate_line_webhook_port(port).map_err(|error| error.to_string())
+}
+
+fn validate_line_webhook_port(port: u16) -> Result<u16> {
+    if port == 0 {
+        anyhow::bail!("LINE webhook port must be an integer from 1 to 65535");
+    }
+    Ok(port)
+}
 
 /// Secret-bearing input for one explicit Telegram account. It deliberately
 /// does not derive Debug so tokens cannot enter diagnostics.
@@ -1265,6 +1284,7 @@ struct ChannelCredentialWireFields {
     allowed_sender: Option<String>,
     allowed_rooms_csv: Option<String>,
     matrix_store_path: Option<String>,
+    line_webhook_port: Option<u16>,
     allow_plaintext: Option<bool>,
 }
 
@@ -1327,6 +1347,9 @@ impl ChannelCredentialWireFields {
         if self.matrix_store_path.is_some() {
             names.push("matrix_store_path");
         }
+        if self.line_webhook_port.is_some() {
+            names.push("line_webhook_port");
+        }
         if self.allow_plaintext.is_some() {
             names.push("allow_plaintext");
         }
@@ -1352,6 +1375,7 @@ impl ChannelCredentialWireFields {
             allowed_sender: self.allowed_sender,
             allowed_rooms_csv: self.allowed_rooms_csv,
             matrix_store_path: self.matrix_store_path,
+            line_webhook_port: self.line_webhook_port,
             allow_plaintext: self.allow_plaintext.unwrap_or(false),
         }
     }
@@ -1372,7 +1396,7 @@ fn private_fields_for(channel_id: ChannelId) -> &'static [&'static str] {
         ChannelId::Keet => &["url", "token", "server", "allowed_sender"],
         ChannelId::Discord => &["token", "allowed_sender"],
         ChannelId::Signal => &["url", "phone", "allowed_sender"],
-        ChannelId::Line => &["token", "password", "allowed_sender"],
+        ChannelId::Line => &["token", "password", "allowed_sender", "line_webhook_port"],
         ChannelId::Irc => &[
             "server",
             "nick",
@@ -1399,8 +1423,8 @@ fn private_fields_for(channel_id: ChannelId) -> &'static [&'static str] {
 }
 
 fn parse_channel_credential_request(body: &[u8]) -> Result<ValidatedChannelCredentialRequest> {
-    let request: ChannelCredentialEnvelope =
-        serde_json::from_slice(body).context("parse channel credential request JSON")?;
+    let request: ChannelCredentialEnvelope = serde_json::from_slice(body)
+        .map_err(|_| anyhow::anyhow!("parse channel credential request JSON"))?;
     if request.schema_version != CHANNEL_CREDENTIAL_SCHEMA_VERSION {
         anyhow::bail!(
             "unsupported channel credential schema version {}; expected {}",
@@ -1436,10 +1460,12 @@ fn parse_channel_credential_request(body: &[u8]) -> Result<ValidatedChannelCrede
         );
     }
 
-    Ok(ValidatedChannelCredentialRequest {
-        channel_id,
-        fields: request.fields.into_add_fields(),
-    })
+    let fields = request.fields.into_add_fields();
+    if let Some(port) = fields.line_webhook_port {
+        validate_line_webhook_port(port)?;
+    }
+
+    Ok(ValidatedChannelCredentialRequest { channel_id, fields })
 }
 
 fn read_channel_credential_request_from(
@@ -1664,6 +1690,9 @@ fn stage_channel_add_for_id(
     let retained_matrix_store_path = (channel_id == ChannelId::Matrix)
         .then(|| base.matrix_store_path.clone())
         .flatten();
+    let retained_line_webhook_port = (channel_id == ChannelId::Line)
+        .then_some(base.line_webhook_port)
+        .flatten();
     let (mut creds, _) = stage_channel_remove_for_id(channel_id, base)?;
     match channel_id {
         ChannelId::Telegram => {
@@ -1825,6 +1854,10 @@ fn stage_channel_add_for_id(
                 "LINE sender allowlist (--allowed-sender)",
             )?)?;
             creds.line_allowed_sender = Some(allowed_sender);
+            creds.line_webhook_port = match fields.line_webhook_port {
+                Some(port) => Some(validate_line_webhook_port(port)?),
+                None => retained_line_webhook_port,
+            };
         }
         ChannelId::Irc => {
             let server = require(&fields.server, "irc server host (e.g. irc.libera.chat)")?;
@@ -2055,6 +2088,7 @@ pub struct ChannelAddFlags {
     pub allowed_sender: Option<String>,
     pub allowed_rooms_csv: Option<String>,
     pub matrix_store_path: Option<String>,
+    pub line_webhook_port: Option<u16>,
     pub allow_plaintext: bool,
 }
 
@@ -2078,6 +2112,7 @@ impl ChannelAddFlags {
             || self.allowed_sender.is_some()
             || self.allowed_rooms_csv.is_some()
             || self.matrix_store_path.is_some()
+            || self.line_webhook_port.is_some()
             || self.allow_plaintext
     }
 
@@ -2100,6 +2135,7 @@ impl ChannelAddFlags {
             allowed_sender: self.allowed_sender,
             allowed_rooms_csv: self.allowed_rooms_csv,
             matrix_store_path: self.matrix_store_path,
+            line_webhook_port: self.line_webhook_port,
             allow_plaintext: self.allow_plaintext,
         }
     }
@@ -3535,6 +3571,7 @@ fn stage_channel_remove_for_id(
         ChannelId::Line => {
             let had = creds.line_channel_access_token.is_some()
                 || creds.line_channel_secret.is_some()
+                || creds.line_webhook_port.is_some()
                 || creds.line_allowed_sender.is_some();
             creds.line_channel_access_token = None;
             creds.line_channel_secret = None;
@@ -4394,6 +4431,30 @@ mod tests {
     }
 
     #[test]
+    fn line_webhook_port_stages_explicitly_and_preserves_omitted_or_blank_reconfiguration() {
+        let complete = |port: Option<u16>| ChannelAddFields {
+            token: Some("line-token".into()),
+            password: Some("line-secret".into()),
+            allowed_sender: Some("U123456".into()),
+            line_webhook_port: port,
+            ..Default::default()
+        };
+        let mut base = Credentials::default();
+        base.line_webhook_port = Some(9443);
+
+        let fresh = stage_channel_add("line", &complete(None), Credentials::default()).unwrap();
+        assert!(fresh.line_webhook_port.is_none(), "fresh setup uses runtime default 8444");
+        let omitted = stage_channel_add("line", &complete(None), base.clone()).unwrap();
+        assert_eq!(omitted.line_webhook_port, Some(9443));
+        let explicit = stage_channel_add("line", &complete(Some(9555)), base).unwrap();
+        assert_eq!(explicit.line_webhook_port, Some(9555));
+
+        let error = stage_channel_add("line", &complete(Some(0)), Credentials::default())
+            .expect_err("zero must never become an ephemeral listener port");
+        assert!(error.to_string().contains("1 to 65535"));
+    }
+
+    #[test]
     fn stage_add_irc_requires_bare_host_and_nick() {
         let with_scheme = ChannelAddFields {
             server: Some("https://irc.libera.chat".into()),
@@ -4614,6 +4675,15 @@ mod tests {
     }
 
     #[test]
+    fn stage_remove_line_port_only_reports_and_clears_configuration() {
+        let mut base = Credentials::default();
+        base.line_webhook_port = Some(9443);
+        let (cleared, removed) = stage_channel_remove("line", base).unwrap();
+        assert!(removed, "a configured LINE port is removable state");
+        assert!(cleared.line_webhook_port.is_none());
+    }
+
+    #[test]
     fn stage_remove_baileys_clears_only_baileys_fields() {
         let mut base = Credentials::default();
         base.whatsapp_token = Some(SecretString::from("meta"));
@@ -4705,6 +4775,7 @@ mod tests {
             allowed_sender: Some("@alice:example.org".into()),
             allowed_rooms_csv: Some("!safe:example.org".into()),
             matrix_store_path: Some("/srv/neoth/matrix".into()),
+            line_webhook_port: Some(9443),
             allow_plaintext: true,
         };
         let f = flags.into_fields();
@@ -4725,6 +4796,7 @@ mod tests {
         assert_eq!(f.allowed_sender.as_deref(), Some("@alice:example.org"));
         assert_eq!(f.allowed_rooms_csv.as_deref(), Some("!safe:example.org"));
         assert_eq!(f.matrix_store_path.as_deref(), Some("/srv/neoth/matrix"));
+        assert_eq!(f.line_webhook_port, Some(9443));
         assert!(f.allow_plaintext);
     }
 
@@ -4754,6 +4826,49 @@ mod tests {
             Some("  /var/lib/neoth/matrix-state  ")
         );
         assert!(!request.fields.allow_plaintext);
+    }
+
+    #[test]
+    fn private_line_webhook_port_is_typed_scoped_and_never_echoes_invalid_values() {
+        let valid = serde_json::to_vec(&serde_json::json!({
+            "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+            "channel": "line",
+            "fields": { "token": "LINE_PRIVATE_TOKEN", "allowed_sender": "U123456", "line_webhook_port": 9443 }
+        }))
+        .unwrap();
+        let request = parse_channel_credential_request(&valid).unwrap();
+        assert_eq!(request.fields.line_webhook_port, Some(9443));
+
+        for invalid in [
+            serde_json::json!("9443"),
+            serde_json::json!(9443.5),
+            serde_json::json!(0),
+        ] {
+            let body = serde_json::to_vec(&serde_json::json!({
+                "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+                "channel": "line",
+                "fields": { "line_webhook_port": invalid }
+            }))
+            .unwrap();
+            let error = parse_channel_credential_request(&body)
+                .err()
+                .expect("malformed or zero LINE port must be rejected")
+                .to_string();
+            assert!(!error.contains("9443"));
+            assert!(!error.contains("9443.5"));
+        }
+
+        let wrong_scope = serde_json::to_vec(&serde_json::json!({
+            "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+            "channel": "discord",
+            "fields": { "line_webhook_port": 9443 }
+        }))
+        .unwrap();
+        let error = parse_channel_credential_request(&wrong_scope)
+            .err()
+            .expect("LINE port must not cross channel scope")
+            .to_string();
+        assert!(error.contains("not valid for `discord`: line_webhook_port"));
     }
 
     #[test]
@@ -4848,6 +4963,18 @@ mod tests {
             .to_string();
         assert!(error.contains("not valid for `discord`: matrix_store_path"));
         assert!(!error.contains("MATRIX_PATH_SCOPE_SENTINEL"));
+
+        let line_port_on_discord = serde_json::to_vec(&serde_json::json!({
+            "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+            "channel": "discord",
+            "fields": { "line_webhook_port": 9443 }
+        }))
+        .unwrap();
+        let error = parse_channel_credential_request(&line_port_on_discord)
+            .err()
+            .expect("LINE-only port must be rejected for other channels")
+            .to_string();
+        assert!(error.contains("not valid for `discord`: line_webhook_port"));
     }
 
     #[test]
@@ -4864,7 +4991,8 @@ mod tests {
             .err()
             .expect("unknown field must be rejected");
         let error = format!("{error:#}");
-        assert!(error.contains("unknown field `future_secret`"));
+        assert!(error.contains("parse channel credential request JSON"));
+        assert!(!error.contains("future_secret"));
         assert!(!error.contains("KNOWN_SECRET_SENTINEL"));
         assert!(!error.contains("UNKNOWN_SECRET_SENTINEL"));
 

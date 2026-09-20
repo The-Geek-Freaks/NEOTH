@@ -683,9 +683,9 @@ adapter when these fields are absent or blank:
 | Nostr | `nostr_allowed_pubkey` |
 
 `neoth channel add` and the GUI collect these policies through their shared
-channel setup contract. Four advanced settings still require a direct,
-owner-private `credentials.yaml` edit: `line_webhook_port` (default `8444`),
-`irc_port` (default `6697`), `irc_tls` (default `true`) and `irc_allowed_nick`. Their missing
+channel setup contract. Three advanced settings still require a direct,
+owner-private `credentials.yaml` edit: `irc_port` (default `6697`),
+`irc_tls` (default `true`) and `irc_allowed_nick`. Their missing
 first-class CLI/GUI controls remain v1.0 surface-parity work.
 
 Matrix's `matrix_store_path` is available through `channel add matrix
@@ -694,6 +694,12 @@ nonblank value selects the crypto/session directory; an omitted or blank value
 preserves the existing custom store during reconfiguration. With no configured
 value, Matrix uses `matrix_store` beneath the selected NEOTH home. Setting this
 field does not copy or migrate an existing encrypted store.
+
+LINE's `line_webhook_port` is available through `channel add line
+--line-webhook-port` and the optional GUI **Webhook port** field. Valid ports
+are `1..=65535`. Omitting it, or leaving the GUI field blank, preserves the
+existing custom port during reconfiguration; an initially unset value uses
+`8444`. The listener remains loopback-only and reads the setting at startup.
 
 OMI uses dedicated credential fields rather than provider/channel tokens:
 `omi_developer_api_key` for official Developer API import/export and

@@ -1174,9 +1174,9 @@ export component SettingsView inherits Rectangle {
     callback channel-remove-clicked(string);
     /// GAP-19 — Add a new channel credential from the GUI.
     /// Args: channel_type + six typed credential fields + Matrix's optional
-    /// public state-store path + one boolean policy flag. Rust maps them to a
+    /// public state-store path + LINE's optional webhook port + one boolean policy flag. Rust maps them to a
     /// private-stdin credential envelope for every registry channel.
-    callback channel-add-clicked(string, string, string, string, string, string, string, string, bool, int);
+    callback channel-add-clicked(string, string, string, string, string, string, string, string, string, bool, int);
     /// GUI-overhaul feature parity — Memory forget. Preview is a dry run
     /// (`neoth memory --forget <t>`); confirm wipes (`… --forget <t> --confirm`).
     callback memory-forget-preview-clicked(string);
@@ -1727,6 +1727,9 @@ export component SettingsView inherits Rectangle {
                 // Matrix's E2EE/sync store is public local configuration, so
                 // it does not consume or change the six secret-mask slots.
                 property <string> ch-matrix-store-path: "";
+                // LINE's optional loopback listener port is public
+                // configuration and stays outside the six credential slots.
+                property <string> ch-line-webhook-port: "";
                 property <bool> ch-flag: false;
                 // The pre-existing positional registry projection is already
                 // authoritative for the generic form's type/secret binding.
@@ -1752,6 +1755,7 @@ export component SettingsView inherits Rectangle {
                         ch-f5 = "";
                         ch-f6 = "";
                         ch-matrix-store-path = "";
+                        ch-line-webhook-port = "";
                         ch-flag = false;
                         // Reconfigure is intentionally type-locked. If its
                         // backing registry row changes, close rather than
@@ -1776,6 +1780,7 @@ export component SettingsView inherits Rectangle {
                         ch-f5 = "";
                         ch-f6 = "";
                         ch-matrix-store-path = "";
+                        ch-line-webhook-port = "";
                         ch-flag = false;
                         type-index = 0;
                     }
@@ -1819,6 +1824,7 @@ export component SettingsView inherits Rectangle {
                             ch-f5 = "";
                             ch-f6 = "";
                             ch-matrix-store-path = "";
+                            ch-line-webhook-port = "";
                             ch-flag = false;
                             account-id = "";
                             account-token = "";
@@ -2004,9 +2010,11 @@ export component SettingsView inherits Rectangle {
                         // line: token + password (optional)
                         if selected-channel-type == "line": VerticalBox {
                             spacing: Theme.space-tight;
-                            Text { text: "LINE Messaging API channel access token; password optional"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            Text { text: "LINE access token, exact sender allowlist, optional secret, and optional loopback listener port"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "Token (--token)"; password: ch-f1-secret; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "Password (--password, optional)"; password: ch-f2-secret; text <=> ch-f2; }
+                            NeothLineEdit { placeholder-text: "Allowed LINE user ID (--allowed-sender)"; password: ch-f3-secret; text <=> ch-f3; }
+                            NeothLineEdit { placeholder-text: "Webhook listener port (--line-webhook-port; blank keeps current/default 8444)"; password: false; text <=> ch-line-webhook-port; }
                         }
                         // irc: server + nick + password (opt) + channels-csv (opt)
                         if selected-channel-type == "irc": VerticalBox {
@@ -2102,7 +2110,8 @@ export component SettingsView inherits Rectangle {
                                     ch-f4 = "";
                                     ch-f5 = "";
                                     ch-f6 = "";
-                                    ch-matrix-store-path = "";
+                            ch-matrix-store-path = "";
+                            ch-line-webhook-port = "";
                                     ch-flag = false;
                                     type-index = 0;
                                 }
@@ -2116,7 +2125,7 @@ export component SettingsView inherits Rectangle {
                                 clicked => {
                                     root.channel-add-clicked(
                                         selected-channel-type,
-                                        ch-f1, ch-f2, ch-f3, ch-f4, ch-f5, ch-f6, ch-matrix-store-path, ch-flag,
+                                        ch-f1, ch-f2, ch-f3, ch-f4, ch-f5, ch-f6, ch-matrix-store-path, ch-line-webhook-port, ch-flag,
                                         editor-generation
                                     );
                                     // Keep values and the form open until Rust confirms
@@ -2212,6 +2221,7 @@ export component SettingsView inherits Rectangle {
                                     ch-f5 = "";
                                     ch-f6 = "";
                                     ch-matrix-store-path = "";
+                                    ch-line-webhook-port = "";
                                     ch-flag = false;
                                     account-id = "";
                                     account-token = "";

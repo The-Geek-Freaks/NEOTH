@@ -53,3 +53,5 @@ roadmap checkbox closes on this source slice.
 ## Publication and formatting follow-up
 
 W108/W109 was published as `af727017`. Code Quality `35534187276` passed; Preflight `35534187849` requested only six assertion/layout changes in `channel.rs` and `panel_logic.rs`. This follow-up applies those exact remote Rustfmt hunks. Fresh GitHub static and runtime gates remain pending; no local formatter or tests ran.
+
+W108/W109 formatting commit `7909081e` passed Preflight `35534327534` and Code Quality `35534327432`. Full CI `35534405981` and Windows preview `35534407998` were dispatched and verified on that exact commit; native, GUI and portable acceptance remain pending.

@@ -2130,11 +2130,31 @@ pub fn build_channel_credential_request(
 /// Same private-stdin builder with Matrix's optional public state-store path.
 /// It deliberately stays outside the six registry-projected credential slots:
 /// the path is not secret data and must not alter their password-mask layout.
+#[cfg(test)]
 pub fn build_channel_credential_request_with_matrix_store_path(
     channel_id: &str,
     fields: [&str; 6],
     flag: bool,
     matrix_store_path: &str,
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    build_channel_credential_request_with_public_settings(
+        channel_id,
+        fields,
+        flag,
+        matrix_store_path,
+        "",
+    )
+}
+
+/// Same strict private-stdin request with the public settings that sit outside
+/// the registry's six credential slots. Blank optional values preserve their
+/// runtime default or existing configured value.
+pub fn build_channel_credential_request_with_public_settings(
+    channel_id: &str,
+    fields: [&str; 6],
+    flag: bool,
+    matrix_store_path: &str,
+    line_webhook_port: &str,
 ) -> Result<Zeroizing<Vec<u8>>, String> {
     let [f1, f2, f3, f4, _f5, _f6] = fields;
     let [n1, n2, n3, n4, n5, n6] = fields.map(str::trim);
@@ -2238,10 +2258,23 @@ pub fn build_channel_credential_request_with_matrix_store_path(
             if !secret_present(f1) || n3.is_empty() {
                 return Err("line needs: --token and --allowed-sender".into());
             }
+            let line_webhook_port = if line_webhook_port.trim().is_empty() {
+                None
+            } else {
+                let port = line_webhook_port
+                    .trim()
+                    .parse::<u16>()
+                    .map_err(|_| "LINE webhook port must be an integer from 1 to 65535")?;
+                if port == 0 {
+                    return Err("LINE webhook port must be an integer from 1 to 65535".into());
+                }
+                Some(port)
+            };
             serde_json::json!({
                 "token": f1,
                 "password": secret_present(f2).then_some(f2),
                 "allowed_sender": n3,
+                "line_webhook_port": line_webhook_port,
             })
         }
         GuiChannelForm::Irc => {
@@ -9372,6 +9405,47 @@ mod tests {
             blank["fields"]["matrix_store_path"],
             serde_json::Value::Null
         );
+    }
+
+    #[test]
+    fn private_channel_builder_routes_line_webhook_port_as_typed_private_stdin_state() {
+        let request = build_channel_credential_request_with_public_settings(
+            "line",
+            ["LINE_GUI_TOKEN", "LINE_GUI_SECRET", "U123456", "", "", ""],
+            false,
+            "",
+            " 9443 ",
+        )
+        .unwrap();
+        let envelope: serde_json::Value = serde_json::from_slice(request.as_slice()).unwrap();
+        assert_eq!(envelope["fields"]["line_webhook_port"], 9443);
+        assert_eq!(envelope["fields"]["token"], "LINE_GUI_TOKEN");
+        assert_eq!(envelope["fields"]["password"], "LINE_GUI_SECRET");
+
+        let blank = build_channel_credential_request_with_public_settings(
+            "line",
+            ["LINE_GUI_TOKEN", "", "U123456", "", "", ""],
+            false,
+            "",
+            " \t ",
+        )
+        .unwrap();
+        let blank: serde_json::Value = serde_json::from_slice(blank.as_slice()).unwrap();
+        assert_eq!(blank["fields"]["line_webhook_port"], serde_json::Value::Null);
+
+        for invalid in ["0", "65536", "9443.5"] {
+            assert!(
+                build_channel_credential_request_with_public_settings(
+                    "line",
+                    ["LINE_GUI_TOKEN", "", "U123456", "", "", ""],
+                    false,
+                    "",
+                    invalid,
+                )
+                .is_err(),
+                "{invalid} must not produce a LINE listener request"
+            );
+        }
     }
 
     #[test]

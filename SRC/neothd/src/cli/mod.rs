@@ -1304,6 +1304,10 @@ pub enum ChannelAction {
         /// an existing Matrix store during credential reconfiguration.
         #[arg(long)]
         matrix_store_path: Option<String>,
+        /// LINE only: loopback webhook listener port. Omit to use 8444 or
+        /// retain the current configured override while reconfiguring.
+        #[arg(long, value_parser = channel::parse_line_webhook_port)]
+        line_webhook_port: Option<u16>,
         /// Matrix only: explicitly permit plaintext rooms. Encrypted rooms are
         /// required when this flag is absent.
         #[arg(long)]
@@ -2211,6 +2215,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 allowed_sender,
                 allowed_rooms_csv,
                 matrix_store_path,
+                line_webhook_port,
                 allow_plaintext,
             } => {
                 let flags = channel::ChannelAddFlags {
@@ -2231,6 +2236,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                     allowed_sender,
                     allowed_rooms_csv,
                     matrix_store_path,
+                    line_webhook_port,
                     allow_plaintext,
                 };
                 channel::run_add(&ch, &flags, &global_output).await?;
@@ -2516,6 +2522,47 @@ mod default_invocation_tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn channel_add_line_webhook_port_is_typed_and_bounded_at_clap_boundary() {
+        let parsed = Cli::try_parse_from([
+            "neoth",
+            "channel",
+            "add",
+            "line",
+            "--token",
+            "line-token",
+            "--allowed-sender",
+            "U123456",
+            "--line-webhook-port",
+            "9443",
+        ])
+        .expect("valid LINE webhook port must parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Channel {
+                action: ChannelAction::Add {
+                    line_webhook_port: Some(9443),
+                    ..
+                }
+            }
+        ));
+
+        for invalid in ["0", "65536"] {
+            assert!(
+                Cli::try_parse_from([
+                    "neoth",
+                    "channel",
+                    "add",
+                    "line",
+                    "--line-webhook-port",
+                    invalid,
+                ])
+                .is_err(),
+                "{invalid} must be rejected before channel staging"
+            );
+        }
     }
 
     #[test]

@@ -97,6 +97,16 @@ from downloaded-artifact custody, visual/accessibility, installed-product and
 final release acceptance. Push preflight checks the workflow contract without
 compiling Rust. On the affected workstation none of these helpers may run locally.
 
+## Generated CLI reference during remote-only validation
+
+The existing Gold smoke job exports `neoth completions --reference` from the
+CLI binary it already built. The `generated-cli-reference` artifact contains
+that exact Markdown, its SHA-256 and the full source commit. Import it only
+after matching the source commit and digest. The ordinary
+`cli_commands_md_is_up_to_date` regression remains the anti-drift authority;
+an exported artifact is not evidence that the committed documentation matches.
+This adds no compiler invocation and does not require a local product binary.
+
 ## Evidence ladder
 
 NEOTH tests every shipped capability and every advertised platform contract,
