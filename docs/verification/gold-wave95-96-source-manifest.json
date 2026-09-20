@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W115-channel-form-parity-and-CI-recovery",
-  "base": "78a4229f7be70ef1b62d6423ae83a269305f80f8",
-  "capturedUtc": "2026-09-20T21:40:26.4008864Z",
+  "base": "eb316b5ef31297f831b035063f262abb6d3d8a7b",
+  "capturedUtc": "2026-09-20T21:46:35.7668486Z",
   "validationStatus": "W115_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
-  "scopeNote": "300 cumulative inputs. W115 eight missing mandatory sender GUI inputs plus real builder regression. W114 static gates passed on78a4229f; full CI35538895227 still running. W116 main.rs work is not admitted in this manifest. No local validation or roadmap closure.",
+  "scopeNote": "300 cumulative inputs. W115 source reviewed and published eb316b5e. Two exact remote Rustfmt array layouts applied from Preflight35539592066; CodeQuality35539591989 passed. W116 main.rs remains unadmitted. New-source remote gates required; no local validation or roadmap closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -278,8 +278,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 508857,
-      "sha256": "FBC5BA2039B6DFACAB354F4B3EEDA06032094E8D3F198298717E65A2B37E2AEC"
+      "bytes": 509135,
+      "sha256": "2AAF56C4A14D963E19E1618894EF82E926E0B2AFA4F4724E0535BA9DA7D9511C"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",

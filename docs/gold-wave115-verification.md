@@ -34,3 +34,5 @@ validation ran. This slice does not close R4-07 or account/adoption parity.
 Required focused GUI test identity:
 
 `panel_logic::tests::required_sender_form_slots_map_to_private_allowed_sender_and_reject_blank`.
+
+W115 source `eb316b5e` passed Code Quality `35539591989`. Preflight `35539592066` requested only two array layouts in `panel_logic.rs`; this follow-up applies those exact remote Rustfmt hunks without local formatter execution. Fresh static and native gates remain required.

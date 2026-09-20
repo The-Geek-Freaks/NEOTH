@@ -78,6 +78,8 @@ W114 source `098dd7e1` passed Code Quality `35538615032`. Preflight `35538615267
 
 **W115 required sender fields (2026-09-20):** eight existing Settings forms now expose the mandatory inbound identity already required by their private setup request: Slack, WhatsApp Business, Discord, Signal, BlueBubbles iMessage, Mattermost, Google Chat and Nostr. Fields use the existing descriptor masks and six-slot transport; backend authorization and validation are unchanged. A table regression checks exact private sender mapping and blank-slot refusal for every form. See [W115 verification](../docs/gold-wave115-verification.md). Independent source review passed; fresh remote execution remains required. No roadmap checkbox closes.
 
+W115 source `eb316b5e` passed Code Quality `35539591989`. Preflight `35539592066` requested only two array layouts in `panel_logic.rs`; this follow-up applies those exact remote Rustfmt hunks without local formatter execution. Fresh static and native gates remain required.
+
 **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 now share Doctor's read-only home/managed-root readiness operation, with typed
 disabled/ready/unavailable results separate from selected-root status. GUI

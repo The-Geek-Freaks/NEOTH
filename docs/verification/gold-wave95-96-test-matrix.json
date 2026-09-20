@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W95_W115_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "78a4229f7be70ef1b62d6423ae83a269305f80f8",
+  "base": "eb316b5ef31297f831b035063f262abb6d3d8a7b",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 51975,
-    "sha256": "5E9BCEEFE37858CCDF9668FB17060A0171C436669DB2298A2922406536AD079D"
+    "bytes": 51992,
+    "sha256": "FF02890F5890DFBBFC618164CB5EFE0361F6988E109DD28F0FAB9359D7F48CE7"
   },
   "sourceInputs": 300,
   "requiredNativeTests": [
@@ -705,8 +705,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 508857,
-      "sha256": "FBC5BA2039B6DFACAB354F4B3EEDA06032094E8D3F198298717E65A2B37E2AEC"
+      "bytes": 509135,
+      "sha256": "2AAF56C4A14D963E19E1618894EF82E926E0B2AFA4F4724E0535BA9DA7D9511C"
     }
   ],
   "remoteFormatCorrection": {
@@ -977,6 +977,14 @@
     "nativeRequired": 79,
     "guiRequired": 16,
     "execution": "PENDING_GITHUB_ONLY",
-    "localValidationRan": false
+    "localValidationRan": false,
+    "formatFollowup": {
+      "run": 35539592066,
+      "codeQuality": 35539591989,
+      "codeQualityConclusion": "success",
+      "change": "Two exact remote Rustfmt array layouts",
+      "rerun": "PENDING",
+      "localFormatterRan": false
+    }
   }
 }
