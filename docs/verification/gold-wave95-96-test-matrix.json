@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W95_W123_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "927f6894908aa96305219a5fe6a2a6e576fc77cc",
+  "base": "034a2b4585d5f44ba537aa07b444e9baf87a7452",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 51945,
-    "sha256": "9002E5F61C2343162EC30F36FBE3B90E58E2CFE7EA06E9A282E29E687359077B"
+    "bytes": 51979,
+    "sha256": "79438B1F2E3D81850932104E2C387D166EE770C5431E6A98ED117E6D2EBA3E86"
   },
   "sourceInputs": 300,
   "requiredNativeTests": [
@@ -784,13 +784,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1698712,
-      "sha256": "01CF94B8D74677FB6820B04CBD93565FDB53252E67DA03763E61A5AEE24E7969"
+      "bytes": 1699584,
+      "sha256": "E091A3E2FF8D61F2C61D2B167A34750CBF1C209254204FE739F3568BF8CC756D"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 524390,
-      "sha256": "C2E02AED5A4DC1785C8DDFBFE2661309058F29878A8BC8F3E32397B0A52DFBDA"
+      "bytes": 524428,
+      "sha256": "D3BCB6F12FE1D3B18C91B358F2DEC31DD59ADC1A0BDD772054EE3DE805ABAD5B"
     }
   ],
   "remoteFormatCorrection": {
@@ -1179,6 +1179,16 @@
     "previewRun": 35541731629,
     "previewScope": "Older927f6894 source, not W121 acceptance",
     "execution": "PENDING_GITHUB_ONLY",
-    "localValidationRan": false
+    "localValidationRan": false,
+    "formatFollowup": {
+      "run": 35542857009,
+      "source": "034a2b4585d5f44ba537aa07b444e9baf87a7452",
+      "codeQuality": 35542856926,
+      "codeQualityConclusion": "success",
+      "distinctHunks": 13,
+      "files": 2,
+      "localFormatterRan": false,
+      "newRemoteGates": "PENDING"
+    }
   }
 }

@@ -27,3 +27,9 @@ review, remote compilation and native behavioral results are recorded separately
 Visible layout, keyboard/accessibility, actual daemon/provider acceptance and the
 remaining pairing approval flow are not established by source or parser evidence.
 No local compiler, formatter, parser, tests or GUI ran. No roadmap checkbox closes.
+
+Independent review approved the six frozen W121–W123 source files before
+publication as `034a2b45`. Code Quality `35542856926` passed. Preflight
+`35542857009` requested thirteen distinct Rustfmt layouts in `main.rs` and
+`panel_logic.rs`; only those exact hosted formatter changes are applied in the
+follow-up. Fresh GitHub static and native validation remains required.

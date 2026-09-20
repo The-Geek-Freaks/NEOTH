@@ -2985,7 +2985,11 @@ const MAX_TELEGRAM_PAIRING_JSON_BYTES: usize = 16 * 1024;
 const MAX_TELEGRAM_PAIRING_PENDING: usize = 3;
 
 fn canonical_telegram_pairing_request_id(raw: &str) -> Result<&str, String> {
-    if raw.len() != 32 || !raw.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')) {
+    if raw.len() != 32
+        || !raw
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
         return Err("pairing request id must be 32 lowercase hexadecimal characters".to_string());
     }
     Ok(raw)

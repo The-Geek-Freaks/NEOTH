@@ -39236,13 +39236,19 @@ exit 72
         let _ = window.hide();
         slint::run_event_loop_until_quit().expect("pump bounded DM-pairing callback event loop");
         drop(timer);
-        assert!(settled.get(), "timed out waiting for DM-pairing callback settlement");
+        assert!(
+            settled.get(),
+            "timed out waiting for DM-pairing callback settlement"
+        );
     }
 
     #[cfg(not(windows))]
     fn w122_wait_for_pairing_start(calls: &Path) {
         for _ in 0..500 {
-            if w116_call_lines(calls).iter().any(|line| line == "pair:enabled") {
+            if w116_call_lines(calls)
+                .iter()
+                .any(|line| line == "pair:enabled")
+            {
                 return;
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -39327,9 +39333,13 @@ exit 72
             },
         );
         let _ = window.hide();
-        slint::run_event_loop_until_quit().expect("pump bounded pairing-request callback event loop");
+        slint::run_event_loop_until_quit()
+            .expect("pump bounded pairing-request callback event loop");
         drop(timer);
-        assert!(settled.get(), "timed out waiting for pairing-request callback settlement");
+        assert!(
+            settled.get(),
+            "timed out waiting for pairing-request callback settlement"
+        );
     }
 
     #[cfg(not(windows))]
@@ -39478,7 +39488,13 @@ exit 72
         w122_pump_until_pairing_settles(&window);
         assert_eq!(w122_account_projection(&window), unchanged);
 
-        for mode_name in ["malformed", "wrong_account", "wrong_bool", "saved_false", "nonzero"] {
+        for mode_name in [
+            "malformed",
+            "wrong_account",
+            "wrong_bool",
+            "saved_false",
+            "nonzero",
+        ] {
             std::fs::write(&mode, mode_name).expect("select controlled DM-pairing outcome");
             window.invoke_channel_account_dm_pairing("telegram".into(), "ops_b".into(), true);
             assert!(
@@ -39505,7 +39521,13 @@ exit 72
             w122_account_projection(&window),
             [("ops_a".to_string(), false), ("ops_b".to_string(), true)]
         );
-        assert_eq!(w116_call_lines(&calls).iter().filter(|line| line.as_str() == "list").count(), 1);
+        assert_eq!(
+            w116_call_lines(&calls)
+                .iter()
+                .filter(|line| line.as_str() == "list")
+                .count(),
+            1
+        );
 
         std::fs::write(&mode, b"success_disabled").expect("select disabled success fixture");
         std::fs::write(
@@ -39517,9 +39539,27 @@ exit 72
         w122_pump_until_pairing_settles(&window);
         assert_eq!(w122_account_projection(&window), unchanged);
         let call_lines = w116_call_lines(&calls);
-        assert_eq!(call_lines.iter().filter(|line| line.as_str() == "pair:enabled").count(), 7);
-        assert_eq!(call_lines.iter().filter(|line| line.as_str() == "pair:disabled").count(), 1);
-        assert_eq!(call_lines.iter().filter(|line| line.as_str() == "list").count(), 2);
+        assert_eq!(
+            call_lines
+                .iter()
+                .filter(|line| line.as_str() == "pair:enabled")
+                .count(),
+            7
+        );
+        assert_eq!(
+            call_lines
+                .iter()
+                .filter(|line| line.as_str() == "pair:disabled")
+                .count(),
+            1
+        );
+        assert_eq!(
+            call_lines
+                .iter()
+                .filter(|line| line.as_str() == "list")
+                .count(),
+            2
+        );
     }
 
     #[cfg(not(windows))]
@@ -39572,7 +39612,11 @@ exit 72
         assert_eq!(window.get_channel_pairing_account().to_string(), "ops_b");
         assert_eq!(
             w121_pairing_request_ids(&window),
-            [REQUEST.to_string(), OTHER_REQUEST.to_string(), THIRD_REQUEST.to_string()]
+            [
+                REQUEST.to_string(),
+                OTHER_REQUEST.to_string(),
+                THIRD_REQUEST.to_string()
+            ]
         );
 
         // Unknown and malformed identifiers are rejected in the UI admission
@@ -39585,7 +39629,11 @@ exit 72
         );
         assert_eq!(
             w121_pairing_request_ids(&window),
-            [REQUEST.to_string(), OTHER_REQUEST.to_string(), THIRD_REQUEST.to_string()]
+            [
+                REQUEST.to_string(),
+                OTHER_REQUEST.to_string(),
+                THIRD_REQUEST.to_string()
+            ]
         );
 
         std::fs::write(&mode, b"w121_wrong_receipt").expect("select wrong dismissal receipt");
@@ -39596,12 +39644,19 @@ exit 72
         assert!(!window.get_channel_pairing_error().is_empty());
         assert_eq!(
             w121_pairing_request_ids(&window),
-            [REQUEST.to_string(), OTHER_REQUEST.to_string(), THIRD_REQUEST.to_string()],
+            [
+                REQUEST.to_string(),
+                OTHER_REQUEST.to_string(),
+                THIRD_REQUEST.to_string()
+            ],
             "a foreign request receipt must retain every displayed row"
         );
         assert_eq!(
             w116_call_lines(&calls),
-            ["request-list:ops_b", "request-dismiss:0123456789abcdef0123456789abcdef"],
+            [
+                "request-list:ops_b",
+                "request-dismiss:0123456789abcdef0123456789abcdef"
+            ],
             "an unconfirmed dismissal must not re-list or optimistically remove rows"
         );
 
@@ -39625,12 +39680,18 @@ exit 72
         );
         let call_lines = w116_call_lines(&calls);
         assert_eq!(
-            call_lines.iter().filter(|line| line.as_str() == "request-dismiss:0123456789abcdef0123456789abcdef").count(),
+            call_lines
+                .iter()
+                .filter(|line| line.as_str() == "request-dismiss:0123456789abcdef0123456789abcdef")
+                .count(),
             2,
             "the wrong and exact receipts each run one exact-request child"
         );
         assert_eq!(
-            call_lines.iter().filter(|line| line.as_str() == "request-list:ops_b").count(),
+            call_lines
+                .iter()
+                .filter(|line| line.as_str() == "request-list:ops_b")
+                .count(),
             3,
             "only the initial load, explicit recovery load, and exact dismissal re-list run"
         );

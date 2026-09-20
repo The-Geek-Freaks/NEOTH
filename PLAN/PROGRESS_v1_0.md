@@ -15,6 +15,11 @@ separate. See [W121](../docs/gold-wave121-verification.md),
 [W123](../docs/gold-wave123-verification.md). Counts remain **1324/1015/307/2**;
 no roadmap checkbox closes and all local validation stays suspended.
 
+W121–W123 source `034a2b45` passed Code Quality `35542856926`. The thirteen
+distinct formatting hunks requested by Preflight `35542857009` are applied
+exactly to the two affected Rust files with updated source/test bindings.
+New-source GitHub static/native results remain pending; no local formatter ran.
+
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
 > **W107 remote regression recovery (2026-09-20):** the completed earlier-source

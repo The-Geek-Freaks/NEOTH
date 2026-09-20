@@ -24,6 +24,12 @@ continues separately. See [W123](../docs/gold-wave123-verification.md).
 No R4-07/P1-16 checkbox closes; counts stay **1324/1015/307/2**, raw309/pre-tag308.
 All local validation remains suspended.
 
+W121–W123 source `034a2b45` passed Code Quality `35542856926`; Preflight
+`35542857009` requested thirteen distinct Rustfmt layout hunks in two Rust
+files. This follow-up applies those exact hosted findings and refreshes the
+source/test bindings. No local formatter ran; fresh static/native gates remain
+required and the implementation review boundary is unchanged.
+
 **W107 remote regression recovery (2026-09-20):** the completed earlier-source
 macOS run `35113128375` executed 16810 tests: 16805 passed, five failed and
 23 were skipped. Windows reached its 50-minute compile limit before tests;
