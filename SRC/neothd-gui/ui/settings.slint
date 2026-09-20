@@ -2056,6 +2056,8 @@ export component SettingsView inherits Rectangle {
                             NeothLineEdit { placeholder-text: "URL (--url)  e.g. http://mac.local:1234"; password: ch-f1-secret; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "Password (--password)"; password: ch-f2-secret; text <=> ch-f2; }
                             NeothLineEdit { placeholder-text: "Allowed iMessage sender"; password: ch-f3-secret; text <=> ch-f3; }
+                            NeothLineEdit { placeholder-text: "Watched chat GUIDs CSV (--channels-csv, optional)"; password: ch-f4-secret; text <=> ch-f4; }
+                            Text { text: "Comma-separated GUIDs restrict accepted chats. Blank removes this chat filter; the allowed sender is still required."; color: Theme.text-muted; font-size: Theme.font-size-caption; wrap: word-wrap; }
                         }
                         // mattermost: url + token
                         if selected-channel-type == "mattermost": VerticalBox {

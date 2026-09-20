@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W115_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "eb316b5ef31297f831b035063f262abb6d3d8a7b",
+  "status": "W95_W117_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "base": "e168dad602f23447782164d37208ecf5a21f0ecf",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 51992,
-    "sha256": "FF02890F5890DFBBFC618164CB5EFE0361F6988E109DD28F0FAB9359D7F48CE7"
+    "bytes": 51949,
+    "sha256": "3C9028AE791B26E9C9C1F78D0773A61205C11CF81923548386A3CC8B19AFDB49"
   },
   "sourceInputs": 300,
   "requiredNativeTests": [
@@ -500,7 +500,8 @@
     "panel_logic::tests::private_channel_builder_routes_irc_public_settings_without_weakening_account_requirement",
     "tests::irc_public_settings_request_uses_private_stdin_without_settings_or_secret_in_argv",
     "panel_logic::tests::named_telegram_account_retirement_command_and_ack_bind_the_exact_account",
-    "panel_logic::tests::required_sender_form_slots_map_to_private_allowed_sender_and_reject_blank"
+    "panel_logic::tests::required_sender_form_slots_map_to_private_allowed_sender_and_reject_blank",
+    "panel_logic::tests::bluebubbles_chat_guid_form_slot_trims_or_clears_without_weakening_sender"
   ],
   "requiredGuiClass": "neothd-gui::bin/neothd-gui",
   "additionalGuiCopies": {
@@ -629,6 +630,12 @@
       "sha256": "E14B2BF9E3686C15D1984DFDE3923ABFD7A0A2ECF81CEA35FC6C105D6D07D073",
       "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
       "executionClaim": false
+    },
+    {
+      "record": "work/gold-20260906/wave117-bluebubbles-chat-guid/REVIEW.md",
+      "sha256": "C19F9F55A2D4AB816D62112117C3A7B63F20CB5789509EED1A8A410E5635CD29",
+      "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
+      "executionClaim": false
     }
   ],
   "priorCi": {
@@ -705,8 +712,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 509135,
-      "sha256": "2AAF56C4A14D963E19E1618894EF82E926E0B2AFA4F4724E0535BA9DA7D9511C"
+      "bytes": 511089,
+      "sha256": "82891418C913A89AC895AE2BB9062DE7E2DEFA53E0526D0E59DA34C5FCD8D2C2"
     }
   ],
   "remoteFormatCorrection": {
@@ -983,8 +990,18 @@
       "codeQuality": 35539591989,
       "codeQualityConclusion": "success",
       "change": "Two exact remote Rustfmt array layouts",
-      "rerun": "PENDING",
+      "rerun": "PASS_PREFLIGHT35539814060_CODEQUALITY35539813948_ONE168DAD6",
       "localFormatterRan": false
     }
+  },
+  "wave117": {
+    "report": "docs/gold-wave117-verification.md",
+    "sourceReview": "APPROVED",
+    "scope": "Existing BlueBubbles chat GUID f4 with explicit blank-to-clear semantics; required sender preserved",
+    "sourceInputs": 300,
+    "nativeRequired": 79,
+    "guiRequired": 17,
+    "execution": "PENDING_GITHUB_ONLY",
+    "localValidationRan": false
   }
 }

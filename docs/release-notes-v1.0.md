@@ -30,6 +30,8 @@ These are unfinished v1 contracts, not accepted post-1.0 limitations:
   through the existing CLI transaction, with exact-account result binding.
   Eight existing setup forms now expose the mandatory inbound sender fields
   already required by their private setup requests; no inbound policy is relaxed.
+  BlueBubbles also exposes its optional watched-chat GUID filter in Settings,
+  with explicit blank-to-clear semantics and the required sender unchanged.
   Durable cross-store credential recovery, persisted
   multi-account identity, descriptor-rendered forms and OpenClaw
   apply/status/rollback plus runtime-behaviour parity remain open.

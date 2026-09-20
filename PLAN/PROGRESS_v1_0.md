@@ -76,6 +76,10 @@
 
 > W115 source `eb316b5e` passed Code Quality `35539591989`. Preflight `35539592066` requested only two array layouts in `panel_logic.rs`; this follow-up applies those exact remote Rustfmt hunks without local formatter execution. Fresh static and native gates remain required.
 
+> **W117 BlueBubbles watched-chat filter (2026-09-20):** Settings now exposes the existing optional chat GUID CSV through the fourth private field. Nonblank input restricts chats; blank explicitly removes an existing filter while the mandatory sender policy remains. The real-builder regression covers trimming, null-clear and blank-sender refusal. Independent source review passed; remote execution, rendering/accessibility and actual provider acceptance remain required. See [W117 verification](../docs/gold-wave117-verification.md). No checkbox or count changes.
+>
+> W115 formatting head `e168dad6` passed Preflight `35539814060` and Code Quality `35539813948`. All local validation remains suspended. Useful earlier-source CI `35538895227` has passed strict Clippy and is executing Linux tests while macOS/Windows compile; it does not validate W115/W117.
+
 > **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 > now share Doctor's read-only home/managed-root readiness operation, with typed
 > disabled/ready/unavailable results separate from selected-root status. GUI

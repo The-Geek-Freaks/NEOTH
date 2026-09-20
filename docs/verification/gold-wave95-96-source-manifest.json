@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W115-channel-form-parity-and-CI-recovery",
-  "base": "eb316b5ef31297f831b035063f262abb6d3d8a7b",
-  "capturedUtc": "2026-09-20T21:46:35.7668486Z",
-  "validationStatus": "W115_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
-  "scopeNote": "300 cumulative inputs. W115 source reviewed and published eb316b5e. Two exact remote Rustfmt array layouts applied from Preflight35539592066; CodeQuality35539591989 passed. W116 main.rs remains unadmitted. New-source remote gates required; no local validation or roadmap closure.",
+  "item": "GOLD-W95-W117-channel-form-parity-and-CI-recovery",
+  "base": "e168dad602f23447782164d37208ecf5a21f0ecf",
+  "capturedUtc": "2026-09-20T21:52:43.1693940Z",
+  "validationStatus": "W117_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
+  "scopeNote": "300 cumulative inputs. W117 BlueBubbles optional chat GUID GUI input and real builder regression reviewed. W115 e168dad6 static gates passed. W116 main.rs unadmitted; published main hash retained. No local validation or roadmap closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -48,8 +48,8 @@
     },
     {
       "path": "docs/channels.md",
-      "bytes": 43253,
-      "sha256": "4CCBAE44F33C0F26C786E755F37E5064F48BF70D9A8DD556267A9D0F88BC6F03"
+      "bytes": 43636,
+      "sha256": "C8ADB06E3CE2C3827BCEA5406F36BEA9A02DDB86092995528C7E76BF7D72275F"
     },
     {
       "path": "docs/cli-commands.md",
@@ -78,8 +78,8 @@
     },
     {
       "path": "docs/release-notes-v1.0.md",
-      "bytes": 14641,
-      "sha256": "C9FB35DA72780881E91E5B9750C8DA197ACC25F59ABDABA4A5D57DC1BC186FAD"
+      "bytes": 14795,
+      "sha256": "1FA975E4385C287B2811983D9EA70ADE81E15C08DF0E69AA220C9966B950ECEF"
     },
     {
       "path": "docs/troubleshooting.md",
@@ -278,8 +278,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 509135,
-      "sha256": "2AAF56C4A14D963E19E1618894EF82E926E0B2AFA4F4724E0535BA9DA7D9511C"
+      "bytes": 511089,
+      "sha256": "82891418C913A89AC895AE2BB9062DE7E2DEFA53E0526D0E59DA34C5FCD8D2C2"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
@@ -418,8 +418,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/settings.slint",
-      "bytes": 399672,
-      "sha256": "C428A024A6F815C897FE6B03698177D4F1FA00006F170BD9D8FB4780ED612E03"
+      "bytes": 400070,
+      "sha256": "D4F4A94015FF7B3F79F69BB8B07C000F65422BBC2D759833242B8124DA7C4382"
     },
     {
       "path": "SRC/neothd-gui/ui/tabs.slint",

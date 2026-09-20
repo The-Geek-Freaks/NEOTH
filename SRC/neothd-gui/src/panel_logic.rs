@@ -9567,6 +9567,60 @@ mod tests {
     }
 
     #[test]
+    fn bluebubbles_chat_guid_form_slot_trims_or_clears_without_weakening_sender() {
+        let configured = build_channel_credential_request(
+            "imessage_bluebubbles",
+            [
+                "http://mac.local:1234",
+                "bluebubbles-secret",
+                "owner@example.org",
+                "  chat-guid-a,chat-guid-b  ",
+                "",
+                "",
+            ],
+            false,
+        )
+        .expect("BlueBubbles sender and watched chats are complete");
+        let configured: serde_json::Value = serde_json::from_slice(configured.as_slice()).unwrap();
+        assert_eq!(configured["fields"]["allowed_sender"], "owner@example.org");
+        assert_eq!(configured["fields"]["channels_csv"], "chat-guid-a,chat-guid-b");
+
+        let cleared = build_channel_credential_request(
+            "imessage_bluebubbles",
+            [
+                "http://mac.local:1234",
+                "bluebubbles-secret",
+                "owner@example.org",
+                " \t ",
+                "",
+                "",
+            ],
+            false,
+        )
+        .expect("blank watched-chat filter deliberately clears scope");
+        let cleared: serde_json::Value = serde_json::from_slice(cleared.as_slice()).unwrap();
+        assert_eq!(cleared["fields"]["channels_csv"], serde_json::Value::Null);
+        assert_eq!(cleared["fields"]["allowed_sender"], "owner@example.org");
+
+        assert!(
+            build_channel_credential_request(
+                "imessage_bluebubbles",
+                [
+                    "http://mac.local:1234",
+                    "bluebubbles-secret",
+                    " \t ",
+                    "chat-guid-a",
+                    "",
+                    "",
+                ],
+                false,
+            )
+            .is_err(),
+            "clearing the required sender is still refused when a watched-chat filter is set"
+        );
+    }
+
+    #[test]
     fn private_channel_builder_routes_matrix_store_path_without_changing_secret_slots() {
         let request = build_channel_credential_request_with_matrix_store_path(
             "matrix",

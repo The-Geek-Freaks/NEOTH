@@ -58,6 +58,12 @@ key. The channel-specific CLI validators remain authoritative. Existing saved
 credentials are not displayed while editing. Native setup and provider probes
 remain required for release qualification.
 
+BlueBubbles also exposes optional watched chat GUIDs in Settings. Enter a
+comma-separated list to restrict accepted chats to those GUIDs. Blank removes
+an existing chat filter on save; the required allowed-sender policy still
+applies. This uses the existing private setup request and the adapter's existing
+chat allowlist, without discovering chats or displaying saved credentials.
+
 ## Account identity and channel leases
 
 The daemon binds each inbound handler to a canonical channel and account at
