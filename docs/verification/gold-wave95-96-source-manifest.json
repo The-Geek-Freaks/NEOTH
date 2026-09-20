@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W110-channel-setting-parity-and-remote-generated-reference",
-  "base": "4087983f96ccee6024ee1abfb03c5bdd49ba85bc",
-  "capturedUtc": "2026-09-20T20:26:15.5982743Z",
-  "validationStatus": "W110_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
-  "scopeNote": "300 cumulative inputs; W110 LINE port typed CLI/private GUI setting plus missing required sender field; real request regressions and remote generated-reference export. Existing docgen guard stays required; committed generated reference still pending refresh. GitHub-only validation; no roadmap closure. Manual reference-only GitHub build restores existing cache without saving it; current-source generation pending.",
+  "item": "GOLD-W95-W112-channel-parity-generated-reference-and-test-lock-recovery",
+  "base": "fb383b8a9d1a5580e65f3e7b7ce238ac5efa7984",
+  "capturedUtc": "2026-09-20T20:32:53.9304078Z",
+  "validationStatus": "W112_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
+  "scopeNote": "300 cumulative inputs; W108 Matrix store, W110 LINE port + required sender GUI, W112 test-lock repair. Actual GitHub CLI-reference snapshot imported with commit/digest binding. All new-source strict lint/native gates remain pending; no local dynamic validation or roadmap closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -53,8 +53,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 226851,
-      "sha256": "8469D9AC51E8AAE778CD2FDDA21E28CF2765D9AA1ABA6D4C618ABCC866A3F880"
+      "bytes": 227196,
+      "sha256": "E5613E2A20EA6F30C830641F94202FB4C272965A31D5FDF6B79B4DF4586D5B2B"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -753,8 +753,8 @@
     },
     {
       "path": "SRC/neothd/src/coding/dispatcher.rs",
-      "bytes": 251818,
-      "sha256": "92C0BB6BD8066B0DF23937477E65F51F9904D904AAD6F15AA54C42A3C5A559C1"
+      "bytes": 252176,
+      "sha256": "C25DDFD333E23F788C785EDC61CA1AC7946348F6AB4A85A9DF041073A11F62A7"
     },
     {
       "path": "SRC/neothd/src/coding/feed.rs",

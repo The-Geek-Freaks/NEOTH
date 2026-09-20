@@ -50,6 +50,8 @@
 >
 > W110 formatting head `4087983f` passed Preflight `35535462840` and Code Quality `35535462600`. Earlier-source CI `35534405981` now has ten successful component jobs but Linux stopped before tests on `await_holding_lock` in a dispatcher fixture; W112 is repairing that narrow test boundary. macOS/Windows and preview remain useful pending runs. A separate dispatch-only CLI-reference job builds the current CLI with one Cargo worker and exports source/digest-bound documentation without repository write access.
 >
+> W112 (2026-09-20) repairs the observed Linux test-lock lint with a synchronous wrapper around the unchanged async dispatcher fixture. The global environment lock, restoration, current-thread runtime and all risk/receipt assertions are preserved; no lint allowance is introduced. Independent review passed. Reference run `35535636229` successfully built the W110 public CLI on `fb383b8a`; its commit/digest-verified generated Markdown now supplies the two new flag entries. Fresh strict Clippy, docgen equality and native runtime remain required on the combined source.
+>
 > **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 > now share Doctor's read-only home/managed-root readiness operation, with typed
 > disabled/ready/unavailable results separate from selected-root status. GUI

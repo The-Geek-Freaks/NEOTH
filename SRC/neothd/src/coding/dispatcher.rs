@@ -3697,8 +3697,8 @@ mod tests {
         accepted_patch_with_sentinel()
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn risk_block_emits_preapply_advisory_receipt_without_changing_risk_authority() {
+    #[test]
+    fn risk_block_emits_preapply_advisory_receipt_without_changing_risk_authority() {
         if !git_available() {
             eprintln!("skipping: git not on PATH");
             return;
@@ -3707,6 +3707,16 @@ mod tests {
         // override leases. Serialize and isolate it so this fixture proves the
         // no-override Block branch without inheriting an ambient lease.
         let _env = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build W88 current-thread runtime")
+            .block_on(
+                risk_block_emits_preapply_advisory_receipt_without_changing_risk_authority_body(),
+            );
+    }
+
+    async fn risk_block_emits_preapply_advisory_receipt_without_changing_risk_authority_body() {
         let previous_home = std::env::var_os("NEOTH_HOME");
         struct RestoreNeothHome(Option<std::ffi::OsString>);
         impl Drop for RestoreNeothHome {

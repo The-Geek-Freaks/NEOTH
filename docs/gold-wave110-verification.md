@@ -39,10 +39,13 @@ LINE source. W110 requires its own relevant remote gates.
 No R4-07 or other roadmap checkbox closes. Counts remain 1324 total, 1015
 checked, 307 open and 2 partial; raw unchecked309/pre-tag308.
 
-The committed generated CLI reference is known to lag the newly exposed flags.
-The reviewed Gold smoke export will provide a real-binary generated snapshot,
-its full source SHA and digest. Import and the unchanged docgen anti-drift test
-remain required; no locally synthesized reference is represented as generated.
+The initial source publication deliberately recorded the generated-reference
+drift as open. GitHub reference run `35535636229` successfully compiled the
+current CLI on `fb383b8a` and exported its actual `completions --reference`
+output. The source commit and SHA-256 were verified before copying the exact
+artifact into `docs/cli-commands.md`; its only changes are the Matrix and LINE
+flag entries. The unchanged docgen anti-drift test still awaits the next full
+CI. W112 changes only a dispatcher test, not the command tree or generator.
 
 The independent six-file source review and separate CLI-reference-export review
 found no blocking issue. Their source hashes are retained in the batch records.
@@ -52,3 +55,7 @@ found no blocking issue. Their source hashes are retained in the batch records.
 W110 was published as `8b7db9a5` after independent source and workflow review. Code Quality `35535343581` passed; Preflight `35535343835` requested only two assertion-layout changes. The follow-up applies those exact remote hunks. New-source static/runtime gates and generated CLI-reference refresh remain pending.
 
 W110 formatting head `4087983f` passed Preflight `35535462840` and Code Quality `35535462600`. Earlier-source CI `35534405981` now has ten successful component jobs but Linux stopped before tests on `await_holding_lock` in a dispatcher fixture; W112 is repairing that narrow test boundary. macOS/Windows and preview remain useful pending runs. A separate dispatch-only CLI-reference job builds the current CLI with one Cargo worker and exports source/digest-bound documentation without repository write access.
+
+## W112 observed strict-lint follow-up
+
+W112 (2026-09-20) repairs the observed Linux test-lock lint with a synchronous wrapper around the unchanged async dispatcher fixture. The global environment lock, restoration, current-thread runtime and all risk/receipt assertions are preserved; no lint allowance is introduced. Independent review passed. Reference run `35535636229` successfully built the W110 public CLI on `fb383b8a`; its commit/digest-verified generated Markdown now supplies the two new flag entries. Fresh strict Clippy, docgen equality and native runtime remain required on the combined source.

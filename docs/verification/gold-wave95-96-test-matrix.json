@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W110_REVIEWED_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "4087983f96ccee6024ee1abfb03c5bdd49ba85bc",
+  "status": "W95_W112_REVIEWED_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "base": "fb383b8a9d1a5580e65f3e7b7ce238ac5efa7984",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 52146,
-    "sha256": "BC9B65607B3E4DF15AE1451159D76E0C9AA9D91E46377946A062470A85AE17F3"
+    "bytes": 52015,
+    "sha256": "FC370EA1B8D619733BF0471324B404AFF05C2FDE4343E75310BB406DC0325552"
   },
   "sourceInputs": 300,
   "requiredNativeTests": [
@@ -198,13 +198,13 @@
     {
       "test": "coding::dispatcher::tests::legacy_worker_outcome_keeps_nullable_result_provenance_empty",
       "sourcePath": "SRC/neothd/src/coding/dispatcher.rs",
-      "sourceSha256": "92C0BB6BD8066B0DF23937477E65F51F9904D904AAD6F15AA54C42A3C5A559C1",
+      "sourceSha256": "C25DDFD333E23F788C785EDC61CA1AC7946348F6AB4A85A9DF041073A11F62A7",
       "junitClass": "neoth"
     },
     {
       "test": "coding::dispatcher::tests::privileged_internal_forged_output_binding_never_materializes_or_persists",
       "sourcePath": "SRC/neothd/src/coding/dispatcher.rs",
-      "sourceSha256": "92C0BB6BD8066B0DF23937477E65F51F9904D904AAD6F15AA54C42A3C5A559C1",
+      "sourceSha256": "C25DDFD333E23F788C785EDC61CA1AC7946348F6AB4A85A9DF041073A11F62A7",
       "junitClass": "neoth"
     },
     {
@@ -276,7 +276,7 @@
     {
       "test": "coding::dispatcher::tests::apply_wal_advisory_uses_narrow_and_wide_configured_impact_policies",
       "sourcePath": "SRC/neothd/src/coding/dispatcher.rs",
-      "sourceSha256": "92C0BB6BD8066B0DF23937477E65F51F9904D904AAD6F15AA54C42A3C5A559C1",
+      "sourceSha256": "C25DDFD333E23F788C785EDC61CA1AC7946348F6AB4A85A9DF041073A11F62A7",
       "junitClass": "neoth"
     },
     {
@@ -301,7 +301,7 @@
       "test": "coding::dispatcher::tests::risk_block_emits_preapply_advisory_receipt_without_changing_risk_authority",
       "sourcePath": "SRC/neothd/src/coding/dispatcher.rs",
       "junitClass": "neoth",
-      "sourceSha256": "92C0BB6BD8066B0DF23937477E65F51F9904D904AAD6F15AA54C42A3C5A559C1"
+      "sourceSha256": "C25DDFD333E23F788C785EDC61CA1AC7946348F6AB4A85A9DF041073A11F62A7"
     },
     {
       "test": "config::code_map_config_tests::configured_mcp_read_path_selectors_are_exact_and_bounded",
@@ -589,6 +589,12 @@
       "sha256": "3438BAED28B7F8706D57462B4A34CA1CE8A18B5D3FC814F6CC90B127358180CE",
       "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
       "executionClaim": false
+    },
+    {
+      "record": "work/gold-20260906/wave112-dispatcher-test-lock/REVIEW.md",
+      "sha256": "ECE978212A66770EF035358C822E667D9AD6AE4C43B9095BFCCA6A338F92759B",
+      "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
+      "executionClaim": false
     }
   ],
   "priorCi": {
@@ -649,7 +655,7 @@
     "W58 native GUI callback now includes Disabled/Unavailable/Ready, diagnosticCLI resolution and drained late-result publication; same macOS mainthread identity",
     "Provider-loop selected-route cancellation remains outside the W102 direct-CLI fixture; direct CLI deliberately uses unbound cancellation",
     "Portable, installed, visual and provider-live acceptance for final source; selector editing/Buddy enable-disable-explain remain open; no ROAD checkbox closes",
-    "Import actual-binary generated CLI reference with matching source SHA and digest, then prove committed-docgen equality on GitHub"
+    "Imported CLI reference must pass unchanged docgen equality guard in next full CI"
   ],
   "guiSourceBindings": [
     {
@@ -809,7 +815,7 @@
     "preserveUsefulPriorRuns": true,
     "sourceReview": "APPROVED",
     "referenceExportReview": "APPROVED",
-    "generatedReference": "KNOWN_DRIFT_PENDING_REAL_BINARY_EXPORT",
+    "generatedReference": "IMPORTED_EXACT_REMOTE_BINARY_OUTPUT_FROM_RUN35535636229",
     "sourceInputs": 300,
     "nativeRequired": 75,
     "guiRequired": 12,
@@ -824,7 +830,19 @@
       "localFormatterRan": false,
       "rerun": "PASS_PREFLIGHT35535462840_CODEQUALITY35535462600_ON4087983f"
     },
-    "referenceWorkflow": "Manual-only cli-reference.yml; reviewed; current generation pending"
+    "referenceWorkflow": "PASS_RUN35535636229_ON_FB383B8A",
+    "referenceImport": {
+      "run": 35535636229,
+      "runConclusion": "success",
+      "source": "fb383b8a9d1a5580e65f3e7b7ce238ac5efa7984",
+      "artifact": "generated-cli-reference",
+      "sha256": "E5613E2A20EA6F30C830641F94202FB4C272965A31D5FDF6B79B4DF4586D5B2B",
+      "bytes": 227196,
+      "importedPath": "docs/cli-commands.md",
+      "localProductRan": false,
+      "laterSourceDelta": "W112 dispatcher cfg(test) only; CLI/docgen source unchanged",
+      "committedDocgenTest": "PENDING_NEXT_FULL_CI"
+    }
   },
   "wave112": {
     "failedRun": 35534405981,
@@ -832,7 +850,8 @@
     "linuxJob": 106140714935,
     "error": "clippy::await_holding_lock in coding/dispatcher.rs test",
     "linuxTests": "NOT_RUN",
-    "repair": "SOURCE_CANDIDATE_IN_PROGRESS_NOT_INCLUDED",
-    "retainOtherUsefulRuns": true
+    "repair": "APPROVED_SYNCHRONOUS_TEST_WRAPPER_SAME_CURRENT_THREAD_RUNTIME_ENV_LOCK_RETAINED",
+    "retainOtherUsefulRuns": true,
+    "validation": "PENDING_NEW_EXACT_SOURCE_STRICT_CLIPPY_AND_RUNTIME"
   }
 }
