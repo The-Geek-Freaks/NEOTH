@@ -1,8 +1,8 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W110-channel-setting-parity-and-remote-generated-reference",
-  "base": "7909081e30594e17b4cb2592f0205f3ec13d6f0e",
-  "capturedUtc": "2026-09-20T20:20:42.8067834Z",
+  "base": "8b7db9a59ceef1cb979cccca57c9e98b9aa2fc9c",
+  "capturedUtc": "2026-09-20T20:22:58.8033774Z",
   "validationStatus": "W110_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
   "scopeNote": "299 cumulative inputs; W110 LINE port typed CLI/private GUI setting plus missing required sender field; real request regressions and remote generated-reference export. Existing docgen guard stays required; committed generated reference still pending refresh. GitHub-only validation; no roadmap closure.",
   "files": [
@@ -273,8 +273,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 495864,
-      "sha256": "BD8336690287E5A87C761D5C9136499F391F4A52A0DDA9CCFC57C182898E43DD"
+      "bytes": 495898,
+      "sha256": "B41CC167B072F43B854ED3710F5193CF1CBAE771E26D0DACFF62D7047477DDD4"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
@@ -493,8 +493,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel.rs",
-      "bytes": 281130,
-      "sha256": "6DC0B0359BC423B43A9C5A839582705263B31EB642863AEF228FA1B93871531E"
+      "bytes": 281164,
+      "sha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",

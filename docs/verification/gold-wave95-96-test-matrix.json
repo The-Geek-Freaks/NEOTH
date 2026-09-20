@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W95_W110_REVIEWED_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "7909081e30594e17b4cb2592f0205f3ec13d6f0e",
+  "base": "8b7db9a59ceef1cb979cccca57c9e98b9aa2fc9c",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 51863,
-    "sha256": "8F1B72E158837FAA28BF0E8186B99192C987C2D61E401B7F99AEEF78BB23E2BD"
+    "sha256": "FC3B1EABDBFBCF4FCA6F1E8C8F231D2CCE62BB13439B68AB7B8936E41C6CF6EE"
   },
   "sourceInputs": 299,
   "requiredNativeTests": [
@@ -396,55 +396,55 @@
     {
       "test": "cli::channel::tests::private_credential_request_accepts_canonical_scoped_fields",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "6DC0B0359BC423B43A9C5A839582705263B31EB642863AEF228FA1B93871531E",
+      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::private_credential_request_rejects_alias_version_and_wrong_scope",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "6DC0B0359BC423B43A9C5A839582705263B31EB642863AEF228FA1B93871531E",
+      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::matrix_store_path_stages_only_when_nonblank_and_preserves_existing_state",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "6DC0B0359BC423B43A9C5A839582705263B31EB642863AEF228FA1B93871531E",
+      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::stage_remove_matrix_store_only_reports_and_clears_configuration",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "6DC0B0359BC423B43A9C5A839582705263B31EB642863AEF228FA1B93871531E",
+      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::flags_into_fields_maps_all_fields",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "6DC0B0359BC423B43A9C5A839582705263B31EB642863AEF228FA1B93871531E",
+      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::line_webhook_port_stages_explicitly_and_preserves_omitted_or_blank_reconfiguration",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "6DC0B0359BC423B43A9C5A839582705263B31EB642863AEF228FA1B93871531E",
+      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::stage_remove_line_port_only_reports_and_clears_configuration",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "6DC0B0359BC423B43A9C5A839582705263B31EB642863AEF228FA1B93871531E",
+      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::private_line_webhook_port_is_typed_scoped_and_never_echoes_invalid_values",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "6DC0B0359BC423B43A9C5A839582705263B31EB642863AEF228FA1B93871531E",
+      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::private_credential_request_denies_unknown_fields_without_echoing_values",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "6DC0B0359BC423B43A9C5A839582705263B31EB642863AEF228FA1B93871531E",
+      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
       "junitClass": "neoth"
     },
     {
@@ -658,8 +658,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 495864,
-      "sha256": "BD8336690287E5A87C761D5C9136499F391F4A52A0DDA9CCFC57C182898E43DD"
+      "bytes": 495898,
+      "sha256": "B41CC167B072F43B854ED3710F5193CF1CBAE771E26D0DACFF62D7047477DDD4"
     }
   ],
   "remoteFormatCorrection": {
@@ -808,6 +808,15 @@
     "nativeRequired": 75,
     "guiRequired": 12,
     "execution": "PENDING_GITHUB_ONLY",
-    "localValidationRan": false
+    "localValidationRan": false,
+    "formatFollowup": {
+      "runId": 35535343835,
+      "codeQuality": 35535343581,
+      "codeQualityConclusion": "success",
+      "source": "8b7db9a59ceef1cb979cccca57c9e98b9aa2fc9c",
+      "change": "Two exact remote assertion layouts",
+      "localFormatterRan": false,
+      "rerun": "PENDING"
+    }
   }
 }

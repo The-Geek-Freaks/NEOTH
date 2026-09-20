@@ -9431,7 +9431,10 @@ mod tests {
         )
         .unwrap();
         let blank: serde_json::Value = serde_json::from_slice(blank.as_slice()).unwrap();
-        assert_eq!(blank["fields"]["line_webhook_port"], serde_json::Value::Null);
+        assert_eq!(
+            blank["fields"]["line_webhook_port"],
+            serde_json::Value::Null
+        );
 
         for invalid in ["0", "65536", "9443.5"] {
             assert!(

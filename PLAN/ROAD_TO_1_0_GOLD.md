@@ -50,6 +50,8 @@ binary with source/digest binding; the docgen anti-drift test remains required.
 See [W110 verification](../docs/gold-wave110-verification.md). Independent review passed; new
 remote execution is required before acceptance. No checkbox or count changes.
 
+W110 was published as `8b7db9a5` after independent source and workflow review. Code Quality `35535343581` passed; Preflight `35535343835` requested only two assertion-layout changes. The follow-up applies those exact remote hunks. New-source static/runtime gates and generated CLI-reference refresh remain pending.
+
 **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 now share Doctor's read-only home/managed-root readiness operation, with typed
 disabled/ready/unavailable results separate from selected-root status. GUI

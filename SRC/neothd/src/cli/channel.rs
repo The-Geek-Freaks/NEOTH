@@ -4443,7 +4443,10 @@ mod tests {
         base.line_webhook_port = Some(9443);
 
         let fresh = stage_channel_add("line", &complete(None), Credentials::default()).unwrap();
-        assert!(fresh.line_webhook_port.is_none(), "fresh setup uses runtime default 8444");
+        assert!(
+            fresh.line_webhook_port.is_none(),
+            "fresh setup uses runtime default 8444"
+        );
         let omitted = stage_channel_add("line", &complete(None), base.clone()).unwrap();
         assert_eq!(omitted.line_webhook_port, Some(9443));
         let explicit = stage_channel_add("line", &complete(Some(9555)), base).unwrap();

@@ -46,3 +46,7 @@ remain required; no locally synthesized reference is represented as generated.
 
 The independent six-file source review and separate CLI-reference-export review
 found no blocking issue. Their source hashes are retained in the batch records.
+
+## Publication and remote formatting
+
+W110 was published as `8b7db9a5` after independent source and workflow review. Code Quality `35535343581` passed; Preflight `35535343835` requested only two assertion-layout changes. The follow-up applies those exact remote hunks. New-source static/runtime gates and generated CLI-reference refresh remain pending.
