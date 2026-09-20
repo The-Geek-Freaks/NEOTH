@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W112-Matrix-LINE-IRC-settings-and-CI-recovery",
-  "base": "1644e74b9befadc9f8bb83526a38dda1a45c7655",
-  "capturedUtc": "2026-09-20T21:02:08.9031043Z",
-  "validationStatus": "W111_EXACT_REMOTE_FORMATTING_APPLIED_RERUN_REQUIRED",
-  "scopeNote": "300 cumulative inputs; Matrix store, LINE port/sender and IRC port/TLS/nick/account surfaces; W112 dispatcher test-lock repair. W111 requires fresh real-binary generated CLI reference. All new-source strict lint/native gates remain pending; no local dynamic validation or roadmap closure.",
+  "item": "GOLD-W95-W113-channel-settings-and-observed-CI-recovery",
+  "base": "cd6b4a07d58156009387401a75ae4d917093cf71",
+  "capturedUtc": "2026-09-20T21:07:22.1347245Z",
+  "validationStatus": "W113_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
+  "scopeNote": "300 cumulative inputs. W108 Matrix, W110 LINE and W111 IRC surfaces; W112 env-lock lint and W113 actual MCP/GUI fixture repairs. W111 static gates passed on cd6b4a07; generated reference and exact combined native gates pending. No local validation or roadmap closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -273,8 +273,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1647359,
-      "sha256": "0AAA7E00EDCBD46FCE8B042B81C21DED483A4B15A0489DAB5ACADCC3A8D1E7AE"
+      "bytes": 1647976,
+      "sha256": "F17DA3CE0E86CB1FFC21F1F87BC5D711432DE9888E58E3F28B572AE78A5180DB"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
@@ -1043,8 +1043,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "bytes": 304661,
-      "sha256": "D2EAF6ED77376B75CDCD7A2716E7B6BA5E43E7579460B7C773B94D16D43B8617"
+      "bytes": 304659,
+      "sha256": "DE4CB5669DB9E1F246885E8DCD27F26159661FCB5C9D5AD2B7612538F327D1A2"
     },
     {
       "path": "SRC/neothd/src/mcp/gate.rs",

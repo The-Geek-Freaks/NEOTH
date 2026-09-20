@@ -3123,7 +3123,7 @@ mod tests {
                     path_field: "path".into(),
                 }];
                 let first_reply = format!(
-                    "```mcp-tool-call\\n{}\\n```",
+                    "```mcp-tool-call\n{}\n```",
                     serde_json::json!({
                         "server": configured_read.id.clone(),
                         "tool": "codegraph_outline",

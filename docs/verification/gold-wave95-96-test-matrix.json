@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W112_REVIEWED_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "1644e74b9befadc9f8bb83526a38dda1a45c7655",
+  "status": "W95_W113_REVIEWED_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "base": "cd6b4a07d58156009387401a75ae4d917093cf71",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 51991,
-    "sha256": "7948AF06DD90215D1E726368FC850F232743E6A9CA1AC1CDFBD06902A64B3B19"
+    "bytes": 51986,
+    "sha256": "F4896CDA49D3A5E46292F43A91135A48710786FDCC913925770DF85EC04459B3"
   },
   "sourceInputs": 300,
   "requiredNativeTests": [
@@ -96,25 +96,25 @@
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_summarizes_over_threshold",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "D2EAF6ED77376B75CDCD7A2716E7B6BA5E43E7579460B7C773B94D16D43B8617",
+      "sourceSha256": "DE4CB5669DB9E1F246885E8DCD27F26159661FCB5C9D5AD2B7612538F327D1A2",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_sends_canonical_outer_history_to_the_driver",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "D2EAF6ED77376B75CDCD7A2716E7B6BA5E43E7579460B7C773B94D16D43B8617",
+      "sourceSha256": "DE4CB5669DB9E1F246885E8DCD27F26159661FCB5C9D5AD2B7612538F327D1A2",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_blocks_oversized_fanout_before_the_first_call",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "D2EAF6ED77376B75CDCD7A2716E7B6BA5E43E7579460B7C773B94D16D43B8617",
+      "sourceSha256": "DE4CB5669DB9E1F246885E8DCD27F26159661FCB5C9D5AD2B7612538F327D1A2",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_is_noop_under_threshold",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "D2EAF6ED77376B75CDCD7A2716E7B6BA5E43E7579460B7C773B94D16D43B8617",
+      "sourceSha256": "DE4CB5669DB9E1F246885E8DCD27F26159661FCB5C9D5AD2B7612538F327D1A2",
       "junitClass": "neoth"
     },
     {
@@ -330,7 +330,7 @@
     {
       "test": "mcp::dispatch_loop::tests::w95_configured_read_path_provider_loop_uses_same_loaded_server_snapshot",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "D2EAF6ED77376B75CDCD7A2716E7B6BA5E43E7579460B7C773B94D16D43B8617",
+      "sourceSha256": "DE4CB5669DB9E1F246885E8DCD27F26159661FCB5C9D5AD2B7612538F327D1A2",
       "junitClass": "neoth"
     },
     {
@@ -698,8 +698,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1647359,
-      "sha256": "0AAA7E00EDCBD46FCE8B042B81C21DED483A4B15A0489DAB5ACADCC3A8D1E7AE"
+      "bytes": 1647976,
+      "sha256": "F17DA3CE0E86CB1FFC21F1F87BC5D711432DE9888E58E3F28B572AE78A5180DB"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
@@ -907,7 +907,22 @@
       "codeQualityConclusion": "success",
       "change": "Exact remote Rustfmt hunks in four canonical Rust files",
       "localFormatterRan": false,
-      "rerun": "PENDING"
+      "rerun": "PASS_PREFLIGHT35537559331_CODEQUALITY35537559153_ON_CD6B4A07"
     }
+  },
+  "wave113": {
+    "report": "docs/gold-wave113-verification.md",
+    "failedRun": 35534405981,
+    "failedSource": "7909081e30594e17b4cb2592f0205f3ec13d6f0e",
+    "macosJob": 106140714937,
+    "macosExecuted": 16821,
+    "macosPassed": 16818,
+    "macosFailed": 3,
+    "macosSkipped": 23,
+    "sourceReview": "APPROVED",
+    "changes": "Real newline MCP fixture; valid baseline restored between invalid and disabled GUI cases",
+    "assertions": "PRESERVED",
+    "execution": "PENDING_FRESH_GITHUB",
+    "localValidationRan": false
   }
 }

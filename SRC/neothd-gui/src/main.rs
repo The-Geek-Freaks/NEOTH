@@ -37576,6 +37576,16 @@ mod w58_gui_callback_runtime_tests {
                 .contains("configuration is unavailable or invalid"),
             "Buddy must expose the typed unavailable readiness result"
         );
+        // The unavailable branch deliberately corrupts the persisted fixture.
+        // Restore the valid baseline before the next real config transaction:
+        // the production writer parses existing YAML before it can persist the
+        // disabled receipt that the Buddy callback must subsequently inspect.
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&neothd::config::FreedomConfig::default())
+                .expect("serialize restored default freedom config"),
+        )
+        .expect("restore valid config after invalid readiness fixture");
         apply_typed_lifecycle_config(
             &window,
             Arc::clone(&presentation),

@@ -68,6 +68,8 @@ remains separate. No R4-07 checkbox or backlog count closes.
 
 W111 source `1644e74b` passed Code Quality `35536941852`; Preflight `35536941930` requested only Rustfmt layout corrections in four Rust files. The follow-up applies the exact remote hunks without local formatter execution. Fresh static gates, a generated IRC CLI reference, strict Clippy and native acceptance remain required. Earlier-source macOS completed 16821 tests: 16818 passed, three failed and 23 were skipped. The failures are generated-reference drift and two diagnosed MCP/GUI fixture defects queued as W113. Windows tests and the preview GUI build remain running.
 
+**W113 observed fixture recovery (2026-09-20):** macOS run `35534405981` on `7909081e` executed 16821 tests (16818 passed, three failed, 23 skipped). One failure is the already understood generated-reference drift. The configured-MCP fixture used literal backslash-n bytes instead of a multiline tool fence; the GUI fixture carried deliberately invalid YAML into its next valid lifecycle transaction. The bounded corrections preserve the two provider turns, real selected child/sidecar checks, invalid-config case and native callback/late-result checks. Independent source review passed; a new remote run remains required. W111 formatting `cd6b4a07` passed Preflight `35537559331` and Code Quality `35537559153`; source-bound CLI-reference generation `35537571719` is running. No roadmap checkbox or count closes.
+
 **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 now share Doctor's read-only home/managed-root readiness operation, with typed
 disabled/ready/unavailable results separate from selected-root status. GUI
