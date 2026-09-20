@@ -24,8 +24,7 @@ These are unfinished v1 contracts, not accepted post-1.0 limitations:
   exact immutable sender identity, refuse open inbound startup, and gate every
   decoded message before the pipeline with metadata-only WAL rejection
   evidence. Twitch still authenticates only the transport/bot and needs a
-  mandatory typed audience/mention policy before release. Three advanced settings are still file-only
-  (`irc_port`, `irc_tls`, `irc_allowed_nick`). Matrix state-store and LINE webhook-port
+  mandatory typed audience/mention policy before release. Matrix state-store, LINE webhook-port and IRC port/TLS/nick-filter
   selection are exposed through CLI and GUI; native acceptance remains pending.
   Durable cross-store credential recovery, persisted
   multi-account identity, descriptor-rendered forms and OpenClaw
@@ -94,10 +93,8 @@ defer the release blockers above:
   refresh, add/reconfigure, read-only live test, and confirmed removal. A few other
   panels stay intentionally thin — the Chat tab is a launch-point for the composer,
   Hemispheres/Plugins/Memory are read-only views, and not every individual
-  `freedom.yaml` flag has its own toggle yet. In particular, the three advanced
-  Channel fields named above currently require a direct configuration-file
-  edit; they have no first-class CLI or GUI control.
-  (GUI rendering is compile-verified; visual QA is a manual step.)
+  `freedom.yaml` flag has its own toggle yet. The advanced Channel settings named above now have first-class
+  CLI/GUI controls; current-source native and visual setup checks remain pending.
 - **Migration shadow-run (ARCH-05):** the deterministic recall-parity GATE +
   runbook ship; the 14-day shadow-run, grading, and cutover are
   operator-operational steps you perform, not code that runs itself.
@@ -124,7 +121,7 @@ above.
 | Privacy | Fail-closed profile extraction, explicit destinations, provider audit, WAL verification, plugin hostcall audit. |
 | Local models | Qwen profile path, optional local thinking-model path and model-cache diagnostics. Unified visible acquire/materialize progress and the complete managed adoption lifecycle remain open. |
 | Providers | Configured cloud providers, provider status, usage caps, circuit breakers, flapping detection. |
-| Channels | CLI and the post-onboarding GUI share one 15-adapter registry and the same add/reconfigure, test, remove and refresh contracts. Six named inbound identity policies fail closed; six other adapters still need the common operator/sender/conversation gate and therefore are not Gold-ready for untrusted audiences. Status never masquerades as reachability, and Test returns the adapter's typed live or unavailable verdict. Three advanced fields, persisted multi-account identity, cross-store recovery and OpenClaw apply/runtime parity remain open. Desktop archives also ship the repository-owned, full-duplex `neoth-keet-bridge` for private Keet-identity Pear/Hyperswarm topics; it deliberately does not claim interoperability with existing Keet app rooms. |
+| Channels | CLI and the post-onboarding GUI share one 15-adapter registry and the same add/reconfigure, test, remove and refresh contracts. Six named inbound identity policies fail closed; six other adapters still need the common operator/sender/conversation gate and therefore are not Gold-ready for untrusted audiences. Status never masquerades as reachability, and Test returns the adapter's typed live or unavailable verdict. Native settings acceptance, persisted multi-account identity, cross-store recovery and OpenClaw apply/runtime parity remain open. Desktop archives also ship the repository-owned, full-duplex `neoth-keet-bridge` for private Keet-identity Pear/Hyperswarm topics; it deliberately does not claim interoperability with existing Keet app rooms. |
 | Coding buddy | Planning, canvas/Kanban, repo memory, cargo/check loop, review promotion, recall of decisions. |
 | Release self-knowledge | Every archive and native installer carries a pinned-Graphify map of the exact tag. Runtime verification binds version, source HEAD, closed file set, and canonical payload digest; upgrade/uninstall preserve operator-owned `User Overlays`. |
 | Automation | Local cron plus a default-off, loopback-only n8n ingress API with bearer scopes, endpoint-specific consent/cost gates and typed request/downstream audit events. Zero-friction post-install n8n coupling and the shared adoption lifecycle remain open. |

@@ -10787,7 +10787,7 @@ fn main() -> Result<()> {
     // contains no secret values. On success the canonical channel inventory is
     // refreshed exactly like on_channel_remove.
     let weak_channel_add = window.as_weak();
-    window.on_channel_add(move |ctype, f1, f2, f3, f4, f5, f6, matrix_store_path, line_webhook_port, flag, editor_generation| {
+    window.on_channel_add(move |ctype, f1, f2, f3, f4, f5, f6, matrix_store_path, line_webhook_port, irc_port, irc_tls_mode, irc_allowed_nick, flag, editor_generation| {
         let ctype = ctype.to_string();
         let request_result = panel_logic::build_channel_credential_request_with_public_settings(
             &ctype,
@@ -10802,6 +10802,11 @@ fn main() -> Result<()> {
             flag,
             matrix_store_path.as_str(),
             line_webhook_port.as_str(),
+            panel_logic::IrcPublicSettings {
+                port: irc_port.as_str(),
+                tls_mode: irc_tls_mode,
+                allowed_nick: irc_allowed_nick.as_str(),
+            },
         );
 
         match request_result {
@@ -34646,6 +34651,7 @@ mod tests {
             false,
             "",
             "9443",
+            panel_logic::IrcPublicSettings { port: "", tls_mode: 0, allowed_nick: "" },
         )
         .unwrap();
         let body: serde_json::Value = serde_json::from_slice(request.as_slice()).unwrap();
@@ -34664,6 +34670,42 @@ mod tests {
                 .iter()
                 .any(|arg| arg.contains(token) || arg.contains(secret) || arg.contains("9443"))
         );
+    }
+
+    #[test]
+    fn irc_public_settings_request_uses_private_stdin_without_settings_or_secret_in_argv() {
+        let secret = "IRC_PROCESS_LIST_SECRET_SENTINEL";
+        let request = panel_logic::build_channel_credential_request_with_public_settings(
+            "irc",
+            ["irc.example.org", "neoth", secret, "#neoth", "operator-account", ""],
+            false,
+            "",
+            "",
+            panel_logic::IrcPublicSettings {
+                port: "6698",
+                tls_mode: 2,
+                allowed_nick: "secondary-nick",
+            },
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(request.as_slice()).unwrap();
+        assert_eq!(body["fields"]["irc_port"], 6698);
+        assert_eq!(body["fields"]["irc_tls"], false);
+        assert_eq!(body["fields"]["irc_allowed_nick"], "secondary-nick");
+        assert_eq!(body["fields"]["allowed_sender"], "operator-account");
+
+        let command = channel_credential_command(Path::new("neoth"));
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(args, ["channel", "set-credentials", "--output", "json"]);
+        assert!(!args.iter().any(|arg| {
+            arg.contains(secret)
+                || arg.contains("6698")
+                || arg.contains("secondary-nick")
+                || arg.contains("operator-account")
+        }));
     }
 
     fn empty_snapshot() -> WizardSnapshot {

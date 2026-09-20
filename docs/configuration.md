@@ -683,10 +683,9 @@ adapter when these fields are absent or blank:
 | Nostr | `nostr_allowed_pubkey` |
 
 `neoth channel add` and the GUI collect these policies through their shared
-channel setup contract. Three advanced settings still require a direct,
-owner-private `credentials.yaml` edit: `irc_port` (default `6697`),
-`irc_tls` (default `true`) and `irc_allowed_nick`. Their missing
-first-class CLI/GUI controls remain v1.0 surface-parity work.
+channel setup contract. The existing Matrix, LINE and IRC advanced settings
+also have typed CLI/private-GUI inputs; exact-source native and visual
+acceptance remains separate from their source implementation.
 
 Matrix's `matrix_store_path` is available through `channel add matrix
 --matrix-store-path` and the optional GUI **State store path** field. A supplied
@@ -700,6 +699,15 @@ LINE's `line_webhook_port` is available through `channel add line
 are `1..=65535`. Omitting it, or leaving the GUI field blank, preserves the
 existing custom port during reconfiguration; an initially unset value uses
 `8444`. The listener remains loopback-only and reads the setting at startup.
+
+IRC's `irc_port`, `irc_tls` and `irc_allowed_nick` are exposed through
+`--irc-port`, `--irc-tls true|false`, `--irc-allowed-nick` and the corresponding
+GUI fields. Valid ports are `1..=65535`; absent new configuration keeps port
+`6697` and TLS enabled. During reconfiguration, omitted/blank optional values
+retain existing settings; explicit `false` remains distinct from omission.
+A nickname filter is additional and cannot replace the required authenticated
+`irc_allowed_account` selected with `--allowed-sender`. Removing IRC clears
+its complete configuration, including a record containing settings only.
 
 OMI uses dedicated credential fields rather than provider/channel tokens:
 `omi_developer_api_key` for official Developer API import/export and

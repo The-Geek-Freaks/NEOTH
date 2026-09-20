@@ -2143,18 +2143,31 @@ pub fn build_channel_credential_request_with_matrix_store_path(
         flag,
         matrix_store_path,
         "",
+        IrcPublicSettings {
+            port: "",
+            tls_mode: 0,
+            allowed_nick: "",
+        },
     )
 }
 
 /// Same strict private-stdin request with the public settings that sit outside
 /// the registry's six credential slots. Blank optional values preserve their
 /// runtime default or existing configured value.
+#[derive(Clone, Copy)]
+pub struct IrcPublicSettings<'a> {
+    pub port: &'a str,
+    pub tls_mode: i32,
+    pub allowed_nick: &'a str,
+}
+
 pub fn build_channel_credential_request_with_public_settings(
     channel_id: &str,
     fields: [&str; 6],
     flag: bool,
     matrix_store_path: &str,
     line_webhook_port: &str,
+    irc_settings: IrcPublicSettings<'_>,
 ) -> Result<Zeroizing<Vec<u8>>, String> {
     let [f1, f2, f3, f4, _f5, _f6] = fields;
     let [n1, n2, n3, n4, n5, n6] = fields.map(str::trim);
@@ -2283,12 +2296,36 @@ pub fn build_channel_credential_request_with_public_settings(
                     "irc needs: --server, --nick, and --allowed-sender (services account)".into(),
                 );
             }
+            let irc_port = if irc_settings.port.trim().is_empty() {
+                None
+            } else {
+                let port = irc_settings
+                    .port
+                    .trim()
+                    .parse::<u16>()
+                    .map_err(|_| "IRC port must be an integer from 1 to 65535")?;
+                if port == 0 {
+                    return Err("IRC port must be an integer from 1 to 65535".into());
+                }
+                Some(port)
+            };
+            let irc_tls = match irc_settings.tls_mode {
+                0 => None,
+                1 => Some(true),
+                2 => Some(false),
+                _ => return Err("IRC TLS mode must be current/default, enabled, or disabled".into()),
+            };
+            let irc_allowed_nick = (!irc_settings.allowed_nick.trim().is_empty())
+                .then_some(irc_settings.allowed_nick.trim());
             serde_json::json!({
                 "server": n1,
                 "nick": n2,
                 "password": secret_present(f3).then_some(f3),
                 "channels_csv": (!n4.is_empty()).then_some(n4),
                 "allowed_sender": n5,
+                "irc_port": irc_port,
+                "irc_tls": irc_tls,
+                "irc_allowed_nick": irc_allowed_nick,
             })
         }
         GuiChannelForm::BlueBubbles => {
@@ -9415,6 +9452,7 @@ mod tests {
             false,
             "",
             " 9443 ",
+            IrcPublicSettings { port: "", tls_mode: 0, allowed_nick: "" },
         )
         .unwrap();
         let envelope: serde_json::Value = serde_json::from_slice(request.as_slice()).unwrap();
@@ -9428,6 +9466,7 @@ mod tests {
             false,
             "",
             " \t ",
+            IrcPublicSettings { port: "", tls_mode: 0, allowed_nick: "" },
         )
         .unwrap();
         let blank: serde_json::Value = serde_json::from_slice(blank.as_slice()).unwrap();
@@ -9444,11 +9483,79 @@ mod tests {
                     false,
                     "",
                     invalid,
+                    IrcPublicSettings { port: "", tls_mode: 0, allowed_nick: "" },
                 )
                 .is_err(),
                 "{invalid} must not produce a LINE listener request"
             );
         }
+    }
+
+    #[test]
+    fn private_channel_builder_routes_irc_public_settings_without_weakening_account_requirement() {
+        let request = build_channel_credential_request_with_public_settings(
+            "irc",
+            [
+                "irc.example.org",
+                "neoth",
+                "IRC_GUI_SECRET",
+                "#neoth",
+                "operator-account",
+                "",
+            ],
+            false,
+            "",
+            "",
+            IrcPublicSettings {
+                port: " 6698 ",
+                tls_mode: 2,
+                allowed_nick: " secondary-nick ",
+            },
+        )
+        .unwrap();
+        let envelope: serde_json::Value = serde_json::from_slice(request.as_slice()).unwrap();
+        assert_eq!(envelope["fields"]["irc_port"], 6698);
+        assert_eq!(envelope["fields"]["irc_tls"], false);
+        assert_eq!(envelope["fields"]["irc_allowed_nick"], "secondary-nick");
+        assert_eq!(envelope["fields"]["allowed_sender"], "operator-account");
+
+        let blank = build_channel_credential_request_with_public_settings(
+            "irc",
+            ["irc.example.org", "neoth", "", "", "operator-account", ""],
+            false,
+            "",
+            "",
+            IrcPublicSettings { port: " \t ", tls_mode: 0, allowed_nick: " " },
+        )
+        .unwrap();
+        let blank: serde_json::Value = serde_json::from_slice(blank.as_slice()).unwrap();
+        assert_eq!(blank["fields"]["irc_port"], serde_json::Value::Null);
+        assert_eq!(blank["fields"]["irc_tls"], serde_json::Value::Null);
+        assert_eq!(blank["fields"]["irc_allowed_nick"], serde_json::Value::Null);
+
+        for settings in [
+            IrcPublicSettings { port: "0", tls_mode: 0, allowed_nick: "" },
+            IrcPublicSettings { port: "6698", tls_mode: 3, allowed_nick: "" },
+        ] {
+            assert!(build_channel_credential_request_with_public_settings(
+                "irc",
+                ["irc.example.org", "neoth", "", "", "operator-account", ""],
+                false,
+                "",
+                "",
+                settings,
+            )
+            .is_err());
+        }
+        assert!(build_channel_credential_request_with_public_settings(
+            "irc",
+            ["irc.example.org", "neoth", "", "", "", ""],
+            false,
+            "",
+            "",
+            IrcPublicSettings { port: "", tls_mode: 0, allowed_nick: "secondary-nick" },
+        )
+        .is_err());
     }
 
     #[test]

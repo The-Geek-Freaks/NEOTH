@@ -52,6 +52,16 @@
 >
 > W112 (2026-09-20) repairs the observed Linux test-lock lint with a synchronous wrapper around the unchanged async dispatcher fixture. The global environment lock, restoration, current-thread runtime and all risk/receipt assertions are preserved; no lint allowance is introduced. Independent review passed. Reference run `35535636229` successfully built the W110 public CLI on `fb383b8a`; its commit/digest-verified generated Markdown now supplies the two new flag entries. Fresh strict Clippy, docgen equality and native runtime remain required on the combined source.
 >
+> **W111 IRC settings surface (2026-09-20):** the existing port, TLS and optional
+> secondary nick filter gain typed CLI and private-GUI inputs. Port zero is
+> rejected; explicit TLS false is distinct from omission. Credential replacement
+> preserves omitted/blank settings, while explicit channel removal clears them
+> and recognizes settings-only state. An authenticated IRCv3 services account
+> remains required; the optional nick never substitutes for that identity.
+> See [W111 verification](../docs/gold-wave111-verification.md). Implementation
+> and independent review are complete; actual native/connection/visual acceptance
+> remains separate. No R4-07 checkbox or backlog count closes.
+>
 > **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 > now share Doctor's read-only home/managed-root readiness operation, with typed
 > disabled/ready/unavailable results separate from selected-root status. GUI

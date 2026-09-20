@@ -1199,7 +1199,8 @@ pub struct ChannelAddFields {
     /// B9 — irc channels csv (`#neoth,#dev`).
     pub channels_csv: Option<String>,
     /// Channel-specific exact inbound sender allowlist: Discord user snowflake,
-    /// Matrix user id, or Keet companion sender IDs (comma-separated).
+    /// IRCv3 authenticated services account, Matrix user id, or Keet companion
+    /// sender IDs (comma-separated).
     pub allowed_sender: Option<String>,
     /// Matrix room-id allowlist, comma-separated (`!id:server`).
     pub allowed_rooms_csv: Option<String>,
@@ -1209,6 +1210,15 @@ pub struct ChannelAddFields {
     /// LINE's loopback webhook listener port. Omitted input keeps the runtime
     /// default for a fresh setup or the existing value while reconfiguring.
     pub line_webhook_port: Option<u16>,
+    /// IRC's explicit TCP port. Omission keeps the runtime default/current
+    /// override; zero is never a valid listener or remote endpoint port.
+    pub irc_port: Option<u16>,
+    /// IRC TLS override. `None` preserves the current value/default; false is
+    /// an explicit operator choice and must not collapse into absence.
+    pub irc_tls: Option<bool>,
+    /// Optional secondary IRC nick filter. It never replaces the required
+    /// authenticated IRCv3 services-account allowlist.
+    pub irc_allowed_nick: Option<String>,
     /// Matrix-only explicit opt-out from the encrypted-room requirement.
     pub allow_plaintext: bool,
 }
@@ -1225,9 +1235,24 @@ pub fn parse_line_webhook_port(value: &str) -> std::result::Result<u16, String> 
     validate_line_webhook_port(port).map_err(|error| error.to_string())
 }
 
+/// Parse IRC's explicit remote port at the CLI boundary.
+pub fn parse_irc_port(value: &str) -> std::result::Result<u16, String> {
+    let port = value
+        .parse::<u16>()
+        .map_err(|_| "IRC port must be an integer from 1 to 65535".to_string())?;
+    validate_irc_port(port).map_err(|error| error.to_string())
+}
+
 fn validate_line_webhook_port(port: u16) -> Result<u16> {
     if port == 0 {
         anyhow::bail!("LINE webhook port must be an integer from 1 to 65535");
+    }
+    Ok(port)
+}
+
+fn validate_irc_port(port: u16) -> Result<u16> {
+    if port == 0 {
+        anyhow::bail!("IRC port must be an integer from 1 to 65535");
     }
     Ok(port)
 }
@@ -1285,6 +1310,9 @@ struct ChannelCredentialWireFields {
     allowed_rooms_csv: Option<String>,
     matrix_store_path: Option<String>,
     line_webhook_port: Option<u16>,
+    irc_port: Option<u16>,
+    irc_tls: Option<bool>,
+    irc_allowed_nick: Option<String>,
     allow_plaintext: Option<bool>,
 }
 
@@ -1350,6 +1378,15 @@ impl ChannelCredentialWireFields {
         if self.line_webhook_port.is_some() {
             names.push("line_webhook_port");
         }
+        if self.irc_port.is_some() {
+            names.push("irc_port");
+        }
+        if self.irc_tls.is_some() {
+            names.push("irc_tls");
+        }
+        if self.irc_allowed_nick.is_some() {
+            names.push("irc_allowed_nick");
+        }
         if self.allow_plaintext.is_some() {
             names.push("allow_plaintext");
         }
@@ -1376,6 +1413,9 @@ impl ChannelCredentialWireFields {
             allowed_rooms_csv: self.allowed_rooms_csv,
             matrix_store_path: self.matrix_store_path,
             line_webhook_port: self.line_webhook_port,
+            irc_port: self.irc_port,
+            irc_tls: self.irc_tls,
+            irc_allowed_nick: self.irc_allowed_nick,
             allow_plaintext: self.allow_plaintext.unwrap_or(false),
         }
     }
@@ -1403,6 +1443,9 @@ fn private_fields_for(channel_id: ChannelId) -> &'static [&'static str] {
             "password",
             "channels_csv",
             "allowed_sender",
+            "irc_port",
+            "irc_tls",
+            "irc_allowed_nick",
         ],
         ChannelId::IMessageBlueBubbles => &["url", "password", "allowed_sender", "channels_csv"],
         ChannelId::Mattermost => &["url", "token", "allowed_sender"],
@@ -1463,6 +1506,9 @@ fn parse_channel_credential_request(body: &[u8]) -> Result<ValidatedChannelCrede
     let fields = request.fields.into_add_fields();
     if let Some(port) = fields.line_webhook_port {
         validate_line_webhook_port(port)?;
+    }
+    if let Some(port) = fields.irc_port {
+        validate_irc_port(port)?;
     }
 
     Ok(ValidatedChannelCredentialRequest { channel_id, fields })
@@ -1683,7 +1729,9 @@ fn stage_channel_add_for_id(
     // Reconfiguration is a typed replacement of this channel, never a merge
     // with stale optional values. This prevents an omitted IRC password from
     // following a new server, and applies the same rule to LINE secrets,
-    // Matrix allowlists, and every other channel-specific optional field.
+    // Matrix allowlists, and other credential/policy fields. IRC's three
+    // public transport/filter overrides deliberately retain when omitted so a
+    // reconfigure cannot turn explicit TLS/port/nick choices into defaults.
     // Matrix state carries E2EE/session identity. Reconfiguration replaces
     // credentials and inbound policy, but a missing optional store path must
     // not abandon an already-configured state store.
@@ -1692,6 +1740,15 @@ fn stage_channel_add_for_id(
         .flatten();
     let retained_line_webhook_port = (channel_id == ChannelId::Line)
         .then_some(base.line_webhook_port)
+        .flatten();
+    let retained_irc_port = (channel_id == ChannelId::Irc)
+        .then_some(base.irc_port)
+        .flatten();
+    let retained_irc_tls = (channel_id == ChannelId::Irc)
+        .then_some(base.irc_tls)
+        .flatten();
+    let retained_irc_allowed_nick = (channel_id == ChannelId::Irc)
+        .then(|| base.irc_allowed_nick.clone())
         .flatten();
     let (mut creds, _) = stage_channel_remove_for_id(channel_id, base)?;
     match channel_id {
@@ -1893,6 +1950,25 @@ fn stage_channel_add_for_id(
                 anyhow::bail!("IRC allowed services account must not contain whitespace");
             }
             creds.irc_allowed_account = Some(allowed_account);
+            creds.irc_port = match fields.irc_port {
+                Some(port) => Some(validate_irc_port(port)?),
+                None => retained_irc_port,
+            };
+            creds.irc_tls = fields.irc_tls.or(retained_irc_tls);
+            creds.irc_allowed_nick = match fields
+                .irc_allowed_nick
+                .as_deref()
+                .map(str::trim)
+                .filter(|nick| !nick.is_empty())
+            {
+                Some(nick) => {
+                    if nick.chars().any(|ch| ch.is_whitespace() || ch.is_control()) {
+                        anyhow::bail!("IRC allowed nick must not contain whitespace or control characters");
+                    }
+                    Some(nick.to_string())
+                }
+                None => retained_irc_allowed_nick,
+            };
         }
         ChannelId::IMessageBlueBubbles => {
             let url = require_http_url(&fields.url, "BlueBubbles server URL")?;
@@ -2089,6 +2165,9 @@ pub struct ChannelAddFlags {
     pub allowed_rooms_csv: Option<String>,
     pub matrix_store_path: Option<String>,
     pub line_webhook_port: Option<u16>,
+    pub irc_port: Option<u16>,
+    pub irc_tls: Option<bool>,
+    pub irc_allowed_nick: Option<String>,
     pub allow_plaintext: bool,
 }
 
@@ -2113,6 +2192,9 @@ impl ChannelAddFlags {
             || self.allowed_rooms_csv.is_some()
             || self.matrix_store_path.is_some()
             || self.line_webhook_port.is_some()
+            || self.irc_port.is_some()
+            || self.irc_tls.is_some()
+            || self.irc_allowed_nick.is_some()
             || self.allow_plaintext
     }
 
@@ -2136,6 +2218,9 @@ impl ChannelAddFlags {
             allowed_rooms_csv: self.allowed_rooms_csv,
             matrix_store_path: self.matrix_store_path,
             line_webhook_port: self.line_webhook_port,
+            irc_port: self.irc_port,
+            irc_tls: self.irc_tls,
+            irc_allowed_nick: self.irc_allowed_nick,
             allow_plaintext: self.allow_plaintext,
         }
     }
@@ -3580,7 +3665,14 @@ fn stage_channel_remove_for_id(
             had
         }
         ChannelId::Irc => {
-            let had = creds.irc_server.is_some() || creds.irc_nick.is_some();
+            let had = creds.irc_server.is_some()
+                || creds.irc_port.is_some()
+                || creds.irc_nick.is_some()
+                || creds.irc_password.is_some()
+                || creds.irc_channels.is_some()
+                || creds.irc_tls.is_some()
+                || creds.irc_allowed_nick.is_some()
+                || creds.irc_allowed_account.is_some();
             creds.irc_server = None;
             creds.irc_port = None;
             creds.irc_nick = None;
@@ -4687,6 +4779,23 @@ mod tests {
     }
 
     #[test]
+    fn stage_remove_irc_settings_only_reports_and_clears_configuration() {
+        let base = Credentials {
+            irc_port: Some(6698),
+            irc_tls: Some(false),
+            irc_allowed_nick: Some("secondary-nick".into()),
+            irc_allowed_account: Some("operator-account".into()),
+            ..Credentials::default()
+        };
+        let (cleared, removed) = stage_channel_remove("irc", base).unwrap();
+        assert!(removed, "IRC public settings are removable configuration");
+        assert!(cleared.irc_port.is_none());
+        assert!(cleared.irc_tls.is_none());
+        assert!(cleared.irc_allowed_nick.is_none());
+        assert!(cleared.irc_allowed_account.is_none());
+    }
+
+    #[test]
     fn stage_remove_baileys_clears_only_baileys_fields() {
         let mut base = Credentials::default();
         base.whatsapp_token = Some(SecretString::from("meta"));
@@ -4779,6 +4888,9 @@ mod tests {
             allowed_rooms_csv: Some("!safe:example.org".into()),
             matrix_store_path: Some("/srv/neoth/matrix".into()),
             line_webhook_port: Some(9443),
+            irc_port: Some(6698),
+            irc_tls: Some(false),
+            irc_allowed_nick: Some("operator-nick".into()),
             allow_plaintext: true,
         };
         let f = flags.into_fields();
@@ -4800,6 +4912,9 @@ mod tests {
         assert_eq!(f.allowed_rooms_csv.as_deref(), Some("!safe:example.org"));
         assert_eq!(f.matrix_store_path.as_deref(), Some("/srv/neoth/matrix"));
         assert_eq!(f.line_webhook_port, Some(9443));
+        assert_eq!(f.irc_port, Some(6698));
+        assert_eq!(f.irc_tls, Some(false));
+        assert_eq!(f.irc_allowed_nick.as_deref(), Some("operator-nick"));
         assert!(f.allow_plaintext);
     }
 
@@ -4872,6 +4987,71 @@ mod tests {
             .expect("LINE port must not cross channel scope")
             .to_string();
         assert!(error.contains("not valid for `discord`: line_webhook_port"));
+    }
+
+    #[test]
+    fn private_irc_public_settings_are_typed_scoped_and_preserve_tls_none() {
+        let valid = serde_json::to_vec(&serde_json::json!({
+            "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+            "channel": "irc",
+            "fields": {
+                "server": "irc.example.org",
+                "nick": "neoth",
+                "allowed_sender": "operator-account",
+                "irc_port": 6698,
+                "irc_tls": false,
+                "irc_allowed_nick": " operator-nick "
+            }
+        }))
+        .unwrap();
+        let request = parse_channel_credential_request(&valid).unwrap();
+        assert_eq!(request.fields.irc_port, Some(6698));
+        assert_eq!(request.fields.irc_tls, Some(false));
+        assert_eq!(request.fields.irc_allowed_nick.as_deref(), Some(" operator-nick "));
+
+        let null_tls = serde_json::to_vec(&serde_json::json!({
+            "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+            "channel": "irc",
+            "fields": { "server": "irc.example.org", "nick": "neoth", "allowed_sender": "operator-account", "irc_tls": null }
+        }))
+        .unwrap();
+        assert_eq!(parse_channel_credential_request(&null_tls).unwrap().fields.irc_tls, None);
+
+        for invalid in [serde_json::json!("false"), serde_json::json!(0), serde_json::json!(1)] {
+            let body = serde_json::to_vec(&serde_json::json!({
+                "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+                "channel": "irc",
+                "fields": { "irc_tls": invalid }
+            }))
+            .unwrap();
+            let error = parse_channel_credential_request(&body)
+                .err()
+                .expect("only JSON booleans may configure IRC TLS")
+                .to_string();
+            assert!(!error.contains("false"));
+        }
+
+        for invalid in [serde_json::json!("6698"), serde_json::json!(6698.5), serde_json::json!(0)] {
+            let body = serde_json::to_vec(&serde_json::json!({
+                "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+                "channel": "irc",
+                "fields": { "irc_port": invalid }
+            }))
+            .unwrap();
+            assert!(parse_channel_credential_request(&body).is_err());
+        }
+
+        let wrong_scope = serde_json::to_vec(&serde_json::json!({
+            "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+            "channel": "line",
+            "fields": { "irc_tls": false }
+        }))
+        .unwrap();
+        let error = parse_channel_credential_request(&wrong_scope)
+            .err()
+            .expect("IRC TLS must not cross channel scope")
+            .to_string();
+        assert!(error.contains("not valid for `line`: irc_tls"));
     }
 
     #[test]
@@ -5113,8 +5293,77 @@ mod tests {
         .unwrap();
         assert!(replaced.irc_password.is_none());
         assert!(replaced.irc_channels.is_none());
-        assert!(replaced.irc_allowed_nick.is_none());
+        assert_eq!(replaced.irc_allowed_nick.as_deref(), Some("old-nick"));
         assert_eq!(replaced.irc_allowed_account.as_deref(), Some("new-account"));
+    }
+
+    #[test]
+    fn irc_public_settings_preserve_on_reconfigure_but_never_replace_account_authentication() {
+        let complete = |port: Option<u16>, tls: Option<bool>, allowed_nick: Option<&str>, account: Option<&str>| ChannelAddFields {
+            server: Some("irc.example.org".into()),
+            nick: Some("neoth".into()),
+            allowed_sender: account.map(str::to_string),
+            irc_port: port,
+            irc_tls: tls,
+            irc_allowed_nick: allowed_nick.map(str::to_string),
+            ..Default::default()
+        };
+        let fresh = stage_channel_add(
+            "irc",
+            &complete(None, None, None, Some("operator-account")),
+            Credentials::default(),
+        )
+        .unwrap();
+        assert_eq!(fresh.irc_port, None);
+        assert_eq!(fresh.irc_tls, None);
+        assert_eq!(fresh.irc_allowed_nick, None);
+        assert_eq!(fresh.irc_allowed_account.as_deref(), Some("operator-account"));
+
+        let base = Credentials {
+            irc_port: Some(6698),
+            irc_tls: Some(false),
+            irc_allowed_nick: Some("existing-nick".into()),
+            ..Credentials::default()
+        };
+        let retained = stage_channel_add(
+            "irc",
+            &complete(None, None, Some("  "), Some("operator-account")),
+            base.clone(),
+        )
+        .unwrap();
+        assert_eq!(retained.irc_port, Some(6698));
+        assert_eq!(retained.irc_tls, Some(false));
+        assert_eq!(retained.irc_allowed_nick.as_deref(), Some("existing-nick"));
+
+        let explicit = stage_channel_add(
+            "irc",
+            &complete(Some(7000), Some(true), Some("  second-filter  "), Some("operator-account")),
+            base,
+        )
+        .unwrap();
+        assert_eq!(explicit.irc_port, Some(7000));
+        assert_eq!(explicit.irc_tls, Some(true));
+        assert_eq!(explicit.irc_allowed_nick.as_deref(), Some("second-filter"));
+        assert_eq!(explicit.irc_allowed_account.as_deref(), Some("operator-account"));
+
+        assert!(stage_channel_add(
+            "irc",
+            &complete(Some(0), Some(false), None, Some("operator-account")),
+            Credentials::default(),
+        )
+        .is_err());
+        assert!(stage_channel_add(
+            "irc",
+            &complete(None, None, Some("nick with space"), Some("operator-account")),
+            Credentials::default(),
+        )
+        .is_err());
+        assert!(stage_channel_add(
+            "irc",
+            &complete(None, None, Some("secondary-nick"), None),
+            Credentials::default(),
+        )
+        .is_err());
     }
 
     #[test]

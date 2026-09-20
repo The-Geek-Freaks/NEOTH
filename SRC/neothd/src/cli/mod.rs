@@ -1291,7 +1291,8 @@ pub enum ChannelAction {
         /// IRC/Twitch rooms to join, or Nostr relay URLs, comma-separated.
         #[arg(long)]
         channels_csv: Option<String>,
-        /// Exact inbound sender allowlist: Discord/Slack/LINE user ID,
+        /// Exact inbound sender allowlist: Discord/Slack/LINE user ID, IRCv3
+        /// authenticated services account,
         /// WhatsApp/Signal E.164 number, Matrix user ID (`@user:server`),
         /// Baileys E.164/JID, or Keet companion sender IDs.
         /// Channels that support multiple identities accept comma-separated values.
@@ -1308,6 +1309,18 @@ pub enum ChannelAction {
         /// retain the current configured override while reconfiguring.
         #[arg(long, value_parser = channel::parse_line_webhook_port)]
         line_webhook_port: Option<u16>,
+        /// IRC only: remote port. Omit to use 6697 or retain the configured
+        /// override during a credential reconfiguration.
+        #[arg(long, value_parser = channel::parse_irc_port)]
+        irc_port: Option<u16>,
+        /// IRC only: explicit TLS override. Omit to use the default/current
+        /// setting; pass `false` to deliberately disable TLS.
+        #[arg(long, action = clap::ArgAction::Set)]
+        irc_tls: Option<bool>,
+        /// IRC only: optional secondary nick filter. Authentication still
+        /// requires --allowed-sender as the IRCv3 services account.
+        #[arg(long)]
+        irc_allowed_nick: Option<String>,
         /// Matrix only: explicitly permit plaintext rooms. Encrypted rooms are
         /// required when this flag is absent.
         #[arg(long)]
@@ -2216,6 +2229,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 allowed_rooms_csv,
                 matrix_store_path,
                 line_webhook_port,
+                irc_port,
+                irc_tls,
+                irc_allowed_nick,
                 allow_plaintext,
             } => {
                 let flags = channel::ChannelAddFlags {
@@ -2237,6 +2253,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                     allowed_rooms_csv,
                     matrix_store_path,
                     line_webhook_port,
+                    irc_port,
+                    irc_tls,
+                    irc_allowed_nick,
                     allow_plaintext,
                 };
                 channel::run_add(&ch, &flags, &global_output).await?;
@@ -2561,6 +2580,60 @@ mod default_invocation_tests {
                 ])
                 .is_err(),
                 "{invalid} must be rejected before channel staging"
+            );
+        }
+    }
+
+    #[test]
+    fn channel_add_irc_public_settings_preserve_false_and_reject_invalid_ports() {
+        let parsed = Cli::try_parse_from([
+            "neoth",
+            "channel",
+            "add",
+            "irc",
+            "--server",
+            "irc.example.org",
+            "--nick",
+            "neoth",
+            "--allowed-sender",
+            "operator-account",
+            "--irc-port",
+            "6698",
+            "--irc-tls",
+            "false",
+            "--irc-allowed-nick",
+            "operator-nick",
+        ])
+        .expect("valid IRC public settings must parse");
+        assert!(matches!(
+            parsed.command,
+            Commands::Channel {
+                action: ChannelAction::Add {
+                    irc_port: Some(6698),
+                    irc_tls: Some(false),
+                    irc_allowed_nick: Some(ref nick),
+                    ..
+                }
+            } if nick == "operator-nick"
+        ));
+
+        let absent_tls = Cli::try_parse_from([
+            "neoth", "channel", "add", "irc", "--server", "irc.example.org", "--nick", "neoth",
+            "--allowed-sender", "operator-account",
+        ])
+        .unwrap();
+        assert!(matches!(
+            absent_tls.command,
+            Commands::Channel { action: ChannelAction::Add { irc_tls: None, .. } }
+        ));
+
+        for invalid in ["0", "65536"] {
+            assert!(
+                Cli::try_parse_from([
+                    "neoth", "channel", "add", "irc", "--irc-port", invalid,
+                ])
+                .is_err(),
+                "{invalid} must be rejected at the CLI boundary"
             );
         }
     }

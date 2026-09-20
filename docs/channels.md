@@ -390,18 +390,13 @@ identity or mention policy. Do not expose its tool-bearing pipeline to an
 untrusted stream audience. Transport membership is never treated as operator
 authorization for the other inbound adapters.
 
-Three advanced runtime settings are currently file-only and remain explicit
-GUI/CLI parity work for v1.0. Set them under `credentials.yaml` only when the
-safe defaults do not fit:
-
-| Field | Current behavior |
-| :-- | :-- |
-| `irc_port` | IRC server port; defaults to `6697`. |
-| `irc_tls` | IRC transport security; defaults to `true`. |
-| `irc_allowed_nick` | Optional secondary nick check; it never replaces the required authenticated `irc_allowed_account`. |
+Matrix state-store selection, LINE webhook port, and IRC port/TLS/secondary
+nick filtering now have CLI and GUI configuration surfaces. Their previously
+file-only settings retain the same runtime defaults. Native and visual setup
+acceptance remain required; field exposure alone does not close channel parity.
 
 These keys are documented for existing operators, not presented as a
-zero-friction setup claim. Descriptor-rendered forms for them, durable recovery
+zero-friction setup claim. Generic descriptor-rendered forms, durable recovery
 across a process crash between OS-keychain and file publication, and persisted
 multi-account channel identity are still release-blocking work.
 
@@ -586,6 +581,35 @@ neoth channel add signal \
 without it. Envelopes from any other source are dropped before the pipeline and
 WAL-audited; delivery receipts, typing events and sync envelopes remain
 non-actionable.
+
+## IRC
+
+IRC requires an authenticated IRCv3 services account in addition to the server
+and bot nick. `--allowed-sender` selects that account; an optional nick filter
+cannot replace it:
+
+```bash
+neoth channel add irc \
+  --server irc.example.org \
+  --nick neoth \
+  --allowed-sender operator-account \
+  --channels-csv '#neoth' \
+  --irc-port 6697 \
+  --irc-tls true \
+  --irc-allowed-nick operator-nick
+```
+
+The **Port**, **TLS** and **Secondary allowed nick** controls in the IRC form
+configure those same fields. Ports must be integers from `1` through `65535`.
+TLS has three choices: retain current/default, explicitly enabled, or explicitly
+disabled. An omitted flag or retain-current choice preserves an existing
+setting; it never silently turns an explicit `false` back into a default.
+Blank port/nick fields preserve an existing override during credential updates.
+With no prior configuration, the runtime defaults to port `6697`, TLS enabled,
+and no additional nick filter. Nonblank nick filters cannot contain whitespace
+or control characters. Channel removal clears the IRC configuration, including
+settings-only state. The adapter reads these settings when it starts; saving
+credentials does not claim a live connection reconfiguration.
 
 ## LINE
 

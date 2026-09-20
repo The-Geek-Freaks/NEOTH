@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W112-channel-parity-generated-reference-and-test-lock-recovery",
-  "base": "fb383b8a9d1a5580e65f3e7b7ce238ac5efa7984",
-  "capturedUtc": "2026-09-20T20:32:53.9304078Z",
-  "validationStatus": "W112_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
-  "scopeNote": "300 cumulative inputs; W108 Matrix store, W110 LINE port + required sender GUI, W112 test-lock repair. Actual GitHub CLI-reference snapshot imported with commit/digest binding. All new-source strict lint/native gates remain pending; no local dynamic validation or roadmap closure.",
+  "item": "GOLD-W95-W112-Matrix-LINE-IRC-settings-and-CI-recovery",
+  "base": "e3d4fbdac42027d43ca64ca9bbd4352afa031a55",
+  "capturedUtc": "2026-09-20T20:50:58.5206486Z",
+  "validationStatus": "W111_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
+  "scopeNote": "300 cumulative inputs; Matrix store, LINE port/sender and IRC port/TLS/nick/account surfaces; W112 dispatcher test-lock repair. W111 requires fresh real-binary generated CLI reference. All new-source strict lint/native gates remain pending; no local dynamic validation or roadmap closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -48,8 +48,8 @@
     },
     {
       "path": "docs/channels.md",
-      "bytes": 40696,
-      "sha256": "269F46B509312D78E43D920DB978FC494978E88897E74CC43385C6F0A6B652EA"
+      "bytes": 41793,
+      "sha256": "7BEE2C7CB7376834925FC4E167AC316F8CA644F26D90DEA8F5125DDDCF2B4D89"
     },
     {
       "path": "docs/cli-commands.md",
@@ -63,8 +63,8 @@
     },
     {
       "path": "docs/configuration.md",
-      "bytes": 39067,
-      "sha256": "0A44731D9616F397CC90E9857984B51371487E8971E3862F938C6D75753D7142"
+      "bytes": 39619,
+      "sha256": "03E8998E33685747EA9014C62687BB86DC52118D079B463EC85500645EC6F401"
     },
     {
       "path": "docs/getting-started.md",
@@ -78,8 +78,8 @@
     },
     {
       "path": "docs/release-notes-v1.0.md",
-      "bytes": 14479,
-      "sha256": "B9747EACA9E4FC94B75EED4143810C977817E410788F140BC5557133FDE564CA"
+      "bytes": 14335,
+      "sha256": "AD61AEF3A870670A03059065226EB37C0B7C244236BC1D5E386190B77D699D6B"
     },
     {
       "path": "docs/troubleshooting.md",
@@ -273,13 +273,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1645381,
-      "sha256": "8E4293282CB9381116A4C81642CD909F966B05712428614B73E1BC62AB231B0E"
+      "bytes": 1647187,
+      "sha256": "F4189703E730CC9693A2BA19179ACF02603D12FAEB15947E8B277EF88E17DF08"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 495898,
-      "sha256": "B41CC167B072F43B854ED3710F5193CF1CBAE771E26D0DACFF62D7047477DDD4"
+      "bytes": 499962,
+      "sha256": "085B6D3D2A3DB63C122ADBD1C682202D88666B63F137C04A72DD6BBC99A17299"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
@@ -373,8 +373,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/main.slint",
-      "bytes": 301875,
-      "sha256": "8D454E4739DDCCF7AD5316A66B6D97E99BDBD545EF2353F87308FBADE2A47BBD"
+      "bytes": 302009,
+      "sha256": "DCCA94A3CA2249017EEA52F96817F1DD438617FE55E88F2315B692158F5B0F3E"
     },
     {
       "path": "SRC/neothd-gui/ui/memory_graph.slint",
@@ -418,8 +418,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/settings.slint",
-      "bytes": 394258,
-      "sha256": "4BF360C6B3FED677D704C45821AF5F3D0D8B220BF099D60D8AF99543A9FD620B"
+      "bytes": 396043,
+      "sha256": "ECAD9D6D2759C205A0B412B98F9EA1104F8A3B4BBAB0731E4A4EAA39E95DFD0F"
     },
     {
       "path": "SRC/neothd-gui/ui/tabs.slint",
@@ -498,8 +498,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/channel.rs",
-      "bytes": 281164,
-      "sha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119"
+      "bytes": 291284,
+      "sha256": "BFDB816E71BD3C07841E1E5CBD3A3DEB2EB5503670611E9F73D228600E3AE60D"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
@@ -613,8 +613,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
-      "bytes": 108686,
-      "sha256": "C29698C029B87E4020B958BA103251AC7132AF11F02681426ADFD05DFBDB4913"
+      "bytes": 111242,
+      "sha256": "0EEF21DD4526F128B72B4C3E4A72903E09BF3051DF1E028C50DC05CB568DF3FD"
     },
     {
       "path": "SRC/neothd/src/cli/proactive.rs",

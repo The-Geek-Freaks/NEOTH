@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W95_W112_REVIEWED_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "fb383b8a9d1a5580e65f3e7b7ce238ac5efa7984",
+  "base": "e3d4fbdac42027d43ca64ca9bbd4352afa031a55",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 52015,
-    "sha256": "FC370EA1B8D619733BF0471324B404AFF05C2FDE4343E75310BB406DC0325552"
+    "bytes": 52006,
+    "sha256": "63BCF26A904E1C7FB7603F9652FFEB08E2739C80B595A9A47E217442F8D4979F"
   },
   "sourceInputs": 300,
   "requiredNativeTests": [
@@ -396,67 +396,91 @@
     {
       "test": "cli::channel::tests::private_credential_request_accepts_canonical_scoped_fields",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
+      "sourceSha256": "BFDB816E71BD3C07841E1E5CBD3A3DEB2EB5503670611E9F73D228600E3AE60D",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::private_credential_request_rejects_alias_version_and_wrong_scope",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
+      "sourceSha256": "BFDB816E71BD3C07841E1E5CBD3A3DEB2EB5503670611E9F73D228600E3AE60D",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::matrix_store_path_stages_only_when_nonblank_and_preserves_existing_state",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
+      "sourceSha256": "BFDB816E71BD3C07841E1E5CBD3A3DEB2EB5503670611E9F73D228600E3AE60D",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::stage_remove_matrix_store_only_reports_and_clears_configuration",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
+      "sourceSha256": "BFDB816E71BD3C07841E1E5CBD3A3DEB2EB5503670611E9F73D228600E3AE60D",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::flags_into_fields_maps_all_fields",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
+      "sourceSha256": "BFDB816E71BD3C07841E1E5CBD3A3DEB2EB5503670611E9F73D228600E3AE60D",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::line_webhook_port_stages_explicitly_and_preserves_omitted_or_blank_reconfiguration",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
+      "sourceSha256": "BFDB816E71BD3C07841E1E5CBD3A3DEB2EB5503670611E9F73D228600E3AE60D",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::stage_remove_line_port_only_reports_and_clears_configuration",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
+      "sourceSha256": "BFDB816E71BD3C07841E1E5CBD3A3DEB2EB5503670611E9F73D228600E3AE60D",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::private_line_webhook_port_is_typed_scoped_and_never_echoes_invalid_values",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
+      "sourceSha256": "BFDB816E71BD3C07841E1E5CBD3A3DEB2EB5503670611E9F73D228600E3AE60D",
       "junitClass": "neoth"
     },
     {
       "test": "cli::channel::tests::private_credential_request_denies_unknown_fields_without_echoing_values",
       "sourcePath": "SRC/neothd/src/cli/channel.rs",
-      "sourceSha256": "244900649D64F1646CA8108B2896A4767AB759CC80B887AEAB027433E40CD119",
+      "sourceSha256": "BFDB816E71BD3C07841E1E5CBD3A3DEB2EB5503670611E9F73D228600E3AE60D",
       "junitClass": "neoth"
     },
     {
       "test": "cli::default_invocation_tests::channel_add_line_webhook_port_is_typed_and_bounded_at_clap_boundary",
       "sourcePath": "SRC/neothd/src/cli/mod.rs",
-      "sourceSha256": "C29698C029B87E4020B958BA103251AC7132AF11F02681426ADFD05DFBDB4913",
+      "sourceSha256": "0EEF21DD4526F128B72B4C3E4A72903E09BF3051DF1E028C50DC05CB568DF3FD",
       "junitClass": "neoth"
     },
     {
       "test": "cli::docgen::tests::cli_commands_md_is_up_to_date",
       "sourcePath": "SRC/neothd/src/cli/docgen.rs",
       "sourceSha256": "63EEDCFA5868E5C0BA3E6117CBCCFE93F90052FF0DD815DC41FB5CCC6A4F7E66",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::channel::tests::stage_remove_irc_settings_only_reports_and_clears_configuration",
+      "sourcePath": "SRC/neothd/src/cli/channel.rs",
+      "sourceSha256": "BFDB816E71BD3C07841E1E5CBD3A3DEB2EB5503670611E9F73D228600E3AE60D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::channel::tests::private_irc_public_settings_are_typed_scoped_and_preserve_tls_none",
+      "sourcePath": "SRC/neothd/src/cli/channel.rs",
+      "sourceSha256": "BFDB816E71BD3C07841E1E5CBD3A3DEB2EB5503670611E9F73D228600E3AE60D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::channel::tests::irc_public_settings_preserve_on_reconfigure_but_never_replace_account_authentication",
+      "sourcePath": "SRC/neothd/src/cli/channel.rs",
+      "sourceSha256": "BFDB816E71BD3C07841E1E5CBD3A3DEB2EB5503670611E9F73D228600E3AE60D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::default_invocation_tests::channel_add_irc_public_settings_preserve_false_and_reject_invalid_ports",
+      "sourcePath": "SRC/neothd/src/cli/mod.rs",
+      "sourceSha256": "0EEF21DD4526F128B72B4C3E4A72903E09BF3051DF1E028C50DC05CB568DF3FD",
       "junitClass": "neoth"
     }
   ],
@@ -472,7 +496,9 @@
     "panel_logic::tests::private_channel_builder_routes_matrix_store_path_without_changing_secret_slots",
     "tests::matrix_store_path_request_uses_private_stdin_without_path_or_secret_in_argv",
     "panel_logic::tests::private_channel_builder_routes_line_webhook_port_as_typed_private_stdin_state",
-    "tests::line_port_request_uses_private_stdin_without_port_or_secrets_in_argv"
+    "tests::line_port_request_uses_private_stdin_without_port_or_secrets_in_argv",
+    "panel_logic::tests::private_channel_builder_routes_irc_public_settings_without_weakening_account_requirement",
+    "tests::irc_public_settings_request_uses_private_stdin_without_settings_or_secret_in_argv"
   ],
   "requiredGuiClass": "neothd-gui::bin/neothd-gui",
   "additionalGuiCopies": {
@@ -595,6 +621,12 @@
       "sha256": "ECE978212A66770EF035358C822E667D9AD6AE4C43B9095BFCCA6A338F92759B",
       "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
       "executionClaim": false
+    },
+    {
+      "record": "work/gold-20260906/wave111-irc-settings/REVIEW.md",
+      "sha256": "E14B2BF9E3686C15D1984DFDE3923ABFD7A0A2ECF81CEA35FC6C105D6D07D073",
+      "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
+      "executionClaim": false
     }
   ],
   "priorCi": {
@@ -651,11 +683,12 @@
   "hostConstraint": "ALL_LOCAL_VALIDATION_SUSPENDED; bounded source/metadata reads, edits and serialized Git/GitHub only",
   "releaseReady": false,
   "pending": [
-    "Fresh exact-source GitHub Rustfmt/static contracts/strict Clippy/actual workspace Nextest for 75 native and 12 GUI identities",
+    "Fresh exact-source GitHub Rustfmt/static contracts/strict Clippy/actual workspace Nextest for 79 native and 14 GUI identities",
     "W58 native GUI callback now includes Disabled/Unavailable/Ready, diagnosticCLI resolution and drained late-result publication; same macOS mainthread identity",
     "Provider-loop selected-route cancellation remains outside the W102 direct-CLI fixture; direct CLI deliberately uses unbound cancellation",
     "Portable, installed, visual and provider-live acceptance for final source; selector editing/Buddy enable-disable-explain remain open; no ROAD checkbox closes",
-    "Imported CLI reference must pass unchanged docgen equality guard in next full CI"
+    "Imported CLI reference must pass unchanged docgen equality guard in next full CI",
+    "W111 real-binary generated-reference refresh and unchanged docgen equality guard"
   ],
   "guiSourceBindings": [
     {
@@ -665,13 +698,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1645381,
-      "sha256": "8E4293282CB9381116A4C81642CD909F966B05712428614B73E1BC62AB231B0E"
+      "bytes": 1647187,
+      "sha256": "F4189703E730CC9693A2BA19179ACF02603D12FAEB15947E8B277EF88E17DF08"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 495898,
-      "sha256": "B41CC167B072F43B854ED3710F5193CF1CBAE771E26D0DACFF62D7047477DDD4"
+      "bytes": 499962,
+      "sha256": "085B6D3D2A3DB63C122ADBD1C682202D88666B63F137C04A72DD6BBC99A17299"
     }
   ],
   "remoteFormatCorrection": {
@@ -853,5 +886,19 @@
     "repair": "APPROVED_SYNCHRONOUS_TEST_WRAPPER_SAME_CURRENT_THREAD_RUNTIME_ENV_LOCK_RETAINED",
     "retainOtherUsefulRuns": true,
     "validation": "PENDING_NEW_EXACT_SOURCE_STRICT_CLIPPY_AND_RUNTIME"
+  },
+  "wave111": {
+    "report": "docs/gold-wave111-verification.md",
+    "sourceReview": "APPROVED",
+    "port": "1..65535",
+    "tls": "None preserves; Some(false) is explicit",
+    "nick": "Optional secondary filter; authenticated account remains required",
+    "callbacks": "14 arguments; prior generated16argumentcallback precedent, freshcompilepending",
+    "sourceInputs": 300,
+    "nativeRequired": 79,
+    "guiRequired": 14,
+    "execution": "PENDING_GITHUB_ONLY",
+    "generatedReference": "PENDING_FRESH_BINARY_EXPORT",
+    "localValidationRan": false
   }
 }
