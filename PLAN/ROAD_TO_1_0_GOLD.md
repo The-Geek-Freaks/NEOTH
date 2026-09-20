@@ -70,6 +70,8 @@ W111 source `1644e74b` passed Code Quality `35536941852`; Preflight `35536941930
 
 **W113 observed fixture recovery (2026-09-20):** macOS run `35534405981` on `7909081e` executed 16821 tests (16818 passed, three failed, 23 skipped). One failure is the already understood generated-reference drift. The configured-MCP fixture used literal backslash-n bytes instead of a multiline tool fence; the GUI fixture carried deliberately invalid YAML into its next valid lifecycle transaction. The bounded corrections preserve the two provider turns, real selected child/sidecar checks, invalid-config case and native callback/late-result checks. Independent source review passed; a new remote run remains required. W111 formatting `cd6b4a07` passed Preflight `35537559331` and Code Quality `35537559153`; source-bound CLI-reference generation `35537571719` is running. No roadmap checkbox or count closes.
 
+Windows run `35534405981` also completed: 16764 tests run, 16761 passed, three failed and 22 skipped. Its failures match the same reference/MCP/GUI cases; both fixture corrections are reviewed and published as `91d9f732`, whose Preflight `35537801047` and Code Quality `35537800744` passed. CLI-reference run `35537571719` successfully compiled the public CLI on `cd6b4a07`; the source- and SHA-256-verified output is now imported, including all IRC flags. Full native retesting remains required.
+
 **W100 shared enrichment readiness (2026-09-16):** Coding settings and Buddy
 now share Doctor's read-only home/managed-root readiness operation, with typed
 disabled/ready/unavailable results separate from selected-root status. GUI

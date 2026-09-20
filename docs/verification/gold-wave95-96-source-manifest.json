@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W113-channel-settings-and-observed-CI-recovery",
-  "base": "cd6b4a07d58156009387401a75ae4d917093cf71",
-  "capturedUtc": "2026-09-20T21:07:22.1347245Z",
+  "base": "91d9f732157d9ce7c50a888a7b4852625bf71854",
+  "capturedUtc": "2026-09-20T21:10:12.4182386Z",
   "validationStatus": "W113_INDEPENDENT_SOURCE_REVIEW_APPROVED_REMOTE_VALIDATION_REQUIRED",
-  "scopeNote": "300 cumulative inputs. W108 Matrix, W110 LINE and W111 IRC surfaces; W112 env-lock lint and W113 actual MCP/GUI fixture repairs. W111 static gates passed on cd6b4a07; generated reference and exact combined native gates pending. No local validation or roadmap closure.",
+  "scopeNote": "300 cumulative inputs. W108 Matrix, W110 LINE and W111 IRC surfaces; W112 test-lock and W113 MCP/GUI fixture repairs. Static gates passed on91d9f732; actual CLI reference from35537571719/cd6b4a07 imported. Exact combined native and GUI gates remain pending; no local validation or roadmap closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -53,8 +53,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 227196,
-      "sha256": "E5613E2A20EA6F30C830641F94202FB4C272965A31D5FDF6B79B4DF4586D5B2B"
+      "bytes": 227682,
+      "sha256": "47C2E0E65CE1C1CD81CFCCDFF03C3FB8C1F071BFCBF50448AD573480AEA1FF05"
     },
     {
       "path": "docs/code-map-lifecycle.md",

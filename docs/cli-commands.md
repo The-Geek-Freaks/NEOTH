@@ -361,10 +361,13 @@ Add a channel non-interactively (pass --token etc.) or interactively (stdin prom
 - `--nick <NICK>` — IRC bot nick / Matrix bot user id (`@user:server`)
 - `--password <PASSWORD>` — Password / secret: IRC NickServ password, BlueBubbles server password, or LINE channel secret
 - `--channels-csv <CHANNELS_CSV>` — IRC/Twitch rooms to join, or Nostr relay URLs, comma-separated
-- `--allowed-sender <ALLOWED_SENDER>` — Exact inbound sender allowlist: Discord/Slack/LINE user ID, WhatsApp/Signal E.164 number, Matrix user ID (`@user:server`), Baileys E.164/JID, or Keet companion sender IDs. Channels that support multiple identities accept comma-separated values
+- `--allowed-sender <ALLOWED_SENDER>` — Exact inbound sender allowlist: Discord/Slack/LINE user ID, IRCv3 authenticated services account, WhatsApp/Signal E.164 number, Matrix user ID (`@user:server`), Baileys E.164/JID, or Keet companion sender IDs. Channels that support multiple identities accept comma-separated values
 - `--allowed-rooms-csv <ALLOWED_ROOMS_CSV>` — Matrix room IDs (`!id:server`) or Baileys group JIDs (`…@g.us`), CSV
 - `--matrix-store-path <MATRIX_STORE_PATH>` — Matrix E2EE/sync-state directory. Omit to use the default or retain an existing Matrix store during credential reconfiguration
 - `--line-webhook-port <LINE_WEBHOOK_PORT>` — LINE only: loopback webhook listener port. Omit to use 8444 or retain the current configured override while reconfiguring
+- `--irc-port <IRC_PORT>` — IRC only: remote port. Omit to use 6697 or retain the configured override during a credential reconfiguration
+- `--irc-tls <IRC_TLS>` — IRC only: explicit TLS override. Omit to use the default/current setting; pass `false` to deliberately disable TLS
+- `--irc-allowed-nick <IRC_ALLOWED_NICK>` — IRC only: optional secondary nick filter. Authentication still requires --allowed-sender as the IRCv3 services account
 - `--allow-plaintext` — Matrix only: explicitly permit plaintext rooms. Encrypted rooms are required when this flag is absent
 
 ### `neoth channel import-openclaw-telegram`

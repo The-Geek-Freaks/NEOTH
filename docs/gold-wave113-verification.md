@@ -36,3 +36,9 @@ The exact observed failures and source changes are retained under
 `work/gold-20260906/wave113-ci-regressions/`. Independent review approved both frozen source files.
 The cumulative matrix already requires both identities; new execution must use
 the repaired source. No local validation ran. No roadmap checkbox closes.
+
+Windows job 106140715035 subsequently completed 16764 tests: 16761 passed
+(one reported leaky), three failed and 22 skipped. It reports the same three
+cases as macOS, including the same YAML parse failure. W113 is published as
+91d9f732; Preflight35537801047 and CodeQuality35537800744 passed. New native
+execution is still required; passing static gates do not close these cases.
