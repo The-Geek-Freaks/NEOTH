@@ -1798,10 +1798,7 @@ mod tests {
     #[test]
     fn whatsapp_auth_dir_requires_the_legacy_string_shape() {
         let temp = tempdir().unwrap();
-        let path = write_config(
-            temp.path(),
-            "{ channels: { whatsapp: { authDir: 42 } } }",
-        );
+        let path = write_config(temp.path(), "{ channels: { whatsapp: { authDir: 42 } } }");
         let report = inspect_openclaw_config(&path).unwrap();
         let auth = report
             .ledger
@@ -2275,9 +2272,7 @@ mod tests {
         let opaque = report
             .ledger
             .iter()
-            .find(|entry| {
-                entry.source_path == "channels.qqbot.accounts.work.arbitraryFutureOption"
-            })
+            .find(|entry| entry.source_path == "channels.qqbot.accounts.work.arbitraryFutureOption")
             .unwrap();
         assert_eq!(opaque.disposition, ImportDisposition::Unknown);
         assert_eq!(

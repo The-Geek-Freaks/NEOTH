@@ -27301,9 +27301,8 @@ fn project_chat_recall_chip_snapshot(
     match surface {
         ChatStreamSurface::Main => {
             if let Some(window) = window {
-                window.set_chat_recall_chip_lines(slint::ModelRc::new(slint::VecModel::from(
-                    lines,
-                )));
+                window
+                    .set_chat_recall_chip_lines(slint::ModelRc::new(slint::VecModel::from(lines)));
                 window.set_chat_recall_chips_active(true);
             }
         }

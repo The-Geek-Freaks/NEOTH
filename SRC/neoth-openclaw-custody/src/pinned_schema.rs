@@ -133,7 +133,11 @@ pub fn lookup(
     actual_json_type: &str,
 ) -> Result<Option<SchemaMatch>> {
     let fixture = fixture()?;
-    let Some(channel_schema) = fixture.channels.iter().find(|item| item.channel_id == channel) else {
+    let Some(channel_schema) = fixture
+        .channels
+        .iter()
+        .find(|item| item.channel_id == channel)
+    else {
         return Ok(None);
     };
 
@@ -155,12 +159,9 @@ pub fn lookup(
         }
     }
 
-    let opaque = channel_schema
-        .leaves
-        .iter()
-        .find(|row| {
-            row.scope.as_deref() == Some("opaque_subtree") && template_matches(row, path, true)
-        });
+    let opaque = channel_schema.leaves.iter().find(|row| {
+        row.scope.as_deref() == Some("opaque_subtree") && template_matches(row, path, true)
+    });
     Ok(opaque.map(|row| schema_match(channel, row, SchemaScope::OpaqueSubtree)))
 }
 
@@ -169,7 +170,11 @@ pub fn lookup(
 /// fields while still blocking unknown dynamic map children at their own path.
 pub fn has_typed_descendant(channel: &str, path: &[PathPart<'_>]) -> Result<bool> {
     let fixture = fixture()?;
-    let Some(channel_schema) = fixture.channels.iter().find(|item| item.channel_id == channel) else {
+    let Some(channel_schema) = fixture
+        .channels
+        .iter()
+        .find(|item| item.channel_id == channel)
+    else {
         return Ok(false);
     };
     Ok(channel_schema
@@ -197,7 +202,7 @@ fn secret_ref_match(
         }
         if ["source", "provider"].iter().all(|member| {
             let mut member_path = path.to_vec();
-            member_path.push(PathPart::Key(*member));
+            member_path.push(PathPart::Key(member));
             let expected_template = format!("{parent}.{member}");
             channel_schema.leaves.iter().any(|row| {
                 row.scope.is_none()

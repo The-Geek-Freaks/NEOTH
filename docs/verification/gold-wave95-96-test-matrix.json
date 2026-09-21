@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W169_W172_HOSTED_FAILURE_REPAIRS_PENDING_REEXECUTION",
-  "base": "3750a81fee7cf08b8ae3cc70f1e8c2fa53065964",
+  "status": "W169_41_TESTS_PASS_HOSTED_LINT_FORMAT_FOLLOWUP_PENDING",
+  "base": "cc0af93882b885ded730b4b1b108c54b89db6fb6",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 67153,
-    "sha256": "175BDDC9652ED07977B1017A43B40E65AA0F50A115A7C4CA36BFB53F08D6F3A2"
+    "bytes": 67118,
+    "sha256": "77DF6AE9DA132E151CA09F4B9457BD12ABCEC6E92A484AA2F0B1AA34563B1C4D"
   },
   "sourceInputs": 388,
   "requiredNativeTests": [
@@ -2406,67 +2406,67 @@
     {
       "test": "pinned_schema::tests::hosted_fixture_has_the_frozen_inventory_and_opaque_boundary",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "621F4A9B581A63D34C32372D83BFD68EB5BC99BA887F72BD876905D63954BAB1",
+      "sourceSha256": "F99D99DE57A101D12F61DA3B2C28F81B876090CF911C5F3B8E7331777DD4C718",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "pinned_schema::tests::every_frozen_row_resolves_or_blocks_at_its_exact_structural_path",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "621F4A9B581A63D34C32372D83BFD68EB5BC99BA887F72BD876905D63954BAB1",
+      "sourceSha256": "F99D99DE57A101D12F61DA3B2C28F81B876090CF911C5F3B8E7331777DD4C718",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "pinned_schema::tests::secret_refs_require_a_fixture_backed_object_composition_family",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "621F4A9B581A63D34C32372D83BFD68EB5BC99BA887F72BD876905D63954BAB1",
+      "sourceSha256": "F99D99DE57A101D12F61DA3B2C28F81B876090CF911C5F3B8E7331777DD4C718",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_ledgers_separate_account_containers_and_redacts_account_secrets",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "4414546D495F1C2E1A84FE9E21441CFF890F6C58FC44A6773E1884AD001A5DEB",
+      "sourceSha256": "82E89BD4BDC723655E9D58AB1612765915AA8036A0F477A8DEEA8A79D598273A",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_opaque_subtree_blocks_at_its_exact_account_path",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "4414546D495F1C2E1A84FE9E21441CFF890F6C58FC44A6773E1884AD001A5DEB",
+      "sourceSha256": "82E89BD4BDC723655E9D58AB1612765915AA8036A0F477A8DEEA8A79D598273A",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_typed_nonsecret_leaf_has_schema_binding_and_value_binding",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "4414546D495F1C2E1A84FE9E21441CFF890F6C58FC44A6773E1884AD001A5DEB",
+      "sourceSha256": "82E89BD4BDC723655E9D58AB1612765915AA8036A0F477A8DEEA8A79D598273A",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_rejects_unbacked_or_malformed_secret_refs_without_serializing_ids",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "4414546D495F1C2E1A84FE9E21441CFF890F6C58FC44A6773E1884AD001A5DEB",
+      "sourceSha256": "82E89BD4BDC723655E9D58AB1612765915AA8036A0F477A8DEEA8A79D598273A",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_never_binds_credential_bearing_string_urls",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "4414546D495F1C2E1A84FE9E21441CFF890F6C58FC44A6773E1884AD001A5DEB",
+      "sourceSha256": "82E89BD4BDC723655E9D58AB1612765915AA8036A0F477A8DEEA8A79D598273A",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::whatsapp_auth_dir_requires_the_legacy_string_shape",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "4414546D495F1C2E1A84FE9E21441CFF890F6C58FC44A6773E1884AD001A5DEB",
+      "sourceSha256": "82E89BD4BDC723655E9D58AB1612765915AA8036A0F477A8DEEA8A79D598273A",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "tests::w169_walks_typed_descendants_under_opaque_map_prefixes",
       "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "sourceSha256": "4414546D495F1C2E1A84FE9E21441CFF890F6C58FC44A6773E1884AD001A5DEB",
+      "sourceSha256": "82E89BD4BDC723655E9D58AB1612765915AA8036A0F477A8DEEA8A79D598273A",
       "junitClass": "neoth-openclaw-custody"
     },
     {
       "test": "pinned_schema::tests::explicit_typed_leaves_take_precedence_over_opaque_map_prefixes",
       "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "sourceSha256": "621F4A9B581A63D34C32372D83BFD68EB5BC99BA887F72BD876905D63954BAB1",
+      "sourceSha256": "F99D99DE57A101D12F61DA3B2C28F81B876090CF911C5F3B8E7331777DD4C718",
       "junitClass": "neoth-openclaw-custody"
     }
   ],
@@ -3021,8 +3021,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2022898,
-      "sha256": "ED7996B3B82B32359FF6AEB5127E1BFA96E5FE1689918CA18D3F4AD02610097A"
+      "bytes": 2022880,
+      "sha256": "816A842A01169DDD594E0D2D54FFDF988077054FA92723A31112E075B12BDCF7"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -6251,5 +6251,18 @@
     "conclusion": "success",
     "sha256": "C948D52B50F47917AD9E8510178974FFA9C4AD3D603B18B0CCE33E308FAE0493",
     "boundary": "CLI build and generated reference; behavioral tests still pending"
+  },
+  "wave169PackagePass": {
+    "source": "cc0af93882b885ded730b4b1b108c54b89db6fb6",
+    "run": 35658152739,
+    "job": 106526812191,
+    "testsPassed": 41,
+    "testsFailed": 0,
+    "lint": "one explicit_auto_deref correction imported",
+    "preflight": 35658129899,
+    "formatHunks": 6,
+    "fullCi": 35658155763,
+    "preview": 35658158597,
+    "next": "fresh package lint/format and Preflight required"
   }
 }

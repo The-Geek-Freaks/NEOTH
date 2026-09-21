@@ -99,3 +99,10 @@ log. Three new regression identities are admitted. The raw schema fixture is
 unchanged. Retained logs and the independent repair review are in the W169 work
 directory. A new Hosted package run must prove the changed behavior; source
 review is not runtime acceptance and no Road checkbox closes.
+
+Follow-up run 35658152739 on cc0af938 passes all 41 package tests and
+extractor/fixture comparison. Strict Clippy then reports one explicit-auto-deref
+at pinned_schema.rs:200; its exact one-character suggestion is applied.
+Preflight 35658129899 reports six formatting hunks across custody and GUI; all
+are imported exactly. New lint/format acceptance is pending. These repairs
+change no classification behavior, fixture bytes or test assertions.

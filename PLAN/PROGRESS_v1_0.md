@@ -4,12 +4,13 @@
 
 **Current Hosted boundary (2026-09-21):** W169 run 35656420591 on
 3750a81f passed exact schema extraction/byte comparison and package compilation.
-Its package tests reached 36/38; the two real classification failures are being
-repaired and require another Hosted run. W171 CLI build/reference 35655672068
+The follow-up run 35658152739 on cc0af938 now passes all 41 package tests.
+A single Clippy auto-deref correction and six Hosted format hunks are imported;
+fresh lint/format acceptance remains required. W171 CLI build/reference 35655672068
 passed on ceea62cb; the generated reference is imported byte-for-byte. W172's
 four Slint ModelRc errors and the headless import lint are repaired in source.
 CI 35655045794 and Windows preview 35653179383 are confirmed cancelled and
-require fresh runs after publication. W173 prompt-tax implementation is under
+have fresh runs 35658155763 / 35658158597 on cc0af938. W173 prompt-tax implementation is under
 independent review; it is excluded from this repair publication. Road counts
 remain 1324 total / 1015 checked / 307 open / 2 partial. No checkbox closes on
 source review or compilation alone. See [W169](../docs/gold-wave169-verification.md),
