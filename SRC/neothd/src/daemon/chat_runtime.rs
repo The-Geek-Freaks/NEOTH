@@ -271,10 +271,56 @@ impl DaemonChatRuntime {
         if let Some(output) = deferred {
             sink.emit(ChatTurnEvent::Output(output))?;
         }
-        prepared
+        let mut terminal = prepared
             .deferred_terminal
             .take()
-            .context("daemon GUI chat engine returned without terminal")
+            .context("daemon GUI chat engine returned without terminal")?;
+        self.attach_response_feedback_after_flush(&mut terminal, incognito)
+            .await;
+        Ok(terminal)
+    }
+
+    /// Register one non-incognito terminal response only after a FIFO durability
+    /// barrier ACKs every earlier write from this daemon-owned turn. The barrier
+    /// keeps the long-lived writer open; a failure leaves the completed terminal
+    /// truthful but unavailable for response feedback.
+    async fn attach_response_feedback_after_flush(
+        &self,
+        terminal: &mut ChatTurnTerminal,
+        incognito: bool,
+    ) {
+        if incognito
+            || terminal.response_feedback_target().is_some()
+            || terminal.response_feedback_unavailable()
+        {
+            return;
+        }
+        let session_id = match terminal {
+            ChatTurnTerminal::Complete { session_id, .. } => session_id.clone(),
+        };
+        let Some(session_id) = session_id.filter(|session_id| !session_id.is_empty()) else {
+            terminal.mark_response_feedback_unavailable();
+            return;
+        };
+        if self.writer.flush_pending().await.is_err() {
+            terminal.mark_response_feedback_unavailable();
+            return;
+        }
+        match crate::feedback::response::register_drained_terminal_response(
+            &self.selected_home,
+            &session_id,
+            false,
+            crate::time::now_unix_i64(),
+        ) {
+            Ok(Some(status)) => terminal.set_response_feedback_target(
+                chat_turn_pipeline::ResponseFeedbackTarget {
+                    response_id: status.response_id.as_str().to_owned(),
+                    session_id: status.session_id,
+                    revision: status.revision,
+                },
+            ),
+            Ok(None) | Err(_) => terminal.mark_response_feedback_unavailable(),
+        }
     }
 
     /// Stop new admissions, cancel the one admitted operation, and wait for
@@ -497,10 +543,12 @@ impl DaemonChatRuntime {
         if let Some(output) = deferred {
             sink.accept_output(output)?;
         }
-        let terminal = prepared
+        let mut terminal = prepared
             .deferred_terminal
             .take()
             .context("daemon plain chat engine returned without a success terminal")?;
+        self.attach_response_feedback_after_flush(&mut terminal, false)
+            .await;
         let response = DaemonPlainChatResponse {
             records: sink.records,
             terminal: terminal.into(),
@@ -560,10 +608,20 @@ impl From<ChatTurnTerminal> for DaemonPlainChatTerminal {
                 provider,
                 model,
                 session_id,
+                response_feedback,
+                response_feedback_unavailable,
             } => Self {
                 provider,
                 model,
                 session_id,
+                response_feedback: response_feedback.map(|target| {
+                    DaemonPlainChatResponseFeedbackTarget {
+                        response_id: target.response_id,
+                        session_id: target.session_id,
+                        revision: target.revision,
+                    }
+                }),
+                response_feedback_unavailable,
             },
         }
     }

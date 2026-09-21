@@ -1080,6 +1080,11 @@ export component MainWindow inherits Window {
     in property <bool> chat-throughput-active: false;
     in property <[string]> chat-recall-chip-lines: [];
     in property <bool> chat-recall-chips-active: false;
+    in property <bool> chat-response-feedback-active: false;
+    in property <bool> chat-response-feedback-available: false;
+    in property <bool> chat-response-feedback-running: false;
+    in property <string> chat-response-feedback-status: "";
+    in property <string> chat-response-feedback-signal: "";
     /// Immutable privacy mode for the request in flight. It remains visible
     /// after `chat-incognito` resets for the next turn.
     in property <bool> chat-incognito-active: false;
@@ -1178,6 +1183,7 @@ export component MainWindow inherits Window {
     /// Operator pressed ArrowUp with an empty composer — Rust writes the
     /// last operator body back into `chat-composer-draft`.
     callback chat-composer-recall-requested();
+    callback chat-response-feedback-action(string);
 
     // ── Chat-surface consent strip ────────────────────────────────────
     /// Current operating-mode string for the consent strip pill.
@@ -4260,6 +4266,12 @@ export component MainWindow inherits Window {
                     throughput-active: root.chat-throughput-active;
                     recall-chip-lines: root.chat-recall-chip-lines;
                     recall-chips-active: root.chat-recall-chips-active;
+                    response-feedback-active: root.chat-response-feedback-active;
+                    response-feedback-available: root.chat-response-feedback-available;
+                    response-feedback-running: root.chat-response-feedback-running;
+                    response-feedback-status: root.chat-response-feedback-status;
+                    response-feedback-signal: root.chat-response-feedback-signal;
+                    response-feedback-action(action) => { root.chat-response-feedback-action(action); }
                     incognito-active: root.chat-incognito-active;
                     send-enabled: root.chat-send-enabled;
                     send-in-flight: root.chat-send-in-flight;

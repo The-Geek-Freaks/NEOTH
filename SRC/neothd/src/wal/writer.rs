@@ -486,6 +486,26 @@ pub struct WriteRequest {
     test_receipt_decision_gate: Option<TestAckGate>,
 }
 
+/// Ordered control messages for the one writer task. A flush is deliberately
+/// not encoded as a synthetic WAL frame: it is only a FIFO durability barrier
+/// for frames that were already admitted to this writer.
+enum WriterRequest {
+    Append(WriteRequest),
+    Flush {
+        ack: oneshot::Sender<Result<(), WalError>>,
+    },
+}
+
+impl WriterRequest {
+    fn release_unqueued(self) {
+        if let Self::Append(mut request) = self
+            && let Some(admission) = request.quota_admission.take()
+        {
+            admission.release_unqueued();
+        }
+    }
+}
+
 struct QuotaPendingAdmission {
     guard: Option<std::sync::Arc<QuotaGuard>>,
     bytes: u64,
@@ -851,7 +871,7 @@ impl TestAckGate {
 /// surfaces are non-secret-bearing.
 #[derive(Clone, Debug)]
 pub struct WalWriterHandle {
-    tx: mpsc::Sender<WriteRequest>,
+    tx: mpsc::Sender<WriterRequest>,
     authentication_markers_enabled: bool,
     /// Phase 33c BS-4 pre-write quota guard. `None` keeps the writer free
     /// of disk-usage checks (tests + cli one-shots); the daemon sets it
@@ -1387,6 +1407,18 @@ impl WalWriterHandle {
         self.append_with_marker_policy(header, payload, false).await
     }
 
+    /// Queue a FIFO durability barrier without emitting a WAL frame or closing
+    /// the long-lived writer. Success means every earlier active-tail byte was
+    /// accepted by `sync_data`; the writer remains available for later appends.
+    pub(crate) async fn flush_pending(&self) -> Result<(), WalError> {
+        let (ack_tx, ack_rx) = oneshot::channel();
+        self.tx
+            .send(WriterRequest::Flush { ack: ack_tx })
+            .await
+            .map_err(|_| WalError::WriterClosed)?;
+        ack_rx.await.map_err(|_| WalError::WriterClosed)?
+    }
+
     /// Append one frame and acknowledge it only after a keyed compaction
     /// marker covering the frame is itself durable.
     ///
@@ -1440,10 +1472,8 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(mut error) = self.tx.send(request).await {
-            if let Some(admission) = error.0.quota_admission.take() {
-                admission.release_unqueued();
-            }
+        if let Err(error) = self.tx.send(WriterRequest::Append(request)).await {
+            error.0.release_unqueued();
             return Err(WalError::WriterClosed);
         }
         ack_rx.await.map_err(|_| WalError::WriterClosed)?
@@ -1486,10 +1516,8 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(mut error) = self.tx.blocking_send(request) {
-            if let Some(admission) = error.0.quota_admission.take() {
-                admission.release_unqueued();
-            }
+        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(request)) {
+            error.0.release_unqueued();
             return Err(WalError::WriterClosed);
         }
         ack_rx.blocking_recv().map_err(|_| WalError::WriterClosed)?
@@ -1566,13 +1594,14 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(mut error) = self.tx.blocking_send(request) {
-            let once = error
-                .0
-                .context_evidence_receipt_once
-                .take()
-                .expect("closed receipt request must retain its quota owner");
-            once.quota_reservation.release_unqueued();
+        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(request)) {
+            if let WriterRequest::Append(mut request) = error.0 {
+                let once = request
+                    .context_evidence_receipt_once
+                    .take()
+                    .expect("closed receipt request must retain its quota owner");
+                once.quota_reservation.release_unqueued();
+            }
             anyhow::bail!("context_evidence_receipt_writer_unavailable");
         }
         match ack_rx.blocking_recv() {
@@ -1733,8 +1762,9 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(mut error) = self.tx.blocking_send(request)
-            && let Some(once) = error.0.transcript_mining_once.take()
+        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(request))
+            && let WriterRequest::Append(mut request) = error.0
+            && let Some(once) = request.transcript_mining_once.take()
         {
             once.finish(Err(TranscriptMiningOnceError::Indeterminate));
         }
@@ -1793,8 +1823,9 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(mut error) = self.tx.blocking_send(request)
-            && let Some(once) = error.0.trust_decision_once.take()
+        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(request))
+            && let WriterRequest::Append(mut request) = error.0
+            && let Some(once) = request.trust_decision_once.take()
         {
             once.finish(Err(TrustDecisionOnceError::Indeterminate));
         }
@@ -1875,7 +1906,7 @@ impl WalWriterHandle {
             None
         };
         let (ack_tx, _ack_rx_drop) = oneshot::channel();
-        match self.tx.try_send(WriteRequest {
+        match self.tx.try_send(WriterRequest::Append(WriteRequest {
             header,
             payload,
             ack: ack_tx,
@@ -1888,21 +1919,17 @@ impl WalWriterHandle {
             test_ack_gate: self.test_ack_gate.clone(),
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
-        }) {
+        })) {
             Ok(()) => Ok(()),
             Err(error) => {
-                let (result, mut request) = match error {
-                    mpsc::error::TrySendError::Full(request) => (
+                let result = match &error {
+                    mpsc::error::TrySendError::Full(_) =>
                         WalError::WriterBackpressured {
                             capacity: DEFAULT_CHANNEL_CAPACITY,
                         },
-                        request,
-                    ),
-                    mpsc::error::TrySendError::Closed(request) => (WalError::WriterClosed, request),
+                    mpsc::error::TrySendError::Closed(_) => WalError::WriterClosed,
                 };
-                if let Some(admission) = request.quota_admission.take() {
-                    admission.release_unqueued();
-                }
+                error.0.release_unqueued();
                 Err(result)
             }
         }
@@ -1944,10 +1971,8 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(mut error) = self.tx.send(request).await {
-            if let Some(admission) = error.0.quota_admission.take() {
-                admission.release_unqueued();
-            }
+        if let Err(error) = self.tx.send(WriterRequest::Append(request)).await {
+            error.0.release_unqueued();
             return Err(WalError::WriterClosed);
         }
         Ok(())
@@ -4052,7 +4077,7 @@ async fn read_existing_segment_bounded(
 async fn run_writer(
     segment_path: PathBuf,
     initial_segment_lock: std::fs::File,
-    mut rx: mpsc::Receiver<WriteRequest>,
+    mut rx: mpsc::Receiver<WriterRequest>,
     segment_policy: SegmentPolicy,
     compression: CompressionPolicy,
     hmac_home: PathBuf,
@@ -4353,7 +4378,41 @@ async fn run_writer(
     let mut pending_unsynced = false;
     let mut receipt_quota_debt = crate::wal::context_evidence_receipts::ReceiptQuotaDebt::default();
 
-    while let Some(mut req) = rx.recv().await {
+    while let Some(request) = rx.recv().await {
+        let mut req = match request {
+            WriterRequest::Append(request) => request,
+            WriterRequest::Flush { ack } => {
+                if let Err(error) = validate_hmac_writer_authority(hmac_authority.as_ref()) {
+                    let reason = error.to_string();
+                    let _ = ack.send(Err(error));
+                    return Err(WalError::Io(std::io::Error::other(format!(
+                        "flush barrier HMAC authority validation failed: {reason}"
+                    ))));
+                }
+                let sync_result = match state.active_file_mut() {
+                    Ok(file) => file.sync_data().await.map_err(WalError::Io),
+                    Err(error) => Err(error),
+                };
+                match sync_result {
+                    Ok(()) => {
+                        pending_unsynced = false;
+                        let _ = ack.send(Ok(()));
+                    }
+                    Err(error) => {
+                        let fixed = state.is_fixed();
+                        let reason = error.to_string();
+                        let _ = ack.send(Err(error));
+                        if fixed {
+                            return Err(WalError::Io(std::io::Error::other(format!(
+                                "fixed WAL flush barrier failed: {reason}"
+                            ))));
+                        }
+                        warn!(error = %reason, "flush barrier sync_data failed");
+                    }
+                }
+                continue;
+            }
+        };
         let is_receipt = is_context_evidence_receipt_header(&req.header);
         let mut trust_decision_once = req.trust_decision_once.take();
         let mut transcript_mining_once = req.transcript_mining_once.take();
@@ -7260,6 +7319,87 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn flush_pending_syncs_batchable_tail_and_writer_remains_usable() {
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000052.wal");
+        let (handle, join) = spawn(seg.clone()).expect("spawn");
+
+        handle
+            .append(batchable_header_for(5, 1), b"first".to_vec())
+            .await
+            .expect("append first batchable frame");
+        handle
+            .flush_pending()
+            .await
+            .expect("flush first queued batchable tail");
+
+        let bytes = read(&seg).await.expect("read after first flush barrier");
+        let first = decode_frame(&bytes[SEGMENT_HEADER_LEN..])
+            .expect("first batchable frame is readable after flush barrier");
+        assert_eq!(first.payload, b"first");
+
+        handle
+            .append(batchable_header_for(6, 2), b"second".to_vec())
+            .await
+            .expect("append after flush barrier");
+        handle
+            .flush_pending()
+            .await
+            .expect("flush subsequent batchable tail");
+
+        let bytes = read(&seg).await.expect("read after second flush barrier");
+        let first = decode_frame(&bytes[SEGMENT_HEADER_LEN..])
+            .expect("first frame remains readable");
+        let second_offset = SEGMENT_HEADER_LEN + first.header.total_len as usize;
+        let second = decode_frame(&bytes[second_offset..])
+            .expect("subsequent frame is readable after flush barrier");
+        assert_eq!(second.payload, b"second");
+
+        drop(handle);
+        join.await.expect("writer remains drainable after flush barriers");
+    }
+
+    #[tokio::test]
+    async fn flush_pending_after_closed_writer_returns_writer_closed() {
+        let writer = closed_test_writer();
+        let error = writer
+            .flush_pending()
+            .await
+            .expect_err("closed writer cannot acknowledge a flush barrier");
+        assert!(matches!(error, WalError::WriterClosed));
+    }
+
+    #[tokio::test]
+    async fn flush_pending_after_writer_failure_never_acknowledges_success() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let segment = wal.join("flush-failure-000001.wal");
+        let (writer, join) = spawn_test_writer_at_home(
+            segment.clone(),
+            home.path(),
+            RotationPolicy::default(),
+            CompressionPolicy::None,
+        )
+        .expect("spawn HMAC writer");
+
+        fail_compaction_marker_write_for_test(&segment);
+        writer
+            .append_authenticated(header_for(1, 1), vec![b'x'])
+            .await
+            .expect_err("injected marker failure stops the writer");
+
+        let error = writer
+            .flush_pending()
+            .await
+            .expect_err("failed writer cannot acknowledge a flush barrier");
+        assert!(matches!(error, WalError::WriterClosed));
+
+        drop(writer);
+        join.await.expect("failed writer task must not panic");
+    }
+
     /// WAL-QUOTA-FAILCLOSED-01: all concurrent threads must be rejected when
     /// the disk is over quota. The separate first-measure trigger forces one
     /// disk walk; waiters then observe the sticky measured breach.
@@ -7565,7 +7705,7 @@ mod tests {
         let (ack_tx, ack_rx) = oneshot::channel();
         writer
             .tx
-            .send(WriteRequest {
+            .send(WriterRequest::Append(WriteRequest {
                 header: header_for(payload.len() as u32, 91),
                 payload: payload.clone(),
                 ack: ack_tx,
@@ -7576,7 +7716,7 @@ mod tests {
                 quota_admission: Some(quota_admission),
                 test_ack_gate: None,
                 test_receipt_decision_gate: None,
-            })
+            }))
             .await
             .expect("enqueue the already-admitted request after reset");
         ack_rx

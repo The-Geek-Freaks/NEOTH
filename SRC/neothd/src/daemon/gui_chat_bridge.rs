@@ -74,6 +74,15 @@ pub enum GuiChatTerminalState {
     Indeterminate,
 }
 
+/// Exact opaque response-feedback identity issued by the daemon terminal.
+/// The bridge only carries this value to the request-bound GUI reducer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GuiChatBridgeResponseFeedbackTarget {
+    pub response_id: String,
+    pub session_id: String,
+    pub revision: u64,
+}
+
 /// Local-only input. Paths reach the daemon only after authenticated bridge
 /// staging. No GUI API accepts selected-home, endpoint, or credential input.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -311,6 +320,8 @@ pub enum GuiChatBridgeEvent {
         state: GuiChatTerminalState,
         provider: String,
         model: String,
+        response_feedback: Option<GuiChatBridgeResponseFeedbackTarget>,
+        response_feedback_unavailable: bool,
     },
 }
 
@@ -1041,6 +1052,14 @@ fn map_frame(
                 },
                 provider: terminal.provider,
                 model: terminal.model,
+                response_feedback: terminal.response_feedback_target.map(|target| {
+                    GuiChatBridgeResponseFeedbackTarget {
+                        response_id: target.response_id,
+                        session_id: target.session_id,
+                        revision: target.revision,
+                    }
+                }),
+                response_feedback_unavailable: terminal.response_feedback_unavailable,
             }
         }
     }

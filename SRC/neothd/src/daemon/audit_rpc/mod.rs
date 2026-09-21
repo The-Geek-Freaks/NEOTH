@@ -118,6 +118,8 @@ pub(crate) const DAEMON_PLAIN_CHAT_MESSAGE_MAX_BYTES: usize = 640;
 pub(crate) const DAEMON_PLAIN_CHAT_TRANSPORT_BODY_MAX_BYTES: usize = 4 * 1024;
 pub(crate) const DAEMON_PLAIN_CHAT_MAX_RECORDS: usize = 64;
 pub(crate) const DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES: usize = 64 * 1024;
+const DAEMON_PLAIN_CHAT_RESPONSE_ID_BYTES: usize = 32;
+const DAEMON_PLAIN_CHAT_SESSION_ID_MAX_BYTES: usize = 128;
 pub(crate) const CHAT_TURN_RESPONSE_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(120);
 
@@ -156,6 +158,20 @@ pub(crate) struct DaemonPlainChatTerminal {
     pub(crate) provider: String,
     pub(crate) model: String,
     pub(crate) session_id: Option<String>,
+    #[serde(default)]
+    pub(crate) response_feedback: Option<DaemonPlainChatResponseFeedbackTarget>,
+    #[serde(default)]
+    pub(crate) response_feedback_unavailable: bool,
+}
+
+/// Opaque terminal-issued feedback capability. This wire form transports only
+/// the producer-issued id, its exact session binding, and its revision.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DaemonPlainChatResponseFeedbackTarget {
+    pub(crate) response_id: String,
+    pub(crate) session_id: String,
+    pub(crate) revision: u64,
 }
 
 pub(crate) fn validate_daemon_plain_chat_request(
@@ -193,6 +209,25 @@ pub(crate) fn validate_daemon_plain_chat_response(
     }
     if encoded_len > DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES {
         return Err("chat_response_too_large");
+    }
+    let terminal = &response.terminal;
+    if terminal.response_feedback.is_some() && terminal.response_feedback_unavailable {
+        return Err("chat_response_feedback_conflicting_availability");
+    }
+    if let Some(target) = terminal.response_feedback.as_ref() {
+        if target.response_id.len() != DAEMON_PLAIN_CHAT_RESPONSE_ID_BYTES
+            || !target.response_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err("chat_response_feedback_id_invalid");
+        }
+        if target.session_id.is_empty()
+            || target.session_id.len() > DAEMON_PLAIN_CHAT_SESSION_ID_MAX_BYTES
+        {
+            return Err("chat_response_feedback_session_invalid");
+        }
+        if terminal.session_id.as_deref() != Some(target.session_id.as_str()) {
+            return Err("chat_response_feedback_session_mismatch");
+        }
     }
     Ok(())
 }
@@ -270,6 +305,12 @@ mod daemon_plain_chat_contract_tests {
 
     #[test]
     fn sealed_response_rejects_unknown_shape_and_declared_bounds() {
+        let legacy = serde_json::from_str::<DaemonPlainChatResponse>(
+            r#"{"records":[],"terminal":{"provider":"p","model":"m","session_id":null}}"#,
+        )
+        .expect("older sealed terminal shape remains readable without feedback fields");
+        assert_eq!(legacy.terminal.response_feedback, None);
+        assert!(!legacy.terminal.response_feedback_unavailable);
         assert!(serde_json::from_str::<DaemonPlainChatResponse>(
             r#"{"records":[],"terminal":{"provider":"p","model":"m","session_id":null,"extra":true}}"#
         )
@@ -285,6 +326,8 @@ mod daemon_plain_chat_contract_tests {
                 provider: "provider".into(),
                 model: "model".into(),
                 session_id: None,
+                response_feedback: None,
+                response_feedback_unavailable: false,
             },
         };
         assert_eq!(
@@ -301,6 +344,57 @@ mod daemon_plain_chat_contract_tests {
                 DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES + 1,
             ),
             Err("chat_response_too_large")
+        );
+    }
+
+    #[test]
+    fn sealed_response_feedback_target_requires_exact_terminal_session() {
+        let mut response = DaemonPlainChatResponse {
+            records: Vec::new(),
+            terminal: DaemonPlainChatTerminal {
+                provider: "provider".into(),
+                model: "model".into(),
+                session_id: Some("terminal-session".into()),
+                response_feedback: Some(DaemonPlainChatResponseFeedbackTarget {
+                    response_id: "a".repeat(DAEMON_PLAIN_CHAT_RESPONSE_ID_BYTES),
+                    session_id: "terminal-session".into(),
+                    revision: 0,
+                }),
+                response_feedback_unavailable: false,
+            },
+        };
+        assert_eq!(validate_daemon_plain_chat_response(&response, 0), Ok(()));
+        response.terminal.response_feedback_unavailable = true;
+        assert_eq!(
+            validate_daemon_plain_chat_response(&response, 0),
+            Err("chat_response_feedback_conflicting_availability")
+        );
+        response.terminal.response_feedback_unavailable = false;
+        response
+            .terminal
+            .response_feedback
+            .as_mut()
+            .expect("target remains present")
+            .response_id = "invalid".into();
+        assert_eq!(
+            validate_daemon_plain_chat_response(&response, 0),
+            Err("chat_response_feedback_id_invalid")
+        );
+        response
+            .terminal
+            .response_feedback
+            .as_mut()
+            .expect("target remains present")
+            .response_id = "a".repeat(DAEMON_PLAIN_CHAT_RESPONSE_ID_BYTES);
+        response
+            .terminal
+            .response_feedback
+            .as_mut()
+            .expect("target remains present")
+            .session_id = "other-session".into();
+        assert_eq!(
+            validate_daemon_plain_chat_response(&response, 0),
+            Err("chat_response_feedback_session_mismatch")
         );
     }
 

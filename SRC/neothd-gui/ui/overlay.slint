@@ -101,6 +101,11 @@ export component MiniOverlay inherits Window {
     /// W163 request-bound recall metadata, separate from recent snippets.
     in property <[string]> recall-chip-lines: [];
     in property <bool> recall-chips-active: false;
+    in property <bool> response-feedback-active: false;
+    in property <bool> response-feedback-available: false;
+    in property <bool> response-feedback-running: false;
+    in property <string> response-feedback-status: "";
+    in property <string> response-feedback-signal: "";
 
     // ── Compact mode ─────────────────────────────────────────────────
     /// When true the overlay renders as a 64 px pill.
@@ -127,6 +132,7 @@ export component MiniOverlay inherits Window {
     callback skill-selected(int);
     /// Operator stopped the active overlay chat request.
     callback stop-stream-clicked();
+    callback response-feedback-action(string);
     /// Operator retries/stops the request currently bound to the stall diagnostic.
     callback stall-retry-clicked();
     callback stall-stop-clicked();
@@ -737,6 +743,25 @@ export component MiniOverlay inherits Window {
                             wrap: word-wrap;
                             accessible-role: AccessibleRole.text;
                             accessible-label: "Current response recall summary";
+                        }
+                    }
+
+                    if root.response-feedback-active: VerticalLayout {
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: root.response-feedback-status;
+                            color: root.response-feedback-available ? Theme.audit : Theme.text-muted;
+                            font-family: Theme.font-sans;
+                            font-size: Theme.font-size-caption;
+                            wrap: word-wrap;
+                            accessible-role: AccessibleRole.text;
+                            accessible-label: "Current response feedback status";
+                        }
+                        if root.response-feedback-available: HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            NeothButton { label: "Needs correction"; primary: false; size: "sm"; enabled: !root.response-feedback-running; loading: root.response-feedback-running; clicked => { root.response-feedback-action("needs-correction"); } }
+                            NeothButton { label: "Not helpful"; primary: false; size: "sm"; enabled: !root.response-feedback-running; loading: root.response-feedback-running; clicked => { root.response-feedback-action("not-helpful"); } }
+                            NeothButton { label: "Remove feedback"; primary: false; danger: true; size: "sm"; enabled: !root.response-feedback-running && root.response-feedback-signal != ""; loading: root.response-feedback-running; clicked => { root.response-feedback-action("remove"); } }
                         }
                     }
 

@@ -418,7 +418,7 @@ const INVENTORY: &[(&str, Surface)] = &[
     ("slack", Gui("channels")),
     ("todo", Gui("coding")),
     ("lease", CliOnly("resource lease pipe")),
-    ("feedback", CliOnly("feedback submit pipe")),
+    ("feedback", Gui("chat")),
     ("fs", CliOnly("filesystem tool surface")),
     ("os", CliOnly("os tool surface")),
     ("tts", CliOnly("text-to-speech pipe")),

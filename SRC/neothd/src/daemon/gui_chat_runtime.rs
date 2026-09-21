@@ -690,7 +690,11 @@ impl DaemonGuiChatRuntime {
                 let terminal = match (result, reasoning_result) {
                     (
                         Ok(ChatTurnTerminal::Complete {
-                            provider, model, ..
+                            provider,
+                            model,
+                            response_feedback,
+                            response_feedback_unavailable,
+                            ..
                         }),
                         Ok(()),
                     ) => GuiChatTerminal {
@@ -704,6 +708,14 @@ impl DaemonGuiChatRuntime {
                             elapsed_ms: 0,
                         },
                         lifecycle_receipt_id: GuiChatDigest(Self::capability()),
+                        response_feedback_target: response_feedback.map(|target| {
+                            GuiChatResponseFeedbackTarget {
+                                response_id: target.response_id,
+                                session_id: target.session_id,
+                                revision: target.revision,
+                            }
+                        }),
+                        response_feedback_unavailable,
                     },
                     _ => GuiChatTerminal {
                         state: GuiChatTerminalState::Indeterminate,
@@ -716,6 +728,8 @@ impl DaemonGuiChatRuntime {
                             elapsed_ms: 0,
                         },
                         lifecycle_receipt_id: GuiChatDigest(Self::capability()),
+                        response_feedback_target: None,
+                        response_feedback_unavailable: false,
                     },
                 };
                 turn.phase = GuiChatPhase::Finalizing;
@@ -2249,6 +2263,7 @@ mod lifecycle_tests {
             ));
         }
         runtime.close_and_drain().await;
+        drop(runtime);
         completion.wait().await.expect("fixture writer drained");
     }
 
@@ -2304,6 +2319,7 @@ mod lifecycle_tests {
             ));
         }
         runtime.close_and_drain().await;
+        drop(runtime);
         completion.wait().await.expect("fixture writer drained");
     }
 
@@ -2361,6 +2377,7 @@ mod lifecycle_tests {
             ));
         }
         runtime.close_and_drain().await;
+        drop(runtime);
         completion.wait().await.expect("fixture writer drained");
     }
 
@@ -2413,6 +2430,14 @@ mod lifecycle_tests {
         use tokio::io::AsyncReadExt;
 
         let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
+        runtime
+            .state
+            .lock()
+            .await
+            .turns
+            .get_mut(&turn_id)
+            .expect("fixture turn")
+            .reasoning_display = true;
         let exchange = |surface| GuiChatAttachExchangeRequest {
             schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
             expected_boot_id: "fixture-boot".into(),
@@ -2557,8 +2582,10 @@ mod lifecycle_tests {
                     input_tokens: 0,
                     output_tokens: 0,
                     elapsed_ms: 0,
-                },
-                lifecycle_receipt_id: GuiChatDigest("1".repeat(64)),
+            },
+            lifecycle_receipt_id: GuiChatDigest("1".repeat(64)),
+            response_feedback_target: None,
+            response_feedback_unavailable: false,
             };
             turn.terminal = Some(terminal.clone());
             DaemonGuiChatRuntime::emit(turn, GuiChatFramePayload::ProviderDone);
@@ -2584,10 +2611,13 @@ mod lifecycle_tests {
         // release the exact current owner before ending the fixture.
         main_task.abort();
         buddy_task.abort();
+        let _ = main_task.await;
+        let _ = buddy_task.await;
         runtime
             .release_live_subscription(&attach_request(&buddy))
             .await;
         runtime.close_and_drain().await;
+        drop(runtime);
         completion.wait().await.expect("fixture writer drained");
     }
 

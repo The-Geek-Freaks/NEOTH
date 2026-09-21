@@ -15,6 +15,8 @@
 //! feedback frame can't leak message content.
 
 pub mod consume;
+/// W164 — terminal-issued, response-bound fixed-vocabulary feedback.
+pub(crate) mod response;
 pub mod tone;
 
 pub use tone::{NEGATIVE_THRESHOLD, POSITIVE_THRESHOLD, ToneScore, score_follow_up};

@@ -64,6 +64,7 @@ pub(crate) struct InstalledGuiChat {
     next_operation_id: u64,
     pending: Option<PendingGuiConsent>,
     attachments: Arc<std::sync::Mutex<Vec<std::path::PathBuf>>>,
+    response_feedback_projections: crate::ChatResponseFeedbackProjections,
 }
 
 impl InstalledGuiChat {
@@ -201,6 +202,7 @@ pub struct BridgeSink {
     pub overlay: slint::Weak<crate::MiniOverlay>,
     operation: Option<GuiChatOperation>,
     pub incognito: bool,
+    response_feedback_projections: crate::ChatResponseFeedbackProjections,
 }
 
 impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
@@ -211,11 +213,11 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
         use neothd::daemon::gui_chat_bridge::{
             GuiChatBridgeError, GuiChatPhase, GuiChatTerminalState,
         };
-        let (metadata, sequence, kind, terminal) = match event {
+        let (metadata, sequence, kind, terminal, response_feedback, response_feedback_unavailable) = match event {
             neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Accepted {
                 subscription,
                 sequence,
-            } => (subscription, sequence, DaemonChatEventKind::Accepted, false),
+            } => (subscription, sequence, DaemonChatEventKind::Accepted, false, None, false),
             neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::PhaseChanged {
                 subscription,
                 sequence,
@@ -229,12 +231,14 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                     GuiChatPhase::Finalizing => DaemonChatEventKind::PhaseFinalizing,
                 },
                 false,
+                None,
+                false,
             ),
             neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Notice {
                 subscription,
                 sequence,
                 ..
-            } => (subscription, sequence, DaemonChatEventKind::Notice, false),
+            } => (subscription, sequence, DaemonChatEventKind::Notice, false, None, false),
             neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Delta {
                 subscription,
                 sequence,
@@ -243,6 +247,8 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                 subscription,
                 sequence,
                 DaemonChatEventKind::Delta(text),
+                false,
+                None,
                 false,
             ),
             neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ReasoningDelta {
@@ -257,6 +263,8 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                     reasoning_sequence,
                     delta,
                 },
+                false,
+                None,
                 false,
             ),
             neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ReasoningState {
@@ -276,6 +284,8 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                     byte_count,
                 },
                 false,
+                None,
+                false,
             ),
             neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ReasoningCheckpoint {
                 subscription,
@@ -292,6 +302,8 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                     byte_count,
                 },
                 false,
+                None,
+                false,
             ),
             neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ProviderDone {
                 subscription,
@@ -300,6 +312,8 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                 subscription,
                 sequence,
                 DaemonChatEventKind::ProviderDone,
+                false,
+                None,
                 false,
             ),
             neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::CancelRequested {
@@ -310,24 +324,41 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                 sequence,
                 DaemonChatEventKind::CancelRequested,
                 false,
+                None,
+                false,
             ),
             neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Terminal {
                 subscription,
                 sequence,
                 state,
+                response_feedback,
+                response_feedback_unavailable,
                 ..
-            } => (
-                subscription,
-                sequence,
-                DaemonChatEventKind::Terminal(match state {
-                    GuiChatTerminalState::Complete => DaemonChatTerminal::Complete,
-                    GuiChatTerminalState::Cancelled => DaemonChatTerminal::Cancelled,
-                    GuiChatTerminalState::Failed => DaemonChatTerminal::Failed,
-                    GuiChatTerminalState::CrashUnknown => DaemonChatTerminal::CrashUnknown,
-                    GuiChatTerminalState::Indeterminate => DaemonChatTerminal::Indeterminate,
-                }),
-                true,
-            ),
+            } => {
+                let (terminal, response_feedback, response_feedback_unavailable) = match state {
+                    GuiChatTerminalState::Complete => (
+                        DaemonChatTerminal::Complete,
+                        response_feedback,
+                        response_feedback_unavailable,
+                    ),
+                    GuiChatTerminalState::Cancelled => (DaemonChatTerminal::Cancelled, None, false),
+                    GuiChatTerminalState::Failed => (DaemonChatTerminal::Failed, None, false),
+                    GuiChatTerminalState::CrashUnknown => {
+                        (DaemonChatTerminal::CrashUnknown, None, false)
+                    }
+                    GuiChatTerminalState::Indeterminate => {
+                        (DaemonChatTerminal::Indeterminate, None, false)
+                    }
+                };
+                (
+                    subscription,
+                    sequence,
+                    DaemonChatEventKind::Terminal(terminal),
+                    true,
+                    response_feedback,
+                    response_feedback_unavailable,
+                )
+            }
         };
         let surface = match metadata.surface {
             GuiChatSurface::Main => ChatStreamSurface::Main,
@@ -369,6 +400,7 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
         let window = self.window.clone();
         let overlay = self.overlay.clone();
         let state = self.state.as_ref().map(Arc::clone);
+        let response_feedback_projections = self.response_feedback_projections.clone();
         let operation = self.operation;
         let daemon_turn_id = metadata.turn_id.as_uuid().to_string();
         let daemon_surface = metadata.surface;
@@ -409,6 +441,40 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                 }
                 if let Some(overlay) = overlay.upgrade() {
                     crate::project_companion_chat_stream(&overlay, phase, Some(&text));
+                }
+                // The terminal target is accepted only after the subscription
+                // has passed both reducer ordering and current-turn checks.
+                // It is an opaque daemon-issued pair, never reconstructed
+                // from provider text or a local stream frame.
+                if terminal
+                    && phase == crate::chat_stream_phase::ChatStreamPhase::Complete
+                    && !incognito
+                    && let Some(operation) = operation
+                    && (response_feedback.is_some() || response_feedback_unavailable)
+                {
+                    let (response_id, session_id, revision) = response_feedback
+                        .map(|target| {
+                            (Some(target.response_id), Some(target.session_id), Some(target.revision))
+                        })
+                        .unwrap_or((None, None, None));
+                    if let Ok(snapshot) = crate::accept_daemon_response_feedback_terminal(
+                        &response_feedback_projections,
+                        operation.id,
+                        response_id,
+                        session_id,
+                        revision,
+                        response_feedback_unavailable,
+                    ) {
+                        crate::project_chat_response_feedback_snapshot(
+                            Some(&window),
+                            overlay.upgrade().as_ref(),
+                            match daemon_surface {
+                                GuiChatSurface::Main => ChatStreamSurface::Main,
+                                GuiChatSurface::Buddy => ChatStreamSurface::Buddy,
+                            },
+                            &snapshot,
+                        );
+                    }
                 }
                 if terminal && let (Some(state), Some(operation)) = (&state, operation) {
                     let settled = state
@@ -612,6 +678,16 @@ fn submit(
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .begin_operation(surface);
+    let response_feedback_projections = state
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .response_feedback_projections
+        .clone();
+    crate::clear_chat_response_feedback_replacement(
+        &response_feedback_projections,
+        &win,
+        overlay.upgrade().as_ref(),
+    );
     win.set_chat_send_in_flight(true);
     win.set_chat_incognito_active(incognito);
     if surface == GuiChatSurface::Buddy
@@ -860,7 +936,7 @@ fn start_receipt(
                         return;
                     }
                     let turn = Arc::new(turn);
-                    let (bridge, reducer) = {
+                    let (bridge, reducer, response_feedback_projections) = {
                         let mut locked = state.lock().unwrap_or_else(|p| p.into_inner());
                         if !locked.operation_is_current(operation) {
                             return;
@@ -880,6 +956,7 @@ fn start_receipt(
                         (
                             Arc::clone(&locked.controller.bridge),
                             Arc::clone(&locked.controller.reducer),
+                            locked.response_feedback_projections.clone(),
                         )
                     };
                     win.set_status_line("Daemon chat started.".into());
@@ -890,6 +967,7 @@ fn start_receipt(
                         let result = attach_subscription(
                             bridge,
                             reducer,
+                            response_feedback_projections,
                             state_for_attach,
                             operation,
                             subscription,
@@ -1029,6 +1107,7 @@ fn fail_current_projection(
 fn attach_subscription(
     bridge: Arc<dyn GuiChatBridge>,
     reducer: Arc<std::sync::Mutex<DaemonChatPresentationReducer>>,
+    response_feedback_projections: crate::ChatResponseFeedbackProjections,
     state: Arc<std::sync::Mutex<InstalledGuiChat>>,
     operation: GuiChatOperation,
     subscription: GuiChatBridgeSubscription,
@@ -1056,6 +1135,7 @@ fn attach_subscription(
         overlay,
         operation: Some(operation),
         incognito,
+        response_feedback_projections,
     };
     let runtime = bridge_runtime().map_err(|_| {
         neothd::daemon::gui_chat_bridge::GuiChatBridgeError::invalid(
@@ -1074,6 +1154,7 @@ impl GuiChatBridgeController {
         overlay: &crate::MiniOverlay,
         session_id: String,
         attachment_owner: Arc<std::sync::Mutex<Vec<std::path::PathBuf>>>,
+        response_feedback_projections: crate::ChatResponseFeedbackProjections,
     ) -> GuiChatBridgeResult<Arc<std::sync::Mutex<InstalledGuiChat>>> {
         let installed = Arc::new(std::sync::Mutex::new(InstalledGuiChat {
             controller: Arc::new(Self::for_attested_current_instance(session_id)?),
@@ -1082,6 +1163,7 @@ impl GuiChatBridgeController {
             next_operation_id: 0,
             pending: None,
             attachments: Arc::clone(&attachment_owner),
+            response_feedback_projections,
         }));
 
         let main = Arc::clone(&installed);
@@ -1364,7 +1446,7 @@ fn reopen_surface(
                 }
             };
             let returned_turn_id = turn.metadata.turn_id.as_uuid().to_string();
-            let (bridge, reducer) = {
+            let (bridge, reducer, response_feedback_projections) = {
                 let mut locked = state.lock().unwrap_or_else(|p| p.into_inner());
                 if !locked.operation_is_current(operation) {
                     return;
@@ -1383,12 +1465,14 @@ fn reopen_surface(
                 (
                     Arc::clone(&locked.controller.bridge),
                     Arc::clone(&locked.controller.reducer),
+                    locked.response_feedback_projections.clone(),
                 )
             };
             std::thread::spawn(move || {
                 let result = attach_subscription(
                     bridge,
                     reducer,
+                    response_feedback_projections,
                     Arc::clone(&state),
                     operation,
                     subscription,
@@ -1557,5 +1641,80 @@ mod tests {
         assert!(!preview_is_publishable(false, false));
         assert!(!preview_is_publishable(true, true));
         assert!(preview_is_publishable(false, true));
+    }
+
+    #[test]
+    fn daemon_terminal_target_reaches_the_shared_action_map_only_for_the_current_turn() {
+        let projections: crate::ChatResponseFeedbackProjections = Arc::new(
+            std::sync::Mutex::new(std::collections::HashMap::new()),
+        );
+        let gui_subscription_session = "neothd-gui";
+        let core_terminal_session = "session-w164-core";
+        assert_ne!(gui_subscription_session, core_terminal_session);
+
+        let snapshot = crate::accept_daemon_response_feedback_terminal(
+            &projections,
+            41,
+            Some("aabbccddeeff00112233445566778899".into()),
+            Some(core_terminal_session.into()),
+            Some(0),
+            false,
+        )
+        .expect("current complete terminal target");
+        assert!(snapshot.available);
+        let (_, target, _) = crate::begin_current_response_feedback_action(
+            &projections,
+            crate::chat_response_feedback::Action::Set(
+                crate::chat_response_feedback::FeedbackSignal::NeedsCorrection,
+            ),
+        )
+        .expect("daemon target reaches the shared response-feedback action map");
+        assert_eq!(target.session_id(), core_terminal_session);
+
+        let current = GuiChatOperation {
+            id: 41,
+            origin_surface: GuiChatSurface::Main,
+            delivery_surface: GuiChatSurface::Main,
+        };
+        let stale = GuiChatOperation {
+            id: 40,
+            origin_surface: GuiChatSurface::Buddy,
+            delivery_surface: GuiChatSurface::Buddy,
+        };
+        assert!(!operation_matches_turn(
+            Some(current),
+            current,
+            "daemon-turn-current",
+            stale,
+            "daemon-turn-stale",
+            GuiChatSurface::Buddy,
+            false,
+            false,
+        ));
+        // `BridgeSink::on_event` returns at this exact guard before it calls
+        // `accept_daemon_response_feedback_terminal`; the newer target above
+        // therefore remains the only action target.
+        assert!(projections
+            .lock()
+            .expect("shared target map")
+            .contains_key(&crate::daemon_response_feedback_projection_id(41)));
+
+        let malformed: crate::ChatResponseFeedbackProjections = Arc::new(
+            std::sync::Mutex::new(std::collections::HashMap::new()),
+        );
+        assert!(crate::accept_daemon_response_feedback_terminal(
+            &malformed,
+            42,
+            Some("aabbccddeeff00112233445566778899".into()),
+            None,
+            Some(0),
+            false,
+        )
+        .is_err());
+        assert!(crate::begin_current_response_feedback_action(
+            &malformed,
+            crate::chat_response_feedback::Action::Remove,
+        )
+        .is_none());
     }
 }

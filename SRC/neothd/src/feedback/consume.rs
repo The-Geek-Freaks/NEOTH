@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::profile::self_dev::{ProposalKind, SelfDevProposal};
+use crate::feedback::response::ActiveResponseFeedbackSummary;
 use crate::wal::compress::decompress_frames;
 use crate::wal::events::EVENT_TYPE_OPERATOR_FEEDBACK;
 use crate::wal::frame::decode_frame;
@@ -220,6 +221,24 @@ pub fn propose_from_feedback(summary: &FeedbackSummary) -> Option<SelfDevProposa
     })
 }
 
+/// W164 response-bound feedback is intentionally separate from 0xBB tone
+/// correction aggregation. Only an active bounded projection can suggest a
+/// review-only proposal; it never changes G-03 thresholds or emits WAL frames.
+pub(crate) fn propose_from_active_response_feedback(
+    summary: &ActiveResponseFeedbackSummary,
+) -> Option<SelfDevProposal> {
+    let total = summary.needs_correction.saturating_add(summary.not_helpful);
+    if total < HIGH_AT { return None; }
+    Some(SelfDevProposal {
+        id: format!("switch_preset-response-fb-{}-{}", summary.needs_correction, summary.not_helpful),
+        kind: ProposalKind::SwitchPreset,
+        reason: format!("{total} active response-bound feedback selections require operator review"),
+        confidence: 0.45,
+        target: "lowkey".to_owned(),
+        extension_authority: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,6 +284,18 @@ mod tests {
         );
         // Same episode ⇒ same id (deduped).
         assert_eq!(propose_from_feedback(&high).unwrap().id, p.id);
+    }
+
+    #[test]
+    fn active_response_feedback_proposes_review_only() {
+        let below = ActiveResponseFeedbackSummary { needs_correction: HIGH_AT - 1, not_helpful: 0 };
+        assert!(propose_from_active_response_feedback(&below).is_none());
+
+        let at_high = ActiveResponseFeedbackSummary { needs_correction: HIGH_AT, not_helpful: 2 };
+        let proposal = propose_from_active_response_feedback(&at_high).expect("active response feedback reaches review threshold");
+        assert!(proposal.id.starts_with("switch_preset-response-fb-"));
+        assert_ne!(proposal.id, propose_from_feedback(&FeedbackSummary { window_secs: 1, corrections: HIGH_AT, top_patterns: vec![], latest_unix: None }).unwrap().id);
+        assert_eq!(proposal.target, "lowkey");
     }
 
     #[tokio::test]

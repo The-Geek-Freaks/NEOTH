@@ -492,6 +492,16 @@ pub(crate) struct GuiChatUsage {
     pub(crate) elapsed_ms: u64,
 }
 
+/// An issuer-created response-feedback target. GUI transport carries this
+/// opaque identity verbatim; it neither derives nor registers a target.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GuiChatResponseFeedbackTarget {
+    pub(crate) response_id: String,
+    pub(crate) session_id: String,
+    pub(crate) revision: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct GuiChatTerminal {
@@ -501,6 +511,14 @@ pub(crate) struct GuiChatTerminal {
     pub(crate) model: String,
     pub(crate) usage: GuiChatUsage,
     pub(crate) lifecycle_receipt_id: GuiChatDigest,
+    /// Present only when the daemon producer issued this exact target after
+    /// its terminal durability barrier. Omission remains wire-compatible.
+    #[serde(default)]
+    pub(crate) response_feedback_target: Option<GuiChatResponseFeedbackTarget>,
+    /// A completed non-incognito response could not be issued as a feedback
+    /// target. This never authorizes fallback creation by a GUI consumer.
+    #[serde(default)]
+    pub(crate) response_feedback_unavailable: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -791,7 +809,41 @@ fn validate_terminal(terminal: &GuiChatTerminal) -> GuiChatResult<()> {
     validate_digest(&terminal.response_digest)?;
     validate_digest(&terminal.lifecycle_receipt_id)?;
     validate_nonempty("provider", &terminal.provider, GUI_CHAT_PROVIDER_MAX_BYTES)?;
-    validate_nonempty("model", &terminal.model, GUI_CHAT_MODEL_MAX_BYTES)
+    validate_nonempty("model", &terminal.model, GUI_CHAT_MODEL_MAX_BYTES)?;
+
+    match (
+        terminal.response_feedback_target.as_ref(),
+        terminal.response_feedback_unavailable,
+    ) {
+        (Some(_), true) => Err(GuiChatProtocolError::Invalid(
+            "response_feedback_target_unavailable_conflict",
+        )),
+        (Some(target), false) => {
+            if terminal.state != GuiChatTerminalState::Complete {
+                return Err(GuiChatProtocolError::Invalid(
+                    "response_feedback_target_not_complete",
+                ));
+            }
+            if target.response_id.len() != 32
+                || !target.response_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                return Err(GuiChatProtocolError::Invalid(
+                    "response_feedback_response_id",
+                ));
+            }
+            validate_nonempty(
+                "response_feedback_session",
+                &target.session_id,
+                GUI_CHAT_SESSION_ID_MAX_BYTES,
+            )?;
+            Ok(())
+        }
+        (None, true) if terminal.state == GuiChatTerminalState::Complete => Ok(()),
+        (None, true) => Err(GuiChatProtocolError::Invalid(
+            "response_feedback_unavailable_not_complete",
+        )),
+        (None, false) => Ok(()),
+    }
 }
 
 fn validate_schema(schema_version: u8) -> GuiChatResult<()> {
@@ -1270,6 +1322,8 @@ mod tests {
                 elapsed_ms: 3,
             },
             lifecycle_receipt_id: digest('d'),
+            response_feedback_target: None,
+            response_feedback_unavailable: false,
         };
         let lifecycle = serde_json::to_string(&GuiChatFramePayload::Terminal { terminal }).unwrap();
         assert!(!lifecycle.contains("response_text"));
@@ -1403,6 +1457,8 @@ mod tests {
                 elapsed_ms: 3,
             },
             lifecycle_receipt_id: digest('d'),
+            response_feedback_target: None,
+            response_feedback_unavailable: false,
         };
         let lifecycle = GuiChatStreamFrame {
             schema_version: 1,
@@ -1430,6 +1486,106 @@ mod tests {
             ..lifecycle
         };
         validate_stream_frame(&delta).unwrap();
+    }
+
+    #[test]
+    fn terminal_response_feedback_target_is_strict_and_complete_only() {
+        let valid_target = GuiChatResponseFeedbackTarget {
+            response_id: "a".repeat(32),
+            session_id: "core-session".into(),
+            revision: 7,
+        };
+        let terminal = GuiChatTerminal {
+            state: GuiChatTerminalState::Complete,
+            response_digest: digest('c'),
+            provider: "provider".into(),
+            model: "model".into(),
+            usage: GuiChatUsage {
+                input_tokens: 1,
+                output_tokens: 2,
+                elapsed_ms: 3,
+            },
+            lifecycle_receipt_id: digest('d'),
+            response_feedback_target: Some(valid_target.clone()),
+            response_feedback_unavailable: false,
+        };
+        let frame = |terminal| GuiChatStreamFrame {
+            schema_version: 1,
+            boot_id: "boot".into(),
+            turn_id: GuiChatTurnId(Uuid::now_v7()),
+            subscription: GuiChatSubscription {
+                session_id: "session".into(),
+                surface: GuiChatSurface::Main,
+                generation: 1,
+            },
+            sequence: 1,
+            payload: GuiChatFramePayload::Terminal { terminal },
+        };
+
+        validate_stream_frame(&frame(terminal.clone())).unwrap();
+
+        let mut malformed_response_id = terminal.clone();
+        malformed_response_id
+            .response_feedback_target
+            .as_mut()
+            .expect("target")
+            .response_id = "g".repeat(32);
+        assert!(matches!(
+            validate_stream_frame(&frame(malformed_response_id)),
+            Err(GuiChatProtocolError::Invalid("response_feedback_response_id"))
+        ));
+
+        let mut empty_session = terminal.clone();
+        empty_session
+            .response_feedback_target
+            .as_mut()
+            .expect("target")
+            .session_id = String::new();
+        assert!(matches!(
+            validate_stream_frame(&frame(empty_session)),
+            Err(GuiChatProtocolError::Invalid("required_field_empty"))
+        ));
+
+        let mut oversized_session = terminal.clone();
+        oversized_session
+            .response_feedback_target
+            .as_mut()
+            .expect("target")
+            .session_id = "s".repeat(GUI_CHAT_SESSION_ID_MAX_BYTES + 1);
+        assert!(matches!(
+            validate_stream_frame(&frame(oversized_session)),
+            Err(GuiChatProtocolError::Invalid("field_too_large"))
+        ));
+
+        let mut conflicting_target = terminal.clone();
+        conflicting_target.response_feedback_unavailable = true;
+        assert!(matches!(
+            validate_stream_frame(&frame(conflicting_target)),
+            Err(GuiChatProtocolError::Invalid(
+                "response_feedback_target_unavailable_conflict"
+            ))
+        ));
+
+        let mut target_on_failed_terminal = terminal.clone();
+        target_on_failed_terminal.state = GuiChatTerminalState::Failed;
+        assert!(matches!(
+            validate_stream_frame(&frame(target_on_failed_terminal)),
+            Err(GuiChatProtocolError::Invalid(
+                "response_feedback_target_not_complete"
+            ))
+        ));
+
+        let mut unavailable_on_failed_terminal = terminal.clone();
+        unavailable_on_failed_terminal.state = GuiChatTerminalState::Failed;
+        unavailable_on_failed_terminal.response_feedback_target = None;
+        unavailable_on_failed_terminal.response_feedback_unavailable = true;
+        assert!(matches!(
+            validate_stream_frame(&frame(unavailable_on_failed_terminal)),
+            Err(GuiChatProtocolError::Invalid(
+                "response_feedback_unavailable_not_complete"
+            ))
+        ));
+
     }
 
     #[test]

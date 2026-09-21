@@ -1118,6 +1118,13 @@ export component ChatView inherits Rectangle {
     /// enter message bubbles, copy paths, or persisted chat history.
     in property <[string]> recall-chip-lines: [];
     in property <bool> recall-chips-active: false;
+    /// W164 carries no target identity into Slint. It is actionable only for
+    /// the current completed, terminal-issued response.
+    in property <bool> response-feedback-active: false;
+    in property <bool> response-feedback-available: false;
+    in property <bool> response-feedback-running: false;
+    in property <string> response-feedback-status: "";
+    in property <string> response-feedback-signal: "";
     /// Privacy mode frozen for the active request. The next-turn selection
     /// resets immediately after dispatch and must not change this indicator.
     in property <bool> incognito-active: false;
@@ -1179,6 +1186,7 @@ export component ChatView inherits Rectangle {
     /// Operator pressed ArrowUp with an empty composer — bubbles up to
     /// Rust so it can write the last sent input back into `composer-draft`.
     callback recall-requested();
+    callback response-feedback-action(string);
     /// Hover-action bar callbacks — index is the position in `messages`.
     callback message-copy(int);
     callback message-retry(int);
@@ -1913,6 +1921,56 @@ export component ChatView inherits Rectangle {
                     wrap: word-wrap;
                     accessible-role: AccessibleRole.text;
                     accessible-label: "Current response recall summary";
+                }
+            }
+
+            if root.response-feedback-active: Rectangle {
+                background: Theme.bg-sunken;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                height: feedback-column.preferred-height + Theme.space-base * 2;
+                feedback-column := VerticalLayout {
+                    x: Theme.space-base;
+                    y: Theme.space-base;
+                    width: parent.width - Theme.space-base * 2;
+                    spacing: Theme.space-tight;
+                    Text {
+                        text: root.response-feedback-status;
+                        color: root.response-feedback-available ? Theme.audit : Theme.text-muted;
+                        font-family: Theme.font-sans;
+                        font-size: Theme.font-size-caption;
+                        wrap: word-wrap;
+                        accessible-role: AccessibleRole.text;
+                        accessible-label: "Current response feedback status";
+                    }
+                    if root.response-feedback-available: HorizontalLayout {
+                        spacing: Theme.space-tight;
+                        NeothButton {
+                            label: "Needs correction";
+                            primary: false;
+                            size: "sm";
+                            enabled: !root.response-feedback-running;
+                            loading: root.response-feedback-running;
+                            clicked => { root.response-feedback-action("needs-correction"); }
+                        }
+                        NeothButton {
+                            label: "Not helpful";
+                            primary: false;
+                            size: "sm";
+                            enabled: !root.response-feedback-running;
+                            loading: root.response-feedback-running;
+                            clicked => { root.response-feedback-action("not-helpful"); }
+                        }
+                        NeothButton {
+                            label: "Remove feedback";
+                            primary: false;
+                            danger: true;
+                            size: "sm";
+                            enabled: !root.response-feedback-running && root.response-feedback-signal != "";
+                            loading: root.response-feedback-running;
+                            clicked => { root.response-feedback-action("remove"); }
+                        }
+                    }
                 }
             }
 

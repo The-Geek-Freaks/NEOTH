@@ -5,7 +5,8 @@
 use neothd::daemon::gui_chat_bridge::{
     GuiChatBridge, GuiChatBridgeEvent, GuiChatBridgePreflight, GuiChatBridgePreflightInput,
     GuiChatConsentDecision, GuiChatConsentPrompt, GuiChatConsentRoute, GuiChatPhase,
-    GuiChatSubscriptionMetadata, GuiChatSurface, GuiChatTerminalState, GuiChatTurnMetadata,
+    GuiChatBridgeResponseFeedbackTarget, GuiChatSubscriptionMetadata, GuiChatSurface,
+    GuiChatTerminalState, GuiChatTurnMetadata,
     gui_bridge_test_support,
 };
 use neothd::providers::{ReasoningTerminalState, ReasoningText};
@@ -56,10 +57,25 @@ fn gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types() {
         state: GuiChatTerminalState::Complete,
         provider: "provider".into(),
         model: "model".into(),
+        response_feedback: Some(GuiChatBridgeResponseFeedbackTarget {
+            response_id: "aabbccddeeff00112233445566778899".into(),
+            session_id: "session-w164".into(),
+            revision: 0,
+        }),
+        response_feedback_unavailable: false,
     };
     assert!(matches!(
         event,
-        GuiChatBridgeEvent::Terminal { sequence: 5, .. }
+        GuiChatBridgeEvent::Terminal {
+            sequence: 5,
+            response_feedback: Some(GuiChatBridgeResponseFeedbackTarget {
+                response_id,
+                session_id,
+                revision: 0,
+            }),
+            response_feedback_unavailable: false,
+            ..
+        } if response_id == "aabbccddeeff00112233445566778899" && session_id == "session-w164"
     ));
     let reasoning = GuiChatBridgeEvent::ReasoningState {
         subscription: subscription.metadata,

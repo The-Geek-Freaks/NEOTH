@@ -1138,12 +1138,11 @@ mod tests {
             autonomy: AutonomyLevel::Full,
             ..Default::default()
         };
-        // Each comparison run has exactly one provider-emitted MCP payload.
-        // The default inner goal ceiling permits a follow-up provider round
-        // after the uncapped tool result, which changes this fixture's
-        // provider-call counter without exercising a second MCP invocation.
-        // Keeping it at one isolates the retained cap's pre-transport denial.
-        freedom.goal.max_turns = 1;
+        // The dispatch loop checks its provider-iteration ceiling before it
+        // dispatches parsed calls. Two iterations therefore admit exactly one
+        // tools/call: the first provider response reaches transport and the
+        // repeated second response is stopped at the ceiling before dispatch.
+        freedom.goal.max_turns = 2;
         let config = LoopConfig {
             min_rounds: 1,
             max_rounds: 1,
@@ -1180,7 +1179,7 @@ mod tests {
         baseline_join.await.unwrap();
         assert_eq!(baseline.per_round[0].failed_calls, 0);
         assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
 
         let capped_wal = home.path().join("wal").join("loop-cap-forwarding.wal");
         let (writer, join) =
@@ -1222,8 +1221,8 @@ mod tests {
 
         assert_eq!(
             calls.load(Ordering::SeqCst),
-            2,
-            "both the uncapped control and capped run emitted the same real tool-call payload"
+            3,
+            "the uncapped control emits a capped follow-up after its transport call; the denied run stops after its first failed call"
         );
         assert_eq!(record.total_tool_calls, Some(1));
         assert_eq!(record.per_round[0].failed_calls, 1);

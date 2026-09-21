@@ -72,11 +72,12 @@ pub async fn run_profile_adapt_tick(
     // runs even when there is no behavioural snapshot yet — feedback is its own
     // signal. Best-effort: a feedback-path error never blocks the snapshot path.
     let feedback_added = run_feedback_consumer(home, wal_dir, writer).await;
+    let response_feedback_added = run_response_feedback_consumer(home, writer).await;
 
     let Some(profile) = crate::profile::snapshot::load_snapshot(home) else {
         // Fresh install / empty WAL → no behavioural snapshot to adapt from,
         // but a feedback proposal may still have been queued above.
-        return Ok(feedback_added);
+        return Ok(feedback_added + response_feedback_added);
     };
 
     let snapshot_added = crate::cli::self_dev::propose_and_store(
@@ -87,7 +88,30 @@ pub async fn run_profile_adapt_tick(
     )
     .await
     .map_err(|e| format!("propose + store: {e}"))?;
-    Ok(feedback_added + snapshot_added)
+    Ok(feedback_added + response_feedback_added + snapshot_added)
+}
+
+async fn run_response_feedback_consumer(
+    home: &std::path::Path,
+    writer: &WalWriterHandle,
+) -> usize {
+    let summary = match crate::feedback::response::active_response_feedback_summary(home) {
+        Ok(summary) => summary,
+        Err(error) => {
+            tracing::debug!(?error, "profile-adapt cron: response-feedback projection unavailable");
+            return 0;
+        }
+    };
+    let Some(proposal) = crate::feedback::consume::propose_from_active_response_feedback(&summary) else { return 0; };
+    match crate::cli::self_dev::store_proposals(home, std::slice::from_ref(&proposal), Some(writer))
+        .await
+    {
+        Ok(count) => count,
+        Err(error) => {
+            tracing::debug!(%error, "profile-adapt cron: response-feedback proposal store failed");
+            0
+        }
+    }
 }
 
 /// G-03 consumer half: read the recent feedback window + queue a sustained

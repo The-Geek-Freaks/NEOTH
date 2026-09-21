@@ -623,6 +623,16 @@ fn render_daemon_plain_chat_response(
     response: crate::daemon::audit_rpc::DaemonPlainChatResponse,
 ) -> Result<()> {
     let mut output = CliChatOutput;
+    render_daemon_plain_chat_response_to(&mut output, response)
+}
+
+/// Present a daemon-owned terminal verbatim. The daemon has already crossed
+/// its per-turn durable flush and issued any response target; this adapter
+/// must only forward that receipt and must never register a replacement.
+fn render_daemon_plain_chat_response_to(
+    output: &mut dyn ChatTurnEventSink,
+    response: crate::daemon::audit_rpc::DaemonPlainChatResponse,
+) -> Result<()> {
     for record in response.records {
         let rendered = match record.kind {
             crate::daemon::audit_rpc::DaemonPlainChatRecordKind::Stdout => {
@@ -636,15 +646,31 @@ fn render_daemon_plain_chat_response(
                 text: record.text,
             },
         };
-        emit_chat_output(&mut output, rendered)?;
+        emit_chat_output(output, rendered)?;
     }
+    let terminal = response.terminal;
+    let terminal = chat_turn_pipeline::ChatTurnTerminal::Complete {
+        provider: terminal.provider,
+        model: terminal.model,
+        session_id: terminal.session_id,
+        response_feedback: terminal.response_feedback.map(|target| {
+            chat_turn_pipeline::ResponseFeedbackTarget {
+                response_id: target.response_id,
+                session_id: target.session_id,
+                revision: target.revision,
+            }
+        }),
+        response_feedback_unavailable: terminal.response_feedback_unavailable,
+    };
+    emit_response_feedback_target(
+        output,
+        None,
+        terminal.response_feedback_target(),
+        terminal.response_feedback_unavailable(),
+    )?;
     chat_turn_pipeline::emit_terminal(
-        &mut output,
-        chat_turn_pipeline::ChatTurnTerminal::Complete {
-            provider: response.terminal.provider,
-            model: response.terminal.model,
-            session_id: response.terminal.session_id,
-        },
+        output,
+        terminal,
     )
 }
 
@@ -4453,6 +4479,69 @@ fn emit_recall_chip_batch(
         ChatOutput::StreamFrames {
             frames: String::from_utf8(frames)
                 .expect("recall-chip protocol formatter emits UTF-8 frames"),
+        },
+    )
+}
+
+/// Emit the terminal-issued W164 target only after the caller has drained the
+/// turn writer. It has no provider or reply content and has no incognito path.
+fn emit_response_feedback_target(
+    output: &mut dyn ChatTurnEventSink,
+    control_token: Option<&str>,
+    target: Option<&chat_turn_pipeline::ResponseFeedbackTarget>,
+    unavailable: bool,
+) -> Result<()> {
+    if target.is_none() && !unavailable {
+        return Ok(());
+    }
+    if let Some(control_token) = control_token {
+        #[derive(serde::Serialize)]
+        struct ResponseFeedbackTargetFrame<'a> {
+            neoth_stream: &'static str,
+            protocol_version: u8,
+            request_id: String,
+            control_token: &'a str,
+            response_id: Option<&'a str>,
+            session_id: Option<&'a str>,
+            revision: Option<u64>,
+            status: &'static str,
+        }
+
+        let line = serde_json::to_string(&ResponseFeedbackTargetFrame {
+            neoth_stream: "response_feedback_target",
+            protocol_version: CHAT_STREAM_PROTOCOL_VERSION,
+            request_id: stream_request_id(control_token),
+            control_token,
+            response_id: target.map(|target| target.response_id.as_str()),
+            session_id: target.map(|target| target.session_id.as_str()),
+            revision: target.map(|target| target.revision),
+            status: if target.is_some() { "ready" } else { "unavailable" },
+        })
+        .context("serialize response-feedback target frame")?;
+        let mut frames = Vec::new();
+        write_stream_control_line(&mut frames, Some(control_token), &line)
+            .context("format response-feedback target frame")?;
+        return emit_chat_output(
+            output,
+            ChatOutput::StreamFrames {
+                frames: String::from_utf8(frames)
+                    .expect("response-feedback protocol formatter emits UTF-8 frames"),
+            },
+        );
+    }
+
+    let text = match target {
+        Some(target) => format!(
+            "[neoth:feedback] response={} session={} revision={}",
+            target.response_id, target.session_id, target.revision
+        ),
+        None => String::from("[neoth:feedback] response feedback unavailable"),
+    };
+    emit_chat_output(
+        output,
+        ChatOutput::Notice {
+            stream: false,
+            text,
         },
     )
 }
@@ -8703,23 +8792,105 @@ async fn run_chat_with_consent(
     )
     .await;
     prepared.preparation.cancellation.close();
+    let response_feedback_home = prepared.preparation.first_tour_home.clone();
+    let response_feedback_incognito = prepared.input.incognito;
+    let response_feedback_token = prepared
+        .preparation
+        .stream_control_token
+        .as_ref()
+        .map(|token| token.as_str());
     drop(writer);
     let drained = writer_completion
         .wait()
         .await
         .context("WAL writer failed after chat turn");
-    finish_cli_chat_turn(
+    finish_cli_chat_turn_with_response_feedback(
         result,
         drained,
         &mut prepared.deferred_failure_output,
         &mut prepared.deferred_terminal,
         &mut output,
+        &response_feedback_home,
+        response_feedback_incognito,
+        response_feedback_token,
     )
 }
 
 /// The direct adapter's one post-WAL terminal boundary. It is intentionally
 /// small so lifecycle tests exercise the same error and sink ordering as the
 /// production CLI path.
+fn finish_cli_chat_turn_with_response_feedback(
+    result: Result<Option<ChatOutput>>,
+    drained: Result<()>,
+    deferred_failure_output: &mut Option<ChatOutput>,
+    deferred_terminal: &mut Option<chat_turn_pipeline::ChatTurnTerminal>,
+    output: &mut dyn ChatTurnEventSink,
+    response_feedback_home: &std::path::Path,
+    response_feedback_incognito: bool,
+    response_feedback_control_token: Option<&str>,
+) -> Result<()> {
+    match result {
+        Ok(deferred) => {
+            drained?;
+            if let Some(deferred) = deferred {
+                emit_chat_output(output, deferred)?;
+            }
+            if let Some(mut terminal) = deferred_terminal.take() {
+                // The writer is already drained. This is the first permitted
+                // response-id registration point and it is immediately before
+                // the actual terminal event, never while the engine merely
+                // constructs its deferred terminal or StreamDone output.
+                if !response_feedback_incognito {
+                    match crate::feedback::response::register_drained_terminal_response(
+                        response_feedback_home,
+                        terminal_session_id(&terminal).unwrap_or_default(),
+                        false,
+                        crate::time::now_unix_i64(),
+                    ) {
+                        Ok(Some(status)) => terminal.set_response_feedback_target(
+                            chat_turn_pipeline::ResponseFeedbackTarget {
+                                response_id: status.response_id.as_str().to_owned(),
+                                session_id: status.session_id,
+                                revision: status.revision,
+                            },
+                        ),
+                        Ok(None) => {
+                            terminal.mark_response_feedback_unavailable();
+                        }
+                        Err(error) => {
+                            tracing::warn!(?error, "response-feedback target unavailable after terminal drain");
+                            terminal.mark_response_feedback_unavailable();
+                        }
+                    }
+                    emit_response_feedback_target(
+                        output,
+                        response_feedback_control_token,
+                        terminal.response_feedback_target(),
+                        terminal.response_feedback_unavailable(),
+                    )?;
+                }
+                chat_turn_pipeline::emit_terminal(output, terminal)?;
+            }
+        }
+        Err(error) => {
+            if let Err(join_error) = drained {
+                return Err(error.context(format!(
+                    "WAL writer join also failed after chat-turn failure: {join_error}"
+                )));
+            }
+            if let Some(deferred) = deferred_failure_output.take() {
+                emit_chat_output(output, deferred)?;
+            }
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+/// Legacy adapter seam retained for its existing terminal-order regressions.
+/// W164 production enters the context-bearing variant above; this test helper
+/// deliberately performs no response-target registration.
+#[cfg(test)]
 fn finish_cli_chat_turn(
     result: Result<Option<ChatOutput>>,
     drained: Result<()>,
@@ -8750,6 +8921,11 @@ fn finish_cli_chat_turn(
         }
     }
     Ok(())
+}
+
+fn terminal_session_id(terminal: &chat_turn_pipeline::ChatTurnTerminal) -> Option<&str> {
+    let chat_turn_pipeline::ChatTurnTerminal::Complete { session_id, .. } = terminal;
+    session_id.as_deref()
 }
 
 /// Build the one intentionally narrow daemon-owned turn.  This is an
@@ -15908,9 +16084,7 @@ mod tests {
         }
 
         let home = tempfile::tempdir().unwrap();
-        let wal_dir = home.path().join("wal");
-        std::fs::create_dir_all(&wal_dir).unwrap();
-        let segment = wal_dir.join("reasoning-native-terminal-error.wal");
+        let segment = canonical_test_wal(home.path(), "reasoning-native-terminal-error");
         let (writer, join) =
             crate::wal::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         let wal_session = crate::wal::WalSessionContext::from_admitted_identity(
@@ -19690,6 +19864,42 @@ modes:
         }
     }
 
+    fn reasoning_fixture_identity() -> crate::providers::CompletionIdentity {
+        crate::providers::CompletionIdentity {
+            provider: "reasoning-fixture-leaf".to_owned(),
+            wire_model: "reasoning-fixture-model".to_owned(),
+            dispatch_route: Vec::new(),
+        }
+    }
+
+    fn without_authenticated_throughput(
+        events: &[ChatTurnEvent],
+        expected_state: &str,
+        expected_reason: &str,
+    ) -> Vec<ChatTurnEvent> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                ChatTurnEvent::Output(ChatOutput::StreamFrames { frames }) => {
+                    let controls = frames
+                        .lines()
+                        .filter_map(|line| line.strip_prefix(CHAT_STREAM_CONTROL_PREFIX))
+                        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("throughput JSON"))
+                        .collect::<Vec<_>>();
+                    assert_eq!(controls.len(), 1, "fixture filters one control record at a time");
+                    let control = &controls[0];
+                    assert_eq!(control["neoth_stream"], "throughput_state");
+                    assert_eq!(control["protocol_version"], CHAT_STREAM_PROTOCOL_VERSION);
+                    assert_eq!(control["control_token"], "0123456789abcdef0123456789abcdef");
+                    assert_eq!(control["state"], expected_state);
+                    assert_eq!(control["reason"], expected_reason);
+                    None
+                }
+                event => Some(event.clone()),
+            })
+            .collect()
+    }
+
     /// Drive the real `dispatch_provider` streaming boundary with a recording
     /// sink and a real WAL writer. All callers below intentionally take an
     /// error path, so this helper owns the writer shutdown before returning.
@@ -19821,14 +20031,14 @@ modes:
 
             Ok(Box::pin(stream::iter(vec![
                 Ok(ProviderStreamEvent {
-                    identity: Default::default(),
+                    identity: reasoning_fixture_identity(),
                     sequence: 1,
                     payload: ProviderStreamPayload::ReasoningDelta {
                         delta: ReasoningText::new("native-private-delta".to_owned()),
                     },
                 }),
                 Ok(ProviderStreamEvent {
-                    identity: Default::default(),
+                    identity: reasoning_fixture_identity(),
                     sequence: 2,
                     payload: ProviderStreamPayload::ReasoningTerminal {
                         state: crate::providers::ReasoningTerminalState::Complete,
@@ -19858,12 +20068,14 @@ modes:
             error.to_string().contains("dispatch_outer"),
             "caller receives the existing opaque dispatch error"
         );
+        let reasoning_events = without_authenticated_throughput(&sink.0, "error", "stream_error");
         assert!(matches!(
-            sink.0.as_slice(),
+            reasoning_events.as_slice(),
             [
                 ChatTurnEvent::Output(ChatOutput::ReasoningDelta {
                     sequence: 1,
                     delta,
+                    stream_control_token: Some(control_token),
                     ..
                 }),
                 ChatTurnEvent::Output(ChatOutput::ReasoningState {
@@ -19871,9 +20083,12 @@ modes:
                     state: crate::providers::ReasoningTerminalState::Redacted,
                     event_count: 1,
                     byte_count: 20,
+                    stream_control_token: Some(terminal_token),
                     ..
                 })
             ] if delta.as_str() == "native-private-delta"
+                && control_token == "0123456789abcdef0123456789abcdef"
+                && terminal_token == "0123456789abcdef0123456789abcdef"
         ));
         let audits = reasoning_audits_at(&segment);
         assert_eq!(audits.len(), 1);
@@ -19952,14 +20167,16 @@ modes:
         .await
         .expect("stream-open cancellation must settle without a detached wait");
         assert!(result.is_err());
+        let reasoning_events = without_authenticated_throughput(&sink.0, "cancelled", "cancelled");
         assert!(matches!(
-            sink.0.as_slice(),
+            reasoning_events.as_slice(),
             [ChatTurnEvent::Output(ChatOutput::ReasoningState {
                 state: crate::providers::ReasoningTerminalState::Cancelled,
                 event_count: 0,
                 byte_count: 0,
+                stream_control_token: Some(token),
                 ..
-            })]
+            })] if token == "0123456789abcdef0123456789abcdef"
         ));
         let audits = reasoning_audits_at(&segment);
         assert_eq!(audits.len(), 1);
@@ -20004,7 +20221,7 @@ modes:
             let entered = std::sync::Arc::clone(&self.entered);
             Ok(Box::pin(async_stream::stream! {
                 yield Ok(ProviderStreamEvent {
-                    identity: Default::default(),
+                    identity: reasoning_fixture_identity(),
                     sequence: 1,
                     payload: ProviderStreamPayload::ReasoningDelta {
                         delta: ReasoningText::new("pending-next-private".to_owned()),
@@ -20046,12 +20263,14 @@ modes:
         .await
         .expect("pending next-item cancellation must settle without a detached wait");
         assert!(result.is_err());
+        let reasoning_events = without_authenticated_throughput(&sink.0, "cancelled", "cancelled");
         assert!(matches!(
-            sink.0.as_slice(),
+            reasoning_events.as_slice(),
             [
                 ChatTurnEvent::Output(ChatOutput::ReasoningDelta {
                     sequence: 1,
                     delta,
+                    stream_control_token: Some(control_token),
                     ..
                 }),
                 ChatTurnEvent::Output(ChatOutput::ReasoningState {
@@ -20059,9 +20278,12 @@ modes:
                     state: crate::providers::ReasoningTerminalState::Cancelled,
                     event_count: 1,
                     byte_count: 20,
+                    stream_control_token: Some(terminal_token),
                     ..
                 })
             ] if delta.as_str() == "pending-next-private"
+                && control_token == "0123456789abcdef0123456789abcdef"
+                && terminal_token == "0123456789abcdef0123456789abcdef"
         ));
         let audits = reasoning_audits_at(&segment);
         assert_eq!(audits.len(), 1);
@@ -24645,6 +24867,231 @@ mod wave35_adapter_lifecycle_tests {
         }
     }
 
+    fn feedback_frame_from(sink: &CollectingSink) -> serde_json::Value {
+        let [ChatTurnEvent::Output(ChatOutput::StreamFrames { frames })] = sink.0.as_slice()
+        else {
+            panic!("expected exactly one authenticated feedback control frame");
+        };
+        let line = frames
+            .lines()
+            .find_map(|line| line.strip_prefix(CHAT_STREAM_CONTROL_PREFIX))
+            .expect("feedback frame uses the authenticated stream prefix");
+        serde_json::from_str(line).expect("feedback frame is JSON")
+    }
+
+    #[test]
+    fn w164_ready_and_unavailable_target_frames_have_the_exact_content_free_v3_schema() {
+        let token = "0123456789abcdef0123456789abcdef";
+        let target = chat_turn_pipeline::ResponseFeedbackTarget {
+            response_id: "fedcba9876543210fedcba9876543210".into(),
+            session_id: "terminal-session".into(),
+            revision: 0,
+        };
+        let mut ready_sink = CollectingSink::default();
+        emit_response_feedback_target(&mut ready_sink, Some(token), Some(&target), false).unwrap();
+        let ready = feedback_frame_from(&ready_sink);
+        assert_eq!(ready.as_object().unwrap().len(), 8);
+        assert_eq!(ready["neoth_stream"], "response_feedback_target");
+        assert_eq!(ready["protocol_version"], CHAT_STREAM_PROTOCOL_VERSION);
+        assert_eq!(ready["request_id"], stream_request_id(token));
+        assert_eq!(ready["control_token"], token);
+        assert_eq!(ready["response_id"], target.response_id.as_str());
+        assert_eq!(ready["session_id"], target.session_id.as_str());
+        assert_eq!(ready["revision"], 0);
+        assert_eq!(ready["status"], "ready");
+        let ready_text = ready.to_string();
+        assert!(!ready_text.contains("provider"));
+        assert!(!ready_text.contains("reply"));
+
+        let mut unavailable_sink = CollectingSink::default();
+        emit_response_feedback_target(&mut unavailable_sink, Some(token), None, true).unwrap();
+        let unavailable = feedback_frame_from(&unavailable_sink);
+        assert_eq!(unavailable.as_object().unwrap().len(), 8);
+        assert_eq!(unavailable["response_id"], serde_json::Value::Null);
+        assert_eq!(unavailable["session_id"], serde_json::Value::Null);
+        assert_eq!(unavailable["revision"], serde_json::Value::Null);
+        assert_eq!(unavailable["status"], "unavailable");
+    }
+
+    #[test]
+    fn w164_incognito_finalizer_skips_target_registration_and_presentation() {
+        let home = tempfile::tempdir().expect("temporary home");
+        let mut sink = CollectingSink::default();
+        let mut failure = None;
+        let mut terminal = Some(chat_turn_pipeline::ChatTurnTerminal::Complete {
+            provider: "actual-provider".into(),
+            model: "actual-model".into(),
+            session_id: Some("actual-session".into()),
+            response_feedback: None,
+            response_feedback_unavailable: false,
+        });
+        finish_cli_chat_turn_with_response_feedback(
+            Ok(Some(done())),
+            Ok(()),
+            &mut failure,
+            &mut terminal,
+            &mut sink,
+            home.path(),
+            true,
+            Some("0123456789abcdef0123456789abcdef"),
+        )
+        .unwrap();
+        assert!(matches!(
+            sink.0.as_slice(),
+            [
+                ChatTurnEvent::Output(ChatOutput::StreamDone { .. }),
+                ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete {
+                    response_feedback: None,
+                    response_feedback_unavailable: false,
+                    ..
+                })
+            ]
+        ));
+        assert!(!home.path().join("feedback").exists());
+    }
+
+    fn daemon_response_fixture(
+        response_feedback: Option<crate::daemon::audit_rpc::DaemonPlainChatResponseFeedbackTarget>,
+        response_feedback_unavailable: bool,
+    ) -> crate::daemon::audit_rpc::DaemonPlainChatResponse {
+        crate::daemon::audit_rpc::DaemonPlainChatResponse {
+            records: Vec::new(),
+            terminal: crate::daemon::audit_rpc::DaemonPlainChatTerminal {
+                provider: "daemon-provider".into(),
+                model: "daemon-model".into(),
+                session_id: Some("daemon-terminal-session".into()),
+                response_feedback,
+                response_feedback_unavailable,
+            },
+        }
+    }
+
+    #[test]
+    fn w164_daemon_renderer_forwards_ready_unavailable_and_absent_terminal_feedback_once() {
+        let target = crate::daemon::audit_rpc::DaemonPlainChatResponseFeedbackTarget {
+            response_id: "0123456789abcdef0123456789abcdef".into(),
+            session_id: "daemon-terminal-session".into(),
+            revision: 0,
+        };
+        let mut ready_sink = CollectingSink::default();
+        render_daemon_plain_chat_response_to(
+            &mut ready_sink,
+            daemon_response_fixture(Some(target), false),
+        )
+        .unwrap();
+        assert!(matches!(
+            ready_sink.0.as_slice(),
+            [
+                ChatTurnEvent::Output(ChatOutput::Notice { text, .. }),
+                ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete {
+                    response_feedback: Some(target),
+                    response_feedback_unavailable: false,
+                    ..
+                })
+            ] if text.contains(target.response_id.as_str())
+                && text.contains(target.session_id.as_str())
+                && text.contains("revision=0")
+        ));
+
+        let mut unavailable_sink = CollectingSink::default();
+        render_daemon_plain_chat_response_to(
+            &mut unavailable_sink,
+            daemon_response_fixture(None, true),
+        )
+        .unwrap();
+        assert!(matches!(
+            unavailable_sink.0.as_slice(),
+            [
+                ChatTurnEvent::Output(ChatOutput::Notice { text, .. }),
+                ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete {
+                    response_feedback: None,
+                    response_feedback_unavailable: true,
+                    ..
+                })
+            ] if text == "[neoth:feedback] response feedback unavailable"
+        ));
+
+        let mut absent_sink = CollectingSink::default();
+        render_daemon_plain_chat_response_to(
+            &mut absent_sink,
+            daemon_response_fixture(None, false),
+        )
+        .unwrap();
+        assert!(matches!(
+            absent_sink.0.as_slice(),
+            [ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete {
+                response_feedback: None,
+                response_feedback_unavailable: false,
+                ..
+            })]
+        ));
+    }
+
+    #[test]
+    fn w164_finalizer_registers_and_presents_only_after_a_clean_drain() {
+        let home = tempfile::tempdir().expect("temporary home");
+        let mut ready_sink = CollectingSink::default();
+        let mut ready_failure = None;
+        let mut ready_terminal = Some(chat_turn_pipeline::ChatTurnTerminal::Complete {
+            provider: "actual-provider".into(),
+            model: "actual-model".into(),
+            session_id: Some("actual-session".into()),
+            response_feedback: None,
+            response_feedback_unavailable: false,
+        });
+        finish_cli_chat_turn_with_response_feedback(
+            Ok(Some(done())),
+            Ok(()),
+            &mut ready_failure,
+            &mut ready_terminal,
+            &mut ready_sink,
+            home.path(),
+            false,
+            None,
+        )
+        .expect("clean drain releases the response target");
+        assert!(matches!(
+            ready_sink.0.as_slice(),
+            [
+                ChatTurnEvent::Output(ChatOutput::StreamDone { .. }),
+                ChatTurnEvent::Output(ChatOutput::Notice { text, .. }),
+                ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete {
+                    response_feedback: Some(target),
+                    response_feedback_unavailable: false,
+                    ..
+                })
+            ] if text.contains(target.response_id.as_str())
+                && text.contains(target.session_id.as_str())
+                && text.contains("revision=0")
+        ));
+        assert!(home.path().join("feedback").join("response-feedback.json").exists());
+
+        let failed_home = tempfile::tempdir().expect("temporary failed-drain home");
+        let mut failed_sink = CollectingSink::default();
+        let mut failed_failure = None;
+        let mut failed_terminal = Some(chat_turn_pipeline::ChatTurnTerminal::Complete {
+            provider: "must-not-emit".into(),
+            model: "must-not-emit".into(),
+            session_id: Some("must-not-emit".into()),
+            response_feedback: None,
+            response_feedback_unavailable: false,
+        });
+        assert!(finish_cli_chat_turn_with_response_feedback(
+            Ok(Some(done())),
+            Err(anyhow::anyhow!("writer drain failed")),
+            &mut failed_failure,
+            &mut failed_terminal,
+            &mut failed_sink,
+            failed_home.path(),
+            false,
+            None,
+        )
+        .is_err());
+        assert!(failed_sink.0.is_empty());
+        assert!(failed_terminal.is_some());
+        assert!(!failed_home.path().join("feedback").exists());
+    }
+
     #[test]
     fn adapter_finalizer_emits_deferred_success_only_after_a_clean_drain() {
         let mut sink = CollectingSink::default();
@@ -24653,6 +25100,8 @@ mod wave35_adapter_lifecycle_tests {
             provider: "actual-provider".into(),
             model: "actual-model".into(),
             session_id: Some("actual-session".into()),
+            response_feedback: None,
+            response_feedback_unavailable: false,
         });
         finish_cli_chat_turn(
             Ok(Some(done())),
@@ -24663,7 +25112,7 @@ mod wave35_adapter_lifecycle_tests {
         )
         .unwrap();
         assert!(
-            matches!(sink.0.as_slice(), [ChatTurnEvent::Output(ChatOutput::StreamDone { .. }), ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete { provider, model, session_id: Some(session_id) })] if provider == "actual-provider" && model == "actual-model" && session_id == "actual-session")
+            matches!(sink.0.as_slice(), [ChatTurnEvent::Output(ChatOutput::StreamDone { .. }), ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete { provider, model, session_id: Some(session_id), .. })] if provider == "actual-provider" && model == "actual-model" && session_id == "actual-session")
         );
     }
 
@@ -24675,6 +25124,8 @@ mod wave35_adapter_lifecycle_tests {
             provider: "actual-provider".into(),
             model: "actual-model".into(),
             session_id: Some("actual-session".into()),
+            response_feedback: None,
+            response_feedback_unavailable: false,
         });
         let error = finish_cli_chat_turn(
             Ok(Some(done())),
@@ -24720,6 +25171,8 @@ mod wave35_adapter_lifecycle_tests {
             provider: "must-not-emit".into(),
             model: "must-not-emit".into(),
             session_id: Some("must-not-emit".into()),
+            response_feedback: None,
+            response_feedback_unavailable: false,
         });
         let error = finish_cli_chat_turn(
             Ok(Some(done())),
@@ -24751,6 +25204,8 @@ mod wave35_adapter_lifecycle_tests {
             provider: "must-not-emit".into(),
             model: "must-not-emit".into(),
             session_id: Some("must-not-emit".into()),
+            response_feedback: None,
+            response_feedback_unavailable: false,
         });
         let error = finish_cli_chat_turn(
             Err(anyhow::anyhow!("engine refused")),
@@ -24777,6 +25232,8 @@ mod wave35_adapter_lifecycle_tests {
             provider: "must-not-emit".into(),
             model: "must-not-emit".into(),
             session_id: Some("must-not-emit".into()),
+            response_feedback: None,
+            response_feedback_unavailable: false,
         });
         let error = finish_cli_chat_turn(
             Err(anyhow::anyhow!("engine refused")),

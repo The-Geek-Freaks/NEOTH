@@ -2282,6 +2282,8 @@ async fn gui_attach_delivers_ndjson_incrementally_before_terminal() {
                         elapsed_ms: 0,
                     },
                     lifecycle_receipt_id: gui::GuiChatDigest("1".repeat(64)),
+                    response_feedback_target: None,
+                    response_feedback_unavailable: false,
                 },
             },
         };

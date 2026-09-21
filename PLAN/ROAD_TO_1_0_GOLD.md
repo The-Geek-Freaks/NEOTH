@@ -8,6 +8,24 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W164 integrated response feedback and W165 remaining repairs (2026-09-21):**
+Response identity is issued after successful direct-CLI drain or an ordered
+live-daemon WAL sync. The private bounded projection supports revision-CAS
+Set/Replace/Remove, with zero feedback I/O in Incognito. Authenticated controls
+and daemon bridges preserve the opaque Core terminal pair. Chat and Buddy require
+an exact mutation receipt plus fresh status readback. Independent scoped source
+reviews approved the integrated code and 35 regression entries; hosted native,
+GUI, rendered/accessibility and release acceptance remain pending.
+The remaining Windows reasoning/GUI/loop repairs retain behavior assertions and
+fix writer ownership during teardown rather than increasing timeouts.
+Admission: 367 source inputs; 378 universal native + 3 Windows-only + 4 Unix-only;
+71 universal GUI + 15 Linux/macOS component cases; 7 optional adapter cases;
+20 macOS custom harness names. See [W164](../docs/gold-wave164-verification.md).
+No Road checkbox closes; 1324 total / 1015 checked / 307 open / 2 partial.
+The preceding c4ce1040 source passed Preflight35642422469 and Code Quality35642422076;
+those results do not establish W164 acceptance. Old full CI35634988336 is completed
+with failures; repairs require a new exact-source run.
+
 Published8c5b4fe0 passed Code Quality35641911878. Preflight35641912718 requested
 one exact permission-fixture wrapping hunk; imported from Hosted output without
 a local formatter. Fresh Preflight and native execution remain pending.

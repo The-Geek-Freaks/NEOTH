@@ -183,7 +183,53 @@ pub(crate) enum ChatTurnTerminal {
         provider: String,
         model: String,
         session_id: Option<String>,
+        response_feedback: Option<ResponseFeedbackTarget>,
+        response_feedback_unavailable: bool,
     },
+}
+
+/// Opaque response-feedback capability issued only at the caller's durable
+/// terminal boundary. It contains no prompt, reply, provider, or WAL value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResponseFeedbackTarget {
+    pub(crate) response_id: String,
+    pub(crate) session_id: String,
+    pub(crate) revision: u64,
+}
+
+impl ChatTurnTerminal {
+    pub(crate) fn set_response_feedback_target(&mut self, target: ResponseFeedbackTarget) {
+        let Self::Complete {
+            response_feedback,
+            response_feedback_unavailable,
+            ..
+        } = self;
+        *response_feedback = Some(target);
+        *response_feedback_unavailable = false;
+    }
+
+    pub(crate) fn mark_response_feedback_unavailable(&mut self) {
+        let Self::Complete {
+            response_feedback_unavailable,
+            ..
+        } = self;
+        *response_feedback_unavailable = true;
+    }
+
+    pub(crate) fn response_feedback_target(&self) -> Option<&ResponseFeedbackTarget> {
+        let Self::Complete {
+            response_feedback, ..
+        } = self;
+        response_feedback.as_ref()
+    }
+
+    pub(crate) fn response_feedback_unavailable(&self) -> bool {
+        let Self::Complete {
+            response_feedback_unavailable,
+            ..
+        } = self;
+        *response_feedback_unavailable
+    }
 }
 
 /// Emit the terminal only after the caller's existing persistence boundary has
@@ -1128,6 +1174,8 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         provider: terminal_provider,
         model: terminal_model,
         session_id: Some(terminal_session_id),
+        response_feedback: None,
+        response_feedback_unavailable: false,
     });
     Ok(stream_done_line.map(|line| ChatOutput::StreamDone {
         control_token: stream_control_token_ref.map(str::to_owned),
@@ -1140,6 +1188,7 @@ mod tests {
     use super::*;
     use crate::cli::init::ProviderKind;
     use crate::providers::{Completion, CompletionIdentity, Provider, Request};
+
     use async_trait::async_trait;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1817,7 +1866,13 @@ mod tests {
         );
         assert!(matches!(
             prepared.deferred_terminal.as_ref(),
-            Some(ChatTurnTerminal::Complete { provider, model, session_id })
+            Some(ChatTurnTerminal::Complete {
+                provider,
+                model,
+                session_id,
+                response_feedback: None,
+                response_feedback_unavailable: false,
+            })
                 if provider == "neutral-engine-mock"
                     && model == "neutral-engine-model"
                     && session_id.as_deref() == Some("neutral-engine-regression")
