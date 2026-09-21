@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W178-Windows-integration-repair",
-  "base": "4da66bdfba8e68cef40a2fd3ca6179d313bcbcf9",
-  "capturedUtc": "2026-09-21T23:27:08.3255785Z",
-  "validationStatus": "W178_HOSTED_FORMAT_IMPORTED_FULLCI_PENDING",
-  "scopeNote": "W178 exact4Hostedhunks/2files plus exact generated W175 CLI reference from passed405c9de6run35666823374. Only7 explicit source/doc paths rehashed; W177 dirty implementation excluded. W175/W178 full behavior pending.",
+  "item": "GOLD-W95-W179-Hosted-prompt-layer-Clippy-repair",
+  "base": "a72b403846f512b67b7bc05e751f6b7e2d667c61",
+  "capturedUtc": "2026-09-21T23:38:44.1479690Z",
+  "validationStatus": "W179_SOURCE_REVIEWED_HOSTED_CLIPPY_PENDING",
+  "scopeNote": "Exact four-path W179 admission only; W177 dirty backend/producer/GUI/exporter excluded. Existing native jobs preserved. No behavioral closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -208,13 +208,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1014163,
-      "sha256": "1FADA01E7D764E42700A6D39B2D3893BB6331C9BC044A214CE465B4F11E5A9A5"
+      "bytes": 1014699,
+      "sha256": "90781F9751844D332D6BC08640EB83C2350BFE0333DE471D00F525B5056A2FEE"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1609610,
-      "sha256": "2C0FA8A759469748DF3B2E56D979045F680DA89F20C968C82E516058C518F45B"
+      "bytes": 1610146,
+      "sha256": "C248D745CE64EE241B0790BD161C2BB7F9B896EAE023096B4C87590D1A971FBD"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1548,8 +1548,8 @@
     },
     {
       "path": "SRC/neothd/src/pipeline/enriched_request.rs",
-      "bytes": 57339,
-      "sha256": "825020B10B52FF16F9DC3E1298EE14657C8E070C9F8023F3DFE299A13B50C88C"
+      "bytes": 57278,
+      "sha256": "72A8D3A89E93821548855FC332208B448EDA99AB9325501157BAC40C03520BDD"
     },
     {
       "path": "SRC/neothd/src/proactive/action_staging.rs",
@@ -2030,6 +2030,11 @@
       "path": "THIRD_PARTY_LICENSES",
       "bytes": 2271741,
       "sha256": "4E77A7CC896F8B5EEDCEFB458199A0939522B9191F22939BE3EFD78C575D9CF7"
+    },
+    {
+      "path": "docs/gold-wave179-verification.md",
+      "bytes": 1646,
+      "sha256": "BCC764E0398F7EF0EA401A52D564361684E79B1988260DC63E3BDB5DEC137E77"
     }
   ]
 }

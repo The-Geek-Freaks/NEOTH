@@ -2,6 +2,14 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W179 Hosted Clippy repair (2026-09-22):** a72b4038 passed Preflight
+35667753310 and Code Quality 35667752599. Full CI35667842810's Linux job
+106557462709 found two type-complexity errors in prompt-layer arrays. The
+reviewed repair introduces one exact private tuple alias; values, ordering and
+prompt-tax behavior stay unchanged. Hosted Clippy must rerun. Windows/macOS
+native compilation is retained to collect its outcome. W177 remains separate
+and unadmitted; no checkbox closes. See [W179](../docs/gold-wave179-verification.md).
+
 **W178 Windows integration repairs (2026-09-22):** CI35658155763's completed
 Windows job compiled and ran 13,607 tests (13,587 pass/20 fail; 3,542 not run).
 Independently reviewed repairs preserve exact reasoning/throughput contracts,

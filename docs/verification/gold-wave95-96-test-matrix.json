@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W178_HOSTED_FORMAT_IMPORTED_FULLCI_PENDING",
-  "base": "4da66bdfba8e68cef40a2fd3ca6179d313bcbcf9",
+  "status": "W179_SOURCE_REVIEWED_HOSTED_CLIPPY_PENDING",
+  "base": "a72b403846f512b67b7bc05e751f6b7e2d667c61",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 70013,
-    "sha256": "97D29E88EC05069CBAB22BE549810514F986CF0258D407942CDFEF714094F04D"
+    "bytes": 70115,
+    "sha256": "A39EADF590A39DCCCB2C299FCA617E58F31F4636C4B9CC75053CAC437A656981"
   },
-  "sourceInputs": 405,
+  "sourceInputs": 406,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -828,7 +828,7 @@
     {
       "test": "pipeline::enriched_request::tests::session_start_skill_registry_is_retained_as_typed_block_d_before_skill_body",
       "sourcePath": "SRC/neothd/src/pipeline/enriched_request.rs",
-      "sourceSha256": "825020B10B52FF16F9DC3E1298EE14657C8E070C9F8023F3DFE299A13B50C88C",
+      "sourceSha256": "72A8D3A89E93821548855FC332208B448EDA99AB9325501157BAC40C03520BDD",
       "junitClass": "neoth"
     },
     {
@@ -6735,5 +6735,19 @@
       "quality": "success",
       "freshFullCi": "pending"
     }
+  },
+  "wave179": {
+    "sourceFiles": 1,
+    "priorSource": "a72b403846f512b67b7bc05e751f6b7e2d667c61",
+    "run": "35667842810",
+    "linuxJob": "106557462709",
+    "errors": 2,
+    "diagnostic": "clippy::type_complexity",
+    "repair": "Exact private EnrichedLayer tuple alias; no behavior or test changes",
+    "sourceSha256": "72A8D3A89E93821548855FC332208B448EDA99AB9325501157BAC40C03520BDD",
+    "receipt": "work/gold-20260906/wave179-hosted-repair/CLIPPY-REPAIR.md",
+    "receiptSha256": "0C914F6D4EC0763B12B03753DF7023DB7B749A04E9C57160E0986F805BDAB8A8",
+    "boundary": "Root source review only; fresh Hosted Clippy pending; existing a72 native jobs retained",
+    "roadClosure": false
   }
 }

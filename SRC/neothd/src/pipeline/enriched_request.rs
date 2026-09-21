@@ -74,6 +74,13 @@ use crate::mcp::catalogue::McpPromptCatalogue;
 use crate::pipeline::{AttachmentContextBatch, UntrustedContext, UntrustedContextClass};
 use crate::security::operator_sovereignty::OperatorSovereigntyPrompt;
 
+type EnrichedLayer<'a> = (
+    Block,
+    Option<AtomicGroup>,
+    Option<PromptTaxSource>,
+    Option<&'a str>,
+);
+
 /// A pre-compiled communication-preference block whose authority is fixed at
 /// response presentation. The private payload prevents callers from attaching
 /// a different authority label to inferred preferences; construction is only
@@ -338,12 +345,7 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
     // Each layer retains its A-E/Conductor identity until the provider Request
     // is built.  `order` is presentation order; the block label controls only
     // degradation and the canonical bundle hash.
-    let layers_before_attachments: [(
-        Block,
-        Option<AtomicGroup>,
-        Option<PromptTaxSource>,
-        Option<&str>,
-    ); 8] = [
+    let layers_before_attachments: [EnrichedLayer<'_>; 8] = [
         // GOLD-FEAT-07 — moral core is position 0: highest-priority directives.
         (
             Block::A,
@@ -397,12 +399,7 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
             repo_context_layer.as_ref().map(|ctx| ctx.as_str()),
         ),
     ];
-    let layers_after_attachments: [(
-        Block,
-        Option<AtomicGroup>,
-        Option<PromptTaxSource>,
-        Option<&str>,
-    ); 3] = [
+    let layers_after_attachments: [EnrichedLayer<'_>; 3] = [
         (
             if inputs.used_skill_id == Some("conductor") {
                 Block::Conductor
