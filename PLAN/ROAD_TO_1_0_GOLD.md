@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W172 GUI test compile repair (2026-09-21):** the beta job in CI
+35658155763 exposed eight test-only errors after product GUI compilation.
+The repair adds two missing helper imports and replaces six invalid ModelRc
+operations with row_count/row_data, preserving every required row and content
+assertion. Root reviewed the exact test-module diff; fresh Hosted compilation
+remains required. The running Windows preview is unaffected by this cfg(test)
+change. W173 remains excluded until its request-binding review passes.
+
 **Current Hosted boundary (2026-09-21):** W169 run 35656420591 on
 3750a81f passed exact schema extraction/byte comparison and package compilation.
 The follow-up run 35658152739 on cc0af938 now passes all 41 package tests.

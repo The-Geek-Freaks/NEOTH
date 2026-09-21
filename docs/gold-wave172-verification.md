@@ -44,3 +44,16 @@ source before cancellation. Both require fresh execution after publication.
 Retained logs, source freezes and root integration review are in the same W172
 evidence directory. No result from these failed/cancelled runs closes a Road
 item or establishes release acceptance.
+
+## GUI test compilation follow-up on cc0af938
+
+The beta workspace job 106526765152 in CI 35658155763 now reaches GUI
+test compilation and reports eight errors: two missing clear-helper imports,
+four ModelRc emptiness checks and two ModelRc indexed reads. The production
+recall-chip assignments are no longer the reported failure. A narrow test-only
+repair imports both helpers and uses Model::row_count/row_data; explicit row
+existence and all original content/state assertions are preserved.
+The retained job log is fullci-cc0a-beta.log in the W172 evidence directory,
+SHA-256 7E5F94BD1010323FF0F588B7C930A65B296E18AC0D14A40594F68D4BC71445C9.
+Linux stopped on the six formatting hunks already fixed by fc3767f3; Windows
+and macOS compilation and the separate Windows preview remain in progress.

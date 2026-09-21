@@ -41669,6 +41669,7 @@ mod w58_gui_callback_runtime_tests {
         cancel_citation_live_flow, chat_recall_chips, chat_stream_request_id,
         citation_gui::{CitationGuiBindingStore, CitationGuiRequest},
         clear_buddy_recall_chip_projection, clear_buddy_throughput_projection,
+        clear_chat_recall_chip_replacement, clear_chat_response_feedback_replacement,
         clear_citation_consent_projection, clear_citation_projection,
         clear_main_recall_chip_projection, clear_main_throughput_projection,
         daemon_recall_chip_projection_id, daemon_throughput_projection_id,
@@ -46011,7 +46012,7 @@ exit 0
         );
         assert!(
             !window.get_chat_recall_chips_active()
-                && window.get_chat_recall_chip_lines().is_empty()
+                && window.get_chat_recall_chip_lines().row_count() == 0
                 && runtime
                     .chat_recall_chip_projections
                     .lock()
@@ -46132,7 +46133,11 @@ exit 0
         );
         assert!(overlay.get_recall_chips_active());
         assert_eq!(
-            overlay.get_recall_chip_lines()[0].as_str(),
+            overlay
+                .get_recall_chip_lines()
+                .row_data(0)
+                .expect("one W163 missing recall-chip line")
+                .as_str(),
             "Recall unavailable · missing"
         );
 
@@ -46140,9 +46145,9 @@ exit 0
         clear_main_recall_chip_projection(&window);
         clear_buddy_recall_chip_projection(&overlay);
         assert!(!window.get_chat_recall_chips_active());
-        assert!(window.get_chat_recall_chip_lines().is_empty());
+        assert_eq!(window.get_chat_recall_chip_lines().row_count(), 0);
         assert!(!overlay.get_recall_chips_active());
-        assert!(overlay.get_recall_chip_lines().is_empty());
+        assert_eq!(overlay.get_recall_chip_lines().row_count(), 0);
 
         let forged = RecallChipControlFrame {
             raw: zeroize::Zeroizing::new(ready.replacen(
@@ -46216,7 +46221,13 @@ exit 0
             !window.get_chat_send_in_flight() && window.get_chat_recall_chips_active()
         });
         assert_eq!(window.get_chat_recall_chip_lines().row_count(), 1);
-        assert!(window.get_chat_recall_chip_lines()[0].contains("score 0.75"));
+        assert!(
+            window
+                .get_chat_recall_chip_lines()
+                .row_data(0)
+                .expect("one W167 recall-chip line")
+                .contains("score 0.75")
+        );
         let key = daemon_recall_chip_projection_id(1);
         assert!(
             projections
@@ -46234,7 +46245,7 @@ exit 0
             !window.get_chat_send_in_flight() && !window.get_chat_recall_chips_active()
         });
         assert!(!window.get_chat_recall_chips_active());
-        assert!(window.get_chat_recall_chip_lines().is_empty());
+        assert_eq!(window.get_chat_recall_chip_lines().row_count(), 0);
         assert!(!overlay.get_recall_chips_active());
         assert!(
             projections

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W169_FOCUSED_HOSTED_PASS_NATIVE_GUI_PENDING",
-  "base": "fc3767f3307b067bc35e414dc76f43bad9a84be0",
+  "status": "W172_GUI_TEST_COMPILE_REPAIR_HOSTED_PENDING",
+  "base": "25b1c169fbcb079572560d6206d02415d03d98c9",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 67151,
-    "sha256": "5846B7A0EC4942E6880CD79137EFB920583A8FE158D8D9D8315E029E133811B2"
+    "bytes": 67107,
+    "sha256": "84B6FCE6070222BB40ACCDD24130B83036495D00FE07DE42F78B517BDFFDDFBB"
   },
   "sourceInputs": 388,
   "requiredNativeTests": [
@@ -3021,8 +3021,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2022880,
-      "sha256": "816A842A01169DDD594E0D2D54FFDF988077054FA92723A31112E075B12BDCF7"
+      "bytes": 2023249,
+      "sha256": "4F4AA01C42BF33A8384FA22F0F0F5B86C4DB789E134880E5620DB3DF002F6A08"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -6280,5 +6280,15 @@
     "log": "work/gold-20260906/wave169-channel-schema/custody-fc37.log",
     "logSha256": "5715ED597926EE49144DCD457C68D419B8347837EDBB507FBEB85AC38AB86C80",
     "boundary": "Focused schema/account inspection only; account runtime migration and overall native/GUI/release acceptance not established"
+  },
+  "wave172GuiTestRepair": {
+    "source": "cc0af93882b885ded730b4b1b108c54b89db6fb6",
+    "run": 35658155763,
+    "job": 106526765152,
+    "compileErrors": 8,
+    "repair": "Two helper imports plus four empty and two indexed ModelRc assertions",
+    "review": "work/gold-20260906/wave172-hosted-repair/GUI-TEST-INTEGRATION-REVIEW.json",
+    "reviewSha256": "5725430DE622E20F889B989E9EF66471B5013304617EC8BD1947015F2337ABF1",
+    "status": "static approved; hosted compilation pending"
   }
 }
