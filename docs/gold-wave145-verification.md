@@ -24,3 +24,7 @@ The real loop fixture first requires an uncapped stdio delivery and then
 requires the capped identical call to leave the delivery counter unchanged.
 This separates an effective cap denial from an unavailable test transport.
 The cumulative matrix has 315 inputs and 167 required native identities.
+
+W145 formatting follow-up: Code Quality35589742057 passed on c5f483bd.
+Preflight35589742105 supplied one exact test-only layout hunk in engine.rs;
+it was imported from the complete hosted log. Fresh Preflight remains required.

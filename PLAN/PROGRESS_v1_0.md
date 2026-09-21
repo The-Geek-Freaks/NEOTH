@@ -2,6 +2,10 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+W145 formatting follow-up: Code Quality35589742057 passed on c5f483bd.
+Preflight35589742105 supplied one exact test-only layout hunk in engine.rs;
+it was imported from the complete hosted log. Fresh Preflight remains required.
+
 **W138 hosted recovery / W144-W145 (2026-09-21):** Code Quality35587706481
 passed on5641da2d. Preflight35587706860 supplied98 raw Rustfmt hunks, reduced
 to80 unique substitutions across15 files because GUI modules are included

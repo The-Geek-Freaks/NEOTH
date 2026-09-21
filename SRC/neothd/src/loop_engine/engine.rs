@@ -1107,10 +1107,8 @@ mod tests {
                 },
             )]),
         };
-        let admitted = crate::permissions::AutonomyPolicySnapshot::new(
-            AutonomyLevel::Full,
-            &cap_config,
-        );
+        let admitted =
+            crate::permissions::AutonomyPolicySnapshot::new(AutonomyLevel::Full, &cap_config);
         let retained = crate::skills::resolver::test_invocation_policy_for_skill_id(
             "w145-loop-mcp-cap",
             &admitted,
