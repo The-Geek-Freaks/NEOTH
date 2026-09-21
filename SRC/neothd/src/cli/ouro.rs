@@ -7,6 +7,10 @@
 //!   - `status` — show the operator's currently-configured Ouro state
 //!                from freedom.yaml (provider_kind, provider_model,
 //!                effective checkpoint, configured accelerator)
+//!   - `verify-q8` — load only an already-published immutable cache through
+//!                   the exact Q8 receipt/lease/model path; never downloads,
+//!                   promotes, or selects mutable cache artifacts. Existing
+//!                   model-cache lock coordination may still occur.
 //!
 //! Operators **switch** to Ouro via the existing wizard
 //! (`neoth init --force --provider local_ouro [--provider-model
@@ -17,6 +21,8 @@
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
@@ -100,6 +106,11 @@ pub enum OuroAction {
         #[arg(long)]
         checkpoint: Option<String>,
     },
+    /// Verify the configured cache through the actual Q8 model loader.
+    ///
+    /// This is cache-only: it refuses a missing or mutable cache instead of
+    /// downloading, promoting, or silently selecting a fallback precision.
+    VerifyQ8,
 }
 
 pub async fn run_ouro(args: OuroArgs) -> Result<()> {
@@ -107,6 +118,7 @@ pub async fn run_ouro(args: OuroArgs) -> Result<()> {
         OuroAction::List => run_list(&args.output),
         OuroAction::Status => run_status(&args.output),
         OuroAction::Fetch { checkpoint } => run_fetch(checkpoint.as_deref()).await,
+        OuroAction::VerifyQ8 => run_verify_q8(&args.output).await,
     }
 }
 
@@ -226,6 +238,7 @@ fn run_status(output: &OutputFormat) -> Result<()> {
         .inference
         .max_new_tokens
         .unwrap_or(crate::providers::ouro::adapter::DEFAULT_MAX_NEW_TOKENS);
+    let quant_mode = cfg.inference.ouro_quant_mode.as_str();
     let cache_dir = crate::providers::local_qwen::default_cache_dir(&configured_model);
     // Shared bounded status contract: no surprise multi-gigabyte digest pass,
     // and no corrupt, partial, or pending cache is called ready.
@@ -240,6 +253,7 @@ fn run_status(output: &OutputFormat) -> Result<()> {
                 "configured_model": configured_model,
                 "accelerator_override": accelerator_override,
                 "max_new_tokens": max_new_tokens,
+                "quant_mode": quant_mode,
                 "default_model": crate::providers::ouro::adapter::DEFAULT_OURO_REPO,
                 "cache_state": cache_state,
                 "cache_dir": cache_dir,
@@ -254,6 +268,7 @@ fn run_status(output: &OutputFormat) -> Result<()> {
             println!("  configured model      : {configured_model}");
             println!("  accelerator override  : {accelerator_override}");
             println!("  max new tokens        : {max_new_tokens}");
+            println!("  quant mode            : {quant_mode}");
             println!("  cache state           : {cache_state}");
             println!("  cache dir             : {}", cache_dir.display());
             if let Some(error) = cache_error {
@@ -280,9 +295,180 @@ fn run_status(output: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
+async fn run_verify_q8(output: &OutputFormat) -> Result<()> {
+    let cfg = FreedomConfig::load_from_default_path_or_default()?;
+    let configured_model = cfg
+        .provider_model
+        .clone()
+        .unwrap_or_else(|| crate::providers::ouro::adapter::DEFAULT_OURO_REPO.to_string());
+    let cache_dir = crate::providers::local_qwen::default_cache_dir(&configured_model);
+    let accelerator = cfg
+        .inference
+        .accelerator_override
+        .as_deref()
+        .and_then(crate::daemon::accelerator::Accelerator::from_str);
+    let max_new_tokens = cfg.inference.max_new_tokens;
+    let configured_quant_mode = cfg.inference.ouro_quant_mode.as_str();
+    let timeout_status = crate::providers::ouro::adapter::OuroQ8VerifyStatus {
+        verified: false,
+        quant_mode: "q8",
+        repo: configured_model.clone(),
+        cache_dir: cache_dir.display().to_string(),
+        receipt: None,
+        resolved_device: None,
+        loop_steps: None,
+        forward_checked: false,
+        forward_digest: None,
+        alternate_forward_digest: None,
+        context_sensitive: false,
+        detail: Some(
+            "timed out after 120s waiting for the Q8 verification worker; the in-flight device load was not cancelled and may still finish".to_string(),
+        ),
+    };
+    let repo = configured_model.clone();
+    eprintln!(
+        "→ verifying existing Ouro cache through the Q8 loader (observation limit: 120s; a timed-out device load may continue in its worker)"
+    );
+    let verification = observe_q8_verify_worker(Duration::from_secs(120), timeout_status, move || {
+        crate::providers::ouro::adapter::verify_q8_cache_only(
+            repo,
+            cache_dir,
+            accelerator,
+            crate::providers::local_qwen::SamplingConfig::default(),
+            max_new_tokens,
+        )
+    });
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string(&serde_json::json!({
+                    "configured_quant_mode": configured_quant_mode,
+                    "tested_quant_mode": verification.quant_mode,
+                    "result": verification,
+                }))?
+            );
+        }
+        OutputFormat::Table => {
+            println!("# Ouro Q8 cache-only verification");
+            println!("  verified              : {}", verification.verified);
+            println!("  configured quant mode : {configured_quant_mode}");
+            println!("  tested quant mode     : {}", verification.quant_mode);
+            println!("  configured model      : {}", verification.repo);
+            println!("  cache dir             : {}", verification.cache_dir);
+            if let Some(receipt) = &verification.receipt {
+                println!("  receipt               : {receipt}");
+            }
+            if let Some(device) = &verification.resolved_device {
+                println!("  resolved device       : {device}");
+            }
+            if let Some(loop_steps) = verification.loop_steps {
+                println!("  loop steps            : {loop_steps}");
+            }
+            println!("  fixed Q8 forward      : {}", verification.forward_checked);
+            println!("  context-sensitive     : {}", verification.context_sensitive);
+            if let Some(digest) = &verification.forward_digest {
+                println!("  forward digest        : {digest}");
+            }
+            if let Some(digest) = &verification.alternate_forward_digest {
+                println!("  alternate digest      : {digest}");
+            }
+            if let Some(detail) = &verification.detail {
+                println!("  detail                : {detail}");
+            }
+        }
+    }
+
+    anyhow::ensure!(
+        verification.verified,
+        "Ouro Q8 cache-only verification failed: {}",
+        verification.detail.as_deref().unwrap_or("no terminal detail")
+    );
+    Ok(())
+}
+
+/// Observe an isolated verifier worker without joining it after a timeout.
+/// A timeout ends only this CLI observation; the worker may still be using a
+/// device/lease and must not be described as cancelled.
+fn observe_q8_verify_worker<F>(
+    timeout: Duration,
+    timeout_status: crate::providers::ouro::adapter::OuroQ8VerifyStatus,
+    worker: F,
+) -> crate::providers::ouro::adapter::OuroQ8VerifyStatus
+where
+    F: FnOnce() -> crate::providers::ouro::adapter::OuroQ8VerifyStatus + Send + 'static,
+{
+    let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let status = worker();
+        let _ = sender.send(status);
+    });
+    receiver.recv_timeout(timeout).unwrap_or(timeout_status)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn q8_timeout_status() -> crate::providers::ouro::adapter::OuroQ8VerifyStatus {
+        crate::providers::ouro::adapter::OuroQ8VerifyStatus {
+            verified: false,
+            quant_mode: "q8",
+            repo: "test/ouro".into(),
+            cache_dir: "test-cache".into(),
+            receipt: None,
+            resolved_device: None,
+            loop_steps: None,
+            forward_checked: false,
+            forward_digest: None,
+            alternate_forward_digest: None,
+            context_sensitive: false,
+            detail: Some("test observation timeout; worker was not cancelled".into()),
+        }
+    }
+
+    #[test]
+    fn q8_verify_timeout_returns_while_a_held_worker_remains_in_flight() {
+        let (worker_started, started_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let (observed_tx, observed_rx) = mpsc::sync_channel(1);
+        let observer = std::thread::spawn(move || {
+            let status = observe_q8_verify_worker(
+                Duration::from_millis(20),
+                q8_timeout_status(),
+                move || {
+                    worker_started.send(()).expect("signal held worker start");
+                    release_rx.recv().expect("release held worker");
+                    crate::providers::ouro::adapter::OuroQ8VerifyStatus {
+                        verified: true,
+                        quant_mode: "q8",
+                        repo: "test/ouro".into(),
+                        cache_dir: "test-cache".into(),
+                        receipt: Some("late-worker-result".into()),
+                        resolved_device: Some("Cpu".into()),
+                        loop_steps: Some(2),
+                        forward_checked: true,
+                        forward_digest: Some("late".into()),
+                        alternate_forward_digest: Some("late-alt".into()),
+                        context_sensitive: true,
+                        detail: None,
+                    }
+                },
+            );
+            observed_tx.send(status).expect("return observed timeout");
+        });
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker reached held barrier");
+        let status = observed_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("timeout returned without waiting for worker release");
+        assert!(!status.verified);
+        assert!(status.detail.as_deref().unwrap_or_default().contains("timeout"));
+        release_tx.send(()).expect("release worker after timeout assertion");
+        observer.join().expect("observer thread exits");
+    }
 
     #[test]
     fn checkpoint_catalogue_has_4_entries() {
@@ -361,11 +547,15 @@ mod tests {
         // Pattern-match pins the enum variants exhaustively.
         match list.action {
             OuroAction::List => {}
-            OuroAction::Status | OuroAction::Fetch { .. } => panic!("expected List"),
+            OuroAction::Status | OuroAction::Fetch { .. } | OuroAction::VerifyQ8 => {
+                panic!("expected List")
+            }
         }
         match status.action {
             OuroAction::Status => {}
-            OuroAction::List | OuroAction::Fetch { .. } => panic!("expected Status"),
+            OuroAction::List | OuroAction::Fetch { .. } | OuroAction::VerifyQ8 => {
+                panic!("expected Status")
+            }
         }
     }
 

@@ -92,6 +92,19 @@ pub fn runtime_cache_status(cache_dir: &Path) -> OuroCacheStatus {
     }
 }
 
+/// Resolve the already-published immutable generation for a cache-only
+/// verifier. This deliberately does not recover, promote, download, or write
+/// a generation pointer: an operator verification request must never turn a
+/// mutable transport cache into a runtime artifact as a side effect.
+pub(crate) fn published_generation_for_cache_only_verify(cache_dir: &Path) -> Result<PathBuf> {
+    active_generation_dir(cache_dir)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Ouro has no published immutable generation under {}; fetch/install first, then retry verification",
+            cache_dir.display()
+        )
+    })
+}
+
 /// One runtime file as observed at validation time.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct OuroArtifactDigest {

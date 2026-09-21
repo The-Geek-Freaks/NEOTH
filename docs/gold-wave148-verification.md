@@ -14,3 +14,12 @@ retained in work/gold-20260906/wave148-adapter-hosted-repair.
 Fresh GitHub-hosted compilation and runtime are required. No local compiler,
 formatter, parser, test, fixture, product or GUI was run. W142/W147 working
 changes are excluded. No Road checkbox is closed.
+
+Hosted follow-up on cee40a6c: Preflight35591288967 and
+CodeQuality35591288255 passed. Full CI35591362095 channel-adapters job
+106306340090 compiled lib-test and executed all seven configured adapter
+contracts successfully (one test per exact filter, zero failures). This covers
+IRC welcome, matching Nostr EOSE, acquired-lease revocation, replaced-readiness
+lease fencing, and exact live-channel proactive delivery/failure handling.
+The complete successful log is retained alongside both original failed logs.
+Full workspace/platform/GUI and preview acceptance remain separate.

@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W148-hosted-lib-test-recovery",
-  "base": "e2de082a2c6cf0c77b3e510862c789089b0e6ca7",
-  "capturedUtc": "2026-09-21T10:52:38.7407317Z",
-  "validationStatus": "W148_REVIEWED_ONE_LINE_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "scopeNote": "315 source inputs; W148 exact hosted lib-test binding repair. W142/W147 working source excluded; no local execution or Road closure.",
+  "item": "GOLD-W95-W148-W147-ouro-cache-only-verification",
+  "base": "cee40a6c61e9b140aafb836583e0ace663114e53",
+  "capturedUtc": "2026-09-21T11:11:59.7577251Z",
+  "validationStatus": "W147_REVIEWED_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "scopeNote": "316 inputs; W147 typed cache-only Ouro Q8 verification, actual CPU artifact/timeout fixtures. W142/W150 working source excluded; no local execution or Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -1303,13 +1303,13 @@
     },
     {
       "path": "SRC/neothd/src/providers/ouro/adapter.rs",
-      "bytes": 75001,
-      "sha256": "A34EB3310B8BC22193100181220CB0C4284769E276D25E6B051D3D288F5B7213"
+      "bytes": 87888,
+      "sha256": "771A0644444C4A01A08D56933E906434F86E0186D365FE4268C0B55CB9FB75C8"
     },
     {
       "path": "SRC/neothd/src/providers/ouro/artifacts.rs",
-      "bytes": 46833,
-      "sha256": "E77C20D6AE43EA3E09B82A0D45ED64E66D4C343E3DC418928EF3B51D37038563"
+      "bytes": 47470,
+      "sha256": "CB9F906B658BAA67262710AE2EC7258F7FF48230AE276C8372BB5BC5E144200A"
     },
     {
       "path": "SRC/neothd/src/providers/recursive_mas_adapter.rs",
@@ -1580,6 +1580,11 @@
       "path": "THIRD_PARTY_LICENSES",
       "bytes": 2271741,
       "sha256": "4E77A7CC896F8B5EEDCEFB458199A0939522B9191F22939BE3EFD78C575D9CF7"
+    },
+    {
+      "path": "SRC/neothd/src/cli/ouro.rs",
+      "bytes": 24806,
+      "sha256": "6F9FB54292F102E8B3B3B33F0B44E9FBD3705DFD569D64509AD5822B0F667989"
     }
   ]
 }

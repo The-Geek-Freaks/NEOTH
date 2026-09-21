@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W147 Ouro Q8 source slice (2026-09-21):** the existing quantized model now
+has an explicit cache-only CLI verification path through its real receipt,
+lease and Q8 forwards. Four source fixtures cover repeatable CPU execution,
+refusal/fallback boundaries and bounded CLI observation. See
+[W147](../docs/gold-wave147-verification.md). Hosted execution and GUI
+presentation remain pending; no P1-09 closure. W142 stays separate work.
+W148 adapter lane passed all seven exact tests on cee40a6c; the same full CI
+then found older GUI test scope/Send errors assigned to W150. Counts remain
+1324/1015/307/2 and all local validation remains suspended.
 **W148 hosted lib-test repair (2026-09-21):** Preflight35590321576 and
 CodeQuality35590321422 passed on e2de082a. Full CI35590346071 then found
 E0425 in a provider denial test: its `_error` binding did not match the

@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use sha2::{Digest, Sha256};
 use tracing::info;
 
 use crate::providers::embed::{EmbedProvider, EmbedRequest, EmbedResponse, l2_normalize};
@@ -195,6 +196,28 @@ pub struct LocalOuroAdapter {
     /// `QuantizedOuroModel`; it never falls through to native precision.
     quant_mode: OuroQuantMode,
     loaded: Arc<Mutex<Option<LoadedOuro>>>,
+}
+
+/// Bounded, terminal result of an explicit cache-only Q8 verification.
+///
+/// `verified` means the existing immutable generation was receipt-bound,
+/// constructed through the real Q8 loader, and completed one fixed Q8 forward.
+/// It does not claim that a provider request was cancelled, nor that a later
+/// chat request has completed.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct OuroQ8VerifyStatus {
+    pub verified: bool,
+    pub quant_mode: &'static str,
+    pub repo: String,
+    pub cache_dir: String,
+    pub receipt: Option<String>,
+    pub resolved_device: Option<String>,
+    pub loop_steps: Option<usize>,
+    pub forward_checked: bool,
+    pub forward_digest: Option<String>,
+    pub alternate_forward_digest: Option<String>,
+    pub context_sensitive: bool,
+    pub detail: Option<String>,
 }
 
 impl LocalOuroAdapter {
@@ -476,6 +499,16 @@ fn effective_max_new_tokens(configured: u32, req: &Request) -> u32 {
 /// First call mmaps weights + parses tokenizer/config; subsequent
 /// calls return immediately.
 fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
+    ensure_ouro_loaded_from_generation(adapter, false)
+}
+
+/// Build/reuse the loaded model from a precise generation. Cache-only
+/// verification passes `published_only = true`, which rejects a mutable cache
+/// instead of promoting or recovering it.
+fn ensure_ouro_loaded_from_generation(
+    adapter: &LocalOuroAdapter,
+    published_only: bool,
+) -> Result<()> {
     use candle_core::DType;
 
     // Serialize this check + mmap/build with the same model-cache lock the
@@ -483,8 +516,13 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
     // after construction, so a changed cache cannot become a warm hit.
     let _cache_guard = crate::media::model_manager::lock_model_cache_blocking(&adapter.cache_dir)
         .context("lock Ouro model cache for load receipt")?;
-    let generation = artifacts::resolve_or_promote_generation_locked(&adapter.cache_dir)
-        .context("resolve immutable Ouro generation for load")?;
+    let generation = if published_only {
+        artifacts::published_generation_for_cache_only_verify(&adapter.cache_dir)
+            .context("resolve published immutable Ouro generation for cache-only verification")?
+    } else {
+        artifacts::resolve_or_promote_generation_locked(&adapter.cache_dir)
+            .context("resolve immutable Ouro generation for load")?
+    };
     let device = adapter.resolved_device();
     let receipt = artifacts::receipt_for(
         &adapter.repo,
@@ -596,6 +634,136 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
         _lease: lease,
     });
     Ok(())
+}
+
+fn bounded_verify_detail(error: &anyhow::Error) -> String {
+    const MAX_CHARS: usize = 480;
+    let mut detail = format!("{error:#}");
+    if detail.chars().count() > MAX_CHARS {
+        detail = detail.chars().take(MAX_CHARS.saturating_sub(1)).collect();
+        detail.push('…');
+    }
+    detail
+}
+
+fn q8_logits_digest(logits: &candle_core::Tensor) -> Result<String> {
+    let values: Vec<f32> = logits
+        .to_dtype(candle_core::DType::F32)
+        .context("cast Q8 verification logits to f32")?
+        .flatten_all()
+        .context("flatten Q8 verification logits")?
+        .to_vec1()
+        .context("read Q8 verification logits")?;
+    anyhow::ensure!(
+        !values.is_empty()
+            && values.iter().all(|value| value.is_finite())
+            && values.iter().any(|value| *value != 0.0),
+        "Q8 verification forward produced empty, non-finite, or all-zero logits"
+    );
+    let mut digest = Sha256::new();
+    digest.update(b"neoth-ouro-q8-forward-v1\\0");
+    for value in values {
+        digest.update(value.to_bits().to_le_bytes());
+    }
+    Ok(hex::encode(digest.finalize()))
+}
+
+/// Verify an already-published local Ouro cache through the exact Q8 loader.
+///
+/// This is intentionally cache-only: it neither calls the download constructor
+/// nor promotes/reconciles mutable cache files. It still uses the existing
+/// shared model-cache lock, whose platform coordination is outside this
+/// verifier's artifact-write contract. The returned status never reports
+/// success from structural cache readiness alone.
+pub fn verify_q8_cache_only(
+    repo: impl Into<String>,
+    cache_dir: PathBuf,
+    accelerator: Option<crate::daemon::accelerator::Accelerator>,
+    sampling: SamplingConfig,
+    max_new_tokens: Option<u32>,
+) -> OuroQ8VerifyStatus {
+    let repo = repo.into();
+    let adapter = LocalOuroAdapter::new_with_paths(
+        repo.clone(),
+        cache_dir.clone(),
+        accelerator,
+        sampling,
+        max_new_tokens,
+    )
+    .with_quant_mode(OuroQuantMode::Q8);
+
+    let loaded = ensure_ouro_loaded_from_generation(&adapter, true).and_then(|()| {
+        let mut slot = adapter
+            .loaded
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let loaded = slot.as_mut().ok_or_else(|| {
+            anyhow::anyhow!("Ouro Q8 loader returned without a cached model")
+        })?;
+        let device = loaded.model_device();
+        let LoadedOuroModel::Quantized(model) = &mut loaded.model else {
+            anyhow::bail!("Ouro Q8 verification reached a non-Q8 loaded model");
+        };
+        let input_ids = candle_core::Tensor::new(&[1_u32, 2_u32], &device)
+            .context("build fixed Q8 verification input ids")?
+            .unsqueeze(0)
+            .context("add fixed Q8 verification batch dimension")?;
+        let logits = model
+            .forward(&input_ids, 0)
+            .context("run fixed Q8 verification forward")?;
+        let forward_digest = q8_logits_digest(&logits)?;
+        model.clear_kv_cache();
+        let alternate_input_ids = candle_core::Tensor::new(&[2_u32, 1_u32], &device)
+            .context("build alternate Q8 verification input ids")?
+            .unsqueeze(0)
+            .context("add alternate Q8 verification batch dimension")?;
+        let alternate_logits = model
+            .forward(&alternate_input_ids, 0)
+            .context("run alternate Q8 verification forward")?;
+        let alternate_forward_digest = q8_logits_digest(&alternate_logits)?;
+        anyhow::ensure!(
+            forward_digest != alternate_forward_digest,
+            "Q8 verification fixture/model produced context-insensitive logits"
+        );
+        Ok((
+            loaded.receipt.summary(),
+            format!("{:?}", device.location()),
+            model.loop_steps(),
+            forward_digest,
+            alternate_forward_digest,
+        ))
+    });
+
+    match loaded {
+        Ok((receipt, resolved_device, loop_steps, forward_digest, alternate_forward_digest)) => OuroQ8VerifyStatus {
+            verified: true,
+            quant_mode: OuroQuantMode::Q8.as_str(),
+            repo,
+            cache_dir: cache_dir.display().to_string(),
+            receipt: Some(receipt),
+            resolved_device: Some(resolved_device),
+            loop_steps: Some(loop_steps),
+            forward_checked: true,
+            forward_digest: Some(forward_digest),
+            alternate_forward_digest: Some(alternate_forward_digest),
+            context_sensitive: true,
+            detail: None,
+        },
+        Err(error) => OuroQ8VerifyStatus {
+            verified: false,
+            quant_mode: OuroQuantMode::Q8.as_str(),
+            repo,
+            cache_dir: cache_dir.display().to_string(),
+            receipt: None,
+            resolved_device: None,
+            loop_steps: None,
+            forward_checked: false,
+            forward_digest: None,
+            alternate_forward_digest: None,
+            context_sensitive: false,
+            detail: Some(bounded_verify_detail(&error)),
+        },
+    }
 }
 
 /// Blocking forward + sampling loop. Mirrors
@@ -1274,7 +1442,71 @@ impl EmbedProvider for LocalOuroAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
     use tempfile::tempdir;
+
+    /// Write a complete, deterministic CPU-only SafeTensors fixture for the
+    /// real Q8 loader. Every matrix dimension is divisible by the Q8 block
+    /// width (32); values are deterministic and nontrivial so this cannot pass
+    /// merely because an all-zero model was accepted.
+    fn write_tiny_q8_loader_fixture(dir: &Path) {
+        tokenizers::Tokenizer::new(tokenizers::models::bpe::BPE::default())
+            .save(dir.join(CONFIG_FILE).with_file_name(TOKENIZER_FILE), false)
+            .expect("write tiny Ouro tokenizer");
+        std::fs::write(
+            dir.join(CONFIG_FILE),
+            r#"{"vocab_size":32,"hidden_size":32,"intermediate_size":64,"num_hidden_layers":1,"num_attention_heads":1,"max_position_embeddings":16,"rope_theta":10000.0,"rms_norm_eps":0.00001,"total_ut_steps":2,"model_type":"ouro"}"#,
+        )
+        .expect("write tiny Ouro config");
+
+        let mut tensors: Vec<(String, Vec<usize>)> = vec![
+            ("model.embed_tokens.weight".into(), vec![32, 32]),
+            ("model.norm.weight".into(), vec![32]),
+            ("lm_head.weight".into(), vec![32, 32]),
+        ];
+        for projection in ["q_proj", "k_proj", "v_proj", "o_proj"] {
+            tensors.push((
+                format!("model.layers.0.self_attn.{projection}.weight"),
+                vec![32, 32],
+            ));
+        }
+        for projection in ["gate_proj", "up_proj"] {
+            tensors.push((
+                format!("model.layers.0.mlp.{projection}.weight"),
+                vec![64, 32],
+            ));
+        }
+        tensors.push(("model.layers.0.mlp.down_proj.weight".into(), vec![32, 64]));
+        for norm in ["norm_pre", "norm_mid", "norm_post"] {
+            tensors.push((format!("model.layers.0.{norm}.weight"), vec![32]));
+        }
+
+        let mut header = serde_json::Map::new();
+        let mut payload = Vec::new();
+        for (tensor_index, (name, shape)) in tensors.into_iter().enumerate() {
+            let elements: usize = shape.iter().product();
+            let start = payload.len();
+            for element in 0..elements {
+                let value = (((tensor_index * 17 + element) % 13) as f32 - 6.0) * 0.03125;
+                payload.extend_from_slice(&value.to_le_bytes());
+            }
+            let end = payload.len();
+            header.insert(
+                name,
+                serde_json::json!({
+                    "dtype": "F32",
+                    "shape": shape,
+                    "data_offsets": [start, end],
+                }),
+            );
+        }
+        let header = serde_json::to_vec(&header).expect("serialize tiny Ouro safetensors header");
+        let mut file = Vec::with_capacity(8 + header.len() + payload.len());
+        file.extend_from_slice(&(header.len() as u64).to_le_bytes());
+        file.extend_from_slice(&header);
+        file.extend_from_slice(&payload);
+        std::fs::write(dir.join(SAFETENSORS_FILE), file).expect("write tiny Ouro safetensors");
+    }
 
     fn synthetic_adapter_with_config(cache_dir: PathBuf) -> LocalOuroAdapter {
         LocalOuroAdapter::new_with_paths(
@@ -1453,6 +1685,87 @@ mod tests {
     fn q8_dispatches_only_to_the_quantized_load_path() {
         assert_eq!(load_path_for(OuroQuantMode::None), OuroLoadPath::Native);
         assert_eq!(load_path_for(OuroQuantMode::Q8), OuroLoadPath::Quantized);
+    }
+
+    #[test]
+    fn q8_cache_only_verifier_rejects_unpublished_cache_without_promoting_it() {
+        let dir = tempdir().unwrap();
+        write_tiny_q8_loader_fixture(dir.path());
+        let status = verify_q8_cache_only(
+            "test/ouro-q8",
+            dir.path().to_path_buf(),
+            None,
+            SamplingConfig::default(),
+            Some(8),
+        );
+        assert!(!status.verified);
+        assert_eq!(status.quant_mode, "q8");
+        assert!(status.receipt.is_none());
+        assert!(status.detail.as_deref().unwrap_or_default().contains("published"));
+        assert!(
+            !dir.path().join(".ouro-generations").exists(),
+            "cache-only verification must not promote mutable artifacts"
+        );
+    }
+
+    #[test]
+    fn q8_cache_only_verifier_loads_the_published_fixture_through_receipt_and_lease() {
+        let dir = tempdir().unwrap();
+        write_tiny_q8_loader_fixture(dir.path());
+        let generation = artifacts::resolve_or_promote_generation(dir.path())
+            .expect("publish tiny fixture before cache-only verification");
+        assert!(generation.exists());
+        let status = verify_q8_cache_only(
+            "test/ouro-q8",
+            dir.path().to_path_buf(),
+            None,
+            SamplingConfig::default(),
+            Some(8),
+        );
+        assert!(status.verified, "{status:?}");
+        assert_eq!(status.quant_mode, "q8");
+        assert!(status.receipt.is_some());
+        assert!(status.resolved_device.as_deref().unwrap_or_default().contains("Cpu"));
+        assert_eq!(status.loop_steps, Some(2));
+        assert!(status.forward_checked);
+        assert!(status.context_sensitive);
+        assert_ne!(status.forward_digest, status.alternate_forward_digest);
+        assert!(status.detail.is_none());
+        let second = verify_q8_cache_only(
+            "test/ouro-q8",
+            dir.path().to_path_buf(),
+            None,
+            SamplingConfig::default(),
+            Some(8),
+        );
+        assert!(second.verified, "{second:?}");
+        assert_eq!(status.forward_digest, second.forward_digest);
+        assert_eq!(status.alternate_forward_digest, second.alternate_forward_digest);
+    }
+
+    #[test]
+    fn q8_cache_only_verifier_never_reports_native_fallback_on_bad_quantized_artifacts() {
+        let dir = tempdir().unwrap();
+        write_tiny_q8_loader_fixture(dir.path());
+        std::fs::write(
+            dir.path().join(CONFIG_FILE),
+            r#"{"vocab_size":31,"hidden_size":31,"intermediate_size":63,"num_hidden_layers":1,"num_attention_heads":1,"max_position_embeddings":16,"rope_theta":10000.0,"rms_norm_eps":0.00001,"total_ut_steps":2,"model_type":"ouro"}"#,
+        )
+        .expect("replace config with Q8-incompatible dimensions");
+        let _ = artifacts::resolve_or_promote_generation(dir.path())
+            .expect("publish structurally valid but Q8-incompatible fixture");
+        let status = verify_q8_cache_only(
+            "test/ouro-q8",
+            dir.path().to_path_buf(),
+            None,
+            SamplingConfig::default(),
+            Some(8),
+        );
+        assert!(!status.verified);
+        assert_eq!(status.quant_mode, "q8");
+        assert!(status.receipt.is_none());
+        assert!(!status.forward_checked);
+        assert!(status.detail.is_some());
     }
 
     #[test]
