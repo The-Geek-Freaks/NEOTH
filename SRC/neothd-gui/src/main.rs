@@ -4348,7 +4348,10 @@ fn main() -> Result<()> {
                     None,
                 );
                 clear_active_chat_response_feedback_projection(
-                    &response_feedback, stream.as_ref(), Some(&w), None,
+                    &response_feedback,
+                    stream.as_ref(),
+                    Some(&w),
+                    None,
                 );
                 if let Ok(mut store) = citations.lock() {
                     store.set_historical(false);
@@ -4392,7 +4395,10 @@ fn main() -> Result<()> {
                 None,
             );
             clear_active_chat_response_feedback_projection(
-                &response_feedback, stream.as_ref(), Some(&w), None,
+                &response_feedback,
+                stream.as_ref(),
+                Some(&w),
+                None,
             );
             if let Ok(mut store) = citations.lock() {
                 store.set_historical(true);
@@ -13588,7 +13594,10 @@ fn main() -> Result<()> {
                 Some(&ov),
             );
             clear_active_chat_response_feedback_projection(
-                &response_feedback_for_restore, stream_for_restore.as_ref(), Some(&win), Some(&ov),
+                &response_feedback_for_restore,
+                stream_for_restore.as_ref(),
+                Some(&win),
+                Some(&ov),
             );
             ov.hide().unwrap_or(());
             win.show().unwrap_or(());
@@ -13629,7 +13638,10 @@ fn main() -> Result<()> {
                 Some(&ov),
             );
             clear_active_chat_response_feedback_projection(
-                &response_feedback_for_hide, stream_for_hide.as_ref(), Some(&win), Some(&ov),
+                &response_feedback_for_hide,
+                stream_for_hide.as_ref(),
+                Some(&win),
+                Some(&ov),
             );
             ov.hide().unwrap_or(());
             win.show().unwrap_or(());
@@ -14420,7 +14432,8 @@ fn install_legacy_child_chat_transport_callbacks(
     let chat_reasoning_projections_for_send = runtime.chat_reasoning_projections.clone();
     let chat_throughput_projections_for_send = runtime.chat_throughput_projections.clone();
     let chat_recall_chip_projections_for_send = runtime.chat_recall_chip_projections.clone();
-    let chat_response_feedback_projections_for_send = runtime.chat_response_feedback_projections.clone();
+    let chat_response_feedback_projections_for_send =
+        runtime.chat_response_feedback_projections.clone();
     let chat_send_approved = move |request_id_wire: slint::SharedString,
                                    text: slint::SharedString,
                                    explicit_skill_id_wire: slint::SharedString,
@@ -15091,7 +15104,14 @@ fn install_legacy_child_chat_transport_callbacks(
                                     let overlay_feedback = overlay_weak_worker.clone();
                                     let stream_feedback = stream.clone();
                                     let _ = slint::invoke_from_event_loop(move || {
-                                        let is_current = stream_feedback.lock().ok().and_then(|controller| controller.current_request()).is_some_and(|current| current.request_id == request_id && !current.cancel_requested);
+                                        let is_current = stream_feedback
+                                            .lock()
+                                            .ok()
+                                            .and_then(|controller| controller.current_request())
+                                            .is_some_and(|current| {
+                                                current.request_id == request_id
+                                                    && !current.cancel_requested
+                                            });
                                         if is_current {
                                             project_chat_response_feedback_snapshot(
                                                 weak_feedback.upgrade().as_ref(),
@@ -15341,7 +15361,10 @@ fn install_legacy_child_chat_transport_callbacks(
             discard_chat_reasoning_projection(&reasoning_projections, request_id);
             if outcome.is_err() {
                 discard_chat_recall_chip_projection(&recall_chip_projections, request_id);
-                discard_chat_response_feedback_projection(&response_feedback_projections, request_id);
+                discard_chat_response_feedback_projection(
+                    &response_feedback_projections,
+                    request_id,
+                );
             }
             discard_chat_throughput_projection(&throughput_projections, request_id);
             discard_chat_reasoning_display_grant(reasoning_displays.as_ref(), request_id);
@@ -15640,7 +15663,8 @@ fn install_legacy_child_chat_transport_callbacks(
         let chat_reasoning_projections_for_buddy = runtime.chat_reasoning_projections.clone();
         let chat_throughput_projections_for_buddy = runtime.chat_throughput_projections.clone();
         let chat_recall_chip_projections_for_buddy = runtime.chat_recall_chip_projections.clone();
-        let chat_response_feedback_projections_for_buddy = runtime.chat_response_feedback_projections.clone();
+        let chat_response_feedback_projections_for_buddy =
+            runtime.chat_response_feedback_projections.clone();
         let buddy_chat_send_approved =
             move |request_id_wire: slint::SharedString,
                   text: slint::SharedString,
@@ -15847,7 +15871,8 @@ fn install_legacy_child_chat_transport_callbacks(
                 let reasoning_projections = chat_reasoning_projections_for_buddy.clone();
                 let throughput_projections = chat_throughput_projections_for_buddy.clone();
                 let recall_chip_projections = chat_recall_chip_projections_for_buddy.clone();
-                let response_feedback_projections = chat_response_feedback_projections_for_buddy.clone();
+                let response_feedback_projections =
+                    chat_response_feedback_projections_for_buddy.clone();
                 let reasoning_displays = chat_reasoning_displays_for_buddy.clone();
                 std::thread::spawn(move || {
                     let _worker_lease = worker_lease;
@@ -16240,7 +16265,16 @@ fn install_legacy_child_chat_transport_callbacks(
                                             let win_feedback = win_weak.clone();
                                             let stream_feedback = stream.clone();
                                             let _ = slint::invoke_from_event_loop(move || {
-                                                let is_current = stream_feedback.lock().ok().and_then(|controller| controller.current_request()).is_some_and(|current| current.request_id == request_id && !current.cancel_requested);
+                                                let is_current = stream_feedback
+                                                    .lock()
+                                                    .ok()
+                                                    .and_then(|controller| {
+                                                        controller.current_request()
+                                                    })
+                                                    .is_some_and(|current| {
+                                                        current.request_id == request_id
+                                                            && !current.cancel_requested
+                                                    });
                                                 if is_current {
                                                     project_chat_response_feedback_snapshot(
                                                         win_feedback.upgrade().as_ref(),
@@ -16496,7 +16530,10 @@ fn install_legacy_child_chat_transport_callbacks(
                     discard_chat_reasoning_projection(&reasoning_projections, request_id);
                     if result.is_err() {
                         discard_chat_recall_chip_projection(&recall_chip_projections, request_id);
-                        discard_chat_response_feedback_projection(&response_feedback_projections, request_id);
+                        discard_chat_response_feedback_projection(
+                            &response_feedback_projections,
+                            request_id,
+                        );
                     }
                     discard_chat_throughput_projection(&throughput_projections, request_id);
                     discard_chat_reasoning_display_grant(reasoning_displays.as_ref(), request_id);
@@ -26352,7 +26389,9 @@ fn begin_chat_response_feedback_projection(
     let mut projections = projections
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    for projection in projections.values_mut() { projection.clear_and_fence(); }
+    for projection in projections.values_mut() {
+        projection.clear_and_fence();
+    }
     projections.clear();
     projections.insert(
         request_id,
@@ -26381,7 +26420,9 @@ pub(crate) fn accept_daemon_response_feedback_terminal(
         .lock()
         .map_err(|_| "daemon response-feedback projection state is unavailable".to_string())?;
     for (existing, projection) in projections.iter_mut() {
-        if *existing != key { projection.clear_and_fence(); }
+        if *existing != key {
+            projection.clear_and_fence();
+        }
     }
     projections.retain(|existing, _| *existing == key);
     let projection = projections.entry(key).or_insert_with(|| {
@@ -26462,11 +26503,15 @@ fn clear_chat_response_feedback_replacement(
     overlay: Option<&MiniOverlay>,
 ) {
     if let Ok(mut projections) = projections.lock() {
-        for projection in projections.values_mut() { projection.clear_and_fence(); }
+        for projection in projections.values_mut() {
+            projection.clear_and_fence();
+        }
         projections.clear();
     }
     clear_main_response_feedback_projection(window);
-    if let Some(overlay) = overlay { clear_buddy_response_feedback_projection(overlay); }
+    if let Some(overlay) = overlay {
+        clear_buddy_response_feedback_projection(overlay);
+    }
 }
 
 fn clear_active_chat_response_feedback_projection(
@@ -26480,8 +26525,12 @@ fn clear_active_chat_response_feedback_projection(
     {
         discard_chat_response_feedback_projection(projections, current.request_id);
     }
-    if let Some(window) = window { clear_main_response_feedback_projection(window); }
-    if let Some(overlay) = overlay { clear_buddy_response_feedback_projection(overlay); }
+    if let Some(window) = window {
+        clear_main_response_feedback_projection(window);
+    }
+    if let Some(overlay) = overlay {
+        clear_buddy_response_feedback_projection(overlay);
+    }
 }
 
 fn clear_main_response_feedback_projection(window: &MainWindow) {
@@ -26534,20 +26583,24 @@ fn project_chat_response_feedback_snapshot(
     let status: slint::SharedString = response_feedback_status_text(snapshot).into();
     let signal: slint::SharedString = response_feedback_signal_text(snapshot.active_signal).into();
     match surface {
-        ChatStreamSurface::Main => if let Some(window) = window {
-            window.set_chat_response_feedback_active(true);
-            window.set_chat_response_feedback_available(snapshot.available);
-            window.set_chat_response_feedback_running(snapshot.running);
-            window.set_chat_response_feedback_status(status);
-            window.set_chat_response_feedback_signal(signal);
-        },
-        ChatStreamSurface::Buddy => if let Some(overlay) = overlay {
-            overlay.set_response_feedback_active(true);
-            overlay.set_response_feedback_available(snapshot.available);
-            overlay.set_response_feedback_running(snapshot.running);
-            overlay.set_response_feedback_status(status);
-            overlay.set_response_feedback_signal(signal);
-        },
+        ChatStreamSurface::Main => {
+            if let Some(window) = window {
+                window.set_chat_response_feedback_active(true);
+                window.set_chat_response_feedback_available(snapshot.available);
+                window.set_chat_response_feedback_running(snapshot.running);
+                window.set_chat_response_feedback_status(status);
+                window.set_chat_response_feedback_signal(signal);
+            }
+        }
+        ChatStreamSurface::Buddy => {
+            if let Some(overlay) = overlay {
+                overlay.set_response_feedback_active(true);
+                overlay.set_response_feedback_available(snapshot.available);
+                overlay.set_response_feedback_running(snapshot.running);
+                overlay.set_response_feedback_status(status);
+                overlay.set_response_feedback_signal(signal);
+            }
+        }
     }
 }
 
@@ -26579,7 +26632,9 @@ fn response_feedback_signal_from_wire(
 ) -> std::result::Result<Option<chat_response_feedback::FeedbackSignal>, String> {
     match value {
         None => Ok(None),
-        Some("needs_correction") => Ok(Some(chat_response_feedback::FeedbackSignal::NeedsCorrection)),
+        Some("needs_correction") => Ok(Some(
+            chat_response_feedback::FeedbackSignal::NeedsCorrection,
+        )),
         Some("not_helpful") => Ok(Some(chat_response_feedback::FeedbackSignal::NotHelpful)),
         Some(_) => Err("response-feedback readback carried an unknown fixed signal".to_string()),
     }
@@ -26596,12 +26651,28 @@ fn run_response_feedback_action_verified(
     let revision = target.revision().to_string();
     let action_arguments: Vec<&str> = match target.action() {
         chat_response_feedback::Action::Set(signal) => vec![
-            "feedback", "response", "set", "--response", response, "--session", session,
-            "--revision", revision.as_str(), "--signal", signal.wire_name(),
+            "feedback",
+            "response",
+            "set",
+            "--response",
+            response,
+            "--session",
+            session,
+            "--revision",
+            revision.as_str(),
+            "--signal",
+            signal.wire_name(),
         ],
         chat_response_feedback::Action::Remove => vec![
-            "feedback", "response", "remove", "--response", response, "--session", session,
-            "--revision", revision.as_str(),
+            "feedback",
+            "response",
+            "remove",
+            "--response",
+            response,
+            "--session",
+            session,
+            "--revision",
+            revision.as_str(),
         ],
     };
     let receipt = run_neothd_json_action::<ResponseFeedbackMutationReceipt>(
@@ -26612,22 +26683,40 @@ fn run_response_feedback_action_verified(
         return Err("response-feedback receipt was bound to another terminal response".to_string());
     }
     if receipt.rejection.is_some()
-        || !matches!(receipt.status.as_str(), "set" | "replaced" | "removed" | "unchanged")
+        || !matches!(
+            receipt.status.as_str(),
+            "set" | "replaced" | "removed" | "unchanged"
+        )
     {
-        return Err("response-feedback mutation was rejected or had an invalid receipt".to_string());
+        return Err(
+            "response-feedback mutation was rejected or had an invalid receipt".to_string(),
+        );
     }
     let expected_signal = match target.action() {
-        chat_response_feedback::Action::Set(chat_response_feedback::FeedbackSignal::NeedsCorrection) => Some("needs_correction"),
-        chat_response_feedback::Action::Set(chat_response_feedback::FeedbackSignal::NotHelpful) => Some("not_helpful"),
+        chat_response_feedback::Action::Set(
+            chat_response_feedback::FeedbackSignal::NeedsCorrection,
+        ) => Some("needs_correction"),
+        chat_response_feedback::Action::Set(chat_response_feedback::FeedbackSignal::NotHelpful) => {
+            Some("not_helpful")
+        }
         chat_response_feedback::Action::Remove => None,
     };
-    match (target.action(), receipt.status.as_str(), receipt.signal.as_deref(), receipt.previous_signal.as_deref()) {
+    match (
+        target.action(),
+        receipt.status.as_str(),
+        receipt.signal.as_deref(),
+        receipt.previous_signal.as_deref(),
+    ) {
         (chat_response_feedback::Action::Set(_), "set", Some(signal), None)
         | (chat_response_feedback::Action::Set(_), "replaced", Some(signal), Some(_))
             if Some(signal) == expected_signal => {}
         (chat_response_feedback::Action::Set(_), "unchanged", None, None) => {}
         (chat_response_feedback::Action::Remove, "removed" | "unchanged", None, None) => {}
-        _ => return Err("response-feedback receipt did not match the requested fixed action".to_string()),
+        _ => {
+            return Err(
+                "response-feedback receipt did not match the requested fixed action".to_string(),
+            );
+        }
     }
     let receipt_revision = receipt
         .revision
@@ -26636,7 +26725,13 @@ fn run_response_feedback_action_verified(
         return Err("response-feedback receipt regressed the target revision".to_string());
     }
     let status_arguments = [
-        "feedback", "response", "status", "--response", response, "--session", session,
+        "feedback",
+        "response",
+        "status",
+        "--response",
+        response,
+        "--session",
+        session,
     ];
     let readback = run_neothd_json_action::<ResponseFeedbackStatusReadback>(
         &status_arguments,
@@ -26647,19 +26742,27 @@ fn run_response_feedback_action_verified(
         || readback.response_id != response
         || readback.session_id != session
     {
-        return Err("response-feedback readback did not bind the current terminal response".to_string());
+        return Err(
+            "response-feedback readback did not bind the current terminal response".to_string(),
+        );
     }
     let readback_revision = readback
         .current_revision
         .ok_or_else(|| "response-feedback readback omitted its revision".to_string())?;
     if readback_revision != receipt_revision {
-        return Err("response-feedback readback revision did not match the mutation receipt".to_string());
+        return Err(
+            "response-feedback readback revision did not match the mutation receipt".to_string(),
+        );
     }
     let active_signal = response_feedback_signal_from_wire(readback.active_signal.as_deref())?;
     match (target.action(), active_signal) {
         (chat_response_feedback::Action::Set(expected), Some(actual)) if expected == actual => {}
         (chat_response_feedback::Action::Remove, None) => {}
-        _ => return Err("response-feedback readback did not reflect the requested fixed action".to_string()),
+        _ => {
+            return Err(
+                "response-feedback readback did not reflect the requested fixed action".to_string(),
+            );
+        }
     }
     Ok((readback_revision, active_signal))
 }
@@ -26667,16 +26770,18 @@ fn run_response_feedback_action_verified(
 fn begin_current_response_feedback_action(
     projections: &ChatResponseFeedbackProjections,
     action: chat_response_feedback::Action,
-) -> Option<(ChatStreamRequestId, chat_response_feedback::ActionTarget, chat_response_feedback::Snapshot)> {
+) -> Option<(
+    ChatStreamRequestId,
+    chat_response_feedback::ActionTarget,
+    chat_response_feedback::Snapshot,
+)> {
     let mut projections = projections.lock().ok()?;
     let (request_id, projection) = projections.iter_mut().next()?;
     let target = projection.begin_action(action)?;
     Some((*request_id, target, projection.snapshot()))
 }
 
-fn response_feedback_action_from_ui(
-    value: &str,
-) -> Option<chat_response_feedback::Action> {
+fn response_feedback_action_from_ui(value: &str) -> Option<chat_response_feedback::Action> {
     match value {
         "needs-correction" => Some(chat_response_feedback::Action::Set(
             chat_response_feedback::FeedbackSignal::NeedsCorrection,
@@ -26698,13 +26803,20 @@ fn register_response_feedback_callbacks(
     let main_weak = window.as_weak();
     let main_overlay = overlay.as_weak();
     window.on_chat_response_feedback_action(move |action_wire| {
-        let Some(action) = response_feedback_action_from_ui(action_wire.as_str()) else { return; };
+        let Some(action) = response_feedback_action_from_ui(action_wire.as_str()) else {
+            return;
+        };
         let Some((request_id, target, snapshot)) =
             begin_current_response_feedback_action(&main_projections, action)
-        else { return; };
+        else {
+            return;
+        };
         if let Some(window) = main_weak.upgrade() {
             project_chat_response_feedback_snapshot(
-                Some(&window), main_overlay.upgrade().as_ref(), ChatStreamSurface::Main, &snapshot,
+                Some(&window),
+                main_overlay.upgrade().as_ref(),
+                ChatStreamSurface::Main,
+                &snapshot,
             );
         }
         let projections = main_projections.clone();
@@ -26724,8 +26836,10 @@ fn register_response_feedback_callbacks(
                 });
                 if let Some(snapshot) = snapshot {
                     project_chat_response_feedback_snapshot(
-                        weak.upgrade().as_ref(), overlay.upgrade().as_ref(),
-                        ChatStreamSurface::Main, &snapshot,
+                        weak.upgrade().as_ref(),
+                        overlay.upgrade().as_ref(),
+                        ChatStreamSurface::Main,
+                        &snapshot,
                     );
                 }
             });
@@ -26736,13 +26850,20 @@ fn register_response_feedback_callbacks(
     let buddy_window = window.as_weak();
     let buddy_weak = overlay.as_weak();
     overlay.on_response_feedback_action(move |action_wire| {
-        let Some(action) = response_feedback_action_from_ui(action_wire.as_str()) else { return; };
+        let Some(action) = response_feedback_action_from_ui(action_wire.as_str()) else {
+            return;
+        };
         let Some((request_id, target, snapshot)) =
             begin_current_response_feedback_action(&buddy_projections, action)
-        else { return; };
+        else {
+            return;
+        };
         if let Some(overlay) = buddy_weak.upgrade() {
             project_chat_response_feedback_snapshot(
-                buddy_window.upgrade().as_ref(), Some(&overlay), ChatStreamSurface::Buddy, &snapshot,
+                buddy_window.upgrade().as_ref(),
+                Some(&overlay),
+                ChatStreamSurface::Buddy,
+                &snapshot,
             );
         }
         let projections = buddy_projections.clone();
@@ -26762,8 +26883,10 @@ fn register_response_feedback_callbacks(
                 });
                 if let Some(snapshot) = snapshot {
                     project_chat_response_feedback_snapshot(
-                        weak.upgrade().as_ref(), overlay.upgrade().as_ref(),
-                        ChatStreamSurface::Buddy, &snapshot,
+                        weak.upgrade().as_ref(),
+                        overlay.upgrade().as_ref(),
+                        ChatStreamSurface::Buddy,
+                        &snapshot,
                     );
                 }
             });
@@ -30742,12 +30865,20 @@ fn final_stream_sentinel(
         // Recursively locate the preceding StreamDone only when this final
         // frame belongs to the expected token and claims the exact namespace.
         if let Some(expected) = expected_control_token
-            && sentinel.get("neoth_stream").and_then(|value| value.as_str())
+            && sentinel
+                .get("neoth_stream")
+                .and_then(|value| value.as_str())
                 == Some("response_feedback_target")
-            && sentinel.get("control_token").and_then(|value| value.as_str()) == Some(expected)
+            && sentinel
+                .get("control_token")
+                .and_then(|value| value.as_str())
+                == Some(expected)
             && let Some(prefix_end) = pos.checked_sub(1)
         {
-            return final_stream_sentinel(&line_ending_trimmed[..prefix_end], expected_control_token);
+            return final_stream_sentinel(
+                &line_ending_trimmed[..prefix_end],
+                expected_control_token,
+            );
         }
         return None;
     }
@@ -41314,10 +41445,9 @@ mod w58_gui_callback_runtime_tests {
     use super::{
         CHAT_STREAM_CONTROL_PREFIX, ChatRecallChipProjections, ChatResponseFeedbackProjections,
         ChatThroughputProjections, RecallChipControlFrame, ThroughputControlFrame,
-        apply_chat_recall_chip_controls,
-        apply_chat_throughput_controls, begin_chat_recall_chip_projection,
-        begin_chat_throughput_projection, cancel_citation_child, cancel_citation_live_flow,
-        chat_recall_chips, chat_stream_request_id,
+        apply_chat_recall_chip_controls, apply_chat_throughput_controls,
+        begin_chat_recall_chip_projection, begin_chat_throughput_projection, cancel_citation_child,
+        cancel_citation_live_flow, chat_recall_chips, chat_stream_request_id,
         citation_gui::{CitationGuiBindingStore, CitationGuiRequest},
         clear_buddy_recall_chip_projection, clear_buddy_throughput_projection,
         clear_citation_consent_projection, clear_citation_projection,
@@ -44602,7 +44732,9 @@ exit 72
             chat_reasoning_projections: Arc::new(Mutex::new(std::collections::HashMap::new())),
             chat_throughput_projections: Arc::new(Mutex::new(std::collections::HashMap::new())),
             chat_recall_chip_projections: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            chat_response_feedback_projections: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            chat_response_feedback_projections: Arc::new(Mutex::new(
+                std::collections::HashMap::new(),
+            )),
             chat_auto_nudge_budget: Arc::new(std::sync::atomic::AtomicU8::new(0)),
             chat_auto_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             chat_consent_flow_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -45317,13 +45449,20 @@ exit 0
                 &overlay,
                 runtime.chat_response_feedback_projections.clone(),
             );
-            let request_id = w153_prepare_approved_request(&window, &overlay, &runtime, surface, false);
+            let request_id =
+                w153_prepare_approved_request(&window, &overlay, &runtime, surface, false);
             match surface {
                 ChatStreamSurface::Main => window.invoke_chat_send_approved(
-                    request_id.as_wire().into(), "W164 target".into(), "".into(), false,
+                    request_id.as_wire().into(),
+                    "W164 target".into(),
+                    "".into(),
+                    false,
                 ),
                 ChatStreamSurface::Buddy => window.invoke_buddy_chat_send_approved(
-                    request_id.as_wire().into(), "W164 target".into(), "".into(), false,
+                    request_id.as_wire().into(),
+                    "W164 target".into(),
+                    "".into(),
+                    false,
                 ),
             }
             let started = fixture.path().join("started");
@@ -45332,48 +45471,85 @@ exit 0
             assert!(!overlay.get_response_feedback_available());
             std::fs::write(fixture.path().join("release"), b"").expect("release W164 child");
             let terminal_overlay = overlay.as_weak();
-            w153_pump_until(&window, "W164 terminal target", move |window| match surface {
-                ChatStreamSurface::Main => window.get_chat_response_feedback_available(),
-                ChatStreamSurface::Buddy => terminal_overlay
-                    .upgrade()
-                    .is_some_and(|overlay| overlay.get_response_feedback_available()),
-            });
+            w153_pump_until(
+                &window,
+                "W164 terminal target",
+                move |window| match surface {
+                    ChatStreamSurface::Main => window.get_chat_response_feedback_available(),
+                    ChatStreamSurface::Buddy => terminal_overlay
+                        .upgrade()
+                        .is_some_and(|overlay| overlay.get_response_feedback_available()),
+                },
+            );
             match surface {
-                ChatStreamSurface::Main => window.invoke_chat_response_feedback_action("needs-correction".into()),
-                ChatStreamSurface::Buddy => overlay.invoke_response_feedback_action("needs-correction".into()),
+                ChatStreamSurface::Main => {
+                    window.invoke_chat_response_feedback_action("needs-correction".into())
+                }
+                ChatStreamSurface::Buddy => {
+                    overlay.invoke_response_feedback_action("needs-correction".into())
+                }
             }
             let verified_overlay = overlay.as_weak();
-            w153_pump_until(&window, "W164 verified feedback readback", move |window| match surface {
-                ChatStreamSurface::Main => !window.get_chat_response_feedback_running()
-                    && window.get_chat_response_feedback_signal() == "needs-correction",
-                ChatStreamSurface::Buddy => verified_overlay.upgrade().is_some_and(|overlay|
-                    !overlay.get_response_feedback_running()
-                        && overlay.get_response_feedback_signal() == "needs-correction"),
-            });
+            w153_pump_until(
+                &window,
+                "W164 verified feedback readback",
+                move |window| match surface {
+                    ChatStreamSurface::Main => {
+                        !window.get_chat_response_feedback_running()
+                            && window.get_chat_response_feedback_signal() == "needs-correction"
+                    }
+                    ChatStreamSurface::Buddy => verified_overlay.upgrade().is_some_and(|overlay| {
+                        !overlay.get_response_feedback_running()
+                            && overlay.get_response_feedback_signal() == "needs-correction"
+                    }),
+                },
+            );
             match surface {
-                ChatStreamSurface::Main => window.invoke_chat_response_feedback_action("not-helpful".into()),
-                ChatStreamSurface::Buddy => overlay.invoke_response_feedback_action("not-helpful".into()),
+                ChatStreamSurface::Main => {
+                    window.invoke_chat_response_feedback_action("not-helpful".into())
+                }
+                ChatStreamSurface::Buddy => {
+                    overlay.invoke_response_feedback_action("not-helpful".into())
+                }
             }
             let replaced_overlay = overlay.as_weak();
-            w153_pump_until(&window, "W164 replacement readback", move |window| match surface {
-                ChatStreamSurface::Main => !window.get_chat_response_feedback_running()
-                    && window.get_chat_response_feedback_signal() == "not-helpful",
-                ChatStreamSurface::Buddy => replaced_overlay.upgrade().is_some_and(|overlay|
-                    !overlay.get_response_feedback_running()
-                        && overlay.get_response_feedback_signal() == "not-helpful"),
-            });
+            w153_pump_until(
+                &window,
+                "W164 replacement readback",
+                move |window| match surface {
+                    ChatStreamSurface::Main => {
+                        !window.get_chat_response_feedback_running()
+                            && window.get_chat_response_feedback_signal() == "not-helpful"
+                    }
+                    ChatStreamSurface::Buddy => replaced_overlay.upgrade().is_some_and(|overlay| {
+                        !overlay.get_response_feedback_running()
+                            && overlay.get_response_feedback_signal() == "not-helpful"
+                    }),
+                },
+            );
             match surface {
-                ChatStreamSurface::Main => window.invoke_chat_response_feedback_action("remove".into()),
-                ChatStreamSurface::Buddy => overlay.invoke_response_feedback_action("remove".into()),
+                ChatStreamSurface::Main => {
+                    window.invoke_chat_response_feedback_action("remove".into())
+                }
+                ChatStreamSurface::Buddy => {
+                    overlay.invoke_response_feedback_action("remove".into())
+                }
             }
             let removed_overlay = overlay.as_weak();
-            w153_pump_until(&window, "W164 removal readback", move |window| match surface {
-                ChatStreamSurface::Main => !window.get_chat_response_feedback_running()
-                    && window.get_chat_response_feedback_signal().is_empty(),
-                ChatStreamSurface::Buddy => removed_overlay.upgrade().is_some_and(|overlay|
-                    !overlay.get_response_feedback_running()
-                        && overlay.get_response_feedback_signal().is_empty()),
-            });
+            w153_pump_until(
+                &window,
+                "W164 removal readback",
+                move |window| match surface {
+                    ChatStreamSurface::Main => {
+                        !window.get_chat_response_feedback_running()
+                            && window.get_chat_response_feedback_signal().is_empty()
+                    }
+                    ChatStreamSurface::Buddy => removed_overlay.upgrade().is_some_and(|overlay| {
+                        !overlay.get_response_feedback_running()
+                            && overlay.get_response_feedback_signal().is_empty()
+                    }),
+                },
+            );
         }
     }
 

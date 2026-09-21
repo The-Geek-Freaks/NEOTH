@@ -10,10 +10,10 @@ use clap::{Args, Subcommand, ValueEnum};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::feedback::consume::{aggregate_recent_feedback, FeedbackPressure};
+use crate::feedback::consume::{FeedbackPressure, aggregate_recent_feedback};
 use crate::feedback::response::{
-    apply_response_feedback, read_response_feedback_status, ResponseFeedbackOperation, ResponseFeedbackOutcome,
-    ResponseFeedbackRejection, ResponseId, ResponseSignal,
+    ResponseFeedbackOperation, ResponseFeedbackOutcome, ResponseFeedbackRejection, ResponseId,
+    ResponseSignal, apply_response_feedback, read_response_feedback_status,
 };
 
 #[derive(Args, Debug, Clone)]
@@ -109,19 +109,30 @@ fn run_response(action: ResponseFeedbackAction, output: &OutputFormat) -> Result
         action => action,
     };
     let (response, session, revision, operation) = match action {
-        ResponseFeedbackAction::Set { response, session, revision, signal } => (
+        ResponseFeedbackAction::Set {
+            response,
+            session,
+            revision,
+            signal,
+        } => (
             response,
             session,
             revision,
             ResponseFeedbackOperation::Set(signal.into()),
         ),
-        ResponseFeedbackAction::Remove { response, session, revision } => (
+        ResponseFeedbackAction::Remove {
+            response,
+            session,
+            revision,
+        } => (
             response,
             session,
             revision,
             ResponseFeedbackOperation::Remove,
         ),
-        ResponseFeedbackAction::Status { .. } => unreachable!("status returns before mutation dispatch"),
+        ResponseFeedbackAction::Status { .. } => {
+            unreachable!("status returns before mutation dispatch")
+        }
     };
 
     // Parse before opening the private projection. The session flag is an
@@ -154,10 +165,15 @@ fn run_response_status(response: &str, session: &str, output: &OutputFormat) -> 
         Err(rejection) => response_status_rejected_body(response, session, rejection),
     };
     match output {
-        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string_pretty(&body)?),
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string_pretty(&body)?)
+        }
         OutputFormat::Table => {
             println!("# Response feedback status");
-            println!("  status      : {}", body["status"].as_str().unwrap_or("rejected"));
+            println!(
+                "  status      : {}",
+                body["status"].as_str().unwrap_or("rejected")
+            );
             println!("  response    : {response}");
             println!("  session     : {session}");
             if let Some(revision) = body["current_revision"].as_u64() {
@@ -226,17 +242,29 @@ fn response_outcome_body(
 ) -> serde_json::Value {
     let (status, revision, signal, previous_signal, rejection) = match outcome {
         ResponseFeedbackOutcome::Set { signal, revision } => (
-            "set", Some(revision), Some(response_signal_name(signal)), None, None,
+            "set",
+            Some(revision),
+            Some(response_signal_name(signal)),
+            None,
+            None,
         ),
-        ResponseFeedbackOutcome::Replaced { previous, signal, revision } => (
+        ResponseFeedbackOutcome::Replaced {
+            previous,
+            signal,
+            revision,
+        } => (
             "replaced",
             Some(revision),
             Some(response_signal_name(signal)),
             Some(response_signal_name(previous)),
             None,
         ),
-        ResponseFeedbackOutcome::Removed { revision } => ("removed", Some(revision), None, None, None),
-        ResponseFeedbackOutcome::Unchanged { revision } => ("unchanged", Some(revision), None, None, None),
+        ResponseFeedbackOutcome::Removed { revision } => {
+            ("removed", Some(revision), None, None, None)
+        }
+        ResponseFeedbackOutcome::Unchanged { revision } => {
+            ("unchanged", Some(revision), None, None, None)
+        }
         ResponseFeedbackOutcome::Rejected(rejection) => (
             "rejected",
             None,
@@ -264,10 +292,15 @@ fn render_response_outcome(
 ) -> Result<()> {
     let body = response_outcome_body(response, session, outcome);
     match output {
-        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string_pretty(&body)?),
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string_pretty(&body)?)
+        }
         OutputFormat::Table => {
             println!("# Response feedback");
-            println!("  status      : {}", body["status"].as_str().unwrap_or("rejected"));
+            println!(
+                "  status      : {}",
+                body["status"].as_str().unwrap_or("rejected")
+            );
             println!("  response    : {response}");
             println!("  session     : {session}");
             if let Some(revision) = body["revision"].as_u64() {
@@ -324,7 +357,9 @@ async fn run_summary(window: &str, output: &OutputFormat) -> Result<()> {
             }
             println!();
             match pressure {
-                FeedbackPressure::Low => println!("  NEOTH is tracking your corrections well — nothing to act on."),
+                FeedbackPressure::Low => {
+                    println!("  NEOTH is tracking your corrections well — nothing to act on.")
+                }
                 FeedbackPressure::Elevated => println!(
                     "  A noticeable run of corrections. Review the patterns above; the \\
                      profile-adapt cron will propose an adjustment if it persists."
@@ -359,67 +394,173 @@ mod tests {
     #[test]
     fn response_set_requires_explicit_terminal_receipt_and_revision() {
         let parsed = TestCli::try_parse_from([
-            "neoth", "feedback", "response", "set", "--response",
-            "0123456789abcdef0123456789abcdef", "--session", "terminal", "--revision", "7",
-            "--signal", "needs-correction",
-        ]).expect("feedback command parses");
-        assert!(matches!(parsed.command, TestCommand::Feedback(FeedbackArgs {
-            action: FeedbackAction::Response { action: ResponseFeedbackAction::Set {
-                revision: 7, signal: ResponseFeedbackSignal::NeedsCorrection, ..
-            } }, ..
-        })));
-        assert!(TestCli::try_parse_from([
-            "neoth", "feedback", "response", "set", "--session", "terminal", "--revision", "0",
-            "--signal", "not-helpful",
-        ]).is_err());
-        assert!(TestCli::try_parse_from([
-            "neoth", "feedback", "response", "set", "--response", "0123456789abcdef0123456789abcdef",
-            "--revision", "0", "--signal", "not-helpful",
-        ]).is_err());
-        assert!(TestCli::try_parse_from([
-            "neoth", "feedback", "response", "set", "--response", "0123456789abcdef0123456789abcdef",
-            "--session", "terminal", "--signal", "not-helpful",
-        ]).is_err());
+            "neoth",
+            "feedback",
+            "response",
+            "set",
+            "--response",
+            "0123456789abcdef0123456789abcdef",
+            "--session",
+            "terminal",
+            "--revision",
+            "7",
+            "--signal",
+            "needs-correction",
+        ])
+        .expect("feedback command parses");
+        assert!(matches!(
+            parsed.command,
+            TestCommand::Feedback(FeedbackArgs {
+                action: FeedbackAction::Response {
+                    action: ResponseFeedbackAction::Set {
+                        revision: 7,
+                        signal: ResponseFeedbackSignal::NeedsCorrection,
+                        ..
+                    }
+                },
+                ..
+            })
+        ));
+        assert!(
+            TestCli::try_parse_from([
+                "neoth",
+                "feedback",
+                "response",
+                "set",
+                "--session",
+                "terminal",
+                "--revision",
+                "0",
+                "--signal",
+                "not-helpful",
+            ])
+            .is_err()
+        );
+        assert!(
+            TestCli::try_parse_from([
+                "neoth",
+                "feedback",
+                "response",
+                "set",
+                "--response",
+                "0123456789abcdef0123456789abcdef",
+                "--revision",
+                "0",
+                "--signal",
+                "not-helpful",
+            ])
+            .is_err()
+        );
+        assert!(
+            TestCli::try_parse_from([
+                "neoth",
+                "feedback",
+                "response",
+                "set",
+                "--response",
+                "0123456789abcdef0123456789abcdef",
+                "--session",
+                "terminal",
+                "--signal",
+                "not-helpful",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
     fn response_command_accepts_only_fixed_signal_and_no_freeform_or_implicit_session() {
-        assert!(TestCli::try_parse_from([
-            "neoth", "feedback", "response", "set", "--response", "0123456789abcdef0123456789abcdef",
-            "--session", "terminal", "--revision", "0", "--signal", "freeform",
-        ]).is_err());
-        assert!(TestCli::try_parse_from([
-            "neoth", "feedback", "response", "set", "--response", "0123456789abcdef0123456789abcdef",
-            "--session", "terminal", "--revision", "0", "--signal", "not-helpful", "--text", "explain",
-        ]).is_err());
-        assert!(TestCli::try_parse_from([
-            "neoth", "feedback", "response", "remove", "--response", "0123456789abcdef0123456789abcdef",
-            "--revision", "0",
-        ]).is_err());
+        assert!(
+            TestCli::try_parse_from([
+                "neoth",
+                "feedback",
+                "response",
+                "set",
+                "--response",
+                "0123456789abcdef0123456789abcdef",
+                "--session",
+                "terminal",
+                "--revision",
+                "0",
+                "--signal",
+                "freeform",
+            ])
+            .is_err()
+        );
+        assert!(
+            TestCli::try_parse_from([
+                "neoth",
+                "feedback",
+                "response",
+                "set",
+                "--response",
+                "0123456789abcdef0123456789abcdef",
+                "--session",
+                "terminal",
+                "--revision",
+                "0",
+                "--signal",
+                "not-helpful",
+                "--text",
+                "explain",
+            ])
+            .is_err()
+        );
+        assert!(
+            TestCli::try_parse_from([
+                "neoth",
+                "feedback",
+                "response",
+                "remove",
+                "--response",
+                "0123456789abcdef0123456789abcdef",
+                "--revision",
+                "0",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
     fn response_status_requires_the_same_explicit_terminal_pair() {
         let parsed = TestCli::try_parse_from([
-            "neoth", "feedback", "response", "status", "--response",
-            "0123456789abcdef0123456789abcdef", "--session", "terminal",
-        ]).expect("status command parses");
-        assert!(matches!(parsed.command, TestCommand::Feedback(FeedbackArgs {
-            action: FeedbackAction::Response { action: ResponseFeedbackAction::Status { .. } }, ..
-        })));
-        assert!(TestCli::try_parse_from([
-            "neoth", "feedback", "response", "status", "--response",
+            "neoth",
+            "feedback",
+            "response",
+            "status",
+            "--response",
             "0123456789abcdef0123456789abcdef",
-        ]).is_err());
-
-        let ready = response_status_ready_body(
-            &crate::feedback::response::ResponseTargetStatus {
-                response_id: ResponseId::parse("0123456789abcdef0123456789abcdef").unwrap(),
-                session_id: "terminal".into(),
-                revision: 4,
-                active_signal: Some(ResponseSignal::NotHelpful),
-            },
+            "--session",
+            "terminal",
+        ])
+        .expect("status command parses");
+        assert!(matches!(
+            parsed.command,
+            TestCommand::Feedback(FeedbackArgs {
+                action: FeedbackAction::Response {
+                    action: ResponseFeedbackAction::Status { .. }
+                },
+                ..
+            })
+        ));
+        assert!(
+            TestCli::try_parse_from([
+                "neoth",
+                "feedback",
+                "response",
+                "status",
+                "--response",
+                "0123456789abcdef0123456789abcdef",
+            ])
+            .is_err()
         );
+
+        let ready = response_status_ready_body(&crate::feedback::response::ResponseTargetStatus {
+            response_id: ResponseId::parse("0123456789abcdef0123456789abcdef").unwrap(),
+            session_id: "terminal".into(),
+            revision: 4,
+            active_signal: Some(ResponseSignal::NotHelpful),
+        });
         let rejected = response_status_rejected_body(
             "0123456789abcdef0123456789abcdef",
             "terminal",
@@ -438,11 +579,53 @@ mod tests {
         let response = "0123456789abcdef0123456789abcdef";
         let session = "terminal";
         let cases = [
-            (ResponseFeedbackOutcome::Set { signal: ResponseSignal::NeedsCorrection, revision: 1 }, "set", Some(1), Some("needs_correction"), None, None),
-            (ResponseFeedbackOutcome::Replaced { previous: ResponseSignal::NeedsCorrection, signal: ResponseSignal::NotHelpful, revision: 2 }, "replaced", Some(2), Some("not_helpful"), Some("needs_correction"), None),
-            (ResponseFeedbackOutcome::Removed { revision: 3 }, "removed", Some(3), None, None, None),
-            (ResponseFeedbackOutcome::Unchanged { revision: 3 }, "unchanged", Some(3), None, None, None),
-            (ResponseFeedbackOutcome::Rejected(ResponseFeedbackRejection::Stale), "rejected", None, None, None, Some("stale")),
+            (
+                ResponseFeedbackOutcome::Set {
+                    signal: ResponseSignal::NeedsCorrection,
+                    revision: 1,
+                },
+                "set",
+                Some(1),
+                Some("needs_correction"),
+                None,
+                None,
+            ),
+            (
+                ResponseFeedbackOutcome::Replaced {
+                    previous: ResponseSignal::NeedsCorrection,
+                    signal: ResponseSignal::NotHelpful,
+                    revision: 2,
+                },
+                "replaced",
+                Some(2),
+                Some("not_helpful"),
+                Some("needs_correction"),
+                None,
+            ),
+            (
+                ResponseFeedbackOutcome::Removed { revision: 3 },
+                "removed",
+                Some(3),
+                None,
+                None,
+                None,
+            ),
+            (
+                ResponseFeedbackOutcome::Unchanged { revision: 3 },
+                "unchanged",
+                Some(3),
+                None,
+                None,
+                None,
+            ),
+            (
+                ResponseFeedbackOutcome::Rejected(ResponseFeedbackRejection::Stale),
+                "rejected",
+                None,
+                None,
+                None,
+                Some("stale"),
+            ),
         ];
         for (outcome, status, revision, signal, previous, rejection) in cases {
             let body = response_outcome_body(response, session, outcome);
@@ -459,7 +642,14 @@ mod tests {
             ResponseFeedbackRejection::Stale,
             ResponseFeedbackRejection::Unavailable,
         ] {
-            assert_eq!(response_outcome_body(response, session, ResponseFeedbackOutcome::Rejected(rejection))["status"], "rejected");
+            assert_eq!(
+                response_outcome_body(
+                    response,
+                    session,
+                    ResponseFeedbackOutcome::Rejected(rejection)
+                )["status"],
+                "rejected"
+            );
         }
     }
 }

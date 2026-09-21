@@ -213,153 +213,170 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
         use neothd::daemon::gui_chat_bridge::{
             GuiChatBridgeError, GuiChatPhase, GuiChatTerminalState,
         };
-        let (metadata, sequence, kind, terminal, response_feedback, response_feedback_unavailable) = match event {
-            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Accepted {
-                subscription,
-                sequence,
-            } => (subscription, sequence, DaemonChatEventKind::Accepted, false, None, false),
-            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::PhaseChanged {
-                subscription,
-                sequence,
-                phase,
-            } => (
-                subscription,
-                sequence,
-                match phase {
-                    GuiChatPhase::Waiting => DaemonChatEventKind::PhaseWaiting,
-                    GuiChatPhase::Receiving => DaemonChatEventKind::PhaseReceiving,
-                    GuiChatPhase::Finalizing => DaemonChatEventKind::PhaseFinalizing,
-                },
-                false,
-                None,
-                false,
-            ),
-            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Notice {
-                subscription,
-                sequence,
-                ..
-            } => (subscription, sequence, DaemonChatEventKind::Notice, false, None, false),
-            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Delta {
-                subscription,
-                sequence,
-                text,
-            } => (
-                subscription,
-                sequence,
-                DaemonChatEventKind::Delta(text),
-                false,
-                None,
-                false,
-            ),
-            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ReasoningDelta {
-                subscription,
-                sequence,
-                reasoning_sequence,
-                delta,
-            } => (
-                subscription,
-                sequence,
-                DaemonChatEventKind::ReasoningDelta {
+        let (metadata, sequence, kind, terminal, response_feedback, response_feedback_unavailable) =
+            match event {
+                neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Accepted {
+                    subscription,
+                    sequence,
+                } => (
+                    subscription,
+                    sequence,
+                    DaemonChatEventKind::Accepted,
+                    false,
+                    None,
+                    false,
+                ),
+                neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::PhaseChanged {
+                    subscription,
+                    sequence,
+                    phase,
+                } => (
+                    subscription,
+                    sequence,
+                    match phase {
+                        GuiChatPhase::Waiting => DaemonChatEventKind::PhaseWaiting,
+                        GuiChatPhase::Receiving => DaemonChatEventKind::PhaseReceiving,
+                        GuiChatPhase::Finalizing => DaemonChatEventKind::PhaseFinalizing,
+                    },
+                    false,
+                    None,
+                    false,
+                ),
+                neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Notice {
+                    subscription,
+                    sequence,
+                    ..
+                } => (
+                    subscription,
+                    sequence,
+                    DaemonChatEventKind::Notice,
+                    false,
+                    None,
+                    false,
+                ),
+                neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Delta {
+                    subscription,
+                    sequence,
+                    text,
+                } => (
+                    subscription,
+                    sequence,
+                    DaemonChatEventKind::Delta(text),
+                    false,
+                    None,
+                    false,
+                ),
+                neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ReasoningDelta {
+                    subscription,
+                    sequence,
                     reasoning_sequence,
                     delta,
-                },
-                false,
-                None,
-                false,
-            ),
-            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ReasoningState {
-                subscription,
-                sequence,
-                reasoning_sequence,
-                state,
-                event_count,
-                byte_count,
-            } => (
-                subscription,
-                sequence,
-                DaemonChatEventKind::ReasoningState {
+                } => (
+                    subscription,
+                    sequence,
+                    DaemonChatEventKind::ReasoningDelta {
+                        reasoning_sequence,
+                        delta,
+                    },
+                    false,
+                    None,
+                    false,
+                ),
+                neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ReasoningState {
+                    subscription,
+                    sequence,
                     reasoning_sequence,
                     state,
                     event_count,
                     byte_count,
-                },
-                false,
-                None,
-                false,
-            ),
-            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ReasoningCheckpoint {
-                subscription,
-                sequence,
-                reasoning_sequence,
-                event_count,
-                byte_count,
-            } => (
-                subscription,
-                sequence,
-                DaemonChatEventKind::ReasoningCheckpoint {
+                } => (
+                    subscription,
+                    sequence,
+                    DaemonChatEventKind::ReasoningState {
+                        reasoning_sequence,
+                        state,
+                        event_count,
+                        byte_count,
+                    },
+                    false,
+                    None,
+                    false,
+                ),
+                neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ReasoningCheckpoint {
+                    subscription,
+                    sequence,
                     reasoning_sequence,
                     event_count,
                     byte_count,
-                },
-                false,
-                None,
-                false,
-            ),
-            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ProviderDone {
-                subscription,
-                sequence,
-            } => (
-                subscription,
-                sequence,
-                DaemonChatEventKind::ProviderDone,
-                false,
-                None,
-                false,
-            ),
-            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::CancelRequested {
-                subscription,
-                sequence,
-            } => (
-                subscription,
-                sequence,
-                DaemonChatEventKind::CancelRequested,
-                false,
-                None,
-                false,
-            ),
-            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Terminal {
-                subscription,
-                sequence,
-                state,
-                response_feedback,
-                response_feedback_unavailable,
-                ..
-            } => {
-                let (terminal, response_feedback, response_feedback_unavailable) = match state {
-                    GuiChatTerminalState::Complete => (
-                        DaemonChatTerminal::Complete,
-                        response_feedback,
-                        response_feedback_unavailable,
-                    ),
-                    GuiChatTerminalState::Cancelled => (DaemonChatTerminal::Cancelled, None, false),
-                    GuiChatTerminalState::Failed => (DaemonChatTerminal::Failed, None, false),
-                    GuiChatTerminalState::CrashUnknown => {
-                        (DaemonChatTerminal::CrashUnknown, None, false)
-                    }
-                    GuiChatTerminalState::Indeterminate => {
-                        (DaemonChatTerminal::Indeterminate, None, false)
-                    }
-                };
-                (
+                } => (
                     subscription,
                     sequence,
-                    DaemonChatEventKind::Terminal(terminal),
-                    true,
+                    DaemonChatEventKind::ReasoningCheckpoint {
+                        reasoning_sequence,
+                        event_count,
+                        byte_count,
+                    },
+                    false,
+                    None,
+                    false,
+                ),
+                neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ProviderDone {
+                    subscription,
+                    sequence,
+                } => (
+                    subscription,
+                    sequence,
+                    DaemonChatEventKind::ProviderDone,
+                    false,
+                    None,
+                    false,
+                ),
+                neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::CancelRequested {
+                    subscription,
+                    sequence,
+                } => (
+                    subscription,
+                    sequence,
+                    DaemonChatEventKind::CancelRequested,
+                    false,
+                    None,
+                    false,
+                ),
+                neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Terminal {
+                    subscription,
+                    sequence,
+                    state,
                     response_feedback,
                     response_feedback_unavailable,
-                )
-            }
-        };
+                    ..
+                } => {
+                    let (terminal, response_feedback, response_feedback_unavailable) = match state {
+                        GuiChatTerminalState::Complete => (
+                            DaemonChatTerminal::Complete,
+                            response_feedback,
+                            response_feedback_unavailable,
+                        ),
+                        GuiChatTerminalState::Cancelled => {
+                            (DaemonChatTerminal::Cancelled, None, false)
+                        }
+                        GuiChatTerminalState::Failed => (DaemonChatTerminal::Failed, None, false),
+                        GuiChatTerminalState::CrashUnknown => {
+                            (DaemonChatTerminal::CrashUnknown, None, false)
+                        }
+                        GuiChatTerminalState::Indeterminate => {
+                            (DaemonChatTerminal::Indeterminate, None, false)
+                        }
+                    };
+                    (
+                        subscription,
+                        sequence,
+                        DaemonChatEventKind::Terminal(terminal),
+                        true,
+                        response_feedback,
+                        response_feedback_unavailable,
+                    )
+                }
+            };
         let surface = match metadata.surface {
             GuiChatSurface::Main => ChatStreamSurface::Main,
             GuiChatSurface::Buddy => ChatStreamSurface::Buddy,
@@ -454,7 +471,11 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                 {
                     let (response_id, session_id, revision) = response_feedback
                         .map(|target| {
-                            (Some(target.response_id), Some(target.session_id), Some(target.revision))
+                            (
+                                Some(target.response_id),
+                                Some(target.session_id),
+                                Some(target.revision),
+                            )
                         })
                         .unwrap_or((None, None, None));
                     if let Ok(snapshot) = crate::accept_daemon_response_feedback_terminal(
@@ -1645,9 +1666,8 @@ mod tests {
 
     #[test]
     fn daemon_terminal_target_reaches_the_shared_action_map_only_for_the_current_turn() {
-        let projections: crate::ChatResponseFeedbackProjections = Arc::new(
-            std::sync::Mutex::new(std::collections::HashMap::new()),
-        );
+        let projections: crate::ChatResponseFeedbackProjections =
+            Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
         let gui_subscription_session = "neothd-gui";
         let core_terminal_session = "session-w164-core";
         assert_ne!(gui_subscription_session, core_terminal_session);
@@ -1694,27 +1714,32 @@ mod tests {
         // `BridgeSink::on_event` returns at this exact guard before it calls
         // `accept_daemon_response_feedback_terminal`; the newer target above
         // therefore remains the only action target.
-        assert!(projections
-            .lock()
-            .expect("shared target map")
-            .contains_key(&crate::daemon_response_feedback_projection_id(41)));
-
-        let malformed: crate::ChatResponseFeedbackProjections = Arc::new(
-            std::sync::Mutex::new(std::collections::HashMap::new()),
+        assert!(
+            projections
+                .lock()
+                .expect("shared target map")
+                .contains_key(&crate::daemon_response_feedback_projection_id(41))
         );
-        assert!(crate::accept_daemon_response_feedback_terminal(
-            &malformed,
-            42,
-            Some("aabbccddeeff00112233445566778899".into()),
-            None,
-            Some(0),
-            false,
-        )
-        .is_err());
-        assert!(crate::begin_current_response_feedback_action(
-            &malformed,
-            crate::chat_response_feedback::Action::Remove,
-        )
-        .is_none());
+
+        let malformed: crate::ChatResponseFeedbackProjections =
+            Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        assert!(
+            crate::accept_daemon_response_feedback_terminal(
+                &malformed,
+                42,
+                Some("aabbccddeeff00112233445566778899".into()),
+                None,
+                Some(0),
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            crate::begin_current_response_feedback_action(
+                &malformed,
+                crate::chat_response_feedback::Action::Remove,
+            )
+            .is_none()
+        );
     }
 }

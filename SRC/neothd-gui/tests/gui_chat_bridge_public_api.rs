@@ -4,10 +4,9 @@
 
 use neothd::daemon::gui_chat_bridge::{
     GuiChatBridge, GuiChatBridgeEvent, GuiChatBridgePreflight, GuiChatBridgePreflightInput,
-    GuiChatConsentDecision, GuiChatConsentPrompt, GuiChatConsentRoute, GuiChatPhase,
-    GuiChatBridgeResponseFeedbackTarget, GuiChatSubscriptionMetadata, GuiChatSurface,
-    GuiChatTerminalState, GuiChatTurnMetadata,
-    gui_bridge_test_support,
+    GuiChatBridgeResponseFeedbackTarget, GuiChatConsentDecision, GuiChatConsentPrompt,
+    GuiChatConsentRoute, GuiChatPhase, GuiChatSubscriptionMetadata, GuiChatSurface,
+    GuiChatTerminalState, GuiChatTurnMetadata, gui_bridge_test_support,
 };
 use neothd::providers::{ReasoningTerminalState, ReasoningText};
 

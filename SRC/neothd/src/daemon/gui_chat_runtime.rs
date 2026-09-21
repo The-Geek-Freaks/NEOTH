@@ -2582,10 +2582,10 @@ mod lifecycle_tests {
                     input_tokens: 0,
                     output_tokens: 0,
                     elapsed_ms: 0,
-            },
-            lifecycle_receipt_id: GuiChatDigest("1".repeat(64)),
-            response_feedback_target: None,
-            response_feedback_unavailable: false,
+                },
+                lifecycle_receipt_id: GuiChatDigest("1".repeat(64)),
+                response_feedback_target: None,
+                response_feedback_unavailable: false,
             };
             turn.terminal = Some(terminal.clone());
             DaemonGuiChatRuntime::emit(turn, GuiChatFramePayload::ProviderDone);

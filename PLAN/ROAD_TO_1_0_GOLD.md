@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W164 first Hosted result (2026-09-21):** source0837eb4b passed Code Quality
+35644565456. Preflight35644566079 requested 130 formatting hunks in 14 files;
+all were imported exactly from the retained Hosted log. CLI build35644567767
+reported four diagnostics across three causes: missing daemon target import,
+Serde rejection without Display, and an invalid TrySendError tuple access.
+Scoped reviewed repairs retain fixed errors and exactly-once quota release.
+Fresh Hosted formatting/build/native/GUI acceptance remains pending.
+
 **W164 integrated response feedback and W165 remaining repairs (2026-09-21):**
 Response identity is issued after successful direct-CLI drain or an ordered
 live-daemon WAL sync. The private bounded projection supports revision-CAS

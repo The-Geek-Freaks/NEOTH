@@ -216,7 +216,10 @@ pub(crate) fn validate_daemon_plain_chat_response(
     }
     if let Some(target) = terminal.response_feedback.as_ref() {
         if target.response_id.len() != DAEMON_PLAIN_CHAT_RESPONSE_ID_BYTES
-            || !target.response_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || !target
+                .response_id
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
         {
             return Err("chat_response_feedback_id_invalid");
         }

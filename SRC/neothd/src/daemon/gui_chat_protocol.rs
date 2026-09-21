@@ -825,7 +825,10 @@ fn validate_terminal(terminal: &GuiChatTerminal) -> GuiChatResult<()> {
                 ));
             }
             if target.response_id.len() != 32
-                || !target.response_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                || !target
+                    .response_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
             {
                 return Err(GuiChatProtocolError::Invalid(
                     "response_feedback_response_id",
@@ -1532,7 +1535,9 @@ mod tests {
             .response_id = "g".repeat(32);
         assert!(matches!(
             validate_stream_frame(&frame(malformed_response_id)),
-            Err(GuiChatProtocolError::Invalid("response_feedback_response_id"))
+            Err(GuiChatProtocolError::Invalid(
+                "response_feedback_response_id"
+            ))
         ));
 
         let mut empty_session = terminal.clone();
@@ -1585,7 +1590,6 @@ mod tests {
                 "response_feedback_unavailable_not_complete"
             ))
         ));
-
     }
 
     #[test]

@@ -70,10 +70,18 @@ pub struct ActionTarget {
 }
 
 impl ActionTarget {
-    pub fn response_id(&self) -> &str { self.response_id.as_str() }
-    pub fn session_id(&self) -> &str { self.session_id.as_str() }
-    pub const fn revision(&self) -> u64 { self.revision }
-    pub const fn action(&self) -> Action { self.action }
+    pub fn response_id(&self) -> &str {
+        self.response_id.as_str()
+    }
+    pub fn session_id(&self) -> &str {
+        self.session_id.as_str()
+    }
+    pub const fn revision(&self) -> u64 {
+        self.revision
+    }
+    pub const fn action(&self) -> Action {
+        self.action
+    }
 }
 
 impl std::fmt::Debug for ActionTarget {
@@ -106,8 +114,12 @@ impl Drop for TargetFrame {
         self.neoth_stream.zeroize();
         self.request_id.zeroize();
         self.control_token.zeroize();
-        if let Some(response_id) = self.response_id.as_mut() { response_id.zeroize(); }
-        if let Some(session_id) = self.session_id.as_mut() { session_id.zeroize(); }
+        if let Some(response_id) = self.response_id.as_mut() {
+            response_id.zeroize();
+        }
+        if let Some(session_id) = self.session_id.as_mut() {
+            session_id.zeroize();
+        }
         self.status.zeroize();
     }
 }
@@ -172,7 +184,9 @@ impl Projection {
     }
 
     /// The old StreamDone remains the truthful provider completion boundary.
-    pub fn stream_done(&mut self) { self.done_seen = true; }
+    pub fn stream_done(&mut self) {
+        self.done_seen = true;
+    }
 
     /// Daemon GUI terminals already crossed the authenticated bridge boundary.
     /// They carry the same terminal-issued opaque pair as the stream control,
@@ -184,7 +198,10 @@ impl Projection {
         session_id: String,
         revision: u64,
     ) -> Result<Snapshot, &'static str> {
-        if self.fenced || !self.done_seen || self.response_id.is_some() || self.session_id.is_some()
+        if self.fenced
+            || !self.done_seen
+            || self.response_id.is_some()
+            || self.session_id.is_some()
             || !is_response_id(response_id.as_str())
             || !is_session_id(session_id.as_str())
         {
@@ -199,9 +216,12 @@ impl Projection {
     }
 
     pub fn accept_issued_terminal_unavailable(&mut self) -> Result<Snapshot, &'static str> {
-        if self.fenced || !self.done_seen || self.response_id.is_some() || self.session_id.is_some() {
+        if self.fenced || !self.done_seen || self.response_id.is_some() || self.session_id.is_some()
+        {
             self.clear_and_fence();
-            return Err("daemon response feedback unavailable marker is outside its terminal window");
+            return Err(
+                "daemon response feedback unavailable marker is outside its terminal window",
+            );
         }
         self.target_status = TargetStatus::Unavailable;
         Ok(self.snapshot())
@@ -225,12 +245,15 @@ impl Projection {
         expected_control_token: &str,
         protocol_version: u64,
     ) -> Result<Snapshot, &'static str> {
-        if self.fenced || !self.done_seen || self.response_id.is_some() || self.session_id.is_some() {
+        if self.fenced || !self.done_seen || self.response_id.is_some() || self.session_id.is_some()
+        {
             self.clear_and_fence();
             return Err("response feedback target is outside its terminal window");
         }
         let result = self.apply_json_inner(line, expected_control_token, protocol_version);
-        if result.is_err() { self.clear_and_fence(); }
+        if result.is_err() {
+            self.clear_and_fence();
+        }
         result
     }
 
@@ -256,14 +279,14 @@ impl Projection {
             .ok_or("unknown response feedback target status")?;
         match status {
             TargetStatus::Ready => {
-                let (Some(response_id), Some(session_id), Some(revision)) =
-                    (frame.response_id.take(), frame.session_id.take(), frame.revision.take())
-                else {
+                let (Some(response_id), Some(session_id), Some(revision)) = (
+                    frame.response_id.take(),
+                    frame.session_id.take(),
+                    frame.revision.take(),
+                ) else {
                     return Err("ready response feedback target is missing identity");
                 };
-                if !is_response_id(response_id.as_str())
-                    || !is_session_id(session_id.as_str())
-                {
+                if !is_response_id(response_id.as_str()) || !is_session_id(session_id.as_str()) {
                     return Err("invalid response feedback target identity");
                 }
                 self.response_id = Some(Zeroizing::new(response_id));
@@ -271,7 +294,10 @@ impl Projection {
                 self.revision = revision;
             }
             TargetStatus::Unavailable => {
-                if frame.response_id.is_some() || frame.session_id.is_some() || frame.revision.is_some() {
+                if frame.response_id.is_some()
+                    || frame.session_id.is_some()
+                    || frame.revision.is_some()
+                {
                     return Err("unavailable response feedback target must not carry identity");
                 }
             }
@@ -285,7 +311,9 @@ impl Projection {
     /// `finish_verified_action`.
     pub fn begin_action(&mut self, action: Action) -> Option<ActionTarget> {
         let snapshot = self.snapshot();
-        if !snapshot.available || snapshot.running { return None; }
+        if !snapshot.available || snapshot.running {
+            return None;
+        }
         let (Some(response_id), Some(session_id)) = (&self.response_id, &self.session_id) else {
             return None;
         };
@@ -307,8 +335,14 @@ impl Projection {
         revision: u64,
         active_signal: Option<FeedbackSignal>,
     ) -> Result<Snapshot, &'static str> {
-        let same_target = self.response_id.as_deref().is_some_and(|id| id == target.response_id())
-            && self.session_id.as_deref().is_some_and(|id| id == target.session_id());
+        let same_target = self
+            .response_id
+            .as_deref()
+            .is_some_and(|id| id == target.response_id())
+            && self
+                .session_id
+                .as_deref()
+                .is_some_and(|id| id == target.session_id());
         if !self.running || !same_target || revision < target.revision() {
             self.clear_and_fence();
             return Err("response feedback receipt/readback did not bind the current target");
@@ -326,13 +360,18 @@ impl Projection {
 }
 
 fn is_response_id(value: &str) -> bool {
-    value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    value.len() == 32
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn is_session_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAX_SESSION_ID_BYTES
-        && value.bytes().all(|byte| byte.is_ascii_graphic() || byte == b' ')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() || byte == b' ')
 }
 
 #[cfg(test)]
@@ -352,10 +391,24 @@ mod tests {
     #[test]
     fn target_becomes_actionable_only_after_done_then_exact_authenticated_frame() {
         let mut projection = Projection::new("request-a".into());
-        assert!(projection.apply_json(&target("ready", "aabbccddeeff00112233445566778899", "session-a", 0), "token-a", 3).is_err());
+        assert!(
+            projection
+                .apply_json(
+                    &target("ready", "aabbccddeeff00112233445566778899", "session-a", 0),
+                    "token-a",
+                    3
+                )
+                .is_err()
+        );
         projection = Projection::new("request-a".into());
         projection.stream_done();
-        let snapshot = projection.apply_json(&target("ready", "aabbccddeeff00112233445566778899", "session-a", 0), "token-a", 3).expect("post-drain target");
+        let snapshot = projection
+            .apply_json(
+                &target("ready", "aabbccddeeff00112233445566778899", "session-a", 0),
+                "token-a",
+                3,
+            )
+            .expect("post-drain target");
         assert!(snapshot.available);
         assert!(!snapshot.running);
     }
@@ -378,14 +431,29 @@ mod tests {
     fn action_is_singleflight_and_only_exact_fresh_readback_can_repaint_it() {
         let mut projection = Projection::new("request-a".into());
         projection.stream_done();
-        projection.apply_json(&target("ready", "aabbccddeeff00112233445566778899", "session-a", 2), "token-a", 3).expect("target");
-        let action = projection.begin_action(Action::Set(FeedbackSignal::NeedsCorrection)).expect("first action");
+        projection
+            .apply_json(
+                &target("ready", "aabbccddeeff00112233445566778899", "session-a", 2),
+                "token-a",
+                3,
+            )
+            .expect("target");
+        let action = projection
+            .begin_action(Action::Set(FeedbackSignal::NeedsCorrection))
+            .expect("first action");
         assert!(projection.begin_action(Action::Remove).is_none());
-        let snapshot = projection.finish_verified_action(&action, 3, Some(FeedbackSignal::NeedsCorrection)).expect("fresh readback");
+        let snapshot = projection
+            .finish_verified_action(&action, 3, Some(FeedbackSignal::NeedsCorrection))
+            .expect("fresh readback");
         assert!(!snapshot.running);
-        assert_eq!(snapshot.active_signal, Some(FeedbackSignal::NeedsCorrection));
+        assert_eq!(
+            snapshot.active_signal,
+            Some(FeedbackSignal::NeedsCorrection)
+        );
 
-        let stale = projection.begin_action(Action::Remove).expect("new lease after receipt");
+        let stale = projection
+            .begin_action(Action::Remove)
+            .expect("new lease after receipt");
         assert!(projection.finish_verified_action(&stale, 2, None).is_err());
         assert!(!projection.snapshot().available);
     }

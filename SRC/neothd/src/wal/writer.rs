@@ -1921,16 +1921,15 @@ impl WalWriterHandle {
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         })) {
             Ok(()) => Ok(()),
-            Err(error) => {
-                let result = match &error {
-                    mpsc::error::TrySendError::Full(_) =>
-                        WalError::WriterBackpressured {
-                            capacity: DEFAULT_CHANNEL_CAPACITY,
-                        },
-                    mpsc::error::TrySendError::Closed(_) => WalError::WriterClosed,
-                };
-                error.0.release_unqueued();
-                Err(result)
+            Err(mpsc::error::TrySendError::Full(request)) => {
+                request.release_unqueued();
+                Err(WalError::WriterBackpressured {
+                    capacity: DEFAULT_CHANNEL_CAPACITY,
+                })
+            }
+            Err(mpsc::error::TrySendError::Closed(request)) => {
+                request.release_unqueued();
+                Err(WalError::WriterClosed)
             }
         }
     }
@@ -7349,15 +7348,16 @@ mod tests {
             .expect("flush subsequent batchable tail");
 
         let bytes = read(&seg).await.expect("read after second flush barrier");
-        let first = decode_frame(&bytes[SEGMENT_HEADER_LEN..])
-            .expect("first frame remains readable");
+        let first =
+            decode_frame(&bytes[SEGMENT_HEADER_LEN..]).expect("first frame remains readable");
         let second_offset = SEGMENT_HEADER_LEN + first.header.total_len as usize;
         let second = decode_frame(&bytes[second_offset..])
             .expect("subsequent frame is readable after flush barrier");
         assert_eq!(second.payload, b"second");
 
         drop(handle);
-        join.await.expect("writer remains drainable after flush barriers");
+        join.await
+            .expect("writer remains drainable after flush barriers");
     }
 
     #[tokio::test]

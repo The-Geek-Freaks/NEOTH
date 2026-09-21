@@ -668,10 +668,7 @@ fn render_daemon_plain_chat_response_to(
         terminal.response_feedback_target(),
         terminal.response_feedback_unavailable(),
     )?;
-    chat_turn_pipeline::emit_terminal(
-        output,
-        terminal,
-    )
+    chat_turn_pipeline::emit_terminal(output, terminal)
 }
 
 /// Inner entry point that takes a pre-built `Provider`. Used by `run_chat`
@@ -4515,7 +4512,11 @@ fn emit_response_feedback_target(
             response_id: target.map(|target| target.response_id.as_str()),
             session_id: target.map(|target| target.session_id.as_str()),
             revision: target.map(|target| target.revision),
-            status: if target.is_some() { "ready" } else { "unavailable" },
+            status: if target.is_some() {
+                "ready"
+            } else {
+                "unavailable"
+            },
         })
         .context("serialize response-feedback target frame")?;
         let mut frames = Vec::new();
@@ -8858,7 +8859,10 @@ fn finish_cli_chat_turn_with_response_feedback(
                             terminal.mark_response_feedback_unavailable();
                         }
                         Err(error) => {
-                            tracing::warn!(?error, "response-feedback target unavailable after terminal drain");
+                            tracing::warn!(
+                                ?error,
+                                "response-feedback target unavailable after terminal drain"
+                            );
                             terminal.mark_response_feedback_unavailable();
                         }
                     }
@@ -19884,9 +19888,16 @@ modes:
                     let controls = frames
                         .lines()
                         .filter_map(|line| line.strip_prefix(CHAT_STREAM_CONTROL_PREFIX))
-                        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("throughput JSON"))
+                        .map(|line| {
+                            serde_json::from_str::<serde_json::Value>(line)
+                                .expect("throughput JSON")
+                        })
                         .collect::<Vec<_>>();
-                    assert_eq!(controls.len(), 1, "fixture filters one control record at a time");
+                    assert_eq!(
+                        controls.len(),
+                        1,
+                        "fixture filters one control record at a time"
+                    );
                     let control = &controls[0];
                     assert_eq!(control["neoth_stream"], "throughput_state");
                     assert_eq!(control["protocol_version"], CHAT_STREAM_PROTOCOL_VERSION);
@@ -24868,8 +24879,7 @@ mod wave35_adapter_lifecycle_tests {
     }
 
     fn feedback_frame_from(sink: &CollectingSink) -> serde_json::Value {
-        let [ChatTurnEvent::Output(ChatOutput::StreamFrames { frames })] = sink.0.as_slice()
-        else {
+        let [ChatTurnEvent::Output(ChatOutput::StreamFrames { frames })] = sink.0.as_slice() else {
             panic!("expected exactly one authenticated feedback control frame");
         };
         let line = frames
@@ -25019,11 +25029,13 @@ mod wave35_adapter_lifecycle_tests {
         .unwrap();
         assert!(matches!(
             absent_sink.0.as_slice(),
-            [ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete {
-                response_feedback: None,
-                response_feedback_unavailable: false,
-                ..
-            })]
+            [ChatTurnEvent::Terminal(
+                chat_turn_pipeline::ChatTurnTerminal::Complete {
+                    response_feedback: None,
+                    response_feedback_unavailable: false,
+                    ..
+                }
+            )]
         ));
     }
 
@@ -25064,7 +25076,12 @@ mod wave35_adapter_lifecycle_tests {
                 && text.contains(target.session_id.as_str())
                 && text.contains("revision=0")
         ));
-        assert!(home.path().join("feedback").join("response-feedback.json").exists());
+        assert!(
+            home.path()
+                .join("feedback")
+                .join("response-feedback.json")
+                .exists()
+        );
 
         let failed_home = tempfile::tempdir().expect("temporary failed-drain home");
         let mut failed_sink = CollectingSink::default();
@@ -25076,17 +25093,19 @@ mod wave35_adapter_lifecycle_tests {
             response_feedback: None,
             response_feedback_unavailable: false,
         });
-        assert!(finish_cli_chat_turn_with_response_feedback(
-            Ok(Some(done())),
-            Err(anyhow::anyhow!("writer drain failed")),
-            &mut failed_failure,
-            &mut failed_terminal,
-            &mut failed_sink,
-            failed_home.path(),
-            false,
-            None,
-        )
-        .is_err());
+        assert!(
+            finish_cli_chat_turn_with_response_feedback(
+                Ok(Some(done())),
+                Err(anyhow::anyhow!("writer drain failed")),
+                &mut failed_failure,
+                &mut failed_terminal,
+                &mut failed_sink,
+                failed_home.path(),
+                false,
+                None,
+            )
+            .is_err()
+        );
         assert!(failed_sink.0.is_empty());
         assert!(failed_terminal.is_some());
         assert!(!failed_home.path().join("feedback").exists());

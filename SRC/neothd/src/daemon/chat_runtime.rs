@@ -19,7 +19,8 @@ use crate::config::reload::{AcceptedConfigSnapshot, ReloadController};
 use crate::daemon::audit_rpc::{
     CHAT_TURN_RESPONSE_TIMEOUT, DAEMON_PLAIN_CHAT_MAX_RECORDS,
     DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES, DaemonPlainChatRecord, DaemonPlainChatRecordKind,
-    DaemonPlainChatRequest, DaemonPlainChatResponse, DaemonPlainChatTerminal,
+    DaemonPlainChatRequest, DaemonPlainChatResponse, DaemonPlainChatResponseFeedbackTarget,
+    DaemonPlainChatTerminal,
     validate_daemon_plain_chat_request, validate_daemon_plain_chat_response,
 };
 use crate::providers::Provider;
@@ -312,13 +313,13 @@ impl DaemonChatRuntime {
             false,
             crate::time::now_unix_i64(),
         ) {
-            Ok(Some(status)) => terminal.set_response_feedback_target(
-                chat_turn_pipeline::ResponseFeedbackTarget {
+            Ok(Some(status)) => {
+                terminal.set_response_feedback_target(chat_turn_pipeline::ResponseFeedbackTarget {
                     response_id: status.response_id.as_str().to_owned(),
                     session_id: status.session_id,
                     revision: status.revision,
-                },
-            ),
+                })
+            }
             Ok(None) | Err(_) => terminal.mark_response_feedback_unavailable(),
         }
     }

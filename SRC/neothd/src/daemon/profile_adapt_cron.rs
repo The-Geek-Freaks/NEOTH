@@ -91,18 +91,21 @@ pub async fn run_profile_adapt_tick(
     Ok(feedback_added + response_feedback_added + snapshot_added)
 }
 
-async fn run_response_feedback_consumer(
-    home: &std::path::Path,
-    writer: &WalWriterHandle,
-) -> usize {
+async fn run_response_feedback_consumer(home: &std::path::Path, writer: &WalWriterHandle) -> usize {
     let summary = match crate::feedback::response::active_response_feedback_summary(home) {
         Ok(summary) => summary,
         Err(error) => {
-            tracing::debug!(?error, "profile-adapt cron: response-feedback projection unavailable");
+            tracing::debug!(
+                ?error,
+                "profile-adapt cron: response-feedback projection unavailable"
+            );
             return 0;
         }
     };
-    let Some(proposal) = crate::feedback::consume::propose_from_active_response_feedback(&summary) else { return 0; };
+    let Some(proposal) = crate::feedback::consume::propose_from_active_response_feedback(&summary)
+    else {
+        return 0;
+    };
     match crate::cli::self_dev::store_proposals(home, std::slice::from_ref(&proposal), Some(writer))
         .await
     {
