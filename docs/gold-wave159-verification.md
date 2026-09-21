@@ -81,3 +81,9 @@ Reference35630100371 failed at two parameter documentation comments; both are
 now ordinary comments. FORMAT-HOSTED.json and COMPILE-COMMENT-REPAIR.json retain
 the source/log hashes. New hosted compilation/reference and native/GUI tests
 remain pending. This patch does not admit W162 or close GOLD-LF-P2-08.
+
+Repair536fafce passed Preflight35631163948, Code Quality35631164047 and hosted
+Core/reference35631164764 (job106437432232). The generated reference is imported
+byte-for-byte with SHA-256 9BE613783FC2C1E8DBD2A203BF75A65F9644889E260F29526B859E498119419C.
+This establishes the core build and generated CLI surface, not native/GUI
+behavior. Full hosted CI remains required on the resulting reference commit.

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W159_HOSTED_FORMAT_AND_PARAMETER_COMMENT_REPAIR_PENDING",
-  "base": "482ffd1ce2d1fcfba14d4c4c54befe0d5a645feb",
+  "status": "W159_CORE_BUILD_REFERENCE_PASS_NATIVE_GUI_PENDING",
+  "base": "536fafce90e0d80f457af91417fccda951d02206",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 60711,
-    "sha256": "76753C5B0B7029A8CC5DD7CADD48D996C6D519177EC1E4C1519C102B564CC708"
+    "bytes": 60705,
+    "sha256": "C48C6212EF4BE2E235B4C23144C63F794B67C7C2EC0DA6D8D2446AE07424BC3A"
   },
   "sourceInputs": 351,
   "requiredNativeTests": [
@@ -4064,7 +4064,7 @@
     "lineEndingNormalization": "work/gold-20260906/wave159-session-id/LF-NORMALIZATION.json",
     "whitespaceCleanup": "work/gold-20260906/wave159-session-id/WHITESPACE-CLEANUP.json",
     "nativeExecution": "pending",
-    "generatedCliReference": "pending exact admitted hosted binary",
+    "generatedCliReference": "Hosted core/reference35631164764 succeeded on536fafce; exact generated artifact9BE61378 imported",
     "releaseReady": false,
     "excludedW162": true
   },
@@ -4083,5 +4083,16 @@
     "compileRepairSha256": "7377541DE631758EDFE5584908825903CCC62679E3E150526255B905383AC3FE",
     "nativeExecution": "pending",
     "excludedW162": true
+  },
+  "wave159CorePass": {
+    "run": 35631164764,
+    "job": 106437432232,
+    "sourceHead": "536fafce90e0d80f457af91417fccda951d02206",
+    "outcome": "success",
+    "artifact": "generated-cli-reference",
+    "path": "docs/cli-commands.md",
+    "sha256": "9BE613783FC2C1E8DBD2A203BF75A65F9644889E260F29526B859E498119419C",
+    "bytes": 230435,
+    "note": "Exact hosted binary artifact; no manual reference or local executable validation"
   }
 }

@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W159-admitted-wal-session-candidate",
-  "base": "482ffd1ce2d1fcfba14d4c4c54befe0d5a645feb",
-  "capturedUtc": "2026-09-21T17:16:02.9897476Z",
-  "validationStatus": "W159_HOSTED_FORMAT_AND_PARAMETER_COMMENT_REPAIR_PENDING",
+  "base": "536fafce90e0d80f457af91417fccda951d02206",
+  "capturedUtc": "2026-09-21T17:22:42.0221902Z",
+  "validationStatus": "W159_CORE_BUILD_REFERENCE_PASS_NATIVE_GUI_PENDING",
   "scopeNote": "351 source inputs; W159 reviewed admitted WAL session context across34files, projectionv40 and exact/unattributed query;48 regression cases (44 added requirements). Required316 universal native+3Windows+2Unix;56GUI+12callbacks;7optional. W155 one exact hosted consent format hunk included. W162 source excluded.",
   "files": [
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 229908,
-      "sha256": "3E3ADE1EC9283383A49582AAA91B31E6138ED0482E83367758FF3632226874D7"
+      "bytes": 230435,
+      "sha256": "9BE613783FC2C1E8DBD2A203BF75A65F9644889E260F29526B859E498119419C"
     },
     {
       "path": "docs/code-map-lifecycle.md",

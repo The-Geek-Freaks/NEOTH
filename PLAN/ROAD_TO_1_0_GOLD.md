@@ -12,8 +12,10 @@
 35630099785. Preflight35630100747 requested formatting corrections; those exact
 79 hosted hunks across 20 source files are imported. CLI-reference35630100371 stopped at two
 parameter documentation comments in mcp/dispatch_loop.rs; both are now ordinary comments. These were compile
-errors, not runtime evidence. The generated session-selector reference and
-fresh native/GUI execution remain pending. W162 GUI/producer integration is
+errors. Repair536fafce passed Preflight35631163948, Code Quality35631164047,
+and Core/reference35631164764. Its exact generated session-selector reference
+is imported (SHA-256 9BE613783FC2C1E8DBD2A203BF75A65F9644889E260F29526B859E498119419C).
+Fresh native/GUI behavior remains pending. W162 GUI/producer integration is
 separate unpublished work; no Road checkbox closes.
 
 **W159 admitted WAL-session integration (2026-09-21):** the 34-file implementation

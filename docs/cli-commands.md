@@ -4088,7 +4088,7 @@ Read-only WAL segment inspector. `stats <file>` counts frames per event-type; `s
 
 ### `neoth wal export`
 
-KF-03 — export a tamper-evidence `.neoth-proof` bundle covering every frame in a time window, plus the HMAC compaction marker(s) sealing those bytes. A third party re-checks integrity offline (`neoth wal verify-proof`). `--sign` uses the operator's auto-managed ed25519 proof key (generated on first use; no minisign tool / keygen / password)
+KF-03 — export a tamper-evidence `.neoth-proof` bundle covering every frame in a time window, plus the HMAC compaction marker(s) sealing those bytes. A third party re-checks integrity offline (`neoth wal verify-proof`). `--sign` uses the operator's auto-managed ed25519 proof key (generated on first use; no minisign tool / keygen / password). Export intentionally has no session filter: this schema proves a whole time window and its marker coverage, not an unverifiable frame subset
 
 - `--window <WINDOW>` — Window: a duration back from now (`24h`, `7d`, `30m`, `3600`) or a UTC RFC3339 range (`2026-05-01T00:00:00Z..2026-05-02T00:00:00Z`)
 - `--out <PATH>` — Output path. Default: `~/.neoth/exports/neoth-<unix>.neoth-proof`
@@ -4145,12 +4145,13 @@ Inspect the bounded authenticated Context Evidence receipt ledger. With no handl
 
 ### `neoth wal show`
 
-Pretty-print frames, newest first. With no `<segment>`, scans EVERY `~/.neoth/wal/*.wal` segment so an operator can audit the whole chain without naming a file. `--type` filters to one event type — this is how an operator proves a guarantee, e.g. `neoth wal show --type plugin_cap_denied` (every denied plugin hostcall) or `--type provider_fallback_attempted` (every 429 failover)
+Pretty-print frames, newest first. With no `<segment>`, scans EVERY `~/.neoth/wal/*.wal` segment so an operator can audit the whole chain without naming a file. `--type` filters to one event type — this is how an operator proves a guarantee, e.g. `neoth wal show --type plugin_cap_denied` (every denied plugin hostcall) or `--type provider_fallback_attempted` (every 429 failover). `--session` partitions decoded frames before the same HLC replay ordering; it accepts only an opaque lower-hex header ID or the explicit legacy bucket `unattributed`
 
 - `<SEGMENT>` — Segment file. Omit to scan ALL `~/.neoth/wal/*.wal`
 - `--type <TYPE>` — Filter to ONE event type. Accepts a name (`plugin_cap_denied`), hex (`0xC7` / `c7`), or decimal. See `neoth events` for names
 - `--limit <LIMIT>` — Show at most this many (the most recent). `--last` is an alias
 - `--skip <SKIP>` — Skip this many of the most-recent frames before showing
+- `--session <OPAQUE_LOWER_HEX_OR_UNATTRIBUTED>` — Restrict output to one opaque WAL session ID (32 lower-hex) or the explicit legacy bucket `unattributed`. Raw logical session labels are never accepted or displayed
 
 ### `neoth wal stats`
 
