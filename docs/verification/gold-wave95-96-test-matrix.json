@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 62229,
-    "sha256": "050B8581D15090EF2F84804C1598A2E85FD17A04EB040DC6D00F1672B3B1A222"
+    "sha256": "9BED993892556D37927E90BA53916ACBCD023D01FE8052F65D67520AC5CD60C6"
   },
   "sourceInputs": 360,
   "requiredNativeTests": [
@@ -942,25 +942,25 @@
     {
       "test": "permissions::gate::tests::w138_retained_skill_deny_blocks_effect_even_when_global_and_confirm_allow",
       "sourcePath": "SRC/neothd/src/permissions/gate.rs",
-      "sourceSha256": "DD7A43EF28E3536E5A9FE197A24F1B653403D21BF498D00500E87D7C93A302EF",
+      "sourceSha256": "BEBC63E9F80BC6712AD9C0DB863DA610E95426832057EDF6227D7B8A3116EFDC",
       "junitClass": "neoth"
     },
     {
       "test": "permissions::gate::tests::w138_retained_skill_confirm_uses_channel_operator_answer",
       "sourcePath": "SRC/neothd/src/permissions/gate.rs",
-      "sourceSha256": "DD7A43EF28E3536E5A9FE197A24F1B653403D21BF498D00500E87D7C93A302EF",
+      "sourceSha256": "BEBC63E9F80BC6712AD9C0DB863DA610E95426832057EDF6227D7B8A3116EFDC",
       "junitClass": "neoth"
     },
     {
       "test": "permissions::gate::tests::w138_effect_gate_applies_global_tightening_after_route_is_retained",
       "sourcePath": "SRC/neothd/src/permissions/gate.rs",
-      "sourceSha256": "DD7A43EF28E3536E5A9FE197A24F1B653403D21BF498D00500E87D7C93A302EF",
+      "sourceSha256": "BEBC63E9F80BC6712AD9C0DB863DA610E95426832057EDF6227D7B8A3116EFDC",
       "junitClass": "neoth"
     },
     {
       "test": "permissions::gate::tests::w138_retained_route_without_skill_cap_preserves_global_effect_behavior",
       "sourcePath": "SRC/neothd/src/permissions/gate.rs",
-      "sourceSha256": "DD7A43EF28E3536E5A9FE197A24F1B653403D21BF498D00500E87D7C93A302EF",
+      "sourceSha256": "BEBC63E9F80BC6712AD9C0DB863DA610E95426832057EDF6227D7B8A3116EFDC",
       "junitClass": "neoth"
     },
     {
@@ -990,7 +990,7 @@
     {
       "test": "permissions::gate::tests::w138_channel_approval_rechecks_reloaded_cap_and_audits_current_deny",
       "sourcePath": "SRC/neothd/src/permissions/gate.rs",
-      "sourceSha256": "DD7A43EF28E3536E5A9FE197A24F1B653403D21BF498D00500E87D7C93A302EF",
+      "sourceSha256": "BEBC63E9F80BC6712AD9C0DB863DA610E95426832057EDF6227D7B8A3116EFDC",
       "junitClass": "neoth"
     },
     {
@@ -1824,7 +1824,7 @@
     {
       "test": "permissions::gate::tests::admitted_writer_sink_stamps_permission_and_trust_headers",
       "sourcePath": "SRC/neothd/src/permissions/gate.rs",
-      "sourceSha256": "DD7A43EF28E3536E5A9FE197A24F1B653403D21BF498D00500E87D7C93A302EF",
+      "sourceSha256": "BEBC63E9F80BC6712AD9C0DB863DA610E95426832057EDF6227D7B8A3116EFDC",
       "junitClass": "neoth"
     },
     {
@@ -5070,5 +5070,19 @@
     },
     "excluded": "W164 responsefeedback and remaining W165 chat/gui/loop repairs are uncommitted and excluded",
     "localExecution": false
+  },
+  "wave165HostedFormat": {
+    "hunks": 1,
+    "receipt": "work/gold-20260906/wave165-hosted-repair/FORMAT-HOSTED.json",
+    "run": 35641912718,
+    "path": "SRC/neothd/src/permissions/gate.rs",
+    "codeQualityConclusion": "success",
+    "logSha256": "1FFBC1A20970F731D5F1DDF67E58C130B71B26E6C355CC508C7365058D0EF3E0",
+    "source": "8c5b4fe0babbe7449de50f32c81b988433cfb455",
+    "codeQualityRun": 35641911878,
+    "status": "fresh_preflight_pending",
+    "localFormatterRan": false,
+    "receiptSha256": "4C78D4EC5F95FECAA6B28438451751D60442533FE7FF28F6FEA6D5FBA32A9234",
+    "after": "BEBC63E9F80BC6712AD9C0DB863DA610E95426832057EDF6227D7B8A3116EFDC"
   }
 }

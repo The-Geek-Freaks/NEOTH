@@ -1,8 +1,8 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W163-recall-provenance-chip-candidate",
-  "base": "6ef32dfdb5dabfdc2ff02540600e5be71ddb0b63",
-  "capturedUtc": "2026-09-21T18:56:33.7280131Z",
+  "base": "8c5b4fe0babbe7449de50f32c81b988433cfb455",
+  "capturedUtc": "2026-09-21T19:01:57.0082709Z",
   "validationStatus": "W165_SCOPED_HOSTED_WINDOWS_REPAIRS_PENDING_RERUN",
   "scopeNote": "W163 source remains admitted; eight W165 source paths repair five canonical-home WAL fixtures, two baseline migration fixtures, citation parity triage, and channel own-home registry/final receipt. W164 work-in-progress excluded. Hosted native/GUI/release acceptance remains pending.",
   "files": [
@@ -1303,8 +1303,8 @@
     },
     {
       "path": "SRC/neothd/src/permissions/gate.rs",
-      "sha256": "DD7A43EF28E3536E5A9FE197A24F1B653403D21BF498D00500E87D7C93A302EF",
-      "bytes": 90730
+      "sha256": "BEBC63E9F80BC6712AD9C0DB863DA610E95426832057EDF6227D7B8A3116EFDC",
+      "bytes": 90742
     },
     {
       "path": "SRC/neothd/src/permissions/lease.rs",

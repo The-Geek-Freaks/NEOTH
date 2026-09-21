@@ -8,6 +8,10 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+Published8c5b4fe0 passed Code Quality35641911878. Preflight35641912718 requested
+one exact permission-fixture wrapping hunk; imported from Hosted output without
+a local formatter. Fresh Preflight and native execution remain pending.
+
 **W165 initial Hosted Windows repair (2026-09-21):** source6003175f ran 11252
 of 17064 tests: 11232 passed (one leaky), 17 failed, three timed out and 22
 were skipped before fail-fast. Eight independently reviewed source paths repair

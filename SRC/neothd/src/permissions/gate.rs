@@ -902,7 +902,8 @@ mod tests {
         let home = tempdir().unwrap();
         let wal_dir = home.path().join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();
-        let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "permission-gate");
+        let segment =
+            crate::wal::writer::unique_standalone_segment_path(&wal_dir, "permission-gate");
         let (writer, join) = spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         let wal_session = crate::wal::WalSessionContext::from_admitted_identity(
             home.path(),
