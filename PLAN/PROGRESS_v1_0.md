@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W157 hosted strict-lint follow-up (2026-09-21):** source ff146652 passed
+workspace formatting and slim-core Clippy; full Linux Clippy then rejected
+one now-unfulfilled `dead_code` expectation in the shared GUI integration
+harness. The obsolete expectation is removed, preserving its module import
+and every test assertion. See [W157](../docs/gold-wave157-verification.md).
+Current Windows/macOS native jobs and preview35604567130 continue; this lint
+failure alone does not invalidate their runtime results. New Linux strict
+lint remains required. W153 is still uncommitted and excluded from these
+runs. No Road checkbox closes.
+
+W156 exact source ff146652 passed Preflight35604300662 and
+CodeQuality35604299515. Full CI35604563909 and Windows preview35604567130
+are dispatched for that source; native/GUI execution remains pending.
+
 W156 hosted formatting: CodeQuality35603984938 passed on21785691.
 The two exact main.rs Rustfmt postimages from Preflight35603984840 are
 imported. Fresh native/GUI compilation and acceptance remain pending.

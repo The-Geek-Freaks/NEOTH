@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W156_HOSTED_COMPILE_REPAIR_EXECUTION_REQUIRED",
-  "base": "217856916dca832202702ce3ede7179c1751fa73",
+  "status": "W157_HOSTED_LINT_EXPECTATION_REPAIR_EXECUTION_REQUIRED",
+  "base": "ff146652e6ef230bd500206978f183e5040644d6",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 55244,
-    "sha256": "5DAC9F84895EB92F863D8A08524AEFF66E8E6C6A75248F65CCE5EE4369786FF1"
+    "bytes": 55291,
+    "sha256": "C733FCB573EF2C54C8CEBFBEEC7C3AED9E7E9D2D3F956AF0ADCE767E710B9C6F"
   },
   "sourceInputs": 320,
   "requiredNativeTests": [
@@ -498,19 +498,19 @@
     {
       "test": "mapped_pairing_gui_command_parses_with_the_real_cli_for_both_states",
       "sourcePath": "SRC/neothd/tests/gui_channel_status.rs",
-      "sourceSha256": "16523D7B19F730CE9C2FF215E32D330D238FA49AF12B021BFE44D74B18E4C304",
+      "sourceSha256": "43AFCED4C0E2E33D002A7BF076F4B08EDC51D7B52B745B7AD01932493A4F024D",
       "junitClass": "neoth::gui_channel_status"
     },
     {
       "test": "pending_pairing_gui_commands_parse_with_the_real_cli",
       "sourcePath": "SRC/neothd/tests/gui_channel_status.rs",
-      "sourceSha256": "16523D7B19F730CE9C2FF215E32D330D238FA49AF12B021BFE44D74B18E4C304",
+      "sourceSha256": "43AFCED4C0E2E33D002A7BF076F4B08EDC51D7B52B745B7AD01932493A4F024D",
       "junitClass": "neoth::gui_channel_status"
     },
     {
       "test": "pending_pairing_parser_and_dismissal_receipt_reject_foreign_or_malformed_data",
       "sourcePath": "SRC/neothd/tests/gui_channel_status.rs",
-      "sourceSha256": "16523D7B19F730CE9C2FF215E32D330D238FA49AF12B021BFE44D74B18E4C304",
+      "sourceSha256": "43AFCED4C0E2E33D002A7BF076F4B08EDC51D7B52B745B7AD01932493A4F024D",
       "junitClass": "neoth::gui_channel_status"
     },
     {
@@ -534,13 +534,13 @@
     {
       "test": "private_pairing_approval_gui_command_parses_without_secrets_in_argv",
       "sourcePath": "SRC/neothd/tests/gui_channel_status.rs",
-      "sourceSha256": "16523D7B19F730CE9C2FF215E32D330D238FA49AF12B021BFE44D74B18E4C304",
+      "sourceSha256": "43AFCED4C0E2E33D002A7BF076F4B08EDC51D7B52B745B7AD01932493A4F024D",
       "junitClass": "neoth::gui_channel_status"
     },
     {
       "test": "private_pairing_approval_body_and_receipt_bind_the_exact_request",
       "sourcePath": "SRC/neothd/tests/gui_channel_status.rs",
-      "sourceSha256": "16523D7B19F730CE9C2FF215E32D330D238FA49AF12B021BFE44D74B18E4C304",
+      "sourceSha256": "43AFCED4C0E2E33D002A7BF076F4B08EDC51D7B52B745B7AD01932493A4F024D",
       "junitClass": "neoth::gui_channel_status"
     },
     {
@@ -624,13 +624,13 @@
     {
       "test": "legacy_telegram_migration_gui_command_parses_with_the_real_cli",
       "sourcePath": "SRC/neothd/tests/gui_channel_status.rs",
-      "sourceSha256": "16523D7B19F730CE9C2FF215E32D330D238FA49AF12B021BFE44D74B18E4C304",
+      "sourceSha256": "43AFCED4C0E2E33D002A7BF076F4B08EDC51D7B52B745B7AD01932493A4F024D",
       "junitClass": "neoth::gui_channel_status"
     },
     {
       "test": "legacy_telegram_migration_receipt_binds_all_terminal_fields",
       "sourcePath": "SRC/neothd/tests/gui_channel_status.rs",
-      "sourceSha256": "16523D7B19F730CE9C2FF215E32D330D238FA49AF12B021BFE44D74B18E4C304",
+      "sourceSha256": "43AFCED4C0E2E33D002A7BF076F4B08EDC51D7B52B745B7AD01932493A4F024D",
       "junitClass": "neoth::gui_channel_status"
     },
     {
@@ -2472,5 +2472,14 @@
       "qualityConclusion": "success",
       "localValidationRan": false
     }
+  },
+  "wave157": {
+    "source": "SRC/neothd/tests/gui_channel_status.rs",
+    "sourceSha256": "43AFCED4C0E2E33D002A7BF076F4B08EDC51D7B52B745B7AD01932493A4F024D",
+    "run": 35604563909,
+    "job": 106348405427,
+    "logSha256": "73F76CD26F7082679F5BEFDBC583D58239F25215BB59D944E6B8E6FC1C004B0D",
+    "change": "Remove exactly the now-unfulfilled dead_code expectation, retain shared production module and all assertions",
+    "execution": "Fresh exact-source hosted strict Clippy and native tests required"
   }
 }

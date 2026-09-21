@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W149-W154-GUI-and-Windows-private-creation",
-  "base": "217856916dca832202702ce3ede7179c1751fa73",
-  "capturedUtc": "2026-09-21T13:12:18.9489042Z",
-  "validationStatus": "W156_HOSTED_COMPILE_REPAIR_PENDING",
-  "scopeNote": "320 source inputs; W156 three-file GUI compile repair over W149/W151/W152/W154. W153 working source is excluded. All executable gates GitHub-only; no Road closure.",
+  "base": "ff146652e6ef230bd500206978f183e5040644d6",
+  "capturedUtc": "2026-09-21T13:24:53.6337430Z",
+  "validationStatus": "W157_HOSTED_LINT_EXPECTATION_REPAIR_PENDING",
+  "scopeNote": "320 source inputs; W157 removes one observed unfulfilled dead-code expectation in the shared GUI integration harness. W153 working source is excluded. All executable gates GitHub-only; no Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -1553,8 +1553,8 @@
     },
     {
       "path": "SRC/neothd/tests/gui_channel_status.rs",
-      "bytes": 16414,
-      "sha256": "16523D7B19F730CE9C2FF215E32D330D238FA49AF12B021BFE44D74B18E4C304"
+      "bytes": 16308,
+      "sha256": "43AFCED4C0E2E33D002A7BF076F4B08EDC51D7B52B745B7AD01932493A4F024D"
     },
     {
       "path": "SRC/neothd/tests/gui_code_map_controller.rs",
