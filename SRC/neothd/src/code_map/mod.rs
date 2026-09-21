@@ -43,6 +43,7 @@ pub mod root_identity;
 pub mod snapshot;
 pub mod symbols;
 pub mod test_coverage;
+pub mod type_hierarchy;
 pub mod walker;
 
 // Re-exports kept under `allow(unused_imports)` because the CLI
@@ -120,6 +121,11 @@ pub use test_coverage::{
     ImpactTestGapOutcome, ImpactTestGapRejection, ImpactTestGapResult, ImpactTestGapWorkBudget,
     ObservedTest, TestCoverageNode, TestCoverageOptions, TestCoverageProvenance,
     TestCoverageResult, TestCoverageUncertainty, test_coverage_for, test_gap_for_impact,
+};
+#[allow(unused_imports)]
+pub use type_hierarchy::{
+    TypeEndpoint, TypeHierarchy, TypeHierarchyDirection, TypeHierarchyEdge, TypeHierarchyEntry,
+    TypeTraversalBudget,
 };
 #[allow(unused_imports)]
 pub use walker::{Language, RepoFile, RepoMap, RepoMapBuilder, ScanReport};

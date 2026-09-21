@@ -39,3 +39,8 @@ Hosted format follow-up: W131 source f3b6a0ae received 76 exact Rustfmt hunks
 across six files from Preflight 35575158268 (including W133 dispatcher layout).
 They were imported without local formatter execution. Fresh hosted gates remain
 required; no semantic change or Road checkbox closure is attributed to formatting.
+
+CI 35575496939 on 85658d48 reached Linux strict Clippy and rejected the
+nine-argument atomic delta-publish function (job 106256308815). This observed
+follow-up is being repaired with the W132 integration. Other native jobs and
+preview continue; a Linux runtime pass is not claimed.

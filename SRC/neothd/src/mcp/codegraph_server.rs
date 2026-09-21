@@ -283,6 +283,12 @@ pub fn codegraph_tools() -> Vec<McpTool> {
             annotations: read_only_annotations(),
         },
         McpTool {
+            name: "codegraph_types".into(),
+            description: Some("Return a bounded ancestor or descendant type hierarchy from the active complete current code-map snapshot.".into()),
+            input_schema: serde_json::json!({"type":"object","properties":{"file":{"type":"string"},"symbol":{"type":"string"},"direction":{"type":"string","enum":["ancestors","descendants"],"default":"ancestors"},"depth":{"type":"integer","default":5,"minimum":1,"maximum":20}},"required":["file","symbol"],"additionalProperties":false}),
+            annotations: read_only_annotations(),
+        },
+        McpTool {
             name: "codegraph_impact_radius".into(),
             description: Some(
                 "Compute a deterministic structural blast radius from changed files or exact \
@@ -437,6 +443,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "codegraph_callers",
     "codegraph_callees",
     "codegraph_imports",
+    "codegraph_types",
     "codegraph_impact_radius",
     "codegraph_diff_impact",
     "codegraph_diff_test_gaps",
@@ -878,6 +885,7 @@ fn dispatch_codegraph_tool_at_runtime_with_binding(
         "codegraph_callers" => tool_callers_with_binding(db_path, args, cwd, requested_runtime),
         "codegraph_callees" => tool_callees_with_binding(db_path, args, cwd, requested_runtime),
         "codegraph_imports" => tool_imports_with_binding(db_path, args, cwd, requested_runtime),
+        "codegraph_types" => tool_types_with_binding(db_path, args, cwd, requested_runtime),
         "codegraph_impact_radius" => {
             CodegraphToolResponse::plain(tool_impact_radius(db_path, args, cwd, runtime))
         }
@@ -898,7 +906,8 @@ fn dispatch_codegraph_tool_at_runtime_with_binding(
         | "codegraph_recall_v1"
         | "codegraph_callers"
         | "codegraph_callees"
-        | "codegraph_imports" => {
+        | "codegraph_imports"
+        | "codegraph_types" => {
             let CodegraphToolResponse { result, witness } = result;
             CodegraphToolResponse {
                 result: requested_runtime.bound_result(result),
@@ -1124,6 +1133,17 @@ struct ImportsArgs {
     file: String,
     #[serde(default)]
     direction: crate::code_map::imports::ImportDirection,
+    #[serde(default = "default_bfs_depth")]
+    depth: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TypesArgs {
+    file: String,
+    symbol: String,
+    #[serde(default)]
+    direction: crate::code_map::type_hierarchy::TypeHierarchyDirection,
     #[serde(default = "default_bfs_depth")]
     depth: u32,
 }
@@ -1779,6 +1799,229 @@ fn tool_imports_with_binding(
     }
 }
 
+const TYPE_HIERARCHY_EDGE_LIMIT: usize = crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_EDGES;
+const TYPE_HIERARCHY_ENDPOINT_LIMIT: usize = crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_DECLARATIONS;
+const TYPE_HIERARCHY_TEXT_BYTE_LIMIT: usize = 16 * 1024 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+struct StoredTypeHierarchySnapshot {
+    root_identity: String,
+    index_generation: i64,
+    graph_generation: i64,
+    import_generation: i64,
+    type_generation: i64,
+    complete: bool,
+}
+
+fn stored_type_hierarchy_snapshot(
+    conn: &rusqlite::Connection,
+    root: &str,
+) -> Result<StoredTypeHierarchySnapshot> {
+    conn.query_row(
+        "SELECT root_identity, index_generation, graph_generation, import_generation, type_generation, \
+                oversize_skipped = 0 AND truncated_at IS NULL \
+         FROM code_map_roots WHERE root = ?1",
+        rusqlite::params![root],
+        |row| {
+            Ok(StoredTypeHierarchySnapshot {
+                root_identity: row.get(0)?,
+                index_generation: row.get(1)?,
+                graph_generation: row.get(2)?,
+                import_generation: row.get(3)?,
+                type_generation: row.get(4)?,
+                complete: row.get(5)?,
+            })
+        },
+    )
+    .with_context(|| format!("read type-hierarchy snapshot metadata for {root:?}"))
+}
+
+fn validate_stored_type_hierarchy_snapshot(
+    expected: &crate::code_map::recall::RootGenerationSnapshot,
+    stored: &StoredTypeHierarchySnapshot,
+) -> Result<()> {
+    anyhow::ensure!(
+        stored.root_identity == expected.root.identity().as_str()
+            && stored.index_generation == expected.index_generation
+            && stored.graph_generation == expected.graph_generation,
+        "code-map root or current generation changed before type-hierarchy materialization; retry"
+    );
+    anyhow::ensure!(
+        stored.index_generation > 0
+            && stored.index_generation == stored.graph_generation
+            && stored.index_generation == stored.import_generation
+            && stored.index_generation == stored.type_generation,
+        "code-map type hierarchy has no current generation; rebuild the code map"
+    );
+    anyhow::ensure!(
+        stored.complete,
+        "code-map root was published from a partial scan; rebuild without explicit limits before querying the type hierarchy"
+    );
+    Ok(())
+}
+
+fn type_hierarchy_from_db_with_snapshot(
+    db_path: &Path,
+    cwd: &Path,
+    requested_endpoint: &crate::code_map::type_hierarchy::TypeEndpoint,
+) -> Result<(crate::code_map::type_hierarchy::TypeHierarchy, ContextBindingWitness)> {
+    if !db_path
+        .try_exists()
+        .with_context(|| format!("inspect code-map DB path {}", db_path.display()))?
+    {
+        anyhow::bail!(
+            "code-map DB does not exist at {}; run `neoth code-map persist` first",
+            db_path.display()
+        );
+    }
+    let conn = open_code_map_read_only(db_path)?;
+    let Some(expected) = crate::code_map::recall::resolve_active_root_snapshot(&conn, cwd)? else {
+        anyhow::bail!(
+            "working directory {} is not inside a persisted code-map root",
+            cwd.display()
+        );
+    };
+    let tx = conn
+        .unchecked_transaction()
+        .context("begin atomic type-hierarchy read transaction")?;
+    let initial = stored_type_hierarchy_snapshot(&tx, expected.root.display())?;
+    validate_stored_type_hierarchy_snapshot(&expected, &initial)?;
+    let initial_freshness =
+        crate::code_map::persist::index_freshness_receipt(&tx, expected.root.display())?;
+    anyhow::ensure!(
+        !initial_freshness.stale,
+        "code-map type hierarchy is stale; rebuild the code map before querying it"
+    );
+    let (hierarchy, truncated) = crate::code_map::persist::load_type_hierarchy_for_root_bounded(
+        &tx,
+        expected.root.display(),
+        TYPE_HIERARCHY_EDGE_LIMIT,
+        TYPE_HIERARCHY_ENDPOINT_LIMIT,
+        TYPE_HIERARCHY_TEXT_BYTE_LIMIT,
+    )?;
+    anyhow::ensure!(
+        !truncated,
+        "code-map type hierarchy exceeds its bounded persisted load ceiling; narrow or rebuild the index"
+    );
+    // A non-edge declaration is a valid known leaf.  The hierarchy's endpoint
+    // table makes it distinct from an unknown file/symbol pair.
+    anyhow::ensure!(
+        hierarchy.endpoints().contains(requested_endpoint),
+        "type hierarchy endpoint is not an exact declaration in this root generation"
+    );
+    let final_freshness =
+        crate::code_map::persist::index_freshness_receipt(&tx, expected.root.display())?;
+    anyhow::ensure!(
+        !final_freshness.stale
+            && initial_freshness.filesystem_fingerprint == final_freshness.filesystem_fingerprint,
+        "code-map root changed during type-hierarchy materialization; rebuild and retry"
+    );
+    let final_stored = stored_type_hierarchy_snapshot(&tx, expected.root.display())?;
+    validate_stored_type_hierarchy_snapshot(&expected, &final_stored)?;
+    anyhow::ensure!(
+        final_stored == initial,
+        "code-map type-hierarchy snapshot changed during materialization; retry"
+    );
+    tx.commit()
+        .context("commit atomic type-hierarchy read transaction")?;
+    let final_active = crate::code_map::recall::resolve_active_root_snapshot(&conn, cwd)?;
+    anyhow::ensure!(
+        final_active.as_ref() == Some(&expected),
+        "active code-map root or generation changed during type-hierarchy materialization; retry"
+    );
+    Ok((
+        hierarchy,
+        ContextBindingWitness {
+            root_identity: expected.root.identity().as_str().to_owned(),
+            index_generation: expected.index_generation,
+            graph_generation: expected.graph_generation,
+        },
+    ))
+}
+
+fn tool_types_with_binding(
+    db_path: &Path,
+    args: &serde_json::Value,
+    cwd: &Path,
+    runtime: RequestedContextRuntime,
+) -> CodegraphToolResponse {
+    let parsed: TypesArgs = match serde_json::from_value(args.clone()) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            return CodegraphToolResponse::plain(error_result(format!("bad args: {error}")));
+        }
+    };
+    let requested_endpoint = match crate::code_map::type_hierarchy::TypeEndpoint::new(
+        parsed.file,
+        parsed.symbol,
+    ) {
+        Ok(endpoint) => endpoint,
+        Err(error) => {
+            return CodegraphToolResponse::plain(error_result(format!(
+                "codegraph types rejected before DB access: {error:#}"
+            )));
+        }
+    };
+    let depth = match runtime.bfs_depth(parsed.depth) {
+        Ok(depth) => depth.min(crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_QUERY_DEPTH),
+        Err(error) => {
+            return CodegraphToolResponse::plain(error_result(format!(
+                "codegraph types rejected before DB access: {error:#}"
+            )));
+        }
+    };
+    let defaults = crate::code_map::type_hierarchy::TypeTraversalBudget::default();
+    let budget = crate::code_map::type_hierarchy::TypeTraversalBudget {
+        max_depth: depth,
+        max_nodes: runtime.0.map_or(defaults.max_nodes, |policy| {
+            policy
+                .max_rendered_bytes()
+                .min(crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_QUERY_NODES)
+        }),
+        max_text_bytes: runtime.0.map_or(defaults.max_text_bytes, |policy| {
+            policy
+                .max_rendered_bytes()
+                .min(crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_QUERY_TEXT_BYTES)
+        }),
+        max_work_steps: runtime.0.map_or(defaults.max_work_steps, |policy| {
+            policy
+                .max_rendered_bytes()
+                .min(crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_QUERY_WORK_STEPS)
+        }),
+    };
+    let (hierarchy, witness) =
+        match type_hierarchy_from_db_with_snapshot(db_path, cwd, &requested_endpoint) {
+            Ok(value) => value,
+            Err(error) => {
+                return CodegraphToolResponse::plain(error_result(format!(
+                    "codegraph_types failed: {error:#}"
+                )));
+            }
+        };
+    match hierarchy.query_bounded(&requested_endpoint, parsed.direction, budget) {
+        Ok(entries) => match bounded_json_array(
+            entries.into_iter().map(|entry| {
+                serde_json::json!({
+                    "file": entry.endpoint.file_path,
+                    "symbol": entry.endpoint.symbol,
+                    "depth": entry.depth,
+                })
+            }),
+            runtime.0.map(|policy| policy.max_rendered_bytes()),
+        ) {
+            Ok(payload) => CodegraphToolResponse {
+                result: text_result(payload),
+                witness: Some(witness),
+            },
+            Err(error) => CodegraphToolResponse::plain(error_result(format!(
+                "codegraph_types bounded result: {error:#}"
+            ))),
+        },
+        Err(error) => CodegraphToolResponse::plain(error_result(format!(
+            "codegraph_types bounded result: {error:#}"
+        ))),
+    }
+}
 fn tool_callers_with_binding(
     db_path: &Path,
     args: &serde_json::Value,
@@ -3409,9 +3652,9 @@ mod tests {
     }
 
     #[test]
-    fn codegraph_tools_lists_eleven_canonical_tools() {
+    fn codegraph_tools_lists_twelve_canonical_tools() {
         let tools = codegraph_tools();
-        assert_eq!(tools.len(), 11);
+        assert_eq!(tools.len(), 12);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(
             names,
@@ -3423,6 +3666,7 @@ mod tests {
                 "codegraph_callers",
                 "codegraph_callees",
                 "codegraph_imports",
+                "codegraph_types",
                 "codegraph_impact_radius",
                 "codegraph_diff_impact",
                 "codegraph_diff_test_gaps",
@@ -3846,17 +4090,56 @@ fn root() { alpha(); beta(); }
                 language: "rust".into(),
             },
         ]);
+        let hierarchy = crate::code_map::type_hierarchy::TypeHierarchy::build_bounded(
+            &[("src/api.rs".to_string(), crate::code_map::walker::Language::Rust, "pub struct Api;".to_string())],
+            crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_EDGES,
+        ).unwrap();
         let mut conn = crate::code_map::persist::open(db).unwrap();
         crate::code_map::persist::persist_map_and_edges_bound(
             &mut conn,
             &map,
             &[],
             imports.edges(),
+            &hierarchy,
             &canonical,
         )
         .unwrap();
     }
 
+    fn seed_type_hierarchy_db(db: &Path, root: &Path) {
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/types.rs"),
+            "trait Parent {}\nstruct Child;\nimpl Parent for Child {}\n",
+        )
+        .unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(root)
+            .with_symbols(true)
+            .scan()
+            .unwrap();
+        let canonical = crate::code_map::root_identity::CanonicalRepoRoot::discover(root).unwrap();
+        let child = crate::code_map::type_hierarchy::TypeEndpoint::new("src/types.rs", "Child").unwrap();
+        let parent = crate::code_map::type_hierarchy::TypeEndpoint::new("src/types.rs", "Parent").unwrap();
+        let hierarchy = crate::code_map::type_hierarchy::TypeHierarchy::from_parts(
+            vec![crate::code_map::type_hierarchy::TypeHierarchyEdge {
+                child: child.clone(),
+                parent: parent.clone(),
+                language: "rust".into(),
+            }],
+            std::collections::BTreeSet::from([child, parent]),
+        )
+        .unwrap();
+        let mut conn = crate::code_map::persist::open(db).unwrap();
+        crate::code_map::persist::persist_map_and_edges_bound(
+            &mut conn,
+            &map,
+            &[],
+            &[],
+            &hierarchy,
+            &canonical,
+        )
+        .unwrap();
+    }
     #[test]
     fn dispatch_codegraph_imports_reads_current_root_local_snapshot() {
         let dir = tempdir().unwrap();
@@ -3896,6 +4179,113 @@ fn root() { alpha(); beta(); }
         assert!(text_content(&unknown).contains("normalized repository-relative"));
     }
 
+    #[test]
+    fn dispatch_codegraph_types_distinguishes_known_leaf_from_unknown_endpoint() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("code_map.db");
+        let repo = dir.path().join("repo");
+        seed_import_graph_db(&db, &repo);
+        let leaf = dispatch_codegraph_tool_at(
+            &db,
+            "codegraph_types",
+            &serde_json::json!({"file":"src/api.rs","symbol":"Api"}),
+            &repo,
+        );
+        assert!(!leaf.is_error, "known declaration leaf must be queryable");
+        assert_eq!(text_content(&leaf), "[]");
+        let unknown = dispatch_codegraph_tool_at(
+            &db,
+            "codegraph_types",
+            &serde_json::json!({"file":"src/api.rs","symbol":"Missing"}),
+            &repo,
+        );
+        assert!(unknown.is_error, "unknown declaration must fail closed");
+    }
+
+    #[test]
+    fn dispatch_codegraph_types_rejects_source_mutation_and_bounded_query_overflow() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("code_map.db");
+        let repo = dir.path().join("repo");
+        seed_type_hierarchy_db(&db, &repo);
+        let bounded = tool_types_with_binding(
+            &db,
+            &serde_json::json!({"file":"src/types.rs","symbol":"Child"}),
+            &repo,
+            RequestedContextRuntime::from_policy(crate::config::RequestedContextPolicy {
+                recall_max_files: 1,
+                callers_per_symbol: 0,
+                summary_token_budget: 1,
+                max_bfs_depth: 2,
+            }),
+        );
+        assert!(bounded.result.is_error, "requested context cap must reject a non-partial type traversal");
+        std::fs::write(repo.join("src/types.rs"), "trait Parent {}\nstruct Child;\n// changed\n").unwrap();
+        let stale = dispatch_codegraph_tool_at(
+            &db,
+            "codegraph_types",
+            &serde_json::json!({"file":"src/types.rs","symbol":"Child"}),
+            &repo,
+        );
+        assert!(stale.is_error, "source mutation must refuse a stale type hierarchy");
+        assert!(text_content(&stale).contains("stale"));
+    }
+
+    #[test]
+    fn stdio_types_call_has_bound_receipt_and_rejects_stale_type_generation() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("code_map.db");
+        let repo = dir.path().join("repo");
+        seed_type_hierarchy_db(&db, &repo);
+        let prior_cwd = std::env::current_dir().unwrap();
+        struct RestoreCwd(std::path::PathBuf);
+        impl Drop for RestoreCwd {
+            fn drop(&mut self) {
+                std::env::set_current_dir(&self.0).expect("restore type stdio CWD");
+            }
+        }
+        std::env::set_current_dir(&repo).unwrap();
+        let _restore = RestoreCwd(prior_cwd);
+        let request = serde_json::json!({
+            "jsonrpc":"2.0", "id":"types-1", "method":"tools/call",
+            "params":{"name":"codegraph_types", "arguments":{"file":"src/types.rs","symbol":"Child"}}
+        });
+        let mut session = StdioSession {
+            initialize_seen: true,
+            ready: true,
+            ..Default::default()
+        };
+        let runtime = RequestedContextRuntime::from_policy(w59_requested_policy());
+        let response = handle_stdio_message_with_runtimes(
+            &db,
+            &serde_json::to_vec(&request).unwrap(),
+            &mut session,
+            CodegraphImpactRuntime::static_defaults(),
+            runtime,
+        )
+        .unwrap();
+        assert_eq!(response["result"]["isError"], false);
+        assert_eq!(
+            response["result"]["_meta"][CODEGRAPH_CONTEXT_BINDING_META_KEY]["tool"],
+            "codegraph_types"
+        );
+        let conn = crate::code_map::persist::open(&db).unwrap();
+        conn.execute("UPDATE code_map_roots SET type_generation = 0", [])
+            .unwrap();
+        let stale = handle_stdio_message_with_runtimes(
+            &db,
+            &serde_json::to_vec(&request).unwrap(),
+            &mut session,
+            CodegraphImpactRuntime::static_defaults(),
+            runtime,
+        )
+        .unwrap();
+        assert_eq!(stale["result"]["isError"], true);
+        assert!(stale["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("no current generation"));
+    }
     #[test]
     fn stdio_imports_call_has_bound_receipt_and_rejects_stale_generation() {
         let dir = tempdir().unwrap();
@@ -4573,6 +4963,12 @@ fn root() { alpha(); beta(); }
                 .unwrap()
                 .iter()
                 .any(|tool| { tool["name"] == "codegraph_imports" })
+        );        assert!(
+            listed["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| { tool["name"] == "codegraph_types" })
         );
     }
 

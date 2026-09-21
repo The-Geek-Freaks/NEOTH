@@ -109,7 +109,8 @@ use super::walker::{Language, RepoFile, RepoMap, ScanReport};
 /// confidence. Legacy heuristic rows are deliberately migrated as inferred.
 /// v10 adds nullable exact target-file identity; legacy NULL rows are never
 /// exact TestedBy evidence. v11 adds a separate generation-bound import graph.
-pub const CODE_MAP_SCHEMA_VERSION: i64 = 11;
+/// v12 adds a separate generation-bound type hierarchy including known leaves.
+pub const CODE_MAP_SCHEMA_VERSION: i64 = 12;
 
 /// Hard ceiling for one filesystem freshness receipt. The count gate runs
 /// before row materialisation and every SELECT still carries `LIMIT cap + 1`
@@ -211,7 +212,7 @@ mod v10_migration_tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "11");
+        assert_eq!(version, "12");
         let import_generation: i64 = conn
             .query_row(
                 "SELECT import_generation FROM code_map_roots WHERE root = '/r'",
@@ -223,6 +224,14 @@ mod v10_migration_tests {
             import_generation, -1,
             "legacy imports are invalid until rebuilt"
         );
+        let type_generation: i64 = conn
+            .query_row(
+                "SELECT type_generation FROM code_map_roots WHERE root = '/r'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(type_generation, -1, "legacy types are invalid until rebuilt");
         let rows: Vec<(String, Option<String>)> = conn
             .prepare("SELECT kind, target_file FROM code_map_edges ORDER BY id")
             .unwrap()
@@ -600,6 +609,34 @@ where
         .context("v10→v11: stamp schema_version=11")?;
     }
 
+    // Existing roots have no trustworthy hierarchy, including no proof that
+    // zero rows means zero declarations. Keep them invalid until a full or
+    // delta snapshot writes endpoints and direct edges together.
+    if v < 12 {
+        tx.execute_batch(
+            "ALTER TABLE code_map_roots ADD COLUMN type_generation INTEGER NOT NULL DEFAULT -1; \
+             CREATE TABLE code_map_type_endpoints ( \
+                 root TEXT NOT NULL, file_path TEXT NOT NULL, symbol TEXT NOT NULL, \
+                 PRIMARY KEY(root, file_path, symbol), \
+                 FOREIGN KEY(root) REFERENCES code_map_roots(root) ON DELETE CASCADE \
+             ); \
+             CREATE TABLE code_map_type_edges ( \
+                 root TEXT NOT NULL, child_file TEXT NOT NULL, child_symbol TEXT NOT NULL, \
+                 parent_file TEXT NOT NULL, parent_symbol TEXT NOT NULL, language TEXT NOT NULL, \
+                 PRIMARY KEY(root, child_file, child_symbol, parent_file, parent_symbol, language), \
+                 FOREIGN KEY(root) REFERENCES code_map_roots(root) ON DELETE CASCADE \
+             ); \
+             CREATE INDEX idx_code_map_type_edges_child ON code_map_type_edges(root, child_file, child_symbol); \
+             CREATE INDEX idx_code_map_type_edges_parent ON code_map_type_edges(root, parent_file, parent_symbol);",
+        )
+        .context("v11→v12: add generation-bound type hierarchy")?;
+        tx.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '12')",
+            [],
+        )
+        .context("v11→v12: stamp schema_version=12")?;
+    }
+
     tx.commit().context("commit locked code-map migration")?;
     Ok(())
 }
@@ -734,6 +771,7 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             index_generation INTEGER NOT NULL DEFAULT 0,
             graph_generation INTEGER NOT NULL DEFAULT 0,
             import_generation INTEGER NOT NULL DEFAULT 0,
+            type_generation INTEGER NOT NULL DEFAULT 0,
             root_identity    TEXT
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_code_map_roots_identity
@@ -803,6 +841,28 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             ON code_map_import_edges(root, from_file);
         CREATE INDEX IF NOT EXISTS idx_code_map_import_edges_target
             ON code_map_import_edges(root, to_file);
+
+        CREATE TABLE IF NOT EXISTS code_map_type_endpoints (
+            root      TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            symbol    TEXT NOT NULL,
+            PRIMARY KEY(root, file_path, symbol),
+            FOREIGN KEY(root) REFERENCES code_map_roots(root) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS code_map_type_edges (
+            root          TEXT NOT NULL,
+            child_file    TEXT NOT NULL,
+            child_symbol  TEXT NOT NULL,
+            parent_file   TEXT NOT NULL,
+            parent_symbol TEXT NOT NULL,
+            language      TEXT NOT NULL,
+            PRIMARY KEY(root, child_file, child_symbol, parent_file, parent_symbol, language),
+            FOREIGN KEY(root) REFERENCES code_map_roots(root) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_code_map_type_edges_child
+            ON code_map_type_edges(root, child_file, child_symbol);
+        CREATE INDEX IF NOT EXISTS idx_code_map_type_edges_parent
+            ON code_map_type_edges(root, parent_file, parent_symbol);
 
         CREATE TABLE IF NOT EXISTS code_map_lifecycle_attempts (
             root_identity TEXT PRIMARY KEY NOT NULL,
@@ -897,6 +957,18 @@ pub(crate) struct BoundPersistResult {
     pub(crate) edges_inserted: usize,
     pub(crate) index_generation: i64,
     pub(crate) graph_generation: i64,
+}
+
+/// One coherent delta publication payload. Grouping these coupled sets keeps
+/// the atomic writer's interface small while making it impossible to pair a
+/// replacement call graph with imports or a hierarchy from another generation.
+pub(crate) struct DeltaGraphPublication<'a> {
+    pub(crate) published_edges: &'a [crate::code_map::graph::CodeEdge],
+    pub(crate) import_edges: &'a [crate::code_map::imports::ImportEdge],
+    pub(crate) hierarchy: &'a crate::code_map::type_hierarchy::TypeHierarchy,
+    pub(crate) replacement_edges: &'a [crate::code_map::graph::CodeEdge],
+    pub(crate) replacement_sources: &'a std::collections::BTreeSet<String>,
+    pub(crate) removed_paths: &'a std::collections::BTreeSet<String>,
 }
 
 /// Incrementally replace the snapshot for `map.root` (CBM-04).
@@ -1441,7 +1513,8 @@ fn persist_map_in_transaction(
              truncated_at     = excluded.truncated_at, \
              root_identity    = excluded.root_identity, \
              index_generation = index_generation + 1, \
-             import_generation = 0",
+             import_generation = 0, \
+             type_generation = 0",
         rusqlite::params![
             &map.root,
             now_unix,
@@ -1574,6 +1647,7 @@ pub(crate) fn persist_map_and_edges_bound(
     map: &RepoMap,
     edges: &[crate::code_map::graph::CodeEdge],
     import_edges: &[crate::code_map::imports::ImportEdge],
+    hierarchy: &crate::code_map::type_hierarchy::TypeHierarchy,
     expected_root: &super::root_identity::CanonicalRepoRoot,
 ) -> Result<BoundPersistResult> {
     let tx = conn
@@ -1587,14 +1661,15 @@ pub(crate) fn persist_map_and_edges_bound(
     )?;
     let inserted = replace_edges_in_transaction(&tx, &map.root, edges)?;
     replace_import_edges_in_transaction(&tx, &map.root, import_edges)?;
+    replace_type_hierarchy_in_transaction(&tx, &map.root, hierarchy)?;
     let observed = super::root_identity::CanonicalRepoRoot::discover(Path::new(&map.root))?;
     ensure!(
         observed == *expected_root,
         "code-map repository root was replaced before bound snapshot commit"
     );
-    let (stored_identity, index_generation, graph_generation, import_generation) = tx
+    let (stored_identity, index_generation, graph_generation, import_generation, type_generation) = tx
         .query_row(
-            "SELECT root_identity, index_generation, graph_generation, import_generation \
+            "SELECT root_identity, index_generation, graph_generation, import_generation, type_generation \
              FROM code_map_roots WHERE root = ?1",
             rusqlite::params![&map.root],
             |row| {
@@ -1603,6 +1678,7 @@ pub(crate) fn persist_map_and_edges_bound(
                     row.get::<_, i64>(1)?,
                     row.get::<_, i64>(2)?,
                     row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
                 ))
             },
         )
@@ -1614,8 +1690,9 @@ pub(crate) fn persist_map_and_edges_bound(
     ensure!(
         index_generation > 0
             && index_generation == graph_generation
-            && index_generation == import_generation,
-        "bound code-map snapshot published mismatched index/graph/import generations"
+            && index_generation == import_generation
+            && index_generation == type_generation,
+        "bound code-map snapshot published mismatched index/graph/import/type generations"
     );
     tx.commit()
         .context("commit bound atomic code-map snapshot transaction")?;
@@ -1633,17 +1710,21 @@ pub(crate) fn persist_map_and_edges_bound(
 pub(crate) fn persist_delta_map_and_edges_bound<PreCommitFence>(
     conn: &mut Connection,
     map: &RepoMap,
-    published_edges: &[crate::code_map::graph::CodeEdge],
-    import_edges: &[crate::code_map::imports::ImportEdge],
-    replacement_edges: &[crate::code_map::graph::CodeEdge],
-    replacement_sources: &std::collections::BTreeSet<String>,
-    removed_paths: &std::collections::BTreeSet<String>,
+    delta: DeltaGraphPublication<'_>,
     expected_root: &super::root_identity::CanonicalRepoRoot,
     pre_commit_fence: PreCommitFence,
 ) -> Result<BoundPersistResult>
 where
     PreCommitFence: FnOnce() -> Result<()>,
 {
+    let DeltaGraphPublication {
+        published_edges,
+        import_edges,
+        hierarchy,
+        replacement_edges,
+        replacement_sources,
+        removed_paths,
+    } = delta;
     enforce_incoming_edge_bounds(&map.root, published_edges)?;
     for edge in replacement_edges {
         ensure!(
@@ -1730,6 +1811,7 @@ where
     // so delta publication deliberately replaces the complete root-local import
     // graph in this same transaction instead of retaining selected sources.
     replace_import_edges_in_transaction(&tx, &map.root, import_edges)?;
+    replace_type_hierarchy_in_transaction(&tx, &map.root, hierarchy)?;
     pre_commit_fence().context("validate delta source fence under writer transaction")?;
     let observed = super::root_identity::CanonicalRepoRoot::discover(Path::new(&map.root))?;
     ensure!(
@@ -1746,7 +1828,7 @@ where
         "bound delta snapshot persisted a different physical root identity"
     );
     let updated = tx.execute(
-        "UPDATE code_map_roots SET graph_generation = ?2, import_generation = ?2 WHERE root = ?1",
+        "UPDATE code_map_roots SET graph_generation = ?2, import_generation = ?2, type_generation = ?2 WHERE root = ?1",
         rusqlite::params![&map.root, index_generation],
     )?;
     ensure!(updated == 1, "bind delta graph generation");
@@ -1903,6 +1985,130 @@ fn replace_import_edges_in_transaction(
     )?;
     ensure!(updated == 1, "bind import graph generation");
     Ok(inserted)
+}
+
+fn replace_type_hierarchy_in_transaction(
+    tx: &Transaction<'_>,
+    root: &str,
+    hierarchy: &crate::code_map::type_hierarchy::TypeHierarchy,
+) -> Result<()> {
+    ensure!(
+        hierarchy.edges().len() <= crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_EDGES,
+        "type hierarchy exceeds bounded {}-edge publish cap",
+        crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_EDGES
+    );
+    for endpoint in hierarchy.endpoints() {
+        ensure_current_type_endpoint(tx, root, endpoint)?;
+    }
+    for edge in hierarchy.edges() {
+        ensure_current_type_endpoint(tx, root, &edge.child)?;
+        ensure_current_type_endpoint(tx, root, &edge.parent)?;
+    }
+    tx.execute("DELETE FROM code_map_type_edges WHERE root = ?1", rusqlite::params![root])?;
+    tx.execute("DELETE FROM code_map_type_endpoints WHERE root = ?1", rusqlite::params![root])?;
+    let mut endpoint_stmt = tx.prepare(
+        "INSERT INTO code_map_type_endpoints (root, file_path, symbol) VALUES (?1, ?2, ?3)",
+    )?;
+    for endpoint in hierarchy.endpoints() {
+        endpoint_stmt.execute(rusqlite::params![root, &endpoint.file_path, &endpoint.symbol])?;
+    }
+    let mut edge_stmt = tx.prepare(
+        "INSERT INTO code_map_type_edges \
+         (root, child_file, child_symbol, parent_file, parent_symbol, language) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )?;
+    for edge in hierarchy.edges() {
+        edge_stmt.execute(rusqlite::params![
+            root, &edge.child.file_path, &edge.child.symbol,
+            &edge.parent.file_path, &edge.parent.symbol, &edge.language,
+        ])?;
+    }
+    let generation: i64 = tx.query_row(
+        "SELECT index_generation FROM code_map_roots WHERE root = ?1", rusqlite::params![root], |row| row.get(0),
+    )?;
+    ensure!(
+        tx.execute(
+            "UPDATE code_map_roots SET type_generation = ?2 WHERE root = ?1",
+            rusqlite::params![root, generation],
+        )? == 1,
+        "bind type hierarchy generation"
+    );
+    Ok(())
+}
+
+fn ensure_current_type_endpoint(
+    conn: &Connection,
+    root: &str,
+    endpoint: &crate::code_map::type_hierarchy::TypeEndpoint,
+) -> Result<()> {
+    let checked = crate::code_map::type_hierarchy::TypeEndpoint::new(
+        endpoint.file_path.clone(), endpoint.symbol.clone(),
+    )?;
+    ensure!(checked == *endpoint, "type endpoint validation changed during publication");
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM code_map_files WHERE root = ?1 AND path = ?2)",
+        rusqlite::params![root, &endpoint.file_path], |row| row.get(0),
+    )?;
+    ensure!(exists, "type hierarchy endpoint is not a current file in the published root");
+    Ok(())
+}
+
+/// Bounded reconstruction includes the endpoint table so a known declaration
+/// with no hierarchy edges remains distinguishable from an unknown endpoint.
+pub(crate) fn load_type_hierarchy_for_root_bounded(
+    conn: &Connection,
+    root: &str,
+    max_edges: usize,
+    max_endpoints: usize,
+    max_text_bytes: usize,
+) -> Result<(crate::code_map::type_hierarchy::TypeHierarchy, bool)> {
+    let (index_generation, type_generation, complete): (i64, i64, bool) = conn.query_row(
+        "SELECT index_generation, type_generation, oversize_skipped = 0 AND truncated_at IS NULL \
+         FROM code_map_roots WHERE root = ?1",
+        rusqlite::params![root], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    ensure!(complete && index_generation > 0 && index_generation == type_generation,
+        "code-map type hierarchy has no current complete generation; rebuild the code map");
+    let freshness = index_freshness_receipt(conn, root)?;
+    ensure!(!freshness.stale, "code-map type hierarchy is stale; rebuild the code map before querying it");
+    let mut text = 0usize;
+    let mut endpoints = std::collections::BTreeSet::new();
+    let mut endpoint_stmt = conn.prepare(
+        "SELECT file_path, symbol FROM code_map_type_endpoints WHERE root = ?1 \
+         ORDER BY file_path, symbol LIMIT ?2",
+    )?;
+    let mut endpoint_rows = endpoint_stmt.query(rusqlite::params![root, i64::try_from(max_endpoints.saturating_add(1))?])?;
+    while let Some(row) = endpoint_rows.next()? {
+        if endpoints.len() >= max_endpoints {
+            return Ok((crate::code_map::type_hierarchy::TypeHierarchy::default(), true));
+        }
+        let endpoint = crate::code_map::type_hierarchy::TypeEndpoint::new(row.get::<_, String>(0)?, row.get::<_, String>(1)?)?;
+        ensure_current_type_endpoint(conn, root, &endpoint)?;
+        text = text.checked_add(endpoint.file_path.len() + endpoint.symbol.len()).ok_or_else(|| anyhow::anyhow!("type hierarchy text counter overflow"))?;
+        ensure!(text <= max_text_bytes, "type hierarchy exceeds bounded {max_text_bytes}-byte text budget");
+        endpoints.insert(endpoint);
+    }
+    let mut edges = Vec::new();
+    let mut edge_stmt = conn.prepare(
+        "SELECT child_file, child_symbol, parent_file, parent_symbol, language \
+         FROM code_map_type_edges WHERE root = ?1 \
+         ORDER BY child_file, child_symbol, parent_file, parent_symbol, language LIMIT ?2",
+    )?;
+    let mut edge_rows = edge_stmt.query(rusqlite::params![root, i64::try_from(max_edges.saturating_add(1))?])?;
+    while let Some(row) = edge_rows.next()? {
+        if edges.len() >= max_edges {
+            return Ok((crate::code_map::type_hierarchy::TypeHierarchy::default(), true));
+        }
+        let child = crate::code_map::type_hierarchy::TypeEndpoint::new(row.get::<_, String>(0)?, row.get::<_, String>(1)?)?;
+        let parent = crate::code_map::type_hierarchy::TypeEndpoint::new(row.get::<_, String>(2)?, row.get::<_, String>(3)?)?;
+        ensure_current_type_endpoint(conn, root, &child)?;
+        ensure_current_type_endpoint(conn, root, &parent)?;
+        let language: String = row.get(4)?;
+        text = text.checked_add(child.file_path.len() + child.symbol.len() + parent.file_path.len() + parent.symbol.len() + language.len()).ok_or_else(|| anyhow::anyhow!("type hierarchy text counter overflow"))?;
+        ensure!(text <= max_text_bytes, "type hierarchy exceeds bounded {max_text_bytes}-byte text budget");
+        edges.push(crate::code_map::type_hierarchy::TypeHierarchyEdge { child, parent, language });
+    }
+    Ok((crate::code_map::type_hierarchy::TypeHierarchy::from_parts(edges, endpoints)?, false))
 }
 
 fn valid_repo_relative_import_path(path: &str) -> bool {
@@ -2404,6 +2610,19 @@ pub fn root_graph_generation(conn: &Connection, root: &str) -> Result<Option<i64
     )
     .optional()
     .context("query code_map_roots graph_generation")
+}
+
+/// Generation for which the separate persisted type hierarchy was built.
+/// Legacy, map-only, and failed publications are non-current sentinels and
+/// callers must require equality with a positive index generation.
+pub fn root_type_generation(conn: &Connection, root: &str) -> Result<Option<i64>> {
+    conn.query_row(
+        "SELECT type_generation FROM code_map_roots WHERE root = ?1",
+        rusqlite::params![root],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+    .context("read type hierarchy generation")
 }
 
 /// True only for a root generation whose scanner reported no file-count or
@@ -4696,7 +4915,10 @@ mod tests {
             confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
             confidence_tier: EdgeConfidenceTier::Inferred,
         }];
-        persist_map_and_edges_bound(&mut conn, &map, &old_edges, &[], &root).unwrap();
+        persist_map_and_edges_bound(
+            &mut conn, &map, &old_edges, &[],
+            &crate::code_map::type_hierarchy::TypeHierarchy::default(), &root,
+        ).unwrap();
         let before_index = root_index_generation(&conn, root.display()).unwrap();
         let before_graph = root_graph_generation(&conn, root.display()).unwrap();
 
@@ -4707,15 +4929,15 @@ mod tests {
             .scan()
             .unwrap();
         let result = persist_delta_map_and_edges_bound(
-            &mut conn,
-            &changed_map,
-            &[],
-            &[],
-            &[],
-            &std::collections::BTreeSet::from(["lib.rs".to_owned()]),
-            &std::collections::BTreeSet::new(),
-            &root,
-            || anyhow::bail!("test final source fence rejected changed bytes"),
+            &mut conn, &changed_map,
+            DeltaGraphPublication {
+                published_edges: &[], import_edges: &[],
+                hierarchy: &crate::code_map::type_hierarchy::TypeHierarchy::default(),
+                replacement_edges: &[],
+                replacement_sources: &std::collections::BTreeSet::from(["lib.rs".to_owned()]),
+                removed_paths: &std::collections::BTreeSet::new(),
+            },
+            &root, || anyhow::bail!("test final source fence rejected changed bytes"),
         );
         assert!(result.is_err());
         assert_eq!(
@@ -4876,36 +5098,40 @@ mod tests {
     #[test]
     fn delta_publication_replaces_imports_after_removed_module() {
         let dir = tempfile::tempdir().unwrap();
-        let root = super::root_identity::CanonicalRepoRoot::discover(dir.path()).unwrap();
+        let root = crate::code_map::root_identity::CanonicalRepoRoot::discover(dir.path()).unwrap();
         std::fs::write(dir.path().join("a.rs"), "mod b;\n").unwrap();
         std::fs::write(dir.path().join("b.rs"), "").unwrap();
-        let first = RepoMapBuilder::new(root.path())
+        let first = crate::code_map::walker::RepoMapBuilder::new(root.path())
             .with_symbols(true)
             .scan()
             .unwrap();
-        let db = dir.path().join("code_map.db");
+        let db_dir = tempfile::tempdir().unwrap();
+        let db = db_dir.path().join("code_map.db");
         let mut conn = open(&db).unwrap();
         let imports = [crate::code_map::imports::ImportEdge {
             from_file: "a.rs".into(),
             to_file: "b.rs".into(),
             language: "rust".into(),
         }];
-        persist_map_and_edges_bound(&mut conn, &first, &[], &imports, &root).unwrap();
+        persist_map_and_edges_bound(
+            &mut conn, &first, &[], &imports,
+            &crate::code_map::type_hierarchy::TypeHierarchy::default(), &root,
+        ).unwrap();
         std::fs::remove_file(dir.path().join("b.rs")).unwrap();
-        let second = RepoMapBuilder::new(root.path())
+        let second = crate::code_map::walker::RepoMapBuilder::new(root.path())
             .with_symbols(true)
             .scan()
             .unwrap();
         persist_delta_map_and_edges_bound(
-            &mut conn,
-            &second,
-            &[],
-            &[],
-            &[],
-            &std::collections::BTreeSet::from(["a.rs".to_owned()]),
-            &std::collections::BTreeSet::from(["b.rs".to_owned()]),
-            &root,
-            || Ok(()),
+            &mut conn, &second,
+            DeltaGraphPublication {
+                published_edges: &[], import_edges: &[],
+                hierarchy: &crate::code_map::type_hierarchy::TypeHierarchy::default(),
+                replacement_edges: &[],
+                replacement_sources: &std::collections::BTreeSet::from(["a.rs".to_owned()]),
+                removed_paths: &std::collections::BTreeSet::from(["b.rs".to_owned()]),
+            },
+            &root, || Ok(()),
         )
         .unwrap();
         let (stored, truncated) =
@@ -4926,6 +5152,110 @@ mod tests {
             generation,
             root_index_generation(&conn, &second.root).unwrap().unwrap()
         );
+    }
+
+    #[test]
+    fn type_hierarchy_full_reopen_map_invalidation_and_delta_replacement() {
+        use crate::code_map::type_hierarchy::{TypeEndpoint, TypeHierarchy};
+        use crate::code_map::walker::{Language, RepoMapBuilder};
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = crate::code_map::root_identity::CanonicalRepoRoot::discover(dir.path()).unwrap();
+        let first_source = "trait Parent {}\nstruct Child;\nimpl Parent for Child {}\n";
+        std::fs::write(dir.path().join("types.rs"), first_source).unwrap();
+        let first_map = RepoMapBuilder::new(root.path()).with_symbols(true).scan().unwrap();
+        let first_hierarchy = TypeHierarchy::build_bounded(
+            &[("types.rs".into(), Language::Rust, first_source.into())],
+            crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_EDGES,
+        ).unwrap();
+        let db_dir = tempfile::tempdir().unwrap();
+        let db = db_dir.path().join("code_map.db");
+        let mut conn = open(&db).unwrap();
+        persist_map_and_edges_bound(
+            &mut conn, &first_map, &[], &[], &first_hierarchy, &root,
+        ).unwrap();
+        drop(conn);
+
+        let mut conn = open(&db).unwrap();
+        let (reopened, truncated) = load_type_hierarchy_for_root_bounded(&conn, &first_map.root, 10, 10, 4096).unwrap();
+        assert!(!truncated);
+        let child = TypeEndpoint::new("types.rs", "Child").unwrap();
+        assert!(reopened.endpoints().contains(&child), "known type leaf survives reopen");
+        assert!(!reopened.edges().is_empty(), "direct proven relationship survives reopen");
+
+        let (endpoint_capped, truncated) = load_type_hierarchy_for_root_bounded(
+            &conn,
+            &first_map.root,
+            10,
+            1,
+            4096,
+        )
+        .unwrap();
+        assert!(truncated, "endpoint cap is explicit");
+        assert!(endpoint_capped.edges().is_empty());
+        assert!(endpoint_capped.endpoints().is_empty(), "endpoint cap must not publish a partial hierarchy");
+        let (edge_capped, truncated) = load_type_hierarchy_for_root_bounded(
+            &conn,
+            &first_map.root,
+            0,
+            10,
+            4096,
+        )
+        .unwrap();
+        assert!(truncated, "edge cap is explicit");
+        assert!(edge_capped.edges().is_empty());
+        assert!(edge_capped.endpoints().is_empty(), "edge cap must not publish a partial hierarchy");
+
+        conn.execute(
+            "DELETE FROM code_map_type_endpoints WHERE root = ?1 AND file_path = ?2 AND symbol = ?3",
+            rusqlite::params![&first_map.root, "types.rs", "Child"],
+        )
+        .unwrap();
+        assert!(
+            load_type_hierarchy_for_root_bounded(&conn, &first_map.root, 10, 10, 4096).is_err(),
+            "an edge whose endpoint inventory row was corrupted must not load"
+        );
+        persist_map_and_edges_bound(
+            &mut conn, &first_map, &[], &[], &first_hierarchy, &root,
+        )
+        .unwrap();
+
+        persist_map(&mut conn, &first_map).unwrap();
+        assert!(load_type_hierarchy_for_root_bounded(&conn, &first_map.root, 10, 10, 4096).is_err(), "map-only persist invalidates type generation");
+
+        let second_source = "struct Child;\n";
+        std::fs::write(dir.path().join("types.rs"), second_source).unwrap();
+        let second_map = RepoMapBuilder::new(root.path()).with_symbols(true).scan().unwrap();
+        let second_hierarchy = TypeHierarchy::build_bounded(
+            &[("types.rs".into(), Language::Rust, second_source.into())],
+            crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_EDGES,
+        ).unwrap();
+        persist_delta_map_and_edges_bound(
+            &mut conn,
+            &second_map,
+            DeltaGraphPublication {
+                published_edges: &[], import_edges: &[], hierarchy: &second_hierarchy,
+                replacement_edges: &[],
+                replacement_sources: &std::collections::BTreeSet::from(["types.rs".to_owned()]),
+                removed_paths: &std::collections::BTreeSet::new(),
+            },
+            &root,
+            || Ok(()),
+        ).unwrap();
+        let (replaced, truncated) = load_type_hierarchy_for_root_bounded(&conn, &second_map.root, 10, 10, 4096).unwrap();
+        assert!(!truncated);
+        assert!(replaced.edges().is_empty(), "removed parent relationship is not retained after delta");
+        assert_eq!(replaced.endpoints().len(), 1);
+        assert!(replaced.endpoints().contains(&child));
+        assert!(load_type_hierarchy_for_root_bounded(&conn, &second_map.root, 10, 10, 1).is_err(), "text cap refuses before result");
+
+        let foreign = TypeHierarchy::from_parts(
+            Vec::new(),
+            std::collections::BTreeSet::from([TypeEndpoint::new("foreign.rs", "Foreign").unwrap()]),
+        ).unwrap();
+        assert!(persist_map_and_edges_bound(
+            &mut conn, &second_map, &[], &[], &foreign, &root,
+        ).is_err(), "publisher rejects endpoint outside current root map");
     }
 
     #[test]
@@ -5625,7 +5955,7 @@ mod tests {
         // Open via the public API — should trigger v1→v2 migration.
         let mut conn = open(&path).expect("open must succeed on a v1 DB");
 
-        // schema_version must now be "11" (v1→…→v10→v11 chain).
+        // schema_version must now be "12" (v1→…→v11→v12 chain).
         let version: String = conn
             .query_row(
                 "SELECT value FROM meta WHERE key='schema_version'",
@@ -5634,8 +5964,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            version, "11",
-            "schema_version must advance to 11 after migration"
+            version, "12",
+            "schema_version must advance to 12 after migration"
         );
 
         // v3 column: code_map_roots.index_generation exists, and the migrated

@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W132 source admitted / W136 active (2026-09-21):** TypeHierarchy now has
+atomic full/delta persistence with an authoritative declaration inventory,
+separate type generation and bounded MCP ancestor/descendant queries. Final
+independent review approved five source files and sixteen new regressions,
+including missing-inventory refusal and actual stdio binding. See
+[W132](../docs/gold-wave132-verification.md). The cumulative matrix has 305
+inputs and 132 required native tests; hosted execution remains required.
+W136 prompt-visible skill summaries are separately in review and excluded from
+that manifest. W135 confirms P1-20 sidebar source exists and still awaits its
+stated exact-head native/release evidence. No Road count or checkbox changes.
+
 **W133 CI recovery (2026-09-21):** current-source Windows/macOS GUI compilation,
 Linux strict lint and optional-adapter WAL fixture failures are diagnosed and
 repaired in three source paths. Independent review and hosted reruns remain
@@ -23,6 +34,17 @@ Hosted format follow-up: W131 source f3b6a0ae received 76 exact Rustfmt hunks
 across six files from Preflight 35575158268 (including W133 dispatcher layout).
 They were imported without local formatter execution. Fresh hosted gates remain
 required; no semantic change or Road checkbox closure is attributed to formatting.
+
+
+Hosted status on 85658d48: Preflight 35575452885 and Code Quality 35575452496
+passed. Scheduled full CI 35575496939 and Windows preview 35575775478 are
+running against that exact source; no final native/portable verdict yet.
+
+
+CI 35575496939 on 85658d48 reached Linux strict Clippy and rejected the
+nine-argument atomic delta-publish function (job 106256308815). This observed
+follow-up is being repaired with the W132 integration. Other native jobs and
+preview continue; a Linux runtime pass is not claimed.
 
 **W128/W130 (2026-09-21):** existing IRC/Twitch/Nostr adapters gain proactive
 delivery through exact live-generation leases and the established durable egress

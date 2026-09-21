@@ -13,6 +13,9 @@ use sha2::{Digest, Sha256};
 
 use super::graph::{CallGraph, DEFAULT_MAX_GRAPH_EDGES, FileInput};
 use super::imports::{DEFAULT_MAX_IMPORT_EDGES, ImportGraph};
+use super::type_hierarchy::{
+    DEFAULT_MAX_TYPE_EDGES, DEFAULT_MAX_TYPE_SOURCE_BYTES, TypeHierarchy,
+};
 use super::incremental;
 use super::persist::PersistStats;
 use super::root_identity::CanonicalRepoRoot;
@@ -532,6 +535,18 @@ pub(crate) fn rebuild_snapshot_delta_cancellable(
         },
         cancellation,
     )?;
+    let hierarchy = build_type_hierarchy_from_scan_snapshot_controlled(
+        &prepared.map,
+        |path| {
+            read_file_bounded(path, max_file_bytes)?.ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "delta type source exceeded bound",
+                )
+            })
+        },
+        cancellation,
+    )?;
     let cycles = CallGraph::from_edges(all_edges.clone()).find_cycles(50)?;
     cancellation.checkpoint()?;
     let source_fingerprint_sha256 = source_fingerprint_digest(root, &prepared.map, &[], &[]);
@@ -539,11 +554,14 @@ pub(crate) fn rebuild_snapshot_delta_cancellable(
     let publication = super::persist::persist_delta_map_and_edges_bound(
         &mut conn,
         &prepared.map,
-        &all_edges,
-        imports.edges(),
-        &replacement_edges,
-        &prepared.edge_sources,
-        &prepared.removed_paths,
+        super::persist::DeltaGraphPublication {
+            published_edges: &all_edges,
+            import_edges: imports.edges(),
+            hierarchy: &hierarchy,
+            replacement_edges: &replacement_edges,
+            replacement_sources: &prepared.edge_sources,
+            removed_paths: &prepared.removed_paths,
+        },
         root,
         || incremental::validate_final_source_fence(root, &prepared, options, cancellation),
     )?;
@@ -808,6 +826,8 @@ where
     let graph = build_graph_from_scan_snapshot_controlled(&map, &mut read_file, cancellation)?;
     let imports =
         build_import_graph_from_scan_snapshot_controlled(&map, &mut read_file, cancellation)?;
+    let hierarchy =
+        build_type_hierarchy_from_scan_snapshot_controlled(&map, &mut read_file, cancellation)?;
     // A file validated early during graph construction can still change while
     // later files are read. Revalidate the complete corpus immediately before
     // entering the publication transaction.
@@ -850,6 +870,7 @@ where
         &map,
         graph.edges(),
         imports.edges(),
+        &hierarchy,
         root,
     )
     .context("atomically persist identity-bound code-map index, call graph, and import graph")?;
@@ -938,6 +959,47 @@ where
         ));
     }
     ImportGraph::build_bounded(&sources, DEFAULT_MAX_IMPORT_EDGES)
+}
+
+fn build_type_hierarchy_from_scan_snapshot_controlled<F>(
+    map: &RepoMap,
+    mut read_file: F,
+    cancellation: &ScanCancellation,
+) -> Result<TypeHierarchy>
+where
+    F: FnMut(&Path) -> std::io::Result<Vec<u8>>,
+{
+    let root_dir = PathBuf::from(&map.root);
+    let mut sources = Vec::new();
+    let mut retained_source_bytes = 0usize;
+    for file in &map.files {
+        cancellation.checkpoint()?;
+        if !matches!(file.language, Language::Rust | Language::Python) {
+            continue;
+        }
+        let absolute = root_dir.join(&file.path);
+        let raw = read_file(&absolute)
+            .with_context(|| format!("re-read scanned type source {}", absolute.display()))?;
+        ensure!(
+            raw.len() as u64 == file.bytes && hex::encode(Sha256::digest(&raw)) == file.sha256,
+            "code-map type source changed after the scan: {}; no generation was published",
+            file.path
+        );
+        retained_source_bytes = retained_source_bytes
+            .checked_add(raw.len())
+            .context("native type-hierarchy source-byte count overflow")?;
+        ensure!(
+            retained_source_bytes <= DEFAULT_MAX_TYPE_SOURCE_BYTES,
+            "native type-hierarchy source exceeds bounded {}-byte work budget; no generation was published",
+            DEFAULT_MAX_TYPE_SOURCE_BYTES
+        );
+        sources.push((
+            file.path.clone(),
+            file.language,
+            String::from_utf8_lossy(&raw).into_owned(),
+        ));
+    }
+    TypeHierarchy::build_bounded(&sources, DEFAULT_MAX_TYPE_EDGES)
 }
 
 #[cfg(test)]
@@ -1673,6 +1735,7 @@ mod tests {
             &replacement_map,
             &[],
             &[],
+            &TypeHierarchy::default(),
             &expected,
         )
         .unwrap_err();
