@@ -16,6 +16,10 @@ prompt must produce unavailable accounting. The measured-zero renderer fixture
 now uses one actual measured-call state. The 19 W173 tests are preserved plus
 this one integration; all 20 still require Hosted execution. W175 memory
 selection remains separate and unadmitted. No D3 checkbox closes.
+W176 Code Quality 35664560616 passed on e62fc496. Preflight 35664561501
+requested exactly three layout hunks in chat.rs; the retained Hosted output
+is now imported without changing the assertions. A fresh formatting result
+and execution of the 20 behavioral identities remain required.
 
 **W174 visual video ingest (2026-09-22):** independently reviewed source adds
 `neoth ingest <video> --analyze-video-frames`, including silent videos. The

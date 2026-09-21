@@ -68,3 +68,9 @@ The first independent review rejected weak greater-than-zero checks; review02
 approved their exact replacements. All 20 identities remain unexecuted for this
 freeze. No D3 completion claim is made.
 Review02 SHA-256: A167F8AE54DE407343D7D4A94EF55F98ECB3495E65427DC592F563D81307CBB2.
+
+W176 Code Quality 35664560616 passed on e62fc496. Preflight 35664561501
+requested exactly three layout hunks in chat.rs; the retained Hosted output
+is now imported without changing the assertions. A fresh formatting result
+and execution of the 20 behavioral identities remain required.
+Format receipt SHA-256: 567D2F6F60B8E615AE379809EC3655D9E204195C7151D046B81DD6A43C808FC9.

@@ -17300,19 +17300,26 @@ modes:
             20_000,
         )
         .with_usage_home(measured_home.path())
-        .with_prompt_tax(bundle.prompt_tax.clone(), &bundle.prompt, bundle.system.as_deref());
+        .with_prompt_tax(
+            bundle.prompt_tax.clone(),
+            &bundle.prompt,
+            bundle.system.as_deref(),
+        );
         let authorized = crate::providers::cost_authorization::CostAuthorizingProvider::new(
             &provider,
             authorizer,
             Some("fixture-local".into()),
             "test.prompt_tax_bundle",
         );
-        authorized.complete(Request {
-            prompt: bundle.prompt.clone(),
-            system: bundle.system.clone(),
-            model: Some("fixture-local".into()),
-            ..Default::default()
-        }).await.unwrap();
+        authorized
+            .complete(Request {
+                prompt: bundle.prompt.clone(),
+                system: bundle.system.clone(),
+                model: Some("fixture-local".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
         drop(authorized);
         drop(writer);
         writer_join.await.unwrap();
@@ -17324,26 +17331,46 @@ modes:
         assert_eq!(totals.repo_context_tokens, u64::from(expected_repo_context));
         assert_eq!(totals.council_tokens, u64::from(expected_council));
         assert_eq!(totals.unattributed_tokens, 0);
-        assert!(crate::cli::usage::render_prompt_tax_section(Some(totals)).contains("prompt tax estimate"));
+        assert!(
+            crate::cli::usage::render_prompt_tax_section(Some(totals))
+                .contains("prompt tax estimate")
+        );
 
         let changed_home = tempfile::tempdir().unwrap();
-        let (writer, writer_join) = wal_spawn(changed_home.path().join("prompt-tax-changed.wal")).unwrap();
+        let (writer, writer_join) =
+            wal_spawn(changed_home.path().join("prompt-tax-changed.wal")).unwrap();
         let bundle = finalized_bundle(changed_home.path(), &writer).await;
         let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
-            crate::permissions::AutonomyLevel::Full, Some(writer.clone()), 20_000,
-        ).with_usage_home(changed_home.path())
-            .with_prompt_tax(bundle.prompt_tax, &bundle.prompt, bundle.system.as_deref());
+            crate::permissions::AutonomyLevel::Full,
+            Some(writer.clone()),
+            20_000,
+        )
+        .with_usage_home(changed_home.path())
+        .with_prompt_tax(bundle.prompt_tax, &bundle.prompt, bundle.system.as_deref());
         let authorized = crate::providers::cost_authorization::CostAuthorizingProvider::new(
-            &provider, authorizer, Some("fixture-local".into()), "test.prompt_tax_bundle",
+            &provider,
+            authorizer,
+            Some("fixture-local".into()),
+            "test.prompt_tax_bundle",
         );
-        authorized.complete(Request {
-            prompt: format!("{} leaf mutation", bundle.prompt), system: bundle.system,
-            model: Some("fixture-local".into()), ..Default::default()
-        }).await.unwrap();
-        drop(authorized); drop(writer); writer_join.await.unwrap();
+        authorized
+            .complete(Request {
+                prompt: format!("{} leaf mutation", bundle.prompt),
+                system: bundle.system,
+                model: Some("fixture-local".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        drop(authorized);
+        drop(writer);
+        writer_join.await.unwrap();
         let changed = crate::daemon::usage_log::aggregate(changed_home.path(), 0, i64::MAX);
         assert!(changed.prompt_tax.is_none());
-        assert_eq!(crate::cli::usage::render_prompt_tax_section(None), "  prompt tax: unavailable (no measured terminal responses)\n");
+        assert_eq!(
+            crate::cli::usage::render_prompt_tax_section(None),
+            "  prompt tax: unavailable (no measured terminal responses)\n"
+        );
     }
 
     #[tokio::test]

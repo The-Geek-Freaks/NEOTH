@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W176-prompt-tax-integration",
-  "base": "79a9ebcb8c291a711ba564e1342e3d7a1575ce6b",
-  "capturedUtc": "2026-09-21T22:46:47.1509703Z",
-  "validationStatus": "W176_STATIC_APPROVED_HOSTED_PENDING",
-  "scopeNote": "W176 one production-helper prompt-tax integration plus reachable measured-zero fixture; no product semantic changes. Preserved19 tests+new1 pending hosted. W175 dirty sources excluded.",
+  "base": "e62fc4963c766a645871ac79ceb228ac9b1df675",
+  "capturedUtc": "2026-09-21T22:55:34.5563969Z",
+  "validationStatus": "W176_HOSTED_FORMAT_IMPORTED_BEHAVIOR_PENDING",
+  "scopeNote": "W176 exact three Hosted format hunks imported in chat.rs; Quality35664560616 passed on e62fc496. No behavior acceptance. Only four explicit source/doc paths rehashed; W175 dirty sources excluded.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -113,8 +113,8 @@
     },
     {
       "path": "docs/gold-wave173-verification.md",
-      "bytes": 4350,
-      "sha256": "7409D0E5AFF186510B0A84A8C8C6C0EA4B93B023FBFB9BB30852421885F2A125"
+      "bytes": 4727,
+      "sha256": "69B4166181D69C24D995D28B3A5A919DAC05DA4345330FCBED9B1B1794772524"
     },
     {
       "path": "docs/gold-wave174-verification.md",
@@ -198,13 +198,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1010982,
-      "sha256": "9675AC15700C3317396A32E2370F245201147EBFA4BEA1F7CCC1B19CE29755F3"
+      "bytes": 1011268,
+      "sha256": "AA3AF828D0E3E88EBB009F557422BDE6808536754C516144087B5AB143E74929"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1606429,
-      "sha256": "277687C4E092E3560E43DC1794D31C54C230A6D31589C264E11E209485EE30FF"
+      "bytes": 1606715,
+      "sha256": "0BB274F8284BD6A6CA29FCC432D45655F526A52D0B800499A699F4BDA85C3CEF"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -683,8 +683,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1058365,
-      "sha256": "35013B74044D951E677C67FF2D0B1B1235726034C7C522927B6D49CB3D01A8DB"
+      "bytes": 1058720,
+      "sha256": "A174C3701D5F674137603B6FC3BF4DDF32B8DB40BE37379273A62D4D2FF4B01D"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
