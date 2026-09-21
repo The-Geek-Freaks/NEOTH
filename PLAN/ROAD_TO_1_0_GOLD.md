@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W174 visual video ingest (2026-09-22):** independently reviewed source adds
+`neoth ingest <video> --analyze-video-frames`, including silent videos. The
+existing cloud/credential/upload/audit gates precede one private snapshot's
+actual ffprobe, scene sampling and frame decoding. SceneChange 0.20/minimum8
+and sparse-keyframe fallback use observed frames and provider caps. Review
+repairs remove cancellation lifetime and EOF-seek defects and replace the
+brittle CSV probe with structured data. Nine pure regression identities plus
+one required Linux real-H.264 scene/decode/mock-synthesis test are admitted.
+GitHub compilation, generated CLI reference, formatting and behavioral gates
+remain pending. No F1/F3 checkbox closes. See [W174](../docs/gold-wave174-verification.md).
+W175 Hippocampus selection is a separate active batch, excluded here.
+
 **W173 Hosted compilation confirmed (2026-09-22):** CLI build/reference
 35660480510 passed on cdaae0a4. Its generated reference is byte-identical to the
 published reference (SHA-256 C948D52B50F47917AD9E8510178974FFA9C4AD3D603B18B0CCE33E308FAE0493).

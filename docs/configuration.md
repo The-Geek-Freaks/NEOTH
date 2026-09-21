@@ -104,6 +104,27 @@ These keys match the deserialized schema. Channel credentials belong in the
 credential store and should normally be written through `neoth channel add`,
 not invented as nested `channels.*.enabled` booleans.
 
+### Visual video ingest
+
+`neoth ingest clip.mp4 --analyze-video-frames` requests visual frame analysis
+with the configured Anthropic, OpenAI or Gemini API provider and credentials.
+It works with silent clips. Without the flag, video ingest continues through
+audio extraction and speech transcription.
+
+The visual mode requires both `media.cloud_vision_enabled: true` and
+`media.video_frame_upload_enabled: true`. When
+`media.required_audit_for_cloud_media: true`, a working audit writer is also
+required; `--no-audit` cannot override that policy. These checks run before
+video probing or decoding. The selected frames are sent to the configured
+cloud vision provider.
+
+Install `ffmpeg` and `ffprobe` on PATH. NEOTH probes one private snapshot,
+combines observed scene changes and keyframes, and fills sparse coverage from
+actual frame positions within the provider's frame limit. Probe/decoder errors,
+resource limits and audit-finalization failures are reported as failures.
+The report labels the result `Visual frame analysis:` and uses the existing
+indexing flow; `--no-index` retains its usual effect.
+
 ### Proactive delivery
 
 Proactive delivery remains opt-in. Its `freedom.yaml::proactive` block controls

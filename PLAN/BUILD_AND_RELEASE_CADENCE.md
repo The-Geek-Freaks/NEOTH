@@ -46,6 +46,12 @@ minutes; live provider and release acceptance remain separate. The workflow and
 its existing cadence contract must pass hosted validation before this is counted
 as evidence. No local toolchain execution is authorized by the new lane.
 
+W174 adds ffmpeg to the existing Linux quality job's build dependencies so the
+required Linux visual-ingest test can exercise real ffprobe, scene sampling and
+frame decoding with a mock synthesizer. The test is not ignored and missing
+binaries fail it. This adds no local execution permission and does not assert
+Windows/macOS video behavior or a paid provider call.
+
 ## Unreleased Windows preview
 
 `.github/workflows/preview-windows.yml` is a manual GitHub-hosted x64 build for

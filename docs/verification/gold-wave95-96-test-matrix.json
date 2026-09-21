@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W173_HOSTED_CORE_PASS_NATIVE_PENDING",
-  "base": "cceefbf5294cd2986ca9bd202bb0764077d18161",
+  "status": "W174_STATIC_APPROVED_HOSTED_PENDING",
+  "base": "39663fbaf23489539c0195dc46bf347ab1746800",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 67915,
-    "sha256": "F0E3B70F5B1F7D9593FB4038DFD12385E6704E0585A5E2A55140821DB52D05F8"
+    "bytes": 68826,
+    "sha256": "675448F55252917A70E3D2E9510DA70CAC74E676E6DA14CC351CA6B552F6D2E1"
   },
-  "sourceInputs": 393,
+  "sourceInputs": 398,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -1800,13 +1800,13 @@
     {
       "test": "media::video_dispatch::tests::dispatch_decodes_synthesises_and_emits_0xc9",
       "sourcePath": "SRC/neothd/src/media/video_dispatch.rs",
-      "sourceSha256": "D6FA5ACA8361E18616F525A7C0CC0BFFFC83B12D32F772CFAF2090C493146336",
+      "sourceSha256": "CBAA2BBD9FB913E5B3C3CA8A46990B32D9F574864F8D7218C82B2C126F2B5BED",
       "junitClass": "neoth"
     },
     {
       "test": "media::video_dispatch::tests::media_intent_is_durable_before_the_frames_leave_the_device",
       "sourcePath": "SRC/neothd/src/media/video_dispatch.rs",
-      "sourceSha256": "D6FA5ACA8361E18616F525A7C0CC0BFFFC83B12D32F772CFAF2090C493146336",
+      "sourceSha256": "CBAA2BBD9FB913E5B3C3CA8A46990B32D9F574864F8D7218C82B2C126F2B5BED",
       "junitClass": "neoth"
     },
     {
@@ -2581,6 +2581,60 @@
       "test": "cli::chat::tests::final_budget_boundary_keeps_only_retained_memory_in_prompt_tax",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
       "sourceSha256": "99FF928C505CCF40E6C7DB8E61DC019F2DD07AE15AA883CF11C0B339ACC39CAB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::video_probe::tests::duration_requires_a_real_finite_positive_value",
+      "sourcePath": "SRC/neothd/src/media/video_probe.rs",
+      "sourceSha256": "533E481A212DAB4AF759296D9523440846797446236BB604FD5E91C2985DCB3F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::video_probe::tests::keyframe_probe_accepts_codec_side_data_but_requires_frame_fields",
+      "sourcePath": "SRC/neothd/src/media/video_probe.rs",
+      "sourceSha256": "533E481A212DAB4AF759296D9523440846797446236BB604FD5E91C2985DCB3F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::video_probe::tests::showinfo_pts_time_parser_rejects_malformed_or_out_of_range_values",
+      "sourcePath": "SRC/neothd/src/media/video_probe.rs",
+      "sourceSha256": "533E481A212DAB4AF759296D9523440846797446236BB604FD5E91C2985DCB3F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::video_frames::tests::observed_visual_plan_uses_real_candidates_and_never_the_legacy_gop",
+      "sourcePath": "SRC/neothd/src/media/video_frames.rs",
+      "sourceSha256": "970E34F39EAF5BDC42B063B10758E96061727A46C6AC430A3D0F1CFC2947F59C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::video_frames::tests::observed_visual_plan_uniformly_fills_sparse_keyframes_with_small_caps",
+      "sourcePath": "SRC/neothd/src/media/video_frames.rs",
+      "sourceSha256": "970E34F39EAF5BDC42B063B10758E96061727A46C6AC430A3D0F1CFC2947F59C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::video_frames::tests::observed_visual_uniform_fallback_never_seeks_at_end_of_stream",
+      "sourcePath": "SRC/neothd/src/media/video_frames.rs",
+      "sourceSha256": "970E34F39EAF5BDC42B063B10758E96061727A46C6AC430A3D0F1CFC2947F59C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::video_frames::tests::scene_change_strategy_records_the_f1_contract",
+      "sourcePath": "SRC/neothd/src/media/video_frames.rs",
+      "sourceSha256": "970E34F39EAF5BDC42B063B10758E96061727A46C6AC430A3D0F1CFC2947F59C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::video_dispatch::tests::visual_preflight_refuses_disabled_upload_before_decode",
+      "sourcePath": "SRC/neothd/src/media/video_dispatch.rs",
+      "sourceSha256": "CBAA2BBD9FB913E5B3C3CA8A46990B32D9F574864F8D7218C82B2C126F2B5BED",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "media::video_dispatch::tests::visual_preflight_refuses_missing_required_audit_before_decode",
+      "sourcePath": "SRC/neothd/src/media/video_dispatch.rs",
+      "sourceSha256": "CBAA2BBD9FB913E5B3C3CA8A46990B32D9F574864F8D7218C82B2C126F2B5BED",
       "junitClass": "neoth"
     }
   ],
@@ -4112,6 +4166,12 @@
         "test": "feedback::response::tests::nonprivate_feedback_parent_fails_closed",
         "sourcePath": "SRC/neothd/src/feedback/response.rs",
         "sourceSha256": "E2A056E8C6ABA53762603E46D388ADBBBCBDAF2BBC1982AE5D664DF07405AB6E",
+        "junitClass": "neoth"
+      },
+      {
+        "test": "media::video_probe::tests::hosted_silent_video_runs_probe_scene_decode_and_mock_synthesis",
+        "sourcePath": "SRC/neothd/src/media/video_probe.rs",
+        "sourceSha256": "533E481A212DAB4AF759296D9523440846797446236BB604FD5E91C2985DCB3F",
         "junitClass": "neoth"
       }
     ],
@@ -6443,5 +6503,22 @@
     "quality": 35661037740,
     "correctedSource": "cceefbf5294cd2986ca9bd202bb0764077d18161",
     "boundary": "Hosted CLI compile/reference, Preflight and Quality pass; behavioral tests pending"
+  },
+  "wave174": {
+    "road": [
+      "ADOPT31-F1",
+      "ADOPT31-F3"
+    ],
+    "sourceFiles": 7,
+    "newUniversalTests": 9,
+    "newLinuxTests": 1,
+    "review": "work/gold-20260906/wave174-next-batch/INDEPENDENT-REVIEW-02.md",
+    "reviewSha256": "7663DFF920208C2879D4D4DBBAC74595B9608175D05549E8C63BEFF7D35FE4B5",
+    "deltaReview": "work/gold-20260906/wave174-next-batch/INTEGRATION-DELTA-REVIEW.md",
+    "deltaReviewSha256": "D3A095664A237CB7B6925DE9AE5826544F8DAA8523788B9DD191219E0EC72759",
+    "sourceInventory": "work/gold-20260906/wave174-next-batch/ADMITTED-SOURCES.json",
+    "native": "Hosted compile, Linux fixture, native/GUI behavior pending",
+    "cliReference": "Must regenerate for new ingest flag",
+    "roadClosure": false
   }
 }

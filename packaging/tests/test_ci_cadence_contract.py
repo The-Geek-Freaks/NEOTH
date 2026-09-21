@@ -462,6 +462,9 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertIn("libxkbcommon-x11-0", dependencies)
         self.assertIn("xauth", dependencies)
         self.assertIn("xvfb", dependencies)
+        # The Linux visual-ingest regression decodes a real silent video.
+        # Missing ffmpeg/ffprobe must fail that test, never silently skip it.
+        self.assertIn("ffmpeg", dependencies)
         self.assertEqual(
             step_run_command(steps["cargo nextest workspace (Linux)"]),
             "\n".join(

@@ -21,7 +21,9 @@ use clap::Args;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::media::{Asset, AssetKind, MediaExtractor, route_to_first_match};
+use crate::media::{
+    Asset, AssetKind, Extraction, ExtractionError, MediaExtractor, route_to_first_match,
+};
 use crate::memory::{
     ctx::{IndexReport, IndexRequest, index_document},
     embeddings, store,
@@ -68,6 +70,11 @@ pub struct IngestArgs {
     #[arg(long)]
     pub no_index: bool,
 
+    /// Analyse an actual video frame sequence with the configured cloud-vision
+    /// provider. This explicit mode does not require an audio transcript.
+    #[arg(long)]
+    pub analyze_video_frames: bool,
+
     /// Output format. Inherited from the global `--output` flag.
     #[arg(skip)]
     pub output: OutputFormat,
@@ -99,6 +106,9 @@ async fn run_ingest_with_context(
             path.display()
         )
     })?;
+    if args.analyze_video_frames && kind != AssetKind::Video {
+        anyhow::bail!("--analyze-video-frames requires a video input");
+    }
 
     let asset = Asset::Path {
         kind,
@@ -117,7 +127,10 @@ async fn run_ingest_with_context(
             .stt
             .fallback
             .is_some_and(|fallback| !fallback.is_local());
-    let stt_audit = if matches!(kind, AssetKind::Audio | AssetKind::Video) && !args.no_audit {
+    let stt_audit = if !args.analyze_video_frames
+        && matches!(kind, AssetKind::Audio | AssetKind::Video)
+        && !args.no_audit
+    {
         let wal_dir = neoth_home.join("wal");
         let opened = (|| -> anyhow::Result<_> {
             std::fs::create_dir_all(&wal_dir)?;
@@ -138,7 +151,14 @@ async fn run_ingest_with_context(
     } else {
         None
     };
-    let extraction_result = if matches!(kind, AssetKind::Audio | AssetKind::Video) {
+    let extraction_result = if args.analyze_video_frames {
+        extract_visual_video_with_context(&asset, effective_config, neoth_home, args.no_audit)
+            .await
+            .map_err(|error| ExtractionError::Backend {
+                backend: "video",
+                reason: error.to_string(),
+            })
+    } else if matches!(kind, AssetKind::Audio | AssetKind::Video) {
         let config = &effective_config;
         match kind {
             AssetKind::Audio => {
@@ -274,6 +294,122 @@ async fn run_ingest_with_context(
         }
     }
     Ok(())
+}
+
+const VISUAL_FRAME_ANALYSIS_PROMPT: &str = "Describe the visual content, scene changes, actions, visible text, and relevant context in these ordered video frames.";
+
+async fn extract_visual_video_with_context(
+    asset: &Asset,
+    effective_config: &FreedomConfig,
+    neoth_home: &Path,
+    no_audit: bool,
+) -> Result<Extraction> {
+    let provider = match effective_config.provider_kind {
+        Some(crate::cli::init::types::ProviderKind::AnthropicApi) => {
+            crate::media::video_frames::MultimodalProvider::AnthropicClaude
+        }
+        Some(crate::cli::init::types::ProviderKind::OpenaiApi) => {
+            crate::media::video_frames::MultimodalProvider::OpenAiGpt4o
+        }
+        Some(crate::cli::init::types::ProviderKind::GeminiApi) => {
+            crate::media::video_frames::MultimodalProvider::GoogleGemini
+        }
+        Some(provider) => anyhow::bail!(
+            "--analyze-video-frames requires anthropic_api, openai_api, or gemini_api; configured provider is {provider:?}"
+        ),
+        None => anyhow::bail!(
+            "--analyze-video-frames requires an anthropic_api, openai_api, or gemini_api provider"
+        ),
+    };
+    // This factory is the cloud-vision and credential gate. It deliberately
+    // precedes snapshotting, probing, decoding, and any possible frame egress.
+    let synth = crate::media::multimodal_synth::make_multimodal_synth(
+        provider,
+        effective_config.provider_key.clone(),
+        &effective_config.media,
+    )
+    .map_err(anyhow::Error::msg)?;
+
+    let visual_audit = if no_audit {
+        None
+    } else {
+        let wal_dir = neoth_home.join("wal");
+        let opened = (|| -> Result<_> {
+            std::fs::create_dir_all(&wal_dir)?;
+            let segment = crate::wal::writer::unique_standalone_segment_path(
+                &wal_dir,
+                "ingest-video-visual",
+            );
+            Ok(crate::wal::writer::spawn_for_home_with_completion(
+                segment,
+                neoth_home.to_path_buf(),
+            )?)
+        })();
+        match opened {
+            Ok(pair) => Some(pair),
+            Err(error) => {
+                tracing::warn!(%error, "ingest: visual video audit writer unavailable");
+                None
+            }
+        }
+    };
+
+    let visual_result = async {
+        // This must remain before snapshot/probe/decode. Keeping it inside the
+        // operation lets the visual WAL writer still reach terminal completion
+        // when this pre-flight itself refuses the operation.
+        crate::media::video_dispatch::preflight_video_analysis(
+            provider,
+            visual_audit.as_ref().map(|(writer, _)| writer),
+            &effective_config.media,
+        )
+        .map_err(anyhow::Error::msg)?;
+        let batch = crate::media::video_probe::decode_observed_visual_video_frames(
+            asset,
+            provider.max_frames_per_request() as usize,
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("visual frame probe/decode: {error}"))?;
+        let planned_timestamps_ms = batch.timestamps_ms;
+        let answer = crate::media::video_dispatch::dispatch_predecoded_video_analysis(
+            synth.as_ref(),
+            batch.frames,
+            VISUAL_FRAME_ANALYSIS_PROMPT,
+            512,
+            visual_audit.as_ref().map(|(writer, _)| writer),
+            None,
+            &effective_config.media,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        Ok(Extraction {
+            text: format!("Visual frame analysis:\n{answer}"),
+            metadata: serde_json::json!({
+                "analysis_kind": "visual_frame_analysis",
+                "provider": provider.as_str(),
+                "planned_timestamps_ms": planned_timestamps_ms,
+            }),
+        })
+    }
+    .await;
+
+    let audit_result = if let Some((writer, completion)) = visual_audit {
+        drop(writer);
+        completion
+            .wait()
+            .await
+            .map_err(|error| anyhow::anyhow!("visual video audit WAL finalization failed: {error}"))
+    } else {
+        Ok(())
+    };
+    match (visual_result, audit_result) {
+        (Ok(extraction), Ok(())) => Ok(extraction),
+        (Err(visual_error), Ok(())) => Err(visual_error),
+        (Ok(_), Err(audit_error)) => Err(audit_error),
+        (Err(visual_error), Err(audit_error)) => Err(anyhow::anyhow!(
+            "visual frame analysis failed: {visual_error}; audit finalization also failed: {audit_error}"
+        )),
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -727,6 +863,7 @@ mod tests {
             no_persist: true,
             no_audit: true,
             no_index: false,
+            analyze_video_frames: false,
             output: OutputFormat::Json,
         };
 
@@ -774,6 +911,7 @@ mod tests {
             no_persist: true,
             no_audit: true,
             no_index: true, // <── skip indexing
+            analyze_video_frames: false,
             output: OutputFormat::Json,
         };
 

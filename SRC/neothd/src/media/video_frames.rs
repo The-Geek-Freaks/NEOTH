@@ -75,13 +75,17 @@ impl FrameFormat {
 }
 
 /// Frame sampling strategy.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SamplingStrategy {
     EveryNthFrame { n: u32 },
     EveryNMilliseconds { ms: u32 },
     Keyframes,
     Adaptive { target_count: u32 },
+    /// F1 — actual scene candidates come from ffmpeg's scene filter. The
+    /// ingest visual path supplies observed candidates; this enum records the
+    /// explicit sampling contract without reviving synthetic GOP planning.
+    SceneChange { threshold: f32, min_frames: usize },
 }
 
 impl SamplingStrategy {
@@ -91,6 +95,7 @@ impl SamplingStrategy {
             Self::EveryNMilliseconds { .. } => "every_n_milliseconds",
             Self::Keyframes => "keyframes",
             Self::Adaptive { .. } => "adaptive",
+            Self::SceneChange { .. } => "scene_change",
         }
     }
 }
@@ -156,6 +161,13 @@ pub fn plan_frame_timestamps(
                 (0..n).map(|i| (i * step).min(duration_ms)).collect()
             }
         }
+        SamplingStrategy::SceneChange { min_frames, .. } => {
+            // The generic planner has no frame observations. Keep this
+            // historical API deterministic while the real ingest path calls
+            // `plan_observed_video_frame_timestamps` with ffprobe/showinfo
+            // evidence instead.
+            uniform_duration_timestamps(duration_ms, *min_frames)
+        }
     };
     if out.len() as u32 > max_frames {
         // Subsample evenly down to max_frames.
@@ -166,6 +178,108 @@ pub fn plan_frame_timestamps(
         out = kept;
     }
     out
+}
+
+/// ADOPT31-F1/F3 contract for the real ingest-only visual path. It is the
+/// same public strategy variant consumed by probe and planner, rather than a
+/// duplicate configuration type beside the sampler API.
+pub const VISUAL_SCENE_CHANGE: SamplingStrategy = SamplingStrategy::SceneChange {
+    threshold: 0.20,
+    min_frames: 8,
+};
+pub const OBSERVED_KEYFRAME_MIN: usize = 4;
+
+pub fn scene_change_config(strategy: &SamplingStrategy) -> Option<(f32, usize)> {
+    match strategy {
+        SamplingStrategy::SceneChange {
+            threshold,
+            min_frames,
+        } => Some((*threshold, *min_frames)),
+        _ => None,
+    }
+}
+
+/// Build a deterministic, provider-capped visual sampling plan from a verified
+/// duration plus timestamps observed from the immutable input snapshot.
+///
+/// Scene candidates and real keyframes are merged before uniform filling. A
+/// sparse keyframe stream activates uniform fallback; the fill also guarantees
+/// the F1 scene minimum where the provider cap permits it. This path never
+/// uses the legacy synthetic two-second GOP planner above.
+pub fn plan_observed_video_frame_timestamps(
+    strategy: &SamplingStrategy,
+    duration_ms: u64,
+    observed_keyframes_ms: &[u64],
+    scene_timestamps_ms: &[u64],
+    observed_frame_timestamps_ms: &[u64],
+    provider_cap: usize,
+) -> Vec<u64> {
+    let Some((_, scene_min_frames)) = scene_change_config(strategy) else {
+        return Vec::new();
+    };
+    if duration_ms == 0 || provider_cap == 0 || observed_frame_timestamps_ms.is_empty() {
+        return Vec::new();
+    }
+
+    let mut timestamps = observed_keyframes_ms
+        .iter()
+        .chain(scene_timestamps_ms)
+        .copied()
+        .filter(|timestamp| *timestamp < duration_ms)
+        .collect::<Vec<_>>();
+    timestamps.sort_unstable();
+    timestamps.dedup();
+
+    let target = provider_cap.min(scene_min_frames);
+    if observed_keyframes_ms.len() < OBSERVED_KEYFRAME_MIN || timestamps.len() < target {
+        timestamps.extend(uniform_observed_timestamps(
+            observed_frame_timestamps_ms,
+            target,
+        ));
+        timestamps.sort_unstable();
+        timestamps.dedup();
+    }
+    cap_evenly(timestamps, provider_cap)
+}
+
+fn uniform_duration_timestamps(duration_ms: u64, count: usize) -> Vec<u64> {
+    if count == 0 {
+        return Vec::new();
+    }
+    if count == 1 {
+        return vec![duration_ms / 2];
+    }
+    (0..count as u64)
+        .map(|index| duration_ms.saturating_mul(index) / count as u64)
+        .collect()
+}
+
+fn uniform_observed_timestamps(timestamps: &[u64], count: usize) -> Vec<u64> {
+    if count == 0 || timestamps.is_empty() {
+        return Vec::new();
+    }
+    if count == 1 {
+        return vec![timestamps[timestamps.len() / 2]];
+    }
+    let last_input = timestamps.len() - 1;
+    let last_output = count - 1;
+    (0..count)
+        .map(|index| timestamps[index * last_input / last_output])
+        .collect()
+}
+
+fn cap_evenly(timestamps: Vec<u64>, cap: usize) -> Vec<u64> {
+    if timestamps.len() <= cap {
+        return timestamps;
+    }
+    if cap == 1 {
+        return vec![timestamps[timestamps.len() / 2]];
+    }
+    let last_input = timestamps.len() - 1;
+    let last_output = cap - 1;
+    (0..cap)
+        .map(|index| timestamps[index * last_input / last_output])
+        .collect()
 }
 
 /// Multimodal council request.
@@ -341,6 +455,47 @@ mod tests {
         let s = SamplingStrategy::Keyframes;
         let plan = plan_frame_timestamps(&s, 6_000, 30.0, 100);
         assert_eq!(plan, vec![0, 2_000, 4_000]);
+    }
+
+    #[test]
+    fn observed_visual_plan_uses_real_candidates_and_never_the_legacy_gop() {
+        let plan = plan_observed_video_frame_timestamps(
+            &VISUAL_SCENE_CHANGE,
+            10_000,
+            &[100, 3_700, 8_900, 9_500],
+            &[3_700, 6_000],
+            &[100, 3_700, 6_000, 8_900, 9_500],
+            8,
+        );
+        assert!(plan.contains(&100));
+        assert_ne!(plan, vec![0, 2_000, 4_000, 6_000, 8_000]);
+        assert!(plan.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    #[test]
+    fn observed_visual_plan_uniformly_fills_sparse_keyframes_with_small_caps() {
+        let plan = plan_observed_video_frame_timestamps(&VISUAL_SCENE_CHANGE, 10_000, &[4_000], &[], &[0, 4_000, 9_999], 3);
+        assert_eq!(plan.len(), 3);
+        assert!(plan.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(plan.iter().all(|timestamp| *timestamp < 10_000));
+    }
+
+    #[test]
+    fn observed_visual_uniform_fallback_never_seeks_at_end_of_stream() {
+        let plan = plan_observed_video_frame_timestamps(&VISUAL_SCENE_CHANGE, 1_000, &[], &[], &[0, 120, 240, 360, 480, 600, 720, 840, 960], 8);
+        assert_eq!(plan.len(), 8);
+        assert_eq!(plan[0], 0);
+        assert!(plan.iter().all(|timestamp| *timestamp < 1_000));
+    }
+
+    #[test]
+    fn scene_change_strategy_records_the_f1_contract() {
+        let strategy = SamplingStrategy::SceneChange {
+            threshold: 0.20,
+            min_frames: 8,
+        };
+        assert_eq!(strategy.kind_str(), "scene_change");
+        assert_eq!(scene_change_config(&VISUAL_SCENE_CHANGE), Some((0.20, 8)));
     }
 
     #[test]

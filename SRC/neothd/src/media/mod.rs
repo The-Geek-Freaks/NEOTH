@@ -97,6 +97,9 @@ pub mod video;
 /// MM-02b — video analysis dispatch: decode → vision synth → 0xC9 audit.
 pub mod video_dispatch;
 pub mod video_frames;
+/// ADOPT31-F1/F3 — immutable-snapshot probing and scene-based sampling for
+/// explicit ingest visual-frame analysis.
+pub mod video_probe;
 pub mod vision;
 
 use anyhow::Result;

@@ -724,6 +724,173 @@ pub(crate) async fn run_auxiliary_ffmpeg_bounded_with_permit(
     .await
 }
 
+/// Bounded output from an auxiliary ffmpeg pass that has a meaningful stderr
+/// protocol (currently `showinfo` scene timestamps). Both streams are drained
+/// under the existing worker permit, timeout, kill/reap and private-cleanup
+/// rules. A truncated stderr protocol is refused rather than sampled from.
+pub(crate) struct AuxiliaryFfmpegOutput {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+pub(crate) async fn run_auxiliary_ffmpeg_bounded_with_permit_capture_stderr(
+    command: Command,
+    operation: &'static str,
+    timeout: Duration,
+    max_stdout_bytes: u64,
+    missing_binary_reason: &'static str,
+    permit: &AuxiliaryVideoWorkPermit,
+) -> Result<AuxiliaryFfmpegOutput, ExtractionError> {
+    let limits = ChildLimits {
+        operation,
+        timeout,
+        max_stdout_bytes,
+        missing_binary_reason,
+    };
+    tokio::spawn(run_child_supervised_capture_stderr(command, limits, permit.0.clone()))
+        .await
+        .map_err(|error| ExtractionError::Backend {
+            backend: "video",
+            reason: format!("ffmpeg supervisor task failed: {error}"),
+        })?
+}
+
+async fn run_child_supervised_capture_stderr(
+    mut command: Command,
+    limits: ChildLimits,
+    _permit: VideoWorkPermit,
+) -> Result<AuxiliaryFfmpegOutput, ExtractionError> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = command.spawn().map_err(|error| {
+        if matches!(error.kind(), std::io::ErrorKind::NotFound) {
+            ExtractionError::Backend {
+                backend: "video",
+                reason: limits.missing_binary_reason.into(),
+            }
+        } else {
+            ExtractionError::Io(format!(
+                "spawn ffmpeg ({} extraction): {error}",
+                limits.operation
+            ))
+        }
+    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ExtractionError::Io("ffmpeg stdout pipe unavailable".into()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ExtractionError::Io("ffmpeg stderr pipe unavailable".into()))?;
+    let stderr_task = tokio::spawn(drain_to_eof_capped(stderr, MAX_STDERR_BYTES));
+
+    let run_result = tokio::time::timeout(limits.timeout, async {
+        let stdout = read_max_plus_one(stdout, limits.max_stdout_bytes)
+            .await
+            .map_err(ChildRunError::Stdout)?;
+        if stdout.truncated {
+            return Err(ChildRunError::OutputTooLarge);
+        }
+        let status = child.wait().await.map_err(ChildRunError::Wait)?;
+        Ok((status, stdout))
+    })
+    .await;
+
+    match run_result {
+        Err(_) => {
+            if let Err(error) = terminate_child_fail_closed(&mut child, limits.operation).await {
+                stderr_task.abort();
+                let _ = stderr_task.await;
+                return Err(error);
+            }
+            let stderr = collect_stderr(stderr_task).await?;
+            Err(ExtractionError::Backend {
+                backend: "video",
+                reason: format!(
+                    "ffmpeg {} extraction timed out after {}s{}",
+                    limits.operation,
+                    limits.timeout.as_secs(),
+                    sanitized_stderr_detail(&stderr)
+                ),
+            })
+        }
+        Ok(Err(ChildRunError::OutputTooLarge)) => {
+            if let Err(error) = terminate_child_fail_closed(&mut child, limits.operation).await {
+                stderr_task.abort();
+                let _ = stderr_task.await;
+                return Err(error);
+            }
+            let _ = collect_stderr(stderr_task).await?;
+            Err(ExtractionError::Backend {
+                backend: "video",
+                reason: format!(
+                    "ffmpeg {} output exceeds the {}-byte limit",
+                    limits.operation, limits.max_stdout_bytes
+                ),
+            })
+        }
+        Ok(Err(ChildRunError::Stdout(error))) => {
+            if let Err(cleanup_error) =
+                terminate_child_fail_closed(&mut child, limits.operation).await
+            {
+                stderr_task.abort();
+                let _ = stderr_task.await;
+                return Err(cleanup_error);
+            }
+            let _ = collect_stderr(stderr_task).await?;
+            Err(ExtractionError::Io(format!(
+                "read ffmpeg {} stdout: {error}",
+                limits.operation
+            )))
+        }
+        Ok(Err(ChildRunError::Wait(error))) => {
+            if let Err(cleanup_error) =
+                terminate_child_fail_closed(&mut child, limits.operation).await
+            {
+                stderr_task.abort();
+                let _ = stderr_task.await;
+                return Err(cleanup_error);
+            }
+            let _ = collect_stderr(stderr_task).await?;
+            Err(ExtractionError::Io(format!(
+                "wait for ffmpeg {} extraction: {error}",
+                limits.operation
+            )))
+        }
+        Ok(Ok((status, stdout))) => {
+            let stderr = collect_stderr(stderr_task).await?;
+            if stderr.truncated {
+                return Err(ExtractionError::Backend {
+                    backend: "video",
+                    reason: format!(
+                        "ffmpeg {} stderr exceeds the {}-byte limit",
+                        limits.operation, MAX_STDERR_BYTES
+                    ),
+                });
+            }
+            if !status.success() {
+                return Err(ExtractionError::Backend {
+                    backend: "video",
+                    reason: format!(
+                        "ffmpeg {} extraction exited with status {}{}",
+                        limits.operation,
+                        status,
+                        sanitized_stderr_detail(&stderr)
+                    ),
+                });
+            }
+            Ok(AuxiliaryFfmpegOutput {
+                stdout: stdout.output,
+                stderr: stderr.bytes,
+            })
+        }
+    }
+}
+
 async fn run_child_to_temp_bounded(
     command: Command,
     limits: ChildLimits,

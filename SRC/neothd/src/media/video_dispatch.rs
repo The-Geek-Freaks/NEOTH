@@ -69,6 +69,27 @@ fn synthesized_payload(
     .unwrap_or_default()
 }
 
+/// Refuse a cloud-video path before any probe, decode, or egress.
+pub fn preflight_video_analysis(
+    provider: MultimodalProvider,
+    writer: Option<&WalWriterHandle>,
+    media_cfg: &crate::config::MediaConfig,
+) -> Result<(), String> {
+    if !media_cfg.video_frame_upload_enabled {
+        return Err(format!(
+            "video frame upload ({}) is disabled — set media.video_frame_upload_enabled: true \
+             to decode video frames and send them to a cloud vision model (those frames then \
+             LEAVE the device)",
+            provider.as_str()
+        ));
+    }
+    crate::media::enforce_cloud_media_audit(
+        media_cfg.required_audit_for_cloud_media,
+        writer.is_some(),
+    )?;
+    Ok(())
+}
+
 /// Decode `timestamps_ms` (capped to the provider's frame limit) into frames,
 /// run the prompt-guided vision synthesis, and audit the call (`0xC9`). Returns
 /// the provider's answer text.
@@ -85,24 +106,7 @@ pub async fn dispatch_video_analysis(
     wal_session: Option<crate::wal::WalSessionContext>,
     media_cfg: &crate::config::MediaConfig,
 ) -> Result<String, String> {
-    // P0 ENFORCEMENT — decoding video frames and shipping them to a cloud vision
-    // model uploads imagery from the operator's files. It may only run when the
-    // operator opted in (`media.video_frame_upload_enabled`). Every offered
-    // synthesizer is cloud-backed, so there is no local exemption.
-    if !media_cfg.video_frame_upload_enabled {
-        return Err(format!(
-            "video frame upload ({}) is disabled — set media.video_frame_upload_enabled: true \
-             to decode video frames and send them to a cloud vision model (those frames then \
-             LEAVE the device)",
-            synth.provider().as_str()
-        ));
-    }
-    // P0 fail-closed pre-flight: under proof-hardline, refuse a CLOUD frame
-    // upload that can't be audited.
-    crate::media::enforce_cloud_media_audit(
-        media_cfg.required_audit_for_cloud_media,
-        writer.is_some(),
-    )?;
+    preflight_video_analysis(synth.provider(), writer, media_cfg)?;
     // Honour the provider's documented per-request frame cap.
     let cap = synth.provider().max_frames_per_request() as usize;
     let chosen: Vec<u64> = timestamps_ms.iter().take(cap).copied().collect();
@@ -124,6 +128,42 @@ pub async fn dispatch_video_analysis(
             "video decoder returned frames that do not exactly match the provider-capped timestamp order"
                 .into(),
         );
+    }
+    dispatch_predecoded_video_analysis(
+        synth,
+        frames,
+        prompt,
+        max_tokens,
+        writer,
+        wal_session,
+        media_cfg,
+    )
+    .await
+}
+
+/// Dispatch already-decoded frames from an immutable caller-owned snapshot.
+/// The same gate remains here so future callers cannot bypass upload/audit
+/// policy; explicit visual ingest additionally calls it before probing.
+#[allow(clippy::too_many_arguments)]
+pub async fn dispatch_predecoded_video_analysis(
+    synth: &dyn MultimodalSynthesizer,
+    frames: Vec<DecodedVideoFrame>,
+    prompt: &str,
+    max_tokens: u32,
+    writer: Option<&WalWriterHandle>,
+    wal_session: Option<crate::wal::WalSessionContext>,
+    media_cfg: &crate::config::MediaConfig,
+) -> Result<String, String> {
+    preflight_video_analysis(synth.provider(), writer, media_cfg)?;
+    let cap = synth.provider().max_frames_per_request() as usize;
+    if frames.is_empty() {
+        return Err("no decoded video frames to analyse".into());
+    }
+    if frames.len() > cap {
+        return Err(format!(
+            "decoded video frame batch has {} frames; provider cap is {cap}",
+            frames.len()
+        ));
     }
     let frames = dedup_frames(frames);
     let frame_count = frames.len();
@@ -205,9 +245,7 @@ pub async fn dispatch_video_analysis(
         .await;
     }
     Ok(answer)
-}
-
-/// Emit the `0xC9` audit frame. Best-effort: a WAL error is logged + dropped
+}/// Emit the `0xC9` audit frame. Best-effort: a WAL error is logged + dropped
 /// (the synthesis already happened; the frame is the audit nicety).
 async fn emit_synthesized(
     writer: &WalWriterHandle,
@@ -367,6 +405,29 @@ mod tests {
             video_frame_upload_enabled: true,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn visual_preflight_refuses_disabled_upload_before_decode() {
+        let error = preflight_video_analysis(
+            MultimodalProvider::OpenAiGpt4o,
+            None,
+            &crate::config::MediaConfig::default(),
+        )
+        .expect_err("disabled video upload must refuse before frame work");
+        assert!(error.contains("video frame upload"));
+    }
+
+    #[test]
+    fn visual_preflight_refuses_missing_required_audit_before_decode() {
+        let config = crate::config::MediaConfig {
+            video_frame_upload_enabled: true,
+            required_audit_for_cloud_media: true,
+            ..Default::default()
+        };
+        let error = preflight_video_analysis(MultimodalProvider::OpenAiGpt4o, None, &config)
+            .expect_err("required visual audit must refuse before frame work");
+        assert!(error.contains("required_audit_for_cloud_media"));
     }
 
     #[test]

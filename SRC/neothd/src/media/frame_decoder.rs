@@ -163,6 +163,29 @@ impl FfmpegFrameDecoder {
     pub fn new() -> Self {
         Self
     }
+
+    /// Decode against a caller-owned immutable snapshot. The visual ingest
+    /// probe owns that snapshot and its auxiliary-work permit so probing,
+    /// scene sampling, and every decoded frame observe identical bytes.
+    pub(crate) async fn decode_snapshot_with_perceptual_signatures(
+        &self,
+        input: &Path,
+        permit: &AuxiliaryVideoWorkPermit,
+        timestamps_ms: &[u64],
+        format: FrameFormat,
+    ) -> Result<Vec<DecodedVideoFrame>, ExtractionError> {
+        enforce_frame_batch_hard_cap(timestamps_ms.len())?;
+        let mut frames = Vec::with_capacity(timestamps_ms.len());
+        for &ts_ms in timestamps_ms {
+            let frame = run_ffmpeg_frame(input, ts_ms, format, permit).await?;
+            let grayscale_signature = run_ffmpeg_perceptual(input, ts_ms, permit).await?;
+            frames.push(DecodedVideoFrame {
+                frame,
+                grayscale_signature: Some(grayscale_signature),
+            });
+        }
+        Ok(frames)
+    }
 }
 
 impl Default for FfmpegFrameDecoder {
