@@ -27,3 +27,12 @@ acceptance. A fresh Hosted Clippy result is still required for this repair.
 The separate W177 training-export implementation remains unadmitted. Its dirty
 source hashes are excluded from this publication. No local compiler, parser,
 formatter, test, fixture or product ran. No Road checkbox closes.
+
+W179 follow-up: Preflight 35668694259 and Code Quality 35668693744 passed
+on 3ced9449. The older a72 adapter and SSH jobs both found the same three
+library-test compile errors: two missing fmt::Write resolutions in usage.rs
+and one PathBuf borrow in hippocampus.rs. The reviewed repair adds a test-only
+trait import and the required borrow. Fresh Hosted test compilation remains
+required; current W177 work is excluded.
+The three diagnostics are retained in jobs 106557462826 and 106557462919.
+Compile-repair receipt SHA-256: 51C0F2F5DC10440952810105379DA21C2698206048ADFE53D30B628DC2D9846C.

@@ -152,7 +152,7 @@ mod tests {
 
     fn open() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().unwrap();
-        let conn = crate::memory::store::open(dir.path().join("views.db")).unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
         (dir, conn)
     }
 

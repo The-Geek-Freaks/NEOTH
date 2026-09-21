@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W179-Hosted-prompt-layer-Clippy-repair",
-  "base": "a72b403846f512b67b7bc05e751f6b7e2d667c61",
-  "capturedUtc": "2026-09-21T23:38:44.1479690Z",
-  "validationStatus": "W179_SOURCE_REVIEWED_HOSTED_CLIPPY_PENDING",
-  "scopeNote": "Exact four-path W179 admission only; W177 dirty backend/producer/GUI/exporter excluded. Existing native jobs preserved. No behavioral closure.",
+  "base": "3ced944969458d5b92b42028d7a972e889a98ff6",
+  "capturedUtc": "2026-09-21T23:43:05.0170780Z",
+  "validationStatus": "W179_HOSTED_TEST_COMPILE_REPAIR_PENDING",
+  "scopeNote": "W179 exact3library-test compile diagnostics repaired in2files;5explicit source/doc admissions only; W177 dirty sources excluded. Fresh Hosted compilation required.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -208,13 +208,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1014699,
-      "sha256": "90781F9751844D332D6BC08640EB83C2350BFE0333DE471D00F525B5056A2FEE"
+      "bytes": 1015120,
+      "sha256": "0288CEAEA77EDAC7CDEF2FDB1C8680B0E3EB944ADA5A76716BD83209AAFAB985"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1610146,
-      "sha256": "C248D745CE64EE241B0790BD161C2BB7F9B896EAE023096B4C87590D1A971FBD"
+      "bytes": 1610567,
+      "sha256": "63D77399CB440DA7CE181ABA5000D88A2C85649A75239E264E21D441D75AF95E"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -893,8 +893,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/usage.rs",
-      "bytes": 17244,
-      "sha256": "56F1F71940181B6D936D765141AF7E26F041A26BC86BBFCF4E156966C14AB73D"
+      "bytes": 17278,
+      "sha256": "E01A50F473406D016AAEF5EF2CF74A75C17ADE1A003842EE38ABA19BC03CCCE7"
     },
     {
       "path": "SRC/neothd/src/cli/wal.rs",
@@ -1458,8 +1458,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/hippocampus.rs",
-      "bytes": 9208,
-      "sha256": "E11C46DD5D54EDDBE9474552C633A7E8EEC5BCD340DFE8B0C73DA7C8B6D25A22"
+      "bytes": 9209,
+      "sha256": "E73F6A5D974DCA825C6C406E20F0B449A79DF632E7DC7B75DCD8AC9ED9431BDD"
     },
     {
       "path": "SRC/neothd/src/memory/indexer.rs",
@@ -2033,8 +2033,8 @@
     },
     {
       "path": "docs/gold-wave179-verification.md",
-      "bytes": 1646,
-      "sha256": "BCC764E0398F7EF0EA401A52D564361684E79B1988260DC63E3BDB5DEC137E77"
+      "bytes": 2239,
+      "sha256": "826C7CE6F45C659A448DA5131819FB333DF0983544692B07FDBC3915B7770A73"
     }
   ]
 }

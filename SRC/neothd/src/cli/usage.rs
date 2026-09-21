@@ -5,6 +5,8 @@
 //! Default window: last 24h. Operator can widen with `--days N` or
 //! pin a custom range with `--since-unix … --until-unix …`.
 
+#[cfg(test)]
+use std::fmt::Write;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 

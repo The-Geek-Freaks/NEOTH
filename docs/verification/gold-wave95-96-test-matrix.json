@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W179_SOURCE_REVIEWED_HOSTED_CLIPPY_PENDING",
-  "base": "a72b403846f512b67b7bc05e751f6b7e2d667c61",
+  "status": "W179_HOSTED_TEST_COMPILE_REPAIR_PENDING",
+  "base": "3ced944969458d5b92b42028d7a972e889a98ff6",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 70115,
-    "sha256": "A39EADF590A39DCCCB2C299FCA617E58F31F4636C4B9CC75053CAC437A656981"
+    "bytes": 70133,
+    "sha256": "B363B6560D97919012EF9249B338CE75849EE524DAA70E7011BE03AC52AA36F3"
   },
   "sourceInputs": 406,
   "requiredNativeTests": [
@@ -2520,7 +2520,7 @@
     {
       "test": "cli::usage::tests::prompt_tax_section_distinguishes_unavailable_from_an_observed_zero",
       "sourcePath": "SRC/neothd/src/cli/usage.rs",
-      "sourceSha256": "56F1F71940181B6D936D765141AF7E26F041A26BC86BBFCF4E156966C14AB73D",
+      "sourceSha256": "E01A50F473406D016AAEF5EF2CF74A75C17ADE1A003842EE38ABA19BC03CCCE7",
       "junitClass": "neoth"
     },
     {
@@ -2652,19 +2652,19 @@
     {
       "test": "memory::hippocampus::tests::selection_boundary_is_inclusive_and_idempotent",
       "sourcePath": "SRC/neothd/src/memory/hippocampus.rs",
-      "sourceSha256": "E11C46DD5D54EDDBE9474552C633A7E8EEC5BCD340DFE8B0C73DA7C8B6D25A22",
+      "sourceSha256": "E73F6A5D974DCA825C6C406E20F0B449A79DF632E7DC7B75DCD8AC9ED9431BDD",
       "junitClass": "neoth"
     },
     {
       "test": "memory::hippocampus::tests::reconcile_removes_decayed_and_missing_membership_atomically",
       "sourcePath": "SRC/neothd/src/memory/hippocampus.rs",
-      "sourceSha256": "E11C46DD5D54EDDBE9474552C633A7E8EEC5BCD340DFE8B0C73DA7C8B6D25A22",
+      "sourceSha256": "E73F6A5D974DCA825C6C406E20F0B449A79DF632E7DC7B75DCD8AC9ED9431BDD",
       "junitClass": "neoth"
     },
     {
       "test": "memory::hippocampus::tests::read_only_query_hides_stale_rows_and_uses_stable_order",
       "sourcePath": "SRC/neothd/src/memory/hippocampus.rs",
-      "sourceSha256": "E11C46DD5D54EDDBE9474552C633A7E8EEC5BCD340DFE8B0C73DA7C8B6D25A22",
+      "sourceSha256": "E73F6A5D974DCA825C6C406E20F0B449A79DF632E7DC7B75DCD8AC9ED9431BDD",
       "junitClass": "neoth"
     },
     {
@@ -6748,6 +6748,24 @@
     "receipt": "work/gold-20260906/wave179-hosted-repair/CLIPPY-REPAIR.md",
     "receiptSha256": "0C914F6D4EC0763B12B03753DF7023DB7B749A04E9C57160E0986F805BDAB8A8",
     "boundary": "Root source review only; fresh Hosted Clippy pending; existing a72 native jobs retained",
-    "roadClosure": false
+    "roadClosure": false,
+    "compileFollowup": {
+      "source": "3ced944969458d5b92b42028d7a972e889a98ff6",
+      "preflight": "35668694259 success",
+      "quality": "35668693744 success",
+      "priorSource": "a72b403846f512b67b7bc05e751f6b7e2d667c61",
+      "priorJobs": [
+        "106557462826",
+        "106557462919"
+      ],
+      "errors": [
+        "E0599 fmt::Write at usage.rs322",
+        "E0599 fmt::Write at usage.rs332",
+        "E0308 PathBuf at hippocampus.rs155"
+      ],
+      "repair": "Test-only fmt::Write import; explicit Path borrow",
+      "receiptSha256": "51C0F2F5DC10440952810105379DA21C2698206048ADFE53D30B628DC2D9846C",
+      "freshHosted": "pending"
+    }
   }
 }

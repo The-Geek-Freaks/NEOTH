@@ -10,6 +10,13 @@ prompt-tax behavior stay unchanged. Hosted Clippy must rerun. Windows/macOS
 native compilation is retained to collect its outcome. W177 remains separate
 and unadmitted; no checkbox closes. See [W179](../docs/gold-wave179-verification.md).
 
+W179 follow-up: Preflight 35668694259 and Code Quality 35668693744 passed
+on 3ced9449. The older a72 adapter and SSH jobs both found the same three
+library-test compile errors: two missing fmt::Write resolutions in usage.rs
+and one PathBuf borrow in hippocampus.rs. The reviewed repair adds a test-only
+trait import and the required borrow. Fresh Hosted test compilation remains
+required; current W177 work is excluded.
+
 **W178 Windows integration repairs (2026-09-22):** CI35658155763's completed
 Windows job compiled and ran 13,607 tests (13,587 pass/20 fail; 3,542 not run).
 Independently reviewed repairs preserve exact reasoning/throughput contracts,
