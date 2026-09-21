@@ -33,6 +33,7 @@ struct PendingGuiConsent {
     surface: GuiChatSurface,
     receipt: neothd::daemon::gui_chat_bridge::GuiChatBridgePreflightReceipt,
     incognito: bool,
+    reasoning_display: bool,
     body: String,
     operation: GuiChatOperation,
 }
@@ -51,6 +52,9 @@ struct ActiveGuiChatTurn {
     /// opaque value behind Arc rather than requiring the core type to Clone.
     turn: Arc<GuiChatBridgeTurn>,
     incognito: bool,
+    /// Captured at the attested preflight boundary. A handoff/reopen never
+    /// rereads the editable next-turn selector.
+    reasoning_display: bool,
 }
 
 pub(crate) struct InstalledGuiChat {
@@ -241,6 +245,54 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                 DaemonChatEventKind::Delta(text),
                 false,
             ),
+            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ReasoningDelta {
+                subscription,
+                sequence,
+                reasoning_sequence,
+                delta,
+            } => (
+                subscription,
+                sequence,
+                DaemonChatEventKind::ReasoningDelta {
+                    reasoning_sequence,
+                    delta,
+                },
+                false,
+            ),
+            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ReasoningState {
+                subscription,
+                sequence,
+                reasoning_sequence,
+                state,
+                event_count,
+                byte_count,
+            } => (
+                subscription,
+                sequence,
+                DaemonChatEventKind::ReasoningState {
+                    reasoning_sequence,
+                    state,
+                    event_count,
+                    byte_count,
+                },
+                false,
+            ),
+            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ReasoningCheckpoint {
+                subscription,
+                sequence,
+                reasoning_sequence,
+                event_count,
+                byte_count,
+            } => (
+                subscription,
+                sequence,
+                DaemonChatEventKind::ReasoningCheckpoint {
+                    reasoning_sequence,
+                    event_count,
+                    byte_count,
+                },
+                false,
+            ),
             neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ProviderDone {
                 subscription,
                 sequence,
@@ -302,6 +354,15 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
             .phase(surface)
             .unwrap_or(crate::chat_stream_phase::ChatStreamPhase::Failed);
         let text = reducer.visible_reply(surface).unwrap_or("").to_owned();
+        let reasoning_status = reducer
+            .reasoning_status(surface)
+            .map(|status| status.as_wire())
+            .unwrap_or("hidden");
+        let reasoning_active = reducer.reasoning_active(surface).unwrap_or(false);
+        let reasoning_text: slint::SharedString = reducer
+            .reasoning_text(surface)
+            .unwrap_or("")
+            .into();
         let incognito = self.incognito;
         let preview = preview_is_publishable(incognito, terminal)
             .then(|| reducer.canonical_preview(surface).map(str::to_owned))
@@ -331,6 +392,14 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                     return;
                 }
                 project_daemon_turn(&window, &daemon_turn_id, phase, &text);
+                project_daemon_reasoning(
+                    &window,
+                    overlay.upgrade().as_ref(),
+                    daemon_surface,
+                    reasoning_status,
+                    &reasoning_text,
+                    reasoning_active,
+                );
                 if let Some(preview) = preview
                     && !preview.is_empty()
                 {
@@ -432,6 +501,48 @@ fn project_daemon_turn(
     crate::set_live_chat_messages(window, rows);
 }
 
+/// Reasoning has its own transient Slint projection. It never enters a
+/// `ChatMessage`, companion recent-lines, preview, or clipboard path.
+fn project_daemon_reasoning(
+    window: &crate::MainWindow,
+    overlay: Option<&crate::MiniOverlay>,
+    surface: GuiChatSurface,
+    status: &str,
+    text: &slint::SharedString,
+    active: bool,
+) {
+    match surface {
+        GuiChatSurface::Main => {
+            window.set_chat_reasoning_status(status.into());
+            window.set_chat_reasoning_text(text.clone());
+            window.set_chat_reasoning_active(active);
+        }
+        GuiChatSurface::Buddy => {
+            if let Some(overlay) = overlay {
+                overlay.set_reasoning_status(status.into());
+                overlay.set_reasoning_text(text.clone());
+                overlay.set_reasoning_active(active);
+            }
+        }
+    }
+}
+
+/// A surface switch/failure starts with no local reasoning. Keeping status
+/// hidden here avoids treating a non-replayed handoff as a completed reason.
+fn clear_daemon_reasoning_projection(
+    window: &crate::MainWindow,
+    overlay: Option<&crate::MiniOverlay>,
+) {
+    window.set_chat_reasoning_status("hidden".into());
+    window.set_chat_reasoning_text("".into());
+    window.set_chat_reasoning_active(false);
+    if let Some(overlay) = overlay {
+        overlay.set_reasoning_status("hidden".into());
+        overlay.set_reasoning_text("".into());
+        overlay.set_reasoning_active(false);
+    }
+}
+
 fn bridge_runtime() -> Result<tokio::runtime::Runtime, String> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -458,14 +569,27 @@ fn submit(
     if win.get_chat_send_in_flight() {
         return;
     }
+    // Reasoning display is a next-turn choice. Capture before resetting the
+    // selector and carry only this immutable bit through preflight/receipt.
+    let reasoning_display = match surface {
+        GuiChatSurface::Main => win.get_chat_reasoning_display(),
+        GuiChatSurface::Buddy => overlay
+            .upgrade()
+            .is_some_and(|overlay| overlay.get_reasoning_display()),
+    };
+    clear_daemon_reasoning_projection(&win, overlay.upgrade().as_ref());
     // Incognito is an immutable request snapshot. Reset only the selector on
     // the initiating surface; the active marker is set below once this
     // operation exists.
     match surface {
-        GuiChatSurface::Main => win.set_chat_incognito(false),
+        GuiChatSurface::Main => {
+            win.set_chat_incognito(false);
+            win.set_chat_reasoning_display(false);
+        }
         GuiChatSurface::Buddy => {
             if let Some(overlay) = overlay.upgrade() {
                 overlay.set_incognito(false);
+                overlay.set_reasoning_display(false);
             }
         }
     }
@@ -514,6 +638,7 @@ fn submit(
                 model,
                 skill,
                 incognito,
+                reasoning_display,
                 attachments,
             ))
         })();
@@ -530,7 +655,16 @@ fn submit(
             }
             match result {
                 Ok(GuiChatBridgePreflight::Ready { decision }) => {
-                    start_receipt(state, window, overlay, operation, incognito, body, decision)
+                    start_receipt(
+                        state,
+                        window,
+                        overlay,
+                        operation,
+                        incognito,
+                        reasoning_display,
+                        body,
+                        decision,
+                    )
                 }
                 Ok(GuiChatBridgePreflight::ConfirmationRequired { receipt, prompt }) => {
                     let routes = prompt
@@ -548,6 +682,7 @@ fn submit(
                             surface,
                             receipt,
                             incognito,
+                            reasoning_display,
                             body,
                             operation,
                         });
@@ -644,6 +779,7 @@ fn decide_pending(
                     overlay,
                     pending.operation,
                     pending.incognito,
+                    pending.reasoning_display,
                     pending.body,
                     receipt,
                 ),
@@ -690,6 +826,7 @@ fn start_receipt(
     overlay: slint::Weak<crate::MiniOverlay>,
     operation: GuiChatOperation,
     incognito: bool,
+    reasoning_display: bool,
     body: String,
     receipt: neothd::daemon::gui_chat_bridge::GuiChatBridgeDecisionReceipt,
 ) {
@@ -706,6 +843,7 @@ fn start_receipt(
                 receipt,
                 operation.origin_surface,
                 incognito,
+                reasoning_display,
             ))
         })();
         match result {
@@ -736,6 +874,7 @@ fn start_receipt(
                             daemon_turn_id,
                             turn,
                             incognito,
+                            reasoning_display,
                         });
                         locked
                             .attachments
@@ -843,9 +982,13 @@ fn stop_active(
 fn settle_projection(window: &crate::MainWindow, overlay: Option<&crate::MiniOverlay>) {
     window.set_chat_send_in_flight(false);
     window.set_chat_incognito_active(false);
+    window.set_chat_reasoning_text("".into());
+    window.set_chat_reasoning_active(false);
     if let Some(overlay) = overlay {
         overlay.set_send_in_flight(false);
         overlay.set_incognito_active(false);
+        overlay.set_reasoning_text("".into());
+        overlay.set_reasoning_active(false);
     }
 }
 
@@ -855,6 +998,7 @@ fn fail_projection(
     message: &str,
 ) {
     settle_projection(window, overlay);
+    clear_daemon_reasoning_projection(window, overlay);
     window.set_status_line(message.into());
     if let Some(overlay) = overlay {
         overlay.set_status_text(message.into());
@@ -868,11 +1012,16 @@ fn fail_current_projection(
     overlay: Option<&crate::MiniOverlay>,
     message: &str,
 ) -> bool {
-    if state
+    let failed = state
         .lock()
         .unwrap_or_else(|p| p.into_inner())
-        .fail_current_operation(operation)
-    {
+        .fail_current_operation(operation);
+    if failed {
+        state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .controller
+            .close(operation.delivery_surface);
         fail_projection(window, overlay, message);
         true
     } else {
@@ -1038,6 +1187,7 @@ impl GuiChatBridgeController {
         model: Option<String>,
         skill_id: Option<String>,
         incognito: bool,
+        reasoning_display: bool,
         attachment_paths: Vec<std::path::PathBuf>,
     ) -> GuiChatBridgeResult<GuiChatBridgePreflight> {
         self.bridge
@@ -1049,6 +1199,7 @@ impl GuiChatBridgeController {
                 model,
                 skill_id,
                 incognito,
+                reasoning_display,
                 attachment_paths,
             })
             .await
@@ -1059,13 +1210,14 @@ impl GuiChatBridgeController {
         receipt: neothd::daemon::gui_chat_bridge::GuiChatBridgeDecisionReceipt,
         surface: GuiChatSurface,
         incognito: bool,
+        reasoning_display: bool,
     ) -> GuiChatBridgeResult<(GuiChatBridgeTurn, GuiChatBridgeSubscription)> {
         let turn = self.bridge.start(receipt).await?;
         let subscription = self
             .bridge
             .exchange_same_session_attach(&turn, surface)
             .await?;
-        self.adopt(&subscription, incognito)?;
+        self.adopt(&subscription, incognito, reasoning_display)?;
         Ok((turn, subscription))
     }
 
@@ -1073,6 +1225,7 @@ impl GuiChatBridgeController {
         &self,
         surface: GuiChatSurface,
         incognito: bool,
+        reasoning_display: bool,
     ) -> GuiChatBridgeResult<Option<(GuiChatBridgeTurn, GuiChatBridgeSubscription)>> {
         let Some(turn) = self.bridge.active().await? else {
             return Ok(None);
@@ -1081,7 +1234,7 @@ impl GuiChatBridgeController {
             .bridge
             .exchange_same_session_attach(&turn, surface)
             .await?;
-        self.adopt(&subscription, incognito)?;
+        self.adopt(&subscription, incognito, reasoning_display)?;
         Ok(Some((turn, subscription)))
     }
 
@@ -1103,6 +1256,7 @@ impl GuiChatBridgeController {
         &self,
         subscription: &GuiChatBridgeSubscription,
         incognito: bool,
+        reasoning_display: bool,
     ) -> GuiChatBridgeResult<()> {
         let metadata = &subscription.metadata;
         let surface = match metadata.surface {
@@ -1121,6 +1275,7 @@ impl GuiChatBridgeController {
                 metadata.generation,
                 metadata.latest_sequence,
                 incognito,
+                reasoning_display,
             )
             .map_err(|_| {
                 neothd::daemon::gui_chat_bridge::GuiChatBridgeError::invalid(
@@ -1138,20 +1293,25 @@ fn handoff_buddy_to_main(
     overlay: crate::MiniOverlay,
 ) {
     crate::save_overlay_pos(&overlay);
-    let retained_incognito = {
+    clear_daemon_reasoning_projection(&window, Some(&overlay));
+    let retained_turn_options = {
         let locked = state.lock().unwrap_or_else(|p| p.into_inner());
         locked.controller.close(GuiChatSurface::Buddy);
-        locked.active.as_ref().map(|active| active.incognito)
+        locked
+            .active
+            .as_ref()
+            .map(|active| (active.incognito, active.reasoning_display))
     };
     let _ = overlay.hide();
     let _ = window.show();
-    if let Some(incognito) = retained_incognito {
+    if let Some((incognito, reasoning_display)) = retained_turn_options {
         reopen_surface(
             state,
             window.as_weak(),
             overlay.as_weak(),
             GuiChatSurface::Main,
             incognito,
+            reasoning_display,
         );
     }
 }
@@ -1162,6 +1322,7 @@ fn reopen_surface(
     overlay: slint::Weak<crate::MiniOverlay>,
     surface: GuiChatSurface,
     incognito: bool,
+    reasoning_display: bool,
 ) {
     let (controller, operation) = {
         let mut locked = state.lock().unwrap_or_else(|p| p.into_inner());
@@ -1177,7 +1338,7 @@ fn reopen_surface(
                     "GUI runtime initialization failed",
                 )
             })?;
-            runtime.block_on(controller.reopen(surface, incognito))
+            runtime.block_on(controller.reopen(surface, incognito, reasoning_display))
         })();
         let _ = slint::invoke_from_event_loop(move || {
             let Some(win) = window.upgrade() else {
@@ -1218,6 +1379,7 @@ fn reopen_surface(
                 if active.operation != operation
                     || active.daemon_turn_id != returned_turn_id
                     || active.incognito != incognito
+                    || active.reasoning_display != reasoning_display
                 {
                     return;
                 }

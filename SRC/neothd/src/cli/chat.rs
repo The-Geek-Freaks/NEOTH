@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use clap::Args;
 use tracing::{info, warn};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::cli::chat_turn_pipeline::{self, ChatOutput, ChatTurnEvent, ChatTurnEventSink};
 use crate::config::{FreedomConfig, InstancePaths};
@@ -61,6 +61,48 @@ impl ChatTurnEventSink for CliChatOutput {
                 } else {
                     print!("{text}");
                     let _ = std::io::stdout().flush();
+                }
+            }
+            ChatOutput::ReasoningDelta {
+                sequence,
+                delta,
+                stream_control_token,
+            } => {
+                if let Some(token) = stream_control_token.as_deref() {
+                    write_reasoning_stream_delta(
+                        std::io::stdout().lock(),
+                        token,
+                        sequence,
+                        delta.as_str(),
+                    )?;
+                } else {
+                    let stderr = std::io::stderr();
+                    let mut stderr = stderr.lock();
+                    writeln!(stderr, "\n── provider reasoning ──\n{}", delta.as_str())?;
+                    stderr.flush()?;
+                }
+            }
+            ChatOutput::ReasoningState {
+                sequence,
+                state,
+                event_count,
+                byte_count,
+                stream_control_token,
+            } => {
+                if let Some(token) = stream_control_token.as_deref() {
+                    write_reasoning_stream_state(
+                        std::io::stdout().lock(),
+                        token,
+                        sequence,
+                        state,
+                        event_count,
+                        byte_count,
+                    )?;
+                } else {
+                    let stderr = std::io::stderr();
+                    let mut stderr = stderr.lock();
+                    writeln!(stderr, "── provider reasoning: {} ──", state.as_wire())?;
+                    stderr.flush()?;
                 }
             }
             ChatOutput::StreamDone {
@@ -241,6 +283,11 @@ pub struct ChatArgs {
     /// clap parsing because the global handler claims the flag first.
     #[arg(skip)]
     pub stream: bool,
+
+    /// Display ephemeral provider reasoning for this direct invocation. The
+    /// private GUI launch envelope overrides this argv flag.
+    #[arg(long)]
+    pub show_reasoning: bool,
 
     /// Private GUI bridge: block on a committed, request-bound launch envelope
     /// from stdin before reading config or constructing a provider. Authority
@@ -530,7 +577,10 @@ pub async fn run_chat(mut args: ChatArgs) -> Result<()> {
     } else {
         provider
     };
-    let stream_control_token = gui_launch.map(|launch| launch.stream_control_token);
+    let (stream_control_token, gui_reasoning_display) = gui_launch
+        .map(|launch| (Some(launch.stream_control_token), launch.reasoning_display))
+        .unwrap_or((None, args.show_reasoning));
+    args.show_reasoning = gui_reasoning_display;
     run_chat_with_consent(
         args,
         config,
@@ -1290,6 +1340,13 @@ impl<'a> CanaryStreamEgressBuffer<'a> {
             &self.pending,
         )?;
         Ok(std::mem::take(&mut self.pending))
+    }
+
+    /// Terminal reasoning failure may not retain a canary-quarantined suffix
+    /// until after its status frame is observable.
+    fn clear(&mut self) {
+        self.pending.zeroize();
+        self.matched = 0;
     }
 }
 
@@ -3986,6 +4043,234 @@ fn stream_request_id(control_token: &str) -> String {
     hex::encode(digest.finalize())
 }
 
+fn reasoning_audit_request_digest(turn_id: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+
+    let mut digest = Sha256::new();
+    digest.update(b"neoth-reasoning-stream-audit-v1\0");
+    digest.update(turn_id.as_bytes());
+    hex::encode(digest.finalize())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn append_reasoning_stream_audit(
+    writer: &crate::wal::writer::WalWriterHandle,
+    turn_id: &str,
+    provider: String,
+    model: String,
+    display_granted: bool,
+    event_count: u64,
+    byte_count: u64,
+    terminal_state: crate::wal::reasoning_audit::ReasoningAuditTerminalState,
+    reason_code: crate::wal::reasoning_audit::ReasoningAuditReasonCode,
+) -> Result<()> {
+    let audit = crate::wal::reasoning_audit::ReasoningStreamAuditV1::new(
+        reasoning_audit_request_digest(turn_id),
+        provider,
+        model,
+        display_granted,
+        event_count,
+        byte_count,
+        terminal_state,
+        reason_code,
+    )?;
+    let payload = crate::wal::reasoning_audit::encode_reasoning_stream_audit_v1(&audit)?;
+    let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+        .event_subtype(crate::wal::events::ExtendedSubtype::ReasoningStreamAuditV1 as u8)
+        .build();
+    writer.append(header, payload).await?;
+    Ok(())
+}
+
+/// Request-owned terminal receipt for the ephemeral reasoning plane.
+///
+/// Provider reasoning is allowed to fail at any point between stream open and
+/// the visible `Done` chunk.  Keeping the receipt state in one value makes the
+/// terminal output and its metadata-only WAL audit a single, once-only effect:
+/// no early return may manufacture a provider identity, lose the terminal
+/// state, or append a second audit after a native provider terminal.
+struct ReasoningStreamLifecycle {
+    display_granted: bool,
+    stream_control_token: Option<String>,
+    identity: Option<crate::providers::CompletionIdentity>,
+    sequence: u32,
+    observed_event_count: u64,
+    observed_byte_count: u64,
+    emitted_event_count: u64,
+    emitted_byte_count: u64,
+    provider_terminal: Option<crate::providers::ReasoningTerminalState>,
+    finalized: bool,
+}
+
+impl ReasoningStreamLifecycle {
+    fn new(display_granted: bool, stream_control_token: Option<&str>) -> Self {
+        Self {
+            display_granted,
+            stream_control_token: stream_control_token.map(str::to_owned),
+            identity: None,
+            sequence: 0,
+            observed_event_count: 0,
+            observed_byte_count: 0,
+            emitted_event_count: 0,
+            emitted_byte_count: 0,
+            provider_terminal: None,
+            finalized: false,
+        }
+    }
+
+    fn observe_identity(&mut self, identity: &crate::providers::CompletionIdentity) {
+        self.identity.get_or_insert_with(|| identity.clone());
+    }
+
+    fn observe_delta(&mut self, byte_count: usize) {
+        self.observed_event_count = self.observed_event_count.saturating_add(1);
+        self.observed_byte_count = self
+            .observed_byte_count
+            .saturating_add(u64::try_from(byte_count).unwrap_or(u64::MAX));
+    }
+
+    fn next_delta_sequence(&mut self) -> u32 {
+        self.sequence = self.sequence.saturating_add(1);
+        self.sequence
+    }
+
+    fn record_emitted_delta(&mut self, byte_count: usize) {
+        self.emitted_event_count = self.emitted_event_count.saturating_add(1);
+        self.emitted_byte_count = self
+            .emitted_byte_count
+            .saturating_add(u64::try_from(byte_count).unwrap_or(u64::MAX));
+    }
+
+    fn capture_provider_terminal(
+        &mut self,
+        provider_state: crate::providers::ReasoningTerminalState,
+        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        locally_redacted: bool,
+    ) {
+        self.provider_terminal = Some(if cancellation.is_closed() {
+            crate::providers::ReasoningTerminalState::Cancelled
+        } else if locally_redacted
+            || matches!(
+                provider_state,
+                crate::providers::ReasoningTerminalState::Redacted
+            )
+        {
+            crate::providers::ReasoningTerminalState::Redacted
+        } else if matches!(
+            provider_state,
+            crate::providers::ReasoningTerminalState::Unsupported
+        ) {
+            // An adapter that explicitly cannot produce reasoning stays
+            // honest even when the caller did not request presentation.
+            crate::providers::ReasoningTerminalState::Unsupported
+        } else if !self.display_granted {
+            crate::providers::ReasoningTerminalState::Hidden
+        } else {
+            provider_state
+        });
+    }
+
+    fn normal_terminal(
+        &self,
+        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    ) -> crate::providers::ReasoningTerminalState {
+        if cancellation.is_closed() {
+            crate::providers::ReasoningTerminalState::Cancelled
+        } else {
+            self.provider_terminal
+                .unwrap_or(crate::providers::ReasoningTerminalState::Redacted)
+        }
+    }
+
+    async fn finalize(
+        &mut self,
+        writer: &crate::wal::writer::WalWriterHandle,
+        turn_id: &str,
+        terminal: crate::providers::ReasoningTerminalState,
+        reason: crate::wal::reasoning_audit::ReasoningAuditReasonCode,
+        output: &mut dyn ChatTurnEventSink,
+    ) -> Result<()> {
+        if self.finalized {
+            return Ok(());
+        }
+
+        // Mark before either external effect.  A sink/audit error is terminal
+        // for this turn; a caller that handles it cannot accidentally retry
+        // and duplicate the reasoning frame or WAL receipt.
+        self.finalized = true;
+        let emit_result = if self.display_granted || self.stream_control_token.is_some() {
+            self.sequence = self.sequence.saturating_add(1);
+            emit_chat_output(
+                output,
+                ChatOutput::ReasoningState {
+                    sequence: self.sequence,
+                    state: terminal,
+                    // Wire counters deliberately describe delivered deltas.
+                    // Raw provider totals are audit-only metadata below.
+                    event_count: self.emitted_event_count,
+                    byte_count: self.emitted_byte_count,
+                    stream_control_token: self.stream_control_token.clone(),
+                },
+            )
+        } else {
+            Ok(())
+        };
+
+        let audit_state = match terminal {
+            crate::providers::ReasoningTerminalState::Unsupported => {
+                crate::wal::reasoning_audit::ReasoningAuditTerminalState::Unsupported
+            }
+            crate::providers::ReasoningTerminalState::Hidden => {
+                crate::wal::reasoning_audit::ReasoningAuditTerminalState::Hidden
+            }
+            crate::providers::ReasoningTerminalState::Redacted => {
+                crate::wal::reasoning_audit::ReasoningAuditTerminalState::Redacted
+            }
+            crate::providers::ReasoningTerminalState::Complete => {
+                crate::wal::reasoning_audit::ReasoningAuditTerminalState::Complete
+            }
+            crate::providers::ReasoningTerminalState::Cancelled => {
+                crate::wal::reasoning_audit::ReasoningAuditTerminalState::Cancelled
+            }
+        };
+        let audit_result = if let Some(identity) = self.identity.as_ref() {
+            append_reasoning_stream_audit(
+                writer,
+                turn_id,
+                identity.provider.clone(),
+                identity.wire_model.clone(),
+                self.display_granted,
+                self.observed_event_count,
+                self.observed_byte_count,
+                audit_state,
+                reason,
+            )
+            .await
+        } else {
+            let audit = crate::wal::reasoning_audit::ReasoningStreamAuditV1::without_observed_leaf(
+                reasoning_audit_request_digest(turn_id),
+                self.display_granted,
+                audit_state,
+                reason,
+            )?;
+            let payload = crate::wal::reasoning_audit::encode_reasoning_stream_audit_v1(&audit)?;
+            let header = crate::wal::HeaderBuilder::new(
+                crate::wal::events::EVENT_TYPE_EXTENDED,
+                &payload,
+            )
+            .event_subtype(crate::wal::events::ExtendedSubtype::ReasoningStreamAuditV1 as u8)
+            .build();
+            writer.append(header, payload).await
+        };
+
+        // Do not skip the audit when the presentation sink failed.  Its error
+        // remains the most useful caller-facing result once the audit settled.
+        emit_result?;
+        audit_result.context("append terminal reasoning stream audit")?;
+        Ok(())
+    }
+}
+
 fn stream_content_hash(response_text: &str) -> String {
     use sha2::{Digest as _, Sha256};
 
@@ -4059,6 +4344,97 @@ fn stream_provider_delta_line(
         text,
     })
     .map_err(std::io::Error::other)
+}
+
+fn stream_reasoning_delta_line(
+    control_token: &str,
+    sequence: u32,
+    delta: &str,
+) -> std::io::Result<String> {
+    #[derive(serde::Serialize)]
+    struct ReasoningDeltaFrame<'a> {
+        neoth_stream: &'static str,
+        protocol_version: u8,
+        request_id: String,
+        control_token: &'a str,
+        sequence: u32,
+        delta: &'a str,
+    }
+
+    serde_json::to_string(&ReasoningDeltaFrame {
+        neoth_stream: "reasoning_delta",
+        protocol_version: CHAT_STREAM_PROTOCOL_VERSION,
+        request_id: stream_request_id(control_token),
+        control_token,
+        sequence,
+        delta,
+    })
+    .map_err(std::io::Error::other)
+}
+
+fn write_reasoning_stream_delta(
+    mut output: impl std::io::Write,
+    control_token: &str,
+    sequence: u32,
+    delta: &str,
+) -> std::io::Result<()> {
+    if delta.is_empty() {
+        return Ok(());
+    }
+    writeln!(
+        output,
+        "{CHAT_STREAM_CONTROL_PREFIX}{}",
+        stream_reasoning_delta_line(control_token, sequence, delta)?
+    )?;
+    output.flush()
+}
+
+fn stream_reasoning_state_line(
+    control_token: &str,
+    sequence: u32,
+    state: crate::providers::ReasoningTerminalState,
+    event_count: u64,
+    byte_count: u64,
+) -> std::io::Result<String> {
+    #[derive(serde::Serialize)]
+    struct ReasoningStateFrame<'a> {
+        neoth_stream: &'static str,
+        protocol_version: u8,
+        request_id: String,
+        control_token: &'a str,
+        sequence: u32,
+        state: &'a str,
+        event_count: u64,
+        byte_count: u64,
+    }
+
+    serde_json::to_string(&ReasoningStateFrame {
+        neoth_stream: "reasoning_state",
+        protocol_version: CHAT_STREAM_PROTOCOL_VERSION,
+        request_id: stream_request_id(control_token),
+        control_token,
+        sequence,
+        state: state.as_wire(),
+        event_count,
+        byte_count,
+    })
+    .map_err(std::io::Error::other)
+}
+
+fn write_reasoning_stream_state(
+    mut output: impl std::io::Write,
+    control_token: &str,
+    sequence: u32,
+    state: crate::providers::ReasoningTerminalState,
+    event_count: u64,
+    byte_count: u64,
+) -> std::io::Result<()> {
+    writeln!(
+        output,
+        "{CHAT_STREAM_CONTROL_PREFIX}{}",
+        stream_reasoning_state_line(control_token, sequence, state, event_count, byte_count)?
+    )?;
+    output.flush()
 }
 
 fn write_provider_stream_delta(
@@ -4943,6 +5319,7 @@ pub(super) async fn dispatch_provider(
     route: TurnDispatchRoute,
     council_skip: Option<CouncilSkipAudit>,
     stream_control_token: Option<&str>,
+    reasoning_display: bool,
     defer_provider_output: bool,
     session_canary: &std::sync::Arc<crate::security::injection_tracker::CanaryToken>,
     cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
@@ -5173,6 +5550,8 @@ pub(super) async fn dispatch_provider(
 
     let dispatch_result: Result<ProviderDispatchResult> = async {
         Ok(if matches!(&route, TurnDispatchRoute::Streaming) {
+            let mut reasoning_lifecycle =
+                ReasoningStreamLifecycle::new(reasoning_display, stream_control_token);
             // QM-10 Phase 2.5: streaming path also consults the breaker.
             // Acquire BEFORE provider.stream so an Open breaker rejects
             // the call without opening a stream we'd have to drain.
@@ -5180,6 +5559,22 @@ pub(super) async fn dispatch_provider(
             {
                 Ok(p) => Some(p),
                 Err(berr) => {
+                    let terminal = if cancellation.is_closed() {
+                        crate::providers::ReasoningTerminalState::Cancelled
+                    } else {
+                        crate::providers::ReasoningTerminalState::Redacted
+                    };
+                    let reason = if cancellation.is_closed() {
+                        crate::wal::reasoning_audit::ReasoningAuditReasonCode::Cancelled
+                    } else {
+                        crate::wal::reasoning_audit::ReasoningAuditReasonCode::StreamError
+                    };
+                    if let Err(error) = reasoning_lifecycle
+                        .finalize(&writer, turn_id, terminal, reason, output)
+                        .await
+                    {
+                        return_dispatch_error!("reasoning_terminal", error);
+                    }
                     return_dispatch_error!(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
                 }
             };
@@ -5189,11 +5584,58 @@ pub(super) async fn dispatch_provider(
             // each authenticated GUI delta (or raw CLI delta) is emitted live.
             // Any active post-provider hook forces complete buffering so
             // Block/Replace executes before the first operator-visible byte.
-            let mut stream = match provider.stream(req).await {
+            let reasoning_grant = if reasoning_display {
+                crate::providers::ReasoningDisplayGrant::Display
+            } else {
+                crate::providers::ReasoningDisplayGrant::Hidden
+            };
+            let stream_open = provider.stream_events(req, reasoning_grant);
+            tokio::pin!(stream_open);
+            let stream_open_result = tokio::select! {
+                result = &mut stream_open => result,
+                () = cancellation.cancelled() => {
+                    if let Some(p) = stream_permit {
+                        p.record_failure();
+                    }
+                    if let Err(error) = reasoning_lifecycle
+                        .finalize(
+                            &writer,
+                            turn_id,
+                            crate::providers::ReasoningTerminalState::Cancelled,
+                            crate::wal::reasoning_audit::ReasoningAuditReasonCode::Cancelled,
+                            output,
+                        )
+                        .await
+                    {
+                        return_dispatch_error!("reasoning_terminal", error);
+                    }
+                    return_dispatch_error!(
+                        "stream_cancelled",
+                        anyhow::anyhow!("chat turn cancelled while provider stream was opening")
+                    );
+                }
+            };
+            let mut stream = match stream_open_result {
                 Ok(s) => s,
                 Err(e) => {
                     if let Some(p) = stream_permit {
                         p.record_failure();
+                    }
+                    let terminal = if cancellation.is_closed() {
+                        crate::providers::ReasoningTerminalState::Cancelled
+                    } else {
+                        crate::providers::ReasoningTerminalState::Redacted
+                    };
+                    let reason = if cancellation.is_closed() {
+                        crate::wal::reasoning_audit::ReasoningAuditReasonCode::Cancelled
+                    } else {
+                        crate::wal::reasoning_audit::ReasoningAuditReasonCode::StreamError
+                    };
+                    if let Err(error) = reasoning_lifecycle
+                        .finalize(&writer, turn_id, terminal, reason, output)
+                        .await
+                    {
+                        return_dispatch_error!("reasoning_terminal", error);
                     }
                     if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
                         record_quota_exceeded(qe, &quota_path, &writer).await;
@@ -5211,6 +5653,38 @@ pub(super) async fn dispatch_provider(
             let mut provider_termination =
                 crate::providers::ProviderTermination::default();
             let mut saw_done_chunk = false;
+            let mut reasoning_redacted = defer_provider_output;
+            let mut reasoning_canary_egress = CanaryStreamEgressBuffer::new(canary);
+            let mut reasoning_quarantine = Zeroizing::new(String::new());
+
+            // Every failure after stream open crosses this one terminal gate.
+            // It clears request-owned raw reasoning before the status frame,
+            // then writes exactly one metadata receipt using only a stamped
+            // leaf identity when one was actually observed.
+            macro_rules! return_stream_error {
+                ($phase:expr, $error:expr) => {{
+                    let raw_error = $error;
+                    reasoning_canary_egress.clear();
+                    reasoning_quarantine.zeroize();
+                    let terminal = if cancellation.is_closed() {
+                        crate::providers::ReasoningTerminalState::Cancelled
+                    } else {
+                        crate::providers::ReasoningTerminalState::Redacted
+                    };
+                    let reason = if cancellation.is_closed() {
+                        crate::wal::reasoning_audit::ReasoningAuditReasonCode::Cancelled
+                    } else {
+                        crate::wal::reasoning_audit::ReasoningAuditReasonCode::StreamError
+                    };
+                    if let Err(error) = reasoning_lifecycle
+                        .finalize(&writer, turn_id, terminal, reason, output)
+                        .await
+                    {
+                        return_dispatch_error!("reasoning_terminal", error);
+                    }
+                    return_dispatch_error!($phase, raw_error);
+                }};
+            }
 
             use futures_util::stream::StreamExt;
             // GOLD-ADOPT-24 — safe-flush markdown buffer runs only after the
@@ -5222,9 +5696,125 @@ pub(super) async fn dispatch_provider(
             // window; emitted as a 0x69 TOKEN_TPS_SAMPLE WAL frame after the stream
             // completes (best-effort, never blocks the turn).
             let mut tps_meter = crate::daemon::metering::TpsMeter::start();
-            while let Some(item) = stream.next().await {
+            loop {
+                let item = tokio::select! {
+                    item = stream.next() => item,
+                    () = cancellation.cancelled() => {
+                        if let Some(p) = stream_permit {
+                            p.record_failure();
+                        }
+                        return_stream_error!(
+                            "stream_cancelled",
+                            anyhow::anyhow!("chat turn cancelled while provider stream was active")
+                        );
+                    }
+                };
+                let Some(item) = item else {
+                    break;
+                };
                 match item {
-                    Ok(chunk) => {
+                    Ok(event) => {
+                        if !event.identity.is_bound() {
+                            if let Some(p) = stream_permit {
+                                p.record_failure();
+                            }
+                            return_stream_error!("stream_identity", anyhow::anyhow!(
+                                "provider `{provider_name}` emitted an event without an authenticated response identity"
+                            ));
+                        }
+                        if let Some(bound) = &response_identity {
+                            if bound != &event.identity {
+                                if let Some(p) = stream_permit {
+                                    p.record_failure();
+                                }
+                                return_stream_error!("stream_identity", anyhow::anyhow!(
+                                    "provider `{provider_name}` changed response identity within one event stream"
+                                ));
+                            }
+                        } else {
+                            response_identity = Some(event.identity.clone());
+                        }
+                        reasoning_lifecycle.observe_identity(&event.identity);
+                        let event_identity = event.identity.clone();
+                        let chunk = match event.payload {
+                            crate::providers::ProviderStreamPayload::VisibleText { chunk }
+                            | crate::providers::ProviderStreamPayload::Done { chunk } => chunk,
+                            crate::providers::ProviderStreamPayload::ReasoningDelta { delta } => {
+                                reasoning_lifecycle.observe_delta(delta.len());
+                                if reasoning_quarantine.len().saturating_add(delta.len()) > 64 * 1024 {
+                                    reasoning_redacted = true;
+                                    reasoning_canary_egress.clear();
+                                    reasoning_quarantine = Zeroizing::new(String::new());
+                                    continue;
+                                }
+                                if reasoning_display && !reasoning_redacted {
+                                    reasoning_quarantine.push_str(delta.as_str());
+                                    let safe_delta = match reasoning_canary_egress.push(delta.as_str()) {
+                                        Ok(delta) => delta,
+                                        Err(_) => {
+                                            reasoning_redacted = true;
+                                            reasoning_canary_egress.clear();
+                                            reasoning_quarantine = Zeroizing::new(String::new());
+                                            continue;
+                                        }
+                                    };
+                                    if safe_delta.is_empty() {
+                                        continue;
+                                    }
+                                    let sequence = reasoning_lifecycle.next_delta_sequence();
+                                    let byte_count = safe_delta.len();
+                                    if let Err(error) = emit_chat_output(output, ChatOutput::ReasoningDelta {
+                                        sequence,
+                                        delta: crate::providers::ReasoningText::new(safe_delta),
+                                        stream_control_token: stream_control_token.map(str::to_owned),
+                                    }) {
+                                        return_stream_error!("reasoning_delta", error);
+                                    }
+                                    reasoning_lifecycle.record_emitted_delta(byte_count);
+                                }
+                                continue;
+                            }
+                            crate::providers::ProviderStreamPayload::ReasoningTerminal { state } => {
+                                if reasoning_display && !reasoning_redacted {
+                                    match reasoning_canary_egress
+                                        .flush_clean(reasoning_quarantine.as_str())
+                                    {
+                                        Ok(tail) if !tail.is_empty() => {
+                                            let sequence = reasoning_lifecycle.next_delta_sequence();
+                                            let byte_count = tail.len();
+                                            if let Err(error) = emit_chat_output(output, ChatOutput::ReasoningDelta {
+                                                sequence,
+                                                delta: crate::providers::ReasoningText::new(tail),
+                                                stream_control_token: stream_control_token.map(str::to_owned),
+                                            }) {
+                                                return_stream_error!("reasoning_delta", error);
+                                            }
+                                            reasoning_lifecycle.record_emitted_delta(byte_count);
+                                        }
+                                        Ok(_) => {}
+                                        Err(_) => {
+                                            reasoning_redacted = true;
+                                            reasoning_canary_egress.clear();
+                                            reasoning_quarantine = Zeroizing::new(String::new());
+                                        }
+                                    }
+                                }
+                                reasoning_lifecycle.capture_provider_terminal(
+                                    state,
+                                    cancellation,
+                                    reasoning_redacted,
+                                );
+                                continue;
+                            }
+                        };
+                        if chunk.identity != event_identity {
+                            if let Some(p) = stream_permit {
+                                p.record_failure();
+                            }
+                            return_stream_error!("stream_identity", anyhow::anyhow!(
+                                "provider `{provider_name}` event identity differs from its visible chunk identity"
+                            ));
+                        }
                         accumulate_optional_counter(
                             &mut cache_creation_tokens,
                             chunk.cache_creation_tokens,
@@ -5237,7 +5827,7 @@ pub(super) async fn dispatch_provider(
                             if let Some(p) = stream_permit {
                                 p.record_failure();
                             }
-                            return_dispatch_error!(anyhow::anyhow!(
+                            return_stream_error!("stream_identity", anyhow::anyhow!(
                                 "provider `{provider_name}` emitted a stream chunk without an authenticated response identity"
                             ));
                         }
@@ -5246,7 +5836,7 @@ pub(super) async fn dispatch_provider(
                                 if let Some(p) = stream_permit {
                                     p.record_failure();
                                 }
-                                return_dispatch_error!(anyhow::anyhow!(
+                                return_stream_error!("stream_identity", anyhow::anyhow!(
                                     "provider `{provider_name}` changed response identity within one stream"
                                 ));
                             }
@@ -5263,7 +5853,7 @@ pub(super) async fn dispatch_provider(
                                     if let Some(p) = stream_permit {
                                         p.record_failure();
                                     }
-                                    return_dispatch_error!(error);
+                                    return_stream_error!("stream_canary", error);
                                 }
                             };
                             acc.push_str(&chunk.delta);
@@ -5285,7 +5875,7 @@ pub(super) async fn dispatch_provider(
                                 if let Some(p) = stream_permit {
                                     p.record_failure();
                                 }
-                                return_dispatch_error!(error);
+                                return_stream_error!("stream_visible_delta", error);
                             }
                         }
                         if chunk.done {
@@ -5300,7 +5890,7 @@ pub(super) async fn dispatch_provider(
                                     if let Some(p) = stream_permit {
                                         p.record_failure();
                                     }
-                                    return_dispatch_error!(error);
+                                    return_stream_error!("stream_canary", error);
                                 }
                             };
                             if let Err(error) = emit_verified_stream_delta(
@@ -5319,18 +5909,20 @@ pub(super) async fn dispatch_provider(
                                 if let Some(p) = stream_permit {
                                     p.record_failure();
                                 }
-                                return_dispatch_error!(error);
+                                return_stream_error!("stream_visible_delta", error);
                             }
                             // Any remaining markdown syntax is now sourced
                             // exclusively from verified-safe bytes.
                             if !defer_provider_output && stream_control_token.is_none() {
                                 let rest = md_buf.flush();
                                 if !rest.is_empty() {
-                                    emit_chat_output(output, ChatOutput::ProviderDelta {
+                                    if let Err(error) = emit_chat_output(output, ChatOutput::ProviderDelta {
                                         sequence: chunk_count.saturating_add(1),
                                         text: rest,
                                         stream_control_token: None,
-                                    })?;
+                                    }) {
+                                        return_stream_error!("stream_visible_delta", error);
+                                    }
                                 }
                             }
                             input_tokens = chunk.input_tokens;
@@ -5345,7 +5937,7 @@ pub(super) async fn dispatch_provider(
                         // Both the canary and markdown buffers are dropped on
                         // error; no incomplete provider text reaches an egress
                         // sink after an unauthenticated terminal state.
-                        return_dispatch_error!("stream_chunk", e);
+                        return_stream_error!("stream_chunk", e);
                     }
                 }
             }
@@ -5355,19 +5947,54 @@ pub(super) async fn dispatch_provider(
                 if let Some(p) = stream_permit {
                     p.record_failure();
                 }
-                return_dispatch_error!(anyhow::anyhow!(
+                return_stream_error!("stream_eof", anyhow::anyhow!(
                     "provider `{provider_name}` stream ended without a final done chunk"
                 ));
             }
             let response_identity = match response_identity {
                 Some(identity) => identity,
-                None => return_dispatch_error!(
+                None => return_stream_error!(
                     "stream_identity",
                     anyhow::anyhow!(
                         "provider `{provider_name}` stream ended without an authenticated response identity"
                     )
                 ),
             };
+            let reasoning_terminal = reasoning_lifecycle.normal_terminal(cancellation);
+            let reasoning_reason = match reasoning_terminal {
+                crate::providers::ReasoningTerminalState::Unsupported => {
+                    crate::wal::reasoning_audit::ReasoningAuditReasonCode::Unsupported
+                }
+                crate::providers::ReasoningTerminalState::Hidden => {
+                    crate::wal::reasoning_audit::ReasoningAuditReasonCode::DisplayDisabled
+                }
+                crate::providers::ReasoningTerminalState::Redacted => {
+                    crate::wal::reasoning_audit::ReasoningAuditReasonCode::PolicyRedacted
+                }
+                crate::providers::ReasoningTerminalState::Complete => {
+                    crate::wal::reasoning_audit::ReasoningAuditReasonCode::Complete
+                }
+                crate::providers::ReasoningTerminalState::Cancelled => {
+                    crate::wal::reasoning_audit::ReasoningAuditReasonCode::Cancelled
+                }
+            };
+            // The final status is an externally observable lifecycle point.
+            // No successful, hidden, or redacted exit retains the pending raw
+            // reasoning tail after that point.
+            reasoning_canary_egress.clear();
+            reasoning_quarantine.zeroize();
+            if let Err(error) = reasoning_lifecycle
+                .finalize(
+                    &writer,
+                    turn_id,
+                    reasoning_terminal,
+                    reasoning_reason,
+                    output,
+                )
+                .await
+            {
+                return_dispatch_error!("reasoning_terminal", error);
+            }
             if let Some(p) = stream_permit {
                 p.record_success();
             }
@@ -7557,6 +8184,7 @@ pub(crate) async fn prepare_daemon_plain_chat_turn(
         config: Some(selected_config_path),
         wal_segment: None,
         stream: false,
+        show_reasoning: false,
         gui_consent_token_stdin: false,
         temperature: None,
         top_p: None,
@@ -7595,6 +8223,7 @@ pub(crate) async fn prepare_daemon_gui_chat_turn(
     model: Option<String>,
     skill: Option<String>,
     incognito: bool,
+    reasoning_display: bool,
     staged_attachments: Vec<PathBuf>,
     ephemeral_consent: crate::consent::EphemeralConsent,
     selected_config: FreedomConfig,
@@ -7619,6 +8248,7 @@ pub(crate) async fn prepare_daemon_gui_chat_turn(
         config: Some(selected_config_path),
         wal_segment: None,
         stream: true,
+        show_reasoning: reasoning_display,
         gui_consent_token_stdin: false,
         temperature: None,
         top_p: None,
@@ -8165,6 +8795,7 @@ async fn finish_chat_turn_preparation(
                 config,
                 ephemeral_consent,
                 stream_control_token,
+                reasoning_display: args.show_reasoning,
                 cancellation,
                 session_canary,
                 instance_paths,
@@ -13254,6 +13885,7 @@ fn test_chat_args_default() -> ChatArgs {
         config: None,
         wal_segment: None,
         stream: false,
+        show_reasoning: false,
         gui_consent_token_stdin: false,
         temperature: None,
         top_p: None,
@@ -14285,6 +14917,146 @@ mod tests {
         assert_eq!(frame["content_hash"], stream_content_hash("reply"));
         assert!(frame.get("text").is_none());
         assert!(frame.get("reply").is_none());
+    }
+
+    #[test]
+    fn reasoning_control_frames_are_v3_bound_and_keep_visible_hashes_separate() {
+        let token = "0123456789abcdef0123456789abcdef";
+        let delta = stream_reasoning_delta_line(token, 1, "ephemeral reasoning").unwrap();
+        let delta: serde_json::Value = serde_json::from_str(&delta).unwrap();
+        assert_eq!(delta["neoth_stream"], "reasoning_delta");
+        assert_eq!(delta["protocol_version"], CHAT_STREAM_PROTOCOL_VERSION);
+        assert_eq!(delta["request_id"], stream_request_id(token));
+        assert_eq!(delta["control_token"], token);
+        assert_eq!(delta["sequence"], 1);
+        assert_eq!(delta["delta"], "ephemeral reasoning");
+
+        let state = stream_reasoning_state_line(
+            token,
+            2,
+            crate::providers::ReasoningTerminalState::Redacted,
+            1,
+            19,
+        )
+        .unwrap();
+        let state: serde_json::Value = serde_json::from_str(&state).unwrap();
+        assert_eq!(state["neoth_stream"], "reasoning_state");
+        assert_eq!(state["sequence"], 2);
+        assert_eq!(state["state"], "redacted");
+        assert_eq!(state["event_count"], 1);
+        assert_eq!(state["byte_count"], 19);
+        assert!(state.get("content_hash").is_none());
+        assert!(state.get("text").is_none());
+    }
+
+    #[tokio::test]
+    async fn reasoning_lifecycle_closes_native_terminal_then_error_once_without_raw_audit_text() {
+        #[derive(Default)]
+        struct RecordingSink(Vec<ChatTurnEvent>);
+
+        impl ChatTurnEventSink for RecordingSink {
+            fn emit(&mut self, event: ChatTurnEvent) -> Result<()> {
+                self.0.push(event);
+                Ok(())
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let segment = home.path().join("reasoning-native-terminal-error.wal");
+        let (writer, join) = wal_spawn(segment.clone()).unwrap();
+        let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
+        let mut lifecycle = ReasoningStreamLifecycle::new(
+            true,
+            Some("0123456789abcdef0123456789abcdef"),
+        );
+        lifecycle.observe_identity(&crate::providers::CompletionIdentity {
+            provider: "authenticated-test-leaf".to_owned(),
+            wire_model: "test-wire-model".to_owned(),
+            dispatch_route: Vec::new(),
+        });
+        lifecycle.observe_delta("split-safe".len());
+        let sequence = lifecycle.next_delta_sequence();
+        let mut sink = RecordingSink::default();
+        emit_chat_output(
+            &mut sink,
+            ChatOutput::ReasoningDelta {
+                sequence,
+                delta: crate::providers::ReasoningText::new("split-safe".to_owned()),
+                stream_control_token: Some("0123456789abcdef0123456789abcdef".to_owned()),
+            },
+        )
+        .unwrap();
+        lifecycle.record_emitted_delta("split-safe".len());
+        lifecycle.capture_provider_terminal(
+            crate::providers::ReasoningTerminalState::Complete,
+            &cancellation,
+            false,
+        );
+
+        // A native terminal followed by an item error is one redacted stream
+        // failure, never a previous Complete receipt plus a second error one.
+        lifecycle
+            .finalize(
+                &writer,
+                "a1b2c3d4",
+                crate::providers::ReasoningTerminalState::Redacted,
+                crate::wal::reasoning_audit::ReasoningAuditReasonCode::StreamError,
+                &mut sink,
+            )
+            .await
+            .unwrap();
+        lifecycle
+            .finalize(
+                &writer,
+                "a1b2c3d4",
+                crate::providers::ReasoningTerminalState::Redacted,
+                crate::wal::reasoning_audit::ReasoningAuditReasonCode::StreamError,
+                &mut sink,
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            sink.0.as_slice(),
+            [
+                ChatTurnEvent::Output(ChatOutput::ReasoningDelta { sequence: 1, .. }),
+                ChatTurnEvent::Output(ChatOutput::ReasoningState {
+                    sequence: 2,
+                    state: crate::providers::ReasoningTerminalState::Redacted,
+                    event_count: 1,
+                    byte_count: 10,
+                    ..
+                })
+            ]
+        ));
+
+        drop(writer);
+        join.await.unwrap();
+        let bytes = std::fs::read(segment).unwrap();
+        let mut audits = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, decoded| {
+            if decoded.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && decoded.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::ReasoningStreamAuditV1 as u8
+            {
+                audits.push(
+                    crate::wal::reasoning_audit::ReasoningStreamAuditV1::decode(decoded.payload)
+                        .unwrap(),
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(audits.len(), 1);
+        let audit = serde_json::to_value(&audits[0]).unwrap();
+        assert_eq!(audit["event_count"], 1);
+        assert_eq!(audit["byte_count"], 10);
+        assert_eq!(audit["terminal_state"], "redacted");
+        assert_eq!(audit["reason_code"], "stream_error");
+        assert!(
+            !serde_json::to_string(&audit).unwrap().contains("split-safe"),
+            "the WAL receipt is metadata-only even when a granted sink saw a delta"
+        );
     }
 
     #[test]
@@ -16466,6 +17238,7 @@ modes:
             config: Some(config_path),
             wal_segment: Some(segment),
             stream: false,
+            show_reasoning: false,
             gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
@@ -16527,6 +17300,7 @@ modes:
             config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
+            show_reasoning: false,
             gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
@@ -16942,6 +17716,7 @@ modes:
             config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
+            show_reasoning: false,
             gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
@@ -17234,6 +18009,7 @@ modes:
             config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
+            show_reasoning: false,
             gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
@@ -17361,6 +18137,7 @@ modes:
             config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
+            show_reasoning: false,
             gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
@@ -17538,6 +18315,7 @@ modes:
             config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: true,
+            show_reasoning: false,
             gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
@@ -17590,6 +18368,7 @@ modes:
         let mut permission_payload: Option<serde_json::Value> = None;
         let mut request_payload: Option<serde_json::Value> = None;
         let mut response_payload: Option<serde_json::Value> = None;
+        let mut reasoning_audits = Vec::new();
         while !cursor.is_empty() {
             let frame = decode_frame(cursor).expect("decode streaming audit frame");
             match frame.header.event_type {
@@ -17620,6 +18399,15 @@ modes:
                 }
                 crate::wal::events::EVENT_TYPE_PROVIDER_STREAM_CHUNK => chunk_count += 1,
                 crate::wal::events::EVENT_TYPE_REFUSAL_OBSERVED => refusal_observed = true,
+                crate::wal::events::EVENT_TYPE_EXTENDED
+                    if frame.header.event_subtype
+                        == crate::wal::events::ExtendedSubtype::ReasoningStreamAuditV1 as u8 =>
+                {
+                    reasoning_audits.push(
+                        crate::wal::reasoning_audit::ReasoningStreamAuditV1::decode(frame.payload)
+                            .expect("decode terminal-only reasoning audit"),
+                    );
+                }
                 _ => {}
             }
             cursor = &cursor[frame.header.total_len as usize..];
@@ -17673,6 +18461,23 @@ modes:
         assert!(permission_index.unwrap() < trust_index && trust_index < request_index.unwrap());
         assert!(request_index.unwrap() < response_index.unwrap());
         assert_eq!(chunk_count, 2);
+        assert_eq!(
+            reasoning_audits.len(),
+            1,
+            "a complete legacy stream must still close the additive reasoning lifecycle once"
+        );
+        let reasoning_audit = serde_json::to_value(&reasoning_audits[0]).unwrap();
+        assert_eq!(reasoning_audit["display_granted"], false);
+        assert_eq!(reasoning_audit["terminal_state"], "unsupported");
+        assert_eq!(reasoning_audit["reason_code"], "unsupported");
+        assert_eq!(reasoning_audit["identity"]["kind"], "authenticated_leaf");
+        assert_eq!(reasoning_audit["identity"]["provider"], "mock_stream");
+        assert!(
+            !serde_json::to_string(&reasoning_audit)
+                .unwrap()
+                .contains("hello world"),
+            "visible stream content must not enter terminal reasoning metadata"
+        );
         assert!(
             refusal_observed,
             "native final-stream refusal must reach post-reply observation"
@@ -17695,6 +18500,398 @@ modes:
             response_payload["invocation_id"],
             request_payload["invocation_id"]
         );
+    }
+
+    #[derive(Default)]
+    struct ReasoningRecordingSink(Vec<ChatTurnEvent>);
+
+    impl ChatTurnEventSink for ReasoningRecordingSink {
+        fn emit(&mut self, event: ChatTurnEvent) -> Result<()> {
+            self.0.push(event);
+            Ok(())
+        }
+    }
+
+    /// Drive the real `dispatch_provider` streaming boundary with a recording
+    /// sink and a real WAL writer. All callers below intentionally take an
+    /// error path, so this helper owns the writer shutdown before returning.
+    async fn dispatch_reasoning_stream_fixture(
+        home: &std::path::Path,
+        segment: std::path::PathBuf,
+        provider: &dyn Provider,
+        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        output: &mut dyn ChatTurnEventSink,
+    ) -> Result<()> {
+        let quota_path = home.join("reasoning-stream-quota.json");
+        let args = ChatArgs {
+            message: Some("reasoning stream fixture".to_owned()),
+            stream: true,
+            show_reasoning: true,
+            ..test_chat_args_default()
+        };
+        let mut config = FreedomConfig::default();
+        config.autonomy = crate::permissions::AutonomyLevel::Full;
+        config.council.disabled = Some(true);
+        let (writer, writer_join) = wal_spawn(segment).expect("spawn fixture WAL writer");
+        let mcp_servers = crate::mcp::McpServers::default();
+        let ephemeral_consent = crate::consent::EphemeralConsent::default();
+        let canary = std::sync::Arc::new(
+            crate::security::injection_tracker::CanaryToken::generate()
+                .expect("mint fixture canary"),
+        );
+        let result = dispatch_provider(
+            "reasoning stream fixture".to_owned(),
+            None,
+            &args,
+            provider,
+            &config,
+            home,
+            writer,
+            quota_path.clone(),
+            Some(
+                crate::providers::quota::QuotaTracker::load_from(&quota_path)
+                    .expect("load fixture quota state"),
+            ),
+            config.tokens.max_per_request,
+            &mcp_servers,
+            crate::mcp::McpToolScope::default(),
+            "reasoning-stream-fixture-turn",
+            None,
+            None,
+            "test",
+            crate::providers::cost_authorization::ProviderCallAuditContext::default(),
+            &ephemeral_consent,
+            TurnDispatchRoute::Streaming,
+            None,
+            Some("0123456789abcdef0123456789abcdef"),
+            true,
+            false,
+            &canary,
+            cancellation,
+            &[],
+            &crate::hooks::SessionOnceGuard::new(),
+            None,
+            None,
+            output,
+        )
+        .await;
+        let result = match result {
+            Ok(DispatchOutput { writer, .. }) => {
+                drop(writer);
+                Ok(())
+            }
+            Err(error) => Err(error),
+        };
+        writer_join
+            .await
+            .expect("fixture dispatch must drain its WAL writer");
+        result
+    }
+
+    fn reasoning_audits_at(segment: &std::path::Path) -> Vec<serde_json::Value> {
+        let bytes = std::fs::read(segment).expect("read fixture WAL");
+        let mut audits = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, decoded| {
+            if decoded.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && decoded.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::ReasoningStreamAuditV1 as u8
+            {
+                audits.push(
+                    serde_json::to_value(
+                        crate::wal::reasoning_audit::ReasoningStreamAuditV1::decode(
+                            decoded.payload,
+                        )
+                        .expect("decode reasoning receipt"),
+                    )
+                    .expect("serialize reasoning receipt"),
+                );
+            }
+            Ok(())
+        })
+        .expect("scan fixture WAL");
+        audits
+    }
+
+    struct NativeTerminalThenErrorProvider;
+
+    #[async_trait]
+    impl Provider for NativeTerminalThenErrorProvider {
+        fn name(&self) -> &'static str {
+            "native-reasoning-error"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("native-reasoning-error-model")
+        }
+
+        fn streams_on_wire(&self) -> bool {
+            true
+        }
+
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            anyhow::bail!("fixture uses stream_events_raw")
+        }
+
+        async fn stream_events_raw(
+            &self,
+            _req: Request,
+            _permit: &crate::providers::ProviderDispatchPermit,
+            _reasoning_display: crate::providers::ReasoningDisplayGrant,
+        ) -> Result<crate::providers::ProviderEventStream> {
+            use crate::providers::{ProviderStreamEvent, ProviderStreamPayload, ReasoningText};
+            use futures_util::stream;
+
+            Ok(Box::pin(stream::iter(vec![
+                Ok(ProviderStreamEvent {
+                    identity: Default::default(),
+                    sequence: 1,
+                    payload: ProviderStreamPayload::ReasoningDelta {
+                        delta: ReasoningText::new("native-private-delta".to_owned()),
+                    },
+                }),
+                Ok(ProviderStreamEvent {
+                    identity: Default::default(),
+                    sequence: 2,
+                    payload: ProviderStreamPayload::ReasoningTerminal {
+                        state: crate::providers::ReasoningTerminalState::Complete,
+                    },
+                }),
+                Err(anyhow::anyhow!("native provider item failure")),
+            ])))
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_native_reasoning_terminal_then_item_error_closes_redacted_once() {
+        let home = tempfile::tempdir().unwrap();
+        let segment = home.path().join("native-reasoning-item-error.wal");
+        let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
+        let mut sink = ReasoningRecordingSink::default();
+        let error = dispatch_reasoning_stream_fixture(
+            home.path(),
+            segment.clone(),
+            &NativeTerminalThenErrorProvider,
+            &cancellation,
+            &mut sink,
+        )
+        .await
+        .expect_err("native post-terminal item error must fail dispatch");
+        assert!(
+            error.to_string().contains("dispatch_outer"),
+            "caller receives the existing opaque dispatch error"
+        );
+        assert!(matches!(
+            sink.0.as_slice(),
+            [
+                ChatTurnEvent::Output(ChatOutput::ReasoningDelta {
+                    sequence: 1,
+                    delta,
+                    ..
+                }),
+                ChatTurnEvent::Output(ChatOutput::ReasoningState {
+                    sequence: 2,
+                    state: crate::providers::ReasoningTerminalState::Redacted,
+                    event_count: 1,
+                    byte_count: 20,
+                    ..
+                })
+            ] if delta.as_str() == "native-private-delta"
+        ));
+        let audits = reasoning_audits_at(&segment);
+        assert_eq!(audits.len(), 1);
+        assert_eq!(audits[0]["identity"]["kind"], "authenticated_leaf");
+        assert_eq!(audits[0]["terminal_state"], "redacted");
+        assert_eq!(audits[0]["reason_code"], "stream_error");
+        assert_eq!(audits[0]["event_count"], 1);
+        assert_eq!(audits[0]["byte_count"], 20);
+        assert!(!serde_json::to_string(&audits[0]).unwrap().contains("native-private-delta"));
+    }
+
+    struct PendingOpenReasoningProvider {
+        entered: std::sync::Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl Provider for PendingOpenReasoningProvider {
+        fn name(&self) -> &'static str {
+            "pending-reasoning-open"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("pending-reasoning-open-model")
+        }
+
+        fn streams_on_wire(&self) -> bool {
+            true
+        }
+
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            anyhow::bail!("fixture uses stream_events_raw")
+        }
+
+        async fn stream_events_raw(
+            &self,
+            _req: Request,
+            _permit: &crate::providers::ProviderDispatchPermit,
+            _reasoning_display: crate::providers::ReasoningDisplayGrant,
+        ) -> Result<crate::providers::ProviderEventStream> {
+            self.entered.notify_one();
+            std::future::pending::<Result<crate::providers::ProviderEventStream>>().await
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_pending_stream_open_cancellation_closes_unobserved_once() {
+        let home = tempfile::tempdir().unwrap();
+        let segment = home.path().join("pending-reasoning-open.wal");
+        let entered = std::sync::Arc::new(tokio::sync::Notify::new());
+        let provider = PendingOpenReasoningProvider {
+            entered: std::sync::Arc::clone(&entered),
+        };
+        let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
+        let close = cancellation.clone();
+        let cancel_after_open = async move {
+            entered.notified().await;
+            close.close();
+        };
+        let mut sink = ReasoningRecordingSink::default();
+        let (result, ()) = tokio::time::timeout(
+            Duration::from_millis(250),
+            async {
+                tokio::join!(
+                    dispatch_reasoning_stream_fixture(
+                        home.path(),
+                        segment.clone(),
+                        &provider,
+                        &cancellation,
+                        &mut sink,
+                    ),
+                    cancel_after_open,
+                )
+            },
+        )
+        .await
+        .expect("stream-open cancellation must settle without a detached wait");
+        assert!(result.is_err());
+        assert!(matches!(
+            sink.0.as_slice(),
+            [ChatTurnEvent::Output(ChatOutput::ReasoningState {
+                state: crate::providers::ReasoningTerminalState::Cancelled,
+                event_count: 0,
+                byte_count: 0,
+                ..
+            })]
+        ));
+        let audits = reasoning_audits_at(&segment);
+        assert_eq!(audits.len(), 1);
+        assert_eq!(audits[0]["identity"], serde_json::json!({"kind":"unobserved"}));
+        assert_eq!(audits[0]["terminal_state"], "cancelled");
+        assert_eq!(audits[0]["reason_code"], "cancelled");
+    }
+
+    struct PendingNextReasoningProvider {
+        entered: std::sync::Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl Provider for PendingNextReasoningProvider {
+        fn name(&self) -> &'static str {
+            "pending-reasoning-next"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("pending-reasoning-next-model")
+        }
+
+        fn streams_on_wire(&self) -> bool {
+            true
+        }
+
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            anyhow::bail!("fixture uses stream_events_raw")
+        }
+
+        async fn stream_events_raw(
+            &self,
+            _req: Request,
+            _permit: &crate::providers::ProviderDispatchPermit,
+            _reasoning_display: crate::providers::ReasoningDisplayGrant,
+        ) -> Result<crate::providers::ProviderEventStream> {
+            use crate::providers::{ProviderStreamEvent, ProviderStreamPayload, ReasoningText};
+
+            let entered = std::sync::Arc::clone(&self.entered);
+            Ok(Box::pin(async_stream::stream! {
+                yield Ok(ProviderStreamEvent {
+                    identity: Default::default(),
+                    sequence: 1,
+                    payload: ProviderStreamPayload::ReasoningDelta {
+                        delta: ReasoningText::new("pending-next-private".to_owned()),
+                    },
+                });
+                entered.notify_one();
+                std::future::pending::<()>().await;
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_pending_stream_next_cancellation_keeps_bound_leaf_and_closes_once() {
+        let home = tempfile::tempdir().unwrap();
+        let segment = home.path().join("pending-reasoning-next.wal");
+        let entered = std::sync::Arc::new(tokio::sync::Notify::new());
+        let provider = PendingNextReasoningProvider {
+            entered: std::sync::Arc::clone(&entered),
+        };
+        let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
+        let close = cancellation.clone();
+        let cancel_after_delta = async move {
+            entered.notified().await;
+            close.close();
+        };
+        let mut sink = ReasoningRecordingSink::default();
+        let (result, ()) = tokio::time::timeout(
+            Duration::from_millis(250),
+            async {
+                tokio::join!(
+                    dispatch_reasoning_stream_fixture(
+                        home.path(),
+                        segment.clone(),
+                        &provider,
+                        &cancellation,
+                        &mut sink,
+                    ),
+                    cancel_after_delta,
+                )
+            },
+        )
+        .await
+        .expect("pending next-item cancellation must settle without a detached wait");
+        assert!(result.is_err());
+        assert!(matches!(
+            sink.0.as_slice(),
+            [
+                ChatTurnEvent::Output(ChatOutput::ReasoningDelta {
+                    sequence: 1,
+                    delta,
+                    ..
+                }),
+                ChatTurnEvent::Output(ChatOutput::ReasoningState {
+                    sequence: 2,
+                    state: crate::providers::ReasoningTerminalState::Cancelled,
+                    event_count: 1,
+                    byte_count: 20,
+                    ..
+                })
+            ] if delta.as_str() == "pending-next-private"
+        ));
+        let audits = reasoning_audits_at(&segment);
+        assert_eq!(audits.len(), 1);
+        assert_eq!(audits[0]["identity"]["kind"], "authenticated_leaf");
+        assert_eq!(audits[0]["event_count"], 1);
+        assert_eq!(audits[0]["byte_count"], 20);
+        assert_eq!(audits[0]["terminal_state"], "cancelled");
+        assert_eq!(audits[0]["reason_code"], "cancelled");
+        assert!(!serde_json::to_string(&audits[0]).unwrap().contains("pending-next-private"));
     }
 
     #[tokio::test]
@@ -17776,6 +18973,7 @@ modes:
             config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
+            show_reasoning: false,
             gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
@@ -17959,6 +19157,7 @@ modes:
             config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
+            show_reasoning: false,
             gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
@@ -19754,6 +20953,7 @@ modes:
             config: None,
             wal_segment: None,
             stream: false,
+            show_reasoning: false,
             gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
@@ -19834,6 +21034,7 @@ modes:
             config: None,
             wal_segment: None,
             stream: false,
+            show_reasoning: false,
             gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
@@ -19917,6 +21118,7 @@ modes:
             config: None,
             wal_segment: None,
             stream: false,
+            show_reasoning: false,
             gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
@@ -21232,6 +22434,7 @@ modes:
             config: None,
             wal_segment: None,
             stream: false,
+            show_reasoning: false,
             gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
@@ -21287,6 +22490,7 @@ modes:
             TurnDispatchRoute::Direct,
             None,
             None,
+            false,
             false,
             &canary,
             &crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
@@ -21384,6 +22588,7 @@ modes:
             config: None,
             wal_segment: None,
             stream: false,
+            show_reasoning: false,
             gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
@@ -21432,6 +22637,7 @@ modes:
             TurnDispatchRoute::Direct,
             None,
             None,
+            false,
             false,
             &canary,
             &cancellation,
@@ -21531,6 +22737,7 @@ modes:
             config: None,
             wal_segment: None,
             stream: false,
+            show_reasoning: false,
             gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
@@ -21575,6 +22782,7 @@ modes:
             TurnDispatchRoute::Direct,
             None,
             None,
+            false,
             false,
             &canary,
             &crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),

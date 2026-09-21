@@ -50,7 +50,7 @@
 
 import { ScrollView, LineEdit, TextEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, Led, ConfirmDialog, NeothComboBox, NeothCheckBox } from "components.slint";
+import { NeothButton, Card, Led, ConfirmDialog, NeothComboBox, NeothCheckBox, Expander } from "components.slint";
 
 /// One message in the scrollback. Owned by the Rust side; Slint
 /// renders the list reactively.
@@ -724,6 +724,9 @@ component Composer inherits Rectangle {
     /// Per-turn privacy boundary. Rust snapshots this value before consent
     /// preflight and passes it to the exact CLI launch for this request.
     in-out property <bool> incognito: false;
+    /// Next-turn-only permission to present live provider reasoning. Rust
+    /// snapshots this at dispatch and resets the selector immediately.
+    in-out property <bool> reasoning-display: false;
     /// Captured privacy mode of the request that is currently in flight.
     /// This is intentionally separate from the next-turn selection above.
     in property <bool> incognito-active: false;
@@ -906,6 +909,12 @@ component Composer inherits Rectangle {
         // the generic chat/helper status line.
         HorizontalLayout {
             spacing: Theme.space-base;
+
+        NeothCheckBox {
+            text: "Show live reasoning";
+            checked <=> root.reasoning-display;
+            enabled: !root.send-in-flight;
+        }
             alignment: center;
 
             Text {
@@ -1097,6 +1106,10 @@ export component ChatView inherits Rectangle {
     in-out property <string> composer-draft: "";
     /// R4-11 — selected per turn and snapshotted by Rust before preflight.
     in-out property <bool> incognito: false;
+    in-out property <bool> reasoning-display: false;
+    in property <string> reasoning-status: "";
+    in property <string> reasoning-text: "";
+    in property <bool> reasoning-active: false;
     /// Privacy mode frozen for the active request. The next-turn selection
     /// resets immediately after dispatch and must not change this indicator.
     in property <bool> incognito-active: false;
@@ -1857,9 +1870,25 @@ export component ChatView inherits Rectangle {
                 }
             }
 
+            if root.reasoning-active && root.reasoning-text != "": Expander {
+                title: "Live reasoning";
+                hint: root.reasoning-status;
+                expanded: false;
+                Text {
+                    text: root.reasoning-text;
+                    color: Theme.text-secondary;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-caption;
+                    wrap: word-wrap;
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: "Live reasoning";
+                }
+            }
+
             if !root.history-active: Composer {
                 draft <=> root.composer-draft;
                 incognito <=> root.incognito;
+                reasoning-display <=> root.reasoning-display;
                 incognito-active: root.incognito-active;
                 send-enabled: root.send-enabled;
                 send-in-flight: root.send-in-flight;

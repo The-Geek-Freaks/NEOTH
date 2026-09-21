@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use anyhow::Context;
 use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, Notify};
@@ -27,6 +28,9 @@ const LEDGER_FILE: &str = "gui-chat-v1-ledger.jsonl";
 const STAGING_DIRECTORY: &str = "gui-chat-v1-staging";
 const REPLAY_FRAME_LIMIT: usize = 1024;
 const REPLAY_BYTE_LIMIT: usize = GUI_CHAT_REPLAY_MAX_BYTES;
+const LIVE_REASONING_EVENT_LIMIT: usize = 256;
+const LIVE_REASONING_BYTE_LIMIT: usize = 64 * 1024;
+const REASONING_EVENT_LIMIT: u64 = LIVE_REASONING_EVENT_LIMIT as u64;
 const EFFECT_HANDSHAKE_BOUND: Duration = Duration::from_secs(30);
 
 /// Constructed once by `run_serve`, before the audit listener is published.
@@ -74,10 +78,16 @@ struct Turn {
     intent: GuiChatDigest,
     session: String,
     incognito: bool,
+    reasoning_display: bool,
+    next_reasoning_sequence: u32,
+    reasoning_event_count: u64,
+    reasoning_byte_count: u64,
+    reasoning_terminal: Option<crate::providers::ReasoningTerminalState>,
     cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
     cancel_capability: String,
     grant: String,
     subscriptions: HashMap<GuiChatSurface, Subscription>,
+    live_reasoning_owner: Option<LiveReasoningOwner>,
     replay: VecDeque<Replay>,
     replay_bytes: usize,
     next_sequence: u64,
@@ -96,6 +106,21 @@ struct Subscription {
     capability: String,
     generation: u64,
     cursor_upper_bound: u64,
+    /// An attachment leases this queue for the lifetime of its HTTP stream.
+    /// Nothing in it is placed in the shared replay deque.
+    live_reasoning: VecDeque<LiveReasoning>,
+    live_reasoning_bytes: usize,
+    live_attached: bool,
+}
+struct LiveReasoning {
+    sequence: u64,
+    reasoning_sequence: u32,
+    delta: crate::providers::ReasoningText,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct LiveReasoningOwner {
+    surface: GuiChatSurface,
+    generation: u64,
 }
 struct Replay {
     sequence: u64,
@@ -277,6 +302,181 @@ impl DaemonGuiChatRuntime {
             subscription.cursor_upper_bound = upper;
         }
     }
+    fn clear_live_reasoning(turn: &mut Turn) {
+        for subscription in turn.subscriptions.values_mut() {
+            // `ReasoningText` owns zeroizing storage. Dropping the queue is
+            // the single clear boundary for cancellation, terminal and
+            // detached subscriptions.
+            subscription.live_reasoning.clear();
+            subscription.live_reasoning_bytes = 0;
+        }
+        turn.live_reasoning_owner = None;
+    }
+    fn emit_reasoning_delta(
+        turn: &mut Turn,
+        reasoning_sequence: u32,
+        delta: crate::providers::ReasoningText,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            turn.reasoning_terminal.is_none(),
+            "reasoning delta after terminal"
+        );
+        anyhow::ensure!(
+            reasoning_sequence != 0 && reasoning_sequence == turn.next_reasoning_sequence,
+            "non-contiguous reasoning sequence"
+        );
+        let delta_len = delta.len();
+        let candidate = (|| -> anyhow::Result<(u32, u64, u64)> {
+            anyhow::ensure!(delta_len != 0, "empty reasoning delta");
+            // Leave envelope headroom; a payload at the generic frame ceiling
+            // cannot serialize inside an authenticated GUI stream envelope.
+            anyhow::ensure!(
+                delta_len <= LIVE_REASONING_BYTE_LIMIT.saturating_sub(2048),
+                "reasoning delta too large"
+            );
+            let next_sequence = turn
+                .next_reasoning_sequence
+                .checked_add(1)
+                .context("reasoning sequence exhausted")?;
+            let event_count = turn
+                .reasoning_event_count
+                .checked_add(1)
+                .context("reasoning event counter exhausted")?;
+            anyhow::ensure!(event_count <= REASONING_EVENT_LIMIT, "reasoning event limit exceeded");
+            let byte_count = turn
+                .reasoning_byte_count
+                .checked_add(delta_len as u64)
+                .context("reasoning byte counter exhausted")?;
+            anyhow::ensure!(
+                byte_count <= LIVE_REASONING_BYTE_LIMIT as u64,
+                "reasoning byte limit exceeded"
+            );
+            Ok((next_sequence, event_count, byte_count))
+        })();
+        let (next_sequence, event_count, byte_count) = match candidate {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                Self::clear_live_reasoning(turn);
+                let terminal_sequence = turn.next_reasoning_sequence;
+                Self::emit_reasoning_state(
+                    turn,
+                    terminal_sequence,
+                    crate::providers::ReasoningTerminalState::Redacted,
+                    turn.reasoning_event_count,
+                    turn.reasoning_byte_count,
+                )?;
+                return Err(error);
+            }
+        };
+        // Commit only after every bound and overflow check passed. A rejected
+        // delta therefore cannot leave counters advanced without a terminal.
+        turn.next_reasoning_sequence = next_sequence;
+        turn.reasoning_event_count = event_count;
+        turn.reasoning_byte_count = byte_count;
+
+        // The durable-in-memory replay plane keeps only a redacted cursor
+        // placeholder. Current leased subscriptions receive an independently
+        // owned ephemeral copy at this same authenticated stream sequence.
+        let frame = Self::frame(
+            turn,
+            GuiChatFramePayload::ReasoningCheckpoint {
+                reasoning_sequence,
+                event_count: turn.reasoning_event_count,
+                byte_count: turn.reasoning_byte_count,
+            },
+        );
+        let sequence = frame.sequence;
+        Self::retain(turn, frame);
+        if turn.reasoning_display
+            && let Some(owner) = turn.live_reasoning_owner
+            && let Some(subscription) = turn.subscriptions.get_mut(&owner.surface)
+            && subscription.generation == owner.generation
+            && subscription.live_attached
+        {
+            if subscription.live_reasoning.len() >= LIVE_REASONING_EVENT_LIMIT
+                || subscription.live_reasoning_bytes > LIVE_REASONING_BYTE_LIMIT - delta_len
+            {
+                subscription.live_reasoning.clear();
+                subscription.live_reasoning_bytes = 0;
+            } else {
+                subscription.live_reasoning.push_back(LiveReasoning {
+                    sequence,
+                    reasoning_sequence,
+                    delta: delta.clone(),
+                });
+                subscription.live_reasoning_bytes += delta_len;
+            }
+        }
+        for subscription in turn.subscriptions.values_mut() {
+            subscription.cursor_upper_bound = sequence;
+        }
+        Ok(())
+    }
+    fn emit_reasoning_state(
+        turn: &mut Turn,
+        reasoning_sequence: u32,
+        state: crate::providers::ReasoningTerminalState,
+        event_count: u64,
+        byte_count: u64,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            turn.reasoning_terminal.is_none(),
+            "duplicate reasoning terminal"
+        );
+        anyhow::ensure!(
+            reasoning_sequence != 0 && reasoning_sequence == turn.next_reasoning_sequence,
+            "non-contiguous reasoning terminal sequence"
+        );
+        anyhow::ensure!(
+            event_count >= turn.reasoning_event_count && byte_count >= turn.reasoning_byte_count,
+            "reasoning terminal counters regress accepted deltas"
+        );
+        anyhow::ensure!(
+            event_count <= REASONING_EVENT_LIMIT && byte_count <= LIVE_REASONING_BYTE_LIMIT as u64,
+            "reasoning terminal counters exceed daemon bounds"
+        );
+        // A policy-redacted provider event may be counted by the turn engine
+        // without being placed on this presentation stream. Keep its bounded
+        // metadata in the terminal projection without retaining its text.
+        turn.reasoning_event_count = event_count;
+        turn.reasoning_byte_count = byte_count;
+        turn.next_reasoning_sequence = turn
+            .next_reasoning_sequence
+            .checked_add(1)
+            .context("reasoning terminal sequence exhausted")?;
+        turn.reasoning_terminal = Some(state);
+        Self::clear_live_reasoning(turn);
+        Self::emit(
+            turn,
+            GuiChatFramePayload::ReasoningState {
+                reasoning_sequence,
+                state,
+                event_count,
+                byte_count,
+            },
+        );
+        Ok(())
+    }
+    fn synthesize_reasoning_terminal(turn: &mut Turn) -> anyhow::Result<()> {
+        if turn.reasoning_terminal.is_some() {
+            return Ok(());
+        }
+        let state = if !turn.reasoning_display {
+            crate::providers::ReasoningTerminalState::Hidden
+        } else if turn.cancellation.is_closed() {
+            crate::providers::ReasoningTerminalState::Cancelled
+        } else {
+            crate::providers::ReasoningTerminalState::Redacted
+        };
+        let sequence = turn.next_reasoning_sequence;
+        Self::emit_reasoning_state(
+            turn,
+            sequence,
+            state,
+            turn.reasoning_event_count,
+            turn.reasoning_byte_count,
+        )
+    }
     fn subscription_response(
         &self,
         id: GuiChatTurnId,
@@ -295,6 +495,79 @@ impl DaemonGuiChatRuntime {
             initial_sequence: s.cursor_upper_bound,
         }
     }
+    async fn release_live_subscription(&self, request: &GuiChatAttachRequest) {
+        let mut state = self.state.lock().await;
+        if let Some(turn) = state.turns.get_mut(&request.turn_id.0) {
+            let requester = LiveReasoningOwner {
+                surface: request.surface,
+                generation: request.subscription_generation,
+            };
+            if turn.live_reasoning_owner == Some(requester) {
+                if let Some(subscription) = turn.subscriptions.get_mut(&request.surface) {
+                    subscription.live_reasoning.clear();
+                    subscription.live_reasoning_bytes = 0;
+                    subscription.live_attached = false;
+                }
+                turn.live_reasoning_owner = None;
+            }
+        }
+    }
+    fn claim_live_delivery(
+        turn: &mut Turn,
+        surface: GuiChatSurface,
+        generation: u64,
+        leased_live_delivery: &mut bool,
+    ) -> GuiChatResult<()> {
+        let requester = LiveReasoningOwner { surface, generation };
+        if turn.live_reasoning_owner == Some(requester) && !*leased_live_delivery {
+            return Err(Self::reject(
+                GuiChatErrorCode::Forbidden,
+                "subscription_already_attached",
+            ));
+        }
+        if turn.live_reasoning_owner != Some(requester) && *leased_live_delivery {
+            // This formerly live connection is now a replay-only observer.
+            // It may drain checkpoints for cursor continuity but cannot steal
+            // the turn owner or receive a fresh raw frame.
+            return Ok(());
+        }
+        if turn.live_reasoning_owner != Some(requester) {
+            if let Some(previous) = turn.live_reasoning_owner
+                && let Some(subscription) = turn.subscriptions.get_mut(&previous.surface)
+                && subscription.generation == previous.generation
+            {
+                subscription.live_reasoning.clear();
+                subscription.live_reasoning_bytes = 0;
+                subscription.live_attached = false;
+            }
+            turn.live_reasoning_owner = Some(requester);
+        }
+        let subscription = turn
+            .subscriptions
+            .get_mut(&surface)
+            .ok_or_else(|| Self::reject(GuiChatErrorCode::Forbidden, "subscription"))?;
+        if subscription.generation != generation {
+            return Err(Self::reject(GuiChatErrorCode::Forbidden, "subscription_generation"));
+        }
+        if !subscription.live_attached {
+            subscription.live_attached = true;
+            *leased_live_delivery = true;
+        }
+        Ok(())
+    }
+    async fn is_current_live_owner(&self, request: &GuiChatAttachRequest) -> bool {
+        let state = self.state.lock().await;
+        state
+            .turns
+            .get(&request.turn_id.0)
+            .is_some_and(|turn| {
+                turn.live_reasoning_owner
+                    == Some(LiveReasoningOwner {
+                        surface: request.surface,
+                        generation: request.subscription_generation,
+                    })
+            })
+    }
 
     /// Schedule an admitted turn before releasing the state admission lock.
     /// This is synchronous: shutdown cannot observe an inserted turn without
@@ -302,7 +575,7 @@ impl DaemonGuiChatRuntime {
     fn schedule_turn(&self, turn_id: Uuid) {
         let runtime = self.clone();
         self.tasks.lock().unwrap_or_else(|poison| poison.into_inner()).spawn(async move {
-            let (message, model, skill, incognito, staged, cancel, effect_admission, ephemeral) = {
+            let (message, model, skill, incognito, reasoning_display, staged, cancel, effect_admission, ephemeral) = {
                 let mut state = runtime.state.lock().await;
                 let request_id = match state.turns.get(&turn_id) { Some(turn) => turn.request_id, None => return turn_id };
                 // The canonical descriptor remains only in the preflight entry until
@@ -310,7 +583,7 @@ impl DaemonGuiChatRuntime {
                 let preflight = match state.preflights.values().find(|p| p.request.request_id == request_id) { Some(p) => p, None => return turn_id };
                 let (message, model, skill) = (preflight.request.message.clone(), preflight.request.model.clone(), preflight.request.skill_id.clone());
                 let turn = match state.turns.get_mut(&turn_id) { Some(turn) => turn, None => return turn_id };
-                (message, model, skill, turn.incognito, turn.staged.clone(), turn.cancellation.clone(), turn.effect_admission.clone(), turn.ephemeral.take())
+                (message, model, skill, turn.incognito, turn.reasoning_display, turn.staged.clone(), turn.cancellation.clone(), turn.effect_admission.clone(), turn.ephemeral.take())
             };
             let Some(ephemeral) = ephemeral else { return turn_id };
             let mut sink = RuntimeSink { runtime: runtime.clone(), turn_id, response: Sha256::new() };
@@ -321,12 +594,16 @@ impl DaemonGuiChatRuntime {
             };
             let owner_registry = { let state = runtime.state.lock().await; state.turns.get(&turn_id).expect("turn remains").owner_registry.clone() };
             let effect: Arc<dyn crate::providers::ChatTurnEffectGate> = Arc::new(RuntimeEffectGate { runtime: runtime.clone(), turn_id, effect_admission, effect_changed, owner_registry });
-            let result = runtime.core.execute_gui_stream_turn(message, model, skill, incognito, staged, ephemeral, cancel, &mut sink, Some(effect)).await;
+            let result = runtime.core.execute_gui_stream_turn(message, model, skill, incognito, reasoning_display, staged, ephemeral, cancel, &mut sink, Some(effect)).await;
             let mut state = runtime.state.lock().await;
             let Some(turn) = state.turns.get_mut(&turn_id) else { return turn_id };
-            let terminal = match result {
-                Ok(ChatTurnTerminal::Complete { provider, model, .. }) => GuiChatTerminal { state: GuiChatTerminalState::Complete, response_digest: GuiChatDigest(hex::encode(sink.response.finalize())), provider, model, usage: GuiChatUsage { input_tokens: 0, output_tokens: 0, elapsed_ms: 0 }, lifecycle_receipt_id: GuiChatDigest(Self::capability()) },
-                Err(_) => GuiChatTerminal { state: GuiChatTerminalState::Indeterminate, response_digest: GuiChatDigest(hex::encode(sink.response.finalize())), provider: "provider_indeterminate".into(), model: "accepted_model".into(), usage: GuiChatUsage { input_tokens: 0, output_tokens: 0, elapsed_ms: 0 }, lifecycle_receipt_id: GuiChatDigest(Self::capability()) },
+            let reasoning_result = Self::synthesize_reasoning_terminal(turn);
+            if reasoning_result.is_err() {
+                Self::clear_live_reasoning(turn);
+            }
+            let terminal = match (result, reasoning_result) {
+                (Ok(ChatTurnTerminal::Complete { provider, model, .. }), Ok(())) => GuiChatTerminal { state: GuiChatTerminalState::Complete, response_digest: GuiChatDigest(hex::encode(sink.response.finalize())), provider, model, usage: GuiChatUsage { input_tokens: 0, output_tokens: 0, elapsed_ms: 0 }, lifecycle_receipt_id: GuiChatDigest(Self::capability()) },
+                _ => GuiChatTerminal { state: GuiChatTerminalState::Indeterminate, response_digest: GuiChatDigest(hex::encode(sink.response.finalize())), provider: "provider_indeterminate".into(), model: "accepted_model".into(), usage: GuiChatUsage { input_tokens: 0, output_tokens: 0, elapsed_ms: 0 }, lifecycle_receipt_id: GuiChatDigest(Self::capability()) },
             };
             turn.phase = GuiChatPhase::Finalizing;
             Self::emit(turn, GuiChatFramePayload::ProviderDone);
@@ -884,6 +1161,26 @@ impl ChatTurnEventSink for RuntimeSink {
                 self.response.update(text.as_bytes());
                 DaemonGuiChatRuntime::emit(turn, GuiChatFramePayload::Delta { text });
             }
+            ChatTurnEvent::Output(ChatOutput::ReasoningDelta {
+                sequence, delta, ..
+            }) => {
+                DaemonGuiChatRuntime::emit_reasoning_delta(turn, sequence, delta)?;
+            }
+            ChatTurnEvent::Output(ChatOutput::ReasoningState {
+                sequence,
+                state,
+                event_count,
+                byte_count,
+                ..
+            }) => {
+                DaemonGuiChatRuntime::emit_reasoning_state(
+                    turn,
+                    sequence,
+                    state,
+                    event_count,
+                    byte_count,
+                )?;
+            }
             ChatTurnEvent::Output(
                 ChatOutput::Notice { text, .. } | ChatOutput::HumanStderr { text },
             ) => DaemonGuiChatRuntime::emit(
@@ -1159,10 +1456,16 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                 intent: request.turn_intent_digest.clone(),
                 session: request.session_id.clone(),
                 incognito: preflight.request.incognito,
+                reasoning_display: preflight.request.reasoning_display,
+                next_reasoning_sequence: 1,
+                reasoning_event_count: 0,
+                reasoning_byte_count: 0,
+                reasoning_terminal: None,
                 cancellation: Default::default(),
                 cancel_capability: Self::capability(),
                 grant: grant.clone(),
                 subscriptions: HashMap::new(),
+                live_reasoning_owner: None,
                 replay: VecDeque::new(),
                 replay_bytes: 0,
                 next_sequence: 1,
@@ -1229,6 +1532,9 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                 capability: Self::capability(),
                 generation: 1,
                 cursor_upper_bound: t.next_sequence.saturating_sub(1),
+                live_reasoning: VecDeque::new(),
+                live_reasoning_bytes: 0,
+                live_attached: false,
             };
             t.subscriptions.insert(request.desired_surface, s);
         }
@@ -1246,86 +1552,151 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
         mut stream: AuditStream,
         request: GuiChatAttachRequest,
     ) -> GuiChatResult<()> {
-        self.require_boot(&request.expected_boot_id)?;
-        let mut cursor = request.after_sequence;
-        // The server has transferred from its ordinary ingress permit to a
-        // bounded attach permit before calling us. Slow output therefore only
-        // drops this subscription; it never owns the provider permit or turn.
-        let head = b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n";
-        tokio::time::timeout(std::time::Duration::from_secs(5), stream.write_all(head))
-            .await
-            .map_err(|_| Self::reject(GuiChatErrorCode::Unavailable, "attach_write_timeout"))?
-            .map_err(|_| Self::reject(GuiChatErrorCode::Unavailable, "attach_write"))?;
-        loop {
-            let (frames, terminal) = {
-                let state = self.state.lock().await;
-                let turn = state
-                    .turns
-                    .get(&request.turn_id.0)
-                    .ok_or_else(|| Self::reject(GuiChatErrorCode::Unavailable, "unknown_turn"))?;
-                let subscription = turn
-                    .subscriptions
-                    .get(&request.surface)
-                    .ok_or_else(|| Self::reject(GuiChatErrorCode::Forbidden, "subscription"))?;
-                validate_attach_request(&request, subscription.cursor_upper_bound)?;
-                if turn.session != request.session_id
-                    || subscription.capability != request.attach_capability.0
-                    || subscription.generation != request.subscription_generation
-                {
-                    return Err(Self::reject(
-                        GuiChatErrorCode::Forbidden,
-                        "attach_capability",
-                    ));
+        let mut leased_live_delivery = false;
+        let result = async {
+            self.require_boot(&request.expected_boot_id)?;
+            let mut cursor = request.after_sequence;
+            // The server has transferred from its ordinary ingress permit to a
+            // bounded attach permit before calling us. Slow output therefore only
+            // drops this subscription; it never owns the provider permit or turn.
+            let head = b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n";
+            tokio::time::timeout(std::time::Duration::from_secs(5), stream.write_all(head))
+                .await
+                .map_err(|_| Self::reject(GuiChatErrorCode::Unavailable, "attach_write_timeout"))?
+                .map_err(|_| Self::reject(GuiChatErrorCode::Unavailable, "attach_write"))?;
+            loop {
+                let (frames, terminal) = {
+                    let mut state = self.state.lock().await;
+                    let turn = state
+                        .turns
+                        .get_mut(&request.turn_id.0)
+                        .ok_or_else(|| Self::reject(GuiChatErrorCode::Unavailable, "unknown_turn"))?;
+                    let earliest = turn
+                        .replay
+                        .front()
+                        .map(|frame| frame.sequence.saturating_sub(1))
+                        .unwrap_or(0);
+                    {
+                        let subscription = turn
+                            .subscriptions
+                            .get(&request.surface)
+                            .ok_or_else(|| Self::reject(GuiChatErrorCode::Forbidden, "subscription"))?;
+                        validate_attach_request(&request, subscription.cursor_upper_bound)?;
+                        if turn.session != request.session_id
+                            || subscription.capability != request.attach_capability.0
+                            || subscription.generation != request.subscription_generation
+                        {
+                            return Err(Self::reject(
+                                GuiChatErrorCode::Forbidden,
+                                "attach_capability",
+                            ));
+                        }
+                    }
+                    if cursor < earliest {
+                        return Err(Self::reject(GuiChatErrorCode::ReplayGap, "replay_gap"));
+                    }
+                    Self::claim_live_delivery(
+                        turn,
+                        request.surface,
+                        request.subscription_generation,
+                        &mut leased_live_delivery,
+                    )?;
+                    let subscription = turn
+                        .subscriptions
+                        .get_mut(&request.surface)
+                        .expect("subscription was claimed");
+                    // Move the current owner's delivery queue out before we
+                    // construct frames. A write failure drops it instead of
+                    // leaving plaintext for a later attach/reconnect.
+                    let mut live_reasoning = std::mem::take(&mut subscription.live_reasoning);
+                    subscription.live_reasoning_bytes = 0;
+                    let frames = turn
+                        .replay
+                        .iter()
+                        .filter(|frame| frame.sequence > cursor)
+                        .map(|frame| {
+                            let payload = match &frame.payload {
+                                GuiChatFramePayload::ReasoningCheckpoint {
+                                    reasoning_sequence,
+                                    ..
+                                } => live_reasoning
+                                    .iter()
+                                    .position(|item| {
+                                        item.sequence == frame.sequence
+                                            && item.reasoning_sequence == *reasoning_sequence
+                                    })
+                                    .and_then(|index| live_reasoning.remove(index))
+                                    .map(|item| GuiChatFramePayload::ReasoningDelta {
+                                        reasoning_sequence: item.reasoning_sequence,
+                                        delta: item.delta.as_str().to_owned(),
+                                    })
+                                    .unwrap_or_else(|| frame.payload.clone()),
+                                _ => frame.payload.clone(),
+                            };
+                            GuiChatStreamFrame {
+                                schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+                                boot_id: self.boot_id.to_string(),
+                                turn_id: request.turn_id.clone(),
+                                subscription: GuiChatSubscription {
+                                    session_id: request.session_id.clone(),
+                                    surface: request.surface,
+                                    generation: request.subscription_generation,
+                                },
+                                sequence: frame.sequence,
+                                payload,
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    (frames, turn.terminal.is_some())
+                };
+                for mut frame in frames {
+                    let raw_reasoning = matches!(frame.payload, GuiChatFramePayload::ReasoningDelta { .. });
+                    let validated = validate_stream_frame(&frame);
+                    if validated.is_err() {
+                        if let GuiChatFramePayload::ReasoningDelta { delta, .. } = &mut frame.payload {
+                            delta.zeroize();
+                        }
+                    }
+                    validated?;
+                    let encoded = serde_json::to_vec(&frame)
+                        .map_err(|_| Self::reject(GuiChatErrorCode::Internal, "frame_encode"));
+                    if let GuiChatFramePayload::ReasoningDelta { delta, .. } = &mut frame.payload {
+                        delta.zeroize();
+                    }
+                    let mut line = encoded?;
+                    line.push(b'\n');
+                    cursor = frame.sequence;
+                    if raw_reasoning && !self.is_current_live_owner(&request).await {
+                        line.zeroize();
+                        return Err(Self::reject(
+                            GuiChatErrorCode::Forbidden,
+                            "subscription_lease_revoked",
+                        ));
+                    }
+                    let written = tokio::time::timeout(std::time::Duration::from_secs(5), stream.write_all(&line))
+                        .await
+                        .map_err(|_| Self::reject(GuiChatErrorCode::Unavailable, "attach_write_timeout"))
+                        .and_then(|result| result.map_err(|_| Self::reject(GuiChatErrorCode::Unavailable, "attach_write")));
+                    if raw_reasoning {
+                        line.zeroize();
+                    }
+                    written?;
                 }
-                let earliest = turn
-                    .replay
-                    .front()
-                    .map(|frame| frame.sequence.saturating_sub(1))
-                    .unwrap_or(0);
-                if cursor < earliest {
-                    return Err(Self::reject(GuiChatErrorCode::ReplayGap, "replay_gap"));
+                if terminal {
+                    stream
+                        .shutdown()
+                        .await
+                        .map_err(|_| Self::reject(GuiChatErrorCode::Unavailable, "attach_close"))?;
+                    return Ok(());
                 }
-                let frames = turn
-                    .replay
-                    .iter()
-                    .filter(|frame| frame.sequence > cursor)
-                    .map(|frame| GuiChatStreamFrame {
-                        schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
-                        boot_id: self.boot_id.to_string(),
-                        turn_id: request.turn_id.clone(),
-                        subscription: GuiChatSubscription {
-                            session_id: request.session_id.clone(),
-                            surface: request.surface,
-                            generation: request.subscription_generation,
-                        },
-                        sequence: frame.sequence,
-                        payload: frame.payload.clone(),
-                    })
-                    .collect::<Vec<_>>();
-                (frames, turn.terminal.is_some())
-            };
-            for frame in frames {
-                validate_stream_frame(&frame)?;
-                let mut line = serde_json::to_vec(&frame)
-                    .map_err(|_| Self::reject(GuiChatErrorCode::Internal, "frame_encode"))?;
-                line.push(b'\n');
-                cursor = frame.sequence;
-                tokio::time::timeout(std::time::Duration::from_secs(5), stream.write_all(&line))
-                    .await
-                    .map_err(|_| {
-                        Self::reject(GuiChatErrorCode::Unavailable, "attach_write_timeout")
-                    })?
-                    .map_err(|_| Self::reject(GuiChatErrorCode::Unavailable, "attach_write"))?;
+                self.changed.notified().await;
             }
-            if terminal {
-                stream
-                    .shutdown()
-                    .await
-                    .map_err(|_| Self::reject(GuiChatErrorCode::Unavailable, "attach_close"))?;
-                return Ok(());
-            }
-            self.changed.notified().await;
         }
+        .await;
+        if leased_live_delivery {
+            self.release_live_subscription(&request).await;
+        }
+        result
     }
     async fn cancel(&self, request: GuiChatCancelRequest) -> GuiChatResult<GuiChatCancelResponse> {
         validate_cancel_request(&request)?;
@@ -1367,6 +1738,7 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
             .turns
             .get_mut(&request.turn_id.0)
             .ok_or_else(|| Self::reject(GuiChatErrorCode::Unavailable, "unknown_turn"))?;
+        Self::clear_live_reasoning(turn);
         Self::emit(turn, GuiChatFramePayload::CancelRequested);
         self.changed.notify_waiters();
         Ok(GuiChatCancelResponse {
@@ -1454,6 +1826,7 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
             let mut state = self.state.lock().await;
             let mut staged = Vec::new();
             for turn in state.turns.values_mut() {
+                Self::clear_live_reasoning(turn);
                 for frame in &mut turn.replay {
                     if let GuiChatFramePayload::Delta { text } = &mut frame.payload {
                         text.zeroize();
@@ -1591,10 +1964,16 @@ mod lifecycle_tests {
                 intent: GuiChatDigest("0".repeat(64)),
                 session: "fixture".into(),
                 incognito: false,
+                reasoning_display: false,
+                next_reasoning_sequence: 1,
+                reasoning_event_count: 0,
+                reasoning_byte_count: 0,
+                reasoning_terminal: None,
                 cancellation: Default::default(),
                 cancel_capability: "cancel".into(),
                 grant: "grant".into(),
                 subscriptions: HashMap::new(),
+                live_reasoning_owner: None,
                 replay: VecDeque::new(),
                 replay_bytes: 0,
                 next_sequence: 1,
@@ -1632,6 +2011,452 @@ mod lifecycle_tests {
             effect_changed,
             owner_registry,
         }
+    }
+
+    #[tokio::test]
+    async fn reasoning_live_delivery_is_leased_and_replay_is_checkpoint_only() {
+        let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
+        {
+            let mut state = runtime.state.lock().await;
+            let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
+            turn.reasoning_display = true;
+            turn.subscriptions.insert(
+                GuiChatSurface::Main,
+                Subscription {
+                    capability: "cap".into(),
+                    generation: 1,
+                    cursor_upper_bound: 0,
+                    live_reasoning: VecDeque::new(),
+                    live_reasoning_bytes: 0,
+                    live_attached: false,
+                },
+            );
+            let mut first_lease = false;
+            DaemonGuiChatRuntime::claim_live_delivery(
+                turn,
+                GuiChatSurface::Main,
+                1,
+                &mut first_lease,
+            )
+                .expect("first attach owns live delivery");
+            let mut competing_lease = false;
+            assert!(DaemonGuiChatRuntime::claim_live_delivery(
+                turn,
+                GuiChatSurface::Main,
+                1,
+                &mut competing_lease,
+            )
+            .is_err());
+
+            DaemonGuiChatRuntime::emit_reasoning_delta(
+                turn,
+                1,
+                crate::providers::ReasoningText::new("ephemeral reasoning".into()),
+            )
+            .expect("bounded live reasoning accepted");
+            let subscription = turn
+                .subscriptions
+                .get(&GuiChatSurface::Main)
+                .expect("leased subscription remains");
+            assert_eq!(subscription.live_reasoning.len(), 1);
+            assert_eq!(subscription.live_reasoning[0].delta.as_str(), "ephemeral reasoning");
+            assert!(matches!(
+                turn.replay.back().map(|frame| &frame.payload),
+                Some(GuiChatFramePayload::ReasoningCheckpoint {
+                    reasoning_sequence: 1,
+                    event_count: 1,
+                    byte_count: 19,
+                })
+            ));
+            turn.subscriptions.insert(
+                GuiChatSurface::Buddy,
+                Subscription {
+                    capability: "buddy-cap".into(),
+                    generation: 1,
+                    cursor_upper_bound: turn.next_sequence.saturating_sub(1),
+                    live_reasoning: VecDeque::new(),
+                    live_reasoning_bytes: 0,
+                    live_attached: false,
+                },
+            );
+            let mut buddy_lease = false;
+            DaemonGuiChatRuntime::claim_live_delivery(
+                turn,
+                GuiChatSurface::Buddy,
+                1,
+                &mut buddy_lease,
+            )
+            .expect("handoff atomically revokes main owner");
+            assert!(turn
+                .subscriptions
+                .get(&GuiChatSurface::Main)
+                .expect("main subscription")
+                .live_reasoning
+                .is_empty());
+            assert!(!turn
+                .subscriptions
+                .get(&GuiChatSurface::Main)
+                .expect("main subscription")
+                .live_attached);
+            DaemonGuiChatRuntime::emit_reasoning_delta(
+                turn,
+                2,
+                crate::providers::ReasoningText::new("buddy-only".into()),
+            )
+            .expect("post-handoff delta");
+            assert_eq!(
+                turn.subscriptions
+                    .get(&GuiChatSurface::Buddy)
+                    .expect("buddy subscription")
+                    .live_reasoning
+                    .len(),
+                1
+            );
+            // A later attachment cannot reclaim this queue: it observes only
+            // the persisted checkpoint after release clears the leased bytes.
+            DaemonGuiChatRuntime::clear_live_reasoning(turn);
+            assert!(turn
+                .subscriptions
+                .get(&GuiChatSurface::Main)
+                .expect("subscription")
+                .live_reasoning
+                .is_empty());
+            assert!(matches!(
+                turn.replay.back().map(|frame| &frame.payload),
+                Some(GuiChatFramePayload::ReasoningCheckpoint { .. })
+            ));
+        }
+        runtime.close_and_drain().await;
+        completion.wait().await.expect("fixture writer drained");
+    }
+
+    #[tokio::test]
+    async fn reasoning_terminal_revokes_live_queue_without_changing_live_cursor() {
+        let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
+        {
+            let mut state = runtime.state.lock().await;
+            let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
+            turn.reasoning_display = true;
+            turn.subscriptions.insert(
+                GuiChatSurface::Main,
+                Subscription {
+                    capability: "cap".into(),
+                    generation: 1,
+                    cursor_upper_bound: 0,
+                    live_reasoning: VecDeque::new(),
+                    live_reasoning_bytes: 0,
+                    live_attached: true,
+                },
+            );
+            turn.live_reasoning_owner = Some(LiveReasoningOwner {
+                surface: GuiChatSurface::Main,
+                generation: 1,
+            });
+            DaemonGuiChatRuntime::emit_reasoning_delta(
+                turn,
+                1,
+                crate::providers::ReasoningText::new("four".into()),
+            )
+            .expect("delta");
+            let delta_cursor = turn.next_sequence.saturating_sub(1);
+            DaemonGuiChatRuntime::emit_reasoning_state(
+                turn,
+                2,
+                crate::providers::ReasoningTerminalState::Complete,
+                1,
+                4,
+            )
+            .expect("terminal");
+            let subscription = turn
+                .subscriptions
+                .get(&GuiChatSurface::Main)
+                .expect("subscription");
+            assert!(subscription.live_reasoning.is_empty());
+            assert!(subscription.cursor_upper_bound > delta_cursor);
+            assert!(matches!(
+                turn.replay.back().map(|frame| &frame.payload),
+                Some(GuiChatFramePayload::ReasoningState {
+                    state: crate::providers::ReasoningTerminalState::Complete,
+                    ..
+                })
+            ));
+        }
+        runtime.close_and_drain().await;
+        completion.wait().await.expect("fixture writer drained");
+    }
+
+    #[tokio::test]
+    async fn reasoning_overflow_keeps_counters_transactional_and_closes_live_delivery() {
+        let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
+        {
+            let mut state = runtime.state.lock().await;
+            let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
+            turn.reasoning_display = true;
+            turn.reasoning_event_count = REASONING_EVENT_LIMIT;
+            turn.subscriptions.insert(
+                GuiChatSurface::Main,
+                Subscription {
+                    capability: "cap".into(),
+                    generation: 1,
+                    cursor_upper_bound: 0,
+                    live_reasoning: VecDeque::from([LiveReasoning {
+                        sequence: 1,
+                        reasoning_sequence: 1,
+                        delta: crate::providers::ReasoningText::new("old transient".into()),
+                    }]),
+                    live_reasoning_bytes: 13,
+                    live_attached: true,
+                },
+            );
+            turn.live_reasoning_owner = Some(LiveReasoningOwner {
+                surface: GuiChatSurface::Main,
+                generation: 1,
+            });
+            assert!(DaemonGuiChatRuntime::emit_reasoning_delta(
+                turn,
+                1,
+                crate::providers::ReasoningText::new("new".into()),
+            )
+            .is_err());
+            assert_eq!(turn.reasoning_event_count, REASONING_EVENT_LIMIT);
+            assert!(turn.live_reasoning_owner.is_none());
+            assert!(turn
+                .subscriptions
+                .get(&GuiChatSurface::Main)
+                .expect("subscription")
+                .live_reasoning
+                .is_empty());
+            assert!(matches!(
+                turn.replay.back().map(|frame| &frame.payload),
+                Some(GuiChatFramePayload::ReasoningState {
+                    state: crate::providers::ReasoningTerminalState::Redacted,
+                    event_count: REASONING_EVENT_LIMIT,
+                    ..
+                })
+            ));
+        }
+        runtime.close_and_drain().await;
+        completion.wait().await.expect("fixture writer drained");
+    }
+
+    async fn read_attach_header(stream: &mut tokio::io::DuplexStream) {
+        use tokio::io::AsyncReadExt;
+        let mut bytes = Vec::new();
+        loop {
+            bytes.push(stream.read_u8().await.expect("attach response byte"));
+            if bytes.ends_with(b"\r\n\r\n") {
+                return;
+            }
+        }
+    }
+
+    async fn read_attach_frame(stream: &mut tokio::io::DuplexStream) -> serde_json::Value {
+        use tokio::io::AsyncReadExt;
+        let mut line = Vec::new();
+        loop {
+            let byte = stream.read_u8().await.expect("attach frame byte");
+            if byte == b'\n' {
+                return serde_json::from_slice(&line).expect("valid authenticated frame JSON");
+            }
+            line.push(byte);
+        }
+    }
+
+    async fn wait_for_live_owner(
+        runtime: &DaemonGuiChatRuntime,
+        turn_id: Uuid,
+        expected: LiveReasoningOwner,
+    ) {
+        for _ in 0..128 {
+            if runtime
+                .state
+                .lock()
+                .await
+                .turns
+                .get(&turn_id)
+                .is_some_and(|turn| turn.live_reasoning_owner == Some(expected))
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("attach never acquired expected live reasoning owner");
+    }
+
+    #[tokio::test]
+    async fn public_exchange_and_attach_handoff_has_one_turn_owner_and_checkpoint_replay() {
+        use tokio::io::AsyncReadExt;
+
+        let (runtime, turn_id, completion, _home) = runtime_with_handshake_turn().await;
+        let exchange = |surface| GuiChatAttachExchangeRequest {
+            schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+            expected_boot_id: "fixture-boot".into(),
+            turn_id: GuiChatTurnId(turn_id),
+            session_id: "fixture".into(),
+            desired_surface: surface,
+            grant: GuiChatOpaqueCapability("grant".into()),
+        };
+        let main = runtime
+            .exchange_attach(exchange(GuiChatSurface::Main))
+            .await
+            .expect("public main exchange");
+        let attach_request = |response: &GuiChatAttachExchangeResponse| GuiChatAttachRequest {
+            schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+            expected_boot_id: "fixture-boot".into(),
+            turn_id: response.turn_id,
+            session_id: response.session_id.clone(),
+            surface: response.surface,
+            subscription_generation: response.subscription_generation,
+            attach_capability: response.attach_capability.clone(),
+            after_sequence: 0,
+        };
+        let main_request = attach_request(&main);
+        let (main_server, mut main_client) = tokio::io::duplex(128 * 1024);
+        let main_runtime = runtime.clone();
+        let main_task = tokio::spawn(async move {
+            main_runtime.attach(Box::new(main_server), main_request).await
+        });
+        read_attach_header(&mut main_client).await;
+        wait_for_live_owner(
+            &runtime,
+            turn_id,
+            LiveReasoningOwner {
+                surface: GuiChatSurface::Main,
+                generation: main.subscription_generation,
+            },
+        )
+        .await;
+
+        {
+            let mut state = runtime.state.lock().await;
+            let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
+            DaemonGuiChatRuntime::emit_reasoning_delta(
+                turn,
+                1,
+                crate::providers::ReasoningText::new("main live".into()),
+            )
+            .expect("main live delta");
+        }
+        runtime.changed.notify_waiters();
+        let main_delta = read_attach_frame(&mut main_client).await;
+        assert_eq!(main_delta["payload"]["type"], "reasoning_delta");
+        assert_eq!(main_delta["payload"]["delta"], "main live");
+
+        let buddy = runtime
+            .exchange_attach(exchange(GuiChatSurface::Buddy))
+            .await
+            .expect("public buddy exchange");
+        let buddy_request = attach_request(&buddy);
+        let (buddy_server, mut buddy_client) = tokio::io::duplex(128 * 1024);
+        let buddy_runtime = runtime.clone();
+        let buddy_task = tokio::spawn(async move {
+            buddy_runtime.attach(Box::new(buddy_server), buddy_request).await
+        });
+        read_attach_header(&mut buddy_client).await;
+        wait_for_live_owner(
+            &runtime,
+            turn_id,
+            LiveReasoningOwner {
+                surface: GuiChatSurface::Buddy,
+                generation: buddy.subscription_generation,
+            },
+        )
+        .await;
+        let buddy_checkpoint = read_attach_frame(&mut buddy_client).await;
+        assert_eq!(buddy_checkpoint["payload"]["type"], "reasoning_checkpoint");
+        assert!(buddy_checkpoint["payload"].get("delta").is_none());
+        {
+            let mut state = runtime.state.lock().await;
+            let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
+            assert_eq!(
+                turn.live_reasoning_owner,
+                Some(LiveReasoningOwner {
+                    surface: GuiChatSurface::Buddy,
+                    generation: buddy.subscription_generation,
+                })
+            );
+            assert!(turn
+                .subscriptions
+                .get(&GuiChatSurface::Main)
+                .expect("main subscription")
+                .live_reasoning
+                .is_empty());
+            DaemonGuiChatRuntime::emit_reasoning_delta(
+                turn,
+                2,
+                crate::providers::ReasoningText::new("buddy live".into()),
+            )
+            .expect("buddy-only delta");
+            assert_eq!(
+                turn.subscriptions
+                    .get(&GuiChatSurface::Buddy)
+                    .expect("buddy subscription")
+                    .live_reasoning
+                    .len(),
+                1
+            );
+            assert!(matches!(
+                turn.replay.front().map(|frame| &frame.payload),
+                Some(GuiChatFramePayload::ReasoningCheckpoint { .. })
+            ));
+        }
+        runtime.changed.notify_waiters();
+        let buddy_delta = read_attach_frame(&mut buddy_client).await;
+        assert_eq!(buddy_delta["payload"]["type"], "reasoning_delta");
+        assert_eq!(buddy_delta["payload"]["delta"], "buddy live");
+        let main_checkpoint = read_attach_frame(&mut main_client).await;
+        assert_eq!(main_checkpoint["payload"]["type"], "reasoning_checkpoint");
+        assert!(main_checkpoint["payload"].get("delta").is_none());
+        {
+            let mut state = runtime.state.lock().await;
+            let turn = state.turns.get_mut(&turn_id).expect("fixture turn");
+            DaemonGuiChatRuntime::emit_reasoning_state(
+                turn,
+                3,
+                crate::providers::ReasoningTerminalState::Complete,
+                2,
+                19,
+            )
+            .expect("terminal state");
+            let terminal = GuiChatTerminal {
+                state: GuiChatTerminalState::Complete,
+                response_digest: GuiChatDigest("0".repeat(64)),
+                provider: "fixture".into(),
+                model: "fixture".into(),
+                usage: GuiChatUsage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    elapsed_ms: 0,
+                },
+                lifecycle_receipt_id: GuiChatDigest("1".repeat(64)),
+            };
+            turn.terminal = Some(terminal.clone());
+            DaemonGuiChatRuntime::emit(turn, GuiChatFramePayload::ProviderDone);
+            DaemonGuiChatRuntime::emit(turn, GuiChatFramePayload::Terminal { terminal });
+        }
+        runtime.changed.notify_waiters();
+        let buddy_terminal = read_attach_frame(&mut buddy_client).await;
+        let main_terminal = read_attach_frame(&mut main_client).await;
+        assert_eq!(buddy_terminal["payload"]["type"], "reasoning_state");
+        assert_eq!(main_terminal["payload"]["type"], "reasoning_state");
+        let buddy_done = read_attach_frame(&mut buddy_client).await;
+        let main_done = read_attach_frame(&mut main_client).await;
+        assert_eq!(buddy_done["payload"]["type"], "provider_done");
+        assert_eq!(main_done["payload"]["type"], "provider_done");
+        let buddy_final = read_attach_frame(&mut buddy_client).await;
+        let main_final = read_attach_frame(&mut main_client).await;
+        assert_eq!(buddy_final["payload"]["type"], "terminal");
+        assert_eq!(main_final["payload"]["type"], "terminal");
+        let mut eof = [0_u8; 1];
+        assert_eq!(buddy_client.read(&mut eof).await.expect("buddy closes"), 0);
+        assert_eq!(main_client.read(&mut eof).await.expect("main closes"), 0);
+        // Cancellation of the test tasks has no implicit teardown guarantee;
+        // release the exact current owner before ending the fixture.
+        main_task.abort();
+        buddy_task.abort();
+        runtime.release_live_subscription(&attach_request(&buddy)).await;
+        runtime.close_and_drain().await;
+        completion.wait().await.expect("fixture writer drained");
     }
 
     fn lifecycle_phases_from_real_wal(segment: &std::path::Path) -> Vec<String> {

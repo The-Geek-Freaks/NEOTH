@@ -9,6 +9,9 @@ use std::sync::{
     atomic::{AtomicU8, Ordering},
 };
 
+use neothd::providers::{ReasoningTerminalState, ReasoningText};
+use zeroize::Zeroize as _;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChatStreamRequestId(u64);
 
@@ -54,6 +57,32 @@ pub enum DaemonChatTerminal {
     Indeterminate,
 }
 
+/// The daemon is authoritative for this closed, transient presentation
+/// vocabulary.  It is intentionally separate from the visible stream phase:
+/// reasoning must never become reply or preview data.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DaemonChatReasoningStatus {
+    Unsupported,
+    Hidden,
+    Redacted,
+    Receiving,
+    Complete,
+    Cancelled,
+}
+
+impl DaemonChatReasoningStatus {
+    pub const fn as_wire(self) -> &'static str {
+        match self {
+            Self::Unsupported => "unsupported",
+            Self::Hidden => "hidden",
+            Self::Redacted => "redacted",
+            Self::Receiving => "receiving",
+            Self::Complete => "complete",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub enum DaemonChatEventKind {
     Accepted,
@@ -62,6 +91,29 @@ pub enum DaemonChatEventKind {
     PhaseFinalizing,
     Notice,
     Delta(String),
+    /// A separate authenticated plane. `ReasoningText` redacts its Debug
+    /// representation and is kept out of every visible-text field below.
+    ReasoningDelta {
+        reasoning_sequence: u32,
+        delta: ReasoningText,
+    },
+    /// A terminal provider reasoning state. It must precede ProviderDone and
+    /// close this separate stream even when the visible response continues to
+    /// its own terminal accounting.
+    ReasoningState {
+        reasoning_sequence: u32,
+        state: ReasoningTerminalState,
+        event_count: u64,
+        byte_count: u64,
+    },
+    /// Metadata-only replay omission. This is never a terminal provider
+    /// state: it advances the independent cursor/counters while ensuring an
+    /// attachment cannot recover previously live reasoning bytes.
+    ReasoningCheckpoint {
+        reasoning_sequence: u32,
+        event_count: u64,
+        byte_count: u64,
+    },
     ProviderDone,
     CancelRequested,
     Terminal(DaemonChatTerminal),
@@ -84,6 +136,8 @@ pub enum DaemonChatReject {
     Duplicate,
     Gap,
     InvalidTransition,
+    ReasoningSequence,
+    ReasoningLimit,
     AfterTerminal,
 }
 
@@ -107,6 +161,16 @@ struct DaemonChatSubscriptionState {
     terminal: Option<DaemonChatTerminal>,
     reply: zeroize::Zeroizing<String>,
     canonical_preview: Option<zeroize::Zeroizing<String>>,
+    /// This grant is captured by the attested preflight and immutable for the
+    /// subscription lifetime. It is never inferred from a preference later.
+    reasoning_display: bool,
+    reasoning_sequence: u32,
+    reasoning_event_count: u64,
+    reasoning_byte_count: u64,
+    reasoning_status: DaemonChatReasoningStatus,
+    reasoning_active: bool,
+    reasoning_terminal: bool,
+    reasoning: zeroize::Zeroizing<String>,
 }
 
 impl DaemonChatSubscriptionState {
@@ -117,6 +181,7 @@ impl DaemonChatSubscriptionState {
         if let Some(mut preview) = self.canonical_preview.take() {
             preview.zeroize();
         }
+        self.reasoning.zeroize();
     }
 }
 
@@ -154,6 +219,7 @@ impl DaemonChatPresentationReducer {
         generation: u64,
         cursor: u64,
         incognito: bool,
+        reasoning_display: bool,
     ) -> Result<(), DaemonChatReject> {
         if generation == 0 || identity.boot_id.is_empty() || identity.turn_id.is_empty() {
             return Err(DaemonChatReject::InvalidTransition);
@@ -178,6 +244,18 @@ impl DaemonChatPresentationReducer {
             terminal: None,
             reply: zeroize::Zeroizing::new(String::new()),
             canonical_preview: None,
+            reasoning_display,
+            reasoning_sequence: 0,
+            reasoning_event_count: 0,
+            reasoning_byte_count: 0,
+            reasoning_status: if reasoning_display {
+                DaemonChatReasoningStatus::Unsupported
+            } else {
+                DaemonChatReasoningStatus::Hidden
+            },
+            reasoning_active: false,
+            reasoning_terminal: false,
+            reasoning: zeroize::Zeroizing::new(String::new()),
         });
         Ok(())
     }
@@ -245,6 +323,120 @@ impl DaemonChatPresentationReducer {
                     true
                 }
             }
+            DaemonChatEventKind::ReasoningDelta {
+                reasoning_sequence,
+                delta,
+            } => {
+                if current.provider_done
+                    || current.phase == ChatStreamPhase::Finalizing
+                    || !current.reasoning_display
+                    || current.reasoning_terminal
+                    || reasoning_sequence != current.reasoning_sequence.saturating_add(1)
+                {
+                    return DaemonChatApply::Rejected(DaemonChatReject::ReasoningSequence);
+                }
+                let delta_bytes = delta.as_str().len();
+                let Some(next_len) = current.reasoning.len().checked_add(delta_bytes) else {
+                    return DaemonChatApply::Rejected(DaemonChatReject::ReasoningLimit);
+                };
+                if next_len > 64 * 1024 {
+                    return DaemonChatApply::Rejected(DaemonChatReject::ReasoningLimit);
+                }
+                let Some(next_events) = current.reasoning_event_count.checked_add(1) else {
+                    return DaemonChatApply::Rejected(DaemonChatReject::ReasoningLimit);
+                };
+                let Some(next_bytes) = current.reasoning_byte_count.checked_add(delta_bytes as u64)
+                else {
+                    return DaemonChatApply::Rejected(DaemonChatReject::ReasoningLimit);
+                };
+                current.reasoning.push_str(delta.as_str());
+                current.reasoning_sequence = reasoning_sequence;
+                current.reasoning_event_count = next_events;
+                current.reasoning_byte_count = next_bytes;
+                current.reasoning_status = DaemonChatReasoningStatus::Receiving;
+                current.reasoning_active = true;
+                true
+            }
+            DaemonChatEventKind::ReasoningState {
+                reasoning_sequence,
+                state,
+                event_count,
+                byte_count,
+            } => {
+                if current.provider_done
+                    || current.phase == ChatStreamPhase::Finalizing
+                    || current.reasoning_terminal
+                    || reasoning_sequence != current.reasoning_sequence.saturating_add(1)
+                    || event_count < current.reasoning_event_count
+                    || byte_count < current.reasoning_byte_count
+                {
+                    return DaemonChatApply::Rejected(DaemonChatReject::ReasoningSequence);
+                }
+                current.reasoning_sequence = reasoning_sequence;
+                current.reasoning_event_count = event_count;
+                current.reasoning_byte_count = byte_count;
+                match state {
+                    ReasoningTerminalState::Unsupported => {
+                        current.reasoning_status = DaemonChatReasoningStatus::Unsupported;
+                        current.reasoning_active = false;
+                        current.reasoning_terminal = true;
+                        current.reasoning.zeroize();
+                    }
+                    ReasoningTerminalState::Hidden => {
+                        current.reasoning_status = DaemonChatReasoningStatus::Hidden;
+                        current.reasoning_active = false;
+                        current.reasoning_terminal = true;
+                        current.reasoning.zeroize();
+                    }
+                    ReasoningTerminalState::Redacted => {
+                        // This is an actual provider terminal, not a replay
+                        // marker. Omitted replay is represented only by the
+                        // checkpoint variant below.
+                        current.reasoning_status = DaemonChatReasoningStatus::Redacted;
+                        current.reasoning_active = false;
+                        current.reasoning_terminal = true;
+                        current.reasoning.zeroize();
+                    }
+                    ReasoningTerminalState::Complete => {
+                        current.reasoning_status = DaemonChatReasoningStatus::Complete;
+                        current.reasoning_active = false;
+                        current.reasoning_terminal = true;
+                        current.reasoning.zeroize();
+                    }
+                    ReasoningTerminalState::Cancelled => {
+                        current.reasoning_status = DaemonChatReasoningStatus::Cancelled;
+                        current.reasoning_active = false;
+                        current.reasoning_terminal = true;
+                        current.reasoning.zeroize();
+                    }
+                }
+                true
+            }
+            DaemonChatEventKind::ReasoningCheckpoint {
+                reasoning_sequence,
+                event_count,
+                byte_count,
+            } => {
+                if current.provider_done
+                    || current.phase == ChatStreamPhase::Finalizing
+                    || current.reasoning_terminal
+                    || reasoning_sequence <= current.reasoning_sequence
+                    || event_count < current.reasoning_event_count
+                    || byte_count < current.reasoning_byte_count
+                {
+                    return DaemonChatApply::Rejected(DaemonChatReject::ReasoningSequence);
+                }
+                // A checkpoint has no text. If this subscription had any
+                // locally buffered prefix, drop it rather than joining it to
+                // later live bytes across an unrecoverable replay gap.
+                current.reasoning_sequence = reasoning_sequence;
+                current.reasoning_event_count = event_count;
+                current.reasoning_byte_count = byte_count;
+                current.reasoning_status = DaemonChatReasoningStatus::Redacted;
+                current.reasoning_active = false;
+                current.reasoning.zeroize();
+                true
+            }
             DaemonChatEventKind::Terminal(terminal) => {
                 let valid = match terminal {
                     DaemonChatTerminal::Complete => {
@@ -270,6 +462,8 @@ impl DaemonChatPresentationReducer {
                             Some(zeroize::Zeroizing::new(current.reply.as_str().to_owned()));
                     }
                     current.terminal = Some(terminal);
+                    current.reasoning_active = false;
+                    current.reasoning.zeroize();
                 }
                 valid
             }
@@ -303,6 +497,22 @@ impl DaemonChatPresentationReducer {
             .as_ref()
             .and_then(|state| state.canonical_preview.as_ref())
             .map(|preview| preview.as_str())
+    }
+
+    pub fn reasoning_status(&self, surface: ChatStreamSurface) -> Option<DaemonChatReasoningStatus> {
+        self.slot(surface).as_ref().map(|state| state.reasoning_status)
+    }
+
+    pub fn reasoning_active(&self, surface: ChatStreamSurface) -> Option<bool> {
+        self.slot(surface).as_ref().map(|state| state.reasoning_active)
+    }
+
+    /// Kept separate from reply/canonical-preview and exposed only to the
+    /// exact live display projection while the captured grant is active.
+    pub fn reasoning_text(&self, surface: ChatStreamSurface) -> Option<&str> {
+        self.slot(surface).as_ref().and_then(|state| {
+            (state.reasoning_display && state.reasoning_active).then_some(state.reasoning.as_str())
+        })
     }
 }
 
@@ -338,7 +548,7 @@ mod daemon_chat_presentation_tests {
     fn main_delta_terminal_creates_preview_only_after_valid_terminal() {
         let mut reducer = DaemonChatPresentationReducer::default();
         reducer
-            .attach(ChatStreamSurface::Main, identity(), 1, 0, false)
+            .attach(ChatStreamSurface::Main, identity(), 1, 0, false, false)
             .unwrap();
         assert_eq!(
             reducer.apply(event(1, DaemonChatEventKind::Delta("hello".into()))),
@@ -366,7 +576,7 @@ mod daemon_chat_presentation_tests {
     fn stale_generation_duplicate_and_gap_cannot_repaint_main() {
         let mut reducer = DaemonChatPresentationReducer::default();
         reducer
-            .attach(ChatStreamSurface::Main, identity(), 2, 4, false)
+            .attach(ChatStreamSurface::Main, identity(), 2, 4, false, false)
             .unwrap();
         assert_eq!(
             reducer.apply(event(5, DaemonChatEventKind::Delta("old".into()))),
@@ -391,10 +601,10 @@ mod daemon_chat_presentation_tests {
     fn buddy_has_own_generation_and_close_only_detaches_local_content() {
         let mut reducer = DaemonChatPresentationReducer::default();
         reducer
-            .attach(ChatStreamSurface::Main, identity(), 1, 0, false)
+            .attach(ChatStreamSurface::Main, identity(), 1, 0, false, false)
             .unwrap();
         reducer
-            .attach(ChatStreamSurface::Buddy, identity(), 7, 0, false)
+            .attach(ChatStreamSurface::Buddy, identity(), 7, 0, false, false)
             .unwrap();
         let mut buddy_delta = event(1, DaemonChatEventKind::Delta("shared".into()));
         buddy_delta.surface = ChatStreamSurface::Buddy;
@@ -409,7 +619,7 @@ mod daemon_chat_presentation_tests {
     fn stop_requires_cancel_then_cancel_terminal_and_never_previews() {
         let mut reducer = DaemonChatPresentationReducer::default();
         reducer
-            .attach(ChatStreamSurface::Main, identity(), 1, 0, false)
+            .attach(ChatStreamSurface::Main, identity(), 1, 0, false, false)
             .unwrap();
         assert_eq!(
             reducer.apply(event(1, DaemonChatEventKind::CancelRequested)),
@@ -427,6 +637,252 @@ mod daemon_chat_presentation_tests {
             DaemonChatApply::Applied
         );
         assert!(reducer.canonical_preview(ChatStreamSurface::Main).is_none());
+    }
+
+    #[test]
+    fn reasoning_is_grant_bound_and_never_enters_visible_reply_or_preview() {
+        let mut reducer = DaemonChatPresentationReducer::default();
+        reducer
+            .attach(ChatStreamSurface::Main, identity(), 1, 0, false, false)
+            .unwrap();
+        assert_eq!(
+            reducer.apply(event(
+                1,
+                DaemonChatEventKind::ReasoningDelta {
+                    reasoning_sequence: 1,
+                    delta: ReasoningText::new("must stay hidden".into()),
+                }
+            )),
+            DaemonChatApply::Rejected(DaemonChatReject::ReasoningSequence)
+        );
+        assert_eq!(reducer.visible_reply(ChatStreamSurface::Main), Some(""));
+        assert!(reducer.canonical_preview(ChatStreamSurface::Main).is_none());
+        assert_eq!(
+            reducer.reasoning_status(ChatStreamSurface::Main),
+            Some(DaemonChatReasoningStatus::Hidden)
+        );
+        assert_eq!(reducer.reasoning_text(ChatStreamSurface::Main), None);
+    }
+
+    #[test]
+    fn reasoning_is_bounded_zeroized_on_terminal_and_uses_an_independent_sequence() {
+        let mut reducer = DaemonChatPresentationReducer::default();
+        reducer
+            .attach(ChatStreamSurface::Main, identity(), 1, 0, false, true)
+            .unwrap();
+        assert_eq!(
+            reducer.apply(event(
+                1,
+                DaemonChatEventKind::ReasoningDelta {
+                    reasoning_sequence: 1,
+                    delta: ReasoningText::new("transient".into()),
+                }
+            )),
+            DaemonChatApply::Applied
+        );
+        assert_eq!(reducer.visible_reply(ChatStreamSurface::Main), Some(""));
+        assert_eq!(reducer.reasoning_text(ChatStreamSurface::Main), Some("transient"));
+        assert_eq!(
+            reducer.apply(event(
+                2,
+                DaemonChatEventKind::ReasoningState {
+                    reasoning_sequence: 1,
+                    state: ReasoningTerminalState::Complete,
+                    event_count: 1,
+                    byte_count: 9,
+                }
+            )),
+            DaemonChatApply::Rejected(DaemonChatReject::ReasoningSequence)
+        );
+        assert_eq!(
+            reducer.apply(event(
+                2,
+                DaemonChatEventKind::ReasoningState {
+                    reasoning_sequence: 3,
+                    state: ReasoningTerminalState::Complete,
+                    event_count: 1,
+                    byte_count: 9,
+                }
+            )),
+            DaemonChatApply::Rejected(DaemonChatReject::ReasoningSequence)
+        );
+        assert_eq!(
+            reducer.apply(event(
+                2,
+                DaemonChatEventKind::ReasoningState {
+                    reasoning_sequence: 2,
+                    state: ReasoningTerminalState::Complete,
+                    event_count: 1,
+                    byte_count: 9,
+                }
+            )),
+            DaemonChatApply::Applied
+        );
+        assert_eq!(reducer.reasoning_text(ChatStreamSurface::Main), None);
+        assert_eq!(
+            reducer.reasoning_status(ChatStreamSurface::Main),
+            Some(DaemonChatReasoningStatus::Complete)
+        );
+        assert_eq!(
+            reducer.apply(event(
+                3,
+                DaemonChatEventKind::ReasoningDelta {
+                    reasoning_sequence: 2,
+                    delta: ReasoningText::new("late".into()),
+                }
+            )),
+            DaemonChatApply::Rejected(DaemonChatReject::ReasoningSequence)
+        );
+    }
+
+    #[test]
+    fn reconnect_checkpoint_drops_no_replayed_text_and_later_live_delta_starts_fresh() {
+        let mut reducer = DaemonChatPresentationReducer::default();
+        reducer
+            .attach(ChatStreamSurface::Buddy, identity(), 3, 4, false, true)
+            .unwrap();
+        let mut checkpoint = event(
+            5,
+            DaemonChatEventKind::ReasoningCheckpoint {
+                reasoning_sequence: 7,
+                event_count: 7,
+                byte_count: 128,
+            },
+        );
+        checkpoint.surface = ChatStreamSurface::Buddy;
+        checkpoint.generation = 3;
+        assert_eq!(reducer.apply(checkpoint), DaemonChatApply::Applied);
+        assert_eq!(reducer.reasoning_text(ChatStreamSurface::Buddy), None);
+        let mut live = event(
+            6,
+            DaemonChatEventKind::ReasoningDelta {
+                reasoning_sequence: 8,
+                delta: ReasoningText::new("new-only".into()),
+            },
+        );
+        live.surface = ChatStreamSurface::Buddy;
+        live.generation = 3;
+        assert_eq!(reducer.apply(live), DaemonChatApply::Applied);
+        assert_eq!(reducer.reasoning_text(ChatStreamSurface::Buddy), Some("new-only"));
+        assert_eq!(reducer.visible_reply(ChatStreamSurface::Buddy), Some(""));
+    }
+
+    #[test]
+    fn actual_redacted_terminal_zeroizes_and_rejects_later_delta() {
+        let mut reducer = DaemonChatPresentationReducer::default();
+        reducer
+            .attach(ChatStreamSurface::Main, identity(), 1, 0, false, true)
+            .unwrap();
+        assert_eq!(
+            reducer.apply(event(
+                1,
+                DaemonChatEventKind::ReasoningDelta {
+                    reasoning_sequence: 1,
+                    delta: ReasoningText::new("provider-redacted".into()),
+                }
+            )),
+            DaemonChatApply::Applied
+        );
+        assert_eq!(
+            reducer.apply(event(
+                2,
+                DaemonChatEventKind::ReasoningState {
+                    reasoning_sequence: 2,
+                    state: ReasoningTerminalState::Redacted,
+                    event_count: 1,
+                    byte_count: 17,
+                }
+            )),
+            DaemonChatApply::Applied
+        );
+        assert_eq!(reducer.reasoning_text(ChatStreamSurface::Main), None);
+        assert_eq!(
+            reducer.reasoning_status(ChatStreamSurface::Main),
+            Some(DaemonChatReasoningStatus::Redacted)
+        );
+        assert_eq!(
+            reducer.apply(event(
+                3,
+                DaemonChatEventKind::ReasoningDelta {
+                    reasoning_sequence: 2,
+                    delta: ReasoningText::new("late".into()),
+                }
+            )),
+            DaemonChatApply::Rejected(DaemonChatReject::ReasoningSequence)
+        );
+    }
+
+    #[test]
+    fn reasoning_delta_state_and_checkpoint_are_rejected_after_provider_done() {
+        let mut reducer = DaemonChatPresentationReducer::default();
+        reducer
+            .attach(ChatStreamSurface::Main, identity(), 1, 0, false, true)
+            .unwrap();
+        assert_eq!(
+            reducer.apply(event(1, DaemonChatEventKind::ProviderDone)),
+            DaemonChatApply::Applied
+        );
+        assert_eq!(
+            reducer.apply(event(
+                2,
+                DaemonChatEventKind::ReasoningDelta {
+                    reasoning_sequence: 1,
+                    delta: ReasoningText::new("late".into()),
+                }
+            )),
+            DaemonChatApply::Rejected(DaemonChatReject::ReasoningSequence)
+        );
+        assert_eq!(
+            reducer.apply(event(
+                2,
+                DaemonChatEventKind::ReasoningState {
+                    reasoning_sequence: 1,
+                    state: ReasoningTerminalState::Unsupported,
+                    event_count: 0,
+                    byte_count: 0,
+                }
+            )),
+            DaemonChatApply::Rejected(DaemonChatReject::ReasoningSequence)
+        );
+        assert_eq!(
+            reducer.apply(event(
+                2,
+                DaemonChatEventKind::ReasoningCheckpoint {
+                    reasoning_sequence: 1,
+                    event_count: 1,
+                    byte_count: 4,
+                }
+            )),
+            DaemonChatApply::Rejected(DaemonChatReject::ReasoningSequence)
+        );
+    }
+
+    #[test]
+    fn reasoning_buffer_rejects_bytes_beyond_sixty_four_kib() {
+        let mut reducer = DaemonChatPresentationReducer::default();
+        reducer
+            .attach(ChatStreamSurface::Main, identity(), 1, 0, false, true)
+            .unwrap();
+        assert_eq!(
+            reducer.apply(event(
+                1,
+                DaemonChatEventKind::ReasoningDelta {
+                    reasoning_sequence: 1,
+                    delta: ReasoningText::new("x".repeat(64 * 1024)),
+                }
+            )),
+            DaemonChatApply::Applied
+        );
+        assert_eq!(
+            reducer.apply(event(
+                2,
+                DaemonChatEventKind::ReasoningDelta {
+                    reasoning_sequence: 2,
+                    delta: ReasoningText::new("y".into()),
+                }
+            )),
+            DaemonChatApply::Rejected(DaemonChatReject::ReasoningLimit)
+        );
     }
 }
 

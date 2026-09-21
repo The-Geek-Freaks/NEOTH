@@ -2,6 +2,24 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W153 CLI/daemon/Main/Buddy integration (2026-09-21):** independently reviewed
+source now carries a default-off per-turn reasoning grant through both GUI
+routes and the CLI. Reasoning stays separate from visible replies, history,
+previews and ordinary audit payloads. Real dispatch, duplex attach/handoff and
+Main/Buddy child-callback regression sources cover error, overflow, stale
+ownership and cancellation. The macOS discovery contract includes both new
+callbacks (16 total). See [W153](../docs/gold-wave153-verification.md).
+The manifest binds 327 source inputs; required tests are 216 universal native
+plus 3 Windows-only, 45 universal GUI plus 11 Linux/macOS callbacks, and the
+existing 7 optional adapter tests. Exact-source hosted execution and the new
+CLI reference remain pending; no Road checkbox closes.
+
+W153A provider repair 8a34482d passed Preflight 35610187900, Code Quality
+35610187836 and the hosted core/reference build 35610187799. Its generated
+reference exactly matches the prior published reference (SHA-256 A223E291D...).
+These results cover the provider/audit prerequisite, not the new integration.
+The older ff146652 Windows/macOS and preview jobs continue separately.
+
 **W153A hosted compiler repair (2026-09-21):** GitHub build 35608152765
 on 772a6019 reported eight compiler diagnostics and one unused binding.
 The three provider sources now keep the zeroizing byte owner alive for its

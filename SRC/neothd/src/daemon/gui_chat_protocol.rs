@@ -37,6 +37,8 @@ pub(crate) const GUI_CHAT_ATTACHMENT_MEDIA_KIND_MAX_BYTES: usize = 96;
 pub(crate) const GUI_CHAT_OPAQUE_CAPABILITY_MAX_BYTES: usize = 512;
 pub(crate) const GUI_CHAT_BOOT_ID_MAX_BYTES: usize = 128;
 pub(crate) const GUI_CHAT_FRAME_MAX_BYTES: usize = 64 * 1024;
+pub(crate) const GUI_CHAT_REASONING_EVENT_MAX: u64 = 256;
+pub(crate) const GUI_CHAT_REASONING_BYTE_MAX: u64 = 64 * 1024;
 pub(crate) const GUI_CHAT_REPLAY_MAX_BYTES: usize = 1024 * 1024;
 pub(crate) const GUI_CHAT_NOTICE_MAX_BYTES: usize = 512;
 pub(crate) const GUI_CHAT_PROVIDER_MAX_BYTES: usize = 128;
@@ -116,6 +118,11 @@ pub(crate) struct GuiChatPreflightRequest {
     pub(crate) model: Option<String>,
     pub(crate) skill_id: Option<String>,
     pub(crate) incognito: bool,
+    /// Per-turn presentation consent. Historical preflights and callers that
+    /// do not know this field are always denied display rather than inheriting
+    /// a preference from configuration or process state.
+    #[serde(default)]
+    pub(crate) reasoning_display: bool,
     pub(crate) attachments: Vec<GuiChatAttachmentCandidate>,
 }
 
@@ -372,16 +379,87 @@ pub(crate) struct GuiChatSubscription {
     pub(crate) generation: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
 pub(crate) enum GuiChatFramePayload {
     Accepted,
     PhaseChanged { phase: GuiChatPhase },
     Notice { code: String },
     Delta { text: String },
+    /// Live-only provider reasoning. The runtime never places this payload in
+    /// a reconnectable replay record.
+    ReasoningDelta {
+        reasoning_sequence: u32,
+        delta: String,
+    },
+    /// Metadata-only replay checkpoint. It contains no provider text and
+    /// preserves the authenticated stream cursor when an earlier live-only
+    /// delta is unavailable to a new attachment.
+    ReasoningCheckpoint {
+        reasoning_sequence: u32,
+        event_count: u64,
+        byte_count: u64,
+    },
+    /// Reasoning terminal state. This is never used as a replay placeholder:
+    /// every one of its closed states terminates the reasoning plane.
+    ReasoningState {
+        reasoning_sequence: u32,
+        state: crate::providers::ReasoningTerminalState,
+        event_count: u64,
+        byte_count: u64,
+    },
     ProviderDone,
     CancelRequested,
     Terminal { terminal: GuiChatTerminal },
+}
+
+impl fmt::Debug for GuiChatFramePayload {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ReasoningDelta {
+                reasoning_sequence, ..
+            } => formatter
+                .debug_struct("ReasoningDelta")
+                .field("reasoning_sequence", reasoning_sequence)
+                .field("delta", &"<redacted>")
+                .finish(),
+            Self::Accepted => formatter.write_str("Accepted"),
+            Self::PhaseChanged { phase } => formatter
+                .debug_struct("PhaseChanged")
+                .field("phase", phase)
+                .finish(),
+            Self::Notice { code } => formatter.debug_struct("Notice").field("code", code).finish(),
+            Self::Delta { text } => formatter.debug_struct("Delta").field("text", text).finish(),
+            Self::ReasoningState {
+                reasoning_sequence,
+                state,
+                event_count,
+                byte_count,
+            } => formatter
+                .debug_struct("ReasoningState")
+                .field("reasoning_sequence", reasoning_sequence)
+                .field("state", state)
+                .field("event_count", event_count)
+                .field("byte_count", byte_count)
+                .finish(),
+            Self::ReasoningCheckpoint {
+                reasoning_sequence,
+                event_count,
+                byte_count,
+            } => formatter
+                .debug_struct("ReasoningCheckpoint")
+                .field("reasoning_sequence", reasoning_sequence)
+                .field("event_count", event_count)
+                .field("byte_count", byte_count)
+                .finish(),
+            Self::ProviderDone => formatter.write_str("ProviderDone"),
+            Self::CancelRequested => formatter.write_str("CancelRequested"),
+            Self::Terminal { terminal } => formatter
+                .debug_struct("Terminal")
+                .field("terminal", terminal)
+                .finish(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -514,6 +592,7 @@ pub(crate) fn preflight_descriptor_digest(
     encoder.option_field(request.model.as_deref());
     encoder.option_field(request.skill_id.as_deref());
     encoder.field(&[u8::from(request.incognito)]);
+    encoder.field(&[u8::from(request.reasoning_display)]);
     encoder.field(request.session_id.as_bytes());
     encoder.field(request.expected_boot_id.as_bytes());
     encoder.field(&accepted_config_generation.to_be_bytes());
@@ -627,6 +706,40 @@ pub(crate) fn validate_stream_frame(frame: &GuiChatStreamFrame) -> GuiChatResult
         }
         GuiChatFramePayload::Delta { text } => {
             validate_nonempty("delta", text, GUI_CHAT_FRAME_MAX_BYTES)?;
+        }
+        GuiChatFramePayload::ReasoningDelta {
+            reasoning_sequence,
+            delta,
+        } => {
+            validate_nonzero("reasoning_sequence", u64::from(*reasoning_sequence))?;
+            validate_nonempty("reasoning_delta", delta, GUI_CHAT_FRAME_MAX_BYTES)?;
+        }
+        GuiChatFramePayload::ReasoningState {
+            reasoning_sequence,
+            event_count,
+            byte_count,
+            ..
+        } => {
+            validate_nonzero("reasoning_sequence", u64::from(*reasoning_sequence))?;
+            if *event_count > GUI_CHAT_REASONING_EVENT_MAX
+                || *byte_count > GUI_CHAT_REASONING_BYTE_MAX
+                || *byte_count > (GUI_CHAT_FRAME_MAX_BYTES as u64).saturating_mul(*event_count)
+            {
+                return Err(GuiChatProtocolError::Invalid("reasoning_counter_bounds"));
+            }
+        }
+        GuiChatFramePayload::ReasoningCheckpoint {
+            reasoning_sequence,
+            event_count,
+            byte_count,
+        } => {
+            validate_nonzero("reasoning_sequence", u64::from(*reasoning_sequence))?;
+            if *event_count > GUI_CHAT_REASONING_EVENT_MAX
+                || *byte_count > GUI_CHAT_REASONING_BYTE_MAX
+                || *byte_count > (GUI_CHAT_FRAME_MAX_BYTES as u64).saturating_mul(*event_count)
+            {
+                return Err(GuiChatProtocolError::Invalid("reasoning_counter_bounds"));
+            }
         }
         GuiChatFramePayload::Terminal { terminal } => {
             validate_terminal(terminal)?;
@@ -1048,6 +1161,7 @@ mod tests {
             model: Some("model-a".into()),
             skill_id: None,
             incognito: false,
+            reasoning_display: false,
             attachments: vec![GuiChatAttachmentCandidate {
                 path: "C:/safe/input.txt".into(),
             }],
@@ -1305,5 +1419,68 @@ mod tests {
             ..lifecycle
         };
         validate_stream_frame(&delta).unwrap();
+    }
+
+    #[test]
+    fn missing_reasoning_display_decodes_false_and_digest_commits_grant() {
+        let request = preflight();
+        let mut historical = serde_json::to_value(&request).unwrap();
+        historical
+            .as_object_mut()
+            .expect("preflight object")
+            .remove("reasoning_display");
+        let decoded: GuiChatPreflightRequest = serde_json::from_value(historical).unwrap();
+        assert!(!decoded.reasoning_display);
+        let mut shown = decoded.clone();
+        shown.reasoning_display = true;
+        assert_ne!(
+            preflight_descriptor_digest(&decoded, &[], 7, None).unwrap(),
+            preflight_descriptor_digest(&shown, &[], 7, None).unwrap(),
+        );
+    }
+
+    #[test]
+    fn reasoning_wire_frames_are_bounded_and_text_free_state_is_valid() {
+        let lifecycle = GuiChatStreamFrame {
+            schema_version: 1,
+            boot_id: "boot".into(),
+            turn_id: GuiChatTurnId(Uuid::now_v7()),
+            subscription: GuiChatSubscription {
+                session_id: "session".into(),
+                surface: GuiChatSurface::Main,
+                generation: 1,
+            },
+            sequence: 1,
+            payload: GuiChatFramePayload::ReasoningDelta {
+                reasoning_sequence: 1,
+                delta: "ephemeral".into(),
+            },
+        };
+        validate_stream_frame(&lifecycle).unwrap();
+        assert!(!format!("{lifecycle:?}").contains("ephemeral"));
+        let state = GuiChatStreamFrame {
+            sequence: 2,
+            payload: GuiChatFramePayload::ReasoningState {
+                reasoning_sequence: 2,
+                state: crate::providers::ReasoningTerminalState::Complete,
+                event_count: 1,
+                byte_count: 9,
+            },
+            ..lifecycle
+        };
+        validate_stream_frame(&state).unwrap();
+        let serialized = serde_json::to_string(&state).unwrap();
+        assert!(!serialized.contains("ephemeral"));
+        let checkpoint = GuiChatStreamFrame {
+            sequence: 3,
+            payload: GuiChatFramePayload::ReasoningCheckpoint {
+                reasoning_sequence: 1,
+                event_count: 1,
+                byte_count: 9,
+            },
+            ..state
+        };
+        validate_stream_frame(&checkpoint).unwrap();
+        assert!(!serde_json::to_string(&checkpoint).unwrap().contains("ephemeral"));
     }
 }

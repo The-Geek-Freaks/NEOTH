@@ -85,6 +85,9 @@ pub struct GuiChatBridgePreflightInput {
     pub model: Option<String>,
     pub skill_id: Option<String>,
     pub incognito: bool,
+    /// Captured next-turn display grant. The attested preflight descriptor
+    /// commits this value; the daemon never reads a later preference.
+    pub reasoning_display: bool,
     pub attachment_paths: Vec<PathBuf>,
 }
 
@@ -266,6 +269,33 @@ pub enum GuiChatBridgeEvent {
         subscription: GuiChatSubscriptionMetadata,
         sequence: u64,
         text: String,
+    },
+    /// Ephemeral reasoning for the sole currently attached subscription.
+    /// A reconnect receives a redacted state/counter projection instead.
+    ReasoningDelta {
+        subscription: GuiChatSubscriptionMetadata,
+        sequence: u64,
+        reasoning_sequence: u32,
+        delta: crate::providers::ReasoningText,
+    },
+    /// A reconnect-safe cursor checkpoint for omitted live reasoning. It is
+    /// deliberately non-terminal and has no text field.
+    ReasoningCheckpoint {
+        subscription: GuiChatSubscriptionMetadata,
+        sequence: u64,
+        reasoning_sequence: u32,
+        event_count: u64,
+        byte_count: u64,
+    },
+    /// Reasoning lifecycle/counters. This frame contains no provider text and
+    /// is strictly terminal for the reasoning plane.
+    ReasoningState {
+        subscription: GuiChatSubscriptionMetadata,
+        sequence: u64,
+        reasoning_sequence: u32,
+        state: crate::providers::ReasoningTerminalState,
+        event_count: u64,
+        byte_count: u64,
     },
     ProviderDone {
         subscription: GuiChatSubscriptionMetadata,
@@ -509,6 +539,7 @@ impl GuiChatBridge for CoreGuiChatBridge {
             model: input.model,
             skill_id: input.skill_id,
             incognito: input.incognito,
+            reasoning_display: input.reasoning_display,
             attachments: input
                 .attachment_paths
                 .into_iter()
@@ -942,6 +973,39 @@ fn map_frame(
                 text,
             }
         }
+        crate::daemon::gui_chat_protocol::GuiChatFramePayload::ReasoningDelta {
+            reasoning_sequence,
+            delta,
+        } => GuiChatBridgeEvent::ReasoningDelta {
+            subscription,
+            sequence,
+            reasoning_sequence,
+            delta: crate::providers::ReasoningText::new(delta),
+        },
+        crate::daemon::gui_chat_protocol::GuiChatFramePayload::ReasoningCheckpoint {
+            reasoning_sequence,
+            event_count,
+            byte_count,
+        } => GuiChatBridgeEvent::ReasoningCheckpoint {
+            subscription,
+            sequence,
+            reasoning_sequence,
+            event_count,
+            byte_count,
+        },
+        crate::daemon::gui_chat_protocol::GuiChatFramePayload::ReasoningState {
+            reasoning_sequence,
+            state,
+            event_count,
+            byte_count,
+        } => GuiChatBridgeEvent::ReasoningState {
+            subscription,
+            sequence,
+            reasoning_sequence,
+            state,
+            event_count,
+            byte_count,
+        },
         crate::daemon::gui_chat_protocol::GuiChatFramePayload::ProviderDone => {
             GuiChatBridgeEvent::ProviderDone {
                 subscription,

@@ -48,3 +48,9 @@ review and complete failed log are retained in
 `work/gold-20260906/wave153-provider-compile/`. A new hosted build must verify
 these repaired sources. Preflight 35608485779 and Code Quality 35608485777
 passed on the earlier formatting commit 96b97515 only.
+
+Hosted follow-up 35610187799 passed on 8a34482d. The exact generated CLI
+reference SHA-256 is A223E291DBE80B7ED69247CCED489A9588B632685BFBC8789649BFC0116AE7E4,
+matching the published snapshot. Preflight 35610187900 and Code Quality
+35610187836 also passed. These checks prove the provider core build, not the
+separate CLI/daemon/GUI integration or native regression execution.

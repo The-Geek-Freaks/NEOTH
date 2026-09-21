@@ -205,11 +205,14 @@ struct GuiChatLaunchEnvelope {
     launch: String,
     stream_control_token: String,
     consent_token: Option<String>,
+    #[serde(default)]
+    reasoning_display: bool,
 }
 
 pub(crate) struct GuiChatLaunch {
     pub(crate) stream_control_token: Zeroizing<String>,
     pub(crate) consent_token: Option<Zeroizing<String>>,
+    pub(crate) reasoning_display: bool,
 }
 
 struct PreflightResult {
@@ -1274,6 +1277,7 @@ fn parse_gui_chat_launch_envelope(input: &str) -> Result<GuiChatLaunch> {
     Ok(GuiChatLaunch {
         stream_control_token,
         consent_token,
+        reasoning_display: envelope.reasoning_display,
     })
 }
 
@@ -1643,6 +1647,23 @@ mod tests {
         )
         .unwrap();
         assert!(launch_without_consent.consent_token.is_none());
+        assert!(
+            !launch_without_consent.reasoning_display,
+            "missing GUI reasoning_display must remain an explicit false grant"
+        );
+
+        let launch_with_reasoning = parse_gui_chat_launch_envelope(
+            &serde_json::json!({
+                "version": 1,
+                "launch": "commit",
+                "stream_control_token": TEST_STREAM_CONTROL_TOKEN,
+                "consent_token": null,
+                "reasoning_display": true,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(launch_with_reasoning.reasoning_display);
     }
 
     #[test]

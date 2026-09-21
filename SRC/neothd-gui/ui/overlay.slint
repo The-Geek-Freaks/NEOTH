@@ -48,7 +48,7 @@
 
 import { Theme } from "theme.slint";
 import { Buddy } from "buddy.slint";
-import { Led, NeothButton, NeothLineEdit, NeothComboBox, NeothCheckBox } from "components.slint";
+import { Led, NeothButton, NeothLineEdit, NeothComboBox, NeothCheckBox, Expander } from "components.slint";
 
 export component MiniOverlay inherits Window {
     // ── Window chrome ────────────────────────────────────────────────
@@ -89,6 +89,12 @@ export component MiniOverlay inherits Window {
     in-out property <int> selected-skill-index: 0;
     /// Dedicated Skill route result, separate from `status-text`.
     in property <string> skill-route-status: "";
+    /// W153 transient per-request reasoning projection. It is deliberately
+    /// separate from recent-lines and bubble-text.
+    in property <bool> reasoning-display: false;
+    in property <string> reasoning-status: "";
+    in property <string> reasoning-text: "";
+    in property <bool> reasoning-active: false;
 
     // ── Compact mode ─────────────────────────────────────────────────
     /// When true the overlay renders as a 64 px pill.
@@ -689,6 +695,21 @@ export component MiniOverlay inherits Window {
                 if !root.compact: VerticalLayout {
                     padding: 10px; spacing: 4px;
                     alignment: end;
+
+                    if root.reasoning-active && root.reasoning-display && root.reasoning-text != "": Expander {
+                        title: "Live reasoning";
+                        hint: root.reasoning-status;
+                        expanded: false;
+                        Text {
+                            text: root.reasoning-text;
+                            color: Theme.text-secondary;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            wrap: word-wrap;
+                            accessible-role: AccessibleRole.text;
+                            accessible-label: "Live reasoning";
+                        }
+                    }
 
                     if root.recent-lines.length == 0: Text {
                         text: "— companion ready —";

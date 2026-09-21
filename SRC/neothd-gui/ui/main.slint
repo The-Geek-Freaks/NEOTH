@@ -1069,6 +1069,12 @@ export component MainWindow inherits Window {
     /// R4-11 — explicit, per-turn privacy selection. The Rust callback
     /// snapshots it before consent preflight; it is not durable GUI state.
     in-out property <bool> chat-incognito: false;
+    /// Next-turn-only display selection. It is captured by Rust with the
+    /// request and resets after dispatch; it is never a session preference.
+    in-out property <bool> chat-reasoning-display: false;
+    in property <string> chat-reasoning-status: "";
+    in property <string> chat-reasoning-text: "";
+    in property <bool> chat-reasoning-active: false;
     /// Immutable privacy mode for the request in flight. It remains visible
     /// after `chat-incognito` resets for the next turn.
     in property <bool> chat-incognito-active: false;
@@ -4212,6 +4218,10 @@ export component MainWindow inherits Window {
                     messages: root.chat-messages;
                     composer-draft <=> root.chat-composer-draft;
                     incognito <=> root.chat-incognito;
+                    reasoning-display <=> root.chat-reasoning-display;
+                    reasoning-status: root.chat-reasoning-status;
+                    reasoning-text: root.chat-reasoning-text;
+                    reasoning-active: root.chat-reasoning-active;
                     incognito-active: root.chat-incognito-active;
                     send-enabled: root.chat-send-enabled;
                     send-in-flight: root.chat-send-in-flight;

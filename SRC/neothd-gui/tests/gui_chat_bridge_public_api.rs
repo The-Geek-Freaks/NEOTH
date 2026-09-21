@@ -1,5 +1,6 @@
-//! Separate-crate facade and reducer-fixture test. It imports no
-//! audit stream, engine event, provider, wire DTO, credential, or proof type.
+//! Separate-crate facade and reducer-fixture test. Alongside facade values it
+//! imports only non-authorizing reasoning text/state values, never an audit
+//! stream, engine event, provider capability, wire DTO, credential, or proof.
 
 use neothd::daemon::gui_chat_bridge::{
     GuiChatBridge, GuiChatBridgeEvent, GuiChatBridgePreflight, GuiChatBridgePreflightInput,
@@ -7,6 +8,7 @@ use neothd::daemon::gui_chat_bridge::{
     GuiChatSubscriptionMetadata, GuiChatSurface, GuiChatTerminalState, GuiChatTurnMetadata,
     gui_bridge_test_support,
 };
+use neothd::providers::{ReasoningTerminalState, ReasoningText};
 
 fn accepts_public_bridge(_: &dyn GuiChatBridge) {}
 
@@ -20,6 +22,7 @@ fn gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types() {
         model: None,
         skill_id: None,
         incognito: false,
+        reasoning_display: false,
         attachment_paths: vec![],
     };
     let prompt = GuiChatConsentPrompt {
@@ -48,7 +51,7 @@ fn gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types() {
     });
     assert_eq!(turn.metadata.turn_id, subscription.metadata.turn_id);
     let event = GuiChatBridgeEvent::Terminal {
-        subscription: subscription.metadata,
+        subscription: subscription.metadata.clone(),
         sequence: 5,
         state: GuiChatTerminalState::Complete,
         provider: "provider".into(),
@@ -57,6 +60,70 @@ fn gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types() {
     assert!(matches!(
         event,
         GuiChatBridgeEvent::Terminal { sequence: 5, .. }
+    ));
+    let reasoning = GuiChatBridgeEvent::ReasoningState {
+        subscription: subscription.metadata,
+        sequence: 6,
+        reasoning_sequence: 1,
+        state: ReasoningTerminalState::Hidden,
+        event_count: 0,
+        byte_count: 0,
+    };
+    assert!(matches!(
+        reasoning,
+        GuiChatBridgeEvent::ReasoningState {
+            sequence: 6,
+            state: ReasoningTerminalState::Hidden,
+            event_count: 0,
+            byte_count: 0,
+            ..
+        }
+    ));
+    let reasoning_delta = GuiChatBridgeEvent::ReasoningDelta {
+        subscription: gui_bridge_test_support::subscription(GuiChatSubscriptionMetadata {
+            boot_id: "boot-a".into(),
+            turn_id,
+            surface: GuiChatSurface::Buddy,
+            generation: 2,
+            latest_sequence: 6,
+        })
+        .metadata,
+        sequence: 7,
+        reasoning_sequence: 1,
+        delta: ReasoningText::new("ephemeral reasoning".into()),
+    };
+    assert!(!format!("{reasoning_delta:?}").contains("ephemeral reasoning"));
+    assert!(matches!(
+        reasoning_delta,
+        GuiChatBridgeEvent::ReasoningDelta {
+            sequence: 7,
+            reasoning_sequence: 1,
+            ..
+        }
+    ));
+    let checkpoint = GuiChatBridgeEvent::ReasoningCheckpoint {
+        subscription: gui_bridge_test_support::subscription(GuiChatSubscriptionMetadata {
+            boot_id: "boot-a".into(),
+            turn_id,
+            surface: GuiChatSurface::Buddy,
+            generation: 2,
+            latest_sequence: 7,
+        })
+        .metadata,
+        sequence: 8,
+        reasoning_sequence: 1,
+        event_count: 1,
+        byte_count: 19,
+    };
+    assert!(matches!(
+        checkpoint,
+        GuiChatBridgeEvent::ReasoningCheckpoint {
+            sequence: 8,
+            reasoning_sequence: 1,
+            event_count: 1,
+            byte_count: 19,
+            ..
+        }
     ));
     assert!(matches!(
         GuiChatConsentDecision::Deny,

@@ -31,24 +31,59 @@ use crate::wal::events::{EVENT_TYPE_INCOGNITO_TURN, EVENT_TYPE_RAW_TEXT};
 
 /// Request-local admission gate. Closing this gate prevents the next effect
 /// boundary from starting; it never implies a durable cross-client cancel.
-#[derive(Clone, Default)]
-pub(crate) struct ChatTurnCancellation(Arc<AtomicBool>);
+#[derive(Clone)]
+pub(crate) struct ChatTurnCancellation {
+    closed: Arc<AtomicBool>,
+    wake: Arc<tokio::sync::Notify>,
+}
+
+impl Default for ChatTurnCancellation {
+    fn default() -> Self {
+        Self {
+            closed: Arc::new(AtomicBool::new(false)),
+            wake: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+}
 
 impl ChatTurnCancellation {
     pub(crate) fn close(&self) {
-        self.0.store(true, Ordering::Release);
+        self.closed.store(true, Ordering::Release);
+        self.wake.notify_waiters();
+    }
+
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
+    /// Wakeable local cancellation used by an active provider stream.  The
+    /// double check closes the notify-registration race without introducing a
+    /// polling task or a detached finalizer.
+    pub(crate) async fn cancelled(&self) {
+        while !self.is_closed() {
+            let notified = self.wake.notified();
+            tokio::pin!(notified);
+            // Register before the second flag read. `Notify` otherwise has a
+            // narrow close-between-check-and-await race that could strand a
+            // provider stream with no further incoming item.
+            notified.as_mut().enable();
+            if self.is_closed() {
+                return;
+            }
+            notified.await;
+        }
     }
 
     pub(crate) fn check_open(&self, boundary: &'static str) -> Result<()> {
         anyhow::ensure!(
-            !self.0.load(Ordering::Acquire),
+            !self.closed.load(Ordering::Acquire),
             "chat turn cancelled before {boundary}"
         );
         Ok(())
     }
 
     pub(crate) fn pre_tool_use_cancellation(&self) -> crate::hooks::PreToolUseCancellation {
-        crate::hooks::PreToolUseCancellation::from_chat_turn(Arc::clone(&self.0))
+        crate::hooks::PreToolUseCancellation::from_chat_turn(Arc::clone(&self.closed))
     }
 }
 
@@ -81,6 +116,18 @@ pub(crate) enum ChatOutput {
     ProviderDelta {
         sequence: u32,
         text: String,
+        stream_control_token: Option<String>,
+    },
+    ReasoningDelta {
+        sequence: u32,
+        delta: crate::providers::ReasoningText,
+        stream_control_token: Option<String>,
+    },
+    ReasoningState {
+        sequence: u32,
+        state: crate::providers::ReasoningTerminalState,
+        event_count: u64,
+        byte_count: u64,
         stream_control_token: Option<String>,
     },
     StreamDone {
@@ -178,6 +225,7 @@ pub(crate) struct ChatTurnPreparation {
     pub(crate) config: FreedomConfig,
     pub(crate) ephemeral_consent: crate::consent::EphemeralConsent,
     pub(crate) stream_control_token: Option<Zeroizing<String>>,
+    pub(crate) reasoning_display: bool,
     pub(crate) cancellation: ChatTurnCancellation,
     pub(crate) session_canary: std::sync::Arc<crate::security::injection_tracker::CanaryToken>,
     pub(crate) instance_paths: InstancePaths,
@@ -228,6 +276,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
                 config,
                 ephemeral_consent,
                 stream_control_token,
+                reasoning_display,
                 cancellation,
                 session_canary,
                 instance_paths,
@@ -261,6 +310,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         config: Some(selected_config_path.clone()),
         wal_segment: None,
         stream: input.stream,
+        show_reasoning: *reasoning_display,
         gui_consent_token_stdin: false,
         temperature: input.temperature,
         top_p: input.top_p,
@@ -878,6 +928,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         chat_route,
         council_skip,
         stream_control_token.as_ref().map(|token| token.as_str()),
+        *reasoning_display,
         defer_provider_output,
         &canary_token,
         cancellation,
@@ -1546,6 +1597,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancellation_wakes_a_pending_stream_wait_without_polling() {
+        let cancellation = ChatTurnCancellation::default();
+        let pending_wait = cancellation.clone();
+        let waiter = tokio::spawn(async move {
+            pending_wait.cancelled().await;
+        });
+        tokio::task::yield_now().await;
+        cancellation.close();
+        tokio::time::timeout(std::time::Duration::from_millis(100), waiter)
+            .await
+            .expect("close must wake a stream-select cancellation branch")
+            .expect("cancellation waiter must not panic");
+    }
+
+    #[tokio::test]
     async fn neutral_engine_runs_a_caller_borrowed_provider_before_caller_drain_and_terminal() {
         let home = tempfile::tempdir().expect("create neutral engine home");
         let home_path = home.path().to_path_buf();
@@ -1591,6 +1657,7 @@ mod tests {
                 config,
                 ephemeral_consent: crate::consent::EphemeralConsent::default(),
                 stream_control_token: None,
+                reasoning_display: false,
                 cancellation: ChatTurnCancellation::default(),
                 session_canary: std::sync::Arc::new(
                     crate::security::injection_tracker::CanaryToken::generate()
@@ -1785,6 +1852,7 @@ mod tests {
                     config,
                     ephemeral_consent: crate::consent::EphemeralConsent::default(),
                     stream_control_token: None,
+                    reasoning_display: false,
                     cancellation: ChatTurnCancellation::default(),
                     session_canary: std::sync::Arc::new(
                         crate::security::injection_tracker::CanaryToken::generate()
@@ -2039,7 +2107,7 @@ mod tests {
             });
             let mut prepared = PreparedChatTurn {
                 input: ChatTurnInput { message: Some("w137-retained-session".to_owned()), model: Some("w137-caller-model".to_owned()), skill: Some(W137_SELECTED_SKILL_ID.to_owned()), system: None, attach: Vec::new(), repository_root: None, edit: false, resume_from: None, incognito: false, loop_mode: false, iterations: None, until: Vec::new(), stream: false, temperature: None, top_p: None, sampling_seed: None },
-                preparation: ChatTurnPreparation { config: config.clone(), ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint W137 session canary")), instance_paths: instance_paths.clone(), first_tour_home: home.clone(), selected_config_path: selected_config_path.clone(), prompt: "w137-retained-session".to_owned(), current_session_id: "w137-retained-A".to_owned(), chat_ts_unix: 1_725_000_137, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: true },
+                preparation: ChatTurnPreparation { config: config.clone(), ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, reasoning_display: false, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint W137 session canary")), instance_paths: instance_paths.clone(), first_tour_home: home.clone(), selected_config_path: selected_config_path.clone(), prompt: "w137-retained-session".to_owned(), current_session_id: "w137-retained-A".to_owned(), chat_ts_unix: 1_725_000_137, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: true },
                 abliterated_loader: Some(loader), deferred_failure_output: None, deferred_terminal: None,
             };
             let segment_path = wal_dir.join("w137-retained-a-000001.wal");
@@ -2089,7 +2157,7 @@ mod tests {
 
             let mut fresh = PreparedChatTurn {
                 input: ChatTurnInput { message: Some("w137-retained-session".to_owned()), model: Some("w137-caller-model".to_owned()), skill: Some(W137_SELECTED_SKILL_ID.to_owned()), system: None, attach: Vec::new(), repository_root: None, edit: false, resume_from: None, incognito: false, loop_mode: false, iterations: None, until: Vec::new(), stream: false, temperature: None, top_p: None, sampling_seed: None },
-                preparation: ChatTurnPreparation { config, ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint W137 fresh-session canary")), instance_paths, first_tour_home: home.clone(), selected_config_path, prompt: "w137-retained-session".to_owned(), current_session_id: "w137-retained-B".to_owned(), chat_ts_unix: 1_725_000_138, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: true },
+                preparation: ChatTurnPreparation { config, ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, reasoning_display: false, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint W137 fresh-session canary")), instance_paths, first_tour_home: home.clone(), selected_config_path, prompt: "w137-retained-session".to_owned(), current_session_id: "w137-retained-B".to_owned(), chat_ts_unix: 1_725_000_138, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: true },
                 abliterated_loader: None, deferred_failure_output: None, deferred_terminal: None,
             };
             let fresh_segment = wal_dir.join("w137-retained-b-000001.wal");
@@ -2146,7 +2214,7 @@ mod tests {
             let selected_config_path = home.join("freedom.yaml");
             let mut prepared = PreparedChatTurn {
                 input: ChatTurnInput { message: Some("find retained_context_marker".to_owned()), model: Some("retained-context-fallback-model".to_owned()), skill: None, system: None, attach: Vec::new(), repository_root: None, edit: false, resume_from: None, incognito: false, loop_mode: false, iterations: None, until: Vec::new(), stream: false, temperature: None, top_p: None, sampling_seed: None },
-                preparation: ChatTurnPreparation { config, ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint fallback chat canary")), instance_paths, first_tour_home: home.clone(), selected_config_path, prompt: "find retained_context_marker".to_owned(), current_session_id: "retained-context-fallback-regression".to_owned(), chat_ts_unix: 1_725_000_004, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: false },
+                preparation: ChatTurnPreparation { config, ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, reasoning_display: false, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint fallback chat canary")), instance_paths, first_tour_home: home.clone(), selected_config_path, prompt: "find retained_context_marker".to_owned(), current_session_id: "retained-context-fallback-regression".to_owned(), chat_ts_unix: 1_725_000_004, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: false },
                 abliterated_loader: Some(loader), deferred_failure_output: None, deferred_terminal: None,
             };
             let wal_dir = home.join("wal"); std::fs::create_dir_all(&wal_dir).expect("create fallback chat WAL directory");
@@ -2270,6 +2338,7 @@ mod tests {
                 preparation: ChatTurnPreparation {
                     config, ephemeral_consent: crate::consent::EphemeralConsent::default(),
                     stream_control_token: Some(Zeroizing::new("final-binding-failure-token".to_owned())),
+                    reasoning_display: false,
                     cancellation: ChatTurnCancellation::default(),
                     session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint failure fixture canary")),
                     instance_paths, first_tour_home: home.clone(), selected_config_path, prompt,
@@ -2361,6 +2430,7 @@ mod tests {
                 config,
                 ephemeral_consent: crate::consent::EphemeralConsent::default(),
                 stream_control_token: None,
+                reasoning_display: false,
                 cancellation: ChatTurnCancellation::default(),
                 session_canary: std::sync::Arc::new(
                     crate::security::injection_tracker::CanaryToken::generate()

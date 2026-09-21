@@ -22,6 +22,8 @@ CUSTOM_TESTS = frozenset(
         "w58_gui_callback_runtime_tests::w142_selfimprove_accept_requires_exact_bound_receipt_and_fresh_readback",
         "w58_gui_callback_runtime_tests::w149_buddy_quality_handoff_selects_the_exact_selfimprove_proposal",
         "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight",
+        "w58_gui_callback_runtime_tests::w153_legacy_child_callbacks_project_only_transient_reasoning",
+        "w58_gui_callback_runtime_tests::w153_reasoning_child_controls_are_transient_and_history_excluded",
     }
 )
 CONTROLLER_TEST = (
