@@ -20,7 +20,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 use crate::config::FreedomConfig;
 use crate::permissions::{self, Action, Decision};
 use crate::tools::citation_lookup::{CitationProvider, CitationQuery, validate_claim};
-use crate::tools::external_http::ExternalHttpSurface;
+use crate::tools::external_http::{ExternalHttpRequest, ExternalHttpSurface};
 
 /// Both records are intentionally short-lived.  A proof starts only after an
 /// explicit Approve and is consumed before the external-HTTP gate is reached.
@@ -110,16 +110,10 @@ impl ConsumedGuiCitationLookupApproval {
         claim: &str,
         gui_request_id: &str,
         current_config_sha256: &str,
-        method: &str,
-        url: &str,
-        surface: ExternalHttpSurface,
-        body_is_empty: bool,
+        request: &ExternalHttpRequest,
     ) -> bool {
         self.matches_lookup(query, claim, gui_request_id, current_config_sha256)
-            && method == "GET"
-            && url == query.fixed_request_url()
-            && surface == surface_for(query.provider)
-            && body_is_empty
+            && request.is_fixed_citation_get_for(query)
     }
 
     /// Internal binding for the existing authorizer hook.  These hashes never
@@ -172,6 +166,18 @@ struct CitationProofRecord {
     claim_sha256: String,
     gui_request_sha256: String,
     config_sha256: String,
+    created_unix: u64,
+    expires_unix: u64,
+}
+
+struct CitationRecordLiveness<'a> {
+    version: u16,
+    id: &'a str,
+    secret_sha256: &'a str,
+    request_key_sha256: &'a str,
+    claim_sha256: &'a str,
+    gui_request_sha256: &'a str,
+    config_sha256: &'a str,
     created_unix: u64,
     expires_unix: u64,
 }
@@ -464,29 +470,18 @@ fn split_token(token: &str) -> Result<TokenParts> {
     })
 }
 
-fn record_is_live(
-    version: u16,
-    id: &str,
-    secret_sha256: &str,
-    request_key_sha256: &str,
-    claim_sha256: &str,
-    gui_request_sha256: &str,
-    config_sha256: &str,
-    created_unix: u64,
-    expires_unix: u64,
-    now: u64,
-) -> Result<()> {
+fn record_is_live(record: CitationRecordLiveness<'_>, now: u64) -> Result<()> {
     anyhow::ensure!(
-        version == RECORD_VERSION,
+        record.version == RECORD_VERSION,
         "unsupported citation consent record version"
     );
-    canonical_uuid(id)?;
+    canonical_uuid(record.id)?;
     for value in [
-        secret_sha256,
-        request_key_sha256,
-        claim_sha256,
-        gui_request_sha256,
-        config_sha256,
+        record.secret_sha256,
+        record.request_key_sha256,
+        record.claim_sha256,
+        record.gui_request_sha256,
+        record.config_sha256,
     ] {
         anyhow::ensure!(
             is_sha256_hex(value),
@@ -494,10 +489,10 @@ fn record_is_live(
         );
     }
     anyhow::ensure!(
-        created_unix <= now
-            && expires_unix > created_unix
-            && expires_unix.saturating_sub(created_unix) <= CITATION_CONSENT_TTL_SECS
-            && now <= expires_unix,
+        record.created_unix <= now
+            && record.expires_unix > record.created_unix
+            && record.expires_unix.saturating_sub(record.created_unix) <= CITATION_CONSENT_TTL_SECS
+            && now <= record.expires_unix,
         "citation consent record is expired or has an invalid clock"
     );
     Ok(())
@@ -513,15 +508,17 @@ fn assert_challenge(
     now: u64,
 ) -> Result<()> {
     record_is_live(
-        record.version,
-        &record.id,
-        &record.secret_sha256,
-        &record.request_key_sha256,
-        &record.claim_sha256,
-        &record.gui_request_sha256,
-        &record.config_sha256,
-        record.created_unix,
-        record.expires_unix,
+        CitationRecordLiveness {
+            version: record.version,
+            id: &record.id,
+            secret_sha256: &record.secret_sha256,
+            request_key_sha256: &record.request_key_sha256,
+            claim_sha256: &record.claim_sha256,
+            gui_request_sha256: &record.gui_request_sha256,
+            config_sha256: &record.config_sha256,
+            created_unix: record.created_unix,
+            expires_unix: record.expires_unix,
+        },
         now,
     )?;
     anyhow::ensure!(
@@ -547,15 +544,17 @@ fn assert_proof(
     now: u64,
 ) -> Result<()> {
     record_is_live(
-        record.version,
-        &record.id,
-        &record.secret_sha256,
-        &record.request_key_sha256,
-        &record.claim_sha256,
-        &record.gui_request_sha256,
-        &record.config_sha256,
-        record.created_unix,
-        record.expires_unix,
+        CitationRecordLiveness {
+            version: record.version,
+            id: &record.id,
+            secret_sha256: &record.secret_sha256,
+            request_key_sha256: &record.request_key_sha256,
+            claim_sha256: &record.claim_sha256,
+            gui_request_sha256: &record.gui_request_sha256,
+            config_sha256: &record.config_sha256,
+            created_unix: record.created_unix,
+            expires_unix: record.expires_unix,
+        },
         now,
     )?;
     anyhow::ensure!(
@@ -646,14 +645,6 @@ fn config_snapshot(home: &Path) -> Result<(FreedomConfig, String)> {
         return Ok((config, sha256(bytes.as_slice())));
     }
     anyhow::bail!("citation consent config changed repeatedly during snapshot")
-}
-
-/// Re-read the same exact bounded config-generation hash at the authorizer
-/// hook. Kept for callers that need only the generation; new request setup
-/// should use [`current_citation_consent_policy_generation`] so its policy and
-/// generation cannot come from separate reads.
-pub(crate) fn current_citation_consent_config_generation(home: &Path) -> Result<String> {
-    config_snapshot(home).map(|(_, generation)| generation)
 }
 
 /// Obtain the exact policy and generation from one bounded, no-follow config
@@ -958,35 +949,30 @@ mod tests {
             "gui-revision-7",
             &config_hash(TEST_CONFIG_A)
         ));
+        let fixed_request = ExternalHttpRequest::get(
+            query().fixed_request_url(),
+            ExternalHttpSurface::Crossref,
+        );
         assert!(consumed.authorizes_fixed_get(
             &query(),
             "the concrete claim",
             "gui-revision-7",
             &config_hash(TEST_CONFIG_A),
-            "GET",
-            &query().fixed_request_url(),
-            ExternalHttpSurface::Crossref,
-            true
+            &fixed_request
         ));
         assert!(!consumed.authorizes_fixed_get(
             &query(),
             "changed claim",
             "gui-revision-7",
             &config_hash(TEST_CONFIG_A),
-            "GET",
-            &query().fixed_request_url(),
-            ExternalHttpSurface::Crossref,
-            true
+            &fixed_request
         ));
         assert!(!consumed.authorizes_fixed_get(
             &query(),
             "the concrete claim",
             "gui-revision-8",
             &config_hash(TEST_CONFIG_A),
-            "GET",
-            &query().fixed_request_url(),
-            ExternalHttpSurface::Crossref,
-            true
+            &fixed_request
         ));
         assert!(
             consume_at(

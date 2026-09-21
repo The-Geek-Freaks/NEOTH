@@ -33,6 +33,14 @@ requested 59 exact Rustfmt hunks in two GUI files, now imported. Full native/GUI
 execution and fresh static gates remain required. All executable validation runs
 only on GitHub; no Road checkbox closes.
 
+Full CI35627170807 on7c6f1684 passed nine component jobs but exposed nine strict
+Citation Clippy errors and three shared-library test compilation errors; that
+failed-source run is confirmed cancelled. The narrow repair boxes large enum
+payloads, groups existing request/liveness arguments without changing their
+checks, removes unused/redundant code and repairs cache-free test values plus a
+shadowed test helper. The serialized record/consent contract is preserved.
+New hosted compilation, strict lint and native/GUI execution remain required.
+
 Repair source b58ec47f passed Preflight35622231947 and Quality35622233230.
 Its full CI35622258375 found one additional test-only E0507 in an attach fixture;
 the borrowed TurnId is now cloned and independently reviewed. That failed-source

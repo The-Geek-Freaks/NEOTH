@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W155-integrated-citation-candidate",
-  "base": "c34603c01397586fc9c3f2988fd0b6677a6965b7",
-  "capturedUtc": "2026-09-21T16:38:39.6610177Z",
-  "validationStatus": "W155_CORE_COMPILED_GUI_HOSTED_FORMAT_IMPORTED_NATIVE_PENDING",
+  "base": "7c6f1684666986bf4013780b80511db63c8aea82",
+  "capturedUtc": "2026-09-21T16:54:40.4656855Z",
+  "validationStatus": "W155_HOSTED_CLIPPY_AND_SHARED_TEST_REPAIR_PENDING",
   "scopeNote": "336 inputs; integrated reviewed Citation Core/Consent/HTTP/CLI/GUI, bounded direct child runner and 17-name macOS callback catalog. Required272 native+3 Windows+2 Unix;56GUI+12callbacks;7optional. W159 unpublished and excluded.",
   "files": [
     {
@@ -528,8 +528,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
-      "bytes": 29139,
-      "sha256": "C87947DC3341CBE125C4E526D25209500DAB7432106666E94BEDE55803539BC5"
+      "bytes": 29281,
+      "sha256": "A85AC0F3F0C6FB9EFF3FA431A3294DF0A6CA2768D63AAD72EF0B1E1B161A4EAA"
     },
     {
       "path": "SRC/neothd/src/cli/code_intel.rs",
@@ -1443,18 +1443,18 @@
     },
     {
       "path": "SRC/neothd/src/tools/citation_consent.rs",
-      "bytes": 38330,
-      "sha256": "F9EFC367E6B36342E77D2D29D12E0B2E9B0F60A17FBEEAA096FC3F6ED9804C9F"
+      "bytes": 38199,
+      "sha256": "18E0061E6463DC3438159C19876B2B3CE0B0693505A2D298AC9CFD72113D8070"
     },
     {
       "path": "SRC/neothd/src/tools/citation_http.rs",
-      "bytes": 46627,
-      "sha256": "DE3A8646ECD0E6638DE513E1F15073208D05FBC7128AE395FEBDABB215EAA9F8"
+      "bytes": 46866,
+      "sha256": "9D9F4086C734E5A9BA2D3C100E0D7D376349DA9C3BA8187A2E98752A36EA8C82"
     },
     {
       "path": "SRC/neothd/src/tools/external_http.rs",
-      "bytes": 100132,
-      "sha256": "8F7ED78EB7CEA40238C45CCF2B63CD73494C025E4613D91E5C77E57DC2BF8781"
+      "bytes": 100021,
+      "sha256": "039E57018FB0BF5189FCFEA949FD9790EEC20EC9A0831112D7FDF64D59A95B58"
     },
     {
       "path": "SRC/neothd/src/tools/mod.rs",
@@ -1653,13 +1653,13 @@
     },
     {
       "path": "SRC/neothd/src/tools/citation_lookup.rs",
-      "bytes": 57887,
-      "sha256": "06A6D8AC9DDF45635E09A8D2531796D5A86F749EFC53BDE95170031B1015AE62"
+      "bytes": 57944,
+      "sha256": "711AD52F0252BC37B26F5096E948FC712D336E0B57E9EB2667BCD226ECF2D530"
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1895609,
-      "sha256": "0239E59AA6F52E0446681A9624ECC3AC4F433F53B4A6D049AA96CCBCCD137A58"
+      "bytes": 1895627,
+      "sha256": "E76FB0CA18F844F43AFEFED2A066065466F27DE4E0D9CAEDF122381924C64266"
     },
     {
       "path": "SRC/neothd-gui/ui/main.slint",
@@ -1668,8 +1668,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/citation_gui.rs",
-      "bytes": 55606,
-      "sha256": "F47493AB9A179EBBBE83A616E215DDE904D14E7643E584D4F67A660660F8267B"
+      "bytes": 55616,
+      "sha256": "E111C35B64CA25E1FD3084F2D89CE8BB579C6FB028BC55AF018E817EC31BE5F0"
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",

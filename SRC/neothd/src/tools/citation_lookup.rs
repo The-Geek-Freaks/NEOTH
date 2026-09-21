@@ -426,7 +426,7 @@ pub enum CitationLookupState {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CitationLookupResult {
     Found {
-        record: CitationRecord,
+        record: Box<CitationRecord>,
         binding: ClaimCitationBinding,
         source: LookupSource,
     },
@@ -449,7 +449,7 @@ impl CitationLookupResult {
         }
         Ok(Self::Found {
             binding: ClaimCitationBinding::new(claim, &record)?,
-            record,
+            record: Box::new(record),
             source: LookupSource::Live,
         })
     }
@@ -550,7 +550,7 @@ pub trait CitationProviderAdapter {
 /// claim binding. This deliberately cannot carry a caller-made binding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CitationAdapterOutcome {
-    Record(CitationRecord),
+    Record(Box<CitationRecord>),
     Unavailable(CitationLookupState),
 }
 
@@ -561,7 +561,7 @@ impl CitationAdapterOutcome {
         claim: &str,
     ) -> Result<CitationLookupResult, CitationValidationError> {
         match self {
-            Self::Record(record) => CitationLookupResult::from_live(query, claim, record),
+            Self::Record(record) => CitationLookupResult::from_live(query, claim, *record),
             Self::Unavailable(state) => {
                 Ok(CitationLookupResult::unavailable(query.provider, state))
             }
@@ -711,7 +711,7 @@ impl CitationCache {
         let record = entry.record.as_cache_record();
         let binding = ClaimCitationBinding::new(&claim, &record).map_err(validation_io_error)?;
         Ok(Some(CitationLookupResult::Found {
-            record,
+            record: Box::new(record),
             binding,
             source: LookupSource::Cache,
         }))
@@ -1529,7 +1529,7 @@ mod tests {
             .canonical_permalink(&record.provider_record_id, record.canonical_doi.as_deref());
         assert!(CitationLookupResult::from_live(&query_a, "claim", record.clone()).is_err());
         assert!(
-            CitationAdapterOutcome::Record(record)
+            CitationAdapterOutcome::Record(Box::new(record))
                 .into_lookup_result(&query_a, "claim")
                 .is_err()
         );

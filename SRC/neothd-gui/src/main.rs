@@ -43674,7 +43674,7 @@ exit 0
         let result = CitationLookupResult::Found {
             binding: ClaimCitationBinding::new(&request.claim, &record)
                 .expect("W155 fixture binding"),
-            record,
+            record: Box::new(record),
             source: LookupSource::Cache,
         };
         let display = result

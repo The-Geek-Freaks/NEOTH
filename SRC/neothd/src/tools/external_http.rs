@@ -78,6 +78,13 @@ pub struct ExternalHttpRequest {
 }
 
 impl ExternalHttpRequest {
+    pub(crate) fn is_fixed_citation_get_for(&self, query: &CitationQuery) -> bool {
+        self.method == "GET"
+            && self.url == query.fixed_request_url()
+            && self.surface == citation_surface_for(query.provider)
+            && self.body_binding_sha256 == hex::encode(Sha256::digest(b""))
+    }
+
     pub fn get(url: impl Into<String>, surface: ExternalHttpSurface) -> Self {
         Self::new("GET", url, surface, &[])
     }
@@ -292,10 +299,7 @@ impl GuiCitationLookupReady {
         self.query.validate().is_ok()
             && validate_claim(&self.claim).is_ok()
             && !self.gui_request_id.is_empty()
-            && request.method == "GET"
-            && request.url == self.query.fixed_request_url()
-            && request.surface == citation_surface_for(self.query.provider)
-            && request.body_binding_sha256 == hex::encode(Sha256::digest(b""))
+            && request.is_fixed_citation_get_for(&self.query)
     }
 }
 
@@ -392,7 +396,7 @@ impl ExternalHttpPolicySource {
         request: &ExternalHttpRequest,
     ) -> Result<(AutonomyPolicySnapshot, bool)> {
         match self {
-            Self::Fixed(_) | Self::Reload(_) => return Ok((self.current(), false)),
+            Self::Fixed(_) | Self::Reload(_) => Ok((self.current(), false)),
             Self::GuiCitationLookupReady(context) => {
                 let (policy, _) =
                     crate::tools::citation_consent::current_citation_consent_policy_generation(
@@ -403,7 +407,7 @@ impl ExternalHttpPolicySource {
                     context.authorizes_fixed_get(request),
                     "GUI citation ready continuation does not authorize this request"
                 );
-                return Ok((policy, false));
+                Ok((policy, false))
             }
             Self::GuiCitationLookup(context) => {
                 let (policy, current_config_sha256) =
@@ -411,17 +415,13 @@ impl ExternalHttpPolicySource {
                         &context.home,
                     )
                     .context("read current GUI citation consent policy")?;
-                let empty_body = request.body_binding_sha256 == hex::encode(Sha256::digest(b""));
                 anyhow::ensure!(
                     context.approval.authorizes_fixed_get(
                         &context.query,
                         &context.claim,
                         &context.gui_request_id,
                         &current_config_sha256,
-                        request.method,
-                        &request.url,
-                        request.surface,
-                        empty_body,
+                        request,
                     ),
                     "consumed GUI citation approval does not authorize this request"
                 );

@@ -80,7 +80,7 @@ impl GuiCitationLiveMiss {
 /// answer for the one remaining live-miss path.  It intentionally does not
 /// expose the live-miss capability to the GUI/CLI caller.
 pub(crate) enum GuiCitationPreflightCacheFirst {
-    Terminal(CitationCacheFirstReport),
+    Terminal(Box<CitationCacheFirstReport>),
     Consent {
         cache_read: CitationCacheReadState,
         preflight: CitationConsentPreflight,
@@ -88,7 +88,7 @@ pub(crate) enum GuiCitationPreflightCacheFirst {
 }
 
 enum CitationCacheFirstDecision {
-    Terminal(CitationCacheFirstReport),
+    Terminal(Box<CitationCacheFirstReport>),
     Live {
         cache_read: CitationCacheReadState,
         normalized_claim: String,
@@ -145,7 +145,7 @@ pub async fn lookup_cache_first(
     authorizer_factory: impl FnOnce() -> anyhow::Result<ExternalHttpAuthorizer>,
 ) -> CitationCacheFirstReport {
     let cache_read = match cache_first_decision(query, claim, cache, now_secs, offline) {
-        CitationCacheFirstDecision::Terminal(report) => return report,
+        CitationCacheFirstDecision::Terminal(report) => return *report,
         CitationCacheFirstDecision::Live { cache_read, .. } => cache_read,
     };
 
@@ -196,37 +196,37 @@ fn cache_first_decision(
     offline: bool,
 ) -> CitationCacheFirstDecision {
     if query.validate().is_err() {
-        return CitationCacheFirstDecision::Terminal(CitationCacheFirstReport {
+        return CitationCacheFirstDecision::Terminal(Box::new(CitationCacheFirstReport {
             lookup: CitationLookupResult::unavailable(
                 query.provider,
                 CitationLookupState::InvalidQuery,
             ),
             cache_read: CitationCacheReadState::NotConfigured,
             cache_write: CitationCacheWriteState::NotAttempted,
-        });
+        }));
     }
     let normalized_claim = match validate_claim(claim) {
         Ok(normalized_claim) => normalized_claim,
         Err(_) => {
-            return CitationCacheFirstDecision::Terminal(CitationCacheFirstReport {
+            return CitationCacheFirstDecision::Terminal(Box::new(CitationCacheFirstReport {
                 lookup: CitationLookupResult::unavailable(
                     query.provider,
                     CitationLookupState::InvalidQuery,
                 ),
                 cache_read: CitationCacheReadState::NotConfigured,
                 cache_write: CitationCacheWriteState::NotAttempted,
-            });
+            }));
         }
     };
 
     let cache_read = match cache {
         Some(cache) => match cache.get(query, &normalized_claim, now_secs) {
             Ok(Some(cached)) => {
-                return CitationCacheFirstDecision::Terminal(CitationCacheFirstReport {
+                return CitationCacheFirstDecision::Terminal(Box::new(CitationCacheFirstReport {
                     lookup: cached,
                     cache_read: CitationCacheReadState::Hit,
                     cache_write: CitationCacheWriteState::NotAttempted,
-                });
+                }));
             }
             Ok(None) => CitationCacheReadState::Miss,
             Err(_) => CitationCacheReadState::ReadFailed,
@@ -234,14 +234,14 @@ fn cache_first_decision(
         None => CitationCacheReadState::NotConfigured,
     };
     if offline {
-        return CitationCacheFirstDecision::Terminal(CitationCacheFirstReport {
+        return CitationCacheFirstDecision::Terminal(Box::new(CitationCacheFirstReport {
             lookup: CitationLookupResult::unavailable(
                 query.provider,
                 CitationLookupState::OfflineCacheMiss,
             ),
             cache_read,
             cache_write: CitationCacheWriteState::NotAttempted,
-        });
+        }));
     }
     CitationCacheFirstDecision::Live {
         cache_read,
@@ -847,12 +847,15 @@ mod tests {
             },
         )
         .unwrap();
+        let GuiCitationPreflightCacheFirst::Terminal(hit) = hit else {
+            panic!()
+        };
         assert!(matches!(
-            hit,
-            GuiCitationPreflightCacheFirst::Terminal(CitationCacheFirstReport {
+            *hit,
+            CitationCacheFirstReport {
                 cache_read: CitationCacheReadState::Hit,
                 ..
-            })
+            }
         ));
 
         let offline_mint_calls = Arc::clone(&mint_calls);
@@ -862,15 +865,18 @@ mod tests {
                 anyhow::bail!("preflight must remain uncalled offline")
             })
             .unwrap();
+        let GuiCitationPreflightCacheFirst::Terminal(offline_preflight) = offline_preflight else {
+            panic!()
+        };
         assert!(matches!(
-            offline_preflight,
-            GuiCitationPreflightCacheFirst::Terminal(CitationCacheFirstReport {
+            *offline_preflight,
+            CitationCacheFirstReport {
                 lookup: CitationLookupResult::Unavailable {
                     state: CitationLookupState::OfflineCacheMiss,
                     ..
                 },
                 ..
-            })
+            }
         ));
         assert_eq!(mint_calls.load(Ordering::SeqCst), 0);
 
@@ -950,18 +956,18 @@ mod tests {
 
     #[test]
     fn gui_live_miss_capability_is_bound_to_its_exact_lookup() {
-        let query = query(CitationProvider::Crossref);
+        let crossref_query = query(CitationProvider::Crossref);
         let other_query = query(CitationProvider::OpenAlex);
         let outcome = gui_citation_preflight_cache_first(
-            &query,
+            &crossref_query,
             "bound claim",
             None,
             11,
             false,
             |live_miss| {
-                assert!(live_miss.matches_lookup(&query, "bound claim"));
+                assert!(live_miss.matches_lookup(&crossref_query, "bound claim"));
                 assert!(!live_miss.matches_lookup(&other_query, "bound claim"));
-                assert!(!live_miss.matches_lookup(&query, "other claim"));
+                assert!(!live_miss.matches_lookup(&crossref_query, "other claim"));
                 Ok(CitationConsentPreflight::Ready)
             },
         )

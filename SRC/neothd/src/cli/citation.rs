@@ -222,6 +222,7 @@ async fn run_gui_preflight(
             challenge_token: Some(challenge_token.to_string()),
         },
         citation_http::GuiCitationPreflightCacheFirst::Terminal(report) => {
+            let report = *report;
             GuiCitationPreflightReceipt {
                 kind: "citation_gui_preflight",
                 status: if matches!(
@@ -618,7 +619,7 @@ mod tests {
     ) -> citation_http::CitationCacheFirstReport {
         citation_http::CitationCacheFirstReport {
             lookup: CitationLookupResult::unavailable(provider, state),
-            cache_read,
+            cache_read: citation_http::CitationCacheReadState::NotConfigured,
             cache_write: citation_http::CitationCacheWriteState::NotAttempted,
         }
     }
@@ -857,7 +858,7 @@ mod tests {
                 .unwrap();
                 citation_http::CitationCacheFirstReport {
                     lookup: CitationLookupResult::from_live(&wrong, &claim, record).unwrap(),
-                    cache_read,
+                    cache_read: citation_http::CitationCacheReadState::NotConfigured,
                     cache_write: citation_http::CitationCacheWriteState::NotAttempted,
                 }
             },

@@ -1137,7 +1137,7 @@ impl CitationResultWire {
                 binding,
                 source,
             } => Ok(CitationLookupResult::Found {
-                record: record.to_core(),
+                record: Box::new(record.to_core()),
                 binding: binding.to_core(),
                 source: *source,
             }),

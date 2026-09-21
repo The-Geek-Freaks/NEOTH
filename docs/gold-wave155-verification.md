@@ -90,3 +90,17 @@ and SHA-256 checks: 3E3ADE1EC9283383A49582AAA91B31E6138ED0482E83367758FF36322268
 GUI source c34603c0 passed Code Quality35626612606. Its Preflight35626613666
 supplied 59 exact Rustfmt hunks in citation_gui.rs/main.rs; all are imported.
 These format and core-build results do not establish native GUI test success.
+
+## Hosted strict-lint and shared-test follow-up
+
+Full CI35627170807 on7c6f1684 passed nine component jobs but exposed nine strict
+Citation Clippy errors and three shared-library test compilation errors; that
+failed-source run is confirmed cancelled. The narrow repair boxes large enum
+payloads, groups existing request/liveness arguments without changing their
+checks, removes unused/redundant code and repairs cache-free test values plus a
+shadowed test helper. The serialized record/consent contract is preserved.
+New hosted compilation, strict lint and native/GUI execution remain required.
+The exact failure logs, repair mapping and independent review are retained as
+7c6-linux-quality.log, 7c6-adapters.log, CLIPPY-HOSTED-REPAIR.md and
+CLIPPY-HOSTED-REVIEW.md. The successful2f3 core/reference build remains historical
+proof for that version; it does not validate these newer representation changes.
