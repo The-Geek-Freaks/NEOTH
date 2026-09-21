@@ -18798,9 +18798,9 @@ fn persist_channel_pairing_approval(
         Ok(child)
     })();
     drop(body);
-    child_result?
-        .wait_with_output()
-        .map_err(|_| "Pairing approval completion is unavailable; refresh to reconcile.".to_string())
+    child_result?.wait_with_output().map_err(|_| {
+        "Pairing approval completion is unavailable; refresh to reconcile.".to_string()
+    })
 }
 
 /// All request operations are admitted on the UI thread under one busy guard.
@@ -39852,12 +39852,15 @@ exit 72
 
     #[cfg(not(windows))]
     #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
-    fn w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt() {
+    fn w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt()
+     {
         const REQUEST: &str = "0123456789abcdef0123456789abcdef";
         const OTHER_REQUEST: &str = "fedcba9876543210fedcba9876543210";
         const THIRD_REQUEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
-        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("serial GUI fixture environment");
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial GUI fixture environment");
         let fixture = TempDir::new().expect("create pairing-approval fixture directory");
         let bin = w116_stage_fake_neoth(&fixture);
         let mode = fixture.path().join("mode");
@@ -39872,7 +39875,8 @@ exit 72
         .expect("write bounded initial pairing requests");
         let _path = PathGuard::install(fixture.path());
         assert_eq!(
-            std::fs::canonicalize(which_neothd().expect("resolve staged approval CLI")).expect("canonicalize resolved approval CLI"),
+            std::fs::canonicalize(which_neothd().expect("resolve staged approval CLI"))
+                .expect("canonicalize resolved approval CLI"),
             std::fs::canonicalize(&bin).expect("canonicalize staged approval CLI"),
             "the real resolver must choose this staged CLI fixture"
         );
@@ -39891,14 +39895,27 @@ exit 72
 
         std::fs::write(&mode, b"w126_blocked").expect("select blocked approval fixture");
         let mut release_guard = W116ReleaseGuard::new(approval_release);
-        window.invoke_channel_pairing_approve("telegram".into(), "ops_b".into(), REQUEST.into(), "ABCDEFGH".into());
+        window.invoke_channel_pairing_approve(
+            "telegram".into(),
+            "ops_b".into(),
+            REQUEST.into(),
+            "ABCDEFGH".into(),
+        );
         assert!(window.get_channel_pairing_in_flight());
         w126_wait_for_approval_start(&calls);
-        window.invoke_channel_pairing_approve("telegram".into(), "ops_b".into(), REQUEST.into(), "ABCDEFGH".into());
+        window.invoke_channel_pairing_approve(
+            "telegram".into(),
+            "ops_b".into(),
+            REQUEST.into(),
+            "ABCDEFGH".into(),
+        );
         window.invoke_channel_pairing_list("telegram".into(), "ops_b".into());
         window.invoke_channel_pairing_dismiss("telegram".into(), "ops_b".into(), REQUEST.into());
         window.invoke_channel_account_dm_pairing("telegram".into(), "ops_b".into(), false);
-        assert_eq!(w116_call_lines(&calls), ["request-list:ops_b", "approval:started"]);
+        assert_eq!(
+            w116_call_lines(&calls),
+            ["request-list:ops_b", "approval:started"]
+        );
         release_guard.release();
         w121_pump_until_request_operation_settles(&window);
         assert!(!window.get_channel_pairing_loaded());
@@ -39913,19 +39930,37 @@ exit 72
             w121_pump_until_request_operation_settles(&window);
             assert!(window.get_channel_pairing_loaded());
             std::fs::write(&mode, mode_name).expect("select controlled approval outcome");
-            window.invoke_channel_pairing_approve("telegram".into(), "ops_b".into(), REQUEST.into(), "ABCDEFGH".into());
+            window.invoke_channel_pairing_approve(
+                "telegram".into(),
+                "ops_b".into(),
+                REQUEST.into(),
+                "ABCDEFGH".into(),
+            );
             assert!(window.get_channel_pairing_in_flight());
             w121_pump_until_request_operation_settles(&window);
-            assert!(!window.get_channel_pairing_loaded(), "{mode_name} must require explicit reload");
-            assert_eq!(w121_pairing_request_ids(&window), unchanged, "{mode_name} must retain every request row");
+            assert!(
+                !window.get_channel_pairing_loaded(),
+                "{mode_name} must require explicit reload"
+            );
+            assert_eq!(
+                w121_pairing_request_ids(&window),
+                unchanged,
+                "{mode_name} must retain every request row"
+            );
             let call_lines = w116_call_lines(&calls);
             assert_eq!(
-                call_lines.iter().filter(|line| line.as_str() == "approval:started").count(),
+                call_lines
+                    .iter()
+                    .filter(|line| line.as_str() == "approval:started")
+                    .count(),
                 failure_index + 2,
                 "{mode_name} must launch exactly one approval child"
             );
             assert_eq!(
-                call_lines.iter().filter(|line| line.as_str() == "request-list:ops_b").count(),
+                call_lines
+                    .iter()
+                    .filter(|line| line.as_str() == "request-list:ops_b")
+                    .count(),
                 failure_index + 2,
                 "{mode_name} must not perform an implicit re-list before the next explicit reload"
             );
@@ -39940,15 +39975,38 @@ exit 72
             w121_pairing_requests_json(&[OTHER_REQUEST, THIRD_REQUEST]),
         )
         .expect("write canonical post-approval request list");
-        window.invoke_channel_pairing_approve("telegram".into(), "ops_b".into(), REQUEST.into(), "ABCDEFGH".into());
+        window.invoke_channel_pairing_approve(
+            "telegram".into(),
+            "ops_b".into(),
+            REQUEST.into(),
+            "ABCDEFGH".into(),
+        );
         w121_pump_until_request_operation_settles(&window);
         assert!(window.get_channel_pairing_loaded());
         assert!(window.get_channel_pairing_error().is_empty());
-        assert_eq!(w121_pairing_request_ids(&window), [OTHER_REQUEST.to_string(), THIRD_REQUEST.to_string()]);
+        assert_eq!(
+            w121_pairing_request_ids(&window),
+            [OTHER_REQUEST.to_string(), THIRD_REQUEST.to_string()]
+        );
         let call_lines = w116_call_lines(&calls);
-        assert_eq!(call_lines.iter().filter(|line| line.as_str() == "approval:started").count(), 5);
-        assert_eq!(call_lines.iter().filter(|line| line.as_str() == "request-list:ops_b").count(), 6);
-        assert!(call_lines.iter().all(|line| !line.contains("ABCDEFGH")), "fixture counters must never retain the private pairing code");
+        assert_eq!(
+            call_lines
+                .iter()
+                .filter(|line| line.as_str() == "approval:started")
+                .count(),
+            5
+        );
+        assert_eq!(
+            call_lines
+                .iter()
+                .filter(|line| line.as_str() == "request-list:ops_b")
+                .count(),
+            6
+        );
+        assert!(
+            call_lines.iter().all(|line| !line.contains("ABCDEFGH")),
+            "fixture counters must never retain the private pairing code"
+        );
     }
 
     #[cfg(target_os = "macos")]

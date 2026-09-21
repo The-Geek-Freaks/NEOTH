@@ -2833,7 +2833,10 @@ mod default_invocation_tests {
             .write_long_help(&mut help)
             .expect("render public pairing help");
         let help = String::from_utf8(help).expect("Clap help is UTF-8");
-        assert!(help.contains("approve"), "public approve must remain documented");
+        assert!(
+            help.contains("approve"),
+            "public approve must remain documented"
+        );
         assert!(
             !help.contains("approve-request"),
             "hidden private approval must not appear in public pairing help"

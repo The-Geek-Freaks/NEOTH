@@ -7555,8 +7555,7 @@ mod tests {
             duplicate_field.as_bytes(),
             oversized.as_slice(),
         ] {
-            let error = match parse_pairing_approve_request_envelope(input, "telegram", &account)
-            {
+            let error = match parse_pairing_approve_request_envelope(input, "telegram", &account) {
                 Err(error) => error.to_string(),
                 Ok(_) => panic!("invalid private pairing envelope unexpectedly parsed"),
             };

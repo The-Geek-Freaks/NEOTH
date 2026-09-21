@@ -25,6 +25,12 @@ An explicit equivalent `if`/`else` preserves the rows and assertions. Other
 platform jobs continue; fresh Linux execution remains required. See
 [W129](../docs/gold-wave129-verification.md).
 
+
+W126/W127 source `f4283ea8` passed Code Quality `35568978710`. Preflight
+`35568979275` supplied 22 exact Rustfmt hunks across six Rust files; these
+layouts were imported without a local formatter. Fresh static gates and the
+SHA-bound remote CLI-reference export remain required.
+
 **W124/W125 observed CI and preview recovery (2026-09-21):** full CI
 `35543099210` on `55ec9225` executed 16800 Windows tests: 16799 passed, one
 failed, 22 skipped. Linux/macOS stopped on a missing nested-module GUI-test

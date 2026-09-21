@@ -19,6 +19,12 @@ uses an equivalent explicit conditional with unchanged payloads/assertions.
 Windows/macOS evidence remains in progress and the repair needs fresh hosted
 validation. See [W129](../docs/gold-wave129-verification.md).
 
+
+W126/W127 source `f4283ea8` passed Code Quality `35568978710`. Preflight
+`35568979275` supplied 22 exact Rustfmt hunks across six Rust files; these
+layouts were imported without a local formatter. Fresh static gates and the
+SHA-bound remote CLI-reference export remain required.
+
 **W124/W125 (2026-09-21):** completed CI `35543099210` on `55ec9225` ran
 16800 Windows tests (16799 pass, one failure, 22 skipped). The remaining
 isolated MCP fixture retains only PATH for its real Python child. Linux/macOS

@@ -2084,7 +2084,10 @@ mod tests {
             assert_eq!(sent[0].0, "4242");
             (pending[0].request_id.clone(), sent[0].1.clone())
         };
-        assert!(message.contains(&request_id), "challenge carries its own request id");
+        assert!(
+            message.contains(&request_id),
+            "challenge carries its own request id"
+        );
         let code = message
             .split("Your pairing code is: ")
             .nth(1)

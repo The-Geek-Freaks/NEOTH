@@ -129,12 +129,14 @@ fn private_pairing_approval_gui_command_parses_without_secrets_in_argv() {
         !args.iter().any(|arg| arg == request_id || arg == code),
         "request id and pairing code belong only in the private stdin body"
     );
-    let parsed = Cli::try_parse_from(std::iter::once(command.get_program()).chain(command.get_args()))
-        .expect("the real CLI must accept the GUI's hidden approval argv");
+    let parsed =
+        Cli::try_parse_from(std::iter::once(command.get_program()).chain(command.get_args()))
+            .expect("the real CLI must accept the GUI's hidden approval argv");
     assert!(matches!(parsed.output, OutputFormat::Json));
     match parsed.command {
         Commands::Channel {
-            action: ChannelAction::Pairing(ChannelPairingAction::ApproveRequest { channel, account }),
+            action:
+                ChannelAction::Pairing(ChannelPairingAction::ApproveRequest { channel, account }),
         } => {
             assert_eq!(channel, "telegram");
             assert_eq!(account.as_str(), "ops_b");
@@ -154,10 +156,22 @@ fn private_pairing_approval_body_and_receipt_bind_the_exact_request() {
         body.as_slice(),
         br#"{"schema_version":1,"channel":"telegram","account":"ops_b","request_id":"0123456789abcdef0123456789abcdef","code":"ABCDEFGH"}"#
     );
-    for invalid_code in ["", "ABCDEFG", "ABCDEFGHI", "abcdefgh", "ABCDEFG0", "ABCD-EFG"] {
+    for invalid_code in [
+        "",
+        "ABCDEFG",
+        "ABCDEFGHI",
+        "abcdefgh",
+        "ABCDEFG0",
+        "ABCD-EFG",
+    ] {
         assert!(
-            panel_logic::telegram_pairing_approve_body("telegram", "ops_b", request_id, invalid_code)
-                .is_err(),
+            panel_logic::telegram_pairing_approve_body(
+                "telegram",
+                "ops_b",
+                request_id,
+                invalid_code
+            )
+            .is_err(),
             "invalid pairing code must not form a private approval body"
         );
     }
@@ -181,11 +195,19 @@ fn private_pairing_approval_body_and_receipt_bind_the_exact_request() {
         Some(true)
     );
     for receipt in [
-        format!(r#"{{"channel":"telegram","account":"ops_a","request_id":"{request_id}","approved":true}}"#),
-        format!(r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}","approved":false}}"#),
-        format!(r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}","approved":true,"extra":true}}"#),
+        format!(
+            r#"{{"channel":"telegram","account":"ops_a","request_id":"{request_id}","approved":true}}"#
+        ),
+        format!(
+            r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}","approved":false}}"#
+        ),
+        format!(
+            r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}","approved":true,"extra":true}}"#
+        ),
         format!(r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}"}}"#),
-        format!(r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}","approved":"true"}}"#),
+        format!(
+            r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}","approved":"true"}}"#
+        ),
     ] {
         assert_eq!(
             panel_logic::parse_telegram_pairing_approved(receipt.as_bytes(), "ops_b", request_id),

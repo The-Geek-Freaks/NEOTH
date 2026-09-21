@@ -182,13 +182,7 @@ impl DmPairingStore {
         now: i64,
     ) -> Result<PendingRequest> {
         validate_request_id(expected_request_id)?;
-        self.approve_inner(
-            reference,
-            binding_tag,
-            Some(expected_request_id),
-            code,
-            now,
-        )
+        self.approve_inner(reference, binding_tag, Some(expected_request_id), code, now)
     }
 
     fn approve_inner(
@@ -672,7 +666,11 @@ mod tests {
         let wrong_pair = store
             .approve_expected(&reference, "generation", &first_id, &second_code, 103)
             .unwrap_err();
-        assert!(wrong_pair.to_string().contains("no current pairing request"));
+        assert!(
+            wrong_pair
+                .to_string()
+                .contains("no current pairing request")
+        );
         assert_eq!(
             store.list(&reference, "generation", 103).unwrap().len(),
             2,
@@ -681,17 +679,21 @@ mod tests {
         assert!(!store.is_approved(&reference, "generation", 7).unwrap());
         assert!(!store.is_approved(&reference, "generation", 8).unwrap());
 
-        assert!(store
-            .approve_expected(&reference, "stale-generation", &first_id, &first_code, 104)
-            .is_err());
+        assert!(
+            store
+                .approve_expected(&reference, "stale-generation", &first_id, &first_code, 104)
+                .is_err()
+        );
         let approved = store
             .approve_expected(&reference, "generation", &first_id, &first_code, 105)
             .unwrap();
         assert_eq!(approved.request_id, first_id);
         assert!(store.is_approved(&reference, "generation", 7).unwrap());
-        assert!(store
-            .approve_expected(&reference, "generation", &first_id, &first_code, 106)
-            .is_err());
+        assert!(
+            store
+                .approve_expected(&reference, "generation", &first_id, &first_code, 106)
+                .is_err()
+        );
         assert_eq!(
             store.list(&reference, "generation", 106).unwrap(),
             vec![PendingRequest {
@@ -700,19 +702,23 @@ mod tests {
             }]
         );
 
-        assert!(store
-            .approve_expected(
-                &reference,
-                "generation",
-                &second_id,
-                &second_code,
-                101 + TTL_SECS + 1,
-            )
-            .is_err());
-        assert!(store
-            .list(&reference, "generation", 101 + TTL_SECS + 1)
-            .unwrap()
-            .is_empty());
+        assert!(
+            store
+                .approve_expected(
+                    &reference,
+                    "generation",
+                    &second_id,
+                    &second_code,
+                    101 + TTL_SECS + 1,
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .list(&reference, "generation", 101 + TTL_SECS + 1)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[cfg(unix)]
