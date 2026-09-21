@@ -5896,8 +5896,11 @@ mod tests {
             BlockItem::new(Block::A, "old system"),
             BlockItem::new(Block::D, "optional recall"),
             BlockItem::new(Block::D, "typed channel attachment").with_required_retention(),
-            BlockItem::new(Block::D, "<skill-registry-context>approved</skill-registry-context>")
-                .with_required_retention(),
+            BlockItem::new(
+                Block::D,
+                "<skill-registry-context>approved</skill-registry-context>",
+            )
+            .with_required_retention(),
             BlockItem::new(Block::E, "operator caption"),
         ];
         let bundle = delegated_system_bundle("delegated system", &enriched);
@@ -5910,8 +5913,7 @@ mod tests {
         assert_eq!(required[0].content, "typed channel attachment");
         assert_eq!(required[0].retention, PromptRetention::Required);
         assert_eq!(
-            required[1].content,
-            "<skill-registry-context>approved</skill-registry-context>",
+            required[1].content, "<skill-registry-context>approved</skill-registry-context>",
             "delegation must retain the complete session-start registry Block D"
         );
         assert_eq!(required[1].retention, PromptRetention::Required);
@@ -5983,7 +5985,9 @@ mod tests {
             1,
             "a channel provider request must contain exactly one complete Skill registry context"
         );
-        registry_contexts.pop().expect("one retained Skill registry context")
+        registry_contexts
+            .pop()
+            .expect("one retained Skill registry context")
     }
 
     fn canonical_channel_tool_error_metadata(system: &str) -> Vec<serde_json::Value> {
@@ -6148,13 +6152,11 @@ mod tests {
                 crate::channels::registry::ChannelAccountId::new(account).unwrap(),
             ))
         };
-        let make_deps = |
-            home: std::path::PathBuf,
-            binding: AuthenticatedInboundBinding,
-            provider: Arc<ChannelRequestCapturingProvider>,
-            writer: WalWriterHandle,
-            config: FreedomConfig,
-        | PipelineHandlerDeps {
+        let make_deps = |home: std::path::PathBuf,
+                         binding: AuthenticatedInboundBinding,
+                         provider: Arc<ChannelRequestCapturingProvider>,
+                         writer: WalWriterHandle,
+                         config: FreedomConfig| PipelineHandlerDeps {
             inbound_binding: binding,
             provider,
             live_channel: None,
@@ -6179,18 +6181,18 @@ mod tests {
         let denied_home = fixture.path().join("denied");
         std::fs::create_dir_all(&denied_home).unwrap();
         let denied_wal = denied_home.join("denied.wal");
-        let (denied_writer, denied_join) = crate::wal::spawn_for_home(
-            denied_wal,
-            denied_home.clone(),
-        )
-        .unwrap();
+        let (denied_writer, denied_join) =
+            crate::wal::spawn_for_home(denied_wal, denied_home.clone()).unwrap();
         let denied_provider = Arc::new(ChannelRequestCapturingProvider {
             request: std::sync::Mutex::new(None),
         });
         let mut denied_config = FreedomConfig::default();
         denied_config.autonomy = crate::permissions::AutonomyLevel::Full;
         denied_config.council.disabled = Some(true);
-        denied_config.skills.disabled.push("academic_research".to_owned());
+        denied_config
+            .skills
+            .disabled
+            .push("academic_research".to_owned());
         let denied = build_pipeline_handler(make_deps(
             denied_home,
             make_binding("policy-denied"),
@@ -6213,11 +6215,8 @@ mod tests {
         let allowed_home = fixture.path().join("allowed");
         std::fs::create_dir_all(&allowed_home).unwrap();
         let allowed_wal = allowed_home.join("allowed.wal");
-        let (allowed_writer, allowed_join) = crate::wal::spawn_for_home(
-            allowed_wal,
-            allowed_home.clone(),
-        )
-        .unwrap();
+        let (allowed_writer, allowed_join) =
+            crate::wal::spawn_for_home(allowed_wal, allowed_home.clone()).unwrap();
         let allowed_provider = Arc::new(ChannelRequestCapturingProvider {
             request: std::sync::Mutex::new(None),
         });
@@ -6236,7 +6235,10 @@ mod tests {
             .expect("allowed subject routing")
             .expect("headless allowed channel reply");
         assert_eq!(outbound.text, "captured");
-        let system = allowed_provider.captured_request().system.expect("provider system");
+        let system = allowed_provider
+            .captured_request()
+            .system
+            .expect("provider system");
         assert!(system.contains("Academic research skill (auto-installed)."));
         assert!(system.contains("skills:registry:"));
         drop(allowed);

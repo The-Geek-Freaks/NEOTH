@@ -1326,7 +1326,10 @@ mod tests {
                 requests.push(request);
                 attempt
             };
-            assert!(attempt < 2, "W137 fixture permits one truthful retry before local shadow");
+            assert!(
+                attempt < 2,
+                "W137 fixture permits one truthful retry before local shadow"
+            );
 
             if attempt == 0 {
                 w137_write_installed_skill(
@@ -1943,7 +1946,8 @@ mod tests {
     }
 
     #[test]
-    fn prepared_turn_retains_authorized_selected_skill_snapshot_across_reload_retry_and_local_shadow() {
+    fn prepared_turn_retains_authorized_selected_skill_snapshot_across_reload_retry_and_local_shadow()
+     {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

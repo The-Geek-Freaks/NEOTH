@@ -8,6 +8,11 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+W137 hosted formatting follow-up: Code Quality 35583072869 passed on28b9facd.
+Preflight35583073252 supplied ten exact Rustfmt hunks (two CLI/eight Channel).
+All were imported from the complete saved log into frozen published-source
+copies, preserving W138 working edits. Fresh hosted gates remain required.
+
 **W140 strict-lint repair (2026-09-21):** four observed Linux Clippy findings
 from CI 35581691195 are repaired without changing type-hierarchy behavior or
 suppressing diagnostics. See [W140](../docs/gold-wave140-verification.md).

@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W136-skill-registry-and-type-hierarchy",
-  "base": "637c00612cd80ddf0ab66948745b5347c18e1e31",
-  "capturedUtc": "2026-09-21T09:22:11.4510441Z",
-  "validationStatus": "W140_OBSERVED_LINT_REPAIR_REMOTE_EXECUTION_REQUIRED",
-  "scopeNote": "308 cumulative inputs, W137 reviewed frozen session sources plus four observed W140 lint repairs. W138 working source excluded; no local validation or Road closure.",
+  "base": "28b9facd150e7ef5744f625ea6995be0d71de2bf",
+  "capturedUtc": "2026-09-21T09:31:02.3520865Z",
+  "validationStatus": "W137_HOSTED_FORMAT_IMPORT_REMOTE_EXECUTION_REQUIRED",
+  "scopeNote": "308 inputs; exact10 hosted Rustfmt hunks in frozen W137 sources, W140 preserved, W138 work excluded. No local validation or Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -513,8 +513,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "bytes": 123899,
-      "sha256": "0A4068F6E26BC4D8E7FE314C53C78FC242DD618BD183696822B6F8EA734505D2"
+      "bytes": 123950,
+      "sha256": "034F4C9AC374F29A470EBE9853DC7AD374D1420BC2C758EF11E21350526701C9"
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
@@ -648,8 +648,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "bytes": 432928,
-      "sha256": "C958C1B8C276B6C1FD5DE1AB85CE21A65A547017A6C0A1D093FB7B0EB5AA4871"
+      "bytes": 433028,
+      "sha256": "95BEBF390875D5649116652D43DBDB67F0F303EB2A2503D5A099A02D08EB714A"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",

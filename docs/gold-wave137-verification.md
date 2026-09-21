@@ -43,3 +43,13 @@ but its Linux quality job reported four strict Clippy diagnostics in
 code_map/type_hierarchy.rs. W140 addresses those observed diagnostics;
 that run is not W137 runtime proof. Windows preview 35575775478 is on older
 85658d48 and cannot establish current-source acceptance.
+
+## Hosted formatting follow-up
+
+Preflight35583073252 on28b9facd supplied ten Rustfmt hunks, imported
+from the complete saved log (two CLI/eight Channel). Independent import and
+Root review confirm layout/trailing-comma normalization only. The formatted
+source hashes are CLI034F4C9AC374F29A470EBE9853DC7AD374D1420BC2C758EF11E21350526701C9
+and Channel95BEBF390875D5649116652D43DBDB67F0F303EB2A2503D5A099A02D08EB714A.
+CodeQuality35583072869 passed before this formatting import. Fresh exact-head
+hosted validation remains required; no local formatter ran.
