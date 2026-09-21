@@ -278,6 +278,7 @@ class CiCadenceContractTests(unittest.TestCase):
                         "python3 packaging/test_bootstrap_verifier.py",
                         "python3 .github/release-tools/test-release-isolation.py",
                         "python3 scripts/test_lost_feature_integrity.py",
+                        "python3 -m unittest scripts/test_extract_openclaw_channel_schema.py",
                         "bash packaging/linux/test-contracts.sh",
                     ]
                 ),

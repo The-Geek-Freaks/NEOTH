@@ -2,15 +2,16 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
-**W169 actual source extraction (2026-09-21):** run35652616234 validates all
-26 expected channel IDs, both input pins, and 3230 typed paths. Its 22 remaining
-cases are upstream empty JSON Schemas; they are now explicit opaque subtrees
-with blocked_requires_explicit_leaf_mapping, not invented inner mappings.
-Independent focused review approved this diagnostic representation. The new
-workflow trigger uses the existing multiline convention after Hosted cadence
-identified its unsupported inline form. Rustfmt on00a646c9 passed; fresh
-preflight, schema extraction and full native/GUI acceptance remain required.
-The successful45c CLI reference is byte-identical to the committed snapshot.
+**W169 verified extraction and custody implementation (2026-09-21):**
+GitHub run 35653170374 on 61eaa58f passed the extractor regressions and captured
+3252 schema rows across all 26 expected channels, with zero uncovered extraction
+blockers. Its 22 opaque subtrees still block migration. The exact artifact is
+frozen by source, input hashes and output SHA-256 before custody integration.
+Preflight 35653170741 passed formatting, then rejected the new unit-test command
+missing from its exact allowlist; that single command is now explicitly listed.
+Fresh preflight is required. Full CI 35653174520 and Windows preview 35653179383
+remain running on 61eaa58f; package schema/account ledger implementation is in
+progress. No Road checkbox closes; counts remain 1324 / 1015 / 307 / 2.
 
 **Latest Hosted boundary (2026-09-21):** CLI build/reference35652041976 on
 45c31447 passed. All 29 remaining GUI format hunks are imported exactly from

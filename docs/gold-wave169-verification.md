@@ -1,8 +1,8 @@
 # W169 — pinned channel schema extraction
 
-Status: diagnostic extraction tooling is independently source-approved. The
-custody schema fixture and importer integration require the actual hosted
-artifact and remain pending. GOLD-LF-001-02 is not closed.
+Status: diagnostic extraction passed GitHub run 35653170374 at source
+61eaa58fc060d211e73e1535caf3dcd04b80d7f0. The custody schema fixture and importer
+integration are in progress. GOLD-LF-001-02 is not closed.
 
 The manual GitHub workflow reads OpenClaw's generated bundled channel metadata
 at commit 4c667aac8859114bd8f0a589ac6cd1de8bfe1474. Before decoding, the extractor
@@ -31,7 +31,18 @@ contains schema structure and hashes, never an operator configuration or secret
 value. The source review is retained in
 work/gold-20260906/wave169-channel-schema/EXTRACTOR-ROOT-REVIEW.md.
 
-The next gate is an actual source-bound GitHub artifact. Its observed coverage
-and blockers determine the remaining extractor work before package-owned
-schema validation and account/source-path ledger integration. No local parser,
-test, fixture, compiler or product execution is permitted by this batch.
+The successful rerun records 3252 schema rows across all 26 expected channels,
+including 22 explicit opaque subtrees, with zero uncovered extraction blockers
+and zero duplicate channel/path/type/scope identities. The opaque rows still
+block migration; extraction success does not supply their missing mappings.
+The package input is frozen byte-for-byte at SHA-256
+A7E60AFBB1E0D013100EE8C30F5237307E6552923F34B55A39B2DC1263B0283F
+(384625 bytes). Its source/evidence/status receipt is retained in
+work/gold-20260906/wave169-channel-schema/HOSTED-FREEZE.json.
+
+Preflight 35653170741 passed formatting and then rejected the newly added
+extractor unit-test command because the exact cadence allowlist was not updated.
+The matching test now admits that specific command in its existing order;
+fresh hosted preflight is required. Full CI 35653174520 and Windows preview
+35653179383 are running on the same published source. No local parser, test,
+fixture, compiler or product execution is permitted by this batch.

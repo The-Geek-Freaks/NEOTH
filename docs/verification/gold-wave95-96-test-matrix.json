@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W169_OPAQUE_SCHEMA_RECORDED_HOSTED_REQUIRED",
-  "base": "319d84f6886a77efd7fa9076879fdc9e826a2d37",
+  "status": "W169_HOSTED_EXTRACTION_PASS_CUSTODY_PENDING",
+  "base": "61eaa58fc060d211e73e1535caf3dcd04b80d7f0",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 65777,
-    "sha256": "FCA8C200C05BE1EDD032C8A2F7E37D6E1212BDC4FB0AC15920892F49EFCF8A25"
+    "bytes": 65718,
+    "sha256": "23622055674A8E5FD827DF84D5EEE4B3C3951AF9FC1BD5B70C4DFAF509AFFD8C"
   },
   "sourceInputs": 380,
   "requiredNativeTests": [
@@ -6050,5 +6050,21 @@
     "bytes": 231534,
     "committedSnapshotMatches": true,
     "localBinaryRan": false
+  },
+  "wave169HostedExtraction": {
+    "head": "61eaa58fc060d211e73e1535caf3dcd04b80d7f0",
+    "run": 35653170374,
+    "conclusion": "success",
+    "schemaRows": 3252,
+    "opaqueRows": 22,
+    "channels": 26,
+    "uncoveredBlockers": 0,
+    "artifactSha256": "A7E60AFBB1E0D013100EE8C30F5237307E6552923F34B55A39B2DC1263B0283F",
+    "freeze": "work/gold-20260906/wave169-channel-schema/HOSTED-FREEZE.json",
+    "freezeSha256": "19BE8DEE370A3F6C5D4F0F45DBB022BFAA7D9AA46B4AADEE2E2CD164F6540E2D",
+    "preflightRepair": "Add exact new extractor unit-test command to existing cadence allowlist; Hosted rerun required",
+    "nativeRun": 35653174520,
+    "previewRun": 35653179383,
+    "boundary": "Opaque rows still block migration; custody integration excluded and native/GUI acceptance pending"
   }
 }

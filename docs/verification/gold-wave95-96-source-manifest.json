@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W170-schema-extraction-candidate",
-  "base": "00a646c9ba69de795f0bda2180ba4598eb756a39",
-  "capturedUtc": "2026-09-21T20:44:40.6286102Z",
-  "validationStatus": "W169_OPAQUE_SCHEMA_RECORDED_HOSTED_REQUIRED",
-  "scopeNote": "W169 preserves upstream unconstrained schemas as blocked opaque subtrees, never migration support. Workflow syntax follows current cadence contract; unit regressions included in push preflight. Native/GUI acceptance pending.",
+  "base": "61eaa58fc060d211e73e1535caf3dcd04b80d7f0",
+  "capturedUtc": "2026-09-21T20:52:09.4280386Z",
+  "validationStatus": "W169_HOSTED_EXTRACTION_PASS_CUSTODY_PENDING",
+  "scopeNote": "Hosted3252schema rows/26IDs/22opaque blockers frozen; exact preflight command allowlist repair. Custody integration not included; full native/GUI acceptance pending.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -93,8 +93,8 @@
     },
     {
       "path": "docs/gold-wave169-verification.md",
-      "bytes": 2239,
-      "sha256": "4CA8E8D687DA0C39E40069717BD9252BEDCD79338F098D340A9BA76D56A9B695"
+      "bytes": 2944,
+      "sha256": "EEF17F2431E7FB64530EE04B8F705AB5B836CD0E4709710850A2D1BD75AA89F2"
     },
     {
       "path": "docs/gold-wave170-verification.md",
@@ -133,8 +133,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 36857,
-      "sha256": "3BFD1C1BD00BF18B7E137E8C67A83F847906B8367921BED6A12F8C8DE5DB02A7"
+      "bytes": 36952,
+      "sha256": "524D99689839D8E04296CC86342E031A65A954011C077F52A28FA6AB358E1E45"
     },
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
