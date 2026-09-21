@@ -747,12 +747,16 @@ pub(crate) async fn run_auxiliary_ffmpeg_bounded_with_permit_capture_stderr(
         max_stdout_bytes,
         missing_binary_reason,
     };
-    tokio::spawn(run_child_supervised_capture_stderr(command, limits, permit.0.clone()))
-        .await
-        .map_err(|error| ExtractionError::Backend {
-            backend: "video",
-            reason: format!("ffmpeg supervisor task failed: {error}"),
-        })?
+    tokio::spawn(run_child_supervised_capture_stderr(
+        command,
+        limits,
+        permit.0.clone(),
+    ))
+    .await
+    .map_err(|error| ExtractionError::Backend {
+        backend: "video",
+        reason: format!("ffmpeg supervisor task failed: {error}"),
+    })?
 }
 
 async fn run_child_supervised_capture_stderr(

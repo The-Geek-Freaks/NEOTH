@@ -53,3 +53,18 @@ D3A095664A237CB7B6925DE9AE5826544F8DAA8523788B9DD191219E0EC72759.
 Both reports and the earlier HOLD remain in `work/gold-20260906/wave174-next-batch/`.
 The final delta scopes the scene-timestamp witness to the Linux test that reads
 it; production data and behavior are unchanged by that delta.
+
+First Hosted results on 96beb0a1:
+
+- Code Quality 35662866172 passed.
+- Preflight 35662865859 requested 20 formatting hunks across five files;
+  those exact layouts were imported without local rustfmt execution.
+- CLI/reference 35662865750 found three E0603 errors because the new provider
+  match used private `cli::init::types`. The repair uses the already-public
+  `cli::init::ProviderKind` export and preserves the same three match arms.
+
+The pure-format and compile-fix receipts are separate. FORMAT-HOSTED.json has
+SHA-256 B5FFC641CF700588E6607366F005A0B4E06C31A927040116241B7EA0A5178FEE;
+COMPILE-REPAIR.json has SHA-256
+F9EC3CA71716E340E85F2156D2530B1180C00ECCF28D33A075310C281ED33A36.
+A fresh Hosted CLI/format run and actual behavior tests remain necessary.

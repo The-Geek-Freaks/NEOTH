@@ -12,8 +12,7 @@ use super::video::{
     snapshot_video_input_for_auxiliary_ffmpeg,
 };
 use super::video_frames::{
-    FrameFormat, VISUAL_SCENE_CHANGE, plan_observed_video_frame_timestamps,
-    scene_change_config,
+    FrameFormat, VISUAL_SCENE_CHANGE, plan_observed_video_frame_timestamps, scene_change_config,
 };
 use super::{Asset, ExtractionError};
 
@@ -22,7 +21,8 @@ const SCENE_SAMPLE_TIMEOUT: Duration = Duration::from_secs(60);
 const PROBE_STDOUT_LIMIT: u64 = 256 * 1024;
 const FFMPEG_MISSING_BINARY_REASON: &str = "ffmpeg binary not found on PATH. Install via your package manager \
     (apt install ffmpeg / brew install ffmpeg / choco install ffmpeg) and re-run.";
-const FFPROBE_MISSING_BINARY_REASON: &str = "ffprobe binary not found on PATH. Install ffmpeg (which provides ffprobe) and re-run.";
+const FFPROBE_MISSING_BINARY_REASON: &str =
+    "ffprobe binary not found on PATH. Install ffmpeg (which provides ffprobe) and re-run.";
 
 /// One fully local decoded batch, with the exact ordered timestamps selected
 /// from observed probe/scene evidence. No source path escapes this module.
@@ -108,22 +108,18 @@ impl VisualVideoSnapshot {
 
     async fn scene_timestamps_ms(&self, duration_ms: u64) -> Result<Vec<u64>, ExtractionError> {
         let mut command = tokio::process::Command::new("ffmpeg");
-        command.args([
-            "-hide_banner",
-            "-nostdin",
-            "-loglevel",
-            "info",
-            "-i",
-        ]);
+        command.args(["-hide_banner", "-nostdin", "-loglevel", "info", "-i"]);
         command.arg(self.path());
-        let (threshold, _) = scene_change_config(&VISUAL_SCENE_CHANGE).ok_or_else(|| {
-            ExtractionError::Backend {
+        let (threshold, _) =
+            scene_change_config(&VISUAL_SCENE_CHANGE).ok_or_else(|| ExtractionError::Backend {
                 backend: "video",
                 reason: "visual scene-change strategy is not configured".into(),
-            }
-        })?;
+            })?;
         let scene_filter = format!("select='gt(scene,{threshold:.2})',showinfo");
-        command.arg("-vf").arg(scene_filter).args(["-an", "-f", "null", "-"]);
+        command
+            .arg("-vf")
+            .arg(scene_filter)
+            .args(["-an", "-f", "null", "-"]);
         let output = run_auxiliary_ffmpeg_bounded_with_permit_capture_stderr(
             command,
             "scene-change video sampling",
@@ -230,12 +226,11 @@ fn parse_observed_frame_timestamps_ms(
         best_effort_timestamp_time: String,
     }
 
-    let parsed: FfprobeFrames = serde_json::from_slice(stdout).map_err(|error| {
-        ExtractionError::Backend {
+    let parsed: FfprobeFrames =
+        serde_json::from_slice(stdout).map_err(|error| ExtractionError::Backend {
             backend: "video",
             reason: format!("ffprobe keyframe JSON is malformed or lacks required fields: {error}"),
-        }
-    })?;
+        })?;
     let mut keyframes_ms = Vec::new();
     let mut frames_ms = Vec::with_capacity(parsed.frames.len());
     for frame in parsed.frames {
@@ -245,11 +240,8 @@ fn parse_observed_frame_timestamps_ms(
                 reason: "ffprobe keyframe flag must be 0 or 1".into(),
             });
         }
-        let timestamp_ms = checked_timestamp_ms(
-            &frame.best_effort_timestamp_time,
-            duration_ms,
-            "frame",
-        )?;
+        let timestamp_ms =
+            checked_timestamp_ms(&frame.best_effort_timestamp_time, duration_ms, "frame")?;
         frames_ms.push(timestamp_ms);
         if frame.key_frame == 1 {
             keyframes_ms.push(timestamp_ms);
@@ -263,10 +255,7 @@ fn parse_observed_frame_timestamps_ms(
     })
 }
 
-fn parse_scene_timestamps_ms(
-    stderr: &[u8],
-    duration_ms: u64,
-) -> Result<Vec<u64>, ExtractionError> {
+fn parse_scene_timestamps_ms(stderr: &[u8], duration_ms: u64) -> Result<Vec<u64>, ExtractionError> {
     let text = std::str::from_utf8(stderr).map_err(|error| ExtractionError::Backend {
         backend: "video",
         reason: format!("ffmpeg showinfo output was not UTF-8: {error}"),
@@ -285,10 +274,12 @@ fn checked_timestamp_ms(
     duration_ms: u64,
     label: &str,
 ) -> Result<u64, ExtractionError> {
-    let timestamp = seconds.parse::<f64>().map_err(|error| ExtractionError::Backend {
-        backend: "video",
-        reason: format!("{label} timestamp is not numeric: {error}"),
-    })?;
+    let timestamp = seconds
+        .parse::<f64>()
+        .map_err(|error| ExtractionError::Backend {
+            backend: "video",
+            reason: format!("{label} timestamp is not numeric: {error}"),
+        })?;
     let milliseconds = timestamp_seconds_to_ms(timestamp, label)?;
     if milliseconds >= duration_ms {
         return Err(ExtractionError::Backend {
@@ -363,23 +354,29 @@ mod tests {
         .unwrap();
         assert_eq!(observed.keyframes_ms, vec![1_250, 9_999]);
         assert_eq!(observed.frames_ms, vec![0, 1_250, 2_000, 9_999]);
-        assert!(parse_observed_frame_timestamps_ms(
-            br#"{"frames":[
+        assert!(
+            parse_observed_frame_timestamps_ms(
+                br#"{"frames":[
                 {"key_frame":1,"best_effort_timestamp_time":"2.000"},
                 {"key_frame":1,"best_effort_timestamp_time":"1.000"}
             ]}"#,
-            3_000,
-        )
-        .is_err());
-        assert!(parse_observed_frame_timestamps_ms(br#"{"frames":[{"key_frame":1}]}"#, 3_000)
-            .is_err());
+                3_000,
+            )
+            .is_err()
+        );
+        assert!(
+            parse_observed_frame_timestamps_ms(br#"{"frames":[{"key_frame":1}]}"#, 3_000).is_err()
+        );
     }
 
     #[test]
     fn showinfo_pts_time_parser_rejects_malformed_or_out_of_range_values() {
         let stderr = b"[Parsed_showinfo_1] pts: 5 pts_time:0.005 foo\n\
             [Parsed_showinfo_1] pts: 10 pts_time:2.500 foo\n";
-        assert_eq!(parse_scene_timestamps_ms(stderr, 3_000).unwrap(), vec![5, 2_500]);
+        assert_eq!(
+            parse_scene_timestamps_ms(stderr, 3_000).unwrap(),
+            vec![5, 2_500]
+        );
         assert!(parse_scene_timestamps_ms(b"pts_time:N/A\n", 3_000).is_err());
         assert!(parse_scene_timestamps_ms(b"pts_time:4.000\n", 3_000).is_err());
     }
@@ -443,11 +440,22 @@ mod tests {
         assert!(status.success(), "ffmpeg fixture generation must succeed");
 
         let codec_probe = std::process::Command::new("ffprobe")
-            .args(["-v", "error", "-select_streams", "v:0", "-show_frames", "-of", "json"])
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_frames",
+                "-of",
+                "json",
+            ])
             .arg(&path)
             .output()
             .expect("hosted Linux W174 lane requires ffprobe");
-        assert!(codec_probe.status.success(), "ffprobe fixture inspection must succeed");
+        assert!(
+            codec_probe.status.success(),
+            "ffprobe fixture inspection must succeed"
+        );
         let codec_json = String::from_utf8(codec_probe.stdout)
             .expect("ffprobe JSON fixture output must be UTF-8");
         assert!(
@@ -473,10 +481,12 @@ mod tests {
         );
         assert_eq!(batch.timestamps_ms.len(), 8);
         assert_eq!(batch.frames.len(), 8);
-        assert!(batch
-            .timestamps_ms
-            .iter()
-            .all(|timestamp| *timestamp < 1_000));
+        assert!(
+            batch
+                .timestamps_ms
+                .iter()
+                .all(|timestamp| *timestamp < 1_000)
+        );
 
         let media_cfg = crate::config::MediaConfig {
             video_frame_upload_enabled: true,

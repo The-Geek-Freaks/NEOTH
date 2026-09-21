@@ -13,6 +13,10 @@ one required Linux real-H.264 scene/decode/mock-synthesis test are admitted.
 GitHub compilation, generated CLI reference, formatting and behavioral gates
 remain pending. No F1/F3 checkbox closes. See [W174](../docs/gold-wave174-verification.md).
 W175 Hippocampus selection is a separate active batch, excluded here.
+W174's first Hosted pass found three E0603 references through a private init
+module; the calls now use the existing public ProviderKind export. Preflight
+35662865859's exact 20 format hunks across five files are imported separately.
+Code Quality 35662866172 passed; a new CLI/native/format run is still required.
 
 **W173 Hosted compilation confirmed (2026-09-22):** CLI build/reference
 35660480510 passed on cdaae0a4. Its generated reference is byte-identical to the

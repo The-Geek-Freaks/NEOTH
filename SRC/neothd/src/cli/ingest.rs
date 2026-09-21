@@ -305,13 +305,13 @@ async fn extract_visual_video_with_context(
     no_audit: bool,
 ) -> Result<Extraction> {
     let provider = match effective_config.provider_kind {
-        Some(crate::cli::init::types::ProviderKind::AnthropicApi) => {
+        Some(crate::cli::init::ProviderKind::AnthropicApi) => {
             crate::media::video_frames::MultimodalProvider::AnthropicClaude
         }
-        Some(crate::cli::init::types::ProviderKind::OpenaiApi) => {
+        Some(crate::cli::init::ProviderKind::OpenaiApi) => {
             crate::media::video_frames::MultimodalProvider::OpenAiGpt4o
         }
-        Some(crate::cli::init::types::ProviderKind::GeminiApi) => {
+        Some(crate::cli::init::ProviderKind::GeminiApi) => {
             crate::media::video_frames::MultimodalProvider::GoogleGemini
         }
         Some(provider) => anyhow::bail!(
@@ -336,10 +336,8 @@ async fn extract_visual_video_with_context(
         let wal_dir = neoth_home.join("wal");
         let opened = (|| -> Result<_> {
             std::fs::create_dir_all(&wal_dir)?;
-            let segment = crate::wal::writer::unique_standalone_segment_path(
-                &wal_dir,
-                "ingest-video-visual",
-            );
+            let segment =
+                crate::wal::writer::unique_standalone_segment_path(&wal_dir, "ingest-video-visual");
             Ok(crate::wal::writer::spawn_for_home_with_completion(
                 segment,
                 neoth_home.to_path_buf(),

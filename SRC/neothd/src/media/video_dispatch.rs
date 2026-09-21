@@ -245,7 +245,8 @@ pub async fn dispatch_predecoded_video_analysis(
         .await;
     }
     Ok(answer)
-}/// Emit the `0xC9` audit frame. Best-effort: a WAL error is logged + dropped
+}
+/// Emit the `0xC9` audit frame. Best-effort: a WAL error is logged + dropped
 /// (the synthesis already happened; the frame is the audit nicety).
 async fn emit_synthesized(
     writer: &WalWriterHandle,

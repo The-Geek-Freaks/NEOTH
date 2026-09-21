@@ -78,14 +78,23 @@ impl FrameFormat {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SamplingStrategy {
-    EveryNthFrame { n: u32 },
-    EveryNMilliseconds { ms: u32 },
+    EveryNthFrame {
+        n: u32,
+    },
+    EveryNMilliseconds {
+        ms: u32,
+    },
     Keyframes,
-    Adaptive { target_count: u32 },
+    Adaptive {
+        target_count: u32,
+    },
     /// F1 — actual scene candidates come from ffmpeg's scene filter. The
     /// ingest visual path supplies observed candidates; this enum records the
     /// explicit sampling contract without reviving synthetic GOP planning.
-    SceneChange { threshold: f32, min_frames: usize },
+    SceneChange {
+        threshold: f32,
+        min_frames: usize,
+    },
 }
 
 impl SamplingStrategy {
@@ -474,7 +483,14 @@ mod tests {
 
     #[test]
     fn observed_visual_plan_uniformly_fills_sparse_keyframes_with_small_caps() {
-        let plan = plan_observed_video_frame_timestamps(&VISUAL_SCENE_CHANGE, 10_000, &[4_000], &[], &[0, 4_000, 9_999], 3);
+        let plan = plan_observed_video_frame_timestamps(
+            &VISUAL_SCENE_CHANGE,
+            10_000,
+            &[4_000],
+            &[],
+            &[0, 4_000, 9_999],
+            3,
+        );
         assert_eq!(plan.len(), 3);
         assert!(plan.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(plan.iter().all(|timestamp| *timestamp < 10_000));
@@ -482,7 +498,14 @@ mod tests {
 
     #[test]
     fn observed_visual_uniform_fallback_never_seeks_at_end_of_stream() {
-        let plan = plan_observed_video_frame_timestamps(&VISUAL_SCENE_CHANGE, 1_000, &[], &[], &[0, 120, 240, 360, 480, 600, 720, 840, 960], 8);
+        let plan = plan_observed_video_frame_timestamps(
+            &VISUAL_SCENE_CHANGE,
+            1_000,
+            &[],
+            &[],
+            &[0, 120, 240, 360, 480, 600, 720, 840, 960],
+            8,
+        );
         assert_eq!(plan.len(), 8);
         assert_eq!(plan[0], 0);
         assert!(plan.iter().all(|timestamp| *timestamp < 1_000));

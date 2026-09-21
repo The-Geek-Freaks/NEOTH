@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W174-visual-ingest-candidate",
-  "base": "39663fbaf23489539c0195dc46bf347ab1746800",
-  "capturedUtc": "2026-09-21T22:25:59.7452802Z",
-  "validationStatus": "W174_STATIC_APPROVED_HOSTED_PENDING",
-  "scopeNote": "Reviewed visual ingest plus nine universal and one Linux-only regression; bounded observed ffprobe/scene/frame path, provider gates, silent H264 fixture. W175 dirty source excluded. Hosted executable acceptance pending.",
+  "base": "96beb0a1f6a11c0c19ea410edba7026cfbe8a759",
+  "capturedUtc": "2026-09-21T22:33:57.1629207Z",
+  "validationStatus": "W174_HOSTED_COMPILE_FORMAT_REPAIR_PENDING",
+  "scopeNote": "Exactly20 Hosted format hunks/five W174 sources plus three existing public ProviderKind export references. No behavior change; W175 excluded. Fresh hosted compile/native acceptance required.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -118,8 +118,8 @@
     },
     {
       "path": "docs/gold-wave174-verification.md",
-      "bytes": 3463,
-      "sha256": "47E4266C54BFCE97A6E2B14245B7946F657870F58EDC692C2B2047EF60DAB76D"
+      "bytes": 4231,
+      "sha256": "2DE43D3A8AB1A8C510CBE8BAE08EA5CDF9A0EE88EE8EE4A3D5C72B2B51D428A1"
     },
     {
       "path": "docs/install.md",
@@ -198,13 +198,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1009843,
-      "sha256": "BEDBA18899BC07C775EACCF4472C2A63E352DF9081D9437C2EC7F230E955B9F0"
+      "bytes": 1010156,
+      "sha256": "8FECCE78FDF1179A75B2AF557C98A5F6D76CE0B8EAB618ACB404E4EC80E610BC"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1605290,
-      "sha256": "5F00F74E964E17F6B43158B4E78737046B8BA0EEEF29E1BA9204A3B3028327BA"
+      "bytes": 1605603,
+      "sha256": "04024626248303C475A97FD1988F6C50A2C9F5B417B5F6F1B41099F6C35E7B6C"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -773,8 +773,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/ingest.rs",
-      "sha256": "13646886E6A125C94A4A457E21F2920EBE6E0AE75CC952923D660D401D0F9C33",
-      "bytes": 35217
+      "sha256": "1414245916CB5B7C7AF1784665E516D1C05644982164A0762CA6B4D57677E54D",
+      "bytes": 35165
     },
     {
       "path": "SRC/neothd/src/cli/internal.rs",
@@ -1408,23 +1408,23 @@
     },
     {
       "path": "SRC/neothd/src/media/video_dispatch.rs",
-      "sha256": "CBAA2BBD9FB913E5B3C3CA8A46990B32D9F574864F8D7218C82B2C126F2B5BED",
-      "bytes": 31164
+      "sha256": "C3F5D227919BBBB1F31F3292DA9ACA257511F01D8F12238E7C71CB236255437E",
+      "bytes": 31165
     },
     {
       "path": "SRC/neothd/src/media/video_frames.rs",
-      "bytes": 21603,
-      "sha256": "970E34F39EAF5BDC42B063B10758E96061727A46C6AC430A3D0F1CFC2947F59C"
+      "bytes": 21829,
+      "sha256": "3F0057A224DB5DD94950EAA907A68DCA767BFE686D5E19A31C9ECCC5F93A8D33"
     },
     {
       "path": "SRC/neothd/src/media/video_probe.rs",
-      "bytes": 18235,
-      "sha256": "533E481A212DAB4AF759296D9523440846797446236BB604FD5E91C2985DCB3F"
+      "bytes": 18443,
+      "sha256": "826D0941A27CBC2668F2DF6AA981F96B9401BE2D74F6BECDFFBDA8077A5B587E"
     },
     {
       "path": "SRC/neothd/src/media/video.rs",
-      "sha256": "ABA382CA422208A077900D75D52BFBF6ACB5E206E143E695C20293C749DB2383",
-      "bytes": 57783
+      "sha256": "DC80F9828C6CA89C724EDC2C640867B2EBB5519E362D50A273863B821B0E1388",
+      "bytes": 57794
     },
     {
       "path": "SRC/neothd/src/memory/indexer.rs",
