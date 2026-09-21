@@ -418,14 +418,20 @@ fn exactly_one_production_proactive_transport_seam_exists() {
             }
         }
     }
-    assert_eq!(leased_proxy_sends.len(), 1, "unexpected live-registry raw send topology: {leased_proxy_sends:?}");
+    assert_eq!(
+        leased_proxy_sends.len(),
+        1,
+        "unexpected live-registry raw send topology: {leased_proxy_sends:?}"
+    );
     let registry = include_str!("../src/daemon/channel_live_registry.rs");
     let leased_proxy = between(
         registry,
         "impl Channel for LeasedProactiveChannel",
         "#[cfg(test)]",
     );
-    assert!(leased_proxy.contains("let _closing = Arc::clone(&self.closing_gate).lock_owned().await;"));
+    assert!(
+        leased_proxy.contains("let _closing = Arc::clone(&self.closing_gate).lock_owned().await;")
+    );
     assert!(leased_proxy.contains("self.channel.send_proactive(chat_id, text).await"));
     assert_eq!(
         seams.len(),

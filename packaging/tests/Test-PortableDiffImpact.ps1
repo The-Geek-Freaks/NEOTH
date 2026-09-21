@@ -121,7 +121,18 @@ function Normalize-Root {
     param([Parameter(Mandatory = $true)][string]$Root)
 
     try {
-        return [System.IO.Path]::GetFullPath($Root).TrimEnd([char[]]@('\', '/'))
+        $fullPath = [System.IO.Path]::GetFullPath($Root).TrimEnd([char[]]@('\', '/'))
+        # Rust std::fs::canonicalize may render a normal Windows directory with
+        # the verbatim namespace prefix. It denotes the same exact root as the
+        # ordinary Win32 spelling passed to the fixture, so remove only that
+        # presentation prefix before retaining the case-exact root comparison.
+        if ($fullPath.StartsWith('\\?\UNC\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            return '\\' + $fullPath.Substring(8)
+        }
+        if ($fullPath.StartsWith('\\?\', [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $fullPath.Substring(4)
+        }
+        return $fullPath
     } catch {
         Stop-Acceptance "result root is not a valid absolute path: $Root"
     }

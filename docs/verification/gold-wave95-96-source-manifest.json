@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W158-native-repair-candidate",
-  "base": "669f32db5d655295dd4069e737cb1d292c3cedf7",
-  "capturedUtc": "2026-09-21T15:24:32.9780068Z",
-  "validationStatus": "W158_FOUR_REPAIR_FAMILIES_AND_W142_DIAGNOSTIC_HOSTED_PENDING",
-  "scopeNote": "327 source inputs; independently reviewed self-improve, retained MCP fixture, GUI/proactive source-contract repairs plus W142 failure-only diagnostic. W137 cause remains unresolved and its dirty source excluded. W155 excluded. Required tests225 universal native+3 Windows;46 universal GUI+11 callbacks;7 optional.",
+  "item": "GOLD-W95-W161-hosted-repair-candidate",
+  "base": "1b672282ede16ecf5ac8c2f8f998fb5de58d706c",
+  "capturedUtc": "2026-09-21T15:46:31.3239168Z",
+  "validationStatus": "W158_FORMAT_W160_COMPILE_W161_PORTABLE_REPAIRS_HOSTED_PENDING",
+  "scopeNote": "327 source inputs; W158 three hosted formatter postimages, W160 reviewed test-compile/strict-lint fixes, W161 reviewed equivalent Windows root normalization. Reviewed W137/W142 diagnostics still require hosted execution. W155 and W159 unpublished work excluded. Required tests225 universal native+3 Windows;46 universal GUI+11 callbacks;7 optional.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -123,8 +123,8 @@
     },
     {
       "path": "packaging/tests/Test-PortableDiffImpact.ps1",
-      "bytes": 16845,
-      "sha256": "2A70E90571092DFB1867C863CC0584DF353BDE5BC228B50DF6A1FC1DEFAF41E5"
+      "bytes": 17485,
+      "sha256": "6B582DC904E5FA590DB3036754BAB9005C881E1A33088B30B9B1D717CE1ECAEC"
     },
     {
       "path": "packaging/tests/Test-PortablePreview.ps1",
@@ -283,8 +283,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1844326,
-      "sha256": "864382B9B3292ADC62809BEE63056D25AEAE93391FD54BC66B31C7F36D00E667"
+      "bytes": 1844325,
+      "sha256": "397DFC11CBDFF4C77B0D2B82D06293FBEA3420D09EFEE8B516CA1BC0E30112B9"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -543,8 +543,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 981868,
-      "sha256": "3842F6D4F406C3C176A3F39055D34F0BD7E19208D2DF90E68A060038F652AA10"
+      "bytes": 981856,
+      "sha256": "BEEC42ADBBA89C91164D7CA40DB11235A500B06DA0E3A91060CF8C17D48BE5FA"
     },
     {
       "path": "SRC/neothd/src/cli/code_intel.rs",
@@ -683,8 +683,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "bytes": 433936,
-      "sha256": "D0F8E2C424A29FA2919A20863A61308E5BD91F7C76009B88E75C53074D3E26BC"
+      "bytes": 438646,
+      "sha256": "7DEE515EF4F0EFD8479B7C527A02484A3605091A86C7CD1B3FA31484768F9732"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
@@ -1003,8 +1003,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "bytes": 129061,
-      "sha256": "1266C5B44F6C027BE1F27CED7E0705BE620AD94AD23938611B301D602D17A179"
+      "bytes": 129082,
+      "sha256": "448C4C6ACEED77230354694FC4B88222E2C701B0C531B89740C39759B96702F7"
     },
     {
       "path": "SRC/neothd/src/daemon/mod.rs",
@@ -1623,8 +1623,8 @@
     },
     {
       "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
-      "bytes": 57294,
-      "sha256": "5EB20799081311C47B6AAC9DE8D50629C5C4B7355B2505F7052B11F78927BC65"
+      "bytes": 57338,
+      "sha256": "707264F2AAAB192A3B518778681DC13056CB4809B0A3403C252EEF890867D819"
     },
     {
       "path": "SRC/neothd/tests/transcript_mining_provenance_contract.rs",

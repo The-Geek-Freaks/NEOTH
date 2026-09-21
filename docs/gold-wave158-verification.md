@@ -32,9 +32,11 @@ The source repair preserves current quality, audited approval and final CAS.
 The retained MCP-scope fixture needs one provider turn for each comparison run;
 its real uncapped transport baseline and capped no-second-transport assertion
 remain required. The delegated channel fixture must retain automatic Skill
-selection, actual TOML agent loading and the original scope assertions. A global
-registry ownership mismatch is a separate candidate source defect; it has not
-established the cause of the isolated Nextest failure.
+selection, actual TOML agent loading and the original scope assertions. The
+unproven global-registry change was reverted. A reviewed diagnostic now records
+bounded, nonpanicking route-WAL status alongside the captured provider system.
+The original agent-system and writer-shutdown assertions remain hard requirements;
+the isolated Nextest failure still has no established cause.
 
 The proactive source contracts must distinguish the connection-bound registry
 proxy from the sole direct transport seam. All thirteen route arms still require

@@ -42013,8 +42013,8 @@ exit 72
                     .filter(|line| line.as_str() == name)
                     .count()
             };
-            let diagnostic_callbacks = super::SELFIMPROVE_REFRESH_CALLBACKS
-                .load(std::sync::atomic::Ordering::Acquire);
+            let diagnostic_callbacks =
+                super::SELFIMPROVE_REFRESH_CALLBACKS.load(std::sync::atomic::Ordering::Acquire);
             let diagnostic_toasts = w142_toast_count(window, "Accepted");
             let diagnostic_proposal = window.get_si_proposals().row_data(0).map(|row| {
                 format!(

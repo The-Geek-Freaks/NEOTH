@@ -118,6 +118,7 @@ struct LiveReasoning {
     delta: crate::providers::ReasoningText,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(test, derive(Debug))]
 struct LiveReasoningOwner {
     surface: GuiChatSurface,
     generation: u64,
@@ -1764,10 +1765,10 @@ impl GuiChatRuntime for DaemonGuiChatRuntime {
                 for mut frame in frames {
                     let raw_reasoning = matches!(frame.payload, GuiChatFramePayload::ReasoningDelta { .. });
                     let validated = validate_stream_frame(&frame);
-                    if validated.is_err() {
-                        if let GuiChatFramePayload::ReasoningDelta { delta, .. } = &mut frame.payload {
-                            delta.zeroize();
-                        }
+                    if validated.is_err()
+                        && let GuiChatFramePayload::ReasoningDelta { delta, .. } = &mut frame.payload
+                    {
+                        delta.zeroize();
                     }
                     validated?;
                     let encoded = serde_json::to_vec(&frame)

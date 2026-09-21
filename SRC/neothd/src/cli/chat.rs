@@ -5919,14 +5919,14 @@ pub(super) async fn dispatch_provider(
                             // exclusively from verified-safe bytes.
                             if !defer_provider_output && stream_control_token.is_none() {
                                 let rest = md_buf.flush();
-                                if !rest.is_empty() {
-                                    if let Err(error) = emit_chat_output(output, ChatOutput::ProviderDelta {
+                                if !rest.is_empty()
+                                    && let Err(error) = emit_chat_output(output, ChatOutput::ProviderDelta {
                                         sequence: chunk_count.saturating_add(1),
                                         text: rest,
                                         stream_control_token: None,
-                                    }) {
-                                        return_stream_error!("stream_visible_delta", error);
-                                    }
+                                    })
+                                {
+                                    return_stream_error!("stream_visible_delta", error);
                                 }
                             }
                             input_tokens = chunk.input_tokens;

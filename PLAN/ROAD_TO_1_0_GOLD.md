@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W158/W160/W161 follow-up (2026-09-21):** the four W158 repair families
+are published in 1b672282. Its Code Quality run 35618942529 passed; Preflight
+35618943452 identified three exact formatting hunks, now imported. W160 repairs
+one test-only Debug error and two strict-Clippy guards from CI 35617862631 on
+669f32db; that failed-source CI is confirmed cancelled. W161 normalizes equivalent
+Windows verbatim roots in the portable diff-impact fixture. Its older ff146652
+preview built CLI/GUI/relay/migrate and passed portable lifecycle before failing
+diff-impact root binding. Independent source review covers W160/W161; fresh
+hosted CI and preview remain required. W137 automatic routing and W142 terminal
+refresh still need their diagnostic reruns. See
+[W160-W161](../docs/gold-wave160-161-verification.md). No Road checkbox closes;
+W155 Citation and W159 WAL session identity remain separate unpublished work.
+
 **W158 native recovery (2026-09-21):** hosted ff146652 ran 16,938 Windows
 and 17,003 macOS tests; 12/13 failed respectively. Four independently reviewed
 repair families now preserve the real Self-Improve quality/approval/CAS gates,

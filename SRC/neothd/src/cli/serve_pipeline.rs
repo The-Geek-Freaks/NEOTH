@@ -6079,6 +6079,89 @@ mod tests {
             .expect("publish W137 channel authenticated authority decision");
     }
 
+    /// Best-effort failure context for the W137 delegated-agent assertion.
+    /// This must never turn a diagnostic WAL issue into the test's oracle.
+    fn w137_durable_route_diagnostic(wal_path: &std::path::Path) -> String {
+        use std::io::Read as _;
+
+        const MAX_WAL_BYTES: u64 = 256 * 1024;
+        const MAX_WAL_FRAMES: usize = 128;
+
+        let file = match std::fs::File::open(wal_path) {
+            Ok(file) => file,
+            Err(error) => {
+                return format!(
+                    "durable_route_status=wal_open_error({error}); route_reports=unavailable; route_payload=unavailable"
+                );
+            }
+        };
+        let declared_bytes = file.metadata().ok().map(|metadata| metadata.len());
+        let mut bytes = Vec::new();
+        let mut reader = file.take(MAX_WAL_BYTES);
+        if let Err(error) = reader.read_to_end(&mut bytes) {
+            return format!(
+                "durable_route_status=wal_read_error({error}); route_reports=unavailable; route_payload=unavailable"
+            );
+        }
+        if bytes.len() < crate::wal::segment_header::SEGMENT_HEADER_LEN {
+            return format!(
+                "durable_route_status=short_header(bytes={}, declared_bytes={declared_bytes:?}); route_reports=unavailable; route_payload=unavailable",
+                bytes.len()
+            );
+        }
+
+        let mut cursor = &bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..];
+        let mut frames_scanned = 0_usize;
+        let mut route_reports = 0_usize;
+        let mut first_route_payload = None;
+        while !cursor.is_empty() && frames_scanned < MAX_WAL_FRAMES {
+            let frame = match crate::wal::frame::decode_frame(cursor) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    return format!(
+                        "durable_route_status=frame_decode_error({error}); route_reports={route_reports}; route_payload={}",
+                        first_route_payload.unwrap_or_else(|| "unavailable".to_owned())
+                    );
+                }
+            };
+            let frame_len = frame.header.total_len as usize;
+            if frame_len == 0 || frame_len > cursor.len() {
+                return format!(
+                    "durable_route_status=invalid_frame_length({frame_len}); route_reports={route_reports}; route_payload={}",
+                    first_route_payload.unwrap_or_else(|| "unavailable".to_owned())
+                );
+            }
+            frames_scanned += 1;
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::SkillRouteResolved as u8
+            {
+                route_reports += 1;
+                if first_route_payload.is_none() {
+                    first_route_payload = Some(match serde_json::from_slice::<serde_json::Value>(frame.payload) {
+                        Ok(payload) => payload.to_string(),
+                        Err(error) => format!("payload_decode_error({error})"),
+                    });
+                }
+            }
+            cursor = &cursor[frame_len..];
+        }
+        let scan_status = if cursor.is_empty() {
+            "complete"
+        } else {
+            "bounded"
+        };
+        let byte_status = if declared_bytes.is_some_and(|length| length > MAX_WAL_BYTES) {
+            "bounded"
+        } else {
+            "complete_or_unknown"
+        };
+        format!(
+            "durable_route_status=ok(scan={scan_status}, bytes={byte_status}, frames={frames_scanned}); route_reports={route_reports}; route_payload={}",
+            first_route_payload.unwrap_or_else(|| "none".to_owned())
+        )
+    }
+
     #[async_trait]
     impl Provider for ChannelRequestCapturingProvider {
         fn name(&self) -> &'static str {
@@ -9214,7 +9297,7 @@ mod tests {
                     goal_max_turns: 2,
                     meter: crate::providers::meter::Meter::with_default_window(),
                     rate_limiter: Arc::new(crate::channels::rate_limit::RateLimiter::with_defaults()),
-                    segment_path: wal_path,
+                    segment_path: wal_path.clone(),
                     neoth_home: home.path().to_path_buf(),
                     profile_config: crate::config::ProfileConfig::default(),
                     reload_controller: reload,
@@ -9223,6 +9306,9 @@ mod tests {
                     confirm_bus: None,
                     abliterated_loader: None,
                 });
+                // The authority-published installed Skill must be selected by
+                // its unique automatic literal trigger before the real agent
+                // loader applies its `delegate_to` contract.
                 let reply = handler(inbound(Some("w137-channel-delegate run"), None))
                     .await
                     .expect("W137 delegated channel turn completes")
@@ -9231,12 +9317,32 @@ mod tests {
                 assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
                 let requests = provider.requests.lock().expect("read delegated provider requests");
                 assert_eq!(requests.len(), 2, "tool results return to the delegated provider");
-                let initial_system = requests[0].system.as_deref().expect("delegated initial system");
-                assert!(initial_system.contains("W137 delegated agent system"));
-                assert!(!initial_system.contains("W137 selected skill body"));
-                let registry = retained_skill_registry_context(initial_system);
-                assert!(registry.contains("w137-channel-delegate"));
+                let initial_system = requests[0]
+                    .system
+                    .clone()
+                    .unwrap_or_else(|| "<absent delegated initial system>".to_owned());
                 let denied_metadata = canonical_channel_tool_error_metadata(&requests[1].prompt);
+                drop(requests);
+
+                drop(handler);
+                drop(writer);
+                let writer_shutdown = writer_join.await;
+                let writer_shutdown_diagnostic = match &writer_shutdown {
+                    Ok(()) => "wal_writer_shutdown=ok".to_owned(),
+                    Err(error) => format!("wal_writer_shutdown=error({error})"),
+                };
+                let route_diagnostic = format!(
+                    "{writer_shutdown_diagnostic}; {}",
+                    w137_durable_route_diagnostic(&wal_path)
+                );
+                assert!(
+                    initial_system.contains("W137 delegated agent system"),
+                    "W137 delegated agent system missing; initial_system={initial_system:?}; {route_diagnostic}"
+                );
+                writer_shutdown.expect("W137 delegated channel WAL writer completes");
+                assert!(!initial_system.contains("W137 selected skill body"));
+                let registry = retained_skill_registry_context(&initial_system);
+                assert!(registry.contains("w137-channel-delegate"));
                 assert_eq!(
                     denied_metadata.len(),
                     3,
@@ -9256,11 +9362,6 @@ mod tests {
                         "the canonical ToolError metadata must bind {tool} to neoth-codegraph/SCOPE_DENIED"
                     );
                 }
-                drop(requests);
-
-                drop(handler);
-                drop(writer);
-                writer_join.await.expect("W137 delegated channel WAL writer completes");
                 let events: Vec<serde_json::Value> = std::fs::read_to_string(&child_record)
                     .expect("read W137 real codegraph child record")
                     .lines()
