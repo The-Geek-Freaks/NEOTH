@@ -1005,6 +1005,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         system: final_system,
         prompt_bundle_hash,
         prompt_token_estimate,
+        prompt_tax,
         effective_cap: request_token_cap,
     } = budgeted;
     let retained_code_map_binding = match emit_retained_code_map_audits(
@@ -1048,7 +1049,8 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         incognito: args.incognito,
         ..Default::default()
     }
-    .with_wal_session(*wal_session);
+    .with_wal_session(*wal_session)
+    .with_prompt_tax(prompt_tax, &final_prompt, final_system.as_deref());
 
     cancellation.check_open("provider dispatch")?;
     let dispatch_output = match dispatch_provider(

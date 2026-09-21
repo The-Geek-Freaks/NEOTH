@@ -42,6 +42,19 @@ pub fn run(home: &Path, args: MeterArgs) -> Result<()> {
                         String::new()
                     }
                 );
+                if s.prompt_tax_observed_call_count == 0 {
+                    println!("  prompt tax: unavailable (no measured terminal responses)");
+                } else {
+                    println!(
+                        "  prompt tax estimate: skill={} memory={} repo_context={} council={} unattributed={} across {} terminal responses",
+                        s.prompt_tax_skill_tokens,
+                        s.prompt_tax_memory_tokens,
+                        s.prompt_tax_repo_context_tokens,
+                        s.prompt_tax_council_tokens,
+                        s.prompt_tax_unattributed_tokens,
+                        s.prompt_tax_observed_call_count,
+                    );
+                }
             } else {
                 println!(
                     "Meter unavailable — daemon may not be running or has not persisted a snapshot yet."
@@ -66,6 +79,12 @@ mod tests {
             provider_responses: 3,
             input_tokens_total: 100,
             output_tokens_total: 200,
+            prompt_tax_observed_call_count: 0,
+            prompt_tax_skill_tokens: 0,
+            prompt_tax_memory_tokens: 0,
+            prompt_tax_repo_context_tokens: 0,
+            prompt_tax_council_tokens: 0,
+            prompt_tax_unattributed_tokens: 0,
             lagged_events: 0,
         };
         let path = tmp.path().join("meter.json");

@@ -3871,9 +3871,15 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             let crate::cli::chat::BudgetedProviderRequest {
                 prompt: final_prompt,
                 system: system_override,
+                prompt_tax,
                 effective_cap: request_token_cap,
                 ..
             } = budgeted;
+            provider_call_authorizer = provider_call_authorizer.with_prompt_tax(
+                prompt_tax,
+                &final_prompt,
+                system_override.as_deref(),
+            );
             let retained_code_map_binding = match crate::cli::chat::emit_retained_code_map_audits(
                 &writer,
                 channel_repo_context_outcome.injected(),

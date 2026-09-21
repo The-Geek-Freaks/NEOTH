@@ -2,6 +2,16 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W173 retained prompt overhead (2026-09-21):** independently reviewed
+source now carries post-budget skill/memory/repo/council/unattributed estimates
+through terminal usage and live meter output. The actual local/paid provider
+leaf verifies exact prompt/system bytes; subsequent Council/MCP rewrites make
+the inherited metric unavailable, while model-only changes retain it. Old
+records remain unavailable and zero remains a real measured zero. Hosted
+compilation and behavioral tests are pending; no ADOPT31-D3 checkbox closes.
+See [W173](../docs/gold-wave173-verification.md). W174 video-ingest F1/F3 is
+a separate work-in-progress and is excluded from this publication.
+
 **W172 GUI test compile repair (2026-09-21):** the beta job in CI
 35658155763 exposed eight test-only errors after product GUI compilation.
 The repair adds two missing helper imports and replaces six invalid ModelRc

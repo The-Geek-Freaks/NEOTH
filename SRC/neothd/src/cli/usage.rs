@@ -5,15 +5,13 @@
 //! Default window: last 24h. Operator can widen with `--days N` or
 //! pin a custom range with `--since-unix … --until-unix …`.
 
-#[cfg(test)]
-use std::fmt::Write as _;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::Args;
 
-use crate::daemon::usage_log::{UsageRollup, WorkflowOtherTotals, aggregate};
+use crate::daemon::usage_log::{PromptTaxTotals, UsageRollup, WorkflowOtherTotals, aggregate};
 use crate::providers::cost::{Currency, convert_from_usd, format_amount};
 
 /// CLI args for `neoth usage`.
@@ -193,6 +191,7 @@ fn print_table(roll: &UsageRollup, currency: Currency) {
             },
         );
     }
+    print!("{}", render_prompt_tax_section(roll.prompt_tax.as_ref()));
     if roll.per_provider.is_empty() {
         println!("  (no events in window — check ~/.neoth/usage/)");
         return;
@@ -228,6 +227,23 @@ fn print_table(roll: &UsageRollup, currency: Currency) {
         );
     }
     print_workflow_table(roll, currency);
+}
+
+/// Render the complete production prompt-tax section. A missing measurement
+/// remains visible as unavailable; an observed zero remains a measurement.
+fn render_prompt_tax_section(totals: Option<&PromptTaxTotals>) -> String {
+    match totals {
+        None => "  prompt tax: unavailable (no measured terminal responses)\n".to_owned(),
+        Some(totals) => format!(
+            "  prompt tax estimate: retained-bundle input overhead across {} terminal responses\n    skill={} memory={} repo_context={} council={} unattributed={}\n",
+            totals.observed_call_count,
+            totals.skill_tokens,
+            totals.memory_tokens,
+            totals.repo_context_tokens,
+            totals.council_tokens,
+            totals.unattributed_tokens,
+        ),
+    }
 }
 
 /// Render the bounded ADOPT31-D2 breakdown from the same serialized rollup
@@ -438,6 +454,22 @@ mod tests {
         assert_eq!(json["per_workflow"][0]["known_cost_count"], 2);
         assert_eq!(json["per_workflow"][0]["unknown_cost_count"], 2);
         assert_eq!(json["workflow_other"]["omitted_workflow_count"], 3);
+    }
+
+    #[test]
+    fn prompt_tax_section_distinguishes_unavailable_from_an_observed_zero() {
+        let totals = PromptTaxTotals {
+            observed_call_count: 0,
+            ..Default::default()
+        };
+        assert_eq!(
+            render_prompt_tax_section(None),
+            "  prompt tax: unavailable (no measured terminal responses)\n"
+        );
+        assert_eq!(
+            render_prompt_tax_section(Some(&totals)),
+            "  prompt tax estimate: retained-bundle input overhead across 0 terminal responses\n    skill=0 memory=0 repo_context=0 council=0 unattributed=0\n"
+        );
     }
 
     #[test]

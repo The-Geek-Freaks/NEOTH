@@ -65,9 +65,10 @@ pub const DEFAULT_CAPACITY: usize = 256;
 /// from the canonical store (idx_episode / idx_profile / WAL). The
 /// bus must not become a substitute database.
 ///
-/// **Producer status (GOLD-WIRE-10):** only [`DomainEvent::ProviderResponded`]
-/// currently has a producer — the council hemisphere path in `cli::chat`
-/// publishes it, and the [`UsageMeter`] consumes it. The other four variants
+/// **Producer status (GOLD-WIRE-10):** [`DomainEvent::ProviderResponded`] is
+/// published once per durable provider terminal append in
+/// `providers::cost_authorization`, and the [`UsageMeter`] consumes it. The
+/// other four variants
 /// are forward-infra with **no producer yet** (`CronJobFired` for the v0.5
 /// scheduler, `CouncilWinnerSelected` / `SubAgentDispatched` for self-
 /// correction, `WalFrameAppended` for live `wal tail`). The `#[non_exhaustive]`
@@ -104,6 +105,9 @@ pub enum DomainEvent {
         model: String,
         input_tokens: u32,
         output_tokens: u32,
+        /// Content-free local estimate from the retained prompt bundle. `None`
+        /// is unavailable, which remains distinct from an observed zero.
+        prompt_tax: Option<crate::tokens::budget::PromptTax>,
         latency_ms: u32,
         ts_unix: i64,
     },
@@ -204,6 +208,12 @@ pub struct UsageMeter {
     provider_responses: AtomicU64,
     input_tokens_total: AtomicU64,
     output_tokens_total: AtomicU64,
+    prompt_tax_observed_call_count: AtomicU64,
+    prompt_tax_skill_tokens: AtomicU64,
+    prompt_tax_memory_tokens: AtomicU64,
+    prompt_tax_repo_context_tokens: AtomicU64,
+    prompt_tax_council_tokens: AtomicU64,
+    prompt_tax_unattributed_tokens: AtomicU64,
     /// Count of events the drainer DROPPED because it lagged > the bus
     /// capacity during a burst. Makes the best-effort undercount visible so a
     /// reader knows the token totals are a lower bound after `lagged_events > 0`.
@@ -217,6 +227,20 @@ pub struct UsageSnapshot {
     pub provider_responses: u64,
     pub input_tokens_total: u64,
     pub output_tokens_total: u64,
+    /// Zero means no current-process terminal response carried this optional
+    /// measurement; clients must render it as unavailable, not a measured zero.
+    #[serde(default)]
+    pub prompt_tax_observed_call_count: u64,
+    #[serde(default)]
+    pub prompt_tax_skill_tokens: u64,
+    #[serde(default)]
+    pub prompt_tax_memory_tokens: u64,
+    #[serde(default)]
+    pub prompt_tax_repo_context_tokens: u64,
+    #[serde(default)]
+    pub prompt_tax_council_tokens: u64,
+    #[serde(default)]
+    pub prompt_tax_unattributed_tokens: u64,
     /// Events dropped on drainer lag — when `> 0`, the token totals undercount.
     pub lagged_events: u64,
 }
@@ -233,6 +257,7 @@ impl UsageMeter {
         if let DomainEvent::ProviderResponded {
             input_tokens,
             output_tokens,
+            prompt_tax,
             ..
         } = ev
         {
@@ -241,6 +266,24 @@ impl UsageMeter {
                 .fetch_add(u64::from(*input_tokens), Ordering::Relaxed);
             self.output_tokens_total
                 .fetch_add(u64::from(*output_tokens), Ordering::Relaxed);
+            if let Some(prompt_tax) = prompt_tax {
+                self.prompt_tax_observed_call_count
+                    .fetch_add(1, Ordering::Relaxed);
+                self.prompt_tax_skill_tokens
+                    .fetch_add(u64::from(prompt_tax.skill_tokens), Ordering::Relaxed);
+                self.prompt_tax_memory_tokens
+                    .fetch_add(u64::from(prompt_tax.memory_tokens), Ordering::Relaxed);
+                self.prompt_tax_repo_context_tokens.fetch_add(
+                    u64::from(prompt_tax.repo_context_tokens),
+                    Ordering::Relaxed,
+                );
+                self.prompt_tax_council_tokens
+                    .fetch_add(u64::from(prompt_tax.council_tokens), Ordering::Relaxed);
+                self.prompt_tax_unattributed_tokens.fetch_add(
+                    u64::from(prompt_tax.unattributed_tokens),
+                    Ordering::Relaxed,
+                );
+            }
         }
     }
 
@@ -255,6 +298,18 @@ impl UsageMeter {
             provider_responses: self.provider_responses.load(Ordering::Relaxed),
             input_tokens_total: self.input_tokens_total.load(Ordering::Relaxed),
             output_tokens_total: self.output_tokens_total.load(Ordering::Relaxed),
+            prompt_tax_observed_call_count: self
+                .prompt_tax_observed_call_count
+                .load(Ordering::Relaxed),
+            prompt_tax_skill_tokens: self.prompt_tax_skill_tokens.load(Ordering::Relaxed),
+            prompt_tax_memory_tokens: self.prompt_tax_memory_tokens.load(Ordering::Relaxed),
+            prompt_tax_repo_context_tokens: self
+                .prompt_tax_repo_context_tokens
+                .load(Ordering::Relaxed),
+            prompt_tax_council_tokens: self.prompt_tax_council_tokens.load(Ordering::Relaxed),
+            prompt_tax_unattributed_tokens: self
+                .prompt_tax_unattributed_tokens
+                .load(Ordering::Relaxed),
             lagged_events: self.lagged_events.load(Ordering::Relaxed),
         }
     }
@@ -411,6 +466,7 @@ mod tests {
                 model: "m".into(),
                 input_tokens: 0,
                 output_tokens: 0,
+                prompt_tax: None,
                 latency_ms: 0,
                 ts_unix: 1,
             }
@@ -590,6 +646,7 @@ mod tests {
             model: "claude-opus-4-8".into(),
             input_tokens: input,
             output_tokens: output,
+            prompt_tax: None,
             latency_ms: 1200,
             ts_unix: 1,
         }
@@ -609,7 +666,37 @@ mod tests {
         assert_eq!(s.provider_responses, 2);
         assert_eq!(s.input_tokens_total, 13);
         assert_eq!(s.output_tokens_total, 12);
+        assert_eq!(s.prompt_tax_observed_call_count, 0);
         assert_eq!(s.lagged_events, 4);
+    }
+
+    #[test]
+    fn usage_meter_keeps_absent_prompt_tax_distinct_from_observed_tax() {
+        let m = UsageMeter::new();
+        m.absorb(&provider_responded(10, 5));
+        m.absorb(&DomainEvent::ProviderResponded {
+            provider: "openai_api".into(),
+            model: "gpt-5.5".into(),
+            input_tokens: 4,
+            output_tokens: 2,
+            prompt_tax: Some(crate::tokens::budget::PromptTax {
+                skill_tokens: 3,
+                memory_tokens: 5,
+                repo_context_tokens: 7,
+                council_tokens: 11,
+                unattributed_tokens: 13,
+            }),
+            latency_ms: 9,
+            ts_unix: 2,
+        });
+
+        let s = m.snapshot();
+        assert_eq!(s.prompt_tax_observed_call_count, 1);
+        assert_eq!(s.prompt_tax_skill_tokens, 3);
+        assert_eq!(s.prompt_tax_memory_tokens, 5);
+        assert_eq!(s.prompt_tax_repo_context_tokens, 7);
+        assert_eq!(s.prompt_tax_council_tokens, 11);
+        assert_eq!(s.prompt_tax_unattributed_tokens, 13);
     }
 
     #[tokio::test]
@@ -655,11 +742,35 @@ mod tests {
             provider_responses: 3,
             input_tokens_total: 300,
             output_tokens_total: 120,
+            prompt_tax_observed_call_count: 0,
+            prompt_tax_skill_tokens: 0,
+            prompt_tax_memory_tokens: 0,
+            prompt_tax_repo_context_tokens: 0,
+            prompt_tax_council_tokens: 0,
+            prompt_tax_unattributed_tokens: 0,
             lagged_events: 0,
         };
         let json = serde_json::to_string(&s).unwrap();
         let back: UsageSnapshot = serde_json::from_str(&json).unwrap();
         assert_eq!(s, back);
+    }
+
+    #[test]
+    fn legacy_usage_snapshot_leaves_prompt_tax_unavailable() {
+        let legacy = serde_json::json!({
+            "events_total": 9,
+            "provider_responses": 3,
+            "input_tokens_total": 300,
+            "output_tokens_total": 120,
+            "lagged_events": 0,
+        });
+        let snapshot: UsageSnapshot = serde_json::from_value(legacy).unwrap();
+        assert_eq!(snapshot.prompt_tax_observed_call_count, 0);
+        assert_eq!(snapshot.prompt_tax_skill_tokens, 0);
+        assert_eq!(snapshot.prompt_tax_memory_tokens, 0);
+        assert_eq!(snapshot.prompt_tax_repo_context_tokens, 0);
+        assert_eq!(snapshot.prompt_tax_council_tokens, 0);
+        assert_eq!(snapshot.prompt_tax_unattributed_tokens, 0);
     }
 
     #[tokio::test]

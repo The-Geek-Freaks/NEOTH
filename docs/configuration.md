@@ -997,6 +997,23 @@ that pass remain in the context store; failure does not imply rollback. Paper
 IDs remain the stable indexing keys, so a retry follows the existing re-index
 behavior. JSONL emits one counter object without paper abstracts or prompts.
 
+## Prompt overhead in usage and meter
+
+`neoth usage` shows estimated prompt overhead for skill, memory, repository,
+council and unattributed context. `neoth usage --format json` exposes the same
+category totals. The estimate counts context retained after the prompt budget
+is applied and stays separate from provider-reported input tokens and costs.
+
+`neoth meter` and `neoth meter --format json` show the daemon's current-process
+measurement. Each surface includes the number of measured terminal calls.
+Old records and calls whose prompt changed after measurement are unavailable;
+they do not contribute a fabricated zero. A current measured zero means that
+no tagged context remained. When the live meter reports dropped events, its
+totals may be incomplete; persisted usage remains the historical view.
+
+This needs no configuration flag and records category counts without prompt,
+memory, skill or repository content.
+
 ## Validate config
 
 ```bash

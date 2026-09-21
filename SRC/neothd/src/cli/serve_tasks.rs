@@ -10063,6 +10063,7 @@ mod tests {
             input_tokens_total: 1200,
             output_tokens_total: 450,
             lagged_events: 0,
+            ..Default::default()
         };
         write_usage_snapshot(&path, &snap).unwrap();
         let back: crate::domain_events::UsageSnapshot =

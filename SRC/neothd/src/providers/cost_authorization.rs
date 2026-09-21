@@ -238,6 +238,26 @@ fn request_binding_sha256(
     finish_sha256(hasher)
 }
 
+/// Bind a prompt-tax measurement to exactly the prompt and system text whose
+/// retained typed blocks produced it. This deliberately excludes the model so
+/// a later leaf model resolution or retry retains the same measurement.
+fn prompt_tax_request_binding_sha256(prompt: &str, system: Option<&str>) -> String {
+    let mut hasher = Sha256::new();
+    hash_binding_field(
+        &mut hasher,
+        "schema",
+        b"neoth.prompt-tax-request-binding.v1",
+    );
+    hash_binding_field(&mut hasher, "system_present", &[u8::from(system.is_some())]);
+    hash_binding_field(
+        &mut hasher,
+        "system",
+        system.unwrap_or_default().as_bytes(),
+    );
+    hash_binding_field(&mut hasher, "prompt", prompt.as_bytes());
+    finish_sha256(hasher)
+}
+
 fn new_authorization_id(request_binding_sha256: &str) -> String {
     let mut hasher = Sha256::new();
     hash_binding_field(
@@ -362,6 +382,12 @@ pub struct ProviderCallAuditContext {
     pub cost_estimate_model: Option<String>,
     pub prompt_bundle_hash: Option<String>,
     pub prompt_token_estimate: Option<u32>,
+    /// Conservative, content-free estimate derived from the final retained
+    /// local prompt bundle. This is not provider-reported input usage.
+    pub prompt_tax: Option<crate::tokens::budget::PromptTax>,
+    /// Internal content-free binding for `prompt_tax`. It is cleared before a
+    /// ticket is created and is never added to WAL or usage payloads.
+    pub(crate) prompt_tax_request_binding_sha256: Option<String>,
     pub cluster_delegated: bool,
     pub incognito: bool,
 }
@@ -372,6 +398,21 @@ impl ProviderCallAuditContext {
     /// public request data cannot select a header session.
     pub(crate) fn with_wal_session(mut self, wal_session: Option<WalSessionContext>) -> Self {
         self.wal_session = wal_session;
+        self
+    }
+
+    /// Attach a content-free prompt-tax measurement to the final prompt and
+    /// system text that produced it. Authorization strips the measurement if a
+    /// concrete leaf later changes either byte sequence.
+    pub(crate) fn with_prompt_tax(
+        mut self,
+        prompt_tax: crate::tokens::budget::PromptTax,
+        prompt: &str,
+        system: Option<&str>,
+    ) -> Self {
+        self.prompt_tax = Some(prompt_tax);
+        self.prompt_tax_request_binding_sha256 =
+            Some(prompt_tax_request_binding_sha256(prompt, system));
         self
     }
 }
@@ -425,6 +466,9 @@ fn add_audit_context(
     }
     if let Some(prompt_token_estimate) = context.prompt_token_estimate {
         payload.insert("prompt_token_estimate".into(), prompt_token_estimate.into());
+    }
+    if let Some(prompt_tax) = context.prompt_tax {
+        payload.insert("prompt_tax".into(), serde_json::json!(prompt_tax));
     }
     if context.cluster_delegated {
         payload.insert("cluster_delegated".into(), true.into());
@@ -561,6 +605,7 @@ impl ProviderCallAuditTicket {
             self.context.source,
             self.context.call_type,
             self.streaming,
+            self.context.prompt_tax,
         )
     }
 
@@ -702,6 +747,15 @@ impl ProviderCallAuditTicket {
                 "provider usage projection append failed; durable terminal WAL retained for idempotent repair"
             );
         }
+        crate::domain_events::publish(crate::domain_events::DomainEvent::ProviderResponded {
+            provider: self.provider.to_owned(),
+            model: self.wire_model.clone(),
+            input_tokens: usage_event.input_tokens.unwrap_or(0),
+            output_tokens: usage_event.output_tokens.unwrap_or(0),
+            prompt_tax: self.context.prompt_tax,
+            latency_ms: usage_event.latency_ms.min(u64::from(u32::MAX)) as u32,
+            ts_unix: usage_event.ts_unix,
+        });
         Ok(())
     }
 }
@@ -1871,6 +1925,21 @@ impl ProviderCallAuthorizer {
         self
     }
 
+    /// Attach a content-free prompt-tax measurement to the final prompt and
+    /// system text that produced it. Authorization strips the measurement if a
+    /// concrete leaf later changes either byte sequence.
+    pub(crate) fn with_prompt_tax(
+        mut self,
+        prompt_tax: crate::tokens::budget::PromptTax,
+        prompt: &str,
+        system: Option<&str>,
+    ) -> Self {
+        self.audit_context = self
+            .audit_context
+            .with_prompt_tax(prompt_tax, prompt, system);
+        self
+    }
+
     /// Return only the opaque session capability for provider-internal WAL
     /// leaves. Payload fields are deliberately not consulted here.
     pub(crate) fn wal_session(&self) -> Option<WalSessionContext> {
@@ -2091,6 +2160,24 @@ impl ProviderCallAuthorizer {
         );
         let invocation_id = new_authorization_id(&request_binding_sha256);
         let effect_gate = self.turn_effect_gate.clone();
+        let mut audit_context = self.audit_context.clone();
+        let leaf_prompt_tax_request_binding =
+            prompt_tax_request_binding_sha256(&req.prompt, req.system.as_deref());
+        let prompt_tax_matches_leaf = match (
+            audit_context.prompt_tax.as_ref(),
+            audit_context.prompt_tax_request_binding_sha256.as_deref(),
+        ) {
+            (Some(_), Some(expected)) => expected == leaf_prompt_tax_request_binding.as_str(),
+            (Some(_), None) => false,
+            (None, _) => true,
+        };
+        if !prompt_tax_matches_leaf {
+            audit_context.prompt_tax = None;
+        }
+        // The binding proves only this in-process transfer. Ticket contexts are
+        // serialized through lifecycle/usage payloads and must retain metrics,
+        // never this internal comparison value.
+        audit_context.prompt_tax_request_binding_sha256 = None;
 
         let system_hash =
             xxhash_rust::xxh3::xxh3_64(req.system.as_deref().unwrap_or("").as_bytes());
@@ -2138,7 +2225,7 @@ impl ProviderCallAuthorizer {
                     system_bytes: req.system.as_deref().map_or(0, str::len),
                     prompt_bytes: req.prompt.len(),
                     requested_max_output_tokens: req.max_output_tokens,
-                    context: self.audit_context.clone(),
+                    context: audit_context,
                     usage_home: self.usage_home.clone(),
                     usage_automated: current_usage_automated(self.usage_automated),
                     daily_budget_plan,
@@ -2332,7 +2419,7 @@ impl ProviderCallAuthorizer {
                 system_bytes: req.system.as_deref().map_or(0, str::len),
                 prompt_bytes: req.prompt.len(),
                 requested_max_output_tokens: req.max_output_tokens,
-                context: self.audit_context.clone(),
+                context: audit_context,
                 usage_home: self.usage_home.clone(),
                 usage_automated: current_usage_automated(self.usage_automated),
                 daily_budget_plan,
@@ -2752,6 +2839,141 @@ mod tests {
 
     fn test_input_token_cap() -> u32 {
         crate::config::TokensConfig::default_max_per_request()
+    }
+
+    fn prompt_tax_fixture() -> crate::tokens::budget::PromptTax {
+        crate::tokens::budget::PromptTax {
+            memory_tokens: 17,
+            ..Default::default()
+        }
+    }
+
+    async fn prompt_tax_for_test_leaf(
+        provider: &'static str,
+        bound_prompt: &str,
+        bound_system: Option<&str>,
+        request: Request,
+    ) -> Option<crate::tokens::budget::PromptTax> {
+        let authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full).with_prompt_tax(
+            prompt_tax_fixture(),
+            bound_prompt,
+            bound_system,
+        );
+        authorizer
+            .authorize_leaf(provider, &request, "test.prompt_tax_binding", false, Some(64))
+            .await
+            .expect("test authorizer must mint a leaf ticket")
+            .ticket
+            .context
+            .prompt_tax
+    }
+
+    #[tokio::test]
+    async fn prompt_tax_binding_retains_exact_local_leaf() {
+        let tax = prompt_tax_for_test_leaf(
+            "local_ollama",
+            "exact prompt",
+            Some("exact system"),
+            Request {
+                prompt: "exact prompt".into(),
+                system: Some("exact system".into()),
+                model: Some("llama3.2".into()),
+                ..Request::default()
+            },
+        )
+        .await;
+
+        assert_eq!(tax, Some(prompt_tax_fixture()));
+    }
+
+    #[tokio::test]
+    async fn prompt_tax_binding_clears_changed_local_prompt() {
+        let tax = prompt_tax_for_test_leaf(
+            "local_ollama",
+            "budgeted prompt",
+            Some("stable system"),
+            Request {
+                prompt: "leaf changed the prompt".into(),
+                system: Some("stable system".into()),
+                model: Some("llama3.2".into()),
+                ..Request::default()
+            },
+        )
+        .await;
+
+        assert_eq!(tax, None);
+    }
+
+    #[tokio::test]
+    async fn prompt_tax_binding_clears_changed_local_system() {
+        let tax = prompt_tax_for_test_leaf(
+            "local_ollama",
+            "stable prompt",
+            Some("budgeted system"),
+            Request {
+                prompt: "stable prompt".into(),
+                system: Some("leaf changed the system".into()),
+                model: Some("llama3.2".into()),
+                ..Request::default()
+            },
+        )
+        .await;
+
+        assert_eq!(tax, None);
+    }
+
+    #[tokio::test]
+    async fn prompt_tax_binding_retains_local_model_only_change() {
+        let tax = prompt_tax_for_test_leaf(
+            "local_ollama",
+            "stable prompt",
+            Some("stable system"),
+            Request {
+                prompt: "stable prompt".into(),
+                system: Some("stable system".into()),
+                model: Some("qwen3".into()),
+                ..Request::default()
+            },
+        )
+        .await;
+
+        assert_eq!(tax, Some(prompt_tax_fixture()));
+    }
+
+    #[tokio::test]
+    async fn prompt_tax_binding_distinguishes_missing_and_empty_local_system() {
+        let tax = prompt_tax_for_test_leaf(
+            "local_ollama",
+            "stable prompt",
+            None,
+            Request {
+                prompt: "stable prompt".into(),
+                system: Some(String::new()),
+                model: Some("llama3.2".into()),
+                ..Request::default()
+            },
+        )
+        .await;
+
+        assert_eq!(tax, None);
+    }
+
+    #[tokio::test]
+    async fn prompt_tax_binding_also_clears_changed_paid_leaf() {
+        let tax = prompt_tax_for_test_leaf(
+            "openai_api",
+            "budgeted paid prompt",
+            Some("stable paid system"),
+            Request {
+                prompt: "changed paid prompt".into(),
+                system: Some("stable paid system".into()),
+                model: Some("gpt-5".into()),
+                ..Request::default()
+            },
+        )
+        .await;
+
+        assert_eq!(tax, None);
     }
 
     fn w138_retained_paid_provider_deny() -> crate::skills::resolver::SkillInvocationPolicy {

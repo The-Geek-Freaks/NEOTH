@@ -91,6 +91,37 @@ pub struct UsageEvent {
     pub call_type: Option<String>,
     #[serde(default)]
     pub streaming: bool,
+    /// Content-free, locally estimated prompt tax captured from the final
+    /// retained bundle. Missing means legacy/unavailable, never zero.
+    #[serde(default)]
+    pub prompt_tax: Option<crate::tokens::budget::PromptTax>,
+}
+
+/// Aggregate of the optional per-leaf prompt-tax measurements. The observed
+/// count keeps an absent legacy measurement distinct from an observed zero.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct PromptTaxTotals {
+    pub observed_call_count: u64,
+    pub skill_tokens: u64,
+    pub memory_tokens: u64,
+    pub repo_context_tokens: u64,
+    pub council_tokens: u64,
+    pub unattributed_tokens: u64,
+}
+
+impl PromptTaxTotals {
+    fn absorb(&mut self, tax: crate::tokens::budget::PromptTax) {
+        self.observed_call_count = self.observed_call_count.saturating_add(1);
+        self.skill_tokens = self.skill_tokens.saturating_add(u64::from(tax.skill_tokens));
+        self.memory_tokens = self.memory_tokens.saturating_add(u64::from(tax.memory_tokens));
+        self.repo_context_tokens = self
+            .repo_context_tokens
+            .saturating_add(u64::from(tax.repo_context_tokens));
+        self.council_tokens = self.council_tokens.saturating_add(u64::from(tax.council_tokens));
+        self.unattributed_tokens = self
+            .unattributed_tokens
+            .saturating_add(u64::from(tax.unattributed_tokens));
+    }
 }
 
 /// Maximum number of named workflow rows exposed by one usage rollup.
@@ -314,6 +345,10 @@ pub struct UsageRollup {
     pub total_automated_count: u64,
     #[serde(default)]
     pub total_human_count: u64,
+    /// `None` when no row in the requested window has an observed prompt-tax
+    /// measurement. This preserves the legacy unavailable state.
+    #[serde(default)]
+    pub prompt_tax: Option<PromptTaxTotals>,
     /// Per-provider breakdown, sorted by `provider` alphabetically.
     pub per_provider: Vec<PerProviderTotals>,
     /// ADOPT31-D2 workflow rollup wire version. `None` is an older daemon
@@ -383,6 +418,7 @@ pub(crate) fn provider_terminal_event(
     source: Option<&str>,
     call_type: Option<&str>,
     streaming: bool,
+    prompt_tax: Option<crate::tokens::budget::PromptTax>,
 ) -> UsageEvent {
     let reviewed_price = crate::providers::cost::lookup_price(provider, model);
     let cost_usd = match (input_tokens, output_tokens, reviewed_price) {
@@ -433,6 +469,7 @@ pub(crate) fn provider_terminal_event(
         source: source.map(str::to_owned),
         call_type: call_type.map(str::to_owned),
         streaming,
+        prompt_tax,
     }
 }
 
@@ -480,6 +517,7 @@ pub fn record_now(
         source: None,
         call_type: None,
         streaming: false,
+        prompt_tax: None,
     };
     append(home, &ev)?;
     Ok(ev)
@@ -572,6 +610,7 @@ pub fn record_provider_call(
         source: None,
         call_type: None,
         streaming: false,
+        prompt_tax: None,
     };
     append(home, &ev)?;
     Ok(ev)
@@ -616,6 +655,17 @@ fn terminal_optional_str<'a>(
             .as_str()
             .map(Some)
             .ok_or_else(|| anyhow::anyhow!("terminal usage field `{field}` is not a string")),
+    }
+}
+
+fn terminal_prompt_tax(
+    payload: &serde_json::Value,
+) -> anyhow::Result<Option<crate::tokens::budget::PromptTax>> {
+    match payload.get("prompt_tax") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|error| anyhow::anyhow!("terminal usage prompt_tax is invalid: {error}")),
     }
 }
 
@@ -682,6 +732,7 @@ fn usage_event_from_terminal_payload(payload: &[u8]) -> anyhow::Result<Option<Us
             .get("streaming")
             .and_then(serde_json::Value::as_bool)
             .ok_or_else(|| anyhow::anyhow!("terminal usage field `streaming` is missing"))?,
+        terminal_prompt_tax(&value)?,
     )))
 }
 
@@ -815,6 +866,9 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
             match ev.output_tokens {
                 Some(tokens) => roll.total_output_tokens += u64::from(tokens),
                 None => roll.total_unknown_output_token_count += 1,
+            }
+            if let Some(prompt_tax) = ev.prompt_tax {
+                roll.prompt_tax.get_or_insert_with(Default::default).absorb(prompt_tax);
             }
             let event_known_cost = valid_known_cost(ev.cost_usd);
             match event_known_cost {
@@ -1166,6 +1220,7 @@ mod tests {
             Some("council"),
             Some("hemisphere"),
             false,
+            None,
         );
         let expected = crate::providers::cost::actual_cost_usd_with_cache(
             "anthropic_api",
@@ -1947,6 +2002,13 @@ mod tests {
             Some("n8n_api"),
             Some("n8n_provider_call"),
             false,
+            Some(crate::tokens::budget::PromptTax {
+                skill_tokens: 3,
+                memory_tokens: 5,
+                repo_context_tokens: 7,
+                council_tokens: 11,
+                unattributed_tokens: 13,
+            }),
         );
         append(normal_home.path(), &normal).unwrap();
         let payload = serde_json::json!({
@@ -1965,7 +2027,25 @@ mod tests {
             "streaming": false,
             "input_tokens": 1_u64,
             "output_tokens": 2_u64,
+            "prompt_tax": {
+                "skill_tokens": 3_u64,
+                "memory_tokens": 5_u64,
+                "repo_context_tokens": 7_u64,
+                "council_tokens": 11_u64,
+                "unattributed_tokens": 13_u64,
+            },
         });
+        let mut legacy_payload = payload.clone();
+        legacy_payload
+            .as_object_mut()
+            .expect("terminal payload object")
+            .remove("prompt_tax");
+        let legacy_payload = serde_json::to_vec(&legacy_payload)
+            .expect("serialize legacy terminal payload");
+        let legacy = usage_event_from_terminal_payload(&legacy_payload)
+            .expect("valid legacy terminal payload")
+            .expect("terminal payload projects a usage event");
+        assert_eq!(legacy.prompt_tax, None);
         let payload = serde_json::to_vec(&payload).unwrap();
         let header =
             crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_PROVIDER_ERROR, &payload)
@@ -1984,6 +2064,18 @@ mod tests {
         let repaired_roll = aggregate(repaired_home.path(), 0, 200);
         assert_eq!(normal_roll.per_workflow, repaired_roll.per_workflow);
         assert_eq!(normal_roll.workflow_other, repaired_roll.workflow_other);
+        assert_eq!(normal_roll.prompt_tax, repaired_roll.prompt_tax);
+        assert_eq!(
+            normal_roll.prompt_tax,
+            Some(PromptTaxTotals {
+                observed_call_count: 1,
+                skill_tokens: 3,
+                memory_tokens: 5,
+                repo_context_tokens: 7,
+                council_tokens: 11,
+                unattributed_tokens: 13,
+            })
+        );
     }
 
     #[test]

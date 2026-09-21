@@ -220,26 +220,6 @@ use crate::wal::events::{
 #[cfg(test)]
 use crate::wal::spawn as wal_spawn;
 
-/// GOLD-WIRE-10b: fire a `ProviderResponded` domain event so the daemon's
-/// `UsageMeter` counts every provider call, not only council-hemisphere ones.
-/// Mirrors the council path's event shape including latency clamping.
-fn publish_provider_responded(
-    provider_name: &str,
-    model: &str,
-    input_tokens: Option<u32>,
-    output_tokens: Option<u32>,
-    elapsed_ms: u64,
-) {
-    crate::domain_events::publish(crate::domain_events::DomainEvent::ProviderResponded {
-        provider: provider_name.to_string(),
-        model: model.to_string(),
-        input_tokens: input_tokens.unwrap_or(0),
-        output_tokens: output_tokens.unwrap_or(0),
-        latency_ms: elapsed_ms.min(u64::from(u32::MAX)) as u32,
-        ts_unix: now_unix() as i64,
-    });
-}
-
 #[derive(Args, Debug, Clone)]
 pub struct ChatArgs {
     /// Message to send. If omitted, NEOTH reads from stdin until EOF.
@@ -1572,6 +1552,9 @@ pub(super) struct BudgetedProviderRequest {
     pub(super) system: Option<String>,
     pub(super) prompt_bundle_hash: String,
     pub(super) prompt_token_estimate: u32,
+    /// Content-free, conservative prompt-tax estimate from only the typed
+    /// items that survived final budget enforcement.
+    pub(super) prompt_tax: crate::tokens::budget::PromptTax,
     pub(super) effective_cap: u32,
 }
 
@@ -2018,12 +2001,14 @@ pub(super) async fn finalize_provider_request(
         prompt_token_estimate <= cap,
         "final provider request has a conservative input-token upper bound of {prompt_token_estimate}, above the effective cap {cap}; protected prompt or required attachment context cannot be degraded safely"
     );
+    let prompt_tax = crate::tokens::budget::PromptTax::from_retained_items(&items);
 
     Ok(BudgetedProviderRequest {
         prompt,
         system,
         prompt_bundle_hash,
         prompt_token_estimate,
+        prompt_tax,
         effective_cap: cap,
     })
 }
@@ -2205,14 +2190,18 @@ fn build_agent_system_from_layers(
             crate::tokens::budget::BlockItem::new(
                 crate::tokens::budget::Block::B,
                 dispatch.system.trim(),
-            ),
+            )
+            .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Unattributed),
         );
         slot = slot.map(|slot| slot.shifted_for_insert(insert_pos, 1));
     }
     if !flags.recall {
         if let Some(guidance) = layers.guidance_block.as_deref() {
-            let mut item =
-                crate::tokens::budget::BlockItem::new(crate::tokens::budget::Block::D, guidance);
+            let mut item = crate::tokens::budget::BlockItem::new(
+                crate::tokens::budget::Block::D,
+                guidance,
+            )
+            .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory);
             item.ts_ns = 1;
             items.push(item);
         }
@@ -2220,7 +2209,8 @@ fn build_agent_system_from_layers(
             let mut item = crate::tokens::budget::BlockItem::new(
                 crate::tokens::budget::Block::D,
                 recall.as_str(),
-            );
+            )
+            .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory);
             item.ts_ns = 2;
             items.push(item);
         }
@@ -3031,14 +3021,20 @@ pub(super) async fn build_prompt_bundle(
         .filter(|item| item.block == crate::tokens::budget::Block::E)
         .ok_or_else(|| anyhow::anyhow!("prompt assembler lost the typed Block E item"))?;
     if let Some(guidance) = guidance_block {
-        let mut item =
-            crate::tokens::budget::BlockItem::new(crate::tokens::budget::Block::D, guidance);
+        let mut item = crate::tokens::budget::BlockItem::new(
+            crate::tokens::budget::Block::D,
+            guidance,
+        )
+        .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory);
         item.ts_ns = 1;
         budget_items.push(item);
     }
     if let Some(recall) = recall_block.as_ref() {
-        let mut item =
-            crate::tokens::budget::BlockItem::new(crate::tokens::budget::Block::D, recall.as_str());
+        let mut item = crate::tokens::budget::BlockItem::new(
+            crate::tokens::budget::Block::D,
+            recall.as_str(),
+        )
+        .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory);
         item.ts_ns = 2;
         budget_items.push(item);
     }
@@ -6688,16 +6684,6 @@ pub(super) async fn dispatch_provider(
                     tracing::debug!(error = %e, "tps-sample WAL emit failed (non-fatal)");
                 }
             }
-            {
-                let elapsed_ms = stream_call_started.elapsed().as_millis() as u64;
-                publish_provider_responded(
-                    &response_identity.provider,
-                    &response_identity.wire_model,
-                    input_tokens,
-                    output_tokens,
-                    elapsed_ms,
-                );
-            }
             let result = ProviderDispatchResult::from_completion(crate::providers::Completion {
                 text: acc,
                 model: response_identity.wire_model.clone(),
@@ -7065,9 +7051,7 @@ pub(super) async fn dispatch_provider(
                         ));
                     }
                 };
-                let call_started = std::time::Instant::now();
                 let result = provider.complete(req).await;
-                let elapsed_ms = call_started.elapsed().as_millis() as u64;
                 match result {
                     Ok(completion) => {
                         if !completion.identity.is_bound() {
@@ -7089,13 +7073,6 @@ pub(super) async fn dispatch_provider(
                         ) {
                             return_dispatch_error!(error);
                         }
-                        publish_provider_responded(
-                            &completion.identity.provider,
-                            &completion.identity.wire_model,
-                            completion.input_tokens,
-                            completion.output_tokens,
-                            elapsed_ms,
-                        );
                         // GOLD-ADAPT-HERMES-03 — mid-run clarification (opt-in,
                         // TTY-only). If the reply carries an ambiguity marker the
                         // gate parks, asks the operator, and re-issues with the
@@ -7120,15 +7097,6 @@ pub(super) async fn dispatch_provider(
                                 ) {
                                     return_dispatch_error!(error);
                                 }
-                                let resolved_elapsed_ms =
-                                    resolved.latency.as_millis().min(u128::from(u64::MAX)) as u64;
-                                publish_provider_responded(
-                                    &resolved.identity.provider,
-                                    &resolved.identity.wire_model,
-                                    resolved.input_tokens,
-                                    resolved.output_tokens,
-                                    resolved_elapsed_ms,
-                                );
                                 ProviderDispatchResult::from_completion(resolved)
                             }
                             Some(_) => {
@@ -10777,17 +10745,11 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                 "council leaf exceeded routed model cap; optional leaf context degraded"
             );
         }
-        // QM-9 Phase 1.5 follow-on: council debate path now also
-        // persists usage events. Each hemisphere call counts —
-        // operators on a Pick #8 council see the per-hemisphere
-        // burn instead of one aggregate "council ran" row.
-        let call_started = std::time::Instant::now();
         let raw = crate::providers::cost_authorization::automated_usage_scope(
             self.provider
                 .complete_authorized(req, &self.authorizer, "council_leaf"),
         )
         .await;
-        let elapsed_ms = call_started.elapsed().as_millis() as u64;
         match raw {
             Ok(c) => {
                 if !c.identity.is_bound() {
@@ -10813,26 +10775,6 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                 if let Some(p) = permit {
                     p.record_success();
                 }
-                // GOLD-WIRE-10: the council's per-hemisphere provider response
-                // is the first real producer on the domain-event bus. Each
-                // council call fires one `ProviderResponded` per hemisphere; the
-                // daemon's UsageMeter drainer folds the token counts into the
-                // running KF-08 budget total. Best-effort — no-op off-daemon.
-                // SCOPE: only THIS council-hemisphere call site publishes today;
-                // the single-provider chat, streaming, and MCP-loop provider
-                // paths do NOT — so the meter currently counts council token
-                // burn only. Extend those call sites in WIRE-10b for a full
-                // token budget. `latency_ms` is clamped (a call can't take 49d).
-                crate::domain_events::publish(
-                    crate::domain_events::DomainEvent::ProviderResponded {
-                        provider: c.identity.provider.clone(),
-                        model: c.identity.wire_model.clone(),
-                        input_tokens: c.input_tokens.unwrap_or(0),
-                        output_tokens: c.output_tokens.unwrap_or(0),
-                        latency_ms: elapsed_ms.min(u64::from(u32::MAX)) as u32,
-                        ts_unix: now_unix() as i64,
-                    },
-                );
                 Ok(crate::council::orchestrator::CompletionRecord {
                     text: c.text,
                     input_tokens: c.input_tokens,
@@ -14582,17 +14524,10 @@ pub(crate) async fn run_mcp_dispatch_loop(
                         return Err(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
                     }
                 };
-                // QM-9 Phase 1.5 follow-on: streaming MCP-loop now
-                // also persists usage events. Each tool-call hop is
-                // a discrete provider dispatch — operators want to
-                // see the cost of an autoroute chain, not just the
-                // final composed reply.
-                let call_started = std::time::Instant::now();
                 let result = crate::providers::cost_authorization::automated_usage_scope(
                     provider.complete(req),
                 )
                 .await;
-                let elapsed_ms = call_started.elapsed().as_millis() as u64;
                 match result {
                     Ok(c) => {
                         if !c.identity.is_bound() {
@@ -14606,13 +14541,6 @@ pub(crate) async fn run_mcp_dispatch_loop(
                         if let Some(p) = permit {
                             p.record_success();
                         }
-                        publish_provider_responded(
-                            &c.identity.provider,
-                            &c.identity.wire_model,
-                            c.input_tokens,
-                            c.output_tokens,
-                            elapsed_ms,
-                        );
                         Ok(c.text)
                     }
                     Err(e) => {
@@ -17250,16 +17178,23 @@ modes:
     }
 
     #[tokio::test]
-    async fn final_budget_boundary_applies_single_d_degradation_to_request_bytes() {
-        use crate::tokens::budget::{Block, BlockItem};
+    async fn final_budget_boundary_keeps_only_retained_memory_in_prompt_tax() {
+        use crate::tokens::budget::{Block, BlockItem, PromptTaxSource, count_tokens_upper_bound};
 
         let home = tempfile::tempdir().unwrap();
         let (writer, writer_join) = wal_spawn(home.path().join("budget.wal")).unwrap();
         let mut config = FreedomConfig::default();
         config.tokens.max_per_request = 20_000;
+        let mut dropped_memory =
+            BlockItem::new(Block::D, "d".repeat(100_000)).with_prompt_tax_source(PromptTaxSource::Memory);
+        dropped_memory.ts_ns = 1;
+        let mut retained_memory =
+            BlockItem::new(Block::D, "retained memory").with_prompt_tax_source(PromptTaxSource::Memory);
+        retained_memory.ts_ns = 2;
         let items = vec![
             BlockItem::new(Block::A, "protected system"),
-            BlockItem::new(Block::D, "d".repeat(100_000)),
+            dropped_memory,
+            retained_memory,
             BlockItem::new(Block::E, "hello"),
         ];
         let (_, system) = crate::tokens::budget::render_request(&items).unwrap();
@@ -17282,6 +17217,11 @@ modes:
         assert!(result.prompt_token_estimate <= result.effective_cap);
         assert_eq!(result.prompt, "hello");
         assert!(!result.system.unwrap().contains(&"d".repeat(1_000)));
+        assert_eq!(
+            result.prompt_tax.memory_tokens,
+            count_tokens_upper_bound("retained memory"),
+            "the terminal-bound estimate contains the surviving typed memory only"
+        );
 
         drop(writer);
         writer_join.await.unwrap();
@@ -23289,6 +23229,49 @@ modes:
             agent_system.contains(registry_context.as_str()),
             "delegated prompt rebuild must retain the already-rendered session registry block"
         );
+    }
+
+    #[test]
+    fn agent_dispatch_system_is_unattributed_prompt_tax() {
+        let dispatch = crate::sub_agents::Dispatch {
+            agent_name: "prompt-tax-agent".to_owned(),
+            system: "agent-local definition".to_owned(),
+            model: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            prompt: "agent question".to_owned(),
+            omit_flags: crate::sub_agents::AgentOmitFlags::default(),
+        };
+        let layers = AgentRawLayers {
+            operator_context: None,
+            preset_addendum: None,
+            explicit_system: None,
+            repo_context_block: None,
+            attachment_contexts: None,
+            skill_layer: None,
+            skill_registry_context: None,
+            persona_override: None,
+            moral_core: None,
+            communication_profile: None,
+            recall_block: None,
+            guidance_block: None,
+            skill_delegate_to: None,
+            identity_anchor: None,
+            identity_locked: false,
+        };
+
+        let (_, items, _) = build_agent_system_from_layers(&dispatch, &layers).unwrap();
+        let agent_definition = items
+            .iter()
+            .find(|item| item.content == "agent-local definition")
+            .expect("agent dispatch system must become a typed Block B item");
+        assert_eq!(agent_definition.block, crate::tokens::budget::Block::B);
+        assert_eq!(
+            agent_definition.prompt_tax_source,
+            Some(crate::tokens::budget::PromptTaxSource::Unattributed)
+        );
+        let tax = crate::tokens::budget::PromptTax::from_retained_items(&items);
+        assert_eq!(tax.unattributed_tokens, agent_definition.tokens);
     }
 
     fn assert_canonical_auto_recall_envelope(system: &str) {

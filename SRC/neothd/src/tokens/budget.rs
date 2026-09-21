@@ -57,6 +57,73 @@ pub enum Block {
     Conductor,
 }
 
+/// Content-free origin of prompt material whose token contribution is exposed
+/// to the operator. This is deliberately separate from [`Block`]: block kinds
+/// express authority and degradation rules, while one block kind can carry
+/// several different sources of injected material.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptTaxSource {
+    Skill,
+    Memory,
+    RepoContext,
+    Council,
+    /// Deliberately tagged injected material that has no safe category.
+    /// Never infer a category by inspecting its content.
+    Unattributed,
+}
+
+/// Conservative post-budget estimate of injected prompt material for one
+/// provider request. The values are local upper-bound estimates, not provider
+/// reported usage and never contain prompt text or identifiers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromptTax {
+    pub skill_tokens: u32,
+    pub memory_tokens: u32,
+    pub repo_context_tokens: u32,
+    pub council_tokens: u32,
+    pub unattributed_tokens: u32,
+}
+
+impl PromptTax {
+    /// Add one retained item's conservative token estimate to its explicit
+    /// origin. Saturation keeps malformed oversized input from wrapping an
+    /// operator-visible total into a smaller value.
+    pub fn add(&mut self, source: PromptTaxSource, tokens: u32) {
+        let total = match source {
+            PromptTaxSource::Skill => &mut self.skill_tokens,
+            PromptTaxSource::Memory => &mut self.memory_tokens,
+            PromptTaxSource::RepoContext => &mut self.repo_context_tokens,
+            PromptTaxSource::Council => &mut self.council_tokens,
+            PromptTaxSource::Unattributed => &mut self.unattributed_tokens,
+        };
+        *total = total.saturating_add(tokens);
+    }
+
+    /// Aggregate only sources explicitly attached to items retained at the
+    /// final provider boundary. A missing marker remains absent from this
+    /// metric rather than being guessed from the block letter or content.
+    #[must_use]
+    pub fn from_retained_items(items: &[BlockItem]) -> Self {
+        let mut tax = Self::default();
+        for item in items {
+            if let Some(source) = item.prompt_tax_source {
+                tax.add(source, item.tokens);
+            }
+        }
+        tax
+    }
+
+    #[must_use]
+    pub fn total_tokens(self) -> u32 {
+        self.skill_tokens
+            .saturating_add(self.memory_tokens)
+            .saturating_add(self.repo_context_tokens)
+            .saturating_add(self.council_tokens)
+            .saturating_add(self.unattributed_tokens)
+    }
+}
+
 impl Block {
     /// True iff degradation policy is permitted to remove or
     /// truncate this block. Centralises the "never remove A/B/E
@@ -95,6 +162,10 @@ pub enum PromptRetention {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlockItem {
     pub block: Block,
+    /// Explicit content-free origin used only for the prompt-tax metric.
+    /// `None` means this block is outside that metric; consumers must not
+    /// infer a source from [`Self::block`] or inspect content.
+    pub prompt_tax_source: Option<PromptTaxSource>,
     /// All members of an atomic group are retained or removed together.
     pub atomic_group: Option<AtomicGroup>,
     /// Whether token-budget degradation may remove or truncate this item.
@@ -123,6 +194,7 @@ impl BlockItem {
         let content = content.into();
         Self {
             block,
+            prompt_tax_source: None,
             atomic_group: None,
             retention: PromptRetention::Degradable,
             importance: 0.5,
@@ -150,6 +222,12 @@ impl BlockItem {
     #[must_use]
     pub fn with_required_retention(mut self) -> Self {
         self.retention = PromptRetention::Required;
+        self
+    }
+
+    #[must_use]
+    pub fn with_prompt_tax_source(mut self, source: PromptTaxSource) -> Self {
+        self.prompt_tax_source = Some(source);
         self
     }
 }
@@ -615,6 +693,7 @@ mod tests {
     fn item(block: Block, importance: f32, ts_ns: i64, tokens: u32) -> BlockItem {
         BlockItem {
             block,
+            prompt_tax_source: None,
             atomic_group: None,
             retention: PromptRetention::Degradable,
             importance,
@@ -641,6 +720,37 @@ mod tests {
     fn count_tokens_handles_unicode() {
         // chars() counts grapheme-precursors; "Müller" = 6 chars.
         assert_eq!(count_tokens("Müller"), 2);
+    }
+
+    #[test]
+    fn prompt_tax_uses_only_explicit_retained_sources() {
+        let tagged_skill = item(Block::B, 0.5, 0, 11)
+            .with_prompt_tax_source(PromptTaxSource::Skill);
+        let tagged_repo = item(Block::D, 0.5, 1, 7)
+            .with_prompt_tax_source(PromptTaxSource::RepoContext);
+        let untagged = item(Block::E, 0.5, 0, 13);
+
+        let tax = PromptTax::from_retained_items(&[tagged_skill, tagged_repo, untagged]);
+        assert_eq!(tax.skill_tokens, 11);
+        assert_eq!(tax.repo_context_tokens, 7);
+        assert_eq!(tax.memory_tokens, 0);
+        assert_eq!(tax.council_tokens, 0);
+        assert_eq!(tax.unattributed_tokens, 0);
+        assert_eq!(tax.total_tokens(), 18);
+    }
+
+    #[test]
+    fn prompt_tax_excludes_tagged_items_dropped_by_budget_enforcement() {
+        let dropped_recall = item(Block::D, 0.5, 1, 100)
+            .with_prompt_tax_source(PromptTaxSource::Memory);
+        let user = item(Block::E, 0.5, 0, 10);
+        let mut items = vec![dropped_recall, user];
+
+        enforce_budget_to_fit(&mut items, 10)
+            .expect("valid bundle")
+            .expect("recall must be dropped");
+
+        assert_eq!(PromptTax::from_retained_items(&items), PromptTax::default());
     }
 
     // ── Block::is_degradable ──────────────────────────────────────
