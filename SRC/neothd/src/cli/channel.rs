@@ -27,6 +27,27 @@ use crate::config::credentials::Credentials;
 use crate::daemon::channel_runtime_health::{AccountRuntimeState, BindingTag, read_active};
 use crate::secret::SecretString;
 
+const MAX_PRIVATE_PAIRING_APPROVAL_BYTES: u64 = 1024;
+
+/// Strict private GUI request. Deliberately has no `Debug` implementation:
+/// its code must never reach diagnostics through a derived formatter.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PairingApproveRequestEnvelope {
+    schema_version: u8,
+    channel: String,
+    account: ChannelAccountId,
+    request_id: String,
+    code: SecretString,
+}
+
+/// Parsed private GUI request. The secret stays in `SecretString` from JSON
+/// decoding through the store commitment calculation and is never printable.
+struct PairingApproveRequest {
+    request_id: String,
+    code: SecretString,
+}
+
 fn known_channel_names() -> String {
     channel_descriptors()
         .iter()
@@ -2603,6 +2624,50 @@ fn pairing_context(
     }
 }
 
+fn parse_pairing_approve_request_envelope(
+    input: &[u8],
+    selected_channel: &str,
+    selected_account: &ChannelAccountId,
+) -> Result<PairingApproveRequest> {
+    anyhow::ensure!(
+        input.len() <= MAX_PRIVATE_PAIRING_APPROVAL_BYTES as usize,
+        "private pairing approval request is malformed"
+    );
+    let envelope: PairingApproveRequestEnvelope = serde_json::from_slice(input)
+        .map_err(|_| anyhow::anyhow!("private pairing approval request is malformed"))?;
+    anyhow::ensure!(
+        envelope.schema_version == 1
+            && envelope.channel == "telegram"
+            && envelope.channel == selected_channel
+            && envelope.account == *selected_account,
+        "private pairing approval request is malformed"
+    );
+    crate::channels::dm_pairing::validate_request_id(&envelope.request_id)
+        .map_err(|_| anyhow::anyhow!("private pairing approval request is malformed"))?;
+    crate::channels::dm_pairing::validate_code(envelope.code.expose_secret())
+        .map_err(|_| anyhow::anyhow!("private pairing approval request is malformed"))?;
+    Ok(PairingApproveRequest {
+        request_id: envelope.request_id,
+        code: envelope.code,
+    })
+}
+
+fn read_pairing_approve_request_from_stdin(
+    selected_channel: &str,
+    selected_account: &ChannelAccountId,
+) -> Result<PairingApproveRequest> {
+    let mut input = Zeroizing::new(Vec::new());
+    std::io::stdin()
+        .take(MAX_PRIVATE_PAIRING_APPROVAL_BYTES + 1)
+        .read_to_end(&mut input)
+        .map_err(|_| anyhow::anyhow!("private pairing approval request is malformed"))?;
+    anyhow::ensure!(
+        input.len() <= MAX_PRIVATE_PAIRING_APPROVAL_BYTES as usize,
+        "private pairing approval request is malformed"
+    );
+    parse_pairing_approve_request_envelope(&input, selected_channel, selected_account)
+}
+
 pub fn run_pairing_list(
     channel: &str,
     account: ChannelAccountId,
@@ -2653,6 +2718,43 @@ pub fn run_pairing_approve(
             account.as_str()
         ),
     };
+    Ok(())
+}
+
+/// Hidden GUI-only approval endpoint. The selected channel/account are argv
+/// authority; stdin must repeat them exactly and cannot choose another row.
+pub fn run_pairing_approve_request(
+    channel: &str,
+    account: ChannelAccountId,
+    output: &OutputFormat,
+) -> Result<()> {
+    anyhow::ensure!(
+        matches!(output, OutputFormat::Json),
+        "private pairing approval requires `--output json`"
+    );
+    anyhow::ensure!(
+        channel == "telegram",
+        "private pairing approval request is malformed"
+    );
+    let request = read_pairing_approve_request_from_stdin(channel, &account)?;
+    let home = FreedomConfig::default_neoth_home();
+    let (reference, binding) = pairing_context(&home, channel, &account)?;
+    let row = crate::channels::dm_pairing::DmPairingStore::open(&home)?.approve_expected(
+        &reference,
+        &binding,
+        &request.request_id,
+        request.code.expose_secret(),
+        crate::time::now_unix_i64(),
+    )?;
+    println!(
+        "{}",
+        serde_json::json!({
+            "channel": "telegram",
+            "account": account.as_str(),
+            "request_id": row.request_id,
+            "approved": true,
+        })
+    );
     Ok(())
 }
 pub fn run_pairing_dismiss(
@@ -7365,5 +7467,103 @@ mod tests {
             plan_channel_test("totally_bogus_channel", &cfg, &creds_empty()),
             ChannelTestPlan::Unknown
         );
+    }
+
+    #[test]
+    fn private_pairing_approval_envelope_is_strict_bound_and_redacts_parse_failures() {
+        let account = ChannelAccountId::new("ops_b").unwrap();
+        let request_id = "0123456789abcdef0123456789abcdef";
+        let code = "ABCDEFGH";
+        let valid = serde_json::json!({
+            "schema_version": 1,
+            "channel": "telegram",
+            "account": "ops_b",
+            "request_id": request_id,
+            "code": code,
+        });
+        let parsed = parse_pairing_approve_request_envelope(
+            valid.to_string().as_bytes(),
+            "telegram",
+            &account,
+        )
+        .unwrap();
+        assert_eq!(parsed.request_id, request_id);
+        assert_eq!(parsed.code.expose_secret(), code);
+
+        let malformed = b"not json";
+        let unknown = serde_json::json!({
+            "schema_version": 1,
+            "channel": "telegram",
+            "account": "ops_b",
+            "request_id": request_id,
+            "code": code,
+            "untrusted_extra": "must-not-be-reported",
+        });
+        let wrong_identity = serde_json::json!({
+            "schema_version": 1,
+            "channel": "telegram",
+            "account": "ops_other",
+            "request_id": request_id,
+            "code": code,
+        });
+        let bad_code = serde_json::json!({
+            "schema_version": 1,
+            "channel": "telegram",
+            "account": "ops_b",
+            "request_id": request_id,
+            "code": "CODE-LEAK",
+        });
+        let wrong_schema = serde_json::json!({
+            "schema_version": 2,
+            "channel": "telegram",
+            "account": "ops_b",
+            "request_id": request_id,
+            "code": code,
+        });
+        let wrong_channel = serde_json::json!({
+            "schema_version": 1,
+            "channel": "telegram_alias",
+            "account": "ops_b",
+            "request_id": request_id,
+            "code": code,
+        });
+        let wrong_request_id = serde_json::json!({
+            "schema_version": 1,
+            "channel": "telegram",
+            "account": "ops_b",
+            "request_id": "0123456789ABCDEF0123456789ABCDEF",
+            "code": code,
+        });
+        let duplicate_field = format!(
+            r#"{{"schema_version":1,"channel":"telegram","account":"ops_b","request_id":"{request_id}","code":"{code}","code":"{code}"}}"#
+        );
+        let oversized = vec![b'x'; MAX_PRIVATE_PAIRING_APPROVAL_BYTES as usize + 1];
+        let unknown_json = unknown.to_string();
+        let wrong_identity_json = wrong_identity.to_string();
+        let bad_code_json = bad_code.to_string();
+        let wrong_schema_json = wrong_schema.to_string();
+        let wrong_channel_json = wrong_channel.to_string();
+        let wrong_request_id_json = wrong_request_id.to_string();
+        for input in [
+            malformed.as_slice(),
+            unknown_json.as_bytes(),
+            wrong_identity_json.as_bytes(),
+            bad_code_json.as_bytes(),
+            wrong_schema_json.as_bytes(),
+            wrong_channel_json.as_bytes(),
+            wrong_request_id_json.as_bytes(),
+            duplicate_field.as_bytes(),
+            oversized.as_slice(),
+        ] {
+            let error = match parse_pairing_approve_request_envelope(input, "telegram", &account)
+            {
+                Err(error) => error.to_string(),
+                Ok(_) => panic!("invalid private pairing envelope unexpectedly parsed"),
+            };
+            assert_eq!(error, "private pairing approval request is malformed");
+            for forbidden in [code, "CODE-LEAK", "untrusted_extra", "must-not-be-reported"] {
+                assert!(!error.contains(forbidden), "error leaked {forbidden}");
+            }
+        }
     }
 }

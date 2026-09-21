@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W126/W127 (2026-09-21):** selected Telegram DM requests gain private-code
+approval in the GUI. The bounded stdin envelope and atomic request-ID/code match
+prevent approval of another row; exact successful receipts alone trigger the
+same-account refresh. The sender receives its own request ID together with the
+code for an unambiguous operator handoff. Source regression coverage includes
+real CLI parsing and the native private-child callback. See
+[W126](../docs/gold-wave126-verification.md) and
+[W127](../docs/gold-wave127-verification.md). Independent source review is approved; hosted gates remain required;
+render, live-provider and release acceptance remain open. No local validation or
+checkbox/count changes (**1324/1015/307/2**).
+
+**W129 (2026-09-21):** the running `f87e0634` CI exposed one Linux Clippy
+`obfuscated_if_else` error in the existing GUI test inventory. The source now
+uses an equivalent explicit conditional with unchanged payloads/assertions.
+Windows/macOS evidence remains in progress and the repair needs fresh hosted
+validation. See [W129](../docs/gold-wave129-verification.md).
+
 **W124/W125 (2026-09-21):** completed CI `35543099210` on `55ec9225` ran
 16800 Windows tests (16799 pass, one failure, 22 skipped). The remaining
 isolated MCP fixture retains only PATH for its real Python child. Linux/macOS

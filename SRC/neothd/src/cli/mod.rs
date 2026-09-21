@@ -1404,6 +1404,13 @@ pub enum ChannelPairingAction {
         #[arg(long)]
         code: String,
     },
+    /// Private GUI approval for one already-selected pairing request.
+    #[command(name = "approve-request", hide = true)]
+    ApproveRequest {
+        channel: String,
+        #[arg(long)]
+        account: crate::channels::registry::ChannelAccountId,
+    },
     Dismiss {
         channel: String,
         #[arg(long)]
@@ -2194,6 +2201,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 account,
                 code,
             }) => channel::run_pairing_approve(&ch, account, &code, &global_output)?,
+            ChannelAction::Pairing(ChannelPairingAction::ApproveRequest {
+                channel: ch,
+                account,
+            }) => channel::run_pairing_approve_request(&ch, account, &global_output)?,
             ChannelAction::Pairing(ChannelPairingAction::Dismiss {
                 channel: ch,
                 account,
@@ -2768,5 +2779,64 @@ mod default_invocation_tests {
         let rendered = format!("{parsed:?}");
         assert!(!rendered.contains(sentinel));
         assert!(rendered.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn hidden_pairing_approve_request_keeps_public_approve_argv_intact() {
+        use clap::CommandFactory as _;
+
+        let public = Cli::try_parse_from([
+            "neoth",
+            "channel",
+            "pairing",
+            "approve",
+            "telegram",
+            "--account",
+            "ops_b",
+            "--code",
+            "ABCDEFGH",
+        ])
+        .unwrap();
+        assert!(matches!(
+            public.command,
+            Commands::Channel {
+                action: ChannelAction::Pairing(ChannelPairingAction::Approve { channel, account, code })
+            } if channel == "telegram" && account.as_str() == "ops_b" && code == "ABCDEFGH"
+        ));
+
+        let private = Cli::try_parse_from([
+            "neoth",
+            "--output",
+            "json",
+            "channel",
+            "pairing",
+            "approve-request",
+            "telegram",
+            "--account",
+            "ops_b",
+        ])
+        .unwrap();
+        assert!(matches!(
+            private.command,
+            Commands::Channel {
+                action: ChannelAction::Pairing(ChannelPairingAction::ApproveRequest { channel, account })
+            } if channel == "telegram" && account.as_str() == "ops_b"
+        ));
+
+        let mut command = Cli::command();
+        let pairing = command
+            .find_subcommand_mut("channel")
+            .and_then(|channel| channel.find_subcommand_mut("pairing"))
+            .expect("channel pairing command is present");
+        let mut help = Vec::new();
+        pairing
+            .write_long_help(&mut help)
+            .expect("render public pairing help");
+        let help = String::from_utf8(help).expect("Clap help is UTF-8");
+        assert!(help.contains("approve"), "public approve must remain documented");
+        assert!(
+            !help.contains("approve-request"),
+            "hidden private approval must not appear in public pairing help"
+        );
     }
 }

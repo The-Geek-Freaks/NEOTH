@@ -813,14 +813,16 @@ async fn handle_one_message(
         crate::channels::dm_pairing::Admission::PinnedAllowed
         | crate::channels::dm_pairing::Admission::Approved => {}
         crate::channels::dm_pairing::Admission::PairingCode {
+            request_id,
             code,
             newly_created,
-            ..
         } => {
             // A duplicate intentionally has no plaintext code to prevent a
             // code oracle/replay. Only the first durable request may reply.
             if newly_created && let TelegramAdmission::DmPairing { reply, .. } = &admission {
-                reply.send_pairing_code(msg.chat.id.0, &code).await?;
+                reply
+                    .send_pairing_code(msg.chat.id.0, &request_id, &code)
+                    .await?;
             }
             return Ok(());
         }
@@ -1990,6 +1992,130 @@ mod tests {
             .unwrap(),
             crate::channels::dm_pairing::Admission::PinnedAllowed
         ));
+    }
+
+    struct CapturingPairingTransport {
+        sent: std::sync::Mutex<Vec<(String, String)>>,
+    }
+
+    #[async_trait]
+    impl Channel for CapturingPairingTransport {
+        fn name(&self) -> &'static str {
+            "capturing-pairing"
+        }
+
+        async fn run(&self, _handler: PipelineHandler) -> Result<()> {
+            Ok(())
+        }
+
+        async fn send_text(
+            &self,
+            chat_id: &str,
+            text: &str,
+        ) -> std::result::Result<MessageId, ChannelError> {
+            self.sent
+                .lock()
+                .expect("capture pairing delivery")
+                .push((chat_id.to_owned(), text.to_owned()));
+            Ok(MessageId("captured-pairing-challenge".to_owned()))
+        }
+    }
+
+    #[tokio::test]
+    async fn pairing_first_challenge_delivers_own_request_id_and_code_without_audit_plaintext() {
+        let runtime = paired_runtime_account("account_a", 11, "token-a", true);
+        let bundle = paired_bundle(&runtime, "account_a");
+        let (writer, join, home, segment) =
+            crate::wal::writer::spawn_isolated_ready_test_writer("telegram-pairing-challenge")
+                .await
+                .expect("start authenticated pairing WAL fixture");
+        let transport = Arc::new(CapturingPairingTransport {
+            sent: std::sync::Mutex::new(Vec::new()),
+        });
+        let (capability, reply) = bundle
+            .pairing_parts_for_test(writer.clone(), live_delivery_config(), transport.clone())
+            .expect("paired bundle mints its mapped reply capability");
+        let reference = capability.channel_ref().clone();
+        let binding = capability.binding_tag().to_owned();
+        let store = Arc::new(
+            crate::channels::dm_pairing::DmPairingStore::open(home.path())
+                .expect("open pairing store"),
+        );
+        let admission = TelegramAdmission::DmPairing {
+            capability,
+            store: Arc::clone(&store),
+            reply: Box::new(reply),
+        };
+        let pipeline_calls = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::clone(&pipeline_calls);
+        let handler: Arc<PipelineHandler> = Arc::new(Box::new(move |_| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(None) })
+        }));
+        let duplicate_admission = admission.clone();
+
+        handle_one_message(
+            Bot::new("dummy-token"),
+            pairing_message("private", 4242, 22),
+            Arc::clone(&handler),
+            admission,
+            None,
+        )
+        .await
+        .expect("first pairing contact delivers its challenge");
+        handle_one_message(
+            Bot::new("dummy-token"),
+            pairing_message("private", 4242, 22),
+            handler,
+            duplicate_admission,
+            None,
+        )
+        .await
+        .expect("duplicate pairing contact is silently retained");
+        assert_eq!(pipeline_calls.load(Ordering::SeqCst), 0);
+
+        let pending = store
+            .list(&reference, &binding, crate::time::now_unix_i64())
+            .expect("read durable pending request");
+        assert_eq!(pending.len(), 1);
+        let (request_id, message) = {
+            let sent = transport.sent.lock().expect("read captured challenge");
+            assert_eq!(sent.len(), 1, "duplicate contact sends no second challenge");
+            assert_eq!(sent[0].0, "4242");
+            (pending[0].request_id.clone(), sent[0].1.clone())
+        };
+        assert!(message.contains(&request_id), "challenge carries its own request id");
+        let code = message
+            .split("Your pairing code is: ")
+            .nth(1)
+            .and_then(|tail| tail.lines().next())
+            .expect("challenge carries a pairing code")
+            .to_owned();
+        crate::channels::dm_pairing::validate_code(&code).expect("challenge code stays canonical");
+        assert!(message.contains("Share both privately with the operator."));
+        let approved = store
+            .approve_expected(
+                &reference,
+                &binding,
+                &request_id,
+                &code,
+                crate::time::now_unix_i64(),
+            )
+            .expect("the delivered code must authorize its exact durable request");
+        assert_eq!(approved.request_id, request_id);
+        drop(writer);
+        join.await
+            .expect("pairing writer task joins")
+            .expect("pairing writer completes");
+        let audit = std::fs::read(&segment).expect("read pairing audit");
+        assert!(
+            !String::from_utf8_lossy(&audit).contains(&request_id),
+            "WAL never carries the request id plaintext"
+        );
+        assert!(
+            !String::from_utf8_lossy(&audit).contains(&code),
+            "WAL never carries the pairing code plaintext"
+        );
     }
 
     struct TerminalReceiptFailureTransport {

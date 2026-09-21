@@ -167,9 +167,74 @@ impl DmPairingStore {
         code: &str,
         now: i64,
     ) -> Result<PendingRequest> {
+        self.approve_inner(reference, binding_tag, None, code, now)
+    }
+
+    /// Consume exactly the caller-selected current request. The expected id
+    /// and code commitment are matched in one immediate transaction before
+    /// the pending row is deleted or its sender becomes approved.
+    pub(crate) fn approve_expected(
+        &self,
+        reference: &ChannelRef,
+        binding_tag: &str,
+        expected_request_id: &str,
+        code: &str,
+        now: i64,
+    ) -> Result<PendingRequest> {
+        validate_request_id(expected_request_id)?;
+        self.approve_inner(
+            reference,
+            binding_tag,
+            Some(expected_request_id),
+            code,
+            now,
+        )
+    }
+
+    fn approve_inner(
+        &self,
+        reference: &ChannelRef,
+        binding_tag: &str,
+        expected_request_id: Option<&str>,
+        code: &str,
+        now: i64,
+    ) -> Result<PendingRequest> {
         validate_code(code)?;
         let digest = commitment(&self.key, reference, binding_tag, code);
-        self.with_connection(|conn| { let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate)?; expire(&tx,reference,binding_tag,now)?; let row=tx.query_row("SELECT request_id,sender_id,created_at FROM pending WHERE channel_id=?1 AND account_id=?2 AND binding_tag=?3 AND code_commitment=?4",params![reference.channel_id.as_str(),reference.account_id.as_str(),binding_tag,digest.as_slice()],|r| Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?))).optional()?; let Some((request_id,sender_id,created_at))=row else { anyhow::bail!("no current pairing request matches that code") }; let deleted=tx.execute("DELETE FROM pending WHERE channel_id=?1 AND account_id=?2 AND binding_tag=?3 AND request_id=?4 AND code_commitment=?5",params![reference.channel_id.as_str(),reference.account_id.as_str(),binding_tag,request_id,digest.as_slice()])?; anyhow::ensure!(deleted==1,"pairing approval lost its exact pending row"); tx.execute("INSERT INTO approved(channel_id,account_id,binding_tag,sender_id,approved_at) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(channel_id,account_id,binding_tag,sender_id) DO NOTHING",params![reference.channel_id.as_str(),reference.account_id.as_str(),binding_tag,sender_id,now])?; tx.commit()?; Ok(PendingRequest{request_id,created_at}) })
+        self.with_connection(|conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            expire(&tx, reference, binding_tag, now)?;
+            let row = match expected_request_id {
+                Some(expected_request_id) => tx
+                    .query_row(
+                        "SELECT request_id,sender_id,created_at FROM pending WHERE channel_id=?1 AND account_id=?2 AND binding_tag=?3 AND request_id=?4 AND code_commitment=?5",
+                        params![reference.channel_id.as_str(), reference.account_id.as_str(), binding_tag, expected_request_id, digest.as_slice()],
+                        |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)),
+                    )
+                    .optional()?,
+                None => tx
+                    .query_row(
+                        "SELECT request_id,sender_id,created_at FROM pending WHERE channel_id=?1 AND account_id=?2 AND binding_tag=?3 AND code_commitment=?4",
+                        params![reference.channel_id.as_str(), reference.account_id.as_str(), binding_tag, digest.as_slice()],
+                        |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)),
+                    )
+                    .optional()?,
+            };
+            let Some((request_id, sender_id, created_at)) = row else {
+                anyhow::bail!("no current pairing request matches that approval");
+            };
+            let deleted = tx.execute(
+                "DELETE FROM pending WHERE channel_id=?1 AND account_id=?2 AND binding_tag=?3 AND request_id=?4 AND code_commitment=?5",
+                params![reference.channel_id.as_str(), reference.account_id.as_str(), binding_tag, request_id, digest.as_slice()],
+            )?;
+            anyhow::ensure!(deleted == 1, "pairing approval lost its exact pending row");
+            tx.execute(
+                "INSERT INTO approved(channel_id,account_id,binding_tag,sender_id,approved_at) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(channel_id,account_id,binding_tag,sender_id) DO NOTHING",
+                params![reference.channel_id.as_str(), reference.account_id.as_str(), binding_tag, sender_id, now],
+            )?;
+            tx.commit()?;
+            Ok(PendingRequest { request_id, created_at })
+        })
     }
 
     pub(crate) fn dismiss(
@@ -268,10 +333,21 @@ fn random_request_id() -> Result<String> {
     getrandom::getrandom(&mut bytes).context("OS RNG for pairing request")?;
     Ok(hex::encode(bytes))
 }
-fn validate_code(code: &str) -> Result<()> {
+pub(crate) fn validate_code(code: &str) -> Result<()> {
     anyhow::ensure!(
         code.len() == CODE_LEN && code.bytes().all(|b| CODE_ALPHABET.contains(&b)),
         "pairing code is malformed"
+    );
+    Ok(())
+}
+
+pub(crate) fn validate_request_id(request_id: &str) -> Result<()> {
+    anyhow::ensure!(
+        request_id.len() == 32
+            && request_id
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "pairing request id is malformed"
     );
     Ok(())
 }
@@ -579,6 +655,64 @@ mod tests {
             1,
             "exactly one concurrent approval may consume the pending row"
         );
+    }
+
+    #[test]
+    fn expected_approval_requires_the_selected_current_request_and_code_together() {
+        let home = tempfile::tempdir().unwrap();
+        let store = DmPairingStore::open(home.path()).unwrap();
+        let reference = reference("ops_b");
+        let first_code = new_code(&store, &reference, "generation", 7, 100);
+        let second_code = new_code(&store, &reference, "generation", 8, 101);
+        let pending = store.list(&reference, "generation", 102).unwrap();
+        assert_eq!(pending.len(), 2);
+        let first_id = pending[0].request_id.clone();
+        let second_id = pending[1].request_id.clone();
+
+        let wrong_pair = store
+            .approve_expected(&reference, "generation", &first_id, &second_code, 103)
+            .unwrap_err();
+        assert!(wrong_pair.to_string().contains("no current pairing request"));
+        assert_eq!(
+            store.list(&reference, "generation", 103).unwrap().len(),
+            2,
+            "a valid code for another pending request must consume neither row"
+        );
+        assert!(!store.is_approved(&reference, "generation", 7).unwrap());
+        assert!(!store.is_approved(&reference, "generation", 8).unwrap());
+
+        assert!(store
+            .approve_expected(&reference, "stale-generation", &first_id, &first_code, 104)
+            .is_err());
+        let approved = store
+            .approve_expected(&reference, "generation", &first_id, &first_code, 105)
+            .unwrap();
+        assert_eq!(approved.request_id, first_id);
+        assert!(store.is_approved(&reference, "generation", 7).unwrap());
+        assert!(store
+            .approve_expected(&reference, "generation", &first_id, &first_code, 106)
+            .is_err());
+        assert_eq!(
+            store.list(&reference, "generation", 106).unwrap(),
+            vec![PendingRequest {
+                request_id: second_id.clone(),
+                created_at: 101,
+            }]
+        );
+
+        assert!(store
+            .approve_expected(
+                &reference,
+                "generation",
+                &second_id,
+                &second_code,
+                101 + TTL_SECS + 1,
+            )
+            .is_err());
+        assert!(store
+            .list(&reference, "generation", 101 + TTL_SECS + 1)
+            .unwrap()
+            .is_empty());
     }
 
     #[cfg(unix)]

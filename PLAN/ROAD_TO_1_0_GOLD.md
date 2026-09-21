@@ -8,6 +8,23 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W126/W127 selected-request approval (2026-09-21):** the GUI can approve an
+existing Telegram DM pairing request with the sender's private code. A hidden
+stdin-only CLI envelope binds the selected request and account; one immediate
+store transaction matches request ID and code before authorizing the sender.
+Only an exact successful receipt triggers refresh; uncertain outcomes preserve
+rows without retry. The first sender challenge now includes its request ID so
+the operator can select the correct row. See [W126](../docs/gold-wave126-verification.md)
+and [W127](../docs/gold-wave127-verification.md). Independent source review is approved; fresh hosted
+gates remain required; no native/render/live-provider or release pass is claimed.
+Local validation remains suspended. Counts stay **1324/1015/307/2**.
+
+**W129 observed lint repair:** CI `35567383561` on `f87e0634` reached Linux
+Clippy and rejected an obfuscated conditional in the shared GUI test inventory.
+An explicit equivalent `if`/`else` preserves the rows and assertions. Other
+platform jobs continue; fresh Linux execution remains required. See
+[W129](../docs/gold-wave129-verification.md).
+
 **W124/W125 observed CI and preview recovery (2026-09-21):** full CI
 `35543099210` on `55ec9225` executed 16800 Windows tests: 16799 passed, one
 failed, 22 skipped. Linux/macOS stopped on a missing nested-module GUI-test

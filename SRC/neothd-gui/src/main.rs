@@ -10997,6 +10997,7 @@ fn main() -> Result<()> {
     register_channel_account_retirement_callback(&window);
     register_channel_account_dm_pairing_callback(&window);
     register_channel_pairing_request_callbacks(&window);
+    register_channel_pairing_approval_callback(&window);
 
     // GUI-overhaul feature parity — Memory "forget a topic". Preview runs the
     // dry-run (`neoth memory --forget <topic>`, no --confirm) and reports the
@@ -18760,6 +18761,48 @@ fn fetch_channel_pairing_requests(
     panel_logic::parse_telegram_pairing_list(&output.stdout, account)
 }
 
+/// Pairing codes cross only the selected CLI's private stdin. Drop the
+/// zeroizing request before waiting, and never expose child stderr to the UI.
+fn persist_channel_pairing_approval(
+    account: &str,
+    body: zeroize::Zeroizing<Vec<u8>>,
+) -> Result<std::process::Output, String> {
+    let child_result = (|| {
+        let bin = which_neothd()
+            .ok_or_else(|| "NEOTH CLI not found; reinstall or repair PATH.".to_string())?;
+        let mut command = panel_logic::telegram_pairing_approve_command(&bin, "telegram", account)?;
+        scrub_gui_control_environment(&mut command);
+        command
+            .env("NO_COLOR", "1")
+            .env("RUST_LOG_STYLE", "never")
+            .env("CLICOLOR", "0")
+            .env("NEOTH_LOG", "error");
+        suppress_console_window(&mut command);
+        let mut child = command
+            .spawn()
+            .map_err(|_| "Could not start the private pairing approval command.".to_string())?;
+        let write_result = child
+            .stdin
+            .take()
+            .ok_or_else(|| "Private pairing approval input is unavailable.".to_string())
+            .and_then(|mut stdin| {
+                stdin
+                    .write_all(body.as_slice())
+                    .map_err(|_| "Could not submit private pairing approval input.".to_string())
+            });
+        if let Err(error) = write_result {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        Ok(child)
+    })();
+    drop(body);
+    child_result?
+        .wait_with_output()
+        .map_err(|_| "Pairing approval completion is unavailable; refresh to reconcile.".to_string())
+}
+
 /// All request operations are admitted on the UI thread under one busy guard.
 /// Account selection cannot change until its reply is consumed; a revoked or
 /// removed account projection additionally rejects the completed snapshot.
@@ -18894,6 +18937,72 @@ fn register_channel_pairing_request_callbacks(window: &MainWindow) {
                 fetch_channel_pairing_requests(&account)
                     .map_err(|error| format!("Request dismissed, but refresh failed: {error}"))
             })();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = weak.upgrade() {
+                    apply_channel_pairing_requests(&window, &account, result);
+                }
+            });
+        });
+    });
+}
+
+fn register_channel_pairing_approval_callback(window: &MainWindow) {
+    let weak = window.as_weak();
+    window.on_channel_pairing_approve(move |channel, account, request_id, code| {
+        use slint::Model as _;
+        let code = zeroize::Zeroizing::new(code.to_string());
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        if channel_pairing_operation_pending(&window)
+            || window.get_channel_pairing_account() != account
+            || !window.get_channel_pairing_loaded()
+            || !window.get_channel_pairing_error().is_empty()
+            || !channel_pairing_account_available(&window, account.as_str())
+            || !window
+                .get_channel_pairing_requests()
+                .iter()
+                .any(|row| row.request_id == request_id)
+        {
+            return;
+        }
+        let body = match panel_logic::telegram_pairing_approve_body(
+            channel.as_str(),
+            account.as_str(),
+            request_id.as_str(),
+            code.as_str(),
+        ) {
+            Ok(body) => body,
+            Err(_) => {
+                window.set_channel_pairing_error(
+                    "Approval input is invalid. Refresh, select the request and enter its eight-character pairing code."
+                        .into(),
+                );
+                return;
+            }
+        };
+        drop(code);
+        window.set_channel_pairing_in_flight(true);
+        let weak = weak.clone();
+        let account = account.to_string();
+        let request_id = request_id.to_string();
+        std::thread::spawn(move || {
+            let result = persist_channel_pairing_approval(&account, body).and_then(|output| {
+                if !output.status.success()
+                    || panel_logic::parse_telegram_pairing_approved(
+                        &output.stdout,
+                        &account,
+                        &request_id,
+                    ) != Some(true)
+                {
+                    return Err(
+                        "Pairing approval unconfirmed. Refresh before another attempt; the code was cleared and no automatic retry was made."
+                            .to_string(),
+                    );
+                }
+                fetch_channel_pairing_requests(&account)
+                    .map_err(|error| format!("Request approved, but refresh failed: {error}"))
+            });
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(window) = weak.upgrade() {
                     apply_channel_pairing_requests(&window, &account, result);
@@ -37662,7 +37771,7 @@ mod w58_gui_callback_runtime_tests {
         publish_code_map_enrichment_readiness, register_buddy_code_map_impact_callback,
         register_buddy_code_map_status_callback, register_buddy_native_coding_callbacks,
         register_channel_account_dm_pairing_callback, register_channel_account_retirement_callback,
-        register_channel_pairing_request_callbacks,
+        register_channel_pairing_approval_callback, register_channel_pairing_request_callbacks,
         register_code_map_enrichment_readiness_callbacks, start_code_map_lifecycle_config_apply,
         start_code_map_lifecycle_refresh, which_neothd,
     };
@@ -38967,25 +39076,25 @@ mod w58_gui_callback_runtime_tests {
         let rows = descriptors
             .iter()
             .map(|descriptor| {
-                let accounts = (descriptor.id.as_str() == "telegram")
-                    .then(|| {
-                        accounts
-                            .iter()
-                            .map(|account| {
-                                serde_json::json!({
-                                    "channel_ref": {
-                                        "channel_id": "telegram",
-                                        "account_id": account,
-                                    },
-                                    "status": "ok",
-                                    "detail": "configured",
-                                    "runtime": "running",
-                                    "dm_pairing": dm_pairing_account == Some(*account),
-                                })
+                let accounts = if descriptor.id.as_str() == "telegram" {
+                    accounts
+                        .iter()
+                        .map(|account| {
+                            serde_json::json!({
+                                "channel_ref": {
+                                    "channel_id": "telegram",
+                                    "account_id": account,
+                                },
+                                "status": "ok",
+                                "detail": "configured",
+                                "runtime": "running",
+                                "dm_pairing": dm_pairing_account == Some(*account),
                             })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
                 serde_json::json!({
                     "name": descriptor.id.as_str(),
                     "status": if descriptor.id.as_str() == "telegram" { "ok" } else { "not_configured" },
@@ -39106,7 +39215,7 @@ if [ "$1" = channel ] && [ "$2" = pairing ] && [ "$3" = list ] && [ "$4" = teleg
     fi
   fi
   case "$mode" in
-    w121_blocked_list|w121_list|w121_wrong_receipt|w121_success) /bin/cat "$base/pairing-requests.json" ;;
+    w121_blocked_list|w121_list|w121_wrong_receipt|w121_success|w126_list|w126_blocked|w126_invalid|w126_foreign|w126_nonzero|w126_success) /bin/cat "$base/pairing-requests.json" ;;
     *) printf 'unexpected pairing-list mode: %s\n' "$mode" >&2; exit 76 ;;
   esac
   exit 0
@@ -39117,6 +39226,34 @@ if [ "$1" = channel ] && [ "$2" = pairing ] && [ "$3" = dismiss ] && [ "$4" = te
     w121_wrong_receipt) printf '{"channel":"telegram","account":"ops_b","request_id":"fedcba9876543210fedcba9876543210","dismissed":true}\n' ;;
     w121_success) printf '{"channel":"telegram","account":"ops_b","request_id":"0123456789abcdef0123456789abcdef","dismissed":true}\n' ;;
     *) printf 'unexpected pairing-dismiss mode: %s\n' "$mode" >&2; exit 77 ;;
+  esac
+  exit 0
+fi
+if [ "$1" = channel ] && [ "$2" = pairing ] && [ "$3" = approve-request ] && [ "$4" = telegram ] && [ "$5" = --account ] && [ "$6" = ops_b ] && [ "$7" = --output ] && [ "$8" = json ] && [ "$#" -eq 8 ]; then
+  body=$(/bin/cat)
+  expected='{"schema_version":1,"channel":"telegram","account":"ops_b","request_id":"0123456789abcdef0123456789abcdef","code":"ABCDEFGH"}'
+  if [ "${#body}" -gt 1024 ] || [ "$body" != "$expected" ]; then
+    printf 'private approval body rejected\n' >&2
+    exit 78
+  fi
+  printf 'approval:started\n' >> "$base/calls"
+  if [ "$mode" = w126_blocked ]; then
+    remaining=500
+    while [ ! -f "$base/approval-release" ] && [ "$remaining" -gt 0 ]; do
+      /bin/sleep 0.01
+      remaining=$((remaining - 1))
+    done
+    if [ ! -f "$base/approval-release" ]; then
+      printf 'fixture approval release timeout\n' >&2
+      exit 79
+    fi
+  fi
+  case "$mode" in
+    w126_blocked|w126_invalid) printf 'not-json\n' ;;
+    w126_foreign) printf '{"channel":"telegram","account":"ops_b","request_id":"fedcba9876543210fedcba9876543210","approved":true}\n' ;;
+    w126_nonzero) printf 'controlled approval failure\n' >&2; exit 11 ;;
+    w126_success) printf '{"channel":"telegram","account":"ops_b","request_id":"0123456789abcdef0123456789abcdef","approved":true}\n' ;;
+    *) printf 'unexpected approval mode: %s\n' "$mode" >&2; exit 80 ;;
   esac
   exit 0
 fi
@@ -39291,6 +39428,20 @@ exit 72
             std::thread::sleep(Duration::from_millis(10));
         }
         panic!("timed out waiting for the blocked request-list child");
+    }
+
+    #[cfg(not(windows))]
+    fn w126_wait_for_approval_start(calls: &Path) {
+        for _ in 0..500 {
+            if w116_call_lines(calls)
+                .iter()
+                .any(|line| line == "approval:started")
+            {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("timed out waiting for the blocked private approval child");
     }
 
     #[cfg(not(windows))]
@@ -39699,8 +39850,109 @@ exit 72
         );
     }
 
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt() {
+        const REQUEST: &str = "0123456789abcdef0123456789abcdef";
+        const OTHER_REQUEST: &str = "fedcba9876543210fedcba9876543210";
+        const THIRD_REQUEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("serial GUI fixture environment");
+        let fixture = TempDir::new().expect("create pairing-approval fixture directory");
+        let bin = w116_stage_fake_neoth(&fixture);
+        let mode = fixture.path().join("mode");
+        let calls = fixture.path().join("calls");
+        let approval_release = fixture.path().join("approval-release");
+        std::fs::write(&calls, b"").expect("initialize fixture call log");
+        std::fs::write(&mode, b"w126_list").expect("select initial request-list fixture");
+        std::fs::write(
+            fixture.path().join("pairing-requests.json"),
+            w121_pairing_requests_json(&[REQUEST, OTHER_REQUEST, THIRD_REQUEST]),
+        )
+        .expect("write bounded initial pairing requests");
+        let _path = PathGuard::install(fixture.path());
+        assert_eq!(
+            std::fs::canonicalize(which_neothd().expect("resolve staged approval CLI")).expect("canonicalize resolved approval CLI"),
+            std::fs::canonicalize(&bin).expect("canonicalize staged approval CLI"),
+            "the real resolver must choose this staged CLI fixture"
+        );
+
+        let window = MainWindow::new().expect("construct generated MainWindow");
+        let mut channels = w116_initial_channels();
+        channels[0].accounts[1].dm_pairing = true;
+        apply_channels(&window, Ok(channels));
+        register_channel_pairing_request_callbacks(&window);
+        register_channel_pairing_approval_callback(&window);
+        register_channel_account_dm_pairing_callback(&window);
+        window.invoke_channel_pairing_list("telegram".into(), "ops_b".into());
+        w121_pump_until_request_operation_settles(&window);
+        assert!(window.get_channel_pairing_loaded());
+        let unchanged = w121_pairing_request_ids(&window);
+
+        std::fs::write(&mode, b"w126_blocked").expect("select blocked approval fixture");
+        let mut release_guard = W116ReleaseGuard::new(approval_release);
+        window.invoke_channel_pairing_approve("telegram".into(), "ops_b".into(), REQUEST.into(), "ABCDEFGH".into());
+        assert!(window.get_channel_pairing_in_flight());
+        w126_wait_for_approval_start(&calls);
+        window.invoke_channel_pairing_approve("telegram".into(), "ops_b".into(), REQUEST.into(), "ABCDEFGH".into());
+        window.invoke_channel_pairing_list("telegram".into(), "ops_b".into());
+        window.invoke_channel_pairing_dismiss("telegram".into(), "ops_b".into(), REQUEST.into());
+        window.invoke_channel_account_dm_pairing("telegram".into(), "ops_b".into(), false);
+        assert_eq!(w116_call_lines(&calls), ["request-list:ops_b", "approval:started"]);
+        release_guard.release();
+        w121_pump_until_request_operation_settles(&window);
+        assert!(!window.get_channel_pairing_loaded());
+        assert_eq!(w121_pairing_request_ids(&window), unchanged);
+
+        for (failure_index, mode_name) in ["w126_invalid", "w126_foreign", "w126_nonzero"]
+            .into_iter()
+            .enumerate()
+        {
+            std::fs::write(&mode, b"w126_list").expect("reload after unconfirmed approval");
+            window.invoke_channel_pairing_list("telegram".into(), "ops_b".into());
+            w121_pump_until_request_operation_settles(&window);
+            assert!(window.get_channel_pairing_loaded());
+            std::fs::write(&mode, mode_name).expect("select controlled approval outcome");
+            window.invoke_channel_pairing_approve("telegram".into(), "ops_b".into(), REQUEST.into(), "ABCDEFGH".into());
+            assert!(window.get_channel_pairing_in_flight());
+            w121_pump_until_request_operation_settles(&window);
+            assert!(!window.get_channel_pairing_loaded(), "{mode_name} must require explicit reload");
+            assert_eq!(w121_pairing_request_ids(&window), unchanged, "{mode_name} must retain every request row");
+            let call_lines = w116_call_lines(&calls);
+            assert_eq!(
+                call_lines.iter().filter(|line| line.as_str() == "approval:started").count(),
+                failure_index + 2,
+                "{mode_name} must launch exactly one approval child"
+            );
+            assert_eq!(
+                call_lines.iter().filter(|line| line.as_str() == "request-list:ops_b").count(),
+                failure_index + 2,
+                "{mode_name} must not perform an implicit re-list before the next explicit reload"
+            );
+        }
+
+        std::fs::write(&mode, b"w126_list").expect("reload before exact approval");
+        window.invoke_channel_pairing_list("telegram".into(), "ops_b".into());
+        w121_pump_until_request_operation_settles(&window);
+        std::fs::write(&mode, b"w126_success").expect("select exact approval receipt");
+        std::fs::write(
+            fixture.path().join("pairing-requests.json"),
+            w121_pairing_requests_json(&[OTHER_REQUEST, THIRD_REQUEST]),
+        )
+        .expect("write canonical post-approval request list");
+        window.invoke_channel_pairing_approve("telegram".into(), "ops_b".into(), REQUEST.into(), "ABCDEFGH".into());
+        w121_pump_until_request_operation_settles(&window);
+        assert!(window.get_channel_pairing_loaded());
+        assert!(window.get_channel_pairing_error().is_empty());
+        assert_eq!(w121_pairing_request_ids(&window), [OTHER_REQUEST.to_string(), THIRD_REQUEST.to_string()]);
+        let call_lines = w116_call_lines(&calls);
+        assert_eq!(call_lines.iter().filter(|line| line.as_str() == "approval:started").count(), 5);
+        assert_eq!(call_lines.iter().filter(|line| line.as_str() == "request-list:ops_b").count(), 6);
+        assert!(call_lines.iter().all(|line| !line.contains("ABCDEFGH")), "fixture counters must never retain the private pairing code");
+    }
+
     #[cfg(target_os = "macos")]
-    const MACOS_NATIVE_HARNESS_TESTS: [&str; 8] = [
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 9] = [
         "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
         "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
@@ -39709,6 +39961,7 @@ exit 72
         "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt",
         "w58_gui_callback_runtime_tests::w122_channel_account_dm_pairing_callback_preserves_projection_until_exact_receipt",
         "w58_gui_callback_runtime_tests::w121_channel_pairing_request_callbacks_require_exact_receipts_before_relisting",
+        "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt",
     ];
 
     /// Native macOS Nextest bridge. Keep its stdout restricted to the libtest
@@ -39788,6 +40041,9 @@ exit 72
                     }
                     "w58_gui_callback_runtime_tests::w121_channel_pairing_request_callbacks_require_exact_receipts_before_relisting" => {
                         w121_channel_pairing_request_callbacks_require_exact_receipts_before_relisting()
+                    }
+                    "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt" => {
+                        w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt()
                     }
                     _ => return Err(format!("unknown macOS native GUI test {test_name:?}")),
                 }

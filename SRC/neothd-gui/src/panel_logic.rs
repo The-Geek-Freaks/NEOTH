@@ -3047,6 +3047,83 @@ pub fn telegram_pairing_dismiss_command(
     Ok(command)
 }
 
+const TELEGRAM_PAIRING_APPROVE_BODY_MAX_BYTES: usize = 1024;
+
+fn canonical_telegram_pairing_code(raw: &str) -> Result<&str, String> {
+    const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    if raw.len() != 8 || !raw.bytes().all(|byte| ALPHABET.contains(&byte)) {
+        return Err("pairing code must use the required eight-character format".to_string());
+    }
+    Ok(raw)
+}
+
+/// Build the hidden private-stdin approval command for one explicit Telegram
+/// account. Pairing codes and request ids are intentionally absent from argv.
+pub fn telegram_pairing_approve_command(
+    bin: &std::path::Path,
+    channel: &str,
+    account: &str,
+) -> Result<std::process::Command, String> {
+    if channel != "telegram" {
+        return Err("only Telegram has DM-pairing requests".to_string());
+    }
+    let account_id = canonical_telegram_account_id(account)?;
+    let mut command = std::process::Command::new(bin);
+    command
+        .arg("channel")
+        .arg("pairing")
+        .arg("approve-request")
+        .arg("telegram")
+        .arg("--account")
+        .arg(account_id.as_str())
+        .arg("--output")
+        .arg("json")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    Ok(command)
+}
+
+/// Serialize the exact private approval envelope directly into zeroizing
+/// storage. No JSON value or formatted string retains a second copy of the
+/// sender-provided pairing code.
+pub fn telegram_pairing_approve_body(
+    channel: &str,
+    account: &str,
+    request_id: &str,
+    code: &str,
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    #[derive(serde::Serialize)]
+    struct PairingApproveBody<'a> {
+        schema_version: u8,
+        channel: &'a str,
+        account: &'a str,
+        request_id: &'a str,
+        code: &'a str,
+    }
+
+    if channel != "telegram" {
+        return Err("only Telegram has DM-pairing requests".to_string());
+    }
+    let account_id = canonical_telegram_account_id(account)?;
+    let request_id = canonical_telegram_pairing_request_id(request_id)?;
+    let code = canonical_telegram_pairing_code(code)?;
+    let body = PairingApproveBody {
+        schema_version: 1,
+        channel: "telegram",
+        account: account_id.as_str(),
+        request_id,
+        code,
+    };
+    let mut encoded = Zeroizing::new(Vec::with_capacity(192));
+    serde_json::to_writer(&mut *encoded, &body)
+        .map_err(|_| "could not encode private pairing approval".to_string())?;
+    if encoded.len() > TELEGRAM_PAIRING_APPROVE_BODY_MAX_BYTES {
+        return Err("private pairing approval exceeds the size limit".to_string());
+    }
+    Ok(encoded)
+}
+
 /// Parse the bounded, canonical request inventory emitted by `channel pairing
 /// list`.  A malformed response is rejected as a whole so the GUI cannot make
 /// a dismissal decision from a partial or mismatched snapshot.
@@ -3131,6 +3208,37 @@ pub fn parse_telegram_pairing_dismissed(
         && returned_account == expected_account
         && returned_request == expected_request
         && receipt.dismissed)
+        .then_some(true)
+}
+
+/// Parse the exact private approval receipt. The code never appears in this
+/// receipt or in any parser error, and only the selected request can succeed.
+pub fn parse_telegram_pairing_approved(
+    stdout: &[u8],
+    expected_account: &str,
+    expected_request: &str,
+) -> Option<bool> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PairingApprovedWire {
+        channel: String,
+        account: String,
+        request_id: String,
+        approved: bool,
+    }
+
+    if stdout.len() > MAX_TELEGRAM_PAIRING_JSON_BYTES {
+        return None;
+    }
+    let expected_account = canonical_telegram_account_id(expected_account).ok()?;
+    let expected_request = canonical_telegram_pairing_request_id(expected_request).ok()?;
+    let receipt: PairingApprovedWire = serde_json::from_slice(stdout).ok()?;
+    let returned_account = canonical_telegram_account_id(&receipt.account).ok()?;
+    let returned_request = canonical_telegram_pairing_request_id(&receipt.request_id).ok()?;
+    (receipt.channel == "telegram"
+        && returned_account == expected_account
+        && returned_request == expected_request
+        && receipt.approved)
         .then_some(true)
 }
 

@@ -5164,18 +5164,20 @@ impl PairingReplySender {
     /// intent -> CHANNEL_SEND -> authenticated result sequence.  A terminal
     /// receipt failure is surfaced to the adapter; it never becomes a
     /// successful pairing admission or pipeline invocation.
-    pub(crate) async fn send_pairing_code(&self, chat_id: i64, code: &str) -> anyhow::Result<()> {
+    pub(crate) async fn send_pairing_code(
+        &self,
+        chat_id: i64,
+        request_id: &str,
+        code: &str,
+    ) -> anyhow::Result<()> {
         anyhow::ensure!(
             chat_id > 0,
             "pairing reply requires a positive private Telegram chat id"
         );
-        anyhow::ensure!(
-            code.len() == 8
-                && code
-                    .bytes()
-                    .all(|byte| byte.is_ascii_uppercase() || matches!(byte, b'2'..=b'9')),
-            "pairing reply received an invalid code"
-        );
+        crate::channels::dm_pairing::validate_request_id(request_id)
+            .context("pairing reply received an invalid request id")?;
+        crate::channels::dm_pairing::validate_code(code)
+            .context("pairing reply received an invalid code")?;
         let channel = self
             .channel
             .get()
@@ -5194,7 +5196,11 @@ impl PairingReplySender {
         delivery
             .send_or_edit(
                 &self.writer,
-                &format!("[NEOTH] Your pairing code is: {code}"),
+                &format!(
+                    "[NEOTH] Your pairing request ID is: {request_id}\n\
+Your pairing code is: {code}\n\
+Share both privately with the operator."
+                ),
                 true,
             )
             .await
@@ -10828,8 +10834,16 @@ mod channel_reconcile_tests {
             retired.upgrade().is_none(),
             "the reply capability retained by TelegramChannel must not form a strong self-cycle"
         );
+        let invalid_request = reply
+            .send_pairing_code(4242, "NOT-A-REQUEST-ID", "ABCDEFGH")
+            .await
+            .expect_err("an invalid request id must fail before the adapter boundary");
+        assert!(
+            format!("{invalid_request:#}").contains("pairing request id is malformed"),
+            "request-id validation precedes any WAL or transport effect"
+        );
         let error = reply
-            .send_pairing_code(4242, "ABCDEFGH")
+            .send_pairing_code(4242, "0123456789abcdef0123456789abcdef", "ABCDEFGH")
             .await
             .expect_err("a retired adapter must fail before WAL or transport work");
         assert!(

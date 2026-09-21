@@ -109,6 +109,93 @@ fn pending_pairing_gui_commands_parse_with_the_real_cli() {
 }
 
 #[test]
+fn private_pairing_approval_gui_command_parses_without_secrets_in_argv() {
+    use clap::Parser as _;
+    use neothd::cli::{ChannelAction, ChannelPairingAction, Cli, Commands, OutputFormat};
+
+    let request_id = "0123456789abcdef0123456789abcdef";
+    let code = "ABCDEFGH";
+    let command = panel_logic::telegram_pairing_approve_command(
+        std::path::Path::new("neoth"),
+        "telegram",
+        "ops_b",
+    )
+    .expect("build the production GUI private approval command");
+    let args = command
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert!(
+        !args.iter().any(|arg| arg == request_id || arg == code),
+        "request id and pairing code belong only in the private stdin body"
+    );
+    let parsed = Cli::try_parse_from(std::iter::once(command.get_program()).chain(command.get_args()))
+        .expect("the real CLI must accept the GUI's hidden approval argv");
+    assert!(matches!(parsed.output, OutputFormat::Json));
+    match parsed.command {
+        Commands::Channel {
+            action: ChannelAction::Pairing(ChannelPairingAction::ApproveRequest { channel, account }),
+        } => {
+            assert_eq!(channel, "telegram");
+            assert_eq!(account.as_str(), "ops_b");
+        }
+        _ => panic!("GUI command must select the hidden private approval action"),
+    }
+}
+
+#[test]
+fn private_pairing_approval_body_and_receipt_bind_the_exact_request() {
+    let request_id = "0123456789abcdef0123456789abcdef";
+    let code = "ABCDEFGH";
+    let body = panel_logic::telegram_pairing_approve_body("telegram", "ops_b", request_id, code)
+        .expect("valid selected request and sender code form a private body");
+    assert!(body.len() <= 1024);
+    assert_eq!(
+        body.as_slice(),
+        br#"{"schema_version":1,"channel":"telegram","account":"ops_b","request_id":"0123456789abcdef0123456789abcdef","code":"ABCDEFGH"}"#
+    );
+    for invalid_code in ["", "ABCDEFG", "ABCDEFGHI", "abcdefgh", "ABCDEFG0", "ABCD-EFG"] {
+        assert!(
+            panel_logic::telegram_pairing_approve_body("telegram", "ops_b", request_id, invalid_code)
+                .is_err(),
+            "invalid pairing code must not form a private approval body"
+        );
+    }
+    assert!(
+        panel_logic::telegram_pairing_approve_body(
+            "telegram",
+            "ops_b",
+            "0123456789ABCDEF0123456789abcdef",
+            code,
+        )
+        .is_err(),
+        "noncanonical request ids cannot form a private approval body"
+    );
+
+    assert_eq!(
+        panel_logic::parse_telegram_pairing_approved(
+            format!(r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}","approved":true}}"#).as_bytes(),
+            "ops_b",
+            request_id,
+        ),
+        Some(true)
+    );
+    for receipt in [
+        format!(r#"{{"channel":"telegram","account":"ops_a","request_id":"{request_id}","approved":true}}"#),
+        format!(r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}","approved":false}}"#),
+        format!(r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}","approved":true,"extra":true}}"#),
+        format!(r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}"}}"#),
+        format!(r#"{{"channel":"telegram","account":"ops_b","request_id":"{request_id}","approved":"true"}}"#),
+    ] {
+        assert_eq!(
+            panel_logic::parse_telegram_pairing_approved(receipt.as_bytes(), "ops_b", request_id),
+            None,
+            "only an exact strict private approval receipt is actionable"
+        );
+    }
+}
+
+#[test]
 fn pending_pairing_parser_and_dismissal_receipt_reject_foreign_or_malformed_data() {
     let request_id = "0123456789abcdef0123456789abcdef";
     let accepted = panel_logic::parse_telegram_pairing_list(

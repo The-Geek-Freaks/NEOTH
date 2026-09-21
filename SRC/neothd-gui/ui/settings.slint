@@ -1190,6 +1190,7 @@ export component SettingsView inherits Rectangle {
     in property <bool> channel-pairing-in-flight: false;
     callback channel-pairing-list(string, string);
     callback channel-pairing-dismiss(string, string, string);
+    callback channel-pairing-approve(string, string, string, string);
     callback channel-remove-clicked(string);
     /// GAP-19 — Add a new channel credential from the GUI.
     /// Args: channel_type + six typed credential fields + Matrix's optional
@@ -2523,14 +2524,14 @@ export component SettingsView inherits Rectangle {
                                         color: Theme.text-primary;
                                     }
                                     Text {
-                                        text: "Approval requires the sender's pairing code in the CLI. This panel can only inspect or dismiss an exact pending request.";
+                                        text: "Ask the sender privately for their request ID and pairing code. Select the matching request below, then enter its code to approve.";
                                         font-family: Theme.font-display;
                                         font-size: Theme.font-size-caption;
                                         color: Theme.text-tertiary;
                                         wrap: word-wrap;
                                     }
                                     if root.channel-pairing-in-flight: Text {
-                                        text: "Loading pairing requests…";
+                                        text: "Processing pairing request…";
                                         font-family: Theme.font-display;
                                         font-size: Theme.font-size-caption;
                                         color: Theme.accent-amber;
@@ -2550,6 +2551,8 @@ export component SettingsView inherits Rectangle {
                                     }
                                     for request in root.channel-pairing-requests: VerticalBox {
                                         property <bool> dismiss-confirming: false;
+                                        property <bool> approve-confirming: false;
+                                        property <string> approve-code: "";
                                         spacing: Theme.space-tight;
                                         Rectangle { height: 1px; background: Theme.border-subtle; }
                                         Text {
@@ -2564,17 +2567,30 @@ export component SettingsView inherits Rectangle {
                                             font-size: Theme.font-size-2xs;
                                             color: Theme.text-tertiary;
                                         }
-                                        if !dismiss-confirming: NeothButton {
-                                            label: "Dismiss";
-                                            primary: false;
-                                            enabled: root.channel-pairing-loaded
-                                                && root.channel-pairing-error == ""
-                                                && !root.channel-account-retirement-in-flight
-                                                && !root.channel-account-dm-pairing-in-flight
-                                                && !root.channel-pairing-in-flight;
-                                            clicked => { dismiss-confirming = true; }
+                                        if !dismiss-confirming && !approve-confirming: HorizontalLayout {
+                                            spacing: Theme.space-tight;
+                                            NeothButton {
+                                                label: "Approve";
+                                                primary: false;
+                                                enabled: root.channel-pairing-loaded
+                                                    && root.channel-pairing-error == ""
+                                                    && !root.channel-account-retirement-in-flight
+                                                    && !root.channel-account-dm-pairing-in-flight
+                                                    && !root.channel-pairing-in-flight;
+                                                clicked => { approve-confirming = true; }
+                                            }
+                                            NeothButton {
+                                                label: "Dismiss";
+                                                primary: false;
+                                                enabled: root.channel-pairing-loaded
+                                                    && root.channel-pairing-error == ""
+                                                    && !root.channel-account-retirement-in-flight
+                                                    && !root.channel-account-dm-pairing-in-flight
+                                                    && !root.channel-pairing-in-flight;
+                                                clicked => { dismiss-confirming = true; }
+                                            }
                                         }
-                                        if dismiss-confirming: HorizontalLayout {
+                                        if dismiss-confirming && !approve-confirming: HorizontalLayout {
                                             spacing: Theme.space-tight;
                                             Text {
                                                 text: "Dismiss this exact pending request?";
@@ -2608,6 +2624,58 @@ export component SettingsView inherits Rectangle {
                                                     && !root.channel-account-dm-pairing-in-flight
                                                     && !root.channel-pairing-in-flight;
                                                 clicked => { dismiss-confirming = false; }
+                                            }
+                                        }
+                                        if approve-confirming && !dismiss-confirming: VerticalBox {
+                                            spacing: Theme.space-tight;
+                                            Text {
+                                                text: "Allow the sender who shared this code to use Telegram for this selected request?";
+                                                font-family: Theme.font-display;
+                                                font-size: Theme.font-size-caption;
+                                                color: Theme.accent-pink;
+                                                wrap: word-wrap;
+                                            }
+                                            NeothLineEdit {
+                                                placeholder-text: "Sender pairing code";
+                                                password: true;
+                                                text <=> approve-code;
+                                                enabled: !root.channel-account-retirement-in-flight
+                                                    && !root.channel-account-dm-pairing-in-flight
+                                                    && !root.channel-pairing-in-flight;
+                                            }
+                                            HorizontalLayout {
+                                                spacing: Theme.space-tight;
+                                                NeothButton {
+                                                    label: "Confirm approval";
+                                                    primary: false;
+                                                    loading: root.channel-pairing-in-flight;
+                                                    enabled: approve-code.length == 8
+                                                        && root.channel-pairing-loaded
+                                                        && root.channel-pairing-error == ""
+                                                        && !root.channel-account-retirement-in-flight
+                                                        && !root.channel-account-dm-pairing-in-flight
+                                                        && !root.channel-pairing-in-flight;
+                                                    clicked => {
+                                                        root.channel-pairing-approve(
+                                                            "telegram",
+                                                            root.channel-pairing-account,
+                                                            request.request-id,
+                                                            approve-code,
+                                                        );
+                                                        approve-code = "";
+                                                    }
+                                                }
+                                                NeothButton {
+                                                    label: "Cancel";
+                                                    primary: false;
+                                                    enabled: !root.channel-account-retirement-in-flight
+                                                        && !root.channel-account-dm-pairing-in-flight
+                                                        && !root.channel-pairing-in-flight;
+                                                    clicked => {
+                                                        approve-code = "";
+                                                        approve-confirming = false;
+                                                    }
+                                                }
                                             }
                                         }
                                     }
