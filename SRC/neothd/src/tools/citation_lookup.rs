@@ -294,7 +294,10 @@ impl CitationRecord {
         }
         append_field(
             &mut bytes,
-            self.year.map(|year| year.to_string()).unwrap_or_default().as_bytes(),
+            self.year
+                .map(|year| year.to_string())
+                .unwrap_or_default()
+                .as_bytes(),
         );
         append_field(&mut bytes, self.venue.as_deref().unwrap_or("").as_bytes());
         Ok(digest_hex(&[RECORD_FINGERPRINT_DOMAIN, &bytes]))

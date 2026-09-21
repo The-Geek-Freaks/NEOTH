@@ -1166,6 +1166,7 @@ mod buddy_activity;
 mod chat_child_supervisor;
 mod chat_reasoning;
 mod chat_stream_phase;
+mod citation_gui;
 mod code_map_controller;
 mod code_map_impact_controller;
 mod coding_controller;
@@ -4286,6 +4287,15 @@ fn main() -> Result<()> {
         timer
     };
 
+    // W155 — explicit citations retain their own revision-bound core display.
+    // They share the chat history switch so a retained transcript cannot keep
+    // a live citation chip or accept a late child result.
+    let citation_binding_store = std::sync::Arc::new(std::sync::Mutex::new(
+        citation_gui::CitationGuiBindingStore::default(),
+    ));
+    let citation_callbacks =
+        register_citation_gui_callbacks(&window, std::sync::Arc::clone(&citation_binding_store));
+
     // GOLD-LF-P1-20 — chat-sidebar history. Hindsight owns ordering/labels;
     // canonical raw_turns owns previews and the read-only selected transcript.
     refresh_chat_session_history(window.as_weak());
@@ -4298,6 +4308,10 @@ fn main() -> Result<()> {
         let revision = chat_session_revision.clone();
         let stream = chat_stream.clone();
         let projections = chat_reasoning_projections.clone();
+        let citations = std::sync::Arc::clone(&citation_binding_store);
+        let citation_live_flow = std::sync::Arc::clone(&citation_callbacks.live_flow);
+        let citation_child_cancellation =
+            std::sync::Arc::clone(&citation_callbacks.child_cancellation);
         window.on_chat_live_session_selected(move || {
             revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             if let Some(w) = weak_live.upgrade() {
@@ -4307,6 +4321,14 @@ fn main() -> Result<()> {
                     Some(&w),
                     None,
                 );
+                if let Ok(mut store) = citations.lock() {
+                    store.set_historical(false);
+                }
+                cancel_citation_live_flow(&citation_live_flow);
+                cancel_citation_child(&citation_child_cancellation);
+                clear_citation_projection(&w);
+                clear_citation_consent_projection(&w);
+                w.set_chat_citation_lookup_running(false);
                 w.set_chat_history_active(false);
                 w.set_chat_active_session_id("".into());
                 w.set_chat_messages(w.get_chat_live_messages());
@@ -4319,6 +4341,10 @@ fn main() -> Result<()> {
         let revision = chat_session_revision.clone();
         let stream = chat_stream.clone();
         let projections = chat_reasoning_projections.clone();
+        let citations = std::sync::Arc::clone(&citation_binding_store);
+        let citation_live_flow = std::sync::Arc::clone(&citation_callbacks.live_flow);
+        let citation_child_cancellation =
+            std::sync::Arc::clone(&citation_callbacks.child_cancellation);
         window.on_chat_session_selected(move |session_id| {
             let session_id = session_id.to_string();
             let generation = revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
@@ -4331,6 +4357,15 @@ fn main() -> Result<()> {
                 Some(&w),
                 None,
             );
+            if let Ok(mut store) = citations.lock() {
+                store.set_historical(true);
+            }
+            cancel_citation_live_flow(&citation_live_flow);
+            cancel_citation_child(&citation_child_cancellation);
+            clear_citation_projection(&w);
+            clear_citation_consent_projection(&w);
+            w.set_chat_citation_lookup_running(false);
+            w.set_chat_citation_lookup_status("Historical transcripts are read-only.".into());
             w.set_chat_history_active(true);
             w.set_chat_active_session_id(session_id.as_str().into());
             w.set_chat_messages(slint::ModelRc::new(slint::VecModel::from(vec![
@@ -20504,6 +20539,681 @@ fn neothd_json_command(args: &[&str]) -> std::result::Result<std::process::Comma
     command.args(["--output", "json"]);
     command.args(args);
     Ok(command)
+}
+
+/// Remove every projected citation value before a new explicit request, a
+/// history transition, or a failed detail check.  The only retained state is
+/// the Rust-side, core-revalidated binding store.
+fn clear_citation_projection(window: &MainWindow) {
+    use slint::{ModelRc, VecModel};
+
+    window.set_chat_citation_chips(ModelRc::new(VecModel::from(Vec::<CitationChip>::new())));
+    window.set_chat_citation_active_claim("".into());
+    window.set_chat_citation_lookup_status("".into());
+    window.set_chat_citation_detail_visible(false);
+    window.set_chat_citation_detail_title("".into());
+    window.set_chat_citation_detail_authors("".into());
+    window.set_chat_citation_detail_year_venue("".into());
+    window.set_chat_citation_detail_provider("".into());
+    window.set_chat_citation_detail_source("".into());
+}
+
+fn clear_citation_consent_projection(window: &MainWindow) {
+    window.set_chat_citation_consent_visible(false);
+    window.set_chat_citation_consent_submitting(false);
+    window.set_chat_citation_consent_body("".into());
+}
+
+enum CitationGuiLiveStage {
+    Preflight,
+    AwaitingDecision {
+        challenge: zeroize::Zeroizing<String>,
+    },
+    DecisionInFlight,
+    FinalInFlight,
+}
+
+struct CitationGuiLiveFlow {
+    revision: u64,
+    request: citation_gui::CitationGuiRequest,
+    request_id: String,
+    cancellation: citation_gui::CitationGuiChildCancellation,
+    stage: CitationGuiLiveStage,
+}
+
+impl CitationGuiLiveFlow {
+    fn is_current(&self, revision: u64, request: &citation_gui::CitationGuiRequest, request_id: &str) -> bool {
+        self.revision == revision && self.request == *request && self.request_id == request_id
+    }
+}
+
+type CitationGuiLiveFlowSlot = std::sync::Arc<std::sync::Mutex<Option<CitationGuiLiveFlow>>>;
+type CitationGuiChildCancellationSlot =
+    std::sync::Arc<std::sync::Mutex<Option<citation_gui::CitationGuiChildCancellation>>>;
+
+struct CitationGuiCallbackState {
+    live_flow: CitationGuiLiveFlowSlot,
+    child_cancellation: CitationGuiChildCancellationSlot,
+}
+
+fn cancel_citation_live_flow(flow: &CitationGuiLiveFlowSlot) {
+    if let Ok(mut flow) = flow.lock() {
+        if let Some(current) = flow.take() {
+            current.cancellation.cancel();
+        }
+    }
+}
+
+fn cancel_citation_child(cancellation: &CitationGuiChildCancellationSlot) {
+    if let Ok(mut cancellation) = cancellation.lock() {
+        if let Some(current) = cancellation.take() {
+            current.cancel();
+        }
+    }
+}
+
+fn begin_citation_child(
+    cancellation: &CitationGuiChildCancellationSlot,
+) -> std::result::Result<citation_gui::CitationGuiChildCancellation, String> {
+    let mut slot = cancellation
+        .lock()
+        .map_err(|_| "citation child ownership is unavailable".to_string())?;
+    if let Some(current) = slot.take() {
+        current.cancel();
+    }
+    let next = citation_gui::CitationGuiChildCancellation::new();
+    *slot = Some(next.clone());
+    Ok(next)
+}
+
+fn new_citation_gui_request_id() -> std::result::Result<String, String> {
+    let mut random = zeroize::Zeroizing::new([0_u8; 16]);
+    getrandom::getrandom(random.as_mut())
+        .map_err(|_| "could not create a private citation request identity".to_string())?;
+    Ok(format!("citation-{}", hex::encode(random.as_ref())))
+}
+
+fn citation_consent_body(request: &citation_gui::CitationGuiRequest) -> String {
+    format!(
+        "Approve one live lookup from {} for this DOI:\n\n{}\n\nNEOTH sends only this DOI to {} to retrieve citation metadata. Your claim stays local and is used only to bind the result in NEOTH.\n\nApprove allows one lookup. Deny starts no lookup.",
+        request.provider.display_name(),
+        request.doi,
+        request.provider.display_name(),
+    )
+}
+
+/// Register the Chat-native W155 citation boundary.  The child runs outside
+/// the store lock so a new request or a retained-history switch can invalidate
+/// its revision before its typed receipt reaches the Slint event loop.
+///
+/// Live lookup uses Core's dedicated citation preflight/decision protocol.
+/// Challenge and proof values stay in the retained Rust flow and are sent only
+/// through the child's private stdin pipe; generic chat consent is never used.
+fn register_citation_gui_callbacks(
+    window: &MainWindow,
+    store: std::sync::Arc<std::sync::Mutex<citation_gui::CitationGuiBindingStore>>,
+) -> CitationGuiCallbackState {
+    let live_flow: CitationGuiLiveFlowSlot = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let child_cancellation: CitationGuiChildCancellationSlot =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let weak_lookup = window.as_weak();
+    let lookup_store = std::sync::Arc::clone(&store);
+    let lookup_flow = std::sync::Arc::clone(&live_flow);
+    let lookup_cancellation = std::sync::Arc::clone(&child_cancellation);
+    window.on_chat_citation_lookup_clicked(move |claim, doi, provider_index, offline| {
+        let Some(window) = weak_lookup.upgrade() else {
+            return;
+        };
+        if window.get_chat_history_active() {
+            if let Ok(mut store) = lookup_store.lock() {
+                store.set_historical(true);
+            }
+            cancel_citation_live_flow(&lookup_flow);
+            cancel_citation_child(&lookup_cancellation);
+            clear_citation_projection(&window);
+            clear_citation_consent_projection(&window);
+            window.set_chat_citation_lookup_running(false);
+            window.set_chat_citation_lookup_status("Historical transcripts are read-only.".into());
+            return;
+        }
+
+        let request = match citation_gui::CitationGuiRequest::new(
+            claim.to_string(),
+            doi.to_string(),
+            provider_index,
+            offline,
+        ) {
+            Ok(request) => request,
+            Err(_) => {
+                cancel_citation_live_flow(&lookup_flow);
+                cancel_citation_child(&lookup_cancellation);
+                clear_citation_projection(&window);
+                clear_citation_consent_projection(&window);
+                window.set_chat_citation_lookup_running(false);
+                window.set_chat_citation_lookup_status(
+                    "Enter one explicit, trimmed claim and a valid DOI.".into(),
+                );
+                return;
+            }
+        };
+
+        let revision = match lookup_store.lock() {
+            Ok(mut store) => store.begin_lookup(request.clone()),
+            Err(_) => {
+                cancel_citation_live_flow(&lookup_flow);
+                cancel_citation_child(&lookup_cancellation);
+                clear_citation_projection(&window);
+                clear_citation_consent_projection(&window);
+                window.set_chat_citation_lookup_running(false);
+                window.set_chat_citation_lookup_status(
+                    "Citation lookup is unavailable; retry the explicit request.".into(),
+                );
+                return;
+            }
+        };
+        cancel_citation_live_flow(&lookup_flow);
+        let cancellation = match begin_citation_child(&lookup_cancellation) {
+            Ok(cancellation) => cancellation,
+            Err(_) => {
+                clear_citation_projection(&window);
+                clear_citation_consent_projection(&window);
+                window.set_chat_citation_lookup_running(false);
+                window.set_chat_citation_lookup_status(
+                    "Citation child ownership is unavailable; no lookup was started.".into(),
+                );
+                return;
+            }
+        };
+        clear_citation_projection(&window);
+        clear_citation_consent_projection(&window);
+        window.set_chat_citation_lookup_running(true);
+        if !request.offline {
+            let request_id = match new_citation_gui_request_id() {
+                Ok(request_id) => request_id,
+                Err(_) => {
+                    window.set_chat_citation_lookup_running(false);
+                    window.set_chat_citation_lookup_status(
+                        "Citation lookup could not create a bound approval request.".into(),
+                    );
+                    return;
+                }
+            };
+            if let Ok(mut flow) = lookup_flow.lock() {
+                *flow = Some(CitationGuiLiveFlow {
+                    revision,
+                    request: request.clone(),
+                    request_id: request_id.clone(),
+                    cancellation: cancellation.clone(),
+                    stage: CitationGuiLiveStage::Preflight,
+                });
+            } else {
+                window.set_chat_citation_lookup_running(false);
+                window.set_chat_citation_lookup_status(
+                    "Citation approval state is unavailable; no lookup was started.".into(),
+                );
+                return;
+            }
+            window.set_chat_citation_lookup_status(
+                "Checking private citation cache and live approval policy…".into(),
+            );
+            start_citation_preflight(
+                weak_lookup.clone(),
+                std::sync::Arc::clone(&lookup_store),
+                std::sync::Arc::clone(&lookup_flow),
+                revision,
+                request,
+                request_id,
+                cancellation,
+            );
+            return;
+        }
+
+        window.set_chat_citation_lookup_status("Checking private citation cache…".into());
+
+        let worker_request = request.clone();
+        let worker_store = std::sync::Arc::clone(&lookup_store);
+        let worker_window = weak_lookup.clone();
+        std::thread::spawn(move || {
+            let child = neothd_json_command(&worker_request.command_args())
+                .and_then(|mut command| citation_gui::execute_citation_child(&mut command, &cancellation));
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(window) = worker_window.upgrade() else {
+                    return;
+                };
+                let mut store = match worker_store.lock() {
+                    Ok(store) => store,
+                    Err(_) => return,
+                };
+                // A newer request or historical transition owns the panel.
+                // It must remain untouched by this late worker completion.
+                if store.revision() != revision {
+                    return;
+                }
+                let outcome = match child {
+                    Ok(mut output) => store.apply_child_output(
+                        revision,
+                        worker_request,
+                        &mut output,
+                    ),
+                    Err(_) => Err("citation child could not be verified".to_string()),
+                };
+                if store.revision() != revision {
+                    return;
+                }
+                window.set_chat_citation_lookup_running(false);
+                match outcome {
+                    Ok(citation_gui::CitationGuiOutcome::Found { chip, .. }) => {
+                        use slint::{ModelRc, VecModel};
+                        window.set_chat_citation_chips(ModelRc::new(VecModel::from(vec![
+                            CitationChip {
+                                claim: chip.claim.into(),
+                                provider: chip.provider.into(),
+                                source: chip.source.into(),
+                                provider_record_id: chip.provider_record_id.into(),
+                                binding_sha256: chip.binding_sha256.into(),
+                                available: chip.available,
+                            },
+                        ])));
+                        window.set_chat_citation_active_claim(request.claim.into());
+                        window.set_chat_citation_lookup_status(
+                            "Citation binding verified. Select the chip for in-app details."
+                                .into(),
+                        );
+                    }
+                    Ok(citation_gui::CitationGuiOutcome::Unavailable { provider, state }) => {
+                        clear_citation_projection(&window);
+                        window.set_chat_citation_lookup_status(
+                            format!("Citation unavailable from {provider}: {state}.").into(),
+                        );
+                    }
+                    Err(_) => {
+                        clear_citation_projection(&window);
+                        window.set_chat_citation_lookup_status(
+                            "Citation lookup could not be verified; no citation was shown."
+                                .into(),
+                        );
+                    }
+                }
+            });
+        });
+    });
+
+    let weak_detail = window.as_weak();
+    let detail_store = std::sync::Arc::clone(&store);
+    window.on_chat_citation_detail_clicked(move |binding_sha256| {
+        let Some(window) = weak_detail.upgrade() else {
+            return;
+        };
+        let detail = detail_store
+            .lock()
+            .map_err(|_| "citation binding store is unavailable".to_string())
+            .and_then(|store| {
+                store.detail_for_click(store.revision(), binding_sha256.as_str())
+            });
+        match detail {
+            Ok(detail) => {
+                window.set_chat_citation_detail_title(detail.title.into());
+                window.set_chat_citation_detail_authors(detail.authors.join(", ").into());
+                window.set_chat_citation_detail_year_venue(
+                    match (detail.year, detail.venue) {
+                        (Some(year), Some(venue)) => format!("{year} · {venue}"),
+                        (Some(year), None) => year.to_string(),
+                        (None, Some(venue)) => venue,
+                        (None, None) => "Metadata unavailable".to_string(),
+                    }
+                    .into(),
+                );
+                window.set_chat_citation_detail_provider(detail.provider.into());
+                window.set_chat_citation_detail_source(detail.source.into());
+                window.set_chat_citation_detail_visible(true);
+            }
+            Err(_) => {
+                clear_citation_projection(&window);
+                window.set_chat_citation_lookup_status(
+                    "Citation details could not be verified; no citation was shown.".into(),
+                );
+            }
+        }
+    });
+
+    let weak_dismiss = window.as_weak();
+    window.on_chat_citation_detail_dismissed(move || {
+        if let Some(window) = weak_dismiss.upgrade() {
+            window.set_chat_citation_detail_visible(false);
+            window.set_chat_citation_detail_title("".into());
+            window.set_chat_citation_detail_authors("".into());
+            window.set_chat_citation_detail_year_venue("".into());
+            window.set_chat_citation_detail_provider("".into());
+            window.set_chat_citation_detail_source("".into());
+        }
+    });
+
+    let weak_approve = window.as_weak();
+    let approve_store = std::sync::Arc::clone(&store);
+    let approve_flow = std::sync::Arc::clone(&live_flow);
+    let approve_cancellation = std::sync::Arc::clone(&child_cancellation);
+    window.on_chat_citation_consent_approved(move || {
+        respond_to_citation_consent(
+            weak_approve.clone(),
+            std::sync::Arc::clone(&approve_store),
+            std::sync::Arc::clone(&approve_flow),
+            std::sync::Arc::clone(&approve_cancellation),
+            true,
+        );
+    });
+
+    let weak_deny = window.as_weak();
+    let deny_store = std::sync::Arc::clone(&store);
+    let deny_flow = std::sync::Arc::clone(&live_flow);
+    let deny_cancellation = std::sync::Arc::clone(&child_cancellation);
+    window.on_chat_citation_consent_cancelled(move || {
+        respond_to_citation_consent(
+            weak_deny.clone(),
+            std::sync::Arc::clone(&deny_store),
+            std::sync::Arc::clone(&deny_flow),
+            std::sync::Arc::clone(&deny_cancellation),
+            false,
+        );
+    });
+
+    CitationGuiCallbackState {
+        live_flow,
+        child_cancellation,
+    }
+}
+
+fn start_citation_preflight(
+    weak_window: slint::Weak<MainWindow>,
+    store: std::sync::Arc<std::sync::Mutex<citation_gui::CitationGuiBindingStore>>,
+    flow: CitationGuiLiveFlowSlot,
+    revision: u64,
+    request: citation_gui::CitationGuiRequest,
+    request_id: String,
+    cancellation: citation_gui::CitationGuiChildCancellation,
+) {
+    std::thread::spawn(move || {
+        let child = request
+            .preflight_command_args(&request_id)
+            .and_then(|args| neothd_json_command(&args))
+            .and_then(|mut command| citation_gui::execute_citation_child(&mut command, &cancellation));
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(window) = weak_window.upgrade() else { return; };
+            let mut live = match flow.lock() {
+                Ok(live) => live,
+                Err(_) => return,
+            };
+            let Some(current) = live.as_mut() else { return; };
+            if !current.is_current(revision, &request, &request_id)
+                || !matches!(&current.stage, CitationGuiLiveStage::Preflight)
+            {
+                return;
+            }
+            let preflight = match child {
+                Ok(mut output) => citation_gui::parse_gui_preflight_child_output(
+                    &mut output,
+                    &request,
+                    &request_id,
+                ),
+                Err(_) => Err("citation preflight did not complete".to_string()),
+            };
+            match preflight {
+                Ok(citation_gui::CitationGuiPreflight::ConfirmationRequired {
+                    challenge_token,
+                    ..
+                }) => {
+                    current.stage = CitationGuiLiveStage::AwaitingDecision {
+                        challenge: challenge_token,
+                    };
+                    window.set_chat_citation_lookup_running(false);
+                    window.set_chat_citation_consent_body(
+                        citation_consent_body(&request).into(),
+                    );
+                    window.set_chat_citation_consent_submitting(false);
+                    window.set_chat_citation_consent_visible(true);
+                    window.set_chat_citation_lookup_status(
+                        "Live citation lookup requires your explicit approval.".into(),
+                    );
+                }
+                Ok(citation_gui::CitationGuiPreflight::Denied) => {
+                    *live = None;
+                    clear_citation_consent_projection(&window);
+                    window.set_chat_citation_lookup_running(false);
+                    window.set_chat_citation_lookup_status(
+                        "Live citation lookup is denied by the current policy; no lookup was started."
+                            .into(),
+                    );
+                }
+                // `Ready` (policy Allow) and `CacheHit` need the final exact
+                // CitationCliReceipt, but never a challenge/proof. The CLI
+                // keeps cache-first behavior and only reads a proof on a
+                // confirmation-bound live miss.
+                Ok(citation_gui::CitationGuiPreflight::Ready)
+                | Ok(citation_gui::CitationGuiPreflight::CacheHit) => {
+                    current.stage = CitationGuiLiveStage::FinalInFlight;
+                    let cancellation = current.cancellation.clone();
+                    drop(live);
+                    window.set_chat_citation_lookup_status(
+                        "Citation approval preflight completed; verifying the typed result…".into(),
+                    );
+                    start_citation_final_lookup(
+                        window.as_weak(),
+                        store,
+                        flow,
+                        revision,
+                        request,
+                        request_id,
+                        None,
+                        cancellation,
+                    );
+                }
+                Ok(citation_gui::CitationGuiPreflight::Offline) | Err(_) => {
+                    *live = None;
+                    clear_citation_consent_projection(&window);
+                    clear_citation_projection(&window);
+                    window.set_chat_citation_lookup_running(false);
+                    window.set_chat_citation_lookup_status(
+                        "Citation approval could not be verified; no lookup was started.".into(),
+                    );
+                }
+            }
+        });
+    });
+}
+
+fn respond_to_citation_consent(
+    weak_window: slint::Weak<MainWindow>,
+    store: std::sync::Arc<std::sync::Mutex<citation_gui::CitationGuiBindingStore>>,
+    flow: CitationGuiLiveFlowSlot,
+    child_cancellation: CitationGuiChildCancellationSlot,
+    approve: bool,
+) {
+    let Some(window) = weak_window.upgrade() else { return; };
+    if window.get_chat_history_active() {
+        cancel_citation_live_flow(&flow);
+        cancel_citation_child(&child_cancellation);
+        clear_citation_consent_projection(&window);
+        window.set_chat_citation_lookup_running(false);
+        window.set_chat_citation_lookup_status("Historical transcripts are read-only.".into());
+        return;
+    }
+    let (revision, request, request_id, cancellation, mut challenge) = {
+        let mut live = match flow.lock() {
+            Ok(live) => live,
+            Err(_) => return,
+        };
+        let Some(current) = live.as_mut() else { return; };
+        let stage = std::mem::replace(&mut current.stage, CitationGuiLiveStage::DecisionInFlight);
+        let challenge = match stage {
+            CitationGuiLiveStage::AwaitingDecision {
+                challenge,
+            } => challenge,
+            other => {
+                current.stage = other;
+                return;
+            }
+        };
+        (
+            current.revision,
+            current.request.clone(),
+            current.request_id.clone(),
+            current.cancellation.clone(),
+            challenge,
+        )
+    };
+    window.set_chat_citation_consent_submitting(true);
+    window.set_chat_citation_lookup_status(
+        if approve { "Recording citation approval…" } else { "Recording citation denial…" }.into(),
+    );
+    std::thread::spawn(move || {
+        let child = request
+            .decision_command_args(&request_id, approve)
+            .and_then(|args| neothd_json_command(&args))
+            .and_then(|mut command| {
+                citation_gui::execute_citation_child_with_private_stdin(
+                    &mut command,
+                    &cancellation,
+                    &mut challenge,
+                )
+            });
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(window) = weak_window.upgrade() else { return; };
+            let mut live = match flow.lock() {
+                Ok(live) => live,
+                Err(_) => return,
+            };
+            let Some(current) = live.as_mut() else { return; };
+            if !current.is_current(revision, &request, &request_id)
+                || !matches!(&current.stage, CitationGuiLiveStage::DecisionInFlight)
+            {
+                return;
+            }
+            let decision = match child {
+                Ok(mut output) => citation_gui::parse_gui_decision_child_output(&mut output),
+                Err(_) => Err("citation decision did not complete".to_string()),
+            };
+            match (approve, decision) {
+                (true, Ok(citation_gui::CitationGuiDecision::Approved { proof_token })) => {
+                    current.stage = CitationGuiLiveStage::FinalInFlight;
+                    drop(live);
+                    clear_citation_consent_projection(&window);
+                    window.set_chat_citation_lookup_running(true);
+                    window.set_chat_citation_lookup_status(
+                        "Citation approval recorded; verifying the typed result…".into(),
+                    );
+                    start_citation_final_lookup(
+                        window.as_weak(),
+                        store,
+                        flow,
+                        revision,
+                        request,
+                        request_id,
+                        Some(proof_token),
+                        cancellation,
+                    );
+                }
+                (false, Ok(citation_gui::CitationGuiDecision::Denied)) => {
+                    *live = None;
+                    clear_citation_consent_projection(&window);
+                    window.set_chat_citation_lookup_running(false);
+                    window.set_chat_citation_lookup_status(
+                        "Live citation lookup was declined; no lookup was started.".into(),
+                    );
+                }
+                _ => {
+                    *live = None;
+                    clear_citation_consent_projection(&window);
+                    clear_citation_projection(&window);
+                    window.set_chat_citation_lookup_running(false);
+                    window.set_chat_citation_lookup_status(
+                        "Citation approval could not be verified; no lookup was started.".into(),
+                    );
+                }
+            }
+        });
+    });
+}
+
+fn start_citation_final_lookup(
+    weak_window: slint::Weak<MainWindow>,
+    store: std::sync::Arc<std::sync::Mutex<citation_gui::CitationGuiBindingStore>>,
+    flow: CitationGuiLiveFlowSlot,
+    revision: u64,
+    request: citation_gui::CitationGuiRequest,
+    request_id: String,
+    proof: Option<zeroize::Zeroizing<String>>,
+    cancellation: citation_gui::CitationGuiChildCancellation,
+) {
+    std::thread::spawn(move || {
+        let requires_proof = proof.is_some();
+        let child = request
+            .approved_lookup_command_args(&request_id, requires_proof)
+            .and_then(|args| neothd_json_command(&args))
+            .and_then(|mut command| match proof {
+                Some(mut proof) => citation_gui::execute_citation_child_with_private_stdin(
+                    &mut command,
+                    &cancellation,
+                    &mut proof,
+                ),
+                None => citation_gui::execute_citation_child(&mut command, &cancellation),
+            });
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(window) = weak_window.upgrade() else { return; };
+            let mut live = match flow.lock() {
+                Ok(live) => live,
+                Err(_) => return,
+            };
+            let Some(current) = live.as_ref() else { return; };
+            if !current.is_current(revision, &request, &request_id)
+                || !matches!(&current.stage, CitationGuiLiveStage::FinalInFlight)
+            {
+                return;
+            }
+            *live = None;
+            drop(live);
+            let mut store = match store.lock() {
+                Ok(store) => store,
+                Err(_) => return,
+            };
+            if store.revision() != revision {
+                return;
+            }
+            let outcome = match child {
+                Ok(mut output) => store.apply_child_output(revision, request.clone(), &mut output),
+                Err(_) => Err("citation final lookup did not complete".to_string()),
+            };
+            if store.revision() != revision { return; }
+            window.set_chat_citation_lookup_running(false);
+            match outcome {
+                Ok(citation_gui::CitationGuiOutcome::Found { chip, .. }) => {
+                    use slint::{ModelRc, VecModel};
+                    window.set_chat_citation_chips(ModelRc::new(VecModel::from(vec![CitationChip {
+                        claim: chip.claim.into(),
+                        provider: chip.provider.into(),
+                        source: chip.source.into(),
+                        provider_record_id: chip.provider_record_id.into(),
+                        binding_sha256: chip.binding_sha256.into(),
+                        available: chip.available,
+                    }])));
+                    window.set_chat_citation_active_claim(request.claim.into());
+                    window.set_chat_citation_lookup_status(
+                        "Citation binding verified. Select the chip for in-app details.".into(),
+                    );
+                }
+                Ok(citation_gui::CitationGuiOutcome::Unavailable { provider, state }) => {
+                    clear_citation_projection(&window);
+                    window.set_chat_citation_lookup_status(
+                        format!("Citation unavailable from {provider}: {state}.").into(),
+                    );
+                }
+                Err(_) => {
+                    clear_citation_projection(&window);
+                    window.set_chat_citation_lookup_status(
+                        "Citation lookup could not be verified; no citation was shown.".into(),
+                    );
+                }
+            }
+        });
+    });
 }
 
 fn validate_neothd_probe_exit(
@@ -38919,6 +39629,9 @@ mod w58_gui_callback_runtime_tests {
     use slint::{ComponentHandle as _, Model as _};
     use tempfile::TempDir;
 
+    #[cfg(not(windows))]
+    use neothd::tools::citation_lookup::{CitationLookupResult, CitationQuery, CitationRecord};
+
     use crate::panel_logic;
 
     use super::{
@@ -38943,8 +39656,16 @@ mod w58_gui_callback_runtime_tests {
         register_channel_account_retirement_callback, register_channel_legacy_migration_callback,
         register_channel_pairing_approval_callback, register_channel_pairing_request_callbacks,
         register_code_map_enrichment_readiness_callbacks, register_selfimprove_accept_callback,
-        register_skill_autonomy_callbacks, start_code_map_lifecycle_config_apply,
+        register_skill_autonomy_callbacks,
+        start_code_map_lifecycle_config_apply,
         start_code_map_lifecycle_refresh, which_neothd,
+    };
+
+    #[cfg(not(windows))]
+    use super::{
+        citation_gui::{CitationGuiBindingStore, CitationGuiRequest},
+        cancel_citation_child, cancel_citation_live_flow, clear_citation_consent_projection,
+        clear_citation_projection, register_citation_gui_callbacks,
     };
 
     static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -42906,8 +43627,417 @@ exit 0
             .count()
     }
 
+    #[cfg(not(windows))]
+    fn w155_found_offline_receipt(request: &CitationGuiRequest) -> String {
+        use neothd::tools::citation_lookup::{
+            ClaimCitationBinding, LookupSource, RecordSource,
+        };
+
+        let query = CitationQuery::new(request.provider.as_core(), &request.doi)
+            .expect("W155 fixture query");
+        let authors = vec!["A. Author".to_string()];
+        let mut record = CitationRecord::new(
+            &query,
+            &request.doi,
+            Some(&request.doi),
+            "W155 cache-bound title",
+            &authors,
+            Some(2026),
+            Some("NEOTH Journal"),
+            1,
+            None,
+        )
+        .expect("W155 fixture record");
+        record.provenance.source = RecordSource::Cache;
+        let result = CitationLookupResult::Found {
+            binding: ClaimCitationBinding::new(&request.claim, &record)
+                .expect("W155 fixture binding"),
+            record,
+            source: LookupSource::Cache,
+        };
+        let display = result
+            .display_for_claim(&query, &request.claim)
+            .expect("W155 fixture display");
+        serde_json::json!({
+            "claim": request.claim.clone(),
+            "providers": [request.provider.as_core()],
+            "result": result.clone(),
+            "cache_read": "hit",
+            "cache_write": "not_attempted",
+            "attempts": [{
+                "provider": request.provider.as_core(),
+                "doi": request.doi.clone(),
+                "result": result,
+                "cache_read": "hit",
+                "cache_write": "not_attempted",
+            }],
+            "display": display,
+        })
+        .to_string()
+    }
+
+    #[cfg(not(windows))]
+    fn w155_stage_fake_neoth(fixture: &TempDir) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let bin = fixture.path().join("neoth");
+        std::fs::write(
+            &bin,
+            r#"#!/bin/sh
+base="${0%/*}"
+printf '%s\n' "$*" >> "$base/calls"
+mode=$(/bin/cat "$base/mode")
+case "$*" in
+  *"citation gui-preflight"*)
+    case "$mode" in
+      preflight-confirm) /bin/cat "$base/preflight-confirm.json" ; exit 0 ;;
+      preflight-ready) /bin/cat "$base/preflight-ready.json" ; exit 0 ;;
+      preflight-denied) /bin/cat "$base/preflight-denied.json" ; exit 0 ;;
+      preflight-mismatch) /bin/cat "$base/preflight-mismatch.json" ; exit 0 ;;
+    esac
+    ;;
+  *"citation gui-decide"*)
+    /bin/cat > "$base/decision-stdin"
+    case "$mode" in
+      decision-deny) /bin/cat "$base/decision-denied.json" ;;
+      *) /bin/cat "$base/decision-approved.json" ;;
+    esac
+    exit 0
+    ;;
+  *"citation lookup"*)
+    if echo "$*" | /bin/grep -q -- "--gui-approval-stdin"; then
+      /bin/cat > "$base/lookup-stdin"
+    fi
+    ;;
+esac
+if [ "$mode" = hung ]; then
+  : > "$base/started"
+  while :; do /bin/sleep 0.01; done
+  exit 0
+fi
+if [ "$mode" = flood ]; then
+  /bin/dd if=/dev/zero bs=1024 count=600 2>/dev/null
+  exit 0
+fi
+if [ "$mode" = found ]; then
+  /bin/cat "$base/found.json"
+  exit 0
+fi
+if [ "$mode" = preflight-ready ]; then
+  /bin/cat "$base/found.json"
+  exit 0
+fi
+/bin/cat "$base/unavailable.json"
+exit 7
+"#,
+        )
+        .expect("write W155 child fixture");
+        let mut permissions = std::fs::metadata(&bin)
+            .expect("read W155 child permissions")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&bin, permissions).expect("make W155 child executable");
+        bin
+    }
+
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w155_citation_callbacks_bind_cache_and_live_consent_receipts() {
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial W155 fixture environment");
+        let fixture = TempDir::new().expect("create W155 child fixture");
+        let bin = w155_stage_fake_neoth(&fixture);
+        std::fs::write(fixture.path().join("calls"), b"").expect("initialize W155 call log");
+        let _path = PathGuard::install(fixture.path());
+        assert_eq!(
+            std::fs::canonicalize(which_neothd().expect("resolve W155 staged child"))
+                .expect("canonical W155 resolver"),
+            std::fs::canonicalize(bin).expect("canonical W155 child"),
+        );
+
+        let claim = "W155 explicit claim";
+        let doi = "10.1000/example";
+        let request = CitationGuiRequest::new(claim.into(), doi.into(), 0, true)
+            .expect("construct W155 request");
+        std::fs::write(
+            fixture.path().join("unavailable.json"),
+            r#"{"claim":"W155 explicit claim","providers":["crossref"],"result":{"status":"unavailable","provider":"crossref","state":{"kind":"offline_cache_miss"}},"cache_read":"miss","cache_write":"not_attempted","attempts":[{"provider":"crossref","doi":"10.1000/example","result":{"status":"unavailable","provider":"crossref","state":{"kind":"offline_cache_miss"}},"cache_read":"miss","cache_write":"not_attempted"}],"display":null}"#,
+        )
+        .expect("write W155 unavailable receipt");
+        std::fs::write(
+            fixture.path().join("found.json"),
+            w155_found_offline_receipt(&request),
+        )
+        .expect("write W155 found receipt");
+        let request_key = CitationQuery::new(request.provider.as_core(), &request.doi)
+            .expect("W155 preflight query")
+            .request_key_sha256();
+        std::fs::write(
+            fixture.path().join("preflight-confirm.json"),
+            format!(
+                r#"{{"kind":"citation_gui_preflight","status":"confirmation_required","request_key_sha256":"{request_key}","cache_read":"miss","result":null,"expires_unix":9999999999,"challenge_token":"challenge-test"}}"#
+            ),
+        )
+        .expect("write W155 confirmation preflight");
+        std::fs::write(
+            fixture.path().join("preflight-ready.json"),
+            format!(
+                r#"{{"kind":"citation_gui_preflight","status":"ready","request_key_sha256":"{request_key}","cache_read":"miss","result":null,"expires_unix":null,"challenge_token":null}}"#
+            ),
+        )
+        .expect("write W155 ready preflight");
+        std::fs::write(
+            fixture.path().join("preflight-denied.json"),
+            format!(
+                r#"{{"kind":"citation_gui_preflight","status":"denied","request_key_sha256":"{request_key}","cache_read":"miss","result":null,"expires_unix":null,"challenge_token":null}}"#
+            ),
+        )
+        .expect("write W155 denied preflight");
+        std::fs::write(
+            fixture.path().join("preflight-mismatch.json"),
+            r#"{"kind":"citation_gui_preflight","status":"confirmation_required","request_key_sha256":"0000000000000000000000000000000000000000000000000000000000000000","cache_read":"miss","result":null,"expires_unix":9999999999,"challenge_token":"challenge-test"}"#,
+        )
+        .expect("write W155 mismatched preflight");
+        std::fs::write(
+            fixture.path().join("decision-approved.json"),
+            r#"{"kind":"citation_gui_decision","status":"approved","proof_token":"proof-test"}"#,
+        )
+        .expect("write W155 approved decision");
+        std::fs::write(
+            fixture.path().join("decision-denied.json"),
+            r#"{"kind":"citation_gui_decision","status":"denied","proof_token":null}"#,
+        )
+        .expect("write W155 denied decision");
+
+        let window = MainWindow::new().expect("construct W155 MainWindow");
+        let store = Arc::new(Mutex::new(CitationGuiBindingStore::default()));
+        let live_flow = register_citation_gui_callbacks(&window, Arc::clone(&store));
+
+        std::fs::write(fixture.path().join("mode"), "offline-unavailable")
+            .expect("select W155 unavailable mode");
+        window.invoke_chat_citation_lookup_clicked(claim.into(), doi.into(), 0, true);
+        w153_pump_until(&window, "typed offline unavailable", |w| {
+            !w.get_chat_citation_lookup_running()
+                && w.get_chat_citation_lookup_status().contains("offline_cache_miss")
+        });
+        assert_eq!(window.get_chat_citation_chips().row_count(), 0);
+
+        std::fs::write(fixture.path().join("mode"), "found").expect("select W155 found mode");
+        window.invoke_chat_citation_lookup_clicked(claim.into(), doi.into(), 0, true);
+        w153_pump_until(&window, "current typed citation", |w| {
+            !w.get_chat_citation_lookup_running() && w.get_chat_citation_chips().row_count() == 1
+        });
+        let chip = window
+            .get_chat_citation_chips()
+            .row_data(0)
+            .expect("one W155 chip");
+        window.invoke_chat_citation_detail_clicked(chip.binding_sha256.clone());
+        assert!(window.get_chat_citation_detail_visible());
+        assert_eq!(
+            window.get_chat_citation_detail_title().as_str(),
+            "W155 cache-bound title"
+        );
+
+        std::fs::remove_file(fixture.path().join("started")).ok();
+        std::fs::write(fixture.path().join("mode"), "hung").expect("select W155 hung mode");
+        window.invoke_chat_citation_lookup_clicked("old claim".into(), doi.into(), 0, true);
+        let stale_started = fixture.path().join("started");
+        w153_pump_until(&window, "hung old citation child", move |_| {
+            stale_started.is_file()
+        });
+        std::fs::write(fixture.path().join("mode"), "offline-unavailable")
+            .expect("select W155 replacement mode");
+        window.invoke_chat_citation_lookup_clicked(claim.into(), doi.into(), 0, true);
+        w153_pump_until(&window, "replacement after hung-child cancellation", |w| {
+            !w.get_chat_citation_lookup_running()
+                && w.get_chat_citation_lookup_status().contains("offline_cache_miss")
+        });
+        assert_eq!(window.get_chat_citation_chips().row_count(), 0);
+        assert!(
+            !window.get_chat_citation_detail_visible(),
+            "a stale child must not reopen an old citation detail"
+        );
+
+        std::fs::remove_file(fixture.path().join("started")).ok();
+        std::fs::write(fixture.path().join("mode"), "hung").expect("select W155 history mode");
+        window.invoke_chat_citation_lookup_clicked("history claim".into(), doi.into(), 0, true);
+        let history_started = fixture.path().join("started");
+        w153_pump_until(&window, "hung history citation child", move |_| {
+            history_started.is_file()
+        });
+        window.set_chat_history_active(true);
+        store
+            .lock()
+            .expect("W155 history store")
+            .set_historical(true);
+        cancel_citation_child(&live_flow.child_cancellation);
+        window.set_chat_citation_lookup_running(false);
+        window.set_chat_citation_lookup_status("Historical transcripts are read-only.".into());
+        w153_pump_until(&window, "history citation stale completion", |w| {
+            !w.get_chat_citation_lookup_running()
+                && w.get_chat_citation_lookup_status().as_str()
+                    == "Historical transcripts are read-only."
+        });
+        assert_eq!(window.get_chat_citation_chips().row_count(), 0);
+        window.invoke_chat_citation_detail_clicked(chip.binding_sha256);
+        assert!(!window.get_chat_citation_detail_visible());
+
+        window.set_chat_history_active(false);
+        store
+            .lock()
+            .expect("W155 restore live after hung history child")
+            .set_historical(false);
+        std::fs::write(fixture.path().join("mode"), "flood")
+            .expect("select W155 output flood mode");
+        window.invoke_chat_citation_lookup_clicked(claim.into(), doi.into(), 0, true);
+        w153_pump_until(&window, "citation output flood is bounded", |w| {
+            !w.get_chat_citation_lookup_running()
+                && w.get_chat_citation_lookup_status().contains("could not be verified")
+        });
+        assert_eq!(window.get_chat_citation_chips().row_count(), 0);
+        std::fs::write(fixture.path().join("mode"), "offline-unavailable")
+            .expect("select W155 post-flood recovery mode");
+        window.invoke_chat_citation_lookup_clicked(claim.into(), doi.into(), 0, true);
+        w153_pump_until(&window, "citation lookup recovers after output flood", |w| {
+            !w.get_chat_citation_lookup_running()
+                && w.get_chat_citation_lookup_status().contains("offline_cache_miss")
+        });
+
+        window.set_chat_history_active(false);
+        store
+            .lock()
+            .expect("W155 restore live store")
+            .set_historical(false);
+        std::fs::write(fixture.path().join("mode"), "preflight-confirm")
+            .expect("select W155 history-discard preflight");
+        window.invoke_chat_citation_lookup_clicked("history discard claim".into(), doi.into(), 0, false);
+        w153_pump_until(&window, "citation history-discard modal", |w| {
+            w.get_chat_citation_consent_visible() && !w.get_chat_citation_consent_submitting()
+        });
+        let decision_calls_before_history_discard = w116_call_lines(&fixture.path().join("calls"))
+            .iter()
+            .filter(|line| line.contains("citation gui-decide"))
+            .count();
+        window.set_chat_history_active(true);
+        store
+            .lock()
+            .expect("W155 history-discard store")
+            .set_historical(true);
+        cancel_citation_live_flow(&live_flow.live_flow);
+        cancel_citation_child(&live_flow.child_cancellation);
+        clear_citation_projection(&window);
+        clear_citation_consent_projection(&window);
+        window.set_chat_citation_lookup_running(false);
+        window.set_chat_citation_lookup_status("Historical transcripts are read-only.".into());
+        window.invoke_chat_citation_consent_approved();
+        assert_eq!(
+            w116_call_lines(&fixture.path().join("calls"))
+                .iter()
+                .filter(|line| line.contains("citation gui-decide"))
+                .count(),
+            decision_calls_before_history_discard,
+            "history selection must discard an open citation challenge before approval can start",
+        );
+        assert!(!window.get_chat_citation_consent_visible());
+
+        window.set_chat_history_active(false);
+        store
+            .lock()
+            .expect("W155 restore live after history discard")
+            .set_historical(false);
+        std::fs::write(fixture.path().join("mode"), "preflight-confirm")
+            .expect("select W155 confirmation mode");
+        window.invoke_chat_citation_lookup_clicked("live claim".into(), doi.into(), 0, false);
+        w153_pump_until(&window, "citation approval modal", |w| {
+            w.get_chat_citation_consent_visible()
+                && !w.get_chat_citation_consent_submitting()
+                && w.get_chat_citation_lookup_status().contains("explicit approval")
+        });
+        // The callback is intentionally invoked twice: the second response
+        // cannot replay the same challenge while the first is in flight.
+        std::fs::write(fixture.path().join("mode"), "found")
+            .expect("select W155 approved final mode");
+        window.invoke_chat_citation_consent_approved();
+        window.invoke_chat_citation_consent_approved();
+        w153_pump_until(&window, "approved citation final lookup", |w| {
+            !w.get_chat_citation_lookup_running()
+                && !w.get_chat_citation_consent_visible()
+                && w.get_chat_citation_chips().row_count() == 1
+        });
+        assert_eq!(
+            std::fs::read_to_string(fixture.path().join("decision-stdin"))
+                .expect("read private W155 challenge"),
+            "challenge-test"
+        );
+        assert_eq!(
+            std::fs::read_to_string(fixture.path().join("lookup-stdin"))
+                .expect("read private W155 proof"),
+            "proof-test"
+        );
+        let approved_calls = w116_call_lines(&fixture.path().join("calls"));
+        assert_eq!(
+            approved_calls
+                .iter()
+                .filter(|line| line.contains("citation gui-decide"))
+                .count(),
+            1,
+            "a duplicate Approve must not replay the one-use challenge"
+        );
+
+        std::fs::write(fixture.path().join("mode"), "preflight-confirm")
+            .expect("select W155 denial preflight");
+        let lookup_calls_before_deny = approved_calls
+            .iter()
+            .filter(|line| line.contains("citation lookup"))
+            .count();
+        window.invoke_chat_citation_lookup_clicked("denied live claim".into(), doi.into(), 0, false);
+        w153_pump_until(&window, "citation denial modal", |w| {
+            w.get_chat_citation_consent_visible() && !w.get_chat_citation_consent_submitting()
+        });
+        std::fs::write(fixture.path().join("mode"), "decision-deny")
+            .expect("select W155 denial decision");
+        window.invoke_chat_citation_consent_cancelled();
+        w153_pump_until(&window, "denied citation decision", |w| {
+            !w.get_chat_citation_lookup_running()
+                && !w.get_chat_citation_consent_visible()
+                && w.get_chat_citation_lookup_status().contains("declined")
+        });
+        assert_eq!(
+            w116_call_lines(&fixture.path().join("calls"))
+                .iter()
+                .filter(|line| line.contains("citation lookup"))
+                .count(),
+            lookup_calls_before_deny,
+            "Deny must not start a final citation lookup"
+        );
+
+        std::fs::write(fixture.path().join("mode"), "preflight-mismatch")
+            .expect("select W155 mismatch preflight");
+        window.invoke_chat_citation_lookup_clicked("mismatched live claim".into(), doi.into(), 0, false);
+        w153_pump_until(&window, "mismatched citation preflight", |w| {
+            !w.get_chat_citation_lookup_running()
+                && !w.get_chat_citation_consent_visible()
+                && w.get_chat_citation_lookup_status().contains("could not be verified")
+        });
+
+        std::fs::write(fixture.path().join("mode"), "preflight-ready")
+            .expect("select W155 ready preflight");
+        std::fs::remove_file(fixture.path().join("lookup-stdin")).ok();
+        window.invoke_chat_citation_lookup_clicked("ready live claim".into(), doi.into(), 0, false);
+        w153_pump_until(&window, "ready citation final lookup", |w| {
+            !w.get_chat_citation_lookup_running()
+                && !w.get_chat_citation_consent_visible()
+                && w.get_chat_citation_chips().row_count() == 1
+        });
+        assert!(
+            !fixture.path().join("lookup-stdin").exists(),
+            "Ready lookup must not send a confirmation proof"
+        );
+    }
+
     #[cfg(target_os = "macos")]
-    const MACOS_NATIVE_HARNESS_TESTS: [&str; 16] = [
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 17] = [
         "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
         "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
@@ -42924,6 +44054,7 @@ exit 0
         "w58_gui_callback_runtime_tests::w153_legacy_child_callbacks_project_only_transient_reasoning",
         "w58_gui_callback_runtime_tests::w153_reasoning_child_controls_are_transient_and_history_excluded",
         "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight",
+        "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts",
     ];
 
     /// Native macOS Nextest bridge. Keep its stdout restricted to the libtest
@@ -43027,6 +44158,9 @@ exit 0
                     }
                     "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight" => {
                         w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight()
+                    }
+                    "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts" => {
+                        w155_citation_callbacks_bind_cache_and_live_consent_receipts()
                     }
                     _ => return Err(format!("unknown macOS native GUI test {test_name:?}")),
                 }

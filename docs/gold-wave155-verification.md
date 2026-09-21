@@ -1,15 +1,14 @@
 # W155 - explicit claim and DOI citation lookup
 
-This admission contains the Core, private consent protocol, HTTP transport and
-CLI for `GOLD-LF-P1-12`. It awaits hosted compilation and native tests. The GUI
-source is prepared separately and remains unpublished while child-process
-deadline, output-cap and cancellation handling are completed. The Road item
-stays open until all required checks cover the integrated source. All executable
-validation runs on GitHub.
+This admission contains Core, private consent protocol, HTTP, CLI and the real
+Chat citation panel for GOLD-LF-P1-12. Independent source review approved its
+claim/consent boundaries and repaired child-process lifecycle. Hosted compilation,
+native callback execution, rendering and provider acceptance remain required;
+no Road item is closed. All executable validation runs on GitHub.
 
 ## User-visible behavior
 
-The CLI and prepared Chat citation panel accept an explicit claim and DOI. The GUI
+The CLI and Chat citation panel accept an explicit claim and DOI. The GUI
 selects one provider and defaults to offline lookup. The CLI can select that
 same provider or use the bounded sequential order Crossref, OpenAlex, Semantic
 Scholar when `--provider` is omitted. A validated result produces a claim-bound citation chip and an in-app
@@ -43,12 +42,16 @@ stdin and zeroizing memory, never argv or Slint properties. The final check bind
 the actual method, URL, provider surface and empty body before the normal
 permission and HTTP intent/result audit. A later Deny remains decisive.
 
-The unpublished GUI callback fixture drives the real registrations and selected fake child:
+The GUI callback fixture drives the real registrations and selected fake child:
 offline miss, found/detail, stale completion, history invalidation, Approve,
 duplicate decision, Deny without final lookup, mismatched preflight, and Ready
-without proof stdin. Its independent review identified unbounded process output
-and wait time; the owner is repairing that concrete lifecycle gap before GUI
-admission. These source assertions do not constitute hosted execution evidence.
+without proof stdin. The repaired direct-child runner enforces a 10-second
+deadline, parallel 512-KiB stdout / 32-KiB stderr limits, cancellation leases and
+kill/reap. Replacement and both history transitions cancel prior work. Capture
+buffers and private stdin are zeroized on success/error/discard. The fixture also
+covers hung-child replacement/history cancellation, output flood and recovery.
+This establishes source coverage only; descendant-tree containment, app shutdown,
+rendering and actual runtime success are not claimed.
 
 ## Evidence and remaining gates
 
@@ -73,3 +76,11 @@ an Option mapping signature and the required geteuid unsafe block. The narrow
 repairs are reviewed separately and await a fresh hosted build. The 334-input
 manifest and all required test hashes bind the repaired source. No executable
 validation ran locally and no Road checkbox closes.
+
+## Integrated GUI admission
+
+10 pure GUI cases and one Linux/macOS callback join the canonical test matrix.
+The exact native macOS harness catalog/discovery contract now lists 17 names.
+Final GUI review: GUI-REREVIEW.md (451649CF417DAC401D95361558C643F592EE66B7E826F285124D2EFF049F5BB2).
+Core repair 2f3ceab5 has reference run35626050057 in progress; its Preflight35626050807
+requested two final hosted layout/newline corrections, imported without local execution.

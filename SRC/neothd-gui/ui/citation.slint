@@ -1,0 +1,191 @@
+// W155 — explicit, typed citation lookup panel for ChatView.
+//
+// This component is mounted below `ChatView` through `main.slint`. The panel
+// accepts only an operator-entered claim and DOI; it neither reads
+// transcript/model Markdown nor owns navigation.
+// Rust clears `citation-chips` before each request and supplies an in-app
+// detail only after `citation_gui::CitationGuiBindingStore` revalidates the
+// core binding for the active revision.
+
+import { Theme } from "theme.slint";
+import { Card, ConfirmDialog, NeothButton, NeothCheckBox, NeothComboBox, NeothLineEdit } from "components.slint";
+
+export struct CitationChip {
+    claim: string,
+    provider: string,
+    source: string,
+    provider-record-id: string,
+    binding-sha256: string,
+    available: bool,
+}
+
+export component CitationLookupPanel inherits Rectangle {
+    in-out property <string> citation-claim-draft: "";
+    in-out property <string> citation-doi-draft: "";
+    in-out property <int> citation-provider-index: 0;
+    in-out property <bool> citation-offline: true;
+    in property <bool> citation-lookup-running: false;
+    in property <string> citation-lookup-status: "";
+    in property <string> citation-active-claim: "";
+    in property <[CitationChip]> citation-chips: [];
+    in property <bool> citation-detail-visible: false;
+    in property <string> citation-detail-title: "";
+    in property <string> citation-detail-authors: "";
+    in property <string> citation-detail-year-venue: "";
+    in property <string> citation-detail-provider: "";
+    in property <string> citation-detail-source: "";
+    // The response contains only display-safe binding context. Challenge and
+    // proof tokens remain Rust-only zeroizing values carried through stdin.
+    in property <bool> citation-consent-visible: false;
+    in property <bool> citation-consent-submitting: false;
+    in property <string> citation-consent-body: "";
+
+    callback citation-lookup-clicked(string, string, int, bool);
+    callback citation-detail-clicked(string);
+    callback citation-detail-dismissed();
+    callback citation-consent-approved();
+    callback citation-consent-cancelled();
+
+    height: panel-card.preferred-height;
+    horizontal-stretch: 1;
+
+    panel-card := Card {
+        width: 100%;
+        shimmer: false;
+        VerticalLayout {
+            padding: Theme.space-base;
+            spacing: Theme.space-tight;
+
+            Text {
+                text: "Citation lookup";
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-caption;
+                font-weight: Theme.weight-medium;
+                color: Theme.text-primary;
+            }
+            Text {
+                text: "Bind an explicit claim to one DOI. Chat text never starts a lookup.";
+                font-family: Theme.font-sans;
+                font-size: Theme.font-size-2xs;
+                color: Theme.text-muted;
+                wrap: word-wrap;
+            }
+            NeothLineEdit {
+                text <=> root.citation-claim-draft;
+                placeholder-text: "Claim shown in this lookup";
+                enabled: !root.citation-lookup-running;
+            }
+            HorizontalLayout {
+                spacing: Theme.space-tight;
+                NeothLineEdit {
+                    text <=> root.citation-doi-draft;
+                    placeholder-text: "DOI, e.g. 10.1000/example";
+                    enabled: !root.citation-lookup-running;
+                    horizontal-stretch: 1;
+                }
+                NeothComboBox {
+                    model: ["Crossref", "OpenAlex", "Semantic Scholar"];
+                    current-index <=> root.citation-provider-index;
+                    enabled: !root.citation-lookup-running;
+                    selected(index) => { root.citation-provider-index = index; }
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.space-base;
+                NeothCheckBox {
+                    text: "Offline cache only";
+                    checked <=> root.citation-offline;
+                    enabled: !root.citation-lookup-running;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                NeothButton {
+                    label: "Look up";
+                    primary: true;
+                    size: "sm";
+                    loading: root.citation-lookup-running;
+                    enabled: !root.citation-lookup-running;
+                    clicked => {
+                        root.citation-lookup-clicked(
+                            root.citation-claim-draft,
+                            root.citation-doi-draft,
+                            root.citation-provider-index,
+                            root.citation-offline,
+                        );
+                    }
+                }
+            }
+            if root.citation-lookup-status != "": Text {
+                text: root.citation-lookup-status;
+                font-family: Theme.font-mono;
+                font-size: Theme.font-size-2xs;
+                color: Theme.text-muted;
+                wrap: word-wrap;
+            }
+            if root.citation-active-claim != "": Text {
+                text: "Bound claim: " + root.citation-active-claim;
+                font-family: Theme.font-mono;
+                font-size: Theme.font-size-2xs;
+                color: Theme.audit;
+                wrap: word-wrap;
+            }
+            if root.citation-chips.length > 0: HorizontalLayout {
+                spacing: Theme.space-tight;
+                for chip in root.citation-chips: NeothButton {
+                    label: chip.provider + " · " + chip.source;
+                    primary: false;
+                    size: "xs";
+                    enabled: chip.available && !root.citation-lookup-running;
+                    accessible-label: "Show in-app citation details for " + chip.claim;
+                    clicked => { root.citation-detail-clicked(chip.binding-sha256); }
+                }
+            }
+        }
+    }
+
+    if root.citation-detail-visible: Rectangle {
+        z: 2;
+        width: parent.width;
+        height: parent.height;
+        background: Theme.bg-void.with-alpha(0.86);
+        // Slint 1.16 has no dialog accessibility role.  The label announces
+        // the modal while its controls remain the keyboard targets.
+        accessible-role: text;
+        accessible-label: "Citation details";
+        Card {
+            x: max(0px, (parent.width - self.width) / 2);
+            y: max(0px, (parent.height - self.height) / 2);
+            width: min(parent.width - Theme.space-base * 2, 560px);
+            height: detail-column.preferred-height + Theme.space-loose * 2;
+            shimmer: false;
+            detail-column := VerticalLayout {
+                x: Theme.space-loose;
+                y: Theme.space-loose;
+                width: parent.width - Theme.space-loose * 2;
+                spacing: Theme.space-tight;
+                Text { text: "Citation details"; font-family: Theme.font-display; font-size: Theme.font-size-body; color: Theme.text-primary; }
+                Text { text: root.citation-detail-title; font-family: Theme.font-sans; font-size: Theme.font-size-caption; color: Theme.text-secondary; wrap: word-wrap; }
+                Text { text: root.citation-detail-authors; font-family: Theme.font-sans; font-size: Theme.font-size-2xs; color: Theme.text-muted; wrap: word-wrap; }
+                Text { text: root.citation-detail-year-venue; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; color: Theme.text-muted; wrap: word-wrap; }
+                Text { text: root.citation-detail-provider + " · " + root.citation-detail-source; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; color: Theme.audit; wrap: word-wrap; }
+                NeothButton { label: "Close"; primary: false; size: "sm"; clicked => { root.citation-detail-dismissed(); } }
+            }
+        }
+    }
+
+    if root.citation-consent-visible: ConfirmDialog {
+        width: root.width;
+        height: root.height;
+        title: "Approve live citation lookup?";
+        body: root.citation-consent-body;
+        cancel-label: root.citation-consent-submitting ? "Sending response…" : "Deny";
+        confirm-label: root.citation-consent-submitting ? "Sending response…" : "Approve lookup";
+        confirm-enabled: !root.citation-consent-submitting;
+        actions-enabled: !root.citation-consent-submitting;
+        confirmed => {
+            if (!root.citation-consent-submitting) { root.citation-consent-approved(); }
+        }
+        cancelled => {
+            if (!root.citation-consent-submitting) { root.citation-consent-cancelled(); }
+        }
+    }
+}

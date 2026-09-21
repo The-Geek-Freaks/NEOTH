@@ -8,25 +8,29 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
-**W155 Citation Core/CLI admission (2026-09-21):** independently reviewed
-fixed Crossref/OpenAlex/Semantic Scholar transport, validated claim-bound records,
-private cache-first behavior, typed CLI receipts and exact GUI consent protocol
-are admitted for hosted verification. The prepared Chat panel stays unpublished
-while the GUI owner repairs its reviewed child-process deadline/output/cancellation
-gap. See [W155](../docs/gold-wave155-verification.md). The manifest binds 334
-inputs; required cases are 272 universal native, 3 Windows-only, 2 Linux/macOS
-filesystem cases, the existing 46 universal GUI plus 11 Linux/macOS callbacks,
-and 7 optional adapter tests. GOLD-LF-P1-12 stays open until full integration and
-executable evidence. Generated CLI reference comes from the next hosted build.
+**W155 integrated Citation admission (2026-09-21):** reviewed Core/Consent/HTTP/CLI
+and the actual Chat citation panel are admitted for hosted verification. Lookup
+binds an explicit claim to a DOI/provider result, checks the private cache first,
+and defaults to offline in the GUI. Live confirmation uses one-use private
+stdin proofs. Replacement/history transitions cancel the prior child; direct
+child execution has a 10-second deadline and 512-KiB/32-KiB output limits.
+Independent review covers the repaired child/consent boundary. Source fixtures
+include live Approve/Deny/Ready, duplicate decisions, stale/history completion,
+hung-child cancellation, output flooding and recovery. See
+[W155](../docs/gold-wave155-verification.md). Rendering and runtime remain pending.
 
-W155 source da2a5582 passed Code Quality35624480765. Preflight35624481124
-reported 119 exact Rustfmt hunks in eight Citation files; those hosted layouts
-are now imported. Reference build35624482185 found six Rust compiler errors:
-missing Context imports, TryLockError variants, a policy-reference argument,
-an Option mapping signature and the required geteuid unsafe block. The narrow
-repairs are reviewed separately and await a fresh hosted build. The 334-input
-manifest and all required test hashes bind the repaired source. No executable
-validation ran locally and no Road checkbox closes.
+The manifest binds 336 inputs: 272 universal native + 3 Windows-only + 2 Unix
+cases, 56 universal GUI cases + 12 Linux/macOS callbacks, and 7 optional adapter
+cases. The macOS catalog now has 17 exact callback names. GOLD-LF-P1-12 stays
+open until executable and visual acceptance. W159 remains unpublished/excluded.
+
+Core repair 2f3ceab5 follows the six actual compiler errors from reference run
+35624482185 and the 119 hosted formatting hunks from Preflight35624481124.
+Its Preflight35626050807 requested two final layout/newline changes, imported
+exactly. Core/reference35626050057 is still building that repaired source;
+its output must be bound to that exact SHA before generated documentation import.
+New integrated-source native/GUI and static gates remain required. All executable
+validation runs only on GitHub; no Road checkbox closes.
 
 Repair source b58ec47f passed Preflight35622231947 and Quality35622233230.
 Its full CI35622258375 found one additional test-only E0507 in an attach fixture;
@@ -51,7 +55,7 @@ diff-impact root binding. Independent source review covers W160/W161; fresh
 hosted CI and preview remain required. W137 automatic routing and W142 terminal
 refresh still need their diagnostic reruns. See
 [W160-W161](../docs/gold-wave160-161-verification.md). No Road checkbox closes;
-W155 GUI and W159 WAL session identity remain separate unpublished work.
+W155 is admitted above; W159 WAL session identity remains separate unpublished work.
 
 **W158 native recovery (2026-09-21):** hosted ff146652 ran 16,938 Windows
 and 17,003 macOS tests; 12/13 failed respectively. Four independently reviewed

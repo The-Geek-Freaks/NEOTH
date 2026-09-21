@@ -24,6 +24,7 @@ CUSTOM_TESTS = frozenset(
         "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight",
         "w58_gui_callback_runtime_tests::w153_legacy_child_callbacks_project_only_transient_reasoning",
         "w58_gui_callback_runtime_tests::w153_reasoning_child_controls_are_transient_and_history_excluded",
+        "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts",
     }
 )
 CONTROLLER_TEST = (

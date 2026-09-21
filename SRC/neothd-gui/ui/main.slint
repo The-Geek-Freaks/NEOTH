@@ -22,6 +22,7 @@ import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack, PaletteItem, CommandPalette, ContextMenu, MenuItem, ConfirmDialog } from "components.slint";
 import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, CodeMapHitRow, CodeMapImpactTestRow, CodeMapManagedRootRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelAccountRow, ChannelActivityRow, TelegramPairingRequestRow, PresetRow, ProfilePresetRow, PermRow } from "settings.slint";
 import { ChatView, ChatMessage, ChatChannelRow, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
+import { CitationLookupPanel, CitationChip } from "citation.slint";
 import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
 import { MiniOverlay } from "overlay.slint";
@@ -50,7 +51,7 @@ import { WikiView, WikiRow } from "wiki.slint";
 import { BuddyConfigView, SelfActSkill, BuddySelfImproveProposal } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow, MeshConflictRow, MeshSyncRow } from "mesh.slint";
-export { SettingsTab, ChatMessage, ChatChannelRow, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow, MenuItem, BgJobRow, SlashCmdRow, ChannelAccountRow, TelegramPairingRequestRow }
+export { SettingsTab, ChatMessage, ChatChannelRow, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow, MenuItem, BgJobRow, SlashCmdRow, ChannelAccountRow, TelegramPairingRequestRow, CitationChip }
 export { Theme }
 
 // SPEC-05 PresetRow/ProfilePresetRow now live in settings.slint (AOS-02
@@ -1087,6 +1088,31 @@ export component MainWindow inherits Window {
     in property <[SessionRow]> chat-session-history: [];
     in property <string> chat-active-session-id: "";
     in property <bool> chat-history-active: false;
+    // W155 — an explicit operator claim/DOI lookup.  These properties stay
+    // separate from transcript/model Markdown; Rust owns the core-validated
+    // binding and clears it on every request or retained-history switch.
+    in-out property <string> chat-citation-claim-draft: "";
+    in-out property <string> chat-citation-doi-draft: "";
+    in-out property <int> chat-citation-provider-index: 0;
+    in-out property <bool> chat-citation-offline: true;
+    in property <bool> chat-citation-lookup-running: false;
+    in property <string> chat-citation-lookup-status: "";
+    in property <string> chat-citation-active-claim: "";
+    in property <[CitationChip]> chat-citation-chips: [];
+    in property <bool> chat-citation-detail-visible: false;
+    in property <string> chat-citation-detail-title: "";
+    in property <string> chat-citation-detail-authors: "";
+    in property <string> chat-citation-detail-year-venue: "";
+    in property <string> chat-citation-detail-provider: "";
+    in property <string> chat-citation-detail-source: "";
+    in property <bool> chat-citation-consent-visible: false;
+    in property <bool> chat-citation-consent-submitting: false;
+    in property <string> chat-citation-consent-body: "";
+    callback chat-citation-lookup-clicked(string, string, int, bool);
+    callback chat-citation-detail-clicked(string);
+    callback chat-citation-detail-dismissed();
+    callback chat-citation-consent-approved();
+    callback chat-citation-consent-cancelled();
     callback chat-live-session-selected();
     callback chat-session-selected(string);
     /// GOLD-LF-P1-21 — request-bound 120-second silence diagnostic.
@@ -4214,7 +4240,11 @@ export component MainWindow inherits Window {
 
                 // Chat — primary surface, inside the shell content. Sovereign-
                 // curve fade on remount (Slint `if`-remount → opacity 0→1).
-                if root.nav-active == "chat": SovereignFade { ChatView {
+                if root.nav-active == "chat": SovereignFade { VerticalLayout {
+                    spacing: Theme.space-tight;
+                    ChatView {
+                    horizontal-stretch: 1;
+                    vertical-stretch: 1;
                     messages: root.chat-messages;
                     composer-draft <=> root.chat-composer-draft;
                     incognito <=> root.chat-incognito;
@@ -4276,7 +4306,37 @@ export component MainWindow inherits Window {
                         root.channel-ctx-y = y;
                         root.channel-ctx-open = true;
                     }
-                } }  // close ChatView + SovereignFade
+                    }
+                    CitationLookupPanel {
+                        horizontal-stretch: 1;
+                        citation-claim-draft <=> root.chat-citation-claim-draft;
+                        citation-doi-draft <=> root.chat-citation-doi-draft;
+                        citation-provider-index <=> root.chat-citation-provider-index;
+                        citation-offline <=> root.chat-citation-offline;
+                        citation-lookup-running: root.chat-citation-lookup-running;
+                        citation-lookup-status: root.chat-citation-lookup-status;
+                        citation-active-claim: root.chat-citation-active-claim;
+                        citation-chips: root.chat-citation-chips;
+                        citation-detail-visible: root.chat-citation-detail-visible;
+                        citation-detail-title: root.chat-citation-detail-title;
+                        citation-detail-authors: root.chat-citation-detail-authors;
+                        citation-detail-year-venue: root.chat-citation-detail-year-venue;
+                        citation-detail-provider: root.chat-citation-detail-provider;
+                        citation-detail-source: root.chat-citation-detail-source;
+                        citation-consent-visible: root.chat-citation-consent-visible;
+                        citation-consent-submitting: root.chat-citation-consent-submitting;
+                        citation-consent-body: root.chat-citation-consent-body;
+                        citation-lookup-clicked(claim, doi, provider, offline) => {
+                            root.chat-citation-lookup-clicked(claim, doi, provider, offline);
+                        }
+                        citation-detail-clicked(binding) => {
+                            root.chat-citation-detail-clicked(binding);
+                        }
+                        citation-detail-dismissed => { root.chat-citation-detail-dismissed(); }
+                        citation-consent-approved => { root.chat-citation-consent-approved(); }
+                        citation-consent-cancelled => { root.chat-citation-consent-cancelled(); }
+                    }
+                } }  // close ChatView + citation panel + SovereignFade
 
                 // Design Wave 3 — Overview / Mission Control dashboard.
                 if root.nav-active == "overview": OverviewView {
