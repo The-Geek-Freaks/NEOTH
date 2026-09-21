@@ -297,7 +297,41 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "P1-16: account-qualified human aliases and exact legacy operator claims",
         run: migration_v38_to_v39,
     },
+    Migration {
+        from: 39,
+        to: 40,
+        description: "GOLD-LF-P2-08: add opaque WAL session projections to episode/provider views",
+        run: migration_v39_to_v40,
+    },
 ];
+
+/// Add only the fixed-width header projection. Existing rows are permanently
+/// zero/unattributed; migration must never infer a session from payload data.
+pub(crate) fn migration_v39_to_v40(conn: &Connection) -> Result<()> {
+    const ZERO_SESSION_SQL: &str = "X'00000000000000000000000000000000'";
+    for table in ["idx_episode", "idx_provider"] {
+        let has_column = conn
+            .prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = 'wal_session_id'")
+            .with_context(|| format!("v40 prepare {table} session projection inspection"))?
+            .exists([table])
+            .with_context(|| format!("v40 inspect {table} session projection"))?;
+        if !has_column {
+            conn.execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN wal_session_id BLOB NOT NULL \
+                 DEFAULT {ZERO_SESSION_SQL} \
+                 CHECK(typeof(wal_session_id) = 'blob' AND length(wal_session_id) = 16)"
+            ))
+            .with_context(|| format!("v40 add {table}.wal_session_id as legacy zero"))?;
+        }
+    }
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_episode_wal_session_ts \
+             ON idx_episode (wal_session_id, ts_ns DESC, event_id); \
+         CREATE INDEX IF NOT EXISTS idx_provider_wal_session_ts \
+             ON idx_provider (wal_session_id, ts_ns DESC, event_id);",
+    )
+    .context("v40 create WAL session projection indexes")
+}
 
 /// Add account-qualified aliases without attributing legacy rows to an account.
 pub(crate) fn migration_v38_to_v39(conn: &Connection) -> Result<()> {
@@ -4902,5 +4936,44 @@ mod tests {
             )
             .unwrap();
         assert_eq!(legacy_after, legacy_before);
+    }
+
+    #[test]
+    fn v39_to_v40_preserves_rows_as_unattributed_and_creates_session_indexes() {
+        let mut conn = open_with_meta(39);
+        conn.execute_batch(
+            "CREATE TABLE idx_episode (
+                event_id INTEGER PRIMARY KEY, event_type INTEGER NOT NULL,
+                ts_ns INTEGER NOT NULL, text TEXT NOT NULL, text_hash TEXT NOT NULL,
+                importance REAL NOT NULL DEFAULT 0.5
+             );
+             CREATE TABLE idx_provider (
+                event_id INTEGER PRIMARY KEY, event_type INTEGER NOT NULL,
+                ts_ns INTEGER NOT NULL, provider TEXT NOT NULL
+             );
+             INSERT INTO idx_episode(event_id,event_type,ts_ns,text,text_hash)
+                VALUES(1,1,10,'legacy','hash');
+             INSERT INTO idx_provider(event_id,event_type,ts_ns,provider)
+                VALUES(2,32,11,'legacy-provider');",
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn, 39, 40).unwrap(), 40);
+        assert_eq!(current_version(&conn).unwrap(), 40);
+        for table in ["idx_episode", "idx_provider"] {
+            let projection: (String, i64, Vec<u8>) = conn
+                .query_row(
+                    &format!(
+                        "SELECT typeof(wal_session_id), length(wal_session_id), wal_session_id FROM {table} LIMIT 1"
+                    ),
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(projection, ("blob".to_string(), 16, vec![0u8; 16]), "{table}");
+        }
+        for index in ["idx_episode_wal_session_ts", "idx_provider_wal_session_ts"] {
+            assert!(sqlite_object_exists(&conn, index), "missing {index}");
+        }
     }
 }

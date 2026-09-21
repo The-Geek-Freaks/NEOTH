@@ -328,6 +328,7 @@ pub(crate) async fn persist_local_operator_turn(
     writer: &crate::wal::writer::WalWriterHandle,
     retention: TranscriptMiningRetention,
     session_id: &str,
+    wal_session: Option<crate::wal::WalSessionContext>,
     text: &str,
     now: i64,
 ) -> Result<i64> {
@@ -337,7 +338,7 @@ pub(crate) async fn persist_local_operator_turn(
     let conn = super::store::open(&ingress.home().join("views.db"))?;
     let mut store = TranscriptMiningStore::open(conn, ingress)?;
     reconcile_store(&mut store, home, writer).await?;
-    let prepared = store.prepare_operator_raw_birth(session_id, text, now)?;
+    let prepared = store.prepare_operator_raw_birth_in(session_id, text, now, wal_session)?;
     let event_id = prepared.event_id();
     let receipt = writer
         .append_planned_raw_text_once(home, prepared.raw_descriptor()?)

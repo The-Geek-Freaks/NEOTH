@@ -15,7 +15,9 @@
 
 use super::header::{CRC_LEN, EventHeaderV2, HEADER_BODY_LEN, PREAMBLE_LEN};
 use super::hlc::Hlc;
-use super::types::{EventFlags, EventId, Importance, NodeId, SessionId, WalCategory, WalScope};
+use super::types::{
+    EventFlags, EventId, Importance, NodeId, SessionId, WalCategory, WalScope, WalSessionContext,
+};
 
 /// Defaults applied to every header unless explicitly overridden.
 const DEFAULT_IMPORTANCE: f32 = 0.5;
@@ -85,6 +87,14 @@ impl<'p> HeaderBuilder<'p> {
 
     pub fn session(mut self, id: SessionId) -> Self {
         self.session_id = id;
+        self
+    }
+
+    /// Apply the context explicitly minted by a trusted admission boundary.
+    /// `None` is deliberately the legacy/unattributed zero bucket: it is used
+    /// by boot, cron, transport, Incognito, and every existing bare caller.
+    pub(crate) fn session_context(mut self, context: Option<WalSessionContext>) -> Self {
+        self.session_id = context.map_or(SessionId::ZERO, WalSessionContext::header_id);
         self
     }
 
@@ -178,6 +188,20 @@ pub fn make_header(event_type: u8, payload: &[u8]) -> EventHeaderV2 {
     HeaderBuilder::new(event_type, payload).build()
 }
 
+/// Contextual convenience constructor for one already-admitted turn. Unlike
+/// [`make_header`], callers must consciously pass their trusted session
+/// context. `None` retains the legacy zero sentinel and is never inferred from
+/// a global, payload, or thread-local source.
+pub(crate) fn make_header_in(
+    event_type: u8,
+    payload: &[u8],
+    context: Option<WalSessionContext>,
+) -> EventHeaderV2 {
+    HeaderBuilder::new(event_type, payload)
+        .session_context(context)
+        .build()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,6 +275,24 @@ mod tests {
         assert_eq!(h.node_id.0, node.0);
         assert_eq!(h.scope, WalScope(42));
         assert_eq!(h.category, WalCategory(1));
+    }
+
+    #[test]
+    fn contextual_builder_stamps_only_an_admitted_context() {
+        let home = tempfile::tempdir().unwrap();
+        let key_path = home.path().join("wal").join("hmac.key");
+        crate::wal::compaction::load_or_init_key(&key_path).unwrap();
+        let context = WalSessionContext::from_admitted_identity(home.path(), b"daemon\0same-user\0turn-3")
+            .unwrap();
+
+        let contextual = make_header_in(EVENT_TYPE_RAW_TEXT, b"turn", Some(context));
+        let unscoped = make_header_in(EVENT_TYPE_RAW_TEXT, b"turn", None);
+        let legacy = make_header(EVENT_TYPE_RAW_TEXT, b"turn");
+
+        assert_eq!(contextual.session_id, context.header_id());
+        assert!(!contextual.session_id.is_zero());
+        assert_eq!(unscoped.session_id, SessionId::ZERO);
+        assert_eq!(legacy.session_id, SessionId::ZERO);
     }
 
     #[test]

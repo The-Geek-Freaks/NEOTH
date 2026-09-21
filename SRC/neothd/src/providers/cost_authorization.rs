@@ -24,9 +24,12 @@ use super::{
 #[cfg(test)]
 use crate::permissions::AutonomyLevel;
 use crate::permissions::gate::ChannelAsker;
-use crate::permissions::{Action, AutonomyPolicySnapshot, ConfirmStrategy, Gate};
+use crate::permissions::{
+    Action, AutonomyPolicySnapshot, ConfirmStrategy, Gate, PermissionAuditSink,
+};
 use crate::security::provider_subject::ProviderSubjectIdentifier;
 use crate::wal::writer::WalWriterHandle;
+use crate::wal::WalSessionContext;
 
 static AUTHORIZATION_ID_NONCE: AtomicU64 = AtomicU64::new(0);
 
@@ -346,7 +349,13 @@ pub struct ProviderCallAuditContext {
     /// has authenticated the caller. Never place a channel sender ID or other
     /// untrusted request field here.
     pub operator_id: Option<String>,
+    /// Serialized compatibility metadata only. It is never an authority for a
+    /// WAL header session identifier.
     pub session_id: Option<String>,
+    /// Trusted, non-serialized WAL attribution capability minted by an
+    /// admission boundary. The opaque value is copied through provider retries
+    /// and fallbacks, never derived from payload metadata.
+    pub(crate) wal_session: Option<WalSessionContext>,
     pub target: Option<String>,
     pub configured_provider_kind: Option<String>,
     pub model_source: Option<&'static str>,
@@ -355,6 +364,16 @@ pub struct ProviderCallAuditContext {
     pub prompt_token_estimate: Option<u32>,
     pub cluster_delegated: bool,
     pub incognito: bool,
+}
+
+impl ProviderCallAuditContext {
+    /// Attach only an already-admitted, opaque WAL session capability. This
+    /// accepts no payload or logical-session string and is crate-private so
+    /// public request data cannot select a header session.
+    pub(crate) fn with_wal_session(mut self, wal_session: Option<WalSessionContext>) -> Self {
+        self.wal_session = wal_session;
+        self
+    }
 }
 
 fn identifier_sha256(value: &str) -> String {
@@ -636,7 +655,9 @@ impl ProviderCallAuditTicket {
             )))
         })?;
         if let Some(writer) = writer {
-            let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+            let header = crate::wal::HeaderBuilder::new(event_type, &payload)
+                .session_context(self.context.wal_session)
+                .build();
             writer.append(header, payload).await.map_err(|error| {
                 anyhow::anyhow!(ProviderAuthorizationError(format!(
                     "provider terminal WAL append failed for `{}`: {error}",
@@ -857,6 +878,7 @@ impl ProviderIntentLifecycle {
                     crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
                     &payload,
                 )
+                .session_context(ticket.context.wal_session)
                 .build();
                 let writer = writer.clone();
                 let call_scope = ticket.call_scope;
@@ -1849,6 +1871,12 @@ impl ProviderCallAuthorizer {
         self
     }
 
+    /// Return only the opaque session capability for provider-internal WAL
+    /// leaves. Payload fields are deliberately not consulted here.
+    pub(crate) fn wal_session(&self) -> Option<WalSessionContext> {
+        self.audit_context.wal_session
+    }
+
     /// Apply the configured input-token ceiling to every concrete provider
     /// leaf reached through this authorizer.  The effective limit remains
     /// model-aware and is resolved only after the exact wire model is known,
@@ -1965,7 +1993,9 @@ impl ProviderCallAuthorizer {
                 "{context}: no WAL writer is attached; provider dispatch is blocked"
             )))
         })?;
-        let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+        let header = crate::wal::HeaderBuilder::new(event_type, &payload)
+            .session_context(self.wal_session())
+            .build();
         writer
             .append(header, payload)
             .await
@@ -2238,6 +2268,7 @@ impl ProviderCallAuthorizer {
                 crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN,
                 &payload,
             )
+            .session_context(self.wal_session())
             .build();
             writer.append(header, payload).await.map_err(|error| {
                 anyhow::anyhow!(ProviderAuthorizationError(format!(
@@ -2248,10 +2279,21 @@ impl ProviderCallAuthorizer {
 
         let gate_result = match self.writer.as_ref() {
             Some(writer) => {
-                self.gate(leaf_policy.autonomy)
-                    .with_skill_invocation_policy(self.skill_invocation_policy.clone())
-                    .check_required_audit(&action, writer)
-                    .await
+                let gate = self
+                    .gate(leaf_policy.autonomy)
+                    .with_skill_invocation_policy(self.skill_invocation_policy.clone());
+                match self.wal_session() {
+                    Some(wal_session) => {
+                        gate.check_with_audit_sink(
+                            &action,
+                            PermissionAuditSink::WriterWithSession(writer, wal_session),
+                            true,
+                            Some(&request_binding_sha256),
+                        )
+                        .await
+                    }
+                    None => gate.check_required_audit(&action, writer).await,
+                }
             }
             #[cfg(test)]
             None => {
@@ -5508,6 +5550,75 @@ mod tests {
         assert_eq!(payload["operator_id_sha256"].as_str().unwrap().len(), 64);
     }
 
+    #[tokio::test]
+    async fn admitted_provider_leaf_permission_and_trust_headers_retain_session() {
+        let home = tempfile::tempdir().unwrap();
+        let segment = home.path().join("provider-session-000001.wal");
+        let (writer, join) = crate::wal::writer::spawn_for_home(
+            segment.clone(),
+            home.path().to_path_buf(),
+        )
+        .unwrap();
+        let wal_session = WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"test\0provider-leaf\0admitted-turn",
+        )
+        .unwrap();
+        let authorizer = ProviderCallAuthorizer::fail_closed(
+            AutonomyLevel::Full,
+            Some(writer.clone()),
+            test_input_token_cap(),
+        )
+        .with_audit_context(ProviderCallAuditContext::default().with_wal_session(Some(
+            wal_session,
+        )));
+        let request = Request {
+            model: Some("gpt-5".into()),
+            prompt: "admitted provider leaf".into(),
+            ..Request::default()
+        };
+
+        authorizer
+            .authorize_leaf(
+                "openai_api",
+                &request,
+                "test.admitted_provider_leaf",
+                false,
+                Some(4096),
+            )
+            .await
+            .unwrap();
+        drop(authorizer);
+        drop(writer);
+        join.await.unwrap();
+
+        let bytes = std::fs::read(segment).unwrap();
+        let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = header.header_len();
+        let mut sessions = Vec::new();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            if matches!(
+                frame.header.event_type,
+                crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN
+                    | crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED
+                    | crate::wal::events::EVENT_TYPE_PERMISSION_DENIED
+            ) || (frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::TrustDecision as u8)
+            {
+                sessions.push(*frame.header.session_id.as_bytes());
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(sessions.len(), 3);
+        assert!(
+            sessions
+                .iter()
+                .all(|session_id| *session_id == *wal_session.header_id().as_bytes()),
+            "provider cost, permission, and TrustDecision frames retain the admitted WAL session"
+        );
+    }
     #[tokio::test]
     async fn authorization_id_and_binding_match_cost_and_permission_frames() {
         let dir = tempfile::tempdir().unwrap();

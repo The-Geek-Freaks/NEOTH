@@ -12,13 +12,13 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use super::SubAgent;
-use super::parallel::SubAgentWorker;
+use super::parallel::{SubAgentExecutionContext, SubAgentWorker};
 use super::schema::{
     SubAgentPromptBaseline, SubAgentPromptShape, SubAgentProviderCall, SubAgentRequest,
     SubAgentResult,
 };
 use crate::council::qa_verdict::QaVerdict;
-use crate::providers::cost_authorization::AuthorizedProvider;
+use crate::providers::cost_authorization::{AuthorizedProvider, ProviderCallAuditContext};
 use crate::providers::{
     Completion, CompletionUsageMeasurements, Provider, ProviderUsageAttribution, Request,
 };
@@ -164,6 +164,17 @@ impl ProviderSubAgentWorker {
 #[async_trait::async_trait]
 impl SubAgentWorker for ProviderSubAgentWorker {
     async fn run(&self, request: SubAgentRequest) -> Result<SubAgentResult> {
+        self.run_in(request, SubAgentExecutionContext::default()).await
+    }
+
+    async fn run_in(
+        &self,
+        request: SubAgentRequest,
+        execution_context: SubAgentExecutionContext,
+    ) -> Result<SubAgentResult> {
+        let provider = self.provider.with_audit_context(
+            ProviderCallAuditContext::default().with_wal_session(execution_context.wal_session),
+        );
         let agent = self
             .agents
             .get(&request.to)
@@ -187,8 +198,7 @@ impl SubAgentWorker for ProviderSubAgentWorker {
                 ),
                 None => PromptSegments::primary(&prompt, &system, &request.context),
             };
-            let completion = self
-                .provider
+            let completion = provider
                 .complete(Request {
                     prompt: prompt.clone(),
                     system: Some(system),
@@ -206,8 +216,8 @@ impl SubAgentWorker for ProviderSubAgentWorker {
                     "candidate is {} bytes; bounded QA limit is {MAX_QA_CANDIDATE_BYTES}",
                     output.len()
                 ));
-                emit_qa_verdict(
-                    &self.writer,
+                emit_qa_verdict_in(
+                    &self.writer, execution_context.wal_session,
                     &request.task_id,
                     &agent.name,
                     attempt,
@@ -232,7 +242,7 @@ impl SubAgentWorker for ProviderSubAgentWorker {
             }
 
             let qa = match request_qa_verdict(
-                self.provider.as_ref(),
+                &provider,
                 &request,
                 &output,
                 agent.model.clone(),
@@ -243,8 +253,8 @@ impl SubAgentWorker for ProviderSubAgentWorker {
                 Ok(qa) => qa,
                 Err(error) => {
                     let verdict = QaVerdict::blocked(format!("QA provider call failed: {error:#}"));
-                    emit_qa_verdict(
-                        &self.writer,
+                    emit_qa_verdict_in(
+                        &self.writer, execution_context.wal_session,
                         &request.task_id,
                         &agent.name,
                         attempt,
@@ -269,8 +279,8 @@ impl SubAgentWorker for ProviderSubAgentWorker {
                 Ok(verdict) => verdict,
                 Err(error) => QaVerdict::blocked(format!("malformed QA verdict: {error}")),
             };
-            emit_qa_verdict(
-                &self.writer,
+            emit_qa_verdict_in(
+                &self.writer, execution_context.wal_session,
                 &request.task_id,
                 &agent.name,
                 attempt,
@@ -517,8 +527,9 @@ fn retry_prompt_parts(
 
 /// Content-free WAL event. `0x84` remains backward-compatible with the older
 /// two-stage review event; `schema` distinguishes the structured aggregate.
-pub async fn emit_qa_verdict(
+pub async fn emit_qa_verdict_in(
     writer: &WalWriterHandle,
+    wal_session: Option<crate::wal::WalSessionContext>,
     task_id: &str,
     agent_name: &str,
     attempt: u8,
@@ -550,6 +561,7 @@ pub async fn emit_qa_verdict(
         crate::wal::events::EVENT_TYPE_SUBAGENT_REVIEW_STAGE,
         &payload,
     )
+    .session_context(wal_session)
     .build();
     writer
         .append(header, payload)
@@ -558,6 +570,18 @@ pub async fn emit_qa_verdict(
     Ok(())
 }
 
+/// Backward-compatible unscoped QA frame for standalone/background callers.
+pub async fn emit_qa_verdict(
+    writer: &WalWriterHandle,
+    task_id: &str,
+    agent_name: &str,
+    attempt: u8,
+    verdict: &QaVerdict,
+    candidate: &str,
+    qa_call: Option<&SubAgentProviderCall>,
+) -> Result<()> {
+    emit_qa_verdict_in(writer, None, task_id, agent_name, attempt, verdict, candidate, qa_call).await
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubAgentRunRecord {
     pub schema_version: u8,

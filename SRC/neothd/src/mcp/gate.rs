@@ -43,6 +43,7 @@ use crate::permissions::gate::{ConfirmStrategy, Gate, PermissionAuditSink};
 use crate::permissions::lease::LeaseStore;
 use crate::permissions::{Action, Decision, PolicyArgument, evaluate};
 use crate::wal::HeaderBuilder;
+use crate::wal::WalSessionContext;
 use crate::wal::events::{
     EVENT_TYPE_MCP_TOOL_CALLED, EVENT_TYPE_MCP_TOOL_REJECTED,
     EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE,
@@ -56,6 +57,9 @@ use crate::wal::writer::WalWriterHandle;
 pub(crate) enum McpAuditSink<'a> {
     None,
     Writer(&'a WalWriterHandle),
+    /// Writer attached to one already-admitted turn. The opaque capability is
+    /// never reconstructed from MCP request or payload data.
+    WriterWithSession(&'a WalWriterHandle, WalSessionContext),
     DaemonRpc(&'a std::path::Path),
     #[cfg(test)]
     Fail(&'static str),
@@ -71,14 +75,24 @@ impl<'a> McpAuditSink<'a> {
         match sink {
             PermissionAuditSink::None => Self::None,
             PermissionAuditSink::Writer(writer) => Self::Writer(writer),
+            PermissionAuditSink::WriterWithSession(writer, wal_session) => {
+                Self::WriterWithSession(writer, wal_session)
+            }
             PermissionAuditSink::DaemonRpc(home) => Self::DaemonRpc(home),
             #[cfg(test)]
             PermissionAuditSink::Fail(message) => Self::Fail(message),
         }
     }
 
-    pub(super) fn from_writer(writer: Option<&'a WalWriterHandle>) -> Self {
-        writer.map(Self::Writer).unwrap_or(Self::None)
+    pub(super) fn from_writer(
+        writer: Option<&'a WalWriterHandle>,
+        wal_session: Option<WalSessionContext>,
+    ) -> Self {
+        match (writer, wal_session) {
+            (Some(writer), Some(wal_session)) => Self::WriterWithSession(writer, wal_session),
+            (Some(writer), None) => Self::Writer(writer),
+            (None, _) => Self::None,
+        }
     }
 
     fn is_present(self) -> bool {
@@ -89,6 +103,9 @@ impl<'a> McpAuditSink<'a> {
         match self {
             Self::None => PermissionAuditSink::None,
             Self::Writer(writer) => PermissionAuditSink::Writer(writer),
+            Self::WriterWithSession(writer, wal_session) => {
+                PermissionAuditSink::WriterWithSession(writer, wal_session)
+            }
             Self::DaemonRpc(home) => PermissionAuditSink::DaemonRpc(home),
             #[cfg(test)]
             Self::Fail(message) => PermissionAuditSink::Fail(message),
@@ -102,6 +119,16 @@ impl<'a> McpAuditSink<'a> {
             Self::None => Ok(()),
             Self::Writer(writer) => {
                 let header = HeaderBuilder::new(event_type, &payload).build();
+                writer
+                    .append(header, payload)
+                    .await
+                    .context("append MCP audit frame")
+                    .map(|_| ())
+            }
+            Self::WriterWithSession(writer, wal_session) => {
+                let header = HeaderBuilder::new(event_type, &payload)
+                    .session_context(Some(wal_session))
+                    .build();
                 writer
                     .append(header, payload)
                     .await
@@ -135,13 +162,27 @@ pub(crate) async fn append_final_tool_result_prepared(
     sink: McpAuditSink<'_>,
     payload: Vec<u8>,
 ) -> Result<(), GateError> {
-    let header = HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
-        .event_subtype(crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8)
-        .build();
     match sink {
         McpAuditSink::None => Ok(()),
         McpAuditSink::Writer(writer) => writer
-            .append(header, payload)
+            .append(
+                HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+                    .event_subtype(crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8)
+                    .build(),
+                payload,
+            )
+            .await
+            .context("append final codegraph tool result audit")
+            .map(|_| ())
+            .map_err(GateError::Wal),
+        McpAuditSink::WriterWithSession(writer, wal_session) => writer
+            .append(
+                HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+                    .event_subtype(crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8)
+                    .session_context(Some(wal_session))
+                    .build(),
+                payload,
+            )
             .await
             .context("append final codegraph tool result audit")
             .map(|_| ())
@@ -327,15 +368,44 @@ impl McpToolScope {
         writer: Option<&WalWriterHandle>,
         now_unix: i64,
     ) -> Result<(), GateError> {
+        self.enforce_in(server, tool, writer, None, now_unix).await
+    }
+
+    /// Contextual form used only by an already-admitted dispatch turn.
+    pub(crate) async fn enforce_in(
+        &self,
+        server: &str,
+        tool: &str,
+        writer: Option<&WalWriterHandle>,
+        wal_session: Option<WalSessionContext>,
+        now_unix: i64,
+    ) -> Result<(), GateError> {
         if let Some(agent) = &self.agent {
-            enforce_agent_denylist(Some(&agent.disallowed), server, tool, writer, now_unix).await?;
-            enforce_agent_allowlist(Some(&agent.allowed), server, tool, writer, now_unix).await?;
+            enforce_agent_denylist_in(
+                Some(&agent.disallowed),
+                server,
+                tool,
+                writer,
+                wal_session,
+                now_unix,
+            )
+            .await?;
+            enforce_agent_allowlist_in(
+                Some(&agent.allowed),
+                server,
+                tool,
+                writer,
+                wal_session,
+                now_unix,
+            )
+            .await?;
         }
-        enforce_skill_allowlist(
+        enforce_skill_allowlist_in(
             self.skill_allowlist.as_deref(),
             server,
             tool,
             writer,
+            wal_session,
             now_unix,
         )
         .await
@@ -924,6 +994,7 @@ pub(crate) async fn invoke_authorized_with_audit_effect_gate(
     arguments: Value,
     authorized: AuthorizedMcpInvocation,
     writer: Option<&WalWriterHandle>,
+    wal_session: Option<WalSessionContext>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     now_unix: i64,
     effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
@@ -936,7 +1007,7 @@ pub(crate) async fn invoke_authorized_with_audit_effect_gate(
         tool,
         arguments,
         authorized,
-        McpAuditSink::from_writer(writer),
+        McpAuditSink::from_writer(writer, wal_session),
         rollback_policy,
         now_unix,
         Some(&request_binding_sha256),
@@ -1049,29 +1120,37 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
         .map_err(|error| GateError::Mcp(McpError::Protocol(cfg.id.clone(), error.to_string())))?;
     let arguments_hash = format!("{:016x}", xxh3_64(&args_bytes));
 
-    if let (Some(policy), McpAuditSink::Writer(writer)) = (rollback_policy, sink)
-        && policy.should_capture("mcp_tool_invoke")
-    {
-        let target = format!("{}:{}", cfg.id, tool);
-        let emit = crate::wal::snapshot::emit_if_policy_allows(
-            writer,
-            policy,
-            crate::wal::snapshot::MutationKind::McpToolInvoke,
-            target,
-            &args_bytes,
-            now_unix,
-            Some(format!(
-                "MCP tool invocation snapshot (args xxh3={arguments_hash})"
-            )),
-        )
-        .await;
-        if let Err(error) = emit {
-            tracing::warn!(
-                error = %error,
-                server = %cfg.id,
-                tool = %tool,
-                "MCP pre-call snapshot emit failed — tool call proceeds without rollback coverage"
-            );
+    if let Some(policy) = rollback_policy {
+        let snapshot_writer = match sink {
+            McpAuditSink::Writer(writer) => Some((writer, None)),
+            McpAuditSink::WriterWithSession(writer, wal_session) => Some((writer, Some(wal_session))),
+            _ => None,
+        };
+        if let Some((writer, wal_session)) = snapshot_writer
+            && policy.should_capture("mcp_tool_invoke")
+        {
+            let target = format!("{}:{}", cfg.id, tool);
+            let emit = crate::wal::snapshot::emit_if_policy_allows_in(
+                writer,
+                policy,
+                crate::wal::snapshot::MutationKind::McpToolInvoke,
+                target,
+                &args_bytes,
+                now_unix,
+                Some(format!(
+                    "MCP tool invocation snapshot (args xxh3={arguments_hash})"
+                )),
+                wal_session,
+            )
+            .await;
+            if let Err(error) = emit {
+                tracing::warn!(
+                    error = %error,
+                    server = %cfg.id,
+                    tool = %tool,
+                    "MCP pre-call snapshot emit failed — tool call proceeds without rollback coverage"
+                );
+            }
         }
     }
 
@@ -1428,6 +1507,17 @@ pub async fn enforce_skill_allowlist(
     writer: Option<&WalWriterHandle>,
     now_unix: i64,
 ) -> Result<(), GateError> {
+    enforce_skill_allowlist_in(skill_allowlist, server, tool, writer, None, now_unix).await
+}
+
+async fn enforce_skill_allowlist_in(
+    skill_allowlist: Option<&[String]>,
+    server: &str,
+    tool: &str,
+    writer: Option<&WalWriterHandle>,
+    wal_session: Option<WalSessionContext>,
+    now_unix: i64,
+) -> Result<(), GateError> {
     let Some(list) = skill_allowlist else {
         return Ok(());
     };
@@ -1436,7 +1526,7 @@ pub async fn enforce_skill_allowlist(
     }
     if let Some(w) = writer {
         emit_reject(
-            McpAuditSink::Writer(w),
+            McpAuditSink::from_writer(Some(w), wal_session),
             server,
             tool,
             "tool not in active skill's tool_allowlist",
@@ -1461,6 +1551,17 @@ pub async fn enforce_agent_allowlist(
     writer: Option<&WalWriterHandle>,
     now_unix: i64,
 ) -> Result<(), GateError> {
+    enforce_agent_allowlist_in(allowed, server, tool, writer, None, now_unix).await
+}
+
+async fn enforce_agent_allowlist_in(
+    allowed: Option<&[String]>,
+    server: &str,
+    tool: &str,
+    writer: Option<&WalWriterHandle>,
+    wal_session: Option<WalSessionContext>,
+    now_unix: i64,
+) -> Result<(), GateError> {
     let Some(list) = allowed else {
         return Ok(());
     };
@@ -1469,7 +1570,7 @@ pub async fn enforce_agent_allowlist(
     }
     if let Some(w) = writer {
         emit_reject(
-            McpAuditSink::Writer(w),
+            McpAuditSink::from_writer(Some(w), wal_session),
             server,
             tool,
             "tool not in active sub-agent tools allowlist",
@@ -1508,6 +1609,17 @@ pub async fn enforce_agent_denylist(
     writer: Option<&WalWriterHandle>,
     now_unix: i64,
 ) -> Result<(), GateError> {
+    enforce_agent_denylist_in(disallowed, server, tool, writer, None, now_unix).await
+}
+
+async fn enforce_agent_denylist_in(
+    disallowed: Option<&[String]>,
+    server: &str,
+    tool: &str,
+    writer: Option<&WalWriterHandle>,
+    wal_session: Option<WalSessionContext>,
+    now_unix: i64,
+) -> Result<(), GateError> {
     let Some(list) = disallowed else {
         return Ok(());
     };
@@ -1516,7 +1628,7 @@ pub async fn enforce_agent_denylist(
     }
     if let Some(w) = writer {
         emit_reject(
-            McpAuditSink::Writer(w),
+            McpAuditSink::from_writer(Some(w), wal_session),
             server,
             tool,
             "tool in sub-agent disallowedTools denylist",
@@ -1559,6 +1671,15 @@ async fn record_trust_decision(
             crate::permissions::trust_ledger::append_resolved_decision_to_writer(writer, resolved)
                 .await
                 .map_err(GateError::Wal)
+        }
+        McpAuditSink::WriterWithSession(writer, wal_session) => {
+            crate::permissions::trust_ledger::append_resolved_decision_to_writer_in(
+                writer,
+                resolved,
+                Some(wal_session),
+            )
+            .await
+            .map_err(GateError::Wal)
         }
         McpAuditSink::DaemonRpc(home) => {
             let event = crate::permissions::trust_ledger::TrustEvent::from_resolved_decision(
@@ -2349,6 +2470,40 @@ mod tests {
             GateError::AgentAllowlistBlocked { ref server, ref tool }
                 if server == "srv" && tool == "read_file"
         ));
+    }
+
+    #[tokio::test]
+    async fn admitted_scope_rejection_retains_wal_session() {
+        let home = tempfile::tempdir().unwrap();
+        let segment = home.path().join("scope-session-000001.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf())
+                .unwrap();
+        let wal_session = WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"test\0mcp-scope\0admitted-turn",
+        )
+        .unwrap();
+        let scope = McpToolScope::default().with_agent(vec![], vec![]);
+
+        let error = scope
+            .enforce_in("srv", "read_file", Some(&writer), Some(wal_session), 1_700)
+            .await
+            .expect_err("provider-only scope must reject MCP before transport");
+        assert!(matches!(error, GateError::AgentAllowlistBlocked { .. }));
+        drop(writer);
+        join.await.unwrap();
+
+        let bytes = std::fs::read(segment).unwrap();
+        let mut headers = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == EVENT_TYPE_MCP_TOOL_REJECTED {
+                headers.push(*frame.header.session_id.as_bytes());
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(headers, vec![*wal_session.header_id().as_bytes()]);
     }
 
     #[tokio::test]
@@ -3340,5 +3495,62 @@ mod tests {
         assert_eq!(payload["tool"], "write_file");
         assert_eq!(payload["reason"], "confirm: lease absent or expired");
         assert_eq!(payload["ts_unix"], 1_700);
+    }
+
+    #[tokio::test]
+    async fn admitted_writer_sink_stamps_tool_audit_headers() {
+        let home = tempfile::tempdir().unwrap();
+        let segment = home.path().join("mcp-session-000001.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf())
+                .unwrap();
+        let wal_session = WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"test\0mcp-gate\0admitted-turn",
+        )
+        .unwrap();
+
+        emit_called(
+            McpAuditSink::WriterWithSession(&writer, wal_session),
+            "filesystem",
+            "read_file",
+            "0000000000000001",
+            0,
+            false,
+            1_700,
+        )
+        .await
+        .unwrap();
+        emit_reject(
+            McpAuditSink::WriterWithSession(&writer, wal_session),
+            "filesystem",
+            "write_file",
+            "test rejection",
+            1_701,
+        )
+        .await
+        .unwrap();
+
+        drop(writer);
+        join.await.unwrap();
+        let bytes = std::fs::read(segment).unwrap();
+        let mut headers = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if matches!(
+                frame.header.event_type,
+                EVENT_TYPE_MCP_TOOL_CALLED | EVENT_TYPE_MCP_TOOL_REJECTED
+            ) {
+                headers.push(*frame.header.session_id.as_bytes());
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(headers.len(), 2);
+        assert!(
+            headers
+                .iter()
+                .all(|session_id| *session_id == *wal_session.header_id().as_bytes()),
+            "admitted MCP tool admission and result audits retain their typed WAL session"
+        );
     }
 }

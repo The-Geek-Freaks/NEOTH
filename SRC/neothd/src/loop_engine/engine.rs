@@ -300,7 +300,12 @@ fn round_stop_approved(
 }
 
 /// Emit a WAL frame best-effort (never fails the loop on WAL error).
-async fn emit_wal(writer: &WalWriterHandle, event_type: u8, payload: serde_json::Value) {
+async fn emit_wal(
+    writer: &WalWriterHandle,
+    wal_session: Option<crate::wal::WalSessionContext>,
+    event_type: u8,
+    payload: serde_json::Value,
+) {
     let bytes = match serde_json::to_vec(&payload) {
         Ok(b) => b,
         Err(e) => {
@@ -308,7 +313,9 @@ async fn emit_wal(writer: &WalWriterHandle, event_type: u8, payload: serde_json:
             return;
         }
     };
-    let header = crate::wal::make_header(event_type, &bytes);
+    let header = crate::wal::HeaderBuilder::new(event_type, &bytes)
+        .session_context(wal_session)
+        .build();
     if let Err(e) = writer.append(header, bytes).await {
         warn!(error = %e, event = event_type, "loop-engine: WAL append failed (non-fatal)");
     }
@@ -482,10 +489,14 @@ pub async fn run_loop(
     // on this plus the previous round's output, so the loop actually iterates
     // (refine/extend) instead of re-running the identical prompt every round.
     let base_prompt = req.prompt.clone();
+    // Admitted callers attach their opaque session to the authorizer. Capture
+    // that capability once and forward it to every loop-owned WAL frame.
+    let wal_session = authorizer.wal_session();
 
     // --- WAL: LOOP_STARTED ---
     emit_wal(
         writer,
+        wal_session,
         EVENT_TYPE_LOOP_STARTED,
         serde_json::json!({
             "loop_id": loop_id,
@@ -588,6 +599,9 @@ pub async fn run_loop(
             // restriction without reconstructing authority from prompt text.
             authorizer.skill_invocation_policy(),
             writer,
+            // The authorizer retains the admitted caller session across all
+            // rounds; absent authorizer context remains unattributed.
+            authorizer.wal_session(),
             Some(rollback),
             tool_scope,
             freedom.goal.max_turns,
@@ -662,6 +676,7 @@ pub async fn run_loop(
                     refine_fired = true;
                     emit_wal(
                         writer,
+                        wal_session,
                         EVENT_TYPE_LOOP_REFINED,
                         serde_json::json!({
                             "loop_id": loop_id,
@@ -724,6 +739,7 @@ pub async fn run_loop(
         // --- WAL: LOOP_ROUND ---
         emit_wal(
             writer,
+            wal_session,
             EVENT_TYPE_LOOP_ROUND,
             serde_json::json!({
                 "loop_id": loop_id,
@@ -830,7 +846,7 @@ pub async fn run_loop(
         completed["accumulated_tool_calls"] = serde_json::json!(state.accumulated_tool_calls);
         completed["budget"] = serde_json::json!(config.tool_call_budget);
     }
-    emit_wal(writer, EVENT_TYPE_LOOP_COMPLETED, completed).await;
+    emit_wal(writer, wal_session, EVENT_TYPE_LOOP_COMPLETED, completed).await;
 
     info!(
         loop_id = %loop_id,
@@ -1166,8 +1182,9 @@ mod tests {
         assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-        let capped_wal = home.path().join("loop-cap-forwarding.wal");
-        let (writer, join) = crate::wal::writer::spawn(capped_wal).unwrap();
+        let capped_wal = home.path().join("wal").join("loop-cap-forwarding.wal");
+        let (writer, join) = crate::wal::writer::spawn_for_home(capped_wal.clone(), home.path().to_path_buf()).unwrap();
+        let wal_session = crate::wal::WalSessionContext::from_admitted_identity(home.path(), b"test\0loop-engine\0admitted-turn").unwrap();
         let record = run_loop(
             &config,
             &provider,
@@ -1182,6 +1199,7 @@ mod tests {
             crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
                 AutonomyLevel::Full,
             )
+            .with_audit_context(crate::providers::cost_authorization::ProviderCallAuditContext::default().with_wal_session(Some(wal_session)))
             .with_skill_invocation_policy(Some(retained)),
             None,
             &crate::mcp::McpToolScope::default(),
@@ -1200,6 +1218,14 @@ mod tests {
         );
         assert_eq!(record.total_tool_calls, Some(1));
         assert_eq!(record.per_round[0].failed_calls, 1);
+        let capped_bytes = std::fs::read(&capped_wal).unwrap();
+        let mut headers = Vec::new();
+        crate::wal::scan::for_each_frame(&capped_bytes, |_, frame| {
+            if matches!(frame.header.event_type, EVENT_TYPE_LOOP_STARTED | EVENT_TYPE_LOOP_ROUND | EVENT_TYPE_LOOP_COMPLETED | crate::wal::events::EVENT_TYPE_MCP_TOOL_REJECTED) { headers.push(frame.header.session_id); }
+            Ok(())
+        }).unwrap();
+        assert_eq!(headers.len(), 4);
+        assert!(headers.iter().all(|id| *id == wal_session.header_id()));
         assert_eq!(
             crate::mcp::client::stdio_fixture_call_count(&counter),
             1,
@@ -1778,5 +1804,20 @@ mod tests {
             !j.is_approved(),
             "unmet criterion 'build green' must reject the stop"
         );
+    }
+    #[tokio::test]
+    async fn w159_loop_refined_emitter_stamps_context_and_none_as_zero() {
+        let home = TempDir::new().unwrap();
+        let segment = home.path().join("wal").join("loop-refined-000001.wal");
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
+        let wal_session = crate::wal::WalSessionContext::from_admitted_identity(home.path(), b"test\0loop-engine\0refined-turn").unwrap();
+        emit_wal(&writer, Some(wal_session), EVENT_TYPE_LOOP_REFINED, serde_json::json!({ "loop_id": "admitted" })).await;
+        emit_wal(&writer, None, EVENT_TYPE_LOOP_REFINED, serde_json::json!({ "loop_id": "unattributed" })).await;
+        drop(writer);
+        join.await.unwrap();
+        let bytes = std::fs::read(segment).unwrap();
+        let mut headers = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| { if frame.header.event_type == EVENT_TYPE_LOOP_REFINED { headers.push(frame.header.session_id); } Ok(()) }).unwrap();
+        assert_eq!(headers, vec![wal_session.header_id(), crate::wal::SessionId::ZERO]);
     }
 }

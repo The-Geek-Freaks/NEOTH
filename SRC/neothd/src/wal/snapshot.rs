@@ -25,7 +25,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use super::HeaderBuilder;
+use super::{HeaderBuilder, WalSessionContext};
 use super::events::EVENT_TYPE_PRE_MUTATION_SNAPSHOT;
 use super::writer::WalWriterHandle;
 
@@ -156,9 +156,21 @@ pub async fn emit_snapshot(
     writer: &WalWriterHandle,
     snapshot: &PreMutationSnapshot,
 ) -> Result<u64> {
+    emit_snapshot_in(writer, snapshot, None).await
+}
+
+/// Contextual form for an already-admitted parent turn. The public wrapper
+/// keeps standalone rollback tooling at the legacy zero session header.
+pub(crate) async fn emit_snapshot_in(
+    writer: &WalWriterHandle,
+    snapshot: &PreMutationSnapshot,
+    wal_session: Option<WalSessionContext>,
+) -> Result<u64> {
     let payload =
         serde_json::to_vec(snapshot).context("serialize PRE_MUTATION_SNAPSHOT payload")?;
-    let header = HeaderBuilder::new(EVENT_TYPE_PRE_MUTATION_SNAPSHOT, &payload).build();
+    let header = HeaderBuilder::new(EVENT_TYPE_PRE_MUTATION_SNAPSHOT, &payload)
+        .session_context(wal_session)
+        .build();
     writer
         .append(header, payload)
         .await
@@ -199,6 +211,31 @@ pub async fn emit_if_policy_allows(
     now_unix: i64,
     note: Option<String>,
 ) -> Result<Option<u64>> {
+    emit_if_policy_allows_in(
+        writer,
+        rollback,
+        kind,
+        target,
+        before_state,
+        now_unix,
+        note,
+        None,
+    )
+    .await
+}
+
+/// Contextual policy-aware form. The optional context is accepted only from a
+/// trusted admitted parent and is never derived from mutation arguments.
+pub(crate) async fn emit_if_policy_allows_in(
+    writer: &WalWriterHandle,
+    rollback: &crate::config::RollbackConfig,
+    kind: MutationKind,
+    target: impl Into<String>,
+    before_state: &[u8],
+    now_unix: i64,
+    note: Option<String>,
+    wal_session: Option<WalSessionContext>,
+) -> Result<Option<u64>> {
     let kind_str = mutation_kind_str(kind);
     if !rollback.should_capture(kind_str) {
         return Ok(None);
@@ -217,7 +254,7 @@ pub async fn emit_if_policy_allows(
     if let Some(n) = note {
         snap = snap.with_note(n);
     }
-    let offset = emit_snapshot(writer, &snap).await?;
+    let offset = emit_snapshot_in(writer, &snap, wal_session).await?;
     Ok(Some(offset))
 }
 
@@ -733,6 +770,54 @@ mod tests {
         assert_eq!(p.before_state_bytes().unwrap(), b"prior file state");
     }
 
+    #[tokio::test]
+    async fn admitted_policy_snapshot_retains_wal_session() {
+        use crate::config::RollbackConfig;
+        use crate::wal::events::EVENT_TYPE_PRE_MUTATION_SNAPSHOT;
+        use crate::wal::frame::decode_frame;
+        use crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        use crate::wal::writer::spawn_for_home;
+        use tempfile::tempdir;
+
+        let home = tempdir().unwrap();
+        let segment = home.path().join("snapshot-session-000001.wal");
+        let (writer, join) =
+            spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
+        let wal_session = WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"test\0rollback-snapshot\0admitted-turn",
+        )
+        .unwrap();
+        let policy = RollbackConfig {
+            capture_kinds: vec!["mcp_tool_invoke".into()],
+            max_snapshot_bytes: 4_096,
+        };
+
+        let emitted = emit_if_policy_allows_in(
+            &writer,
+            &policy,
+            MutationKind::McpToolInvoke,
+            "filesystem:write_file",
+            b"args",
+            1_700,
+            None,
+            Some(wal_session),
+        )
+        .await
+        .unwrap();
+        assert!(emitted.is_some());
+        drop(writer);
+        join.await.unwrap();
+
+        let bytes = std::fs::read(segment).unwrap();
+        let frame = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).unwrap();
+        assert_eq!(frame.header.event_type, EVENT_TYPE_PRE_MUTATION_SNAPSHOT);
+        assert_eq!(
+            *frame.header.session_id.as_bytes(),
+            *wal_session.header_id().as_bytes(),
+            "PRE_MUTATION_SNAPSHOT retains the already-admitted WAL session"
+        );
+    }
     /// MUTATION-SAFE WRITER DEMO (operator-requested) — the end-to-end proof the
     /// snapshot framing exists to provide: a pre-mutation snapshot captured
     /// through `WalWriterHandle` survives the subsequent mutation, so the

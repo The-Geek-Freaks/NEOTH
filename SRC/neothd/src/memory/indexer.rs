@@ -366,9 +366,18 @@ fn index_frame(
                 let importance = header.importance.raw() as f64;
                 tx.execute(
                     "INSERT OR IGNORE INTO idx_episode \
-                     (event_id, event_type, ts_ns, text, text_hash, channel, sender_id, operator_id, importance, last_access_ts, trust) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, NULL, ?6, ?7, 2)",
-                    params![event_id, event_type as i64, ts_ns, text, text_hash, importance, ts_ns],
+                     (event_id, event_type, ts_ns, text, text_hash, channel, sender_id, operator_id, importance, last_access_ts, trust, wal_session_id) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, NULL, ?6, ?7, 2, ?8)",
+                    params![
+                        event_id,
+                        event_type as i64,
+                        ts_ns,
+                        text,
+                        text_hash,
+                        importance,
+                        ts_ns,
+                        header.session_id.as_bytes().to_vec()
+                    ],
                 )?;
                 // neoth: GOLD-ADAPT-MEMGRAPH-01 — after this tx commits, call
                 //   crate::memory::embeddings::embed_episode_text(conn, event_id, &text, provider)
@@ -424,8 +433,8 @@ fn index_frame(
                 let importance = header.importance.raw() as f64;
                 tx.execute(
                     "INSERT OR IGNORE INTO idx_episode \
-                     (event_id, event_type, ts_ns, text, text_hash, channel, sender_id, operator_id, importance, last_access_ts) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                     (event_id, event_type, ts_ns, text, text_hash, channel, sender_id, operator_id, importance, last_access_ts, wal_session_id) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                     params![
                         event_id,
                         event_type as i64,
@@ -436,7 +445,8 @@ fn index_frame(
                         sender,
                         operator,
                         importance,
-                        ts_ns
+                        ts_ns,
+                        header.session_id.as_bytes().to_vec()
                     ],
                 )?;
             }
@@ -464,8 +474,8 @@ fn index_frame(
                 tx.execute(
                     "INSERT OR IGNORE INTO idx_provider \
                      (event_id, event_type, ts_ns, provider, model, text_hash, bytes, \
-                      latency_ns, input_tokens, output_tokens) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                      latency_ns, input_tokens, output_tokens, wal_session_id) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                     params![
                         event_id,
                         event_type as i64,
@@ -476,7 +486,8 @@ fn index_frame(
                         bytes,
                         latency,
                         input_tokens,
-                        output_tokens
+                        output_tokens,
+                        header.session_id.as_bytes().to_vec()
                     ],
                 )?;
             }
@@ -495,7 +506,7 @@ use rusqlite::OptionalExtension;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wal::events::EVENT_TYPE_RAW_TEXT;
+    use crate::wal::events::{EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_RAW_TEXT};
     use crate::wal::frame::encode_frame;
     use crate::wal::header::{CRC_LEN, HEADER_BODY_LEN, PREAMBLE_LEN};
     use crate::wal::segment_header::SegmentHeader;
@@ -537,12 +548,13 @@ mod tests {
         let sh = SegmentHeader::new(0, 1, 0, 1_700_000_000_000_000_000, [0u8; 16]);
         bytes.extend_from_slice(&sh.to_le_bytes());
         let p1 = b"hello world".to_vec();
-        let h1 = header_for(
+        let mut h1 = header_for(
             EVENT_TYPE_RAW_TEXT,
             p1.len() as u32,
             1,
             1_700_000_000_000_000_001,
         );
+        h1.session_id = SessionId([0xA5; 16]);
         bytes.extend_from_slice(&encode_frame(&h1, &p1));
         let p2 = b"goodbye moon".to_vec();
         let h2 = header_for(
@@ -552,11 +564,20 @@ mod tests {
             1_700_000_000_000_000_002,
         );
         bytes.extend_from_slice(&encode_frame(&h2, &p2));
+        let p3 = br#"{"provider":"test-provider","model":"test-model","prompt_bytes":7}"#.to_vec();
+        let mut h3 = header_for(
+            EVENT_TYPE_PROVIDER_REQUEST,
+            p3.len() as u32,
+            3,
+            1_700_000_000_000_000_003,
+        );
+        h3.session_id = SessionId([0x5A; 16]);
+        bytes.extend_from_slice(&encode_frame(&h3, &p3));
         write(&seg, &bytes).await.unwrap();
 
         let mut conn = crate::memory::store::open(&db).unwrap();
         let n = replay_once(&mut conn, &seg).await.unwrap();
-        assert_eq!(n, 2, "should index 2 RAW_TEXT frames");
+        assert_eq!(n, 3, "should index RAW_TEXT and provider frames");
 
         // Verify rows are present.
         let count: i64 = conn
@@ -570,6 +591,30 @@ mod tests {
             })
             .unwrap();
         assert_eq!(text1, "hello world");
+        let projected_session: Vec<u8> = conn
+            .query_row(
+                "SELECT wal_session_id FROM idx_episode WHERE event_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(projected_session, vec![0xA5; 16]);
+        let legacy_projected_session: Vec<u8> = conn
+            .query_row(
+                "SELECT wal_session_id FROM idx_episode WHERE event_id = 2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_projected_session, vec![0u8; 16]);
+        let provider_projected_session: Vec<u8> = conn
+            .query_row(
+                "SELECT wal_session_id FROM idx_provider WHERE event_id = 3",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(provider_projected_session, vec![0x5A; 16]);
 
         // Re-running replay must NOT double-insert (cursor advanced).
         let n2 = replay_once(&mut conn, &seg).await.unwrap();

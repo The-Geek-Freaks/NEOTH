@@ -98,6 +98,12 @@ impl PreparedRaw {
     pub(crate) fn raw_descriptor(&self) -> Result<PlannedRawTextDescriptor> {
         Ok(self.descriptor.clone())
     }
+    /// Reuse only the session ID sealed into this exact RAW descriptor when
+    /// deriving its Bound record. This is durable header provenance, never a
+    /// payload/session-label authority.
+    pub(crate) const fn raw_header_session_id(&self) -> crate::wal::SessionId {
+        self.descriptor.header_session_id()
+    }
 }
 pub(crate) struct PreparedBound {
     outbox_id: String,
@@ -320,6 +326,20 @@ impl TranscriptMiningStore {
         text: &str,
         now: i64,
     ) -> Result<PreparedRaw> {
+        self.prepare_operator_raw_birth_in(session_id, text, now, None)
+    }
+
+    /// Build a fresh local operator RAW plan with the already-admitted typed
+    /// context. Recovery and standalone store callers deliberately use the
+    /// zero-session wrapper above; neither SQLite data nor raw text can mint a
+    /// non-zero WAL session attribution.
+    pub(crate) fn prepare_operator_raw_birth_in(
+        &mut self,
+        session_id: &str,
+        text: &str,
+        now: i64,
+        wal_session: Option<crate::wal::WalSessionContext>,
+    ) -> Result<PreparedRaw> {
         self.validate()?;
         ensure!(
             !session_id.is_empty() && session_id.len() <= 4096,
@@ -327,7 +347,9 @@ impl TranscriptMiningStore {
         );
         ensure!(now >= 0, "invalid transcript timestamp");
         let payload = text.as_bytes().to_vec();
-        let header = HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, &payload).build();
+        let header = HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, &payload)
+            .session_context(wal_session)
+            .build();
         let header_bytes = header.to_le_bytes();
         let header_sha: [u8; 32] = Sha256::digest(header_bytes).into();
         let payload_sha: [u8; 32] = Sha256::digest(&payload).into();
@@ -440,6 +462,7 @@ impl TranscriptMiningStore {
         let payload_sha: [u8; 32] = Sha256::digest(&payload).into();
         let header = HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
             .event_subtype(ExtendedSubtype::TranscriptMiningBound as u8)
+            .session(p.raw_header_session_id())
             .build();
         let header_bytes = header.to_le_bytes();
         let header_sha: [u8; 32] = Sha256::digest(header_bytes).into();

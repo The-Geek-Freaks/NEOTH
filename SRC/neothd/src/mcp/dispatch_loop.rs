@@ -34,6 +34,7 @@ use crate::mcp::tool_call_parser::{ParseError, ParsedToolCall, extract_tool_call
 #[cfg(test)]
 use crate::permissions::AutonomyLevel;
 use crate::permissions::PolicyArgument;
+use crate::wal::WalSessionContext;
 use crate::wal::writer::WalWriterHandle;
 
 /// Cap on dispatcher iterations. Prevents a model that emits a
@@ -285,6 +286,7 @@ where
         policy,
         None,
         writer,
+        None,
         rollback_policy,
         tool_scope,
         max_iterations,
@@ -320,6 +322,9 @@ pub(crate) async fn run_tool_loop_with_budget_and_skill_policy<D, P>(
     policy: P,
     skill_invocation_policy: Option<&crate::skills::resolver::SkillInvocationPolicy>,
     writer: Option<&WalWriterHandle>,
+    /// Capability copied from an admitted chat/channel turn. It is never
+    /// derived from MCP request, result, or server data.
+    wal_session: Option<WalSessionContext>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     tool_scope: &McpToolScope,
     max_iterations: u32,
@@ -421,7 +426,12 @@ where
         && !goal_tracker.goal_prompt_complete()
         && let Some(goal_hash) = goal_tracker.configured_goal_hash()
     {
-        crate::mcp::goal_judge::emit_goal_judged_wal(writer, goal_hash, "input_budget_exceeded")
+        crate::mcp::goal_judge::emit_goal_judged_wal_in(
+            writer,
+            wal_session,
+            goal_hash,
+            "input_budget_exceeded",
+        )
             .await;
         return Err(
             crate::mcp::goal_tracker::GoalIntegrityError::PromptIncomplete {
@@ -462,11 +472,12 @@ where
         // completion if it crossed the threshold. Iteration 1 is the operator's
         // own prompt (never compact that); only the grown prompt (2+) qualifies.
         if iterations > 1 {
-            prompt = compact_if_needed(
+            prompt = compact_if_needed_in(
                 driver,
                 prompt,
                 &compaction,
                 writer,
+                wal_session,
                 iterations,
                 compaction_budget,
             )
@@ -550,12 +561,13 @@ where
                     goal_tracker.configured_goal_hash(),
                 )
             {
-                if crate::mcp::goal_judge::judge_goal_met_with_hash(
+                if crate::mcp::goal_judge::judge_goal_met_with_hash_in(
                     goal_text,
                     goal_hash,
                     &replayed_reply,
                     provider,
                     writer,
+                    wal_session,
                 )
                 .await
                 {
@@ -641,10 +653,11 @@ where
             // SmartApprove. The same immutable scope is reused for every call
             // and every outer loop-engine round.
             if let Err(error) = tool_scope
-                .enforce(
+                .enforce_in(
                     &call.server,
                     &call.tool,
                     writer,
+                    wal_session,
                     crate::time::now_unix_i64(),
                 )
                 .await
@@ -993,6 +1006,7 @@ where
                             .event_subtype(
                                 crate::wal::events::ExtendedSubtype::ManifestInstallBlocked as u8,
                             )
+                            .session_context(wal_session)
                             .flags(crate::wal::EventFlags::empty())
                             .build();
                             if let Err(error) = w.append(header, payload).await {
@@ -1078,6 +1092,7 @@ where
                                     // GOLD-ADOPT-23 point 3 — the confirm window was spent.
                                     emit_risk_gate_wal(
                                         writer,
+                                        wal_session,
                                         call,
                                         crate::wal::events::EVENT_TYPE_RISK_CONFIRM_USED,
                                         "lifted_by_lease",
@@ -1111,6 +1126,7 @@ where
                         let rule = risk.dangerous.first().map(|d| d.id).unwrap_or("egress");
                         emit_risk_gate_wal(
                             writer,
+                            wal_session,
                             call,
                             crate::wal::events::EVENT_TYPE_RISK_CONFIRM_EXPIRED,
                             "expired",
@@ -1146,7 +1162,7 @@ where
                         ),
                         crate::security::risk_gate::RiskGate::Allow => unreachable!(),
                     };
-                    emit_risk_gate_wal(writer, call, event_type, verdict, rule).await;
+                    emit_risk_gate_wal(writer, wal_session, call, event_type, verdict, rule).await;
                     tool_result_blocks.push(format_failure_with_status(call, status, reason));
                     continue;
                 }
@@ -1178,6 +1194,7 @@ where
                 policy,
                 skill_invocation_policy,
                 writer,
+                wal_session,
                 rollback_policy,
                 smart_session.as_mut(),
                 // GOLD-ADAPT-AWE-CODE-01 — thread the caller identity down.
@@ -1334,7 +1351,12 @@ where
                 "every dispatch in this round failed; terminating loop early",
             );
             if let Some(goal_hash) = goal_tracker.configured_goal_hash() {
-                crate::mcp::goal_judge::emit_goal_judged_wal(writer, goal_hash, "unavailable")
+                crate::mcp::goal_judge::emit_goal_judged_wal_in(
+                    writer,
+                    wal_session,
+                    goal_hash,
+                    "unavailable",
+                )
                     .await;
                 return Err(
                     crate::mcp::goal_tracker::GoalIntegrityError::DispatchUnavailable.into(),
@@ -1357,7 +1379,7 @@ where
                     if !new_hints.is_empty() {
                         let now_unix = crate::time::now_unix_i64();
                         for hint in new_hints {
-                            emit_hint_loaded(writer, &hint, now_unix).await;
+                            emit_hint_loaded(writer, wal_session, &hint, now_unix).await;
                             hint_blocks.push(hint.rendered);
                         }
                     }
@@ -1378,7 +1400,7 @@ where
         // is safe to run on the freshly-produced blocks; a passthrough leaves
         // them untouched. Off (None) = no change.
         if let Some(runtime) = compression.as_ref() {
-            compress_tool_results(&mut tool_result_blocks, runtime, iterations, writer).await;
+            compress_tool_results(&mut tool_result_blocks, runtime, iterations, writer, wal_session).await;
         }
         // GOLD-ADAPT-HARNESS-02 — capture the current-turn prompt fingerprint
         // BEFORE build_next_prompt overwrites `prompt` with the next turn's content.
@@ -1452,6 +1474,7 @@ enum CompactionWalState {
 /// `cancelled` terminal; a normal terminal already in flight is only awaited.
 struct CompactionWalLifecycle {
     writer: Option<WalWriterHandle>,
+    wal_session: Option<WalSessionContext>,
     state: CompactionWalState,
     compaction_id: String,
     iteration: u32,
@@ -1461,9 +1484,15 @@ struct CompactionWalLifecycle {
 }
 
 impl CompactionWalLifecycle {
-    fn new(writer: Option<&WalWriterHandle>, iteration: u32, before_tokens: u32) -> Self {
+    fn new(
+        writer: Option<&WalWriterHandle>,
+        wal_session: Option<WalSessionContext>,
+        iteration: u32,
+        before_tokens: u32,
+    ) -> Self {
         Self {
             writer: writer.cloned(),
+            wal_session,
             state: CompactionWalState::Ready,
             compaction_id: uuid::Uuid::now_v7().to_string(),
             iteration,
@@ -1478,6 +1507,7 @@ impl CompactionWalLifecycle {
         event_type: u8,
         mut payload: serde_json::Value,
         compaction_id: &str,
+        wal_session: Option<WalSessionContext>,
     ) -> anyhow::Result<tokio::task::JoinHandle<anyhow::Result<()>>> {
         let object = payload
             .as_object_mut()
@@ -1487,7 +1517,9 @@ impl CompactionWalLifecycle {
             serde_json::Value::String(compaction_id.to_owned()),
         );
         let bytes = serde_json::to_vec(&payload).context("serialize compaction WAL payload")?;
-        let header = crate::wal::HeaderBuilder::new(event_type, &bytes).build();
+        let header = crate::wal::HeaderBuilder::new(event_type, &bytes)
+            .session_context(wal_session)
+            .build();
         let runtime = tokio::runtime::Handle::try_current()
             .context("compaction WAL requires a Tokio runtime")?;
         Ok(runtime.spawn(async move {
@@ -1518,6 +1550,7 @@ impl CompactionWalLifecycle {
                 "ts_unix": now_unix_i64(),
             }),
             &self.compaction_id,
+            self.wal_session,
         ) {
             Ok(task) => task,
             Err(error) => {
@@ -1587,6 +1620,7 @@ impl CompactionWalLifecycle {
             crate::wal::events::EVENT_TYPE_CONTEXT_COMPACTION_DONE,
             payload,
             &self.compaction_id,
+            self.wal_session,
         )?;
         self.state = CompactionWalState::TerminalPending(task);
         let joined = match &mut self.state {
@@ -1630,6 +1664,7 @@ impl Drop for CompactionWalLifecycle {
     fn drop(&mut self) {
         let state = std::mem::replace(&mut self.state, CompactionWalState::Finished);
         let writer = self.writer.clone();
+        let wal_session = self.wal_session;
         let compaction_id = self.compaction_id.clone();
         let cancelled_payload = self.cancelled_payload();
         let cleanup = async move {
@@ -1640,6 +1675,7 @@ impl Drop for CompactionWalLifecycle {
                     crate::wal::events::EVENT_TYPE_CONTEXT_COMPACTION_DONE,
                     cancelled_payload,
                     &compaction_id,
+                    wal_session,
                 ) {
                     Ok(task) => match task.await {
                         Ok(Ok(())) => {}
@@ -1699,12 +1735,24 @@ async fn compact_if_needed<D: CompletionDriver + Send>(
     iteration: u32,
     budget: &mut CompactionBudget,
 ) -> anyhow::Result<String> {
+    compact_if_needed_in(driver, prompt, policy, writer, None, iteration, budget).await
+}
+
+async fn compact_if_needed_in<D: CompletionDriver + Send>(
+    driver: &mut D,
+    prompt: String,
+    policy: &crate::context::compaction::CompactionPolicy,
+    writer: Option<&WalWriterHandle>,
+    wal_session: Option<WalSessionContext>,
+    iteration: u32,
+    budget: &mut CompactionBudget,
+) -> anyhow::Result<String> {
     if !crate::context::compaction::needs_compaction(&prompt, policy) {
         return Ok(prompt);
     }
     let before_tokens = crate::tokens::budget::count_tokens_upper_bound(&prompt);
     let pass_start_calls = budget.summary_calls_used;
-    let mut wal_lifecycle = CompactionWalLifecycle::new(writer, iteration, before_tokens);
+    let mut wal_lifecycle = CompactionWalLifecycle::new(writer, wal_session, iteration, before_tokens);
     let mut reduction_rounds = 0usize;
     let mut failure_reason = None;
     let result = compact_if_needed_inner(
@@ -1952,12 +2000,15 @@ async fn compact_if_needed_inner<D: CompletionDriver + Send>(
 /// derail the loop). Shared by START/DONE so the two stay shape-consistent.
 async fn emit_compaction_wal(
     writer: Option<&WalWriterHandle>,
+    wal_session: Option<WalSessionContext>,
     event_type: u8,
     payload: serde_json::Value,
 ) {
     let Some(w) = writer else { return };
     let bytes = serde_json::to_vec(&payload).unwrap_or_default();
-    let header = crate::wal::HeaderBuilder::new(event_type, &bytes).build();
+    let header = crate::wal::HeaderBuilder::new(event_type, &bytes)
+        .session_context(wal_session)
+        .build();
     if let Err(e) = w.append(header, bytes).await {
         warn!(error = %e, event_type, "compaction WAL append failed");
     }
@@ -2016,6 +2067,7 @@ async fn compress_tool_results(
     runtime: &crate::context::compress::CompressionRuntime,
     iteration: u32,
     writer: Option<&WalWriterHandle>,
+    wal_session: Option<WalSessionContext>,
 ) {
     let ctx = crate::context::compress::CompressionContext::default();
     for block in blocks.iter_mut() {
@@ -2050,6 +2102,7 @@ async fn compress_tool_results(
         runtime.meter(before, after);
         emit_compaction_wal(
             writer,
+            wal_session,
             crate::wal::events::EVENT_TYPE_COMPRESSION_APPLIED,
             serde_json::json!({
                 "iteration": iteration,
@@ -2083,6 +2136,7 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
     policy: P,
     skill_invocation_policy: Option<&crate::skills::resolver::SkillInvocationPolicy>,
     writer: Option<&WalWriterHandle>,
+    wal_session: Option<WalSessionContext>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     smart_approve: Option<&mut crate::mcp::smart_approve::SmartApproveSession>,
     // GOLD-ADAPT-AWE-CODE-01 — pre-authenticated caller identity for
@@ -2132,7 +2186,7 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
         &call.tool,
         policy,
         skill_invocation_policy,
-        crate::mcp::gate::McpAuditSink::from_writer(writer),
+        crate::mcp::gate::McpAuditSink::from_writer(writer, wal_session),
         now_unix,
         subject,
         Some(&request_binding_sha256),
@@ -2176,7 +2230,7 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
                 preflight,
                 cfg,
                 &call.tool,
-                crate::mcp::gate::McpAuditSink::from_writer(writer),
+                crate::mcp::gate::McpAuditSink::from_writer(writer, wal_session),
                 grant,
                 now_unix,
                 subject,
@@ -2192,6 +2246,7 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
                         call.arguments.clone(),
                         authorized,
                         writer,
+                        wal_session,
                         rollback_policy,
                         now_unix,
                         turn_effect_gate.clone(),
@@ -2225,7 +2280,7 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
         preflight,
         cfg,
         &call.tool,
-        crate::mcp::gate::McpAuditSink::from_writer(writer),
+        crate::mcp::gate::McpAuditSink::from_writer(writer, wal_session),
         None,
         now_unix,
         subject,
@@ -2248,6 +2303,7 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
         call.arguments.clone(),
         authorized,
         writer,
+        wal_session,
         rollback_policy,
         now_unix,
         turn_effect_gate,
@@ -2333,6 +2389,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
         policy,
         None,
         writer,
+        None,
         rollback_policy,
         smart_approve,
         subject,
@@ -2578,6 +2635,7 @@ fn summarize_args(args: &serde_json::Value) -> String {
 /// lease id. The raw command is NEVER recorded.
 async fn emit_risk_gate_wal(
     writer: Option<&WalWriterHandle>,
+    wal_session: Option<WalSessionContext>,
     call: &ParsedToolCall,
     event_type: u8,
     verdict: &str,
@@ -2593,7 +2651,9 @@ async fn emit_risk_gate_wal(
         "ts_unix": ts,
     }))
     .unwrap_or_default();
-    let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+    let header = crate::wal::HeaderBuilder::new(event_type, &payload)
+        .session_context(wal_session)
+        .build();
     if let Err(e) = w.append(header, payload).await {
         warn!(error = %e, event_type, "risk-gate audit append failed (audit gap)");
     }
@@ -2854,6 +2914,7 @@ fn hint_loaded_payload(
 
 async fn emit_hint_loaded(
     writer: Option<&WalWriterHandle>,
+    wal_session: Option<WalSessionContext>,
     hint: &crate::mcp::hints::LoadedHint,
     now_unix: i64,
 ) {
@@ -2867,6 +2928,7 @@ async fn emit_hint_loaded(
     };
     let header =
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_HINT_LOADED, &payload)
+            .session_context(wal_session)
             .build();
     if let Err(e) = w.append(header, payload).await {
         warn!(error = %e, "HINT_LOADED append failed");
@@ -4434,7 +4496,7 @@ mod tests {
         let mut blocks = vec![big_block.clone(), small_block.clone()];
 
         // writer = None: WAL emit is best-effort and must no-op cleanly.
-        compress_tool_results(&mut blocks, &runtime, 5, None).await;
+        compress_tool_results(&mut blocks, &runtime, 5, None, None).await;
 
         // Big array shrank and carries a CCR retrieval marker.
         assert!(
@@ -4550,7 +4612,7 @@ mod tests {
         let root_sha256 = wrapped.sha256().to_owned();
 
         let mut blocks = vec![wrapped.clone()];
-        compress_tool_results(&mut blocks, &runtime, 7, None).await;
+        compress_tool_results(&mut blocks, &runtime, 7, None, None).await;
 
         let keys = extract_keys(blocks[0].payload());
         assert_eq!(keys.len(), 1, "production-shaped block must enter CCR");
@@ -4614,7 +4676,7 @@ mod tests {
         assert_eq!(prompt.matches("```mcp-tool-result").count(), 1);
 
         let once_compressed = blocks[0].clone();
-        compress_tool_results(&mut blocks, &runtime, 8, None).await;
+        compress_tool_results(&mut blocks, &runtime, 8, None, None).await;
         assert_eq!(
             blocks[0], once_compressed,
             "a second pass must not double-wrap the protected result"

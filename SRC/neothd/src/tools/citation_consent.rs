@@ -949,10 +949,8 @@ mod tests {
             "gui-revision-7",
             &config_hash(TEST_CONFIG_A)
         ));
-        let fixed_request = ExternalHttpRequest::get(
-            query().fixed_request_url(),
-            ExternalHttpSurface::Crossref,
-        );
+        let fixed_request =
+            ExternalHttpRequest::get(query().fixed_request_url(), ExternalHttpSurface::Crossref);
         assert!(consumed.authorizes_fixed_get(
             &query(),
             "the concrete claim",

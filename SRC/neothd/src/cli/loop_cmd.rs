@@ -221,6 +221,8 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
     if let Ok(record) = result.as_ref() {
         crate::cli::chat::emit_terminal_goal_outcome(
             &writer,
+            // This standalone command never admitted a chat/channel turn.
+            None,
             record.goal_outcome,
             record.goal_hash.as_deref(),
             "loop_cmd",

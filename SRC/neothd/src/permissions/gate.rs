@@ -27,6 +27,7 @@ use anyhow::Result;
 use thiserror::Error;
 
 use crate::wal::events::{EVENT_TYPE_PERMISSION_DENIED, EVENT_TYPE_PERMISSION_GRANTED};
+use crate::wal::WalSessionContext;
 use crate::wal::writer::WalWriterHandle;
 
 use super::lease::{CapabilityLease, LeaseStore};
@@ -75,6 +76,10 @@ pub enum PermissionAuditSink<'a> {
     None,
     /// Append through a WAL writer owned by this process.
     Writer(&'a WalWriterHandle),
+    /// Writer paired with an already-admitted, opaque WAL session capability.
+    /// The gate copies it into permission and TrustDecision frames, never
+    /// constructing it from the action or payload.
+    WriterWithSession(&'a WalWriterHandle, WalSessionContext),
     /// Forward through the live daemon's kernel-authenticated same-user OS IPC.
     DaemonRpc(&'a Path),
     /// Deterministic audit failure used to prove required-audit fail-closed
@@ -850,6 +855,16 @@ async fn audit(
             super::trust_ledger::append_to_writer(writer, &trust_event).await?;
             Ok(())
         }
+        PermissionAuditSink::WriterWithSession(writer, wal_session) => {
+            let header = crate::wal::HeaderBuilder::new(event_type, &payload)
+                .session_context(Some(wal_session))
+                .flags(crate::wal::EventFlags::SYNTHETIC)
+                .build();
+            writer.append(header, payload).await?;
+            super::trust_ledger::append_to_writer_in(writer, &trust_event, Some(wal_session))
+                .await?;
+            Ok(())
+        }
         PermissionAuditSink::DaemonRpc(home) => {
             crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload)
                 .await
@@ -880,6 +895,53 @@ mod tests {
             request_binding_sha256: "b".repeat(64),
             eur_estimate,
         }
+    }
+
+    #[tokio::test]
+    async fn admitted_writer_sink_stamps_permission_and_trust_headers() {
+        let home = tempdir().unwrap();
+        let segment = home.path().join("permission-session-000001.wal");
+        let (writer, join) = spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
+        let wal_session = crate::wal::WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"test\0permission-gate\0admitted-turn",
+        )
+        .unwrap();
+
+        Gate::for_level(AutonomyLevel::Full)
+            .check_with_audit_sink(
+                &Action::ExecArbitrary,
+                PermissionAuditSink::WriterWithSession(&writer, wal_session),
+                true,
+                None,
+            )
+            .await
+            .unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        let bytes = std::fs::read(segment).unwrap();
+        let mut headers = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if matches!(
+                frame.header.event_type,
+                EVENT_TYPE_PERMISSION_GRANTED | EVENT_TYPE_PERMISSION_DENIED
+            ) || (frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::TrustDecision as u8)
+            {
+                headers.push(*frame.header.session_id.as_bytes());
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(headers.len(), 2);
+        assert!(
+            headers
+                .iter()
+                .all(|session_id| *session_id == *wal_session.header_id().as_bytes()),
+            "paired permission and TrustDecision records retain the admitted WAL context"
+        );
     }
 
     #[tokio::test]

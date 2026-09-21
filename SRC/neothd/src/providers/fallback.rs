@@ -833,6 +833,36 @@ mod tests {
         frames
     }
 
+    fn provider_audit_header_ids(seg: &std::path::Path) -> Vec<(u8, [u8; 16])> {
+        let bytes = std::fs::read(seg).unwrap();
+        let segment = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = segment.header_len();
+        let mut headers = Vec::new();
+        while cursor < bytes.len() {
+            let decoded = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            if matches!(
+                decoded.header.event_type,
+                crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN
+                    | crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST
+                    | crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE
+                    | crate::wal::events::EVENT_TYPE_PROVIDER_ERROR
+                    | crate::wal::events::EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED
+                    | crate::wal::events::EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED
+            ) {
+                headers.push((
+                    decoded.header.event_type,
+                    *decoded.header.session_id.as_bytes(),
+                ));
+            }
+            let total = decoded.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        headers
+    }
+
     struct RecordingProvider {
         name: &'static str,
         default_model: &'static str,
@@ -1541,6 +1571,11 @@ mod tests {
         let seg = wal_dir.join("authorized-fallback-000001.wal");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
+        let wal_session = crate::wal::WalSessionContext::from_admitted_identity(
+            dir.path(),
+            b"test\0provider-fallback\0admitted-turn",
+        )
+        .unwrap();
         let primary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let fallback_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let fallback = FallbackProvider::new_with_models_at(
@@ -1575,7 +1610,16 @@ mod tests {
                 Some(writer.clone()),
                 crate::config::TokensConfig::default_max_per_request(),
             )
-            .with_usage_home(dir.path()),
+            .with_usage_home(dir.path())
+            .with_audit_context(
+                crate::providers::cost_authorization::ProviderCallAuditContext {
+                    // Compatibility payload metadata is not used to derive the
+                    // typed header capability below.
+                    session_id: Some("payload-session-metadata".into()),
+                    ..Default::default()
+                }
+                .with_wal_session(Some(wal_session)),
+            ),
             None,
             "fallback.test",
         );
@@ -1616,6 +1660,18 @@ mod tests {
         drop(provider);
         drop(writer);
         join.await.unwrap();
+        let audited_headers = provider_audit_header_ids(&seg);
+        assert_eq!(
+            audited_headers.len(),
+            8,
+            "cost, lifecycle, quota, and fallback leaves must all be present"
+        );
+        assert!(
+            audited_headers
+                .iter()
+                .all(|(_, session_id)| *session_id == *wal_session.header_id().as_bytes()),
+            "provider retries, fallback, and auxiliary leaves retain the admitted WAL context"
+        );
         let payloads = cost_payloads(&seg);
         assert_eq!(payloads.len(), 2);
         assert_eq!(payloads[0]["provider"], "primary_cloud");

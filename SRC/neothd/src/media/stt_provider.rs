@@ -4158,6 +4158,26 @@ pub(crate) async fn transcribe_and_audit(
     media_cfg: &crate::config::MediaConfig,
     neoth_home: &Path,
 ) -> Result<TranscriptionResult, SttProviderError> {
+    transcribe_and_audit_in(
+        provider, permit, audio, request, writer, None, media_cfg, neoth_home,
+    )
+    .await
+}
+
+/// Contextual STT audit path for one already-admitted media turn. The opaque
+/// capability travels beside the writer and is never reconstructed from audio,
+/// provider, replay state, or request payload.
+#[allow(clippy::too_many_arguments)]
+async fn transcribe_and_audit_in(
+    provider: std::sync::Arc<dyn SttProviderImpl>,
+    permit: &crate::media::audio::AudioWorkPermit,
+    audio: &[u8],
+    request: &TranscriptionRequest,
+    writer: Option<&crate::wal::writer::WalWriterHandle>,
+    wal_session: Option<crate::wal::WalSessionContext>,
+    media_cfg: &crate::config::MediaConfig,
+    neoth_home: &Path,
+) -> Result<TranscriptionResult, SttProviderError> {
     let is_cloud = !provider.kind().is_local();
     if is_cloud {
         crate::media::enforce_cloud_media_audit(
@@ -4173,6 +4193,7 @@ pub(crate) async fn transcribe_and_audit(
         audio.to_vec(),
         request.clone(),
         writer.cloned(),
+        wal_session,
         media_cfg.clone(),
         neoth_home.to_path_buf(),
     );
@@ -4194,6 +4215,7 @@ async fn transcribe_and_audit_owned(
     audio: Vec<u8>,
     request: TranscriptionRequest,
     writer: Option<crate::wal::writer::WalWriterHandle>,
+    wal_session: Option<crate::wal::WalSessionContext>,
     media_cfg: crate::config::MediaConfig,
     neoth_home: PathBuf,
 ) -> Result<TranscriptionResult, SttProviderError> {
@@ -4497,6 +4519,7 @@ async fn transcribe_and_audit_owned(
                         result.text.chars().count(),
                         &paths.binding_sha256,
                         &lease.claim.claim_id,
+                        wal_session,
                     )
                     .await
                     {
@@ -4577,6 +4600,7 @@ async fn emit_stt_transcribed(
     output_chars: usize,
     replay_binding_sha256: &str,
     audit_claim_id: &str,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Result<u64, String> {
     let ts_unix = crate::time::now_unix_secs();
     let payload = serde_json::to_vec(&serde_json::json!({
@@ -4588,7 +4612,11 @@ async fn emit_stt_transcribed(
         "ts_unix": ts_unix,
     }))
     .map_err(|error| format!("serialize STT_TRANSCRIBED (0xCC): {error}"))?;
-    let header = crate::wal::make_header(crate::wal::events::EVENT_TYPE_STT_TRANSCRIBED, &payload);
+    let header = crate::wal::make_header_in(
+        crate::wal::events::EVENT_TYPE_STT_TRANSCRIBED,
+        &payload,
+        wal_session,
+    );
     writer
         .append(header, payload)
         .await
@@ -4687,14 +4715,16 @@ async fn run_stt_attempt(
     media_cfg: &crate::config::MediaConfig,
     neoth_home: &Path,
     wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Result<TranscriptionResult, SttAttemptError> {
     let provider = factory.build(kind, permit).await?;
-    let mut result = transcribe_and_audit(
+    let mut result = transcribe_and_audit_in(
         std::sync::Arc::clone(&provider),
         permit,
         audio,
         request,
         wal_writer,
+        wal_session,
         media_cfg,
         neoth_home,
     )
@@ -4750,6 +4780,25 @@ pub(crate) async fn dispatch_transcription_with_audio_permit(
     wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
     permit: &crate::media::audio::AudioWorkPermit,
 ) -> Result<TranscriptionResult, String> {
+    dispatch_transcription_with_audio_permit_in(
+        stt_cfg, media_cfg, updater_cfg, neoth_home, audio, wal_writer, None, permit,
+    )
+    .await
+}
+
+/// Contextual dispatch retains the admission capability through every provider
+/// attempt and fallback. The standalone wrapper deliberately supplies `None`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn dispatch_transcription_with_audio_permit_in(
+    stt_cfg: &crate::media::stt_dispatch::MediaSttConfig,
+    media_cfg: &crate::config::MediaConfig,
+    updater_cfg: &crate::config::ops::UpdaterConfig,
+    neoth_home: &Path,
+    audio: &[u8],
+    wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    wal_session: Option<crate::wal::WalSessionContext>,
+    permit: &crate::media::audio::AudioWorkPermit,
+) -> Result<TranscriptionResult, String> {
     let azure_region =
         (!stt_cfg.azure_region.trim().is_empty()).then(|| stt_cfg.azure_region.clone());
     let factory = ConfiguredSttProviderFactory {
@@ -4761,7 +4810,7 @@ pub(crate) async fn dispatch_transcription_with_audio_permit(
         runtime: SttRuntimeEnvironment::for_home(neoth_home),
     };
     dispatch_transcription_with_factory(
-        stt_cfg, media_cfg, neoth_home, audio, wal_writer, permit, &factory,
+        stt_cfg, media_cfg, neoth_home, audio, wal_writer, wal_session, permit, &factory,
     )
     .await
 }
@@ -4773,6 +4822,7 @@ async fn dispatch_transcription_with_factory(
     neoth_home: &Path,
     audio: &[u8],
     wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    wal_session: Option<crate::wal::WalSessionContext>,
     permit: &crate::media::audio::AudioWorkPermit,
     factory: &dyn SttProviderFactory,
 ) -> Result<TranscriptionResult, String> {
@@ -4802,6 +4852,7 @@ async fn dispatch_transcription_with_factory(
         media_cfg,
         neoth_home,
         wal_writer,
+        wal_session,
     )
     .await
     {
@@ -4844,7 +4895,7 @@ async fn dispatch_transcription_with_factory(
     }
 
     run_stt_attempt(
-        factory, fb_kind, permit, audio, &request, media_cfg, neoth_home, wal_writer,
+        factory, fb_kind, permit, audio, &request, media_cfg, neoth_home, wal_writer, wal_session,
     )
     .await
     .map_err(|fallback_error| {
@@ -4927,6 +4978,34 @@ pub(crate) async fn dispatch_pcm_f32_with_audio_permit(
     wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
     _permit: &crate::media::audio::AudioWorkPermit,
 ) -> Result<TranscriptionResult, PcmSttError> {
+    dispatch_pcm_f32_with_audio_permit_in(
+        stt_cfg,
+        media_cfg,
+        updater_cfg,
+        neoth_home,
+        samples,
+        sample_rate_hz,
+        wal_writer,
+        None,
+        _permit,
+    )
+    .await
+}
+
+/// Contextual PCM dispatch used only after admission supplied a WAL session.
+/// It has no other source for a session value.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn dispatch_pcm_f32_with_audio_permit_in(
+    stt_cfg: &crate::media::stt_dispatch::MediaSttConfig,
+    media_cfg: &crate::config::MediaConfig,
+    updater_cfg: &crate::config::ops::UpdaterConfig,
+    neoth_home: &Path,
+    samples: &[f32],
+    sample_rate_hz: u32,
+    wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    wal_session: Option<crate::wal::WalSessionContext>,
+    permit: &crate::media::audio::AudioWorkPermit,
+) -> Result<TranscriptionResult, PcmSttError> {
     dispatch_pcm_f32_inner(
         stt_cfg,
         media_cfg,
@@ -4935,7 +5014,8 @@ pub(crate) async fn dispatch_pcm_f32_with_audio_permit(
         samples,
         sample_rate_hz,
         wal_writer,
-        _permit,
+        wal_session,
+        permit,
     )
     .await
 }
@@ -4948,16 +5028,18 @@ async fn dispatch_pcm_f32_inner(
     samples: &[f32],
     sample_rate_hz: u32,
     wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    wal_session: Option<crate::wal::WalSessionContext>,
     permit: &crate::media::audio::AudioWorkPermit,
 ) -> Result<TranscriptionResult, PcmSttError> {
     let wav = prepare_pcm_f32_wav(samples, sample_rate_hz)?;
-    dispatch_transcription_with_audio_permit(
+    dispatch_transcription_with_audio_permit_in(
         stt_cfg,
         media_cfg,
         updater_cfg,
         neoth_home,
         &wav,
         wal_writer,
+        wal_session,
         permit,
     )
     .await
@@ -6711,6 +6793,7 @@ mod tests {
             neoth_home.path(),
             &wav_fixture(),
             None,
+            None,
             &permit,
             &factory,
         )
@@ -6751,6 +6834,7 @@ mod tests {
             &media_cfg,
             neoth_home.path(),
             &wav_fixture(),
+            None,
             None,
             &permit,
             &factory,
@@ -6799,6 +6883,7 @@ mod tests {
             neoth_home.path(),
             &wav_fixture(),
             Some(&writer),
+            None,
             &permit,
             &factory,
         )
@@ -6845,6 +6930,7 @@ mod tests {
             &crate::config::MediaConfig::default(),
             neoth_home.path(),
             &wav_fixture(),
+            None,
             None,
             &permit,
             &factory,

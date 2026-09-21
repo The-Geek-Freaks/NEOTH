@@ -125,6 +125,7 @@ impl AudioExtractor {
         updater_cfg: &crate::config::UpdaterConfig,
         neoth_home: &std::path::Path,
         wal_writer: Option<crate::wal::writer::WalWriterHandle>,
+        wal_session: Option<crate::wal::WalSessionContext>,
     ) -> Result<Extraction, ExtractionError> {
         if asset.kind() != AssetKind::Audio {
             return Err(ExtractionError::Unsupported {
@@ -153,6 +154,7 @@ impl AudioExtractor {
                 &updater_cfg,
                 &neoth_home,
                 wal_writer.as_ref(),
+                wal_session,
                 permit,
             )
         })
@@ -187,6 +189,7 @@ impl MediaExtractor for AudioExtractor {
             &config.media,
             &config.updater,
             &crate::config::FreedomConfig::default_neoth_home(),
+            None,
             None,
         )
         .await
@@ -230,6 +233,7 @@ fn extract_blocking_with_context(
     updater_cfg: &crate::config::UpdaterConfig,
     neoth_home: &std::path::Path,
     wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    wal_session: Option<crate::wal::WalSessionContext>,
     permit: AudioWorkPermit,
 ) -> Result<Extraction, ExtractionError> {
     let DecodedAudio {
@@ -258,7 +262,7 @@ fn extract_blocking_with_context(
         })?;
     let result = handle
         .block_on(
-            crate::media::stt_provider::dispatch_pcm_f32_with_audio_permit(
+            crate::media::stt_provider::dispatch_pcm_f32_with_audio_permit_in(
                 &media_cfg.stt,
                 media_cfg,
                 updater_cfg,
@@ -266,6 +270,7 @@ fn extract_blocking_with_context(
                 &samples,
                 TARGET_SAMPLE_RATE,
                 wal_writer,
+                wal_session,
                 &permit,
             ),
         )
@@ -869,6 +874,7 @@ mod tests {
                 &crate::config::MediaConfig::default(),
                 &crate::config::UpdaterConfig::default(),
                 home.path(),
+                None,
                 None,
             )
             .await

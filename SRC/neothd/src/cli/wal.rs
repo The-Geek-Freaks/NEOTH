@@ -34,6 +34,7 @@ use crate::wal::proof_bundle::{
     PROOF_SCHEMA_VERSION, ProofBundle, ProofEnvelope, ProofFrame, ProofMarker,
 };
 use crate::wal::segment_header::{SEGMENT_HEADER_LEN, parse_segment_header};
+use crate::wal::SessionPartition;
 
 #[derive(Args, Debug, Clone)]
 pub struct WalArgs {
@@ -57,7 +58,9 @@ pub enum WalAction {
     /// type — this is how an operator proves a guarantee, e.g.
     /// `neoth wal show --type plugin_cap_denied` (every denied plugin
     /// hostcall) or `--type provider_fallback_attempted` (every 429
-    /// failover).
+    /// failover). `--session` partitions decoded frames before the same HLC
+    /// replay ordering; it accepts only an opaque lower-hex header ID or the
+    /// explicit legacy bucket `unattributed`.
     Show {
         /// Segment file. Omit to scan ALL `~/.neoth/wal/*.wal`.
         segment: Option<PathBuf>,
@@ -71,6 +74,11 @@ pub enum WalAction {
         /// Skip this many of the most-recent frames before showing.
         #[arg(long, default_value_t = 0)]
         skip: usize,
+        /// Restrict output to one opaque WAL session ID (32 lower-hex) or the
+        /// explicit legacy bucket `unattributed`. Raw logical session labels
+        /// are never accepted or displayed.
+        #[arg(long, value_name = "OPAQUE_LOWER_HEX_OR_UNATTRIBUTED")]
+        session: Option<String>,
     },
     /// Inspect the bounded authenticated Context Evidence receipt ledger.
     /// With no handle, prints the signed current head. With `--handle`, reads
@@ -89,6 +97,8 @@ pub enum WalAction {
     /// those bytes. A third party re-checks integrity offline (`neoth wal
     /// verify-proof`). `--sign` uses the operator's auto-managed ed25519 proof
     /// key (generated on first use; no minisign tool / keygen / password).
+    /// Export intentionally has no session filter: this schema proves a whole
+    /// time window and its marker coverage, not an unverifiable frame subset.
     Export {
         /// Window: a duration back from now (`24h`, `7d`, `30m`, `3600`) or a
         /// UTC RFC3339 range (`2026-05-01T00:00:00Z..2026-05-02T00:00:00Z`).
@@ -298,11 +308,13 @@ pub async fn run_wal(args: WalArgs) -> Result<()> {
             event_type,
             limit,
             skip,
+            session,
         } => {
             let home = FreedomConfig::default_neoth_home();
             show(
                 segment.as_deref(),
                 event_type.as_deref(),
+                session.as_deref(),
                 limit,
                 skip,
                 &home,
@@ -838,6 +850,7 @@ fn shown_event_name(frame: &ShownFrame) -> std::borrow::Cow<'static, str> {
 fn show(
     segment: Option<&Path>,
     type_filter: Option<&str>,
+    session_filter: Option<&str>,
     limit: usize,
     skip: usize,
     home: &Path,
@@ -855,6 +868,12 @@ fn show(
         })?),
         None => None,
     };
+    let session_partition = match session_filter {
+        Some(value) => Some(SessionPartition::from_filter(value).with_context(|| {
+            "invalid --session; use exactly 32 opaque lower-hex characters or `unattributed`"
+        })?),
+        None => None,
+    };
 
     // Segments: an explicit path is read strictly (a bad header is an
     // error — the operator named that file); a whole-chain scan is
@@ -867,7 +886,13 @@ fn show(
     let mut frames: Vec<ShownFrame> = Vec::new();
     let mut walked = 0usize;
     for seg in &segments {
-        match read_segment_frames(seg, want, &mut frames, &mut walked) {
+        match read_segment_frames(
+            seg,
+            want,
+            session_partition.unwrap_or(SessionPartition::ANY),
+            &mut frames,
+            &mut walked,
+        ) {
             Ok(()) => {}
             Err(e) if strict => return Err(e),
             Err(e) => {
@@ -896,6 +921,7 @@ fn show(
                         "ts_ns": f.ts_ns,
                         "event_id": f.event_id,
                         "payload_hash": format!("{:016x}", f.payload_hash),
+                        "session": shown_session_id(f),
                     })
                 })
                 .collect();
@@ -903,6 +929,7 @@ fn show(
                 "{}",
                 serde_json::json!({
                     "type_filter": type_filter,
+                    "session_filter": session_filter,
                     "segments_scanned": segments.len(),
                     "frames_matched": frames.len(),
                     "frames_shown": view.len(),
@@ -914,21 +941,25 @@ fn show(
             for f in &view {
                 let name = shown_event_name(f);
                 println!(
-                    "  0x{code:02X} {name:<26}  id={id:<8}  ts_ns={ts}  payload={plen}  imp={imp:.2}  hash={h:016x}",
+                    "  0x{code:02X} {name:<26}  id={id:<8}  ts_ns={ts}  payload={plen}  imp={imp:.2}  session={session}  hash={h:016x}",
                     code = f.event_type,
                     name = name,
                     id = f.event_id,
                     ts = f.ts_ns,
                     plen = f.payload_len,
                     imp = f.importance,
+                    session = shown_session_id(f),
                     h = f.payload_hash,
                 );
             }
             let filt = type_filter
                 .map(|t| format!(" (type={t})"))
                 .unwrap_or_default();
+            let session = session_filter
+                .map(|value| format!(" (session={value})"))
+                .unwrap_or_default();
             println!(
-                "# {} of {} matching frame(s){filt}, newest first — scanned {} segment(s)",
+                "# {} of {} matching frame(s){filt}{session}, newest first — scanned {} segment(s)",
                 view.len(),
                 frames.len(),
                 segments.len(),
@@ -943,6 +974,14 @@ fn sort_shown_frames_newest_first(frames: &mut [ShownFrame]) {
         compare_event_headers_for_replay(&left.replay_header, &right.replay_header)
     });
     frames.reverse();
+}
+
+fn shown_session_id(frame: &ShownFrame) -> String {
+    if frame.replay_header.session_id.is_zero() {
+        "unattributed".to_string()
+    } else {
+        frame.replay_header.session_id.opaque_hex()
+    }
 }
 
 /// Sorted `*.wal` paths under `wal_dir` (zero-padded names sort
@@ -961,11 +1000,13 @@ fn sorted_segments(wal_dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Robust v1/v2 read of one segment: parse the header, decompress a v2
-/// zstd body, then walk frames, pushing those matching `want` (or all
-/// when `None`). Mirrors the ledger/council/refusal walkers.
+/// zstd body, then walk frames, pushing those matching `want` (or all when
+/// `None`) and the requested session partition. Mirrors the ledger/council/
+/// refusal walkers while retaining their complete decode/replay walk.
 fn read_segment_frames(
     path: &Path,
     want: Option<WalEventFilter>,
+    session_partition: SessionPartition,
     out: &mut Vec<ShownFrame>,
     walked: &mut usize,
 ) -> Result<()> {
@@ -1003,7 +1044,9 @@ fn read_segment_frames(
             event_id: dec.header.event_id.0,
             payload_hash: dec.header.payload_hash,
         };
-        if want.is_none_or(|filter| filter.matches(&frame)) {
+        if want.is_none_or(|filter| filter.matches(&frame))
+            && session_partition.matches(frame.replay_header.session_id)
+        {
             out.push(frame);
         }
         let total = dec.header.total_len as usize;
@@ -1464,7 +1507,14 @@ mod tests {
         let mut shown = Vec::new();
         let mut walked = 0;
         for segment in &segments {
-            read_segment_frames(segment, Some(proof_filter), &mut shown, &mut walked).unwrap();
+            read_segment_frames(
+                segment,
+                Some(proof_filter),
+                SessionPartition::ANY,
+                &mut shown,
+                &mut walked,
+            )
+            .unwrap();
         }
         assert_eq!(shown.len(), 1);
         assert_eq!(shown_event_name(&shown[0]), "proof_key_rotated");
@@ -1825,6 +1875,7 @@ mod tests {
                 event_type: None,
                 limit: 3,
                 skip: 2,
+                session: None,
             },
             output: OutputFormat::Table,
         };
@@ -1853,6 +1904,7 @@ mod tests {
                 event_type: None,
                 limit: 1,
                 skip: 0,
+                session: None,
             },
             output: OutputFormat::Table,
         };
@@ -1891,7 +1943,7 @@ mod tests {
         // No filter → all 4 frames.
         let mut all = Vec::new();
         let mut walked = 0;
-        read_segment_frames(&seg, None, &mut all, &mut walked).unwrap();
+        read_segment_frames(&seg, None, SessionPartition::ANY, &mut all, &mut walked).unwrap();
         assert_eq!(all.len(), 4);
         // Filter to BOOT → exactly the 1 boot frame.
         let mut boots = Vec::new();
@@ -1899,6 +1951,7 @@ mod tests {
         read_segment_frames(
             &seg,
             Some(WalEventFilter::Type(EVENT_TYPE_BOOT)),
+            SessionPartition::ANY,
             &mut boots,
             &mut w2,
         )
@@ -1906,6 +1959,55 @@ mod tests {
         assert_eq!(boots.len(), 1);
         assert_eq!(boots[0].event_type, EVENT_TYPE_BOOT);
         assert_eq!(w2, 4, "walked count counts every frame, not just matches");
+    }
+
+    #[test]
+    fn read_segment_frames_partitions_exact_and_unattributed_sessions() {
+        use crate::wal::SessionId;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("000001.wal");
+        let mut bytes = SegmentHeader::new(0, 1, 0, 0, [0u8; 16])
+            .to_le_bytes()
+            .to_vec();
+        let selected = SessionId([0x11; 16]);
+        let other = SessionId([0x22; 16]);
+        for session in [selected, SessionId::ZERO, other] {
+            let payload = b"session partition".to_vec();
+            let header = HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, &payload)
+                .session(session)
+                .build();
+            bytes.extend_from_slice(&encode_frame(&header, &payload));
+        }
+        std::fs::write(&path, bytes).unwrap();
+
+        let mut exact = Vec::new();
+        let mut exact_walked = 0;
+        read_segment_frames(
+            &path,
+            None,
+            SessionPartition::exact(selected).unwrap(),
+            &mut exact,
+            &mut exact_walked,
+        )
+        .unwrap();
+        assert_eq!(exact_walked, 3, "partitioning preserves the complete replay walk");
+        assert_eq!(exact.len(), 1, "exact session excludes every other header ID");
+        assert_eq!(shown_session_id(&exact[0]), selected.opaque_hex());
+
+        let mut unattributed = Vec::new();
+        let mut unattributed_walked = 0;
+        read_segment_frames(
+            &path,
+            None,
+            SessionPartition::UNATTRIBUTED,
+            &mut unattributed,
+            &mut unattributed_walked,
+        )
+        .unwrap();
+        assert_eq!(unattributed_walked, 3);
+        assert_eq!(unattributed.len(), 1, "legacy zero is its own partition");
+        assert_eq!(shown_session_id(&unattributed[0]), "unattributed");
     }
 
     #[test]
@@ -1918,7 +2020,14 @@ mod tests {
         let mut frames = Vec::new();
         let mut walked = 0;
 
-        read_segment_frames(&segment, None, &mut frames, &mut walked).unwrap();
+        read_segment_frames(
+            &segment,
+            None,
+            SessionPartition::ANY,
+            &mut frames,
+            &mut walked,
+        )
+        .unwrap();
 
         assert_eq!(walked, 1);
         assert_eq!(frames.len(), 1);
@@ -1990,6 +2099,7 @@ mod tests {
         read_segment_frames(
             &path,
             Some(WalEventFilter::parse("omi_lifecycle_audit").unwrap()),
+            SessionPartition::ANY,
             &mut frames,
             &mut walked,
         )

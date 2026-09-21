@@ -231,6 +231,14 @@ impl PlannedRawTextDescriptor {
         );
         Ok(Self(descriptor))
     }
+
+    /// The sealed RAW descriptor is the only transcript-recovery source for
+    /// its header attribution.  This exposes no logical label or minting API;
+    /// it lets the immediately derived Bound descriptor retain the exact
+    /// session already authenticated in the persisted RAW header.
+    pub(crate) const fn header_session_id(&self) -> crate::wal::SessionId {
+        self.0.header.session_id
+    }
 }
 
 /// A planned metadata-only `TranscriptMiningBound` or `TranscriptMiningRevoked`

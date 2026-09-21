@@ -36,7 +36,9 @@
 //! → group in Rust) is straightforward and keeps the view portable
 //! across SQLite versions that lag on window-function support.
 
-use rusqlite::Connection;
+use rusqlite::{Connection, types::Type};
+
+use crate::wal::{SessionId, SessionPartition};
 
 /// Default temporal window: 60 minutes in nanoseconds.
 /// `60 * 60 * 1_000_000_000`.
@@ -71,6 +73,8 @@ pub struct EpisodeRow {
     pub event_type: u8,
     pub ts_ns: i64,
     pub importance: f64,
+    /// Exact opaque header projection. `ZERO` is legacy/unattributed.
+    pub wal_session_id: SessionId,
 }
 
 /// Errors surfaced by [`fetch_episodes`]. SQLite failures keep the
@@ -99,6 +103,25 @@ pub fn fetch_episodes(
     to_ns: i64,
     window_size_ns: i64,
 ) -> Result<Vec<EpisodeSummary>, EpisodeViewError> {
+    fetch_episodes_in(
+        conn,
+        from_ns,
+        to_ns,
+        window_size_ns,
+        SessionPartition::ANY,
+    )
+}
+
+/// Like [`fetch_episodes`], but with an explicit WAL-session partition.
+/// `Any` retains legacy broad views, `Exact` uses the session index, and
+/// `Unattributed` returns only the permanent all-zero legacy bucket.
+pub fn fetch_episodes_in(
+    conn: &Connection,
+    from_ns: i64,
+    to_ns: i64,
+    window_size_ns: i64,
+    partition: SessionPartition,
+) -> Result<Vec<EpisodeSummary>, EpisodeViewError> {
     if window_size_ns <= 0 {
         return Err(EpisodeViewError::InvalidWindow(window_size_ns));
     }
@@ -108,24 +131,50 @@ pub fn fetch_episodes(
             to: to_ns,
         });
     }
-    let mut stmt = conn
-        .prepare(
-            "SELECT event_id, event_type, ts_ns, importance \
-             FROM idx_episode \
-             WHERE ts_ns BETWEEN ?1 AND ?2 \
-             ORDER BY ts_ns ASC, event_id ASC",
-        )
-        .map_err(|e| EpisodeViewError::Sqlite(e.to_string()))?;
-    let rows = stmt
-        .query_map(rusqlite::params![from_ns, to_ns], |row| {
-            Ok(EpisodeRow {
-                event_id: row.get(0)?,
-                event_type: row.get::<_, i64>(1)? as u8,
-                ts_ns: row.get(2)?,
-                importance: row.get(3)?,
-            })
+    let decode = |row: &rusqlite::Row<'_>| -> rusqlite::Result<EpisodeRow> {
+        let bytes: Vec<u8> = row.get(4)?;
+        let raw: [u8; 16] = bytes.as_slice().try_into().map_err(|_| {
+            rusqlite::Error::FromSqlConversionFailure(
+                4,
+                Type::Blob,
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "idx_episode.wal_session_id must be exactly 16 bytes",
+                )),
+            )
+        })?;
+        Ok(EpisodeRow {
+            event_id: row.get(0)?,
+            event_type: row.get::<_, i64>(1)? as u8,
+            ts_ns: row.get(2)?,
+            importance: row.get(3)?,
+            wal_session_id: SessionId::from_bytes(raw),
         })
-        .map_err(|e| EpisodeViewError::Sqlite(e.to_string()))?;
+    };
+    let sql = "SELECT event_id, event_type, ts_ns, importance, wal_session_id \
+               FROM idx_episode \
+               WHERE ts_ns BETWEEN ?1 AND ?2";
+    let mut stmt = if partition.is_any() {
+        conn.prepare(&format!("{sql} ORDER BY ts_ns ASC, event_id ASC"))
+    } else {
+        conn.prepare(&format!("{sql} AND wal_session_id = ?3 ORDER BY ts_ns ASC, event_id ASC"))
+    }
+    .map_err(|e| EpisodeViewError::Sqlite(e.to_string()))?;
+    let rows = if partition.is_any() {
+        stmt.query_map(rusqlite::params![from_ns, to_ns], decode)
+    } else if let Some(id) = partition.exact_id() {
+        stmt.query_map(
+            rusqlite::params![from_ns, to_ns, id.as_bytes().to_vec()],
+            decode,
+        )
+    } else {
+        debug_assert!(partition.is_unattributed());
+        stmt.query_map(
+            rusqlite::params![from_ns, to_ns, SessionId::ZERO.as_bytes().to_vec()],
+            decode,
+        )
+    }
+    .map_err(|e| EpisodeViewError::Sqlite(e.to_string()))?;
     let mut collected = Vec::new();
     for row in rows {
         collected.push(row.map_err(|e| EpisodeViewError::Sqlite(e.to_string()))?);
@@ -151,7 +200,7 @@ pub fn group_episodes(rows: &[EpisodeRow], window_size_ns: i64) -> Vec<EpisodeSu
             .last()
             .expect("current is non-empty by construction")
             .ts_ns;
-        if row.ts_ns - prev_ts <= window_size_ns {
+        if row.wal_session_id == current[0].wal_session_id && row.ts_ns - prev_ts <= window_size_ns {
             current.push(*row);
         } else {
             out.push(summarise(&current));
@@ -207,6 +256,7 @@ mod tests {
             event_type,
             ts_ns,
             importance,
+            wal_session_id: SessionId::ZERO,
         }
     }
 
@@ -260,6 +310,16 @@ mod tests {
         assert_eq!(out[1].event_count, 1);
         assert_eq!(out[0].event_ids, vec![1]);
         assert_eq!(out[1].event_ids, vec![2]);
+    }
+
+    #[test]
+    fn group_session_change_splits_even_inside_temporal_window() {
+        let mut first = r(1, 0x01, 0, 0.5);
+        first.wal_session_id = SessionId([1u8; 16]);
+        let mut second = r(2, 0x01, ONE_MIN_NS, 0.5);
+        second.wal_session_id = SessionId([2u8; 16]);
+        let out = group_episodes(&[first, second], ONE_HOUR_NS);
+        assert_eq!(out.len(), 2, "a session boundary must outrank temporal adjacency");
     }
 
     #[test]
@@ -355,7 +415,8 @@ mod tests {
                 sender_id      TEXT,
                 operator_id    TEXT,
                 importance     REAL NOT NULL DEFAULT 0.5,
-                last_access_ts INTEGER NOT NULL DEFAULT 0
+                last_access_ts INTEGER NOT NULL DEFAULT 0,
+                wal_session_id BLOB NOT NULL DEFAULT X'00000000000000000000000000000000'
             );",
         )
         .unwrap();
@@ -404,6 +465,42 @@ mod tests {
         build_idx_episode_schema(&conn);
         let out = fetch_episodes(&conn, 0, ONE_HOUR_NS, ONE_HOUR_NS).unwrap();
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn fetch_episodes_partition_isolates_exact_and_unattributed_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        build_idx_episode_schema(&conn);
+        insert_row(&conn, 1, 0x01, 0, 0.5);
+        insert_row(&conn, 2, 0x01, ONE_MIN_NS, 0.5);
+        conn.execute(
+            "UPDATE idx_episode SET wal_session_id = ?1 WHERE event_id = 2",
+            [vec![7u8; 16]],
+        )
+        .unwrap();
+
+        let exact = fetch_episodes_in(
+            &conn,
+            0,
+            ONE_HOUR_NS,
+            ONE_HOUR_NS,
+            SessionPartition::exact(SessionId([7u8; 16])).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(exact.len(), 1);
+        assert_eq!(exact[0].event_ids, vec![2]);
+
+        let unattributed = fetch_episodes_in(
+            &conn,
+            0,
+            ONE_HOUR_NS,
+            ONE_HOUR_NS,
+            SessionPartition::UNATTRIBUTED,
+        )
+        .unwrap();
+        assert_eq!(unattributed.len(), 1);
+        assert_eq!(unattributed[0].event_ids, vec![1]);
+        assert!(SessionPartition::exact(SessionId::ZERO).is_err());
     }
 
     #[test]

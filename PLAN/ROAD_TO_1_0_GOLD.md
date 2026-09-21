@@ -8,6 +8,28 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W159 admitted WAL-session integration (2026-09-21):** the 34-file implementation
+is source-reviewed across core identity, projection/query, provider/subagent
+execution and the finite accepted-turn emitter inventory. Local/daemon/channel
+turns retain one opaque home-key-derived capability through media, Code Map,
+MCP, permission/trust, goal/council, hooks, stream/quota, snapshots and loop
+leaves. Legacy, Incognito and unadmitted paths retain Zero. SQLite v40 projects
+the header identity; `wal show --session` supports exact/unattributed selection.
+Complete-window proof export is unchanged. See
+[W159](../docs/gold-wave159-verification.md). Native build and actual WAL/query
+regressions remain required; GOLD-LF-P2-08 stays open.
+Current manifest: 351 source inputs; 316 universal native + 3 Windows-only +
+2 Unix-only requirements; 56 universal GUI + 12 Linux/macOS callbacks; 7 optional
+adapter cases. W159 contributes 48 session regressions, 44 newly required.
+
+W162 live-throughput core
+is separate unpublished work and excluded from this admission.
+
+W155 repair b73c2be4 passed Code Quality35629241435. Preflight35629245213 requested
+one exact consent-test layout hunk; it is imported with this admission. The
+previous 7c6 CI failure and cancelled verdict remain recorded below. No local
+executable validation is allowed; Road counts remain1324/1015/307open/2partial.
+
 **W155 integrated Citation admission (2026-09-21):** reviewed Core/Consent/HTTP/CLI
 and the actual Chat citation panel are admitted for hosted verification. Lookup
 binds an explicit claim to a DOI/provider result, checks the private cache first,
@@ -22,7 +44,7 @@ hung-child cancellation, output flooding and recovery. See
 The manifest binds 336 inputs: 272 universal native + 3 Windows-only + 2 Unix
 cases, 56 universal GUI cases + 12 Linux/macOS callbacks, and 7 optional adapter
 cases. The macOS catalog now has 17 exact callback names. GOLD-LF-P1-12 stays
-open until executable and visual acceptance. W159 remains unpublished/excluded.
+open until executable and visual acceptance. W159 is admitted separately above.
 
 Core repair 2f3ceab5 passed hosted compilation/reference35626050057 and Code
 Quality35626049967. Its generated CLI reference was imported with exact source
@@ -46,7 +68,7 @@ Its full CI35622258375 found one additional test-only E0507 in an attach fixture
 the borrowed TurnId is now cloned and independently reviewed. That failed-source
 CI is confirmed cancelled; preview35622261449 continues on b58ec47f because the
 production build is unaffected. Fresh native/GUI compilation remains required.
-W159 WAL session integration is separate unpublished work and is excluded from
+The earlier W159 WAL session work was unpublished and excluded from
 this Citation admission.
 
 W160/W161 repair source ba26d52a passed Code Quality 35621786176. Preflight
@@ -64,7 +86,7 @@ diff-impact root binding. Independent source review covers W160/W161; fresh
 hosted CI and preview remain required. W137 automatic routing and W142 terminal
 refresh still need their diagnostic reruns. See
 [W160-W161](../docs/gold-wave160-161-verification.md). No Road checkbox closes;
-W155 is admitted above; W159 WAL session identity remains separate unpublished work.
+W155 and W159 admissions are tracked above; neither closes runtime/release gates.
 
 **W158 native recovery (2026-09-21):** hosted ff146652 ran 16,938 Windows
 and 17,003 macOS tests; 12/13 failed respectively. Four independently reviewed

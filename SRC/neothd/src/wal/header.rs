@@ -195,6 +195,15 @@ mod tests {
     }
 
     #[test]
+    fn zero_session_header_stays_legacy_wire_compatible() {
+        let h = EventHeaderV2::empty();
+        let bytes = h.to_le_bytes();
+        assert_eq!(&bytes[53..69], &[0u8; 16]);
+        let parsed = EventHeaderV2::from_le_bytes(&bytes).expect("parse legacy zero session");
+        assert_eq!(parsed.session_id, SessionId::ZERO);
+    }
+
+    #[test]
     fn populated_header_roundtrip() {
         let h = EventHeaderV2 {
             wal_format_version: WAL_FORMAT_VERSION,

@@ -149,6 +149,7 @@ async fn run_ingest_with_context(
                         &config.updater,
                         neoth_home,
                         stt_audit.as_ref().map(|(writer, _)| writer.clone()),
+                        None,
                     )
                     .await
             }
@@ -160,6 +161,7 @@ async fn run_ingest_with_context(
                         &config.updater,
                         neoth_home,
                         stt_audit.as_ref().map(|(writer, _)| writer.clone()),
+                        None,
                     )
                     .await
             }

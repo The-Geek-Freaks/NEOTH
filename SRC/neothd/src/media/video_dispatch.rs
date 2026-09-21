@@ -82,6 +82,7 @@ pub async fn dispatch_video_analysis(
     prompt: &str,
     max_tokens: u32,
     writer: Option<&WalWriterHandle>,
+    wal_session: Option<crate::wal::WalSessionContext>,
     media_cfg: &crate::config::MediaConfig,
 ) -> Result<String, String> {
     // P0 ENFORCEMENT — decoding video frames and shipping them to a cloud vision
@@ -157,6 +158,7 @@ pub async fn dispatch_video_analysis(
         .unwrap_or_default();
         let header = crate::wal::HeaderBuilder::new(0x00, &payload)
             .event_subtype(crate::wal::events::ExtendedSubtype::MediaCallIntent as u8)
+            .session_context(wal_session)
             .build();
         if let Err(e) = w.append(header, payload).await {
             // `enforce_cloud_media_audit` above already refuses an unauditable
@@ -182,6 +184,7 @@ pub async fn dispatch_video_analysis(
         .unwrap_or_default();
         let header = crate::wal::HeaderBuilder::new(0x00, &payload)
             .event_subtype(crate::wal::events::ExtendedSubtype::MediaCallResult as u8)
+            .session_context(wal_session)
             .build();
         if let Err(e) = w.append(header, payload).await {
             tracing::warn!(error = %e, "WAL append MEDIA_CALL_RESULT failed after the upload");
@@ -197,6 +200,7 @@ pub async fn dispatch_video_analysis(
             frame_count,
             prompt,
             answer.chars().count(),
+            wal_session,
         )
         .await;
     }
@@ -211,12 +215,14 @@ async fn emit_synthesized(
     frame_count: usize,
     prompt: &str,
     output_chars: usize,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) {
     let now = crate::time::now_unix_secs();
     let payload = synthesized_payload(provider, frame_count, prompt, output_chars, now);
-    let header = crate::wal::make_header(
+    let header = crate::wal::make_header_in(
         crate::wal::events::EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED,
         &payload,
+        wal_session,
     );
     if let Err(e) = writer.append(header, payload).await {
         tracing::warn!(error = %e, "WAL append VIDEO_FRAME_SYNTHESIZED (0xC9) failed (non-fatal)");
@@ -444,6 +450,7 @@ mod tests {
             "p",
             64,
             None,
+            None,
             &frames_on(),
         )
         .await
@@ -482,6 +489,7 @@ mod tests {
                 FrameFormat::Jpeg,
                 "p",
                 64,
+                None,
                 None,
                 &frames_on(),
             )
@@ -550,6 +558,7 @@ mod tests {
             "what happens?",
             256,
             Some(&writer),
+            None,
             &frames_on(),
         )
         .await
@@ -562,6 +571,18 @@ mod tests {
         drop(writer);
         let _ = join.await;
         assert_eq!(count_0xc9(&seg), 1, "exactly one 0xC9 audit frame");
+        let bytes = std::fs::read(&seg).unwrap();
+        let mut cursor = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        while cursor < bytes.len() {
+            let Ok(frame) = crate::wal::frame::decode_frame(&bytes[cursor..]) else {
+                break;
+            };
+            assert!(
+                frame.header.session_id.is_zero(),
+                "standalone media analysis must retain the unattributed WAL bucket"
+            );
+            cursor += frame.header.total_len as usize;
+        }
     }
 
     #[tokio::test]
@@ -583,6 +604,14 @@ mod tests {
         };
         let (writer, join, dir) = test_writer();
         let seg = dir.path().join("vd.wal");
+        let session_home = tempfile::tempdir().unwrap();
+        let key_path = session_home.path().join("wal").join("hmac.key");
+        crate::wal::compaction::load_or_init_key(&key_path).unwrap();
+        let wal_session = crate::wal::WalSessionContext::from_admitted_identity(
+            session_home.path(),
+            b"cli\0media-context-test\0turn-1",
+        )
+        .unwrap();
 
         dispatch_video_analysis(
             &decoder,
@@ -593,6 +622,7 @@ mod tests {
             "what happens?",
             256,
             Some(&writer),
+            Some(wal_session),
             &frames_on(),
         )
         .await
@@ -601,7 +631,7 @@ mod tests {
         let _ = join.await;
 
         let bytes = std::fs::read(&seg).unwrap();
-        let mut seen: Vec<(u8, u8, serde_json::Value)> = Vec::new();
+        let mut seen: Vec<(u8, u8, crate::wal::SessionId, serde_json::Value)> = Vec::new();
         let mut cursor = SEGMENT_HEADER_LEN;
         while cursor < bytes.len() {
             let Ok(frame) = decode_frame(&bytes[cursor..]) else {
@@ -610,6 +640,7 @@ mod tests {
             seen.push((
                 frame.header.event_type,
                 frame.header.event_subtype,
+                frame.header.session_id,
                 serde_json::from_slice(frame.payload).unwrap_or(serde_json::Value::Null),
             ));
             cursor += frame.header.total_len as usize;
@@ -617,15 +648,15 @@ mod tests {
 
         let intent_at = seen
             .iter()
-            .position(|(t, s, _)| *t == 0x00 && *s == ExtendedSubtype::MediaCallIntent as u8)
+            .position(|(t, s, _, _)| *t == 0x00 && *s == ExtendedSubtype::MediaCallIntent as u8)
             .expect("a MediaCallIntent must precede the upload");
         let result_at = seen
             .iter()
-            .position(|(t, s, _)| *t == 0x00 && *s == ExtendedSubtype::MediaCallResult as u8)
+            .position(|(t, s, _, _)| *t == 0x00 && *s == ExtendedSubtype::MediaCallResult as u8)
             .expect("a MediaCallResult must pair the intent");
         let synth_at = seen
             .iter()
-            .position(|(t, _, _)| *t == crate::wal::events::EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED)
+            .position(|(t, _, _, _)| *t == crate::wal::events::EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED)
             .expect("the existing 0xC9 frame must still be emitted");
 
         assert!(
@@ -634,11 +665,15 @@ mod tests {
              intent={intent_at} result={result_at} synthesized={synth_at}"
         );
         assert_eq!(
-            seen[intent_at].2["intent_id"],
-            seen[result_at].2["intent_id"]
+            seen[intent_at].3["intent_id"],
+            seen[result_at].3["intent_id"]
         );
-        assert_eq!(seen[result_at].2["outcome"], "answered");
-        assert_eq!(seen[intent_at].2["frame_count"], 2);
+        assert_eq!(seen[result_at].3["outcome"], "answered");
+        assert_eq!(seen[intent_at].3["frame_count"], 2);
+        for index in [intent_at, result_at, synth_at] {
+            assert_eq!(seen[index].2, wal_session.header_id());
+            assert!(!seen[index].2.is_zero());
+        }
         // The prompt and the imagery are bound, never carried.
         let intent_text = seen[intent_at].2.to_string();
         assert!(!intent_text.contains("what happens?"));
@@ -669,6 +704,7 @@ mod tests {
             "p",
             64,
             Some(&writer),
+            None,
             &frames_on(),
         )
         .await
@@ -701,6 +737,7 @@ mod tests {
             "p",
             64,
             None,
+            None,
             &frames_on(),
         )
         .await
@@ -729,6 +766,7 @@ mod tests {
             FrameFormat::Jpeg,
             "p",
             64,
+            None,
             None,
             &off,
         )
@@ -768,6 +806,7 @@ mod tests {
             FrameFormat::Jpeg,
             "p",
             64,
+            None,
             None,
             &cfg,
         )

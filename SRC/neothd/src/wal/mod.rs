@@ -69,6 +69,7 @@ pub mod writer;
 // upstream consumer uses yet make the build output noisy and hide real
 // regressions. Re-exports get added here as wired-up Day-by-Day.
 pub use builder::{HeaderBuilder, make_header};
+pub(crate) use builder::make_header_in;
 #[allow(unused_imports)]
 pub(crate) use transcript_mining_once::{
     ExpiredMiningFrameReceipt, PlannedMiningOutboxDescriptor, PlannedRawTextDescriptor,
@@ -121,7 +122,9 @@ pub use header::EventHeaderV2;
 #[allow(unused_imports)]
 pub use hlc::Hlc;
 #[allow(unused_imports)]
-pub use types::{EventId, Importance, NodeId, SessionId};
+pub use types::{EventId, Importance, NodeId, SessionId, SessionIdTextError, SessionPartition, SessionPartitionError};
+pub use types::WalSessionContext;
+pub(crate) use types::MAX_ADMITTED_IDENTITY_BYTES;
 #[allow(unused_imports)]
 pub use types::{WalCategory, WalScope};
 // WalError gets re-exported once an external caller consumes it directly;

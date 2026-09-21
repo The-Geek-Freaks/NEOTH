@@ -1357,6 +1357,7 @@ async fn emit_verified_stream_delta(
     delta: String,
     identity: &crate::providers::CompletionIdentity,
     writer: &crate::wal::writer::WalWriterHandle,
+    wal_session: Option<crate::wal::WalSessionContext>,
     journal: &mut Option<crate::recovery::turn_journal::TurnJournal>,
     chunk_count: &mut u32,
     defer_provider_output: bool,
@@ -1402,7 +1403,14 @@ async fn emit_verified_stream_delta(
         identity: identity.clone(),
         ..Default::default()
     };
-    emit_stream_chunk(writer, &identity.provider, &emitted_chunk, next_sequence).await?;
+    emit_stream_chunk(
+        writer,
+        wal_session,
+        &identity.provider,
+        &emitted_chunk,
+        next_sequence,
+    )
+    .await?;
     *chunk_count = next_sequence;
     Ok(())
 }
@@ -3160,6 +3168,7 @@ pub(super) async fn enforce_preflight(
     args: &ChatArgs,
     config: &FreedomConfig,
     writer: crate::wal::writer::WalWriterHandle,
+    wal_session: Option<crate::wal::WalSessionContext>,
     home: &std::path::Path,
     // GOLD-ADAPT-PWF-01: SHA-256 of `task_plan.md` captured at injection
     // time by `build_prompt_bundle`. `None` means no plan was injected.
@@ -3322,6 +3331,7 @@ pub(super) async fn enforce_preflight(
                         crate::wal::events::EVENT_TYPE_AGENT_DISPATCHED,
                         &payload,
                     )
+                    .session_context(wal_session)
                     .build();
                     if let Err(e) = writer.append(header, payload).await {
                         tracing::warn!(error = %e, "WAL append AGENT_DISPATCHED failed (best-effort)");
@@ -3732,6 +3742,7 @@ pub(super) async fn enforce_preflight(
                 crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
                 &payload,
             )
+            .session_context(wal_session)
             .build();
             if let Err(e) = writer.append(header, payload).await {
                 tracing::warn!(error = %e, "WAL append HOOK_BLOCKED (plan tamper) failed");
@@ -3768,6 +3779,7 @@ pub(super) async fn enforce_preflight(
                             crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
                             &payload,
                         )
+                        .session_context(wal_session)
                         .build();
                         if let Err(audit_error) = writer.append(header, payload).await {
                             warn!(
@@ -3796,6 +3808,7 @@ pub(super) async fn enforce_preflight(
         &final_prompt,
         &hooks,
         &writer,
+        wal_session,
         once_guard,
     )
     .await?
@@ -3830,7 +3843,11 @@ pub(super) async fn enforce_preflight(
             "ts_unix": crate::time::now_unix_i64(),
         }))
         .unwrap_or_default();
-        let hdr = crate::wal::make_header(EVENT_TYPE_TZ_CONTEXT_INJECTED, &payload);
+        let hdr = crate::wal::make_header_in(
+            EVENT_TYPE_TZ_CONTEXT_INJECTED,
+            &payload,
+            wal_session,
+        );
         let _ = writer.append(hdr, payload).await;
     }
 
@@ -3845,6 +3862,7 @@ pub(super) async fn enforce_preflight(
         &final_prompt,
         &hooks,
         &writer,
+        wal_session,
         once_guard,
     )
     .await?
@@ -4055,6 +4073,7 @@ fn reasoning_audit_request_digest(turn_id: &str) -> String {
 #[allow(clippy::too_many_arguments)]
 async fn append_reasoning_stream_audit(
     writer: &crate::wal::writer::WalWriterHandle,
+    wal_session: Option<crate::wal::WalSessionContext>,
     turn_id: &str,
     provider: String,
     model: String,
@@ -4077,6 +4096,7 @@ async fn append_reasoning_stream_audit(
     let payload = crate::wal::reasoning_audit::encode_reasoning_stream_audit_v1(&audit)?;
     let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::ReasoningStreamAuditV1 as u8)
+        .session_context(wal_session)
         .build();
     writer.append(header, payload).await?;
     Ok(())
@@ -4091,6 +4111,7 @@ async fn append_reasoning_stream_audit(
 /// state, or append a second audit after a native provider terminal.
 struct ReasoningStreamLifecycle {
     display_granted: bool,
+    wal_session: Option<crate::wal::WalSessionContext>,
     stream_control_token: Option<String>,
     identity: Option<crate::providers::CompletionIdentity>,
     sequence: u32,
@@ -4103,9 +4124,14 @@ struct ReasoningStreamLifecycle {
 }
 
 impl ReasoningStreamLifecycle {
-    fn new(display_granted: bool, stream_control_token: Option<&str>) -> Self {
+    fn new(
+        display_granted: bool,
+        stream_control_token: Option<&str>,
+        wal_session: Option<crate::wal::WalSessionContext>,
+    ) -> Self {
         Self {
             display_granted,
+            wal_session,
             stream_control_token: stream_control_token.map(str::to_owned),
             identity: None,
             sequence: 0,
@@ -4236,6 +4262,7 @@ impl ReasoningStreamLifecycle {
         let audit_result = if let Some(identity) = self.identity.as_ref() {
             append_reasoning_stream_audit(
                 writer,
+                self.wal_session,
                 turn_id,
                 identity.provider.clone(),
                 identity.wire_model.clone(),
@@ -4259,6 +4286,7 @@ impl ReasoningStreamLifecycle {
                     .event_subtype(
                         crate::wal::events::ExtendedSubtype::ReasoningStreamAuditV1 as u8,
                     )
+                    .session_context(self.wal_session)
                     .build();
             writer
                 .append(header, payload)
@@ -5081,6 +5109,8 @@ fn write_chat_notice(stream: bool, message: impl std::fmt::Display) -> std::io::
 /// only budget exhaustion remains for CLI/channel callers to append.
 pub(crate) async fn emit_terminal_goal_outcome(
     writer: &crate::wal::writer::WalWriterHandle,
+    // Existing admitted caller capability; never derived from goal or judge data.
+    wal_session: Option<crate::wal::WalSessionContext>,
     goal_outcome: crate::mcp::dispatch_loop::GoalOutcome,
     goal_hash: Option<&str>,
     surface: &'static str,
@@ -5089,8 +5119,13 @@ pub(crate) async fn emit_terminal_goal_outcome(
         return;
     }
     if let Some(goal_hash) = goal_hash {
-        crate::mcp::goal_judge::emit_goal_judged_wal(Some(writer), goal_hash, "budget_exhausted")
-            .await;
+        crate::mcp::goal_judge::emit_goal_judged_wal_in(
+            Some(writer),
+            wal_session,
+            goal_hash,
+            "budget_exhausted",
+        )
+        .await;
     } else {
         warn!(
             surface,
@@ -5358,6 +5393,9 @@ pub(super) async fn dispatch_provider(
     // field that would now (correctly) fail the strict leaf-control gate.
     let requested_thinking_budget =
         override_effort.map(crate::providers::effort_override::effort_to_tokens);
+    // This opaque capability was attached by the admitted turn pipeline. It
+    // is copied to local audit leaves and is never selected from request data.
+    let wal_session = provider_audit_context.wal_session;
     let thinking_budget = match requested_thinking_budget {
         Some(budget) if provider.request_controls().supports_thinking_budget() => Some(budget),
         Some(budget) => {
@@ -5384,7 +5422,11 @@ pub(super) async fn dispatch_provider(
             "ts_unix": ts,
         }))
         .unwrap_or_default();
-        let header = crate::wal::make_header(EVENT_TYPE_SKILL_EFFORT_APPLIED, &payload);
+        let header = crate::wal::make_header_in(
+            EVENT_TYPE_SKILL_EFFORT_APPLIED,
+            &payload,
+            wal_session,
+        );
         let _ = writer.append(header, payload).await;
     }
     let req = Request {
@@ -5469,9 +5511,10 @@ pub(super) async fn dispatch_provider(
             Ok(mut j) => {
                 let ts = crate::time::now_unix_i64();
                 let payload = opened_payload(turn_id, j.path(), ts);
-                let header = crate::wal::make_header(
+                let header = crate::wal::make_header_in(
                     crate::wal::events::EVENT_TYPE_TURN_JOURNAL_OPENED,
                     &payload,
+                    wal_session,
                 );
                 let _ = writer.append(header, payload).await;
                 let _ = j.append(&TurnEvent::Started {
@@ -5499,7 +5542,7 @@ pub(super) async fn dispatch_provider(
     // belongs to this exact turn. Emit it only after TURN_JOURNAL_OPENED so a
     // replay can bind the decision to the journal that owns the provider call.
     if let Some(skip) = council_skip {
-        let _ = emit_council_skip(&writer, skip.prompt_hash, &skip.reason).await;
+        let _ = emit_council_skip(&writer, skip.prompt_hash, &skip.reason, wal_session).await;
     }
 
     // AP-2: every local-inference call (stream OR non-stream) leaves a WAL
@@ -5525,6 +5568,7 @@ pub(super) async fn dispatch_provider(
             crate::wal::events::EVENT_TYPE_LOCAL_INFERENCE_START,
             &payload,
         )
+        .session_context(wal_session)
         .build();
         if let Err(e) = writer.append(header, payload).await {
             tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
@@ -5554,8 +5598,11 @@ pub(super) async fn dispatch_provider(
 
     let dispatch_result: Result<ProviderDispatchResult> = async {
         Ok(if matches!(&route, TurnDispatchRoute::Streaming) {
-            let mut reasoning_lifecycle =
-                ReasoningStreamLifecycle::new(reasoning_display, stream_control_token);
+            let mut reasoning_lifecycle = ReasoningStreamLifecycle::new(
+                reasoning_display,
+                stream_control_token,
+                wal_session,
+            );
             // QM-10 Phase 2.5: streaming path also consults the breaker.
             // Acquire BEFORE provider.stream so an Open breaker rejects
             // the call without opening a stream we'd have to drain.
@@ -5642,7 +5689,7 @@ pub(super) async fn dispatch_provider(
                         return_dispatch_error!("reasoning_terminal", error);
                     }
                     if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
-                        record_quota_exceeded(qe, &quota_path, &writer).await;
+                        record_quota_exceeded(qe, &quota_path, &writer, wal_session).await;
                     }
                     return_dispatch_error!("stream_open", e);
                 }
@@ -5867,6 +5914,7 @@ pub(super) async fn dispatch_provider(
                                 safe_delta,
                                 &chunk.identity,
                                 &writer,
+                                wal_session,
                                 &mut journal,
                                 &mut chunk_count,
                                 defer_provider_output,
@@ -5901,6 +5949,7 @@ pub(super) async fn dispatch_provider(
                                 tail,
                                 &chunk.identity,
                                 &writer,
+                                wal_session,
                                 &mut journal,
                                 &mut chunk_count,
                                 defer_provider_output,
@@ -6007,7 +6056,7 @@ pub(super) async fn dispatch_provider(
             {
                 let tps = tps_meter.finish();
                 if tps.has_data()
-                    && let Err(e) = crate::daemon::metering::emit_tps_sample(&tps, &writer).await
+                    && let Err(e) = crate::daemon::metering::emit_tps_sample_in(&tps, &writer, wal_session).await
                 {
                     tracing::debug!(error = %e, "tps-sample WAL emit failed (non-fatal)");
                 }
@@ -6178,7 +6227,12 @@ pub(super) async fn dispatch_provider(
                         };
                         cp.stamp_hash();
                         if let Ok(payload) = serde_json::to_vec(&cp) {
-                            let hdr = crate::wal::make_header(EVENT_TYPE_MODE_CHECKPOINT, &payload);
+                            let hdr = crate::wal::HeaderBuilder::new(
+                                EVENT_TYPE_MODE_CHECKPOINT,
+                                &payload,
+                            )
+                            .session_context(call_authorizer.wal_session())
+                            .build();
                             let _ = writer.append(hdr, payload).await;
                         }
                     }
@@ -6242,7 +6296,7 @@ pub(super) async fn dispatch_provider(
                                 && let Some(qe) =
                                     e.downcast_ref::<crate::providers::quota::QuotaError>()
                             {
-                                record_quota_exceeded(qe, &quota_path, &writer).await;
+                                record_quota_exceeded(qe, &quota_path, &writer, wal_session).await;
                             }
                             return_dispatch_error!("loop", e);
                         }
@@ -6257,6 +6311,7 @@ pub(super) async fn dispatch_provider(
                         &config.autonomy_policy(),
                         skill_invocation_policy.as_ref(),
                         &writer,
+                        wal_session,
                         Some(&config.rollback),
                         &tool_scope,
                         config.goal.max_turns,
@@ -6324,7 +6379,7 @@ pub(super) async fn dispatch_provider(
                                 && let Some(qe) =
                                     e.downcast_ref::<crate::providers::quota::QuotaError>()
                             {
-                                record_quota_exceeded(qe, &quota_path, &writer).await;
+                                record_quota_exceeded(qe, &quota_path, &writer, wal_session).await;
                             }
                             return_dispatch_error!("mcp_dispatch", e);
                         }
@@ -6339,6 +6394,7 @@ pub(super) async fn dispatch_provider(
                 );
                 emit_terminal_goal_outcome(
                     &writer,
+                    wal_session,
                     outcome.goal_outcome,
                     outcome.goal_hash.as_deref(),
                     "cli",
@@ -6467,7 +6523,7 @@ pub(super) async fn dispatch_provider(
                             && let Some(qe) =
                                 e.downcast_ref::<crate::providers::quota::QuotaError>()
                         {
-                            record_quota_exceeded(qe, &quota_path, &writer).await;
+                            record_quota_exceeded(qe, &quota_path, &writer, wal_session).await;
                         }
                         return_dispatch_error!("direct_completion", e);
                     }
@@ -6591,6 +6647,7 @@ pub(super) async fn dispatch_provider(
             crate::wal::events::EVENT_TYPE_LOCAL_INFERENCE_END,
             &payload,
         )
+        .session_context(wal_session)
         .build();
         if let Err(e) = writer.append(header, payload).await {
             tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
@@ -6671,6 +6728,7 @@ pub(super) async fn run_post_reply_pipelines(
     profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry,
     chat_ts_unix: i64,
     current_session_id: String,
+    wal_session: Option<crate::wal::WalSessionContext>,
     operator_transcript_persisted: bool,
     prompt_token_estimate: u32,
     turn_journal: Option<crate::recovery::turn_journal::TurnJournal>,
@@ -6778,7 +6836,8 @@ pub(super) async fn run_post_reply_pipelines(
                     crate::profile::runner::extract_target_label(provider.name()).to_owned(),
                 ),
                 ..Default::default()
-            },
+            }
+            .with_wal_session(wal_session),
         );
     let recovery_token_capped_provider =
         crate::providers::token_cap::TokenCappedProvider::new(provider, resolved_cap);
@@ -6807,6 +6866,7 @@ pub(super) async fn run_post_reply_pipelines(
         &provider_response_text,
         &hooks,
         &writer,
+        wal_session,
         once_guard,
     )
     .await?
@@ -6924,6 +6984,7 @@ pub(super) async fn run_post_reply_pipelines(
                         crate::wal::events::EVENT_TYPE_REFUSAL_OBSERVED,
                         &bytes,
                     )
+                    .session_context(wal_session)
                     .build();
                     if let Err(e) = writer.append(header, bytes).await {
                         tracing::warn!(error = %e,
@@ -7380,8 +7441,11 @@ pub(super) async fn run_post_reply_pipelines(
             .map(|b| b.lines().filter(|l| !l.is_empty()).count())
             .unwrap_or(0);
         let payload = closed_payload(&turn_id, ts, line_count);
-        let header =
-            crate::wal::make_header(crate::wal::events::EVENT_TYPE_TURN_JOURNAL_CLOSED, &payload);
+        let header = crate::wal::make_header_in(
+            crate::wal::events::EVENT_TYPE_TURN_JOURNAL_CLOSED,
+            &payload,
+            wal_session,
+        );
         writer
             .append(header, payload)
             .await
@@ -7765,6 +7829,7 @@ pub(super) async fn run_post_reply_pipelines(
                         crate::wal::events::EVENT_TYPE_SUBAGENT_REVIEW_STAGE,
                         &payload,
                     )
+                    .session_context(wal_session)
                     .build();
                     if let Err(e) = writer.append(header, payload).await {
                         tracing::warn!(error = %e, "failed to write review WAL frame");
@@ -7925,7 +7990,11 @@ pub(super) async fn run_post_reply_pipelines(
                     "tool_call_count": mcp_tool_calls,
                     "ts_unix": crate::time::now_unix_i64(),
                 })) {
-                    let hdr = crate::wal::make_header(EVENT_TYPE_AUTO_SKILL_EXTRACTED, &payload);
+                    let hdr = crate::wal::make_header_in(
+                        EVENT_TYPE_AUTO_SKILL_EXTRACTED,
+                        &payload,
+                        wal_session,
+                    );
                     let _ = writer.append(hdr, payload).await;
                 }
                 // Stage + enqueue in the proactive review queue (dedup via proposal id).
@@ -7982,6 +8051,7 @@ pub(super) async fn run_post_reply_pipelines(
             correlation,
             &response_text,
             "chat_terminal",
+            wal_session,
         )
         .await?;
         if let Some(done_line) = stream_plan.done_line.take() {
@@ -8807,6 +8877,7 @@ async fn finish_chat_turn_preparation(
                 selected_config_path,
                 prompt,
                 current_session_id,
+                wal_session: None,
                 chat_ts_unix,
                 mcp_servers,
                 scoped_mcp_servers,
@@ -9012,6 +9083,7 @@ async fn run_hook_stage(
     body: &str,
     hooks: &[crate::hooks::schema::HookDef],
     writer: &crate::wal::writer::WalWriterHandle,
+    wal_session: Option<crate::wal::WalSessionContext>,
     once_guard: &crate::hooks::SessionOnceGuard,
 ) -> Result<HookOutcome> {
     let before = body.to_string();
@@ -9035,6 +9107,7 @@ async fn run_hook_stage(
             name,
             stage,
             None,
+            wal_session,
         )
         .await;
     }
@@ -9055,6 +9128,7 @@ async fn run_hook_stage(
                     name,
                     stage,
                     status_note,
+                    wal_session,
                 )
                 .await;
                 // once=true claim is handled atomically inside
@@ -9067,6 +9141,7 @@ async fn run_hook_stage(
                     hits.last().map(String::as_str).unwrap_or("?"),
                     stage,
                     Some(&format!("{} → {}", before.len(), after.len())),
+                    wal_session,
                 )
                 .await;
             }
@@ -9079,6 +9154,7 @@ async fn run_hook_stage(
                 &name,
                 stage,
                 Some(&reason),
+                wal_session,
             )
             .await;
             Ok(HookOutcome::Blocked { name, reason })
@@ -9093,6 +9169,7 @@ async fn emit_hook_frame(
     hook_name: &str,
     stage: crate::hooks::HookStage,
     note: Option<&str>,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) {
     let payload = match serde_json::to_vec(&serde_json::json!({
         "name": hook_name,
@@ -9106,7 +9183,9 @@ async fn emit_hook_frame(
             return;
         }
     };
-    let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+    let header = crate::wal::HeaderBuilder::new(event_type, &payload)
+        .session_context(wal_session)
+        .build();
     if let Err(e) = writer.append(header, payload).await {
         tracing::warn!(error = %e, "WAL append hook frame failed (best-effort)");
     }
@@ -9121,6 +9200,7 @@ async fn record_quota_exceeded(
     qe: &crate::providers::quota::QuotaError,
     quota_path: &std::path::Path,
     writer: &crate::wal::writer::WalWriterHandle,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) {
     let provider_name = qe.provider;
     let now = crate::providers::quota::now_unix();
@@ -9158,6 +9238,7 @@ async fn record_quota_exceeded(
         crate::wal::events::EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED,
         &payload,
     )
+    .session_context(wal_session)
     .build();
     if let Err(e) = writer.append(header, payload).await {
         tracing::warn!(error = %e, "WAL append PROVIDER_QUOTA_EXCEEDED failed (best-effort)");
@@ -9208,6 +9289,7 @@ fn model_for_estimate(
 /// PROVIDER_RESPONSE itself.
 async fn emit_stream_chunk(
     writer: &crate::wal::writer::WalWriterHandle,
+    wal_session: Option<crate::wal::WalSessionContext>,
     provider_name: &str,
     chunk: &CompletionChunk,
     seq: u32,
@@ -9219,7 +9301,7 @@ async fn emit_stream_chunk(
         "delta_bytes": chunk.delta.len(),
         "delta_hash_xxh3": xxhash_rust::xxh3::xxh3_64(chunk.delta.as_bytes()),
     }))?;
-    let header = crate::wal::make_header(EVENT_TYPE_PROVIDER_STREAM_CHUNK, &payload);
+    let header = crate::wal::make_header_in(EVENT_TYPE_PROVIDER_STREAM_CHUNK, &payload, wal_session);
     writer
         .append_no_ack(header, payload)
         .await
@@ -9629,6 +9711,7 @@ pub(super) async fn extract_attachment_contexts(
     config: &FreedomConfig,
     neoth_home: &std::path::Path,
     wal_writer: crate::wal::writer::WalWriterHandle,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Result<Option<crate::pipeline::AttachmentContextBatch>> {
     if paths.is_empty() {
         return Ok(None);
@@ -9693,6 +9776,7 @@ pub(super) async fn extract_attachment_contexts(
                                 &config.updater,
                                 neoth_home,
                                 Some(wal_writer.clone()),
+                                wal_session,
                             )
                             .await
                     }
@@ -9704,6 +9788,7 @@ pub(super) async fn extract_attachment_contexts(
                                 &config.updater,
                                 neoth_home,
                                 Some(wal_writer.clone()),
+                                wal_session,
                             )
                             .await
                     }
@@ -11514,10 +11599,12 @@ pub(crate) async fn emit_repo_context_unavailable_audit(
 pub(crate) async fn emit_repo_context_recall_audit(
     writer: &crate::wal::writer::WalWriterHandle,
     binding: &RetainedCodeMapBinding,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Result<()> {
     let payload = repo_context_recall_audit_payload(binding)?;
     let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8)
+        .session_context(wal_session)
         .build();
     writer
         .append(header, payload)
@@ -11556,6 +11643,7 @@ pub(crate) async fn emit_retained_code_map_audits(
     prompt: &str,
     final_system: Option<&str>,
     surface: &'static str,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Result<Option<RetainedCodeMapBinding>> {
     let Some(final_system) = final_system else {
         return Ok(None);
@@ -11574,11 +11662,11 @@ pub(crate) async fn emit_retained_code_map_audits(
     if let Some(recall) = repo_recall {
         let retained_binding =
             retained_code_map_binding(&recall.receipt, prompt, &recall.block, surface)?;
-        emit_repo_context_recall_audit(writer, &retained_binding).await?;
+        emit_repo_context_recall_audit(writer, &retained_binding, wal_session).await?;
         binding = Some(retained_binding);
     }
     if let Some(context) = architecture_recall {
-        emit_architecture_findings_audit(writer, context, surface).await?;
+        emit_architecture_findings_audit(writer, context, surface, wal_session).await?;
     }
     Ok(binding)
 }
@@ -11592,6 +11680,7 @@ pub(crate) async fn emit_final_code_map_reply_binding(
     correlation: Option<&str>,
     final_reply: &str,
     completion_kind: &'static str,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Result<()> {
     #[cfg(test)]
     if binding.reject_final_append_for_test {
@@ -11632,6 +11721,7 @@ pub(crate) async fn emit_final_code_map_reply_binding(
     .context("serialize final code-map reply binding payload")?;
     let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8)
+        .session_context(wal_session)
         .build();
     writer
         .append(header, payload)
@@ -11648,6 +11738,7 @@ pub(crate) async fn emit_architecture_findings_audit(
     writer: &crate::wal::writer::WalWriterHandle,
     context: &ArchitectureRecall,
     surface: &'static str,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Result<()> {
     let findings = &context.findings;
     let root_identity = crate::security::redact::bounded_audit_digest_bytes(
@@ -11679,6 +11770,7 @@ pub(crate) async fn emit_architecture_findings_audit(
     .context("serialize architecture recall audit payload")?;
     let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::ArchitectureCyclesInjected as u8)
+        .session_context(wal_session)
         .build();
     writer
         .append(header, payload)
@@ -12137,6 +12229,7 @@ async fn emit_council_agreement_evaluated(
     writer: &crate::wal::writer::WalWriterHandle,
     prompt_hash: u64,
     outcome: &crate::council::CouncilDebate,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Result<()> {
     let payload = serde_json::to_vec(&serde_json::json!({
         "prompt_hash": format!("{prompt_hash:016x}"), "protocol": outcome.agreement.protocol,
@@ -12147,6 +12240,7 @@ async fn emit_council_agreement_evaluated(
     .context("serialize COUNCIL_AGREEMENT_EVALUATED payload")?;
     let header = crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
         .event_subtype(crate::wal::events::ExtendedSubtype::CouncilAgreementEvaluated as u8)
+        .session_context(wal_session)
         .build();
     if let Err(e) = writer.append(header, payload).await {
         warn!(error = %e, "could not append COUNCIL_AGREEMENT_EVALUATED frame");
@@ -12162,10 +12256,11 @@ async fn emit_council_dispatch_audits(
     outcome: &crate::council::CouncilDebate,
     config: &FreedomConfig,
     incognito: bool,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) {
     if !incognito {
-        emit_council_transcripts(writer, prompt_hash, outcome, config).await;
-        let _ = emit_council_agreement_evaluated(writer, prompt_hash, outcome).await;
+        emit_council_transcripts(writer, prompt_hash, outcome, config, wal_session).await;
+        let _ = emit_council_agreement_evaluated(writer, prompt_hash, outcome, wal_session).await;
     }
 }
 
@@ -12177,6 +12272,7 @@ async fn emit_council_partial_refusal(
     writer: &crate::wal::writer::WalWriterHandle,
     prompt_hash: u64,
     outcome: &crate::council::CouncilDebate,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Result<()> {
     let refused: Vec<serde_json::Value> = outcome
         .refused_responses()
@@ -12216,6 +12312,7 @@ async fn emit_council_partial_refusal(
         crate::wal::events::EVENT_TYPE_COUNCIL_PARTIAL_REFUSAL,
         &payload,
     )
+    .session_context(wal_session)
     .build();
     if let Err(e) = writer.append(header, payload).await {
         warn!(error = %e, "could not append COUNCIL_PARTIAL_REFUSAL frame");
@@ -12233,6 +12330,7 @@ pub(crate) async fn emit_council_skip(
     writer: &crate::wal::writer::WalWriterHandle,
     prompt_hash: u64,
     reason: &str,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Result<()> {
     let payload_value = serde_json::json!({
         "prompt_hash": format!("{prompt_hash:016x}"),
@@ -12241,6 +12339,7 @@ pub(crate) async fn emit_council_skip(
     let payload = serde_json::to_vec(&payload_value).context("serialize COUNCIL_SKIP payload")?;
     let header =
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_COUNCIL_SKIP, &payload)
+            .session_context(wal_session)
             .build();
     if let Err(e) = writer.append(header, payload).await {
         warn!(error = %e, "could not append COUNCIL_SKIP frame");
@@ -12423,6 +12522,7 @@ pub(crate) async fn emit_council_diversity_warning_if_needed(
     prompt_hash: u64,
     config: &FreedomConfig,
     output: &mut dyn ChatTurnEventSink,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Result<()> {
     let verdict = crate::council::classify_council_diversity(&config.inference);
     if !verdict.needs_warning() {
@@ -12459,6 +12559,7 @@ pub(crate) async fn emit_council_diversity_warning_if_needed(
         crate::wal::events::EVENT_TYPE_COUNCIL_DIVERSITY_WARNING,
         &payload,
     )
+    .session_context(wal_session)
     .build();
     if let Err(e) = writer.append(header, payload).await {
         warn!(error = %e, "could not append COUNCIL_DIVERSITY_WARNING frame");
@@ -12479,6 +12580,7 @@ pub(crate) async fn emit_council_winner_selected(
     depth: u8,
     winner: &RoleAgnosticWinner,
     mode: crate::config::inference::SelectionMode,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Result<()> {
     use crate::config::inference::SelectionMode;
     let mode_str = match mode {
@@ -12504,6 +12606,7 @@ pub(crate) async fn emit_council_winner_selected(
         crate::wal::events::EVENT_TYPE_COUNCIL_WINNER_SELECTED,
         &payload,
     )
+    .session_context(wal_session)
     .build();
     if let Err(e) = writer.append(header, payload).await {
         warn!(error = %e, "could not append COUNCIL_WINNER_SELECTED frame");
@@ -12515,6 +12618,7 @@ async fn emit_council_synthesis_attempted(
     writer: &crate::wal::writer::WalWriterHandle,
     prompt_hash: u64,
     outcome: CouncilSynthesisOutcome,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Result<()> {
     let payload_value = match &outcome {
         CouncilSynthesisOutcome::Synthesis { chars } => serde_json::json!({
@@ -12534,6 +12638,7 @@ async fn emit_council_synthesis_attempted(
         crate::wal::events::EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED,
         &payload,
     )
+    .session_context(wal_session)
     .build();
     if let Err(e) = writer.append(header, payload).await {
         warn!(error = %e, "could not append COUNCIL_SYNTHESIS_ATTEMPTED frame");
@@ -12559,6 +12664,7 @@ async fn emit_council_transcripts(
     prompt_hash: u64,
     outcome: &crate::council::CouncilDebate,
     config: &FreedomConfig,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) {
     if !config.council.persist_transcripts {
         return;
@@ -12595,6 +12701,7 @@ async fn emit_council_transcripts(
             crate::wal::events::EVENT_TYPE_COUNCIL_TRANSCRIPT,
             &payload,
         )
+        .session_context(wal_session)
         .build();
         if let Err(e) = writer.append(header, payload).await {
             warn!(
@@ -12834,19 +12941,32 @@ async fn dispatch_council_with_recovery_for_turn(
     session_canary: Option<std::sync::Arc<crate::security::injection_tracker::CanaryToken>>,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<String> {
+    // The authorizer retains only the session capability minted at admission.
+    // Council emitters copy that opaque value; they never inspect request or
+    // debate data to choose a WAL session.
+    let wal_session = authorizer.wal_session();
     // Pick #8 F8 (Session 14 Pick #20) — channel-path pre-flight
     // diversity audit. Mirrors the CLI-path emission in `run_chat_with`
     // so the WAL audit trail records misconfigured topologies
     // regardless of ingress channel.
     let prompt_hash_pre = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
-    let _ = emit_council_diversity_warning_if_needed(writer, prompt_hash_pre, config, output).await;
+    let _ = emit_council_diversity_warning_if_needed(
+        writer, prompt_hash_pre, config, output, wal_session,
+    )
+    .await;
     // GOLD-ADAPT-LOWKEY-04 — MIF motive pre-step (opt-in). Classify operator
     // intent BEFORE the hemisphere fan-out: a Conflicted prompt is NOT debated
     // (would only produce a confused answer) — surface a disambiguation request
     // and skip the council entirely (no provider cost). Audited as a
     // COUNCIL_SKIP so the WAL trace shows why the debate didn't run.
     if let Some(message) = mif_disambiguation(config, &req.prompt) {
-        let _ = emit_council_skip(writer, prompt_hash_pre, "mif_conflicted_disambiguation").await;
+        let _ = emit_council_skip(
+            writer,
+            prompt_hash_pre,
+            "mif_conflicted_disambiguation",
+            wal_session,
+        )
+        .await;
         tracing::info!("MIF: conflicted intent — council skipped, disambiguation surfaced");
         return Ok(message);
     }
@@ -12872,7 +12992,15 @@ async fn dispatch_council_with_recovery_for_turn(
     // `neoth council replay` can show the actual prose. No-op unless
     // freedom.yaml::council.persist_transcripts = true. Emitted here so BOTH
     // the CLI and channel paths record replayable transcripts identically.
-    emit_council_dispatch_audits(writer, prompt_hash_pre, &outcome, config, incognito).await;
+    emit_council_dispatch_audits(
+        writer,
+        prompt_hash_pre,
+        &outcome,
+        config,
+        incognito,
+        wal_session,
+    )
+    .await;
     // B-3 (Session 13) — record this debate's wall-clock so the NEXT
     // inbound's trigger eval honours the rate cooldown.
     if !incognito
@@ -12926,7 +13054,7 @@ async fn dispatch_council_with_recovery_for_turn(
     // or Callosum absorbed them silently.
     let prompt_hash_outer = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
     if outcome.is_partial_refusal() {
-        let _ = emit_council_partial_refusal(writer, prompt_hash_outer, &outcome).await;
+        let _ = emit_council_partial_refusal(writer, prompt_hash_outer, &outcome, wal_session).await;
     }
 
     // Pick #8 SP-2 (Session 14) — role-agnostic winner selection.
@@ -12967,6 +13095,7 @@ async fn dispatch_council_with_recovery_for_turn(
             0,
             &winner,
             config.council.selection_mode,
+            wal_session,
         )
         .await;
         // SP-5 (Session 14) — self-reflect refinement pass.
@@ -13073,9 +13202,10 @@ async fn dispatch_council_with_recovery_for_turn(
                 "ts_unix": now_unix(),
             }))
             .unwrap_or_default();
-            let header = crate::wal::make_header(
+            let header = crate::wal::make_header_in(
                 crate::wal::events::EVENT_TYPE_COUNCIL_SELF_SCORE,
                 &payload,
+                wal_session,
             );
             if let Err(e) = writer.append(header, payload).await {
                 tracing::warn!(
@@ -13204,6 +13334,7 @@ async fn dispatch_council_with_recovery_for_turn(
                     );
                     emit_terminal_goal_outcome(
                         writer,
+                        authorizer.wal_session(),
                         record.goal_outcome,
                         record.goal_hash.as_deref(),
                         "council_dissent",
@@ -13318,6 +13449,7 @@ async fn dispatch_council_with_recovery_for_turn(
                                     CouncilSynthesisOutcome::Synthesis {
                                         chars: s.chars().count(),
                                     },
+                                    wal_session,
                                 )
                                 .await;
                                 s
@@ -13332,6 +13464,7 @@ async fn dispatch_council_with_recovery_for_turn(
                                     CouncilSynthesisOutcome::IrreconcilableConflict {
                                         reason: reason.clone(),
                                     },
+                                    wal_session,
                                 )
                                 .await;
                                 format!("[council split — operator decision needed]\n{summary}")
@@ -13346,6 +13479,7 @@ async fn dispatch_council_with_recovery_for_turn(
                             CouncilSynthesisOutcome::IrreconcilableConflict {
                                 reason: format!("provider build failed: {e}"),
                             },
+                            wal_session,
                         )
                         .await;
                         format!("[council split — operator decision needed]\n{summary}")
@@ -13556,6 +13690,8 @@ pub(crate) async fn run_mcp_dispatch_loop(
     autonomy_policy: &crate::permissions::AutonomyPolicySnapshot,
     skill_invocation_policy: Option<&crate::skills::resolver::SkillInvocationPolicy>,
     writer: &crate::wal::writer::WalWriterHandle,
+    // Capability retained from the already admitted chat/channel turn; never reconstructed from MCP data.
+    wal_session: Option<crate::wal::WalSessionContext>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     // Complete skill/agent tool scope resolved once for this provider turn.
     tool_scope: &crate::mcp::McpToolScope,
@@ -13689,6 +13825,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         autonomy_policy,
         skill_invocation_policy,
         Some(writer),
+        wal_session,
         rollback_policy,
         tool_scope,
         max_iterations.max(1),
@@ -14724,6 +14861,7 @@ mod tests {
             Some("turn-fixture"),
             "post-hook replacement",
             "chat_terminal",
+            None,
         )
         .await
         .unwrap();
@@ -14966,11 +15104,22 @@ mod tests {
         }
 
         let home = tempfile::tempdir().unwrap();
-        let segment = home.path().join("reasoning-native-terminal-error.wal");
-        let (writer, join) = wal_spawn(segment.clone()).unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("reasoning-native-terminal-error.wal");
+        let (writer, join) =
+            crate::wal::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
+        let wal_session = crate::wal::WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"reasoning-native-terminal-error/admitted-turn",
+        )
+        .unwrap();
         let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
-        let mut lifecycle =
-            ReasoningStreamLifecycle::new(true, Some("0123456789abcdef0123456789abcdef"));
+        let mut lifecycle = ReasoningStreamLifecycle::new(
+            true,
+            Some("0123456789abcdef0123456789abcdef"),
+            Some(wal_session),
+        );
         lifecycle.observe_identity(&crate::providers::CompletionIdentity {
             provider: "authenticated-test-leaf".to_owned(),
             wire_model: "test-wire-model".to_owned(),
@@ -15036,11 +15185,13 @@ mod tests {
         join.await.unwrap();
         let bytes = std::fs::read(segment).unwrap();
         let mut audits = Vec::new();
+        let mut audit_session_ids = Vec::new();
         crate::wal::scan::for_each_frame(&bytes, |_, decoded| {
             if decoded.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
                 && decoded.header.event_subtype
                     == crate::wal::events::ExtendedSubtype::ReasoningStreamAuditV1 as u8
             {
+                audit_session_ids.push(decoded.header.session_id);
                 audits.push(
                     crate::wal::reasoning_audit::ReasoningStreamAuditV1::decode(decoded.payload)
                         .unwrap(),
@@ -15050,6 +15201,8 @@ mod tests {
         })
         .unwrap();
         assert_eq!(audits.len(), 1);
+        assert_eq!(audit_session_ids, vec![wal_session.header_id()]);
+        assert_ne!(wal_session.header_id(), crate::wal::SessionId::ZERO);
         let audit = serde_json::to_value(&audits[0]).unwrap();
         assert_eq!(audit["event_count"], 1);
         assert_eq!(audit["byte_count"], 10);
@@ -22893,6 +23046,13 @@ modes:
         let home = tempfile::tempdir().unwrap();
         let segment = home.path().join("council-agreement.wal");
         let (writer, join) = wal_spawn(segment.clone()).unwrap();
+        let key_path = home.path().join("wal").join("hmac.key");
+        crate::wal::compaction::load_or_init_key(&key_path).unwrap();
+        let wal_session = crate::wal::WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"cli\0council-agreement-test\0turn-1",
+        )
+        .unwrap();
         let mut outcome =
             mk_outcome_consensus("operator-visible-body-must-not-persist", Vec::new());
         outcome.agreement = evaluate(&[
@@ -22922,6 +23082,7 @@ modes:
             &outcome,
             &FreedomConfig::default(),
             false,
+            Some(wal_session),
         )
         .await;
         drop(writer);
@@ -22962,6 +23123,8 @@ modes:
             frame.header.event_subtype,
             crate::wal::events::ExtendedSubtype::CouncilAgreementEvaluated as u8
         );
+        assert_eq!(frame.header.session_id, wal_session.header_id());
+        assert!(!frame.header.session_id.is_zero());
         let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
         assert_eq!(payload["prompt_hash"], "0a11ce0000000001");
         assert_eq!(payload["protocol"], "v1");
@@ -22998,7 +23161,15 @@ modes:
         let (writer, join) = wal_spawn(segment.clone()).unwrap();
         let outcome = mk_outcome_consensus("private body", Vec::new());
 
-        emit_council_dispatch_audits(&writer, 1, &outcome, &FreedomConfig::default(), true).await;
+        emit_council_dispatch_audits(
+            &writer,
+            1,
+            &outcome,
+            &FreedomConfig::default(),
+            true,
+            None,
+        )
+        .await;
         drop(writer);
         join.await.unwrap();
 
@@ -23055,6 +23226,7 @@ modes:
             "hello",
             &hooks,
             &writer,
+            None,
             &once_guard,
         )
         .await
@@ -23070,6 +23242,7 @@ modes:
             "world",
             &hooks,
             &writer,
+            None,
             &once_guard,
         )
         .await
@@ -23086,6 +23259,7 @@ modes:
             "fresh",
             &hooks,
             &writer,
+            None,
             &new_guard,
         )
         .await
@@ -23148,6 +23322,7 @@ modes:
             "turn1",
             &hooks,
             &writer,
+            None,
             &once_guard,
         )
         .await
@@ -23157,6 +23332,7 @@ modes:
             "turn2",
             &hooks,
             &writer,
+            None,
             &once_guard,
         )
         .await
@@ -23184,6 +23360,97 @@ modes:
         );
         // once=false hooks do NOT claim the guard — no assertion needed since
         // SessionOnceGuard's inner set is not accessible from this module.
+    }
+
+    #[tokio::test]
+    async fn admitted_hook_stream_and_quota_frames_keep_one_wal_session() {
+        let fixture = tempfile::tempdir().expect("create contextual audit fixture");
+        let home = fixture.path().join("home");
+        let segment = home.join("wal").join("000001.wal");
+        std::fs::create_dir_all(segment.parent().expect("WAL parent"))
+            .expect("create contextual audit WAL directory");
+        let (writer, writer_join) = crate::wal::spawn_for_home(segment.clone(), home.clone())
+            .expect("spawn contextual audit WAL writer");
+        let wal_session = crate::wal::WalSessionContext::from_admitted_identity(
+            &home,
+            b"neoth/test/admitted-hook-stream-quota/v1",
+        )
+        .expect("derive admitted test WAL session");
+
+        let hook = crate::hooks::schema::HookDef {
+            name: "contextual-hook".into(),
+            stage: crate::hooks::HookStage::PrePipeline,
+            enabled: Some(true),
+            priority: None,
+            matcher: None,
+            action: crate::hooks::schema::HookAction::Allow,
+            status_message: None,
+            once: false,
+            fail_fast: false,
+        };
+        let once_guard = crate::hooks::SessionOnceGuard::new();
+        run_hook_stage(
+            crate::hooks::HookStage::PrePipeline,
+            "admitted turn",
+            &[hook],
+            &writer,
+            Some(wal_session),
+            &once_guard,
+        )
+        .await
+        .expect("run admitted hook stage");
+        emit_stream_chunk(
+            &writer,
+            Some(wal_session),
+            "fixture-provider",
+            &CompletionChunk {
+                delta: "safe delta".to_owned(),
+                ..Default::default()
+            },
+            1,
+        )
+        .await
+        .expect("append contextual stream chunk");
+        record_quota_exceeded(
+            &crate::providers::quota::QuotaError {
+                provider: "fixture-provider",
+                retry_after: None,
+                body: String::new(),
+            },
+            &home.join("quota.json"),
+            &writer,
+            Some(wal_session),
+        )
+        .await;
+
+        drop(writer);
+        writer_join.await.expect("drain contextual audit WAL writer");
+
+        let expected = wal_session.header_id();
+        let mut observed = std::collections::BTreeSet::new();
+        crate::wal::scan::for_each_frame(
+            &std::fs::read(&segment).expect("read contextual audit WAL"),
+            |_, frame| {
+                let event = match frame.header.event_type {
+                    crate::wal::events::EVENT_TYPE_HOOK_FIRED => Some("hook_fired"),
+                    crate::wal::events::EVENT_TYPE_PROVIDER_STREAM_CHUNK => Some("stream_chunk"),
+                    crate::wal::events::EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED => Some("quota"),
+                    _ => None,
+                };
+                if let Some(event) = event {
+                    assert_eq!(
+                        frame.header.session_id, expected,
+                        "admitted {event} frame retains its WAL session"
+                    );
+                    observed.insert(event);
+                }
+            },
+        );
+        assert_eq!(
+            observed,
+            std::collections::BTreeSet::from(["hook_fired", "quota", "stream_chunk"]),
+            "one admitted turn stamps every covered hook/stream/quota leaf"
+        );
     }
 
     // ── GOLD-ADAPT-SKILL-10: skill-catalog banner unit tests ─────────────
@@ -23567,6 +23834,7 @@ mod attach_tests {
             &FreedomConfig::default(),
             dir.path(),
             writer.clone(),
+            None,
         )
         .await
         .unwrap()
@@ -23603,6 +23871,7 @@ mod attach_tests {
             &FreedomConfig::default(),
             dir.path(),
             writer.clone(),
+            None,
         )
         .await
         .unwrap_err();
@@ -23645,7 +23914,7 @@ mod attach_tests {
         config.media.stt.primary = crate::media::stt_dispatch::SttProvider::OpenAiWhisperApi;
         let (writer, join) = wal_spawn(dir.path().join("cloud-stt.wal")).unwrap();
 
-        let error = extract_attachment_contexts(&[audio], &config, dir.path(), writer.clone())
+        let error = extract_attachment_contexts(&[audio], &config, dir.path(), writer.clone(), None)
             .await
             .unwrap_err();
         drop(writer);

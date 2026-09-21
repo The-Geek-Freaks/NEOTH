@@ -67,12 +67,33 @@ pub(crate) async fn judge_goal_met_with_hash(
     provider: &dyn crate::providers::Provider,
     writer: Option<&crate::wal::writer::WalWriterHandle>,
 ) -> bool {
+    judge_goal_met_with_hash_in(
+        bounded_goal,
+        goal_hash,
+        conversation_summary,
+        provider,
+        writer,
+        None,
+    )
+    .await
+}
+
+/// Contextual dispatch-loop form. It only forwards an already-admitted typed
+/// WAL capability and never derives one from the goal or judge payloads.
+pub(crate) async fn judge_goal_met_with_hash_in(
+    bounded_goal: &str,
+    goal_hash: &str,
+    conversation_summary: &crate::pipeline::RenderedUntrustedContext,
+    provider: &dyn crate::providers::Provider,
+    writer: Option<&crate::wal::writer::WalWriterHandle>,
+    wal_session: Option<crate::wal::WalSessionContext>,
+) -> bool {
     let Some(summary) = conversation_summary.fit_to_wire_limit(JUDGE_SUMMARY_WIRE_LIMIT) else {
         tracing::warn!(
             limit = JUDGE_SUMMARY_WIRE_LIMIT,
             "HERMES-04: canonical goal-judge summary cannot fit the wire budget"
         );
-        emit_goal_judged_wal(writer, goal_hash, "input_budget_exceeded").await;
+        emit_goal_judged_wal_in(writer, wal_session, goal_hash, "input_budget_exceeded").await;
         return false;
     };
     let goal = crate::pipeline::UntrustedContext::new(
@@ -86,7 +107,7 @@ pub(crate) async fn judge_goal_met_with_hash(
             limit = crate::pipeline::UntrustedContextClass::OtherReviewed.max_payload_bytes(),
             "HERMES-04: canonical goal-judge goal exceeds the input budget"
         );
-        emit_goal_judged_wal(writer, goal_hash, "input_budget_exceeded").await;
+        emit_goal_judged_wal_in(writer, wal_session, goal_hash, "input_budget_exceeded").await;
         return false;
     }
 
@@ -125,7 +146,7 @@ pub(crate) async fn judge_goal_met_with_hash(
     };
 
     // Emit the WAL audit frame (GOLD-TASK-05: kind field replaces verdict field).
-    emit_goal_judged_wal(writer, goal_hash, kind).await;
+    emit_goal_judged_wal_in(writer, wal_session, goal_hash, kind).await;
 
     verdict
 }
@@ -140,6 +161,17 @@ pub(crate) async fn judge_goal_met_with_hash(
 /// claiming new WAL bytes (0x7A/0x7B are already taken by skill-effort events).
 pub async fn emit_goal_judged_wal(
     writer: Option<&crate::wal::writer::WalWriterHandle>,
+    goal_hash: &str,
+    kind: &str,
+) {
+    emit_goal_judged_wal_in(writer, None, goal_hash, kind).await;
+}
+
+/// Contextual form for an already-admitted parent turn. Direct and fixture
+/// callers retain the zero session header through `emit_goal_judged_wal`.
+pub(crate) async fn emit_goal_judged_wal_in(
+    writer: Option<&crate::wal::writer::WalWriterHandle>,
+    wal_session: Option<crate::wal::WalSessionContext>,
     goal_hash: &str,
     kind: &str,
 ) {
@@ -158,6 +190,7 @@ pub async fn emit_goal_judged_wal(
     };
     let header =
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_GOAL_JUDGED, &payload)
+            .session_context(wal_session)
             .build();
     if let Err(e) = w.append(header, payload).await {
         tracing::warn!(error = %e, "HERMES-04: GOAL_JUDGED WAL append failed (audit gap)");
@@ -371,6 +404,37 @@ mod tests {
         assert_eq!(error_kind, "unavailable");
     }
 
+    #[tokio::test]
+    async fn admitted_goal_judged_header_retains_wal_session() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("goal-judge-session-000001.wal");
+        let (writer, join) = crate::wal::writer::spawn_for_home(
+            path.clone(),
+            home.path().to_path_buf(),
+        )
+        .unwrap();
+        let wal_session = crate::wal::WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"test\0goal-judge\0admitted-turn",
+        )
+        .unwrap();
+
+        emit_goal_judged_wal_in(Some(&writer), Some(wal_session), "goal-hash", "met").await;
+        drop(writer);
+        join.await.unwrap();
+
+        let bytes = std::fs::read(path).unwrap();
+        let frame = crate::wal::frame::decode_frame(
+            &bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..],
+        )
+        .unwrap();
+        assert_eq!(frame.header.event_type, EVENT_TYPE_GOAL_JUDGED);
+        assert_eq!(
+            *frame.header.session_id.as_bytes(),
+            *wal_session.header_id().as_bytes(),
+            "GOAL_JUDGED retains the already-admitted WAL session"
+        );
+    }
     #[tokio::test]
     async fn bound_judge_wal_keeps_original_untruncated_goal_hash() {
         let original = "x".repeat(crate::mcp::goal_tracker::MAX_NUDGE_TEXT_LEN + 100);

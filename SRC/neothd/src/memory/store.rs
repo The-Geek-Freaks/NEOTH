@@ -127,7 +127,8 @@ impl std::ops::DerefMut for PrivateHistoryConnection {
 /// v36: establish the sealed transcript-mining provenance prerequisite.
 /// v37: add post-v37 exact raw-frame plans without promoting any v36 row.
 /// v39: account-qualified aliases and exact legacy operator claims.
-pub const SCHEMA_VERSION: i64 = 39;
+/// v40: exact 16-byte WAL session projections for episode/provider views.
+pub const SCHEMA_VERSION: i64 = 40;
 
 /// Current P1-08 metadata schema, split so the v36→v37 migration can rebuild
 /// the altered strict tables before the final trigger set is installed.  The
@@ -1984,12 +1985,18 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             -- 2=high operator-explicit). Set at index time from the event source;
             -- weights recall ranking (tiers::trust_weight) so operator-typed
             -- memories outrank external chatter. Default 1 (medium).
-            trust          INTEGER NOT NULL DEFAULT 1
+            trust          INTEGER NOT NULL DEFAULT 1,
+            -- GOLD-LF-P2-08: opaque fixed-width header session projection.
+            -- All historical and intentionally unscoped frames remain ZERO.
+            wal_session_id BLOB NOT NULL DEFAULT X'00000000000000000000000000000000'
+                CHECK(typeof(wal_session_id) = 'blob' AND length(wal_session_id) = 16)
         );
 
         CREATE INDEX IF NOT EXISTS idx_episode_ts          ON idx_episode (ts_ns DESC);
         CREATE INDEX IF NOT EXISTS idx_episode_hash        ON idx_episode (text_hash);
         CREATE INDEX IF NOT EXISTS idx_episode_importance  ON idx_episode (importance DESC);
+        CREATE INDEX IF NOT EXISTS idx_episode_wal_session_ts
+            ON idx_episode (wal_session_id, ts_ns DESC, event_id);
 
         -- idx_provider — every PROVIDER_REQUEST + PROVIDER_RESPONSE pair.
         -- Joined by request_event_id so `recall --provider` can show
@@ -2004,10 +2011,15 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             bytes             INTEGER,
             latency_ns        INTEGER,
             input_tokens      INTEGER,
-            output_tokens     INTEGER
+            output_tokens     INTEGER,
+            -- GOLD-LF-P2-08: opaque header projection; ZERO is legacy/unattributed.
+            wal_session_id    BLOB NOT NULL DEFAULT X'00000000000000000000000000000000'
+                CHECK(typeof(wal_session_id) = 'blob' AND length(wal_session_id) = 16)
         );
 
         CREATE INDEX IF NOT EXISTS idx_provider_ts ON idx_provider (ts_ns DESC);
+        CREATE INDEX IF NOT EXISTS idx_provider_wal_session_ts
+            ON idx_provider (wal_session_id, ts_ns DESC, event_id);
 
         -- RECALL-METER-01 — per-`neoth recall` latency samples. The one-shot
         -- recall CLI records one row per query here; the daemon's recall-latency

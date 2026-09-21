@@ -138,6 +138,16 @@ pub async fn emit_tps_sample(
     sample: &TpsSample,
     writer: &crate::wal::writer::WalWriterHandle,
 ) -> Result<(), String> {
+    emit_tps_sample_in(sample, writer, None).await
+}
+
+/// Contextual form for an already-admitted chat/channel turn. It only copies
+/// the retained capability; TPS data cannot select a WAL session.
+pub(crate) async fn emit_tps_sample_in(
+    sample: &TpsSample,
+    writer: &crate::wal::writer::WalWriterHandle,
+    wal_session: Option<crate::wal::WalSessionContext>,
+) -> Result<(), String> {
     let ts_unix = crate::time::now_unix_i64();
     let payload = serde_json::to_vec(&serde_json::json!({
         "tps": sample.tps(),
@@ -151,6 +161,7 @@ pub async fn emit_tps_sample(
     let header =
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_TOKEN_TPS_SAMPLE, &payload)
             .flags(crate::wal::EventFlags::SYNTHETIC)
+            .session_context(wal_session)
             .build();
 
     writer
@@ -279,16 +290,24 @@ mod tests {
     /// emit_tps_sample writes exactly one 0x69 frame to the WAL segment.
     #[tokio::test]
     async fn emit_writes_one_frame() {
-        let seg_dir = tempfile::tempdir().unwrap();
-        let seg = seg_dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let seg = wal_dir.join("000001.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(seg.clone(), home.path().to_path_buf()).unwrap();
+        let wal_session = crate::wal::WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"tps-sample/admitted-turn",
+        )
+        .unwrap();
 
         let sample = TpsSample {
             elapsed: Duration::from_secs(3),
             total_tokens: 300,
             observe_count: 30,
         };
-        emit_tps_sample(&sample, &writer)
+        emit_tps_sample_in(&sample, &writer, Some(wal_session))
             .await
             .expect("emit must succeed");
 
@@ -301,6 +320,7 @@ mod tests {
             crate::wal::segment_header::parse_segment_header(&bytes).expect("valid segment header");
         let mut cursor = hdr.header_len();
         let mut count = 0usize;
+        let mut session_ids = Vec::new();
         while cursor < bytes.len() {
             let dec = match crate::wal::frame::decode_frame(&bytes[cursor..]) {
                 Ok(d) => d,
@@ -308,6 +328,7 @@ mod tests {
             };
             if dec.header.event_type == crate::wal::events::EVENT_TYPE_TOKEN_TPS_SAMPLE {
                 count += 1;
+                session_ids.push(dec.header.session_id);
                 // Verify the JSON payload is parseable and carries the expected tps.
                 let v: serde_json::Value =
                     serde_json::from_slice(dec.payload).expect("valid json payload");
@@ -325,5 +346,7 @@ mod tests {
             cursor = cursor.saturating_add(total);
         }
         assert_eq!(count, 1, "exactly one 0x69 TOKEN_TPS_SAMPLE frame");
+        assert_eq!(session_ids, vec![wal_session.header_id()]);
+        assert_ne!(wal_session.header_id(), crate::wal::SessionId::ZERO);
     }
 }

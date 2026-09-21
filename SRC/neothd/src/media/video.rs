@@ -208,6 +208,7 @@ impl VideoExtractor {
         updater_cfg: &crate::config::UpdaterConfig,
         neoth_home: &std::path::Path,
         wal_writer: Option<crate::wal::writer::WalWriterHandle>,
+        wal_session: Option<crate::wal::WalSessionContext>,
     ) -> Result<Extraction, ExtractionError> {
         if asset.kind() != AssetKind::Video {
             return Err(ExtractionError::Unsupported {
@@ -232,6 +233,7 @@ impl VideoExtractor {
             updater_cfg,
             neoth_home,
             wal_writer,
+            wal_session,
         ))
         .await
         .map_err(|error| ExtractionError::Backend {
@@ -248,6 +250,7 @@ async fn run_owned_video_pipeline(
     updater_cfg: crate::config::UpdaterConfig,
     neoth_home: std::path::PathBuf,
     wal_writer: Option<crate::wal::writer::WalWriterHandle>,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> Result<Extraction, ExtractionError> {
     let input_snapshot = snapshot_owned_private_input_async(input, ".neoth-video-").await?;
     // Snapshot admission failures happen before any subprocess exists and do
@@ -280,6 +283,7 @@ async fn run_owned_video_pipeline(
                 &updater_cfg,
                 &neoth_home,
                 wal_writer.clone(),
+                wal_session,
             )
             .await?;
         let mut metadata = audio_out.metadata;
@@ -376,6 +380,7 @@ impl MediaExtractor for VideoExtractor {
             &config.media,
             &config.updater,
             &crate::config::FreedomConfig::default_neoth_home(),
+            None,
             None,
         )
         .await
@@ -1454,6 +1459,7 @@ mod tests {
             &config.media,
             &config.updater,
             home.path(),
+            None,
             None,
         ));
         unsafe {

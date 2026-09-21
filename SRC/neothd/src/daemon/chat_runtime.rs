@@ -802,6 +802,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn generic_gui_lifecycle_remains_unattributed_without_an_admitted_turn() {
+        let (runtime, _provider, _home, writer, writer_join) = test_runtime(true, 0).await;
+        let segment_path = runtime.active_segment_path.clone();
+        runtime
+            .append_gui_lifecycle(br#"{"phase":"queued"}"#.to_vec())
+            .await
+            .expect("append generic GUI lifecycle");
+        runtime.close_and_drain().await;
+        drop(runtime);
+        drop(writer);
+        writer_join
+            .await
+            .expect("join generic GUI lifecycle writer")
+            .expect("generic GUI lifecycle writer succeeds");
+
+        let wal = std::fs::read(segment_path).expect("read generic GUI lifecycle WAL");
+        let mut lifecycle_session_ids = Vec::new();
+        crate::wal::scan::for_each_frame(&wal, |_, frame| {
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::GuiChatLifecycle as u8
+            {
+                lifecycle_session_ids.push(frame.header.session_id);
+            }
+            Ok(())
+        })
+        .expect("scan generic GUI lifecycle WAL");
+        assert_eq!(lifecycle_session_ids, vec![crate::wal::SessionId::ZERO]);
+    }
+
+    #[tokio::test]
+    async fn admitted_plain_daemon_turn_preserves_one_nonzero_wal_session() {
+        let (runtime, _provider, _home, writer, writer_join) = test_runtime(true, 0).await;
+        let segment_path = runtime.active_segment_path.clone();
+        execute_admitted_turn(&runtime, "daemon session attribution")
+            .await
+            .expect("execute admitted daemon turn");
+        runtime.close_and_drain().await;
+        drop(runtime);
+        drop(writer);
+        writer_join
+            .await
+            .expect("join admitted daemon turn writer")
+            .expect("admitted daemon turn writer succeeds");
+
+        let wal = std::fs::read(segment_path).expect("read admitted daemon turn WAL");
+        let mut scoped_headers = Vec::new();
+        crate::wal::scan::for_each_frame(&wal, |_, frame| {
+            if matches!(
+                frame.header.event_type,
+                crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT
+                    | crate::wal::events::EVENT_TYPE_RAW_TEXT
+                    | crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST
+                    | crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE
+            ) {
+                scoped_headers.push((frame.header.event_type, frame.header.session_id));
+            }
+            Ok(())
+        })
+        .expect("scan admitted daemon turn WAL");
+        for expected_type in [
+            crate::wal::events::EVENT_TYPE_MODE_CHECKPOINT,
+            crate::wal::events::EVENT_TYPE_RAW_TEXT,
+            crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+            crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE,
+        ] {
+            assert!(
+                scoped_headers.iter().any(|(event_type, _)| *event_type == expected_type),
+                "admitted daemon turn persists its required scoped event {expected_type:#04x}"
+            );
+        }
+        let session_id = scoped_headers
+            .first()
+            .expect("admitted daemon turn has scoped frames")
+            .1;
+        assert_ne!(session_id, crate::wal::SessionId::ZERO);
+        assert!(
+            scoped_headers
+                .iter()
+                .all(|(_, observed)| *observed == session_id),
+            "daemon checkpoint, RAW_TEXT, and provider leaves share one session"
+        );
+    }
+
+    #[tokio::test]
     async fn two_real_daemon_turns_share_the_live_global_writer() {
         let (runtime, provider, _home, writer, writer_join) = test_runtime(true, 0).await;
         let first = execute_admitted_turn(&runtime, "first daemon turn")

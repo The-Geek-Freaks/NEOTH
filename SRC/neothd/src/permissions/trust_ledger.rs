@@ -753,6 +753,11 @@ pub(crate) async fn audit_trust_admission_once(
                 .append_trust_decision_once(home, expected.clone())
                 .await
         }
+        PermissionAuditSink::WriterWithSession(writer, _) => {
+            writer
+                .append_trust_decision_once(home, expected.clone())
+                .await
+        }
         PermissionAuditSink::DaemonRpc(bound_home) => {
             let same_home = crate::daemon::audit_rpc::homes_same_identity(bound_home, home)
                 .map_err(|_| TrustDecisionOnceError::Indeterminate)?;
@@ -788,6 +793,16 @@ fn completeness_from_authenticated_scan(
 }
 
 pub(crate) async fn append_to_writer(writer: &WalWriterHandle, event: &TrustEvent) -> Result<()> {
+    append_to_writer_in(writer, event, None).await
+}
+
+/// Append a non-durable TrustDecision with an optional already-admitted WAL
+/// context. Standalone callers retain zero attribution through the wrapper.
+pub(crate) async fn append_to_writer_in(
+    writer: &WalWriterHandle,
+    event: &TrustEvent,
+    wal_session: Option<crate::wal::WalSessionContext>,
+) -> Result<()> {
     ensure!(
         !event.is_durable_admission(),
         "schema-2 durable TrustDecision must use append_trust_decision_once"
@@ -795,6 +810,7 @@ pub(crate) async fn append_to_writer(writer: &WalWriterHandle, event: &TrustEven
     let payload = event.encode()?;
     let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
         .event_subtype(ExtendedSubtype::TrustDecision as u8)
+        .session_context(wal_session)
         .flags(crate::wal::EventFlags::SYNTHETIC)
         .build();
     writer
@@ -822,6 +838,16 @@ pub(crate) async fn append_resolved_decision_to_writer(
     writer: &WalWriterHandle,
     resolved: ResolvedTrustDecision<'_>,
 ) -> Result<()> {
+    append_resolved_decision_to_writer_in(writer, resolved, None).await
+}
+
+/// Contextual counterpart for an already-admitted caller. It accepts only the
+/// typed capability and leaves all serialized TrustDecision content unchanged.
+pub(crate) async fn append_resolved_decision_to_writer_in(
+    writer: &WalWriterHandle,
+    resolved: ResolvedTrustDecision<'_>,
+    wal_session: Option<crate::wal::WalSessionContext>,
+) -> Result<()> {
     let event = TrustEvent::from_resolved_decision(
         resolved.action,
         resolved.autonomy_level,
@@ -832,7 +858,7 @@ pub(crate) async fn append_resolved_decision_to_writer(
         resolved.request_binding_sha256,
         resolved.decided_at_ns,
     )?;
-    append_to_writer(writer, &event).await
+    append_to_writer_in(writer, &event, wal_session).await
 }
 
 pub(crate) async fn append_to_daemon(home: &Path, event: &TrustEvent) -> Result<()> {

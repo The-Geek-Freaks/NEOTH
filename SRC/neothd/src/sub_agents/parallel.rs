@@ -54,7 +54,20 @@ use super::schema::{SubAgentRequest, SubAgentResult};
 #[cfg(test)]
 use crate::council::qa_verdict::FailureItem;
 use crate::council::qa_verdict::QaVerdict;
+use crate::wal::WalSessionContext;
 
+/// Trusted, turn-local WAL attribution passed beside serialised task data.
+/// This type is intentionally not serialisable or persistable.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SubAgentExecutionContext {
+    pub(crate) wal_session: Option<WalSessionContext>,
+}
+
+impl SubAgentExecutionContext {
+    pub(crate) const fn with_wal_session(wal_session: Option<WalSessionContext>) -> Self {
+        Self { wal_session }
+    }
+}
 /// QM-16: trait the caller implements so the dispatcher can run an
 /// arbitrary worker (coding worker, reviewer sub-agent, evidence
 /// collector) against each request. Async + Send + Sync so the
@@ -66,6 +79,11 @@ pub trait SubAgentWorker: Send + Sync {
     /// percolate as a `Blocked` verdict in [`dispatch_parallel`] so
     /// one bad worker doesn't abort the whole fan-out.
     async fn run(&self, request: SubAgentRequest) -> Result<SubAgentResult>;
+
+    async fn run_in(&self, request: SubAgentRequest, context: SubAgentExecutionContext) -> Result<SubAgentResult> {
+        let _ = context;
+        self.run(request).await
+    }
 }
 
 /// QM-16: aggregate report from one parallel dispatch. Operator-
@@ -98,6 +116,26 @@ impl DispatchReport {
     }
 }
 
+/// Backward-compatible standalone/background dispatch. It deliberately carries
+/// no WAL session context.
+pub async fn dispatch_parallel<W>(
+    worker: Arc<W>,
+    requests: Vec<SubAgentRequest>,
+    max_concurrent: Option<usize>,
+    per_task_timeout: Option<Duration>,
+) -> Result<DispatchReport>
+where
+    W: SubAgentWorker + 'static,
+{
+    dispatch_parallel_in(
+        worker,
+        requests,
+        SubAgentExecutionContext::default(),
+        max_concurrent,
+        per_task_timeout,
+    )
+    .await
+}
 /// QM-16 entry point. Drives N requests concurrently through one
 /// worker, collects results, returns the aggregated report.
 ///
@@ -110,9 +148,10 @@ impl DispatchReport {
 /// `per_task_timeout: Option<Duration>` bounds each individual
 /// worker. Timeout hits → synthesized Blocked verdict with reason
 /// "timed out after Xs". `None` = no per-task ceiling.
-pub async fn dispatch_parallel<W>(
+pub async fn dispatch_parallel_in<W>(
     worker: Arc<W>,
     requests: Vec<SubAgentRequest>,
+    context: SubAgentExecutionContext,
     max_concurrent: Option<usize>,
     per_task_timeout: Option<Duration>,
 ) -> Result<DispatchReport>
@@ -148,6 +187,7 @@ where
         let worker = Arc::clone(&worker);
         let sem = Arc::clone(&semaphore);
         let timeout = per_task_timeout;
+        let context = context;
         joinset.spawn(async move {
             // Catch worker panics *inside* the indexed task. A JoinError has no
             // request index, so letting the panic escape would make it
@@ -161,7 +201,7 @@ where
                     .map_err(|e| anyhow::anyhow!("semaphore closed: {e}"))?;
                 let req_id = req.task_id.clone();
                 match timeout {
-                    Some(t) => match tokio::time::timeout(t, worker.run(req)).await {
+                    Some(t) => match tokio::time::timeout(t, worker.run_in(req, context)).await {
                         Ok(r) => r,
                         Err(_) => Err(anyhow::anyhow!(
                             "parallel worker timed out after {}s on task {}",
@@ -169,7 +209,7 @@ where
                             req_id
                         )),
                     },
-                    None => worker.run(req).await,
+                    None => worker.run_in(req, context).await,
                 }
             })
             .catch_unwind()
@@ -283,9 +323,7 @@ fn now_unix() -> i64 {
     crate::time::now_unix_i64()
 }
 
-/// QM-16 convenience: drive a single request through the dispatcher
-/// for callers that want the timeout + retry envelope without doing
-/// the manual `Arc` + `Vec` wrap. Returns the single result.
+/// Backward-compatible standalone/background single dispatch.
 pub async fn dispatch_one<W>(
     worker: Arc<W>,
     request: SubAgentRequest,
@@ -294,7 +332,21 @@ pub async fn dispatch_one<W>(
 where
     W: SubAgentWorker + 'static,
 {
-    let report = dispatch_parallel(worker, vec![request], Some(1), timeout)
+    dispatch_one_in(worker, request, SubAgentExecutionContext::default(), timeout).await
+}
+/// QM-16 convenience: drive a single request through the dispatcher
+/// for callers that want the timeout + retry envelope without doing
+/// the manual `Arc` + `Vec` wrap. Returns the single result.
+pub async fn dispatch_one_in<W>(
+    worker: Arc<W>,
+    request: SubAgentRequest,
+    context: SubAgentExecutionContext,
+    timeout: Option<Duration>,
+) -> Result<SubAgentResult>
+where
+    W: SubAgentWorker + 'static,
+{
+    let report = dispatch_parallel_in(worker, vec![request], context, Some(1), timeout)
         .await
         .context("dispatch_one")?;
     report
@@ -309,6 +361,7 @@ mod tests {
     use super::*;
     use crate::sub_agents::schema::HandoffPriority;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
 
     fn make_request(task_id: &str) -> SubAgentRequest {
         SubAgentRequest {
@@ -399,6 +452,25 @@ mod tests {
         seen: AtomicUsize,
     }
 
+    struct ContextWorker {
+        seen: Mutex<Vec<Option<WalSessionContext>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl SubAgentWorker for ContextWorker {
+        async fn run(&self, req: SubAgentRequest) -> Result<SubAgentResult> {
+            PassingWorker.run(req).await
+        }
+
+        async fn run_in(
+            &self,
+            req: SubAgentRequest,
+            context: SubAgentExecutionContext,
+        ) -> Result<SubAgentResult> {
+            self.seen.lock().unwrap().push(context.wal_session);
+            self.run(req).await
+        }
+    }
     struct SelectivePanicWorker;
     #[async_trait::async_trait]
     impl SubAgentWorker for SelectivePanicWorker {
@@ -429,6 +501,34 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn contextual_dispatch_copies_one_parent_wal_session_to_every_child() {
+        let home = tempfile::tempdir().unwrap();
+        let session = WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"trusted\0parent\0turn",
+        )
+        .unwrap();
+        let worker = Arc::new(ContextWorker {
+            seen: Mutex::new(Vec::new()),
+        });
+
+        let report = dispatch_parallel_in(
+            Arc::clone(&worker),
+            vec![make_request("child"), make_request("qa-retry")],
+            SubAgentExecutionContext::with_wal_session(Some(session)),
+            Some(1),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.pass_count, 2);
+        assert_eq!(
+            *worker.seen.lock().unwrap(),
+            vec![Some(session), Some(session)]
+        );
+    }
     #[tokio::test]
     async fn empty_requests_returns_empty_report() {
         let w = Arc::new(PassingWorker);
