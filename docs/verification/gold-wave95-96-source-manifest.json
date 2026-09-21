@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W136-skill-registry-and-type-hierarchy",
-  "base": "0c2c2a2addc2d01720ee328f414688a377477fd1",
-  "capturedUtc": "2026-09-21T09:05:14.2071734Z",
-  "validationStatus": "W139_OBSERVED_TYPE_SCOPE_REPAIR_REMOTE_EXECUTION_REQUIRED",
-  "scopeNote": "308 cumulative inputs. One reviewed W139 type-path correction after hosted E0412; W137/W138 working source excluded. No local validation or Road closure.",
+  "base": "12048d6c225c50faa42147632c54be7c5039716d",
+  "capturedUtc": "2026-09-21T09:20:02.0175504Z",
+  "validationStatus": "W137_REVIEWED_SESSION_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "scopeNote": "308 cumulative inputs; W137 frozen reviewed session sources. W138 working source excluded. No local validation or Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -513,8 +513,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "bytes": 104748,
-      "sha256": "B693A9B6FCD16B26D9F1C80450D26B2FF3F303D61CE34D823C818C2E50E886FE"
+      "bytes": 123899,
+      "sha256": "0A4068F6E26BC4D8E7FE314C53C78FC242DD618BD183696822B6F8EA734505D2"
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
@@ -648,8 +648,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "bytes": 406379,
-      "sha256": "FBC027668354557B247B3C9A35BC4FF0F72CF165A158957E6CA98CD10ACB815B"
+      "bytes": 432928,
+      "sha256": "C958C1B8C276B6C1FD5DE1AB85CE21A65A547017A6C0A1D093FB7B0EB5AA4871"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",

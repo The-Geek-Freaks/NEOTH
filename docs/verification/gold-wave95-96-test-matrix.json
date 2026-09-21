@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W139_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "0c2c2a2addc2d01720ee328f414688a377477fd1",
+  "status": "W95_W139_W137_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "base": "12048d6c225c50faa42147632c54be7c5039716d",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 53226,
-    "sha256": "3343E2D7F45493B2DA1D77F886480193A2394F2318DA509BB1935F8820DA679C"
+    "bytes": 53197,
+    "sha256": "9A9AD6406798BA8187F1405561A1481315C3F1CAFC12CE0026AF0984CCE16035"
   },
   "sourceInputs": 308,
   "requiredNativeTests": [
@@ -240,25 +240,25 @@
     {
       "test": "cli::chat_turn_pipeline::tests::prepared_turn_retains_seeded_context_through_truthful_retry_before_final_receipt_and_terminal",
       "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "sourceSha256": "B693A9B6FCD16B26D9F1C80450D26B2FF3F303D61CE34D823C818C2E50E886FE",
+      "sourceSha256": "0A4068F6E26BC4D8E7FE314C53C78FC242DD618BD183696822B6F8EA734505D2",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::build_pipeline_handler_retains_selected_generation_through_truthful_retry_before_final_channel_result",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "FBC027668354557B247B3C9A35BC4FF0F72CF165A158957E6CA98CD10ACB815B",
+      "sourceSha256": "C958C1B8C276B6C1FD5DE1AB85CE21A65A547017A6C0A1D093FB7B0EB5AA4871",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat_turn_pipeline::tests::prepared_turn_retains_context_through_truthful_refusal_then_local_shadow_final_result",
       "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "sourceSha256": "B693A9B6FCD16B26D9F1C80450D26B2FF3F303D61CE34D823C818C2E50E886FE",
+      "sourceSha256": "0A4068F6E26BC4D8E7FE314C53C78FC242DD618BD183696822B6F8EA734505D2",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::build_pipeline_handler_retains_context_through_direct_local_shadow_cloud_fallback_final_result",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "FBC027668354557B247B3C9A35BC4FF0F72CF165A158957E6CA98CD10ACB815B",
+      "sourceSha256": "C958C1B8C276B6C1FD5DE1AB85CE21A65A547017A6C0A1D093FB7B0EB5AA4871",
       "junitClass": "neoth"
     },
     {
@@ -835,6 +835,30 @@
       "test": "cli::chat::tests::auto_recall_is_canonical_untrusted_memory_for_primary_and_agent_prompts",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
       "sourceSha256": "4721AB9B10BA15EFC1CB1A277EB92F07AB56B51E794CFB50166DC39D25281AB2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::chat_turn_pipeline::tests::prepared_turn_retains_authorized_selected_skill_snapshot_across_reload_retry_and_local_shadow",
+      "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+      "sourceSha256": "0A4068F6E26BC4D8E7FE314C53C78FC242DD618BD183696822B6F8EA734505D2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve_pipeline::tests::authenticated_channel_policy_cannot_inject_a_disabled_subject_skill",
+      "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "sourceSha256": "C958C1B8C276B6C1FD5DE1AB85CE21A65A547017A6C0A1D093FB7B0EB5AA4871",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve_pipeline::tests::channel_delegate_to_uses_authorized_installed_skill_real_agent_loader_and_child_scope",
+      "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "sourceSha256": "C958C1B8C276B6C1FD5DE1AB85CE21A65A547017A6C0A1D093FB7B0EB5AA4871",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve_pipeline::tests::delegated_bundle_preserves_required_attachment_data",
+      "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
+      "sourceSha256": "C958C1B8C276B6C1FD5DE1AB85CE21A65A547017A6C0A1D093FB7B0EB5AA4871",
       "junitClass": "neoth"
     }
   ],
@@ -1750,6 +1774,18 @@
     "failedCi": 35580547601,
     "failedSource": "0c2c2a2addc2d01720ee328f414688a377477fd1",
     "failedCiConclusion": "cancelled_after_E0412",
+    "execution": "PENDING_GITHUB_ONLY",
+    "localValidationRan": false
+  },
+  "wave137": {
+    "report": "docs/gold-wave137-verification.md",
+    "sourceReview": "APPROVED_STATIC_ONLY",
+    "reviewSha256": "7A55EFEA1DA076E495E2A0FFC18B84851BB2A83FA719BDA59E6BCDF6B37666AC",
+    "sourceInputs": 308,
+    "nativeRequired": 142,
+    "newTests": 3,
+    "strengthenedExistingTests": 3,
+    "newRequiredIdentities": 4,
     "execution": "PENDING_GITHUB_ONLY",
     "localValidationRan": false
   }

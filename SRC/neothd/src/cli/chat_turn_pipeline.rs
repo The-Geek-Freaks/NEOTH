@@ -1241,6 +1241,171 @@ mod tests {
         }
     }
 
+    const W137_SELECTED_SKILL_ID: &str = "w137-selected";
+    const W137_SELECTED_A_BODY: &str = "W137_SELECTED_A_BODY";
+    const W137_SELECTED_B_BODY: &str = "W137_SELECTED_B_BODY";
+    const W137_DISABLED_BODY: &str = "W137_DISABLED_APPROVED_CANDIDATE_BODY";
+    const W137_REJECTED_BODY: &str = "W137_AUTHORITY_REJECTED_CANDIDATE_BODY";
+
+    fn w137_skill_manifest(description: &str, body: &str, model: &str, effort: &str) -> String {
+        format!(
+            "id: {W137_SELECTED_SKILL_ID}\n\
+             description: {description}\n\
+             trigger_keywords: [w137-retained-session]\n\
+             system_prompt: {body}\n\
+             tool_allowlist: [w137::allowed]\n\
+             model: {model}\n\
+             effort: {effort}\n"
+        )
+    }
+
+    fn w137_write_installed_skill(home: &std::path::Path, id: &str, manifest: &str) {
+        let skill_dir = home.join("skills").join(id);
+        std::fs::create_dir_all(&skill_dir).expect("create W137 installed Skill directory");
+        std::fs::write(skill_dir.join("skill.yaml"), manifest)
+            .expect("write W137 installed Skill manifest");
+    }
+
+    fn w137_record_install_incarnation(home: &std::path::Path, id: &str) {
+        let current = crate::skills::installer::inspect_current_install(&home.join("skills"), id)
+            .expect("inspect W137 exact installed Skill generation");
+        crate::skills::mutation_lifecycle::record_committed_install_incarnation_for_test(
+            home,
+            id,
+            &current.generation_sha256,
+            crate::skills::installer::SkillMutationOrigin::CliInstall,
+        )
+        .expect("record W137 authenticated install incarnation");
+    }
+
+    fn w137_publish_authority(
+        home: &std::path::Path,
+        id: &str,
+        reload: &crate::config::reload::ReloadController,
+        state: crate::skills::authority::SkillAuthorityState,
+        reason: Option<&str>,
+    ) {
+        let decision = crate::skills::authority::SkillAuthorityDecision::new(
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorCli,
+            state,
+            reason.map(str::to_owned),
+        )
+        .expect("construct W137 authority decision");
+        crate::skills::authority::publish_installed_authority_decision(home, id, reload, decision)
+            .expect("publish W137 authenticated authority decision");
+    }
+
+    /// Publishes B only after capturing the first real provider request. The
+    /// second cloud request and the local-shadow request therefore exercise
+    /// recovery after a durable, newly-authorized registry generation exists.
+    struct W137SnapshotPublishingFallbackCloudProvider {
+        home: std::path::PathBuf,
+        reload: std::sync::Arc<crate::config::reload::ReloadController>,
+        requests: Mutex<Vec<Request>>,
+        published_b: std::sync::atomic::AtomicBool,
+    }
+
+    #[async_trait]
+    impl Provider for W137SnapshotPublishingFallbackCloudProvider {
+        fn name(&self) -> &'static str {
+            "w137-snapshot-publishing-cloud"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("w137-cloud-default")
+        }
+
+        fn request_controls(&self) -> crate::providers::ProviderRequestControls {
+            crate::providers::ProviderRequestControls::THINKING_BUDGET
+        }
+
+        async fn complete(&self, request: Request) -> Result<Completion> {
+            let attempt = {
+                let mut requests = self.requests.lock().expect("lock W137 cloud requests");
+                let attempt = requests.len();
+                requests.push(request);
+                attempt
+            };
+            assert!(attempt < 2, "W137 fixture permits one truthful retry before local shadow");
+
+            if attempt == 0 {
+                w137_write_installed_skill(
+                    &self.home,
+                    W137_SELECTED_SKILL_ID,
+                    &w137_skill_manifest(
+                        "W137 selected B registry description",
+                        W137_SELECTED_B_BODY,
+                        "w137-b-model",
+                        "low",
+                    ),
+                );
+                w137_record_install_incarnation(&self.home, W137_SELECTED_SKILL_ID);
+                w137_publish_authority(
+                    &self.home,
+                    W137_SELECTED_SKILL_ID,
+                    self.reload.as_ref(),
+                    crate::skills::authority::SkillAuthorityState::Active,
+                    None,
+                );
+                self.published_b.store(true, Ordering::SeqCst);
+            }
+
+            Ok(Completion {
+                text: String::new(),
+                termination: crate::providers::ProviderTermination::refused(
+                    Some("safety_policy".to_owned()),
+                    crate::providers::RefusalOrigin::ProviderMessage,
+                    "safety_policy",
+                    Some("This request violates safety policy.".to_owned()),
+                ),
+                identity: CompletionIdentity {
+                    provider: self.name().to_owned(),
+                    wire_model: "w137-cloud-default".to_owned(),
+                    dispatch_route: Vec::new(),
+                },
+                model: "w137-cloud-default".to_owned(),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct W137FreshSessionProvider {
+        requests: Mutex<Vec<Request>>,
+    }
+
+    #[async_trait]
+    impl Provider for W137FreshSessionProvider {
+        fn name(&self) -> &'static str {
+            "w137-fresh-session-provider"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("w137-fresh-default")
+        }
+
+        fn request_controls(&self) -> crate::providers::ProviderRequestControls {
+            crate::providers::ProviderRequestControls::THINKING_BUDGET
+        }
+
+        async fn complete(&self, request: Request) -> Result<Completion> {
+            self.requests
+                .lock()
+                .expect("lock W137 fresh-session requests")
+                .push(request);
+            Ok(Completion {
+                text: "W137 fresh-session completion".to_owned(),
+                identity: CompletionIdentity {
+                    provider: self.name().to_owned(),
+                    wire_model: "w137-fresh-default".to_owned(),
+                    dispatch_route: Vec::new(),
+                },
+                model: "w137-fresh-default".to_owned(),
+                ..Default::default()
+            })
+        }
+    }
+
     /// Drives the real MCP loop while making the first provider boundary prove
     /// that automatic-context's unavailable receipt is already durable.
     struct ChatConsumerMcpProvider {
@@ -1774,6 +1939,175 @@ mod tests {
                     if provider == "retained-context-retry-mock"
                         && model == "retained-context-retry-model"
             ));
+        });
+    }
+
+    #[test]
+    fn prepared_turn_retains_authorized_selected_skill_snapshot_across_reload_retry_and_local_shadow() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build W137 retained-session runtime");
+        let _environment = crate::test_env::lock();
+        runtime.block_on(async {
+            let fixture = tempfile::tempdir().expect("create W137 retained-session fixture");
+            let home = fixture.path().join("home");
+            let repo = fixture.path().join("repo");
+            std::fs::create_dir_all(&home).expect("create W137 home");
+            let instance_paths = seed_pipeline_repo_context(&home, &repo);
+            let _cwd = PipelineCwdGuard::enter(&repo);
+            let selected_config_path = home.join("freedom.yaml");
+            let wal_dir = home.join("wal");
+            std::fs::create_dir_all(&wal_dir).expect("create W137 WAL directory");
+            crate::wal::compaction::load_or_init_key(&wal_dir.join("hmac.key"))
+                .expect("initialize W137 WAL key");
+            crate::skills::authority::initialize_authority_key_for_test(&home)
+                .expect("initialize W137 authority key");
+            crate::consent::grant(&home, ProviderKind::ClaudeCli)
+                .expect("grant W137 fixture provider consent");
+
+            let mut config = FreedomConfig {
+                provider_kind: Some(ProviderKind::ClaudeCli),
+                provider_binary: Some("claude".to_owned()),
+                provider_model: Some("w137-caller-model".to_owned()),
+                autonomy: crate::permissions::AutonomyLevel::Full,
+                review_gate_enabled: false,
+                steps_completed: vec![1, 2, 3, 4, 5, 6, 7],
+                ..Default::default()
+            };
+            config.council.disabled = Some(true);
+            config.memory.recall_shortcut = false;
+            config.code_map.auto_context_max_files = 5;
+            config.refusal_recovery.enabled = true;
+            config.refusal_recovery.max_attempts = 1;
+            config.refusal_recovery.abliterated_fallback_enabled = true;
+            config.refusal_recovery.abliterated_model = Some("fixture-local-abliterated-model".to_owned());
+            config.refusal_recovery.teacher_escalation_enabled = false;
+            std::fs::write(&selected_config_path, serde_yaml::to_string(&config).expect("serialize W137 config"))
+                .expect("write W137 config");
+            let authority_reload = std::sync::Arc::new(crate::config::reload::ReloadController::new(
+                config.clone(),
+                selected_config_path.clone(),
+            ));
+
+            w137_write_installed_skill(
+                &home,
+                W137_SELECTED_SKILL_ID,
+                &w137_skill_manifest(
+                    "W137 selected A registry description",
+                    W137_SELECTED_A_BODY,
+                    "w137-a-model",
+                    "high",
+                ),
+            );
+            w137_record_install_incarnation(&home, W137_SELECTED_SKILL_ID);
+            w137_publish_authority(
+                &home,
+                W137_SELECTED_SKILL_ID,
+                authority_reload.as_ref(),
+                crate::skills::authority::SkillAuthorityState::Active,
+                None,
+            );
+            w137_write_installed_skill(
+                &home,
+                "w137-disabled",
+                "id: w137-disabled\ndescription: W137 disabled registry description\nsystem_prompt: W137_DISABLED_APPROVED_CANDIDATE_BODY\nenabled: false\n",
+            );
+            w137_write_installed_skill(
+                &home,
+                "w137-rejected",
+                "id: w137-rejected\ndescription: W137 rejected registry description\nsystem_prompt: W137_AUTHORITY_REJECTED_CANDIDATE_BODY\n",
+            );
+            w137_record_install_incarnation(&home, "w137-rejected");
+            w137_publish_authority(
+                &home,
+                "w137-rejected",
+                authority_reload.as_ref(),
+                crate::skills::authority::SkillAuthorityState::Inactive,
+                Some("W137 fixture operator rejection"),
+            );
+
+            let local_requests = std::sync::Arc::new(Mutex::new(Vec::new()));
+            let loader = std::sync::Arc::new(RetainedContextFallbackLoader {
+                local_requests: std::sync::Arc::clone(&local_requests),
+            });
+            let mut prepared = PreparedChatTurn {
+                input: ChatTurnInput { message: Some("w137-retained-session".to_owned()), model: Some("w137-caller-model".to_owned()), skill: Some(W137_SELECTED_SKILL_ID.to_owned()), system: None, attach: Vec::new(), repository_root: None, edit: false, resume_from: None, incognito: false, loop_mode: false, iterations: None, until: Vec::new(), stream: false, temperature: None, top_p: None, sampling_seed: None },
+                preparation: ChatTurnPreparation { config: config.clone(), ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint W137 session canary")), instance_paths: instance_paths.clone(), first_tour_home: home.clone(), selected_config_path: selected_config_path.clone(), prompt: "w137-retained-session".to_owned(), current_session_id: "w137-retained-A".to_owned(), chat_ts_unix: 1_725_000_137, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: true },
+                abliterated_loader: Some(loader), deferred_failure_output: None, deferred_terminal: None,
+            };
+            let segment_path = wal_dir.join("w137-retained-a-000001.wal");
+            let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(segment_path.clone(), home.clone())
+                .expect("spawn W137 A WAL writer");
+            let provider = W137SnapshotPublishingFallbackCloudProvider {
+                home: home.clone(), reload: std::sync::Arc::clone(&authority_reload), requests: Mutex::new(Vec::new()), published_b: std::sync::atomic::AtomicBool::new(false),
+            };
+            let mut sink = CollectingSink::default();
+            run_prepared_chat_turn(&mut prepared, &provider, &writer, &segment_path, &mut sink)
+                .await
+                .expect("W137 A turn recovers through local shadow");
+            assert!(provider.published_b.load(Ordering::SeqCst), "the first refused request must publish authorized B before recovery");
+
+            let registry_a = {
+                let cloud = provider.requests.lock().expect("read W137 cloud requests");
+                assert_eq!(cloud.len(), 2, "A must receive one initial cloud request and one truthful retry");
+                for request in cloud.iter() {
+                    let system = request.system.as_deref().expect("W137 cloud request system");
+                    assert!(system.contains(W137_SELECTED_A_BODY), "the started session retains selected A body");
+                    assert!(!system.contains(W137_SELECTED_B_BODY), "B cannot enter an already-composed A recovery request");
+                    assert!(!system.contains(W137_DISABLED_BODY), "disabled candidate must never inject");
+                    assert!(!system.contains(W137_REJECTED_BODY), "authority-rejected candidate must never inject");
+                    assert_eq!(request.model.as_deref(), Some("w137-a-model"), "selected A route model survives truthful recovery");
+                    assert_eq!(request.thinking_budget, Some(16_384), "selected A effort survives truthful recovery");
+                }
+                let first = cloud[0].system.as_deref().expect("initial W137 cloud system");
+                let retry = cloud[1].system.as_deref().expect("retry W137 cloud system");
+                let registry_a = retained_skill_registry_context(first);
+                assert!(registry_a.contains("W137 selected A registry description"));
+                assert_eq!(retained_skill_registry_context(retry), registry_a, "truthful retry must retain the complete admitted A registry envelope");
+                registry_a
+            };
+            {
+                let local = local_requests.lock().expect("read W137 local-shadow request");
+                assert_eq!(local.len(), 1, "exhausted cloud recovery must make one local-shadow request");
+                let request = &local[0];
+                let system = request.system.as_deref().expect("W137 local-shadow system");
+                assert!(system.contains(W137_SELECTED_A_BODY), "local shadow retains the selected A body");
+                assert!(!system.contains(W137_SELECTED_B_BODY), "local shadow cannot observe B in the started A session");
+                assert!(!system.contains(W137_DISABLED_BODY));
+                assert!(!system.contains(W137_REJECTED_BODY));
+                assert_eq!(retained_skill_registry_context(system), registry_a, "local shadow must retain the complete admitted A registry envelope");
+            }
+            drop(writer);
+            completion.wait().await.expect("drain W137 A WAL");
+
+            let mut fresh = PreparedChatTurn {
+                input: ChatTurnInput { message: Some("w137-retained-session".to_owned()), model: Some("w137-caller-model".to_owned()), skill: Some(W137_SELECTED_SKILL_ID.to_owned()), system: None, attach: Vec::new(), repository_root: None, edit: false, resume_from: None, incognito: false, loop_mode: false, iterations: None, until: Vec::new(), stream: false, temperature: None, top_p: None, sampling_seed: None },
+                preparation: ChatTurnPreparation { config, ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint W137 fresh-session canary")), instance_paths, first_tour_home: home.clone(), selected_config_path, prompt: "w137-retained-session".to_owned(), current_session_id: "w137-retained-B".to_owned(), chat_ts_unix: 1_725_000_138, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: true },
+                abliterated_loader: None, deferred_failure_output: None, deferred_terminal: None,
+            };
+            let fresh_segment = wal_dir.join("w137-retained-b-000001.wal");
+            let (fresh_writer, fresh_completion) = crate::wal::writer::spawn_for_home_with_completion(fresh_segment.clone(), home.clone())
+                .expect("spawn W137 B WAL writer");
+            let fresh_provider = W137FreshSessionProvider::default();
+            let mut fresh_sink = CollectingSink::default();
+            run_prepared_chat_turn(&mut fresh, &fresh_provider, &fresh_writer, &fresh_segment, &mut fresh_sink)
+                .await
+                .expect("fresh W137 session accepts authorized B");
+            let fresh_requests = fresh_provider.requests.lock().expect("read W137 fresh-session request");
+            assert_eq!(fresh_requests.len(), 1);
+            let fresh_request = &fresh_requests[0];
+            let fresh_system = fresh_request.system.as_deref().expect("fresh W137 system");
+            assert!(fresh_system.contains(W137_SELECTED_B_BODY), "a later session must resolve B body");
+            assert!(!fresh_system.contains(W137_SELECTED_A_BODY), "a later session must not reuse A body");
+            assert_eq!(fresh_request.model.as_deref(), Some("w137-b-model"), "a later session must resolve B model");
+            assert_eq!(fresh_request.thinking_budget, Some(1_024), "a later session must resolve B effort");
+            let registry_b = retained_skill_registry_context(fresh_system);
+            assert!(registry_b.contains("W137 selected B registry description"));
+            assert_ne!(registry_b, registry_a, "a later session must acquire the newly authorized B registry generation");
+            drop(fresh_requests);
+            drop(fresh_writer);
+            fresh_completion.wait().await.expect("drain W137 B WAL");
         });
     }
 

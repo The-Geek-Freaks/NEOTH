@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W137 retained-session source admitted (2026-09-21):** three new acceptance
+fixtures and three strengthened tests cover authorized skill A/B reload,
+retry/local fallback, authenticated account/config isolation and real
+agent-TOML delegation through a CodeGraph child. Each denied tool has its
+own parsed scope-denial result. Independent source review passed; hosted
+execution remains pending. See [W137](../docs/gold-wave137-verification.md).
+The cumulative matrix is 308 inputs /142 required native identities.
+W138 autonomy remains in progress. W139 passed static gates on 12048d6c;
+its full CI passed Gold smoke but exposed four type-hierarchy Clippy errors
+now assigned to W140. Counts stay 1324/1015/307/2; no local execution.
+
 **W139 observed compile repair (2026-09-21):** Preflight 35580411011 and
 Code Quality 35580410277 passed on 0c2c2a2a. Full CI 35580547601 then found
 E0412 for the new registry-context type in the production composer; the field
