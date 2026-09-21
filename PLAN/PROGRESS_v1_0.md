@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W148 hosted lib-test repair (2026-09-21):** Preflight35590321576 and
+CodeQuality35590321422 passed on e2de082a. Full CI35590346071 then found
+E0425 in a provider denial test: its `_error` binding did not match the
+existing `error` assertion. The one-line repair preserves denial and
+zero-call checks; see [W148](../docs/gold-wave148-verification.md).
+Fresh hosted compilation/runtime remains required. W142/W147 stay separate
+working changes; counts remain 1324/1015/307/2. No local validation.
 W145 hosted CLI build and generation35589743038 succeeded on c5f483bd.
 The source/SHA-bound CLI reference was imported after confirming no committed
 CLI change since that source. Preflight35590007571 and CodeQuality35590007565

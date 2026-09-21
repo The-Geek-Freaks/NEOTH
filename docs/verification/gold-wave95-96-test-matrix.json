@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W145_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "7374b258d18e6023128dc4fde8133ef99affeb5c",
+  "status": "W95_W148_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "base": "e2de082a2c6cf0c77b3e510862c789089b0e6ca7",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 54445,
-    "sha256": "6096CF4F3008AC555EC274CFE8B4C77E3C294FECB1BA5BE17687A9FCBDF81FF9"
+    "bytes": 54370,
+    "sha256": "E0C43B51D9CFD2D1C7C3299923B69C7190AB943EA63A2B6528D9834DBDAA454E"
   },
   "sourceInputs": 315,
   "requiredNativeTests": [
@@ -984,7 +984,7 @@
     {
       "test": "providers::cost_authorization::tests::w138_retained_skill_deny_blocks_paid_provider_before_transport",
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sourceSha256": "2369B020B43385D96B4F8B009FDEA0A065CD2A1E0F02930ACD8E0CE43E6DE5ED",
+      "sourceSha256": "E6071E1512B26702B917B182B0D52D9D2AC7A52A40697951B13E9F1B9CED71B6",
       "junitClass": "neoth"
     },
     {
@@ -2038,5 +2038,15 @@
       "import": "exact_source_and_sha256_verified",
       "localExecution": false
     }
+  },
+  "wave148": {
+    "report": "docs/gold-wave148-verification.md",
+    "sourceReview": "ROOT_REVIEWED_EXACT_ONE_LINE_BINDING",
+    "observedCi": 35590346071,
+    "observedSource": "e2de082a2c6cf0c77b3e510862c789089b0e6ca7",
+    "failedJob": 106303075769,
+    "diagnostic": "E0425 test binding _error vs error",
+    "execution": "PENDING_GITHUB_ONLY",
+    "localValidationRan": false
   }
 }

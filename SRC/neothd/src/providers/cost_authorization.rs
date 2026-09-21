@@ -3353,7 +3353,7 @@ mod tests {
             dispatch_route: Vec::new(),
         };
 
-        let _error = provider
+        let error = provider
             .complete_pinned(Request::default(), &expected)
             .await
             .unwrap_err();

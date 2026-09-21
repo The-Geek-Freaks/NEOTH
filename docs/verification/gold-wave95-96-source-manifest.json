@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W145-skill-autonomy-and-hosted-recovery",
-  "base": "7374b258d18e6023128dc4fde8133ef99affeb5c",
-  "capturedUtc": "2026-09-21T10:42:21.5795316Z",
-  "validationStatus": "W145_REVIEWED_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "scopeNote": "315 source inputs; W138 exact hosted formatting, W144 portable fixture ownership and W145 retained loop capability/loader compile recovery. W142 working changes excluded; no local execution or Road closure.",
+  "item": "GOLD-W95-W148-hosted-lib-test-recovery",
+  "base": "e2de082a2c6cf0c77b3e510862c789089b0e6ca7",
+  "capturedUtc": "2026-09-21T10:52:38.7407317Z",
+  "validationStatus": "W148_REVIEWED_ONE_LINE_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "scopeNote": "315 source inputs; W148 exact hosted lib-test binding repair. W142/W147 working source excluded; no local execution or Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -1273,8 +1273,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 243133,
-      "sha256": "2369B020B43385D96B4F8B009FDEA0A065CD2A1E0F02930ACD8E0CE43E6DE5ED"
+      "bytes": 243132,
+      "sha256": "E6071E1512B26702B917B182B0D52D9D2AC7A52A40697951B13E9F1B9CED71B6"
     },
     {
       "path": "SRC/neothd/src/providers/gemini_api.rs",
