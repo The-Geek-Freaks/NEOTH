@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W153-transient-reasoning-integration",
-  "base": "a439a1ee0e078e24cf462cad43a05bc0c67ef8f5",
-  "capturedUtc": "2026-09-21T14:59:50.3483666Z",
-  "validationStatus": "W153_CORE_REFERENCE_PASS_NATIVE_GUI_PENDING",
-  "scopeNote": "327 source inputs; W153 format/finalizer source a439a1ee passed Preflight35615137561, CodeQuality35615138192 and core/reference35615137053. Generated reference imported with source/hash proof. Native/GUI execution pending; W155/W158 excluded.",
+  "item": "GOLD-W95-W158-native-repair-candidate",
+  "base": "669f32db5d655295dd4069e737cb1d292c3cedf7",
+  "capturedUtc": "2026-09-21T15:24:32.9780068Z",
+  "validationStatus": "W158_FOUR_REPAIR_FAMILIES_AND_W142_DIAGNOSTIC_HOSTED_PENDING",
+  "scopeNote": "327 source inputs; independently reviewed self-improve, retained MCP fixture, GUI/proactive source-contract repairs plus W142 failure-only diagnostic. W137 cause remains unresolved and its dirty source excluded. W155 excluded. Required tests225 universal native+3 Windows;46 universal GUI+11 callbacks;7 optional.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -263,8 +263,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/gui_action.rs",
-      "bytes": 336176,
-      "sha256": "604E868C299ADB26B8FE6E30207076E36021F9C2BB1895C1D6E8A8C0CD02F1C2"
+      "bytes": 336973,
+      "sha256": "C683CC30698086E44E43478B607C1FAD029D766456B7C63B787A6C994CE67512"
     },
     {
       "path": "SRC/neothd-gui/src/gui_action/ouro_q8.rs",
@@ -283,8 +283,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1842434,
-      "sha256": "4D60F9B3760714EC37406A9C0C7C38F93ED1562646538C994230D843F8818ED0"
+      "bytes": 1844326,
+      "sha256": "864382B9B3292ADC62809BEE63056D25AEAE93391FD54BC66B31C7F36D00E667"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -1088,8 +1088,8 @@
     },
     {
       "path": "SRC/neothd/src/loop_engine/engine.rs",
-      "bytes": 65432,
-      "sha256": "539FC1A3F67AE2BD172D0604A0C3A5505417B740183C5220B743F5895C50559B"
+      "bytes": 65997,
+      "sha256": "BF547017099ACB8E0080FA5D7E4BB4BC62C5E7171F8681429F60FDE9A6B59458"
     },
     {
       "path": "SRC/neothd/src/mcp/catalogue.rs",
@@ -1383,8 +1383,8 @@
     },
     {
       "path": "SRC/neothd/src/self_improve.rs",
-      "bytes": 419034,
-      "sha256": "370D8866C201790B7949B9CD222A1D6D1C45B99F4C8F1B22E72EB29B116ACC6D"
+      "bytes": 420483,
+      "sha256": "537E6A814D4A87C7F084D7A370C2206B1575D3D4E432318015E9F799664881D4"
     },
     {
       "path": "SRC/neothd/src/self_improve/passive.rs",
@@ -1623,8 +1623,8 @@
     },
     {
       "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
-      "bytes": 56519,
-      "sha256": "8A263D92A6A73B6447BB30D3E2576A22E5636B36CB7E850FABA8A3EAE38EEA8C"
+      "bytes": 57294,
+      "sha256": "5EB20799081311C47B6AAC9DE8D50629C5C4B7355B2505F7052B11F78927BC65"
     },
     {
       "path": "SRC/neothd/tests/transcript_mining_provenance_contract.rs",

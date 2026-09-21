@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W153_CORE_REFERENCE_PASS_NATIVE_GUI_PENDING",
-  "base": "a439a1ee0e078e24cf462cad43a05bc0c67ef8f5",
+  "status": "W158_FOUR_REPAIR_FAMILIES_AND_W142_DIAGNOSTIC_HOSTED_PENDING",
+  "base": "669f32db5d655295dd4069e737cb1d292c3cedf7",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 56526,
-    "sha256": "855C6F6EF120A79F88CAC0D58A97C66631E2D04475257F367553303FE171AFA4"
+    "bytes": 56606,
+    "sha256": "5F0BC83CFB3B559E5C1C3AF472DA8963D6F610026672FC2B58E88C9845B7DB03"
   },
   "sourceInputs": 327,
   "requiredNativeTests": [
@@ -1008,7 +1008,7 @@
     {
       "test": "loop_engine::engine::tests::w145_loop_forwards_retained_skill_mcp_deny_before_stdio_transport",
       "sourcePath": "SRC/neothd/src/loop_engine/engine.rs",
-      "sourceSha256": "539FC1A3F67AE2BD172D0604A0C3A5505417B740183C5220B743F5895C50559B",
+      "sourceSha256": "BF547017099ACB8E0080FA5D7E4BB4BC62C5E7171F8681429F60FDE9A6B59458",
       "junitClass": "neoth"
     },
     {
@@ -1038,49 +1038,49 @@
     {
       "test": "self_improve::tests::w142_fixed_verifier_materializes_inputs_mints_evidence_and_accepts",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "370D8866C201790B7949B9CD222A1D6D1C45B99F4C8F1B22E72EB29B116ACC6D",
+      "sourceSha256": "537E6A814D4A87C7F084D7A370C2206B1575D3D4E432318015E9F799664881D4",
       "junitClass": "neoth"
     },
     {
       "test": "self_improve::tests::w142_fixed_verifier_rejects_wrong_schema_echo_case_and_baseline_bindings",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "370D8866C201790B7949B9CD222A1D6D1C45B99F4C8F1B22E72EB29B116ACC6D",
+      "sourceSha256": "537E6A814D4A87C7F084D7A370C2206B1575D3D4E432318015E9F799664881D4",
       "junitClass": "neoth"
     },
     {
       "test": "self_improve::tests::w142_quality_evaluation_rejects_target_drift_before_verifier_spawn",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "370D8866C201790B7949B9CD222A1D6D1C45B99F4C8F1B22E72EB29B116ACC6D",
+      "sourceSha256": "537E6A814D4A87C7F084D7A370C2206B1575D3D4E432318015E9F799664881D4",
       "junitClass": "neoth"
     },
     {
       "test": "self_improve::tests::w142_corpus_drift_stales_readback_blocks_verified_approval_and_accept",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "370D8866C201790B7949B9CD222A1D6D1C45B99F4C8F1B22E72EB29B116ACC6D",
+      "sourceSha256": "537E6A814D4A87C7F084D7A370C2206B1575D3D4E432318015E9F799664881D4",
       "junitClass": "neoth"
     },
     {
       "test": "self_improve::tests::w142_verifier_revocation_stales_current_evidence_and_refuses_accept",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "370D8866C201790B7949B9CD222A1D6D1C45B99F4C8F1B22E72EB29B116ACC6D",
+      "sourceSha256": "537E6A814D4A87C7F084D7A370C2206B1575D3D4E432318015E9F799664881D4",
       "junitClass": "neoth"
     },
     {
       "test": "self_improve::tests::w142_expected_evidence_digest_refuses_stale_gui_consent_before_mutation",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "370D8866C201790B7949B9CD222A1D6D1C45B99F4C8F1B22E72EB29B116ACC6D",
+      "sourceSha256": "537E6A814D4A87C7F084D7A370C2206B1575D3D4E432318015E9F799664881D4",
       "junitClass": "neoth"
     },
     {
       "test": "self_improve::tests::w142_re_evaluated_evidence_cannot_bypass_prior_expected_digest",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "370D8866C201790B7949B9CD222A1D6D1C45B99F4C8F1B22E72EB29B116ACC6D",
+      "sourceSha256": "537E6A814D4A87C7F084D7A370C2206B1575D3D4E432318015E9F799664881D4",
       "junitClass": "neoth"
     },
     {
       "test": "self_improve::tests::w142_stage_discards_imported_quality_evidence",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "370D8866C201790B7949B9CD222A1D6D1C45B99F4C8F1B22E72EB29B116ACC6D",
+      "sourceSha256": "537E6A814D4A87C7F084D7A370C2206B1575D3D4E432318015E9F799664881D4",
       "junitClass": "neoth"
     },
     {
@@ -1304,6 +1304,60 @@
       "sourcePath": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
       "sourceSha256": "1266C5B44F6C027BE1F27CED7E0705BE620AD94AD23938611B301D602D17A179",
       "junitClass": "neoth"
+    },
+    {
+      "test": "self_improve::tests::accept_rejects_legacy_status_only_approval",
+      "sourcePath": "SRC/neothd/src/self_improve.rs",
+      "sourceSha256": "537E6A814D4A87C7F084D7A370C2206B1575D3D4E432318015E9F799664881D4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "self_improve::tests::accept_writes_skill_and_rollback_restores_it",
+      "sourcePath": "SRC/neothd/src/self_improve.rs",
+      "sourceSha256": "537E6A814D4A87C7F084D7A370C2206B1575D3D4E432318015E9F799664881D4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "self_improve::tests::audited_approval_payload_cas_rejects_last_moment_mutation",
+      "sourcePath": "SRC/neothd/src/self_improve.rs",
+      "sourceSha256": "537E6A814D4A87C7F084D7A370C2206B1575D3D4E432318015E9F799664881D4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "self_improve::tests::home_root_runtime_state_cannot_self_invalidate_refresh_and_execute",
+      "sourcePath": "SRC/neothd/src/self_improve.rs",
+      "sourceSha256": "537E6A814D4A87C7F084D7A370C2206B1575D3D4E432318015E9F799664881D4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "self_improve::tests::installed_legacy_status_only_proposal_is_rejected_before_accept",
+      "sourcePath": "SRC/neothd/src/self_improve.rs",
+      "sourceSha256": "537E6A814D4A87C7F084D7A370C2206B1575D3D4E432318015E9F799664881D4",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "every_live_route_uses_the_choke_point_and_keet_binds_raw_capability",
+      "sourcePath": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
+      "sourceSha256": "5EB20799081311C47B6AAC9DE8D50629C5C4B7355B2505F7052B11F78927BC65",
+      "junitClass": "neoth::proactive_egress_contract_source_gate"
+    },
+    {
+      "test": "exactly_one_production_proactive_transport_seam_exists",
+      "sourcePath": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
+      "sourceSha256": "5EB20799081311C47B6AAC9DE8D50629C5C4B7355B2505F7052B11F78927BC65",
+      "junitClass": "neoth::proactive_egress_contract_source_gate"
+    },
+    {
+      "test": "gui_action::tests::targeted_gui_mutations_cannot_regress_to_the_unchecked_probe",
+      "sourcePath": "SRC/neothd-gui/src/gui_action.rs",
+      "sourceSha256": "C683CC30698086E44E43478B607C1FAD029D766456B7C63B787A6C994CE67512",
+      "junitClass": "neoth::gui_channel_status"
+    },
+    {
+      "test": "gui_action::tests::targeted_gui_mutations_cannot_regress_to_the_unchecked_probe",
+      "sourcePath": "SRC/neothd-gui/src/gui_action.rs",
+      "sourceSha256": "C683CC30698086E44E43478B607C1FAD029D766456B7C63B787A6C994CE67512",
+      "junitClass": "neoth::gui_code_map_impact_controller"
     }
   ],
   "requiredGuiTests": [
@@ -1351,7 +1405,8 @@
     "chat_reasoning::tests::duplicate_or_forged_frame_clears_the_exact_projection",
     "chat_reasoning::tests::default_off_counts_controls_without_retaining_text",
     "gui_chat_bridge_controller::tests::reopen_none_or_error_settles_only_the_current_main_handoff",
-    "gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types"
+    "gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types",
+    "gui_action::tests::targeted_gui_mutations_cannot_regress_to_the_unchecked_probe"
   ],
   "requiredGuiClass": "neothd-gui::bin/neothd-gui",
   "additionalGuiCopies": {
@@ -1725,8 +1780,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1842434,
-      "sha256": "4D60F9B3760714EC37406A9C0C7C38F93ED1562646538C994230D843F8818ED0"
+      "bytes": 1844326,
+      "sha256": "864382B9B3292ADC62809BEE63056D25AEAE93391FD54BC66B31C7F36D00E667"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
@@ -2894,5 +2949,52 @@
       "localExecution": false,
       "scope": "Core CLI binary build and generated reference only; native and GUI tests remain pending"
     }
+  },
+  "wave158Repair": {
+    "scope": "four reviewed repair families and W142 diagnostic; W137 unresolved",
+    "observedSource": "ff146652e6ef230bd500206978f183e5040644d6",
+    "observedRun": 35604563909,
+    "windowsJob": 106348405161,
+    "macosJob": 106348405393,
+    "windowsResult": "16938run/16926pass(1leaky)/12fail/22skip",
+    "macosResult": "17003run/16990pass/13fail/23skip",
+    "sourceFiles": [
+      {
+        "path": "SRC/neothd/src/self_improve.rs",
+        "bytes": 420483,
+        "sha256": "537E6A814D4A87C7F084D7A370C2206B1575D3D4E432318015E9F799664881D4"
+      },
+      {
+        "path": "SRC/neothd/src/loop_engine/engine.rs",
+        "bytes": 65997,
+        "sha256": "BF547017099ACB8E0080FA5D7E4BB4BC62C5E7171F8681429F60FDE9A6B59458"
+      },
+      {
+        "path": "SRC/neothd-gui/src/gui_action.rs",
+        "bytes": 336973,
+        "sha256": "C683CC30698086E44E43478B607C1FAD029D766456B7C63B787A6C994CE67512"
+      },
+      {
+        "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",
+        "bytes": 57294,
+        "sha256": "5EB20799081311C47B6AAC9DE8D50629C5C4B7355B2505F7052B11F78927BC65"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 1844326,
+        "sha256": "864382B9B3292ADC62809BEE63056D25AEAE93391FD54BC66B31C7F36D00E667"
+      }
+    ],
+    "sourceReviewSha256": "53F7AA2ED25002BDCBB0A74B90977118636E1699E30923C91866FB87397B09EC",
+    "diagnosticPatchSha256": "A5E553662B45F97E9A755F815C2DD350680A133EF2B8A68A94F93FBDFB0E85DA",
+    "diagnosticReviewSha256": "AA143DC741D2249052CF806BB7161D51FAC56499408BF77BF1A85712E128BEF9",
+    "requiredClassSet": [
+      "neoth::gui_channel_status",
+      "neoth::gui_code_map_impact_controller",
+      "neothd-gui::bin/neothd-gui"
+    ],
+    "duplicatedTest": "gui_action::tests::targeted_gui_mutations_cannot_regress_to_the_unchecked_probe",
+    "hostedExecution": "pending",
+    "releaseReady": false
   }
 }

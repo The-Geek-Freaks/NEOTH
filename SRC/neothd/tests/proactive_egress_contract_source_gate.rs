@@ -396,6 +396,7 @@ fn exactly_one_production_proactive_transport_seam_exists() {
     let mut sources = Vec::new();
     rust_sources_below(&root, &mut sources);
     let mut seams = Vec::new();
+    let mut leased_proxy_sends = Vec::new();
     for path in sources {
         let source = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
@@ -410,9 +411,22 @@ fn exactly_one_production_proactive_transport_seam_exists() {
                 .expect("source below crate src")
                 .to_string_lossy()
                 .replace('\\', "/");
-            seams.push(format!("{relative}:{line}"));
+            if relative == "daemon/channel_live_registry.rs" {
+                leased_proxy_sends.push(format!("{relative}:{line}"));
+            } else {
+                seams.push(format!("{relative}:{line}"));
+            }
         }
     }
+    assert_eq!(leased_proxy_sends.len(), 1, "unexpected live-registry raw send topology: {leased_proxy_sends:?}");
+    let registry = include_str!("../src/daemon/channel_live_registry.rs");
+    let leased_proxy = between(
+        registry,
+        "impl Channel for LeasedProactiveChannel",
+        "#[cfg(test)]",
+    );
+    assert!(leased_proxy.contains("let _closing = Arc::clone(&self.closing_gate).lock_owned().await;"));
+    assert!(leased_proxy.contains("self.channel.send_proactive(chat_id, text).await"));
     assert_eq!(
         seams.len(),
         1,
@@ -1193,6 +1207,7 @@ fn every_live_route_uses_the_choke_point_and_keet_binds_raw_capability() {
     let route_code = rust_code_only(route);
     let route = route_code.as_str();
     let live_route_arms = [
+        "DeliveryRoute::ConnectionBound",
         "DeliveryRoute::Telegram",
         "DeliveryRoute::Slack",
         "DeliveryRoute::Discord",

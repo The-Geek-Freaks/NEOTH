@@ -2344,6 +2344,17 @@ pub fn accept_proposal_with_expected_evidence(
                 p.status
             );
         }
+        // A legacy `VerifiedApproved` bit must report its missing audited
+        // receipt before any later quality-evidence requirement. Otherwise a
+        // migration/replay attempt is indistinguishable from an ordinary
+        // pending-quality proposal, even though neither is acceptable.
+        if p.status == ProposalStatus::VerifiedApproved {
+            verify_audit_bound_proposal_approval(home, &p).with_context(|| {
+                format!(
+                    "proposal `{id_owned}` approval is legacy or its architectural source snapshot changed"
+                )
+            })?;
+        }
         require_current_proposal_quality(home, &p)
             .context("proposal quality evidence is incomplete or stale; re-stage and run the fixed approved verifier before accepting")?;
         let evidence_sha256 = p
@@ -2370,11 +2381,6 @@ pub fn accept_proposal_with_expected_evidence(
                 quality_state: ProposalQualityState::Current,
             });
         }
-        verify_audit_bound_proposal_approval(home, &p).with_context(|| {
-            format!(
-                "proposal `{id_owned}` approval is legacy or its architectural source snapshot changed"
-            )
-        })?;
         #[cfg(test)]
         run_after_accept_architecture_validation_hook();
         // IMPR-02 + GR-fix: drift check — ABORT (not just warn) if the target skill
@@ -5396,6 +5402,7 @@ mod tests {
         )
         .await
         .unwrap();
+        w142_mint_current_quality_evidence(home.path(), &id);
         persist_verified_approval_after_audit(home.path(), &id, &prepared).unwrap();
 
         assert!(matches!(verdict, ExecutionVerdict::Approved));
@@ -5789,6 +5796,19 @@ mod tests {
                 .push(command.to_owned());
         }
         config.save(home).unwrap();
+    }
+
+    /// Test-only fixture arrangement for assertions that need to reach a later
+    /// approval or execution guard. It mints the same fixed-corpus evidence as
+    /// production acceptance requires; it does not persist an approval.
+    fn w142_mint_current_quality_evidence(home: &Path, id: &str) {
+        let proposal = unique_proposal_by_id(&load_proposals(home).unwrap(), id)
+            .unwrap()
+            .clone();
+        w142_write_fixed_corpus(home, &proposal.skill);
+        let verifier = w142_write_verifier(home, &proposal, serde_json::json!({}));
+        w142_enable_verifier(home, &verifier);
+        evaluate_proposal_quality_with_approved_verifier(home, id, &verifier).unwrap();
     }
 
     #[tokio::test]
@@ -7425,6 +7445,7 @@ mod tests {
             external_proposal("approval-cas", &target, "pub fn before() {}\n"),
         )
         .unwrap();
+        w142_mint_current_quality_evidence(home.path(), &id);
         let analysis = load_proposals(home.path()).unwrap()[0]
             .code_map_analysis
             .clone();
@@ -7645,8 +7666,10 @@ mod tests {
             .expect("stage must create a proposal-bound ledger record");
         assert!(accepted_record.accepted, "accept must update that record");
 
-        // double-accept is rejected
-        assert!(accept_proposal(&tmp, &id).is_err());
+        // Accepted is intentionally idempotent while its quality evidence is
+        // current; the retry must leave the installed document unchanged.
+        accept_proposal(&tmp, &id).expect("accepted proposal retry must be idempotent");
+        assert_eq!(std::fs::read_to_string(&skill).unwrap(), "IMPROVED skill");
 
         // rollback restores the exact replaced content
         rollback_proposal(&tmp, &id).unwrap();

@@ -41964,6 +41964,10 @@ exit 72
         let calls = calls.to_path_buf();
         let expected_quality = expected_quality.to_owned();
         let expected_summary = expected_summary.to_owned();
+        let diagnostic_calls = calls.clone();
+        let diagnostic_weak = window.as_weak();
+        let diagnostic_expected_quality = expected_quality.clone();
+        let diagnostic_expected_summary = expected_summary.clone();
         let timer = slint::Timer::default();
         timer.start(
             slint::TimerMode::Repeated,
@@ -42001,7 +42005,39 @@ exit 72
         let _ = window.hide();
         slint::run_event_loop_until_quit().unwrap();
         drop(timer);
-        assert!(done.get(), "W142 terminal refresh did not settle");
+        if !done.get() {
+            let diagnostic_call_lines = w116_call_lines(&diagnostic_calls);
+            let diagnostic_count = |name: &str| {
+                diagnostic_call_lines
+                    .iter()
+                    .filter(|line| line.as_str() == name)
+                    .count()
+            };
+            let diagnostic_callbacks = super::SELFIMPROVE_REFRESH_CALLBACKS
+                .load(std::sync::atomic::Ordering::Acquire);
+            let diagnostic_toasts = w142_toast_count(window, "Accepted");
+            let diagnostic_proposal = window.get_si_proposals().row_data(0).map(|row| {
+                format!(
+                    "id={:?}, status={:?}, quality_state={:?}, evidence_sha256={:?}, title={:?}",
+                    row.id.to_string(),
+                    row.status.to_string(),
+                    row.quality_state.to_string(),
+                    row.evidence_sha256.to_string(),
+                    row.title.to_string(),
+                )
+            });
+            panic!(
+                "W142 terminal refresh did not settle: expected quality={diagnostic_expected_quality:?} summary={diagnostic_expected_summary:?} counts={expected_counts:?}; observed weak_upgrade={} in_flight={} accepts={} reviews={} statuses={} logs={} callbacks={} accepted_toasts={} proposal={diagnostic_proposal:?}",
+                diagnostic_weak.upgrade().is_some(),
+                window.get_si_accept_in_flight(),
+                diagnostic_count("si-accept"),
+                diagnostic_count("si-review"),
+                diagnostic_count("si-status"),
+                diagnostic_count("si-log"),
+                diagnostic_callbacks,
+                diagnostic_toasts,
+            );
+        }
     }
 
     #[cfg(not(windows))]

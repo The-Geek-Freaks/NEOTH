@@ -7631,7 +7631,6 @@ mod tests {
             "Self-Improve enable",
             "Self-Improve disable",
             "Self-Improve dry-run",
-            "Self-Improve accept",
             "Self-Improve rollback",
             "Self-Dev scan",
             "Self-Dev accept",
@@ -7653,6 +7652,20 @@ mod tests {
             );
         }
         assert!(callbacks.contains("&[\"reflect\", \"digest\", \"daily\"]"));
+
+        // Accept now lives in the focused callback registration so its
+        // single-flight/readback boundary cannot be weakened by the broad
+        // settings-panel region changing around it.
+        let accept = source
+            .split("fn register_selfimprove_accept_callback")
+            .nth(1)
+            .and_then(|tail| tail.split("fn refresh_selfimprove").next())
+            .expect("Self-Improve accept callback registration");
+        assert!(accept.contains("run_neothd_json_action::<gui_action::SelfImproveAcceptAck>"));
+        assert!(accept.contains("\"Self-Improve accept\""));
+        assert!(accept.contains("\"--expected-evidence-sha256\""));
+        assert!(accept.contains("ack.verify(id.trim(), evidence_sha256.trim())"));
+        assert!(accept.contains("selfimprove_accept_readback_matches"));
 
         let wave8_start = source
             .find("Wave 8 — C2 permissions matrix + A4 kanban context menu")

@@ -1114,10 +1114,20 @@ mod tests {
             &admitted,
         )
         .unwrap();
-        let freedom = crate::config::FreedomConfig {
+        assert!(
+            retained.has_skill_cap(),
+            "W145 fixture must carry the resolver-minted retained Skill cap"
+        );
+        let mut freedom = crate::config::FreedomConfig {
             autonomy: AutonomyLevel::Full,
             ..Default::default()
         };
+        // Each comparison run has exactly one provider-emitted MCP payload.
+        // The default inner goal ceiling permits a follow-up provider round
+        // after the uncapped tool result, which changes this fixture's
+        // provider-call counter without exercising a second MCP invocation.
+        // Keeping it at one isolates the retained cap's pre-transport denial.
+        freedom.goal.max_turns = 1;
         let config = LoopConfig {
             min_rounds: 1,
             max_rounds: 1,

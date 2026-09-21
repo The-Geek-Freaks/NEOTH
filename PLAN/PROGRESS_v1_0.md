@@ -2,6 +2,18 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W158 native recovery (2026-09-21):** hosted ff146652 ran 16,938 Windows
+and 17,003 macOS tests; 12/13 failed respectively. Four independently reviewed
+repair families now preserve the real Self-Improve quality/approval/CAS gates,
+the retained MCP transport proof and the current GUI/proactive contracts.
+W142 now emits failure-only condition snapshots without changing its deadline
+or assertions. Its cause and the W137 automatic-routing failure remain open.
+See [W158](../docs/gold-wave158-verification.md). Manifest: 327 inputs;
+required cases: 225 universal native plus 3 Windows-only, 46 universal GUI plus
+11 Linux/macOS callbacks, and 7 optional adapter tests. These source changes
+still require hosted execution; no Road checkbox closes. CI 35617862631 covers
+the earlier W153 source 669f32db and does not validate this repair candidate.
+
 **W153 hosted core/reference PASS (2026-09-21):** repaired source a439a1ee
 passed Preflight 35615137561, Code Quality 35615138192 and core/reference
 35615137053 (job 106383786726). The generated reference was imported only
