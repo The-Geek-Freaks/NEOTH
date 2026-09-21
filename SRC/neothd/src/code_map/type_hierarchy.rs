@@ -183,7 +183,10 @@ impl TypeHierarchy {
                 is_relative_file_path(path),
                 "type hierarchy source path must be canonical root-relative"
             );
-            ensure!(paths.insert(path.clone()), "type hierarchy source path is duplicated");
+            ensure!(
+                paths.insert(path.clone()),
+                "type hierarchy source path is duplicated"
+            );
             ensure!(
                 source.as_bytes().len() <= DEFAULT_MAX_FILE_BYTES as usize,
                 "type hierarchy source exceeds bounded per-file byte cap"
@@ -459,8 +462,10 @@ impl<'a> RustTypeCollector<'a> {
             let Some(Some(parent_kind)) = scope.declarations.get(&parent_name) else {
                 continue;
             };
-            if !matches!(child_kind, RustDeclarationKind::Concrete | RustDeclarationKind::Trait)
-                || *parent_kind != RustDeclarationKind::Trait
+            if !matches!(
+                child_kind,
+                RustDeclarationKind::Concrete | RustDeclarationKind::Trait
+            ) || *parent_kind != RustDeclarationKind::Trait
             {
                 continue;
             }
@@ -562,7 +567,10 @@ fn python_edges(file_path: &str, source: &str) -> (Vec<TypeHierarchyEdge>, BTree
         let mut header = rest.to_owned();
         let mut open_parens = paren_delta(rest);
         let mut consumed = 1usize;
-        while open_parens > 0 && consumed < MAX_PYTHON_HEADER_LINES && index + consumed < lines.len() {
+        while open_parens > 0
+            && consumed < MAX_PYTHON_HEADER_LINES
+            && index + consumed < lines.len()
+        {
             let continuation = lines[index + consumed].trim();
             header.push(' ');
             header.push_str(continuation);
@@ -576,7 +584,10 @@ fn python_edges(file_path: &str, source: &str) -> (Vec<TypeHierarchyEdge>, BTree
         if open_parens != 0 || header.len() > MAX_PYTHON_HEADER_BYTES {
             continue;
         }
-        let compact: String = header.chars().filter(|character| !character.is_whitespace()).collect();
+        let compact: String = header
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
         if let Some(child) = compact.strip_suffix(':')
             && is_simple_identifier(child)
         {
@@ -703,13 +714,23 @@ mod tests {
             10,
         )
         .unwrap();
-        assert!(hierarchy.edges().iter().any(|edge| edge.child.symbol == "Model"));
         assert!(
-            !hierarchy.edges().iter().any(|edge| edge.child.symbol == "Duplicate"),
+            hierarchy
+                .edges()
+                .iter()
+                .any(|edge| edge.child.symbol == "Model")
+        );
+        assert!(
+            !hierarchy
+                .edges()
+                .iter()
+                .any(|edge| edge.child.symbol == "Duplicate"),
             "same-scope duplicate declarations must not choose a first endpoint"
         );
         assert!(
-            !hierarchy.endpoints().contains(&endpoint("src/types.rs", "Duplicate")),
+            !hierarchy
+                .endpoints()
+                .contains(&endpoint("src/types.rs", "Duplicate")),
             "ambiguous declarations are not valid query endpoints"
         );
     }
@@ -725,8 +746,18 @@ mod tests {
             10,
         )
         .unwrap();
-        assert!(hierarchy.edges().iter().any(|edge| edge.child.symbol == "one::Same"));
-        assert!(hierarchy.edges().iter().any(|edge| edge.child.symbol == "two::Same"));
+        assert!(
+            hierarchy
+                .edges()
+                .iter()
+                .any(|edge| edge.child.symbol == "one::Same")
+        );
+        assert!(
+            hierarchy
+                .edges()
+                .iter()
+                .any(|edge| edge.child.symbol == "two::Same")
+        );
     }
 
     #[test]
@@ -744,7 +775,14 @@ mod tests {
             parent: endpoint("pkg/models.py", "Parent"),
             language: "python".into(),
         }));
-        assert_eq!(hierarchy.edges().iter().filter(|edge| edge.language == "python").count(), 1);
+        assert_eq!(
+            hierarchy
+                .edges()
+                .iter()
+                .filter(|edge| edge.language == "python")
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -790,24 +828,98 @@ mod tests {
         let b = endpoint("src/types.rs", "B");
         let c = endpoint("src/types.rs", "C");
         let hierarchy = TypeHierarchy::from_edges(vec![
-            TypeHierarchyEdge { child: a.clone(), parent: b.clone(), language: "rust".into() },
-            TypeHierarchyEdge { child: b.clone(), parent: c.clone(), language: "rust".into() },
-            TypeHierarchyEdge { child: c.clone(), parent: a.clone(), language: "rust".into() },
+            TypeHierarchyEdge {
+                child: a.clone(),
+                parent: b.clone(),
+                language: "rust".into(),
+            },
+            TypeHierarchyEdge {
+                child: b.clone(),
+                parent: c.clone(),
+                language: "rust".into(),
+            },
+            TypeHierarchyEdge {
+                child: c.clone(),
+                parent: a.clone(),
+                language: "rust".into(),
+            },
         ])
         .unwrap();
-        let budget = TypeTraversalBudget { max_depth: 8, max_nodes: 3, max_text_bytes: 100, max_work_steps: 8 };
-        let ancestors = hierarchy.query_bounded(&a, TypeHierarchyDirection::Ancestors, budget).unwrap();
-        assert_eq!(ancestors.iter().map(|entry| entry.endpoint.symbol.as_str()).collect::<Vec<_>>(), vec!["B", "C"]);
-        assert!(hierarchy.query_bounded(&endpoint("src/types.rs", "Missing"), TypeHierarchyDirection::Ancestors, budget).is_err());
-        assert!(hierarchy.query_bounded(&a, TypeHierarchyDirection::Ancestors, TypeTraversalBudget { max_nodes: 0, ..budget }).is_err());
-        assert!(hierarchy.query_bounded(&a, TypeHierarchyDirection::Ancestors, TypeTraversalBudget { max_text_bytes: 1, ..budget }).is_err());
-        assert!(hierarchy.query_bounded(&a, TypeHierarchyDirection::Ancestors, TypeTraversalBudget { max_work_steps: 0, ..budget }).is_err());
+        let budget = TypeTraversalBudget {
+            max_depth: 8,
+            max_nodes: 3,
+            max_text_bytes: 100,
+            max_work_steps: 8,
+        };
+        let ancestors = hierarchy
+            .query_bounded(&a, TypeHierarchyDirection::Ancestors, budget)
+            .unwrap();
+        assert_eq!(
+            ancestors
+                .iter()
+                .map(|entry| entry.endpoint.symbol.as_str())
+                .collect::<Vec<_>>(),
+            vec!["B", "C"]
+        );
+        assert!(
+            hierarchy
+                .query_bounded(
+                    &endpoint("src/types.rs", "Missing"),
+                    TypeHierarchyDirection::Ancestors,
+                    budget
+                )
+                .is_err()
+        );
+        assert!(
+            hierarchy
+                .query_bounded(
+                    &a,
+                    TypeHierarchyDirection::Ancestors,
+                    TypeTraversalBudget {
+                        max_nodes: 0,
+                        ..budget
+                    }
+                )
+                .is_err()
+        );
+        assert!(
+            hierarchy
+                .query_bounded(
+                    &a,
+                    TypeHierarchyDirection::Ancestors,
+                    TypeTraversalBudget {
+                        max_text_bytes: 1,
+                        ..budget
+                    }
+                )
+                .is_err()
+        );
+        assert!(
+            hierarchy
+                .query_bounded(
+                    &a,
+                    TypeHierarchyDirection::Ancestors,
+                    TypeTraversalBudget {
+                        max_work_steps: 0,
+                        ..budget
+                    }
+                )
+                .is_err()
+        );
     }
 
     #[test]
     fn from_parts_rejects_portably_noncanonical_endpoint_paths() {
-        for path in ["../escape.rs", "/absolute.rs", "C:/drive.rs", "src/nu\0l.rs"] {
-            assert!(TypeEndpoint::new(path, "Thing").is_err(), "must reject {path:?}");
+        for path in [
+            "../escape.rs",
+            "/absolute.rs",
+            "C:/drive.rs",
+            "src/nu\0l.rs",
+        ] {
+            assert!(
+                TypeEndpoint::new(path, "Thing").is_err(),
+                "must reject {path:?}"
+            );
         }
     }
 

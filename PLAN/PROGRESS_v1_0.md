@@ -2,16 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
-**W132 source admitted / W136 active (2026-09-21):** TypeHierarchy now has
-atomic full/delta persistence with an authoritative declaration inventory,
-separate type generation and bounded MCP ancestor/descendant queries. Final
-independent review approved five source files and sixteen new regressions,
-including missing-inventory refusal and actual stdio binding. See
-[W132](../docs/gold-wave132-verification.md). The cumulative matrix has 305
-inputs and 132 required native tests; hosted execution remains required.
-W136 prompt-visible skill summaries are separately in review and excluded from
-that manifest. W135 confirms P1-20 sidebar source exists and still awaits its
-stated exact-head native/release evidence. No Road count or checkbox changes.
+**W136 skill registry source admitted (2026-09-21):** chat and channel prompts
+now receive the exact policy-filtered registry metadata as required typed
+context. Delegation, retry and local fallback retain the same snapshot;
+oversized inventories fail before dispatch. Eight source files passed
+independent review, with five new regressions and three strengthened real
+composer/provider regressions. See [W136](../docs/gold-wave136-verification.md).
+The cumulative matrix has 308 inputs and 138 required native identities;
+hosted compilation/runtime and the full P2-10 scope remain open.
+
+**W132 hosted formatting:** Code Quality 35578149332 passed on a7b78704.
+Preflight 35578149373 supplied 39 exact Rustfmt hunks across three files;
+these were imported without a local formatter. Fresh consolidated hosted
+gates remain required. W135 sidebar source awaits native/render/release
+acceptance. Road counts remain **1324/1015/307/2**.
 
 **W133 CI recovery (2026-09-21):** current-source Windows/macOS GUI compilation,
 Linux strict lint and optional-adapter WAL fixture failures are diagnosed and
@@ -26,8 +30,8 @@ with the native snapshot. Bounded forward/reverse MCP queries return the
 existing context witness; unknown files and stale generations are refused.
 Six source files and twelve focused regressions passed independent source
 review; hosted compilation/runtime remain required. See [W131](../docs/gold-wave131-verification.md).
-W132 TypeHierarchy is being repaired after review before persistence/MCP
-integration. P2-11, Graphify/self-knowledge and Road counts stay open/unchanged.
+W132 TypeHierarchy is now independently reviewed and published in a7b78704.
+P2-11, Graphify/self-knowledge and Road counts stay open/unchanged.
 
 
 Hosted format follow-up: W131 source f3b6a0ae received 76 exact Rustfmt hunks
@@ -37,14 +41,16 @@ required; no semantic change or Road checkbox closure is attributed to formattin
 
 
 Hosted status on 85658d48: Preflight 35575452885 and Code Quality 35575452496
-passed. Scheduled full CI 35575496939 and Windows preview 35575775478 are
-running against that exact source; no final native/portable verdict yet.
+passed. Scheduled full CI 35575496939 was cancelled after the concrete errors
+below. Windows preview 35575775478 continues on that older source; it cannot
+establish current-head native/portable acceptance.
 
 
 CI 35575496939 on 85658d48 reached Linux strict Clippy and rejected the
 nine-argument atomic delta-publish function (job 106256308815). This observed
-follow-up is being repaired with the W132 integration. Other native jobs and
-preview continue; a Linux runtime pass is not claimed.
+follow-up and the optional-adapter test import errors are repaired in W132.
+The known-broken full CI is confirmed cancelled; a fresh complete run is
+required. Preview continues separately; a Linux runtime pass is not claimed.
 
 **W128/W130 (2026-09-21):** existing IRC/Twitch/Nostr adapters gain proactive
 delivery through exact live-generation leases and the established durable egress

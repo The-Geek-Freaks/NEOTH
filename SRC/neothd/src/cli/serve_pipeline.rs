@@ -2376,6 +2376,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             let skill_resolver =
                 crate::skills::resolver::SkillRouteResolver::new(skill_snapshot.clone())
                     .retaining(|skill| !eval_suppress && !blocked_skill_ids.contains(skill.id()));
+            // Keep the session-start registry data derived from this exact
+            // authority-bound, policy-filtered snapshot. The owned typed value
+            // is passed into the common composer and never re-read by retry or
+            // fallback branches.
+            let channel_skill_registry_context = skill_resolver
+                .session_registry_context(&[])
+                .context("render channel session-start Skill registry context")?;
             let slash_skill_name = match crate::slash::parse_invocation(&sanitized_text) {
                 crate::slash::Invocation::Command { name, .. }
                     if skill_snapshot
@@ -2772,6 +2779,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     repo_context_block: channel_repo_context.as_deref(),
                     attachment_contexts: channel_attachment_contexts.as_ref(),
                     skill_system_prompt: skill_layer.as_deref(),
+                    skill_registry_context: Some(&channel_skill_registry_context),
                     used_skill_id: used_skill_id.as_deref(),
                     // Route selection happens after hooks and Council admission.
                     // The MCP A/D pair is inserted only for the exact MCP leaf.
@@ -6093,6 +6101,7 @@ mod tests {
             repo_context_block: Some(hostile),
             attachment_contexts: Some(&attachments),
             skill_system_prompt: None,
+            skill_registry_context: None,
             used_skill_id: None,
             mcp_catalogue: None,
             persona_override: None,
@@ -7025,6 +7034,7 @@ mod tests {
             repo_context_block: None,
             attachment_contexts: Some(&attachments),
             skill_system_prompt: None,
+            skill_registry_context: None,
             used_skill_id: None,
             mcp_catalogue: None,
             persona_override: None,

@@ -183,6 +183,11 @@ pub struct EnrichmentInputs<'a> {
     /// Matched skill's `system_prompt` (possibly layered with a mode
     /// `system_prompt_delta`). `None` when no skill activated.
     pub skill_system_prompt: Option<&'a str>,
+    /// Session-start, authority-admitted skill inventory rendered by the
+    /// resolver from the exact snapshot used for routing. This remains typed
+    /// Block D data: it describes available skills and has no instruction
+    /// authority. `None` on surfaces without that snapshot.
+    pub skill_registry_context: Option<&'a RenderedUntrustedContext>,
     /// Identifier of the activated skill, plumbed through to the
     /// downstream WAL audit. `None` mirrors `skill_system_prompt`.
     pub used_skill_id: Option<&'a str>,
@@ -435,6 +440,11 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
             budget_item(Block::D, None, attachment.as_str()).with_required_retention()
         }));
     }
+    if let Some(skill_registry_context) = inputs.skill_registry_context {
+        budget_items.push(
+            budget_item(Block::D, None, skill_registry_context.as_str()).with_required_retention(),
+        );
+    }
     for (block, atomic_group, layer) in &layers_after_attachments {
         if let Some(content) = layer {
             budget_items.push(budget_item(*block, *atomic_group, content));
@@ -485,6 +495,7 @@ mod tests {
             repo_context_block: None,
             attachment_contexts: None,
             skill_system_prompt: None,
+            skill_registry_context: None,
             used_skill_id: None,
             mcp_catalogue: None,
             persona_override: None,
@@ -1003,6 +1014,43 @@ mod tests {
     }
 
     #[test]
+    fn session_start_skill_registry_is_retained_as_typed_block_d_before_skill_body() {
+        let registry = UntrustedContext::new(
+            UntrustedContextClass::OtherReviewed,
+            "skill-registry:session",
+            "session registry: alpha — approved skill",
+        )
+        .render();
+        let mut inputs = empty_inputs("run alpha");
+        inputs.skill_registry_context = Some(&registry);
+        inputs.skill_system_prompt = Some("selected alpha instructions");
+        inputs.used_skill_id = Some("alpha");
+
+        let out = build_enriched_request(inputs);
+        let registry_item = out
+            .budget_items
+            .iter()
+            .find(|item| item.content == registry.as_str())
+            .expect("session registry must be represented by its typed payload");
+        assert_eq!(registry_item.block, crate::tokens::budget::Block::D);
+        assert_eq!(
+            registry_item.retention,
+            crate::tokens::budget::PromptRetention::Required
+        );
+        let registry_index = out
+            .budget_items
+            .iter()
+            .position(|item| item.content == registry.as_str())
+            .unwrap();
+        let skill_index = out
+            .budget_items
+            .iter()
+            .position(|item| item.content == "selected alpha instructions")
+            .unwrap();
+        assert!(registry_index < skill_index, "registry data precedes the selected body");
+    }
+
+    #[test]
     fn snapshot_full_seven_layer_composition() {
         let catalogue = McpPromptCatalogue::from_catalogue_data("## Server `fs`\n- read_file")
             .expect("catalogue");
@@ -1015,6 +1063,7 @@ mod tests {
             repo_context_block: Some("<repo-context>\nsrc/x.rs\n</repo-context>"),
             attachment_contexts: None,
             skill_system_prompt: Some("You are the systematic-debugging skill."),
+            skill_registry_context: None,
             used_skill_id: Some("systematic-debugging"),
             mcp_catalogue: Some(&catalogue),
             persona_override: Some("concise"),
@@ -1098,6 +1147,7 @@ mod tests {
             repo_context_block: Some("<repo-context>\nx.rs\n</repo-context>"),
             attachment_contexts: None,
             skill_system_prompt: None,
+            skill_registry_context: None,
             used_skill_id: None,
             mcp_catalogue: None,
             persona_override: None,
@@ -1149,6 +1199,7 @@ mod tests {
             repo_context_block: None,
             attachment_contexts: None,
             skill_system_prompt: Some("Morning-news skill prompt."),
+            skill_registry_context: None,
             used_skill_id: Some("morning-news"),
             mcp_catalogue: None,
             persona_override: Some("warm"),
@@ -1241,6 +1292,7 @@ mod tests {
             repo_context_block: Some("volatile repo context"),
             attachment_contexts: None,
             skill_system_prompt: Some("product spec and plan"),
+            skill_registry_context: None,
             used_skill_id: Some("conductor"),
             mcp_catalogue: Some(&catalogue),
             persona_override: None,

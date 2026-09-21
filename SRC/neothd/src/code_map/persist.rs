@@ -231,7 +231,10 @@ mod v10_migration_tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(type_generation, -1, "legacy types are invalid until rebuilt");
+        assert_eq!(
+            type_generation, -1,
+            "legacy types are invalid until rebuilt"
+        );
         let rows: Vec<(String, Option<String>)> = conn
             .prepare("SELECT kind, target_file FROM code_map_edges ORDER BY id")
             .unwrap()
@@ -2004,13 +2007,23 @@ fn replace_type_hierarchy_in_transaction(
         ensure_current_type_endpoint(tx, root, &edge.child)?;
         ensure_current_type_endpoint(tx, root, &edge.parent)?;
     }
-    tx.execute("DELETE FROM code_map_type_edges WHERE root = ?1", rusqlite::params![root])?;
-    tx.execute("DELETE FROM code_map_type_endpoints WHERE root = ?1", rusqlite::params![root])?;
+    tx.execute(
+        "DELETE FROM code_map_type_edges WHERE root = ?1",
+        rusqlite::params![root],
+    )?;
+    tx.execute(
+        "DELETE FROM code_map_type_endpoints WHERE root = ?1",
+        rusqlite::params![root],
+    )?;
     let mut endpoint_stmt = tx.prepare(
         "INSERT INTO code_map_type_endpoints (root, file_path, symbol) VALUES (?1, ?2, ?3)",
     )?;
     for endpoint in hierarchy.endpoints() {
-        endpoint_stmt.execute(rusqlite::params![root, &endpoint.file_path, &endpoint.symbol])?;
+        endpoint_stmt.execute(rusqlite::params![
+            root,
+            &endpoint.file_path,
+            &endpoint.symbol
+        ])?;
     }
     let mut edge_stmt = tx.prepare(
         "INSERT INTO code_map_type_edges \
@@ -2019,12 +2032,18 @@ fn replace_type_hierarchy_in_transaction(
     )?;
     for edge in hierarchy.edges() {
         edge_stmt.execute(rusqlite::params![
-            root, &edge.child.file_path, &edge.child.symbol,
-            &edge.parent.file_path, &edge.parent.symbol, &edge.language,
+            root,
+            &edge.child.file_path,
+            &edge.child.symbol,
+            &edge.parent.file_path,
+            &edge.parent.symbol,
+            &edge.language,
         ])?;
     }
     let generation: i64 = tx.query_row(
-        "SELECT index_generation FROM code_map_roots WHERE root = ?1", rusqlite::params![root], |row| row.get(0),
+        "SELECT index_generation FROM code_map_roots WHERE root = ?1",
+        rusqlite::params![root],
+        |row| row.get(0),
     )?;
     ensure!(
         tx.execute(
@@ -2042,14 +2061,22 @@ fn ensure_current_type_endpoint(
     endpoint: &crate::code_map::type_hierarchy::TypeEndpoint,
 ) -> Result<()> {
     let checked = crate::code_map::type_hierarchy::TypeEndpoint::new(
-        endpoint.file_path.clone(), endpoint.symbol.clone(),
+        endpoint.file_path.clone(),
+        endpoint.symbol.clone(),
     )?;
-    ensure!(checked == *endpoint, "type endpoint validation changed during publication");
+    ensure!(
+        checked == *endpoint,
+        "type endpoint validation changed during publication"
+    );
     let exists: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM code_map_files WHERE root = ?1 AND path = ?2)",
-        rusqlite::params![root, &endpoint.file_path], |row| row.get(0),
+        rusqlite::params![root, &endpoint.file_path],
+        |row| row.get(0),
     )?;
-    ensure!(exists, "type hierarchy endpoint is not a current file in the published root");
+    ensure!(
+        exists,
+        "type hierarchy endpoint is not a current file in the published root"
+    );
     Ok(())
 }
 
@@ -2065,27 +2092,47 @@ pub(crate) fn load_type_hierarchy_for_root_bounded(
     let (index_generation, type_generation, complete): (i64, i64, bool) = conn.query_row(
         "SELECT index_generation, type_generation, oversize_skipped = 0 AND truncated_at IS NULL \
          FROM code_map_roots WHERE root = ?1",
-        rusqlite::params![root], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        rusqlite::params![root],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
-    ensure!(complete && index_generation > 0 && index_generation == type_generation,
-        "code-map type hierarchy has no current complete generation; rebuild the code map");
+    ensure!(
+        complete && index_generation > 0 && index_generation == type_generation,
+        "code-map type hierarchy has no current complete generation; rebuild the code map"
+    );
     let freshness = index_freshness_receipt(conn, root)?;
-    ensure!(!freshness.stale, "code-map type hierarchy is stale; rebuild the code map before querying it");
+    ensure!(
+        !freshness.stale,
+        "code-map type hierarchy is stale; rebuild the code map before querying it"
+    );
     let mut text = 0usize;
     let mut endpoints = std::collections::BTreeSet::new();
     let mut endpoint_stmt = conn.prepare(
         "SELECT file_path, symbol FROM code_map_type_endpoints WHERE root = ?1 \
          ORDER BY file_path, symbol LIMIT ?2",
     )?;
-    let mut endpoint_rows = endpoint_stmt.query(rusqlite::params![root, i64::try_from(max_endpoints.saturating_add(1))?])?;
+    let mut endpoint_rows = endpoint_stmt.query(rusqlite::params![
+        root,
+        i64::try_from(max_endpoints.saturating_add(1))?
+    ])?;
     while let Some(row) = endpoint_rows.next()? {
         if endpoints.len() >= max_endpoints {
-            return Ok((crate::code_map::type_hierarchy::TypeHierarchy::default(), true));
+            return Ok((
+                crate::code_map::type_hierarchy::TypeHierarchy::default(),
+                true,
+            ));
         }
-        let endpoint = crate::code_map::type_hierarchy::TypeEndpoint::new(row.get::<_, String>(0)?, row.get::<_, String>(1)?)?;
+        let endpoint = crate::code_map::type_hierarchy::TypeEndpoint::new(
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+        )?;
         ensure_current_type_endpoint(conn, root, &endpoint)?;
-        text = text.checked_add(endpoint.file_path.len() + endpoint.symbol.len()).ok_or_else(|| anyhow::anyhow!("type hierarchy text counter overflow"))?;
-        ensure!(text <= max_text_bytes, "type hierarchy exceeds bounded {max_text_bytes}-byte text budget");
+        text = text
+            .checked_add(endpoint.file_path.len() + endpoint.symbol.len())
+            .ok_or_else(|| anyhow::anyhow!("type hierarchy text counter overflow"))?;
+        ensure!(
+            text <= max_text_bytes,
+            "type hierarchy exceeds bounded {max_text_bytes}-byte text budget"
+        );
         endpoints.insert(endpoint);
     }
     let mut edges = Vec::new();
@@ -2094,21 +2141,51 @@ pub(crate) fn load_type_hierarchy_for_root_bounded(
          FROM code_map_type_edges WHERE root = ?1 \
          ORDER BY child_file, child_symbol, parent_file, parent_symbol, language LIMIT ?2",
     )?;
-    let mut edge_rows = edge_stmt.query(rusqlite::params![root, i64::try_from(max_edges.saturating_add(1))?])?;
+    let mut edge_rows = edge_stmt.query(rusqlite::params![
+        root,
+        i64::try_from(max_edges.saturating_add(1))?
+    ])?;
     while let Some(row) = edge_rows.next()? {
         if edges.len() >= max_edges {
-            return Ok((crate::code_map::type_hierarchy::TypeHierarchy::default(), true));
+            return Ok((
+                crate::code_map::type_hierarchy::TypeHierarchy::default(),
+                true,
+            ));
         }
-        let child = crate::code_map::type_hierarchy::TypeEndpoint::new(row.get::<_, String>(0)?, row.get::<_, String>(1)?)?;
-        let parent = crate::code_map::type_hierarchy::TypeEndpoint::new(row.get::<_, String>(2)?, row.get::<_, String>(3)?)?;
+        let child = crate::code_map::type_hierarchy::TypeEndpoint::new(
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+        )?;
+        let parent = crate::code_map::type_hierarchy::TypeEndpoint::new(
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        )?;
         ensure_current_type_endpoint(conn, root, &child)?;
         ensure_current_type_endpoint(conn, root, &parent)?;
         let language: String = row.get(4)?;
-        text = text.checked_add(child.file_path.len() + child.symbol.len() + parent.file_path.len() + parent.symbol.len() + language.len()).ok_or_else(|| anyhow::anyhow!("type hierarchy text counter overflow"))?;
-        ensure!(text <= max_text_bytes, "type hierarchy exceeds bounded {max_text_bytes}-byte text budget");
-        edges.push(crate::code_map::type_hierarchy::TypeHierarchyEdge { child, parent, language });
+        text = text
+            .checked_add(
+                child.file_path.len()
+                    + child.symbol.len()
+                    + parent.file_path.len()
+                    + parent.symbol.len()
+                    + language.len(),
+            )
+            .ok_or_else(|| anyhow::anyhow!("type hierarchy text counter overflow"))?;
+        ensure!(
+            text <= max_text_bytes,
+            "type hierarchy exceeds bounded {max_text_bytes}-byte text budget"
+        );
+        edges.push(crate::code_map::type_hierarchy::TypeHierarchyEdge {
+            child,
+            parent,
+            language,
+        });
     }
-    Ok((crate::code_map::type_hierarchy::TypeHierarchy::from_parts(edges, endpoints)?, false))
+    Ok((
+        crate::code_map::type_hierarchy::TypeHierarchy::from_parts(edges, endpoints)?,
+        false,
+    ))
 }
 
 fn valid_repo_relative_import_path(path: &str) -> bool {
@@ -4916,9 +4993,14 @@ mod tests {
             confidence_tier: EdgeConfidenceTier::Inferred,
         }];
         persist_map_and_edges_bound(
-            &mut conn, &map, &old_edges, &[],
-            &crate::code_map::type_hierarchy::TypeHierarchy::default(), &root,
-        ).unwrap();
+            &mut conn,
+            &map,
+            &old_edges,
+            &[],
+            &crate::code_map::type_hierarchy::TypeHierarchy::default(),
+            &root,
+        )
+        .unwrap();
         let before_index = root_index_generation(&conn, root.display()).unwrap();
         let before_graph = root_graph_generation(&conn, root.display()).unwrap();
 
@@ -4929,15 +5011,18 @@ mod tests {
             .scan()
             .unwrap();
         let result = persist_delta_map_and_edges_bound(
-            &mut conn, &changed_map,
+            &mut conn,
+            &changed_map,
             DeltaGraphPublication {
-                published_edges: &[], import_edges: &[],
+                published_edges: &[],
+                import_edges: &[],
                 hierarchy: &crate::code_map::type_hierarchy::TypeHierarchy::default(),
                 replacement_edges: &[],
                 replacement_sources: &std::collections::BTreeSet::from(["lib.rs".to_owned()]),
                 removed_paths: &std::collections::BTreeSet::new(),
             },
-            &root, || anyhow::bail!("test final source fence rejected changed bytes"),
+            &root,
+            || anyhow::bail!("test final source fence rejected changed bytes"),
         );
         assert!(result.is_err());
         assert_eq!(
@@ -5114,24 +5199,32 @@ mod tests {
             language: "rust".into(),
         }];
         persist_map_and_edges_bound(
-            &mut conn, &first, &[], &imports,
-            &crate::code_map::type_hierarchy::TypeHierarchy::default(), &root,
-        ).unwrap();
+            &mut conn,
+            &first,
+            &[],
+            &imports,
+            &crate::code_map::type_hierarchy::TypeHierarchy::default(),
+            &root,
+        )
+        .unwrap();
         std::fs::remove_file(dir.path().join("b.rs")).unwrap();
         let second = crate::code_map::walker::RepoMapBuilder::new(root.path())
             .with_symbols(true)
             .scan()
             .unwrap();
         persist_delta_map_and_edges_bound(
-            &mut conn, &second,
+            &mut conn,
+            &second,
             DeltaGraphPublication {
-                published_edges: &[], import_edges: &[],
+                published_edges: &[],
+                import_edges: &[],
                 hierarchy: &crate::code_map::type_hierarchy::TypeHierarchy::default(),
                 replacement_edges: &[],
                 replacement_sources: &std::collections::BTreeSet::from(["a.rs".to_owned()]),
                 removed_paths: &std::collections::BTreeSet::from(["b.rs".to_owned()]),
             },
-            &root, || Ok(()),
+            &root,
+            || Ok(()),
         )
         .unwrap();
         let (stored, truncated) =
@@ -5163,38 +5256,40 @@ mod tests {
         let root = crate::code_map::root_identity::CanonicalRepoRoot::discover(dir.path()).unwrap();
         let first_source = "trait Parent {}\nstruct Child;\nimpl Parent for Child {}\n";
         std::fs::write(dir.path().join("types.rs"), first_source).unwrap();
-        let first_map = RepoMapBuilder::new(root.path()).with_symbols(true).scan().unwrap();
+        let first_map = RepoMapBuilder::new(root.path())
+            .with_symbols(true)
+            .scan()
+            .unwrap();
         let first_hierarchy = TypeHierarchy::build_bounded(
             &[("types.rs".into(), Language::Rust, first_source.into())],
             crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_EDGES,
-        ).unwrap();
+        )
+        .unwrap();
         let db_dir = tempfile::tempdir().unwrap();
         let db = db_dir.path().join("code_map.db");
         let mut conn = open(&db).unwrap();
-        persist_map_and_edges_bound(
-            &mut conn, &first_map, &[], &[], &first_hierarchy, &root,
-        ).unwrap();
+        persist_map_and_edges_bound(&mut conn, &first_map, &[], &[], &first_hierarchy, &root)
+            .unwrap();
         drop(conn);
 
         let mut conn = open(&db).unwrap();
-        let (reopened, truncated) = load_type_hierarchy_for_root_bounded(&conn, &first_map.root, 10, 10, 4096).unwrap();
+        let (reopened, truncated) =
+            load_type_hierarchy_for_root_bounded(&conn, &first_map.root, 10, 10, 4096).unwrap();
         assert!(!truncated);
         let child = TypeEndpoint::new("types.rs", "Child").unwrap();
-        assert!(reopened.endpoints().contains(&child), "known type leaf survives reopen");
-        assert!(!reopened.edges().is_empty(), "direct proven relationship survives reopen");
+        assert!(
+            reopened.endpoints().contains(&child),
+            "known type leaf survives reopen"
+        );
+        assert!(
+            !reopened.edges().is_empty(),
+            "direct proven relationship survives reopen"
+        );
 
-        let (endpoint_capped, truncated) = load_type_hierarchy_for_root_bounded(
-            &conn,
-            &first_map.root,
-            10,
-            1,
-            4096,
-        )
-        .unwrap();
+        let (endpoint_capped, truncated) =
+            load_type_hierarchy_for_root_bounded(&conn, &first_map.root, 10, 1, 4096).unwrap();
         assert!(truncated, "endpoint cap is explicit");
         assert!(endpoint_capped.edges().is_empty());
-        assert!(endpoint_capped.endpoints().is_empty(), "endpoint cap must not publish a partial hierarchy");
-        let (edge_capped, truncated) = load_type_hierarchy_for_root_bounded(
             &conn,
             &first_map.root,
             0,

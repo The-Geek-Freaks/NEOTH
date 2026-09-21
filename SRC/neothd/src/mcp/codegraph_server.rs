@@ -1800,7 +1800,8 @@ fn tool_imports_with_binding(
 }
 
 const TYPE_HIERARCHY_EDGE_LIMIT: usize = crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_EDGES;
-const TYPE_HIERARCHY_ENDPOINT_LIMIT: usize = crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_DECLARATIONS;
+const TYPE_HIERARCHY_ENDPOINT_LIMIT: usize =
+    crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_DECLARATIONS;
 const TYPE_HIERARCHY_TEXT_BYTE_LIMIT: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1864,7 +1865,10 @@ fn type_hierarchy_from_db_with_snapshot(
     db_path: &Path,
     cwd: &Path,
     requested_endpoint: &crate::code_map::type_hierarchy::TypeEndpoint,
-) -> Result<(crate::code_map::type_hierarchy::TypeHierarchy, ContextBindingWitness)> {
+) -> Result<(
+    crate::code_map::type_hierarchy::TypeHierarchy,
+    ContextBindingWitness,
+)> {
     if !db_path
         .try_exists()
         .with_context(|| format!("inspect code-map DB path {}", db_path.display()))?
@@ -1951,17 +1955,15 @@ fn tool_types_with_binding(
             return CodegraphToolResponse::plain(error_result(format!("bad args: {error}")));
         }
     };
-    let requested_endpoint = match crate::code_map::type_hierarchy::TypeEndpoint::new(
-        parsed.file,
-        parsed.symbol,
-    ) {
-        Ok(endpoint) => endpoint,
-        Err(error) => {
-            return CodegraphToolResponse::plain(error_result(format!(
-                "codegraph types rejected before DB access: {error:#}"
-            )));
-        }
-    };
+    let requested_endpoint =
+        match crate::code_map::type_hierarchy::TypeEndpoint::new(parsed.file, parsed.symbol) {
+            Ok(endpoint) => endpoint,
+            Err(error) => {
+                return CodegraphToolResponse::plain(error_result(format!(
+                    "codegraph types rejected before DB access: {error:#}"
+                )));
+            }
+        };
     let depth = match runtime.bfs_depth(parsed.depth) {
         Ok(depth) => depth.min(crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_QUERY_DEPTH),
         Err(error) => {
@@ -4091,9 +4093,14 @@ fn root() { alpha(); beta(); }
             },
         ]);
         let hierarchy = crate::code_map::type_hierarchy::TypeHierarchy::build_bounded(
-            &[("src/api.rs".to_string(), crate::code_map::walker::Language::Rust, "pub struct Api;".to_string())],
+            &[(
+                "src/api.rs".to_string(),
+                crate::code_map::walker::Language::Rust,
+                "pub struct Api;".to_string(),
+            )],
             crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_EDGES,
-        ).unwrap();
+        )
+        .unwrap();
         let mut conn = crate::code_map::persist::open(db).unwrap();
         crate::code_map::persist::persist_map_and_edges_bound(
             &mut conn,
@@ -4118,8 +4125,10 @@ fn root() { alpha(); beta(); }
             .scan()
             .unwrap();
         let canonical = crate::code_map::root_identity::CanonicalRepoRoot::discover(root).unwrap();
-        let child = crate::code_map::type_hierarchy::TypeEndpoint::new("src/types.rs", "Child").unwrap();
-        let parent = crate::code_map::type_hierarchy::TypeEndpoint::new("src/types.rs", "Parent").unwrap();
+        let child =
+            crate::code_map::type_hierarchy::TypeEndpoint::new("src/types.rs", "Child").unwrap();
+        let parent =
+            crate::code_map::type_hierarchy::TypeEndpoint::new("src/types.rs", "Parent").unwrap();
         let hierarchy = crate::code_map::type_hierarchy::TypeHierarchy::from_parts(
             vec![crate::code_map::type_hierarchy::TypeHierarchyEdge {
                 child: child.clone(),
@@ -4219,15 +4228,25 @@ fn root() { alpha(); beta(); }
                 max_bfs_depth: 2,
             }),
         );
-        assert!(bounded.result.is_error, "requested context cap must reject a non-partial type traversal");
-        std::fs::write(repo.join("src/types.rs"), "trait Parent {}\nstruct Child;\n// changed\n").unwrap();
+        assert!(
+            bounded.result.is_error,
+            "requested context cap must reject a non-partial type traversal"
+        );
+        std::fs::write(
+            repo.join("src/types.rs"),
+            "trait Parent {}\nstruct Child;\n// changed\n",
+        )
+        .unwrap();
         let stale = dispatch_codegraph_tool_at(
             &db,
             "codegraph_types",
             &serde_json::json!({"file":"src/types.rs","symbol":"Child"}),
             &repo,
         );
-        assert!(stale.is_error, "source mutation must refuse a stale type hierarchy");
+        assert!(
+            stale.is_error,
+            "source mutation must refuse a stale type hierarchy"
+        );
         assert!(text_content(&stale).contains("stale"));
     }
 
@@ -4281,10 +4300,12 @@ fn root() { alpha(); beta(); }
         )
         .unwrap();
         assert_eq!(stale["result"]["isError"], true);
-        assert!(stale["result"]["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("no current generation"));
+        assert!(
+            stale["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("no current generation")
+        );
     }
     #[test]
     fn stdio_imports_call_has_bound_receipt_and_rejects_stale_generation() {
@@ -4963,7 +4984,8 @@ fn root() { alpha(); beta(); }
                 .unwrap()
                 .iter()
                 .any(|tool| { tool["name"] == "codegraph_imports" })
-        );        assert!(
+        );
+        assert!(
             listed["result"]["tools"]
                 .as_array()
                 .unwrap()

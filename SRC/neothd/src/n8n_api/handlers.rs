@@ -360,6 +360,7 @@ fn build_provider_request(
         repo_context_block: None,
         attachment_contexts: None,
         skill_system_prompt: None,
+        skill_registry_context: None,
         used_skill_id: None,
         mcp_catalogue: None,
         persona_override: None,

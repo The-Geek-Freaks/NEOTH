@@ -2011,6 +2011,9 @@ pub(super) struct AgentRawLayers {
     repo_context_block: Option<String>,
     attachment_contexts: Option<crate::pipeline::AttachmentContextBatch>,
     skill_layer: Option<String>,
+    /// Session-start registry data from the exact admitted resolver snapshot.
+    /// This is typed Block D context, never the selected skill's authority.
+    skill_registry_context: Option<crate::pipeline::RenderedUntrustedContext>,
     persona_override: Option<String>,
     moral_core: Option<String>,
     /// GOLD-R4-11 — compiler-owned, presentation-only communication profile.
@@ -2061,6 +2064,7 @@ fn build_agent_system_from_layers(
             .and(layers.repo_context_block.as_deref()),
         attachment_contexts: layers.attachment_contexts.as_ref(),
         skill_system_prompt: layers.skill_layer.as_deref(),
+        skill_registry_context: layers.skill_registry_context.as_ref(),
         used_skill_id: None,
         mcp_catalogue: None,
         persona_override: layers.persona_override.as_deref(),
@@ -2194,6 +2198,7 @@ pub(super) async fn build_prompt_bundle(
             repo_context_block: None,
             attachment_contexts,
             skill_system_prompt: None,
+            skill_registry_context: None,
             used_skill_id: None,
             mcp_catalogue: None,
             persona_override: None,
@@ -2236,6 +2241,7 @@ pub(super) async fn build_prompt_bundle(
                     repo_context_block: None,
                     attachment_contexts: attachment_contexts.cloned(),
                     skill_layer: None,
+                    skill_registry_context: None,
                     persona_override: None,
                     moral_core: None,
                     communication_profile: None,
@@ -2537,6 +2543,12 @@ pub(super) async fn build_prompt_bundle(
         crate::skills::router::DEFAULT_MIN_WEIGHT
     };
     let active_files = crate::skills::resolver::active_files_from_env();
+    // Render once from the same filtered, authority-bound resolver snapshot
+    // used by this turn's route. Retain the owned typed Block D value through
+    // all later prompt rebuilds; retry/fallback must not re-read the registry.
+    let skill_registry_context = skill_resolver
+        .session_registry_context(&active_files)
+        .context("render session-start Skill registry context")?;
     // Compatibility field, corrected semantics: `true` enables semantic
     // fallback after literal NoMatch. It can no longer override a literal or
     // mode decision.
@@ -2850,6 +2862,7 @@ pub(super) async fn build_prompt_bundle(
         repo_context_block: repo_context_block.as_deref(),
         attachment_contexts,
         skill_system_prompt: skill_layer.as_deref(),
+        skill_registry_context: Some(&skill_registry_context),
         used_skill_id: used_skill_id.as_deref(),
         // Route is not exact until post-hook preflight completes. Keep this
         // base bundle MCP-free and carry its typed insertion slot instead.
@@ -2929,6 +2942,7 @@ pub(super) async fn build_prompt_bundle(
         repo_context_block,
         attachment_contexts: attachment_contexts.cloned(),
         skill_layer,
+        skill_registry_context: Some(skill_registry_context),
         persona_override,
         moral_core,
         communication_profile: communication_profile
@@ -15105,6 +15119,7 @@ modes:
                 repo_context_block: None,
                 attachment_contexts: None,
                 skill_system_prompt: None,
+                skill_registry_context: None,
                 used_skill_id: None,
                 mcp_catalogue: Some(catalogue),
                 persona_override: None,
@@ -20558,6 +20573,23 @@ modes:
             .as_deref()
             .expect("primary prompt must contain recalled memory");
         assert_canonical_auto_recall_envelope(primary_system);
+        let registry_context = bundle
+            .agent_raw_layers
+            .skill_registry_context
+            .as_ref()
+            .expect("normal chat session must retain its typed skill registry context");
+        assert_eq!(
+            registry_context.class(),
+            crate::pipeline::UntrustedContextClass::OtherReviewed
+        );
+        assert!(
+            registry_context.source_id().as_str().starts_with("skills:registry:"),
+            "registry context must remain bound to its resolver fingerprint"
+        );
+        assert!(
+            primary_system.contains(registry_context.as_str()),
+            "primary builder must retain the session-start skill registry block"
+        );
 
         let dispatch = crate::sub_agents::Dispatch {
             agent_name: "memory-test-agent".to_owned(),
@@ -20572,6 +20604,10 @@ modes:
             build_agent_system_from_layers(&dispatch, &bundle.agent_raw_layers).unwrap();
         let agent_system = agent_system.expect("agent rebuild must retain recall by default");
         assert_canonical_auto_recall_envelope(&agent_system);
+        assert!(
+            agent_system.contains(registry_context.as_str()),
+            "delegated prompt rebuild must retain the already-rendered session registry block"
+        );
     }
 
     fn assert_canonical_auto_recall_envelope(system: &str) {

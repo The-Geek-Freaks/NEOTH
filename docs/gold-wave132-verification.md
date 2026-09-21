@@ -1,5 +1,11 @@
 # W132 — persisted TypeHierarchy and bounded MCP traversal
 
+Hosted format follow-up: Preflight `35578149373` on `a7b78704` reported
+39 Rustfmt hunks across `persist.rs`, `type_hierarchy.rs` and
+`codegraph_server.rs`. Those exact layouts were imported without a local
+formatter. Code Quality `35578149332` passed on that source. Fresh hosted
+format, compilation and runtime gates are still required after this import.
+
 This slice extends the native code-map with explicit type declarations and
 direct, conservative type relations. Rust uses the existing bounded `syn`
 parser and retains only unambiguous local module relationships. Negative or
