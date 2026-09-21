@@ -106,3 +106,15 @@ at pinned_schema.rs:200; its exact one-character suggestion is applied.
 Preflight 35658129899 reports six formatting hunks across custody and GUI; all
 are imported exactly. New lint/format acceptance is pending. These repairs
 change no classification behavior, fixture bytes or test assertions.
+
+## Focused Hosted acceptance on fc3767f3
+
+Run 35658464887 on fc3767f3307b067bc35e414dc76f43bad9a84be0 passes
+the pinned extractor tests, byte comparison, all 41 custody tests, strict
+Clippy and package formatting. The package log is retained at
+work/gold-20260906/wave169-channel-schema/custody-fc37.log with SHA-256
+5715ED597926EE49144DCD457C68D419B8347837EDBB507FBEB85AC38AB86C80.
+Preflight 35658465313 and Code Quality 35658464558 also pass on that source.
+This proves the focused schema/account inspection batch. Runtime migration of
+account-scoped channels and full native/GUI/release acceptance remain separate
+open work; no broader Road checkbox is closed by this package result.

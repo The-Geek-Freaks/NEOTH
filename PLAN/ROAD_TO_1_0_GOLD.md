@@ -11,8 +11,9 @@
 **Current Hosted boundary (2026-09-21):** W169 run 35656420591 on
 3750a81f passed exact schema extraction/byte comparison and package compilation.
 The follow-up run 35658152739 on cc0af938 now passes all 41 package tests.
-A single Clippy auto-deref correction and six Hosted format hunks are imported;
-fresh lint/format acceptance remains required. W171 CLI build/reference 35655672068
+All focused package gates now pass on fc3767f3: run 35658464887 repeats all
+41 tests and passes strict Clippy plus formatting; Preflight 35658465313 and
+Code Quality 35658464558 also pass. W171 CLI build/reference 35655672068
 passed on ceea62cb; the generated reference is imported byte-for-byte. W172's
 four Slint ModelRc errors and the headless import lint are repaired in source.
 CI 35655045794 and Windows preview 35653179383 are confirmed cancelled and

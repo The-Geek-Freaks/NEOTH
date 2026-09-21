@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W172-hosted-repair-candidate",
-  "base": "cc0af93882b885ded730b4b1b108c54b89db6fb6",
-  "capturedUtc": "2026-09-21T21:37:38.4456342Z",
-  "validationStatus": "W169_41_TESTS_PASS_HOSTED_LINT_FORMAT_FOLLOWUP_PENDING",
-  "scopeNote": "41 package tests passed on cc0af938; exact hosted six format hunks plus one Clippy auto-deref correction. W173 remains excluded. Full CI/Windows preview running on cc0af938.",
+  "base": "fc3767f3307b067bc35e414dc76f43bad9a84be0",
+  "capturedUtc": "2026-09-21T21:46:12.6292783Z",
+  "validationStatus": "W169_FOCUSED_HOSTED_PASS_NATIVE_GUI_PENDING",
+  "scopeNote": "No production changes: records passing extractor, 41 package tests, strict Clippy, formatting, Preflight and Code Quality at fc3767f3. Full native/GUI/release acceptance still pending; unreviewed W173 source excluded.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -93,8 +93,8 @@
     },
     {
       "path": "docs/gold-wave169-verification.md",
-      "bytes": 6564,
-      "sha256": "53A77BEC717BE2B208D35B9B3E520A426D060CFCDCDD579169AC6A06AA38CB9E"
+      "bytes": 7252,
+      "sha256": "7994828743EA01EFC9CEC923E1B33137277C8BF4E20AC0E2D24A5CD16C6E0422"
     },
     {
       "path": "docs/gold-wave170-verification.md",
@@ -188,13 +188,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1007033,
-      "sha256": "F225F36530EDF871491BD9C52D945E3EA039BAB80378A64105E96520E05E2871"
+      "bytes": 1007095,
+      "sha256": "603901FDE1892CA486A6BFFF690F6EBD8D3DA40989D66C9E1F19A315C5272073"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1602480,
-      "sha256": "A5A7BC4288C1BB04FD8C980E47AD6E40A773AEFA00E19AF67515E637FB4DCBB6"
+      "bytes": 1602542,
+      "sha256": "AAFEB14F500E32BCBDF23D363495EA69975046C23581B74D75DEA2F59316AC6E"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
