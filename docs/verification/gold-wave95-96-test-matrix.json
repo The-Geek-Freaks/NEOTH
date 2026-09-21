@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W162_HOSTED_STRICT_CLIPPY_REPAIR_PENDING",
-  "base": "6003175f29de1f081054ce10a5f16e10e715cecd",
+  "status": "W162_HOSTED_GUI_TEST_SCOPE_REPAIR_PENDING",
+  "base": "65e27f0cebe16c82c62db428940269a16a2c92d3",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 60974,
-    "sha256": "9A02FFDEF3233307080A54CB96A7EF0EFA317797BCF09925570FBB99E2CF100F"
+    "bytes": 61004,
+    "sha256": "61A0D58D6692802671A385D1CFAA8CC526ADBF53EAD8E9489E62485909189F9E"
   },
   "sourceInputs": 353,
   "requiredNativeTests": [
@@ -4371,5 +4371,31 @@
     "currentReviewSha256": "F82F72B0B98C3C670C339D32C4C85F79C87CE3A40D8DAA1636174B0393FE0E0D",
     "currentVerdict": "STATIC_APPROVE_CURRENT_FOUNDATION_ONLY",
     "executionClaim": false
+  },
+  "wave162GuiTestCompileRepair": {
+    "source": "65e27f0cebe16c82c62db428940269a16a2c92d3",
+    "preflight": 35636083470,
+    "preflightConclusion": "success",
+    "quality": 35636082892,
+    "qualityConclusion": "success",
+    "observedRun": 35634988336,
+    "observedSource": "6003175f29de1f081054ce10a5f16e10e715cecd",
+    "observedJob": 106450108302,
+    "compileDiagnostics": 27,
+    "uniqueMissingImports": 12,
+    "unusedStartupClonesRemoved": 12,
+    "unusedCitationReadImportRemoved": true,
+    "betaFetchUpdateAdvisory": "unchanged",
+    "log": "work/gold-20260906/wave162-live-tps/600-beta-quality.log",
+    "logSha256": "66C4762AB715E7BEEED193775C5709523433554F7B2ED627F077D5C89E7EC6B8",
+    "patch": "work/gold-20260906/wave162-live-tps/GUI-TEST-COMPILE-PATCH.diff",
+    "patchSha256": "222A7770D4E1AD8790403C535ACBA5ACC93358EBECA37B9AD9EA1DC645B55EEE",
+    "review": "work/gold-20260906/wave162-live-tps/GUI-TEST-COMPILE-REVIEW.md",
+    "reviewSha256": "FB40E5FCEFFCD5DDAEDCC563AC033E996CFB75D551992155A73E64E5C049924A",
+    "reviewVerdict": "STATIC_WARNING_DOCUMENTATION_CORRECTED_NO_CODE_CHANGE",
+    "correctedReceipt": "work/gold-20260906/wave162-live-tps/GUI-TEST-COMPILE-REPAIR.md",
+    "correctedReceiptSha256": "764FC76374A78159AC85F58270DED4C1B4B99632A3D18C627BC3BEDC93C8C755",
+    "w163Excluded": true,
+    "nativeExecution": "fresh_hosted_required"
   }
 }

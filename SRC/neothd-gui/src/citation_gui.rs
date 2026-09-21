@@ -17,7 +17,7 @@ use neothd::tools::citation_lookup::{
 };
 use serde::Deserialize;
 use std::{
-    io::{Read as _, Write as _},
+    io::Write as _,
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
         Arc,

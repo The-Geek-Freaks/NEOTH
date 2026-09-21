@@ -3025,7 +3025,6 @@ fn main() -> Result<()> {
     // on_chat_composer_recall_requested share the same Arc.
     let last_operator_input: std::sync::Arc<std::sync::Mutex<String>> =
         std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-    let last_operator_input_for_send = std::sync::Arc::clone(&last_operator_input);
     let last_operator_input_for_privacy = std::sync::Arc::clone(&last_operator_input);
     window.on_chat_incognito_selection_changed(move |selected| {
         detach_operator_recall_for_incognito(last_operator_input_for_privacy.as_ref(), selected);
@@ -3093,18 +3092,6 @@ fn main() -> Result<()> {
     // file names, the send worker consumes the paths as `--attach` args.
     let chat_attachments: std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>> =
         std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-
-    let chat_child_for_send = chat_child.clone();
-    let chat_launch_gate_for_send = chat_launch_gate.clone();
-    let chat_signal_for_send = chat_signal_clock.clone();
-    let chat_stream_for_send = chat_stream.clone();
-    let chat_model_overrides_for_send = chat_model_overrides.clone();
-    let chat_budget_for_send = chat_auto_nudge_budget.clone();
-    let chat_auto_flag_for_send = chat_auto_in_progress.clone();
-    let chat_attach_for_send = chat_attachments.clone();
-    let chat_watchdog_retry_for_send = chat_watchdog_retry.clone();
-    let chat_watchdog_input_for_send = chat_watchdog_input.clone();
-    let chat_watchdog_retry_stop_for_send = chat_watchdog_retry_stop.clone();
 
     // H4 — drag-drop ingestion: files dropped anywhere on the main window
     // land in the chat attachment strip (same path as the picker). The
@@ -40103,6 +40090,16 @@ mod w58_gui_callback_runtime_tests {
 
     #[cfg(not(windows))]
     use neothd::tools::citation_lookup::{CitationLookupResult, CitationQuery, CitationRecord};
+
+    #[cfg(not(windows))]
+    use super::{
+        CHAT_STREAM_CONTROL_PREFIX, ChatThroughputProjections, ThroughputControlFrame,
+        apply_chat_throughput_controls, begin_chat_throughput_projection,
+        chat_stream_request_id, clear_buddy_throughput_projection,
+        clear_main_throughput_projection, discard_chat_throughput_projection,
+        parse_chat_stream_protocol_incremental, project_chat_throughput_snapshot,
+        provider_done_chat_throughput_projection,
+    };
 
     use crate::panel_logic;
 

@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W162-live-throughput-and-hosted-repair-candidate",
-  "base": "6003175f29de1f081054ce10a5f16e10e715cecd",
-  "capturedUtc": "2026-09-21T18:02:03.1618293Z",
-  "validationStatus": "W162_HOSTED_STRICT_CLIPPY_REPAIR_PENDING",
-  "scopeNote": "353 inputs; W162 source600 passed Core/reference, Preflight and Code Quality. Linux slim Clippy found two chat.rs style errors, repaired without behavior changes. Native/GUI and Windows preview600 still running. W163 excluded.",
+  "base": "65e27f0cebe16c82c62db428940269a16a2c92d3",
+  "capturedUtc": "2026-09-21T18:14:07.0137211Z",
+  "validationStatus": "W162_HOSTED_GUI_TEST_SCOPE_REPAIR_PENDING",
+  "scopeNote": "353 inputs;65e27f0c Preflight/Code Quality passed. Hosted600 beta exposed27GUItest missing-scope diagnostics and13unused GUI imports/clones, repaired in two source files. Frozen main mirror excludes W163. Native and preview600 pending; no runtime closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -248,8 +248,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/citation_gui.rs",
-      "bytes": 55616,
-      "sha256": "E111C35B64CA25E1FD3084F2D89CE8BB579C6FB028BC55AF018E817EC31BE5F0"
+      "bytes": 55603,
+      "sha256": "D6720CD3A6911399F59109C9877C5529313053E1ACC41AABF830F19F4B8C7C5E"
     },
     {
       "path": "SRC/neothd-gui/src/code_map_controller.rs",
@@ -288,8 +288,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1923938,
-      "sha256": "4C56DD2DC160BA98CE224DC8CBA9AF20D102603DD076F265649F7832791BAB9E"
+      "bytes": 1923650,
+      "sha256": "A0A8EFE18D07E0C349DE16F18BC97FCE68FDE41A0628C71304B8AD0B9C34A083"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",

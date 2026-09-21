@@ -71,3 +71,10 @@ The historical W159 core-review file was accidentally overwritten. Its expected
 hash remains recorded as unavailable, never reconstructed as original evidence.
 A new independent CURRENT-CORE-REVIEW.md approves the current WAL foundation
 with exact source hashes; caller/runtime acceptance remains separately required.
+W162 GUI-test follow-up:65e27f0c passed Preflight35636083470 and Code Quality
+35636082892. The Hosted600 beta job106450108302 exposed 27 missing test-scope
+references. Twelve non-Windows imports preserve the complete callback test;
+twelve unused startup clones and one unused citation Read import are removed.
+The independent frozen-patch review found no code defect; its documentation
+scope warning is corrected in the receipt. Native/GUI execution remains
+pending. W163 is excluded from this repair admission.
