@@ -2745,8 +2745,29 @@ mod tests {
         .unwrap();
 
         let target: i64 = MIGRATIONS.iter().map(|m| m.to).max().unwrap_or(3);
+        // This base projection predates the migration registry. Include it
+        // without the new session column so v40 exercises the real ALTER.
+        conn.execute_batch(
+            "CREATE TABLE idx_provider (
+                 event_id INTEGER PRIMARY KEY, event_type INTEGER NOT NULL,
+                 ts_ns INTEGER NOT NULL, provider TEXT NOT NULL,
+                 model TEXT, text_hash TEXT, bytes INTEGER, latency_ns INTEGER,
+                 input_tokens INTEGER, output_tokens INTEGER
+             );
+             INSERT INTO idx_provider(event_id, event_type, ts_ns, provider)
+                 VALUES(3, 32, 3000, 'legacy-provider');",
+        )
+        .unwrap();
         let reached = migrate(&mut conn, 3, target).expect("migration chain");
         assert_eq!(reached, target, "chain should reach latest");
+        let provider: (String, Vec<u8>) = conn
+            .query_row(
+                "SELECT provider, wal_session_id FROM idx_provider WHERE event_id = 3",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(provider, ("legacy-provider".to_owned(), vec![0u8; 16]));
 
         // Pre-existing rows survive intact + ALTER defaults landed.
         let (id, text, imp, last_access): (i64, String, f64, i64) = conn

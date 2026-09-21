@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W163-recall-provenance-chip-candidate",
-  "base": "7091979ccc6ac50d8931b264f7dbc0908c89ebee",
-  "capturedUtc": "2026-09-21T18:37:13.9296078Z",
-  "validationStatus": "W163_HOSTED_FORMAT_IMPORTED_NATIVE_GUI_PENDING",
-  "scopeNote": "358 inputs; W163 same-query paired provenance through warm snapshot route, preload, source cap and final dedup; authenticated content-free chip frame and Main/Buddy transient display. Successful response freezes, request activation/error/cancel/session clears. Required350native+3Windows+2Unix/67GUI+14Linux-macOS fixtures/7optional. 19-name macOS catalog. All W163 executable and rendered acceptance pending.",
+  "base": "6ef32dfdb5dabfdc2ff02540600e5be71ddb0b63",
+  "capturedUtc": "2026-09-21T18:56:33.7280131Z",
+  "validationStatus": "W165_SCOPED_HOSTED_WINDOWS_REPAIRS_PENDING_RERUN",
+  "scopeNote": "W163 source remains admitted; eight W165 source paths repair five canonical-home WAL fixtures, two baseline migration fixtures, citation parity triage, and channel own-home registry/final receipt. W164 work-in-progress excluded. Hosted native/GUI/release acceptance remains pending.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -677,6 +677,11 @@
       "sha256": "6B6250023D1068495EA62A54FF3CC5863C0F7AEE23AFD78D4BA86A9C541FC4EF"
     },
     {
+      "path": "SRC/neothd/src/cli/migrate.rs",
+      "bytes": 36493,
+      "sha256": "42CF2F3A7D15787CF1BF7C6702BCBE647B0F1CCD752B301B1B8D456823C37234"
+    },
+    {
       "path": "SRC/neothd/src/cli/mod.rs",
       "bytes": 114079,
       "sha256": "C0608B012F7B2040FB3880273BD7DAE1CF08699DB5E3CE5E7E7E7C9F6B1E5386"
@@ -685,6 +690,11 @@
       "path": "SRC/neothd/src/cli/ouro.rs",
       "bytes": 25047,
       "sha256": "49C4A5955F48CEC0F2827977E3A2B1F1EF30D04B8A29D170D11132D9B28D56EA"
+    },
+    {
+      "path": "SRC/neothd/src/cli/parity_drift.rs",
+      "bytes": 38192,
+      "sha256": "BF81F26D99875E7262F2C311303410C65191EF25033AB1DD039F3AC98FC39958"
     },
     {
       "path": "SRC/neothd/src/cli/proactive.rs",
@@ -718,8 +728,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sha256": "9EB15AB99BF938BBF04574B28CA91A2F37FEC64116B874261226256A2D85A306",
-      "bytes": 457823
+      "sha256": "36C43C7C55D0770F5471821673C2C81BB4C8EA1E517C84BCD68E6FD0C6FD9EE7",
+      "bytes": 458008
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
@@ -1168,13 +1178,13 @@
     },
     {
       "path": "SRC/neothd/src/mcp/gate.rs",
-      "sha256": "2FA8FDCC610135F91B249DC1F97270E84BBE74D6956B52E960FEE3BBCFE4712C",
-      "bytes": 135132
+      "sha256": "4F45B308740ABDA49F6A18E5B8E25C2270F71EC76B78BC27D2CBA7482ACC707F",
+      "bytes": 135389
     },
     {
       "path": "SRC/neothd/src/mcp/goal_judge.rs",
-      "sha256": "C425926C71B15196B3231CA061BA1DA12BCD4CC855DD1FF404BD561AD9FED240",
-      "bytes": 22495
+      "sha256": "B5C1ADCFA66367DB4517CF47CA757DA2324F2DB77709A6870706B59CC69CCD30",
+      "bytes": 22619
     },
     {
       "path": "SRC/neothd/src/mcp/goal_tracker.rs",
@@ -1238,8 +1248,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/migrations/mod.rs",
-      "sha256": "7674817DB97071F425168E399FA70B870425D03130AFFD560D5A6126282AFC9F",
-      "bytes": 220694
+      "sha256": "7F94C61624296430B562BF0D71BBE3E4F24542902808684A636CAB7B8B71C847",
+      "bytes": 221724
     },
     {
       "path": "SRC/neothd/src/memory/mod.rs",
@@ -1293,8 +1303,8 @@
     },
     {
       "path": "SRC/neothd/src/permissions/gate.rs",
-      "sha256": "041796F384C4CE6A9BE31533534E9EC28A9DAC8E5B7E9A44E4859809AFAB5D8C",
-      "bytes": 90601
+      "sha256": "DD7A43EF28E3536E5A9FE197A24F1B653403D21BF498D00500E87D7C93A302EF",
+      "bytes": 90730
     },
     {
       "path": "SRC/neothd/src/permissions/lease.rs",
@@ -1393,8 +1403,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "sha256": "79ECCCC23018B1FB8B439978B16A2F4E64FD75DC392F4E7AF642B0B6B323E505",
-      "bytes": 254756
+      "sha256": "EC6BF9C10E34BB91B8E957C5B12462908A50C7485A47EF8567FCC7B65A227EF1",
+      "bytes": 254885
     },
     {
       "path": "SRC/neothd/src/providers/fallback.rs",

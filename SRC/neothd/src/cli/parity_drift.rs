@@ -374,6 +374,7 @@ const INVENTORY: &[(&str, Surface)] = &[
     ("terminal", CliOnly("embedded terminal launcher")),
     ("tour", CliOnly("onboarding tour")),
     ("groundtruth", Gui("groundtruth")),
+    ("citation", Gui("chat")),
     ("import", CliOnly("data import pipe")),
     ("telemetry", Gui("privacy")),
     ("adr", Gui("adr-browser")),

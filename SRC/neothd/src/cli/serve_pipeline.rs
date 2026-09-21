@@ -2523,22 +2523,25 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 Some(crate::memory::operator_md::render(&operator_blocks))
             };
 
-            // Prefer the daemon's global SkillRegistry (built once at
-            // startup + hot-reloaded by the file watcher); fall back to
-            // per-call load when the global wasn't initialised.
-            let skill_snapshot = match crate::skills::registry::global() {
-                Some(reg) => reg
+            // Reuse the daemon's global SkillRegistry only when it owns this
+            // handler's exact home. Isolated handlers must not route against a
+            // registry published by a different daemon or fixture home.
+            let channel_skills_dir = channel_home.join("skills");
+            let skill_snapshot = match crate::skills::registry::global()
+                .filter(|registry| registry.skills_dir() == channel_skills_dir.as_path())
+            {
+                Some(registry) => registry
                     .authority_bound_snapshot_for_epoch(config_epoch_for_handler)
                     .context("acquire authority-bound channel Skill snapshot")?,
                 None => crate::skills::SkillRegistry::load_with_reload_controller(
-                    channel_home.join("skills"),
+                    &channel_skills_dir,
                     Arc::clone(&reload_controller),
                 )
                 .await
                 .with_context(|| {
                     format!(
                         "load channel skill registry from {}",
-                        channel_home.join("skills").display()
+                        channel_skills_dir.display()
                     )
                 })?
                 .authority_bound_snapshot_for_epoch(config_epoch_for_handler)
@@ -5235,7 +5238,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     binding,
                     Some(&sender_hash),
                     &reply_for_egress,
-                    "channel_terminal",
+                    "channel_pre_egress",
                     channel_wal_session,
                 )
                 .await

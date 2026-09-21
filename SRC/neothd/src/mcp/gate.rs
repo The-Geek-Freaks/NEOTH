@@ -2477,7 +2477,9 @@ mod tests {
     #[tokio::test]
     async fn admitted_scope_rejection_retains_wal_session() {
         let home = tempfile::tempdir().unwrap();
-        let segment = home.path().join("scope-session-000001.wal");
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "mcp-scope");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         let wal_session = WalSessionContext::from_admitted_identity(
@@ -3501,7 +3503,9 @@ mod tests {
     #[tokio::test]
     async fn admitted_writer_sink_stamps_tool_audit_headers() {
         let home = tempfile::tempdir().unwrap();
-        let segment = home.path().join("mcp-session-000001.wal");
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "mcp-gate");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         let wal_session = WalSessionContext::from_admitted_identity(

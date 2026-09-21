@@ -407,7 +407,9 @@ mod tests {
     #[tokio::test]
     async fn admitted_goal_judged_header_retains_wal_session() {
         let home = tempfile::tempdir().unwrap();
-        let path = home.path().join("goal-judge-session-000001.wal");
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let path = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "goal-judge");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(path.clone(), home.path().to_path_buf()).unwrap();
         let wal_session = crate::wal::WalSessionContext::from_admitted_identity(

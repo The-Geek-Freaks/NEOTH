@@ -900,7 +900,9 @@ mod tests {
     #[tokio::test]
     async fn admitted_writer_sink_stamps_permission_and_trust_headers() {
         let home = tempdir().unwrap();
-        let segment = home.path().join("permission-session-000001.wal");
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "permission-gate");
         let (writer, join) = spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         let wal_session = crate::wal::WalSessionContext::from_admitted_identity(
             home.path(),

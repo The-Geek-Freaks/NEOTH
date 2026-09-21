@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W165 initial Hosted Windows repair (2026-09-21):** source6003175f ran 11252
+of 17064 tests: 11232 passed (one leaky), 17 failed, three timed out and 22
+were skipped before fail-fast. Eight independently reviewed source paths repair
+five canonical-home WAL fixtures, two baseline migration fixtures, citation
+navigation triage, and the channel's own-home Skill registry plus pre-egress
+receipt marker. Existing assertions remain. W164 and the remaining chat/GUI/loop
+repairs are excluded from this publication; full native/GUI acceptance is pending.
+Admission: 360 source inputs and 353 universal native cases, plus the
+existing 3 Windows-only, 2 Unix-only, 67 GUI, 14 Linux/macOS and 7 optional cases.
+Road counts remain 1324 total / 1015 checked / 307 open / 2 partial.
+
 **W163 hosted follow-up (2026-09-21):** published source7091979c passed
 Code Quality35638612862 and CLI build/reference35638614813. The generated
 reference is byte-identical to the committed snapshot. Preflight35638613969

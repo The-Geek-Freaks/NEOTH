@@ -949,6 +949,17 @@ mod tests {
              );",
         )
         .unwrap();
+        // Provider projection is part of the pre-migration store schema;
+        // the migration chain alters it but does not create the base table.
+        conn.execute_batch(
+            "CREATE TABLE idx_provider (
+                 event_id INTEGER PRIMARY KEY, event_type INTEGER NOT NULL,
+                 ts_ns INTEGER NOT NULL, provider TEXT NOT NULL,
+                 model TEXT, text_hash TEXT, bytes INTEGER, latency_ns INTEGER,
+                 input_tokens INTEGER, output_tokens INTEGER
+             );",
+        )
+        .unwrap();
         migrations::migrate(&mut conn, 3, previous).unwrap();
         drop(conn);
         let args = MigrateArgs {
