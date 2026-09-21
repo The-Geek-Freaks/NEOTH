@@ -8,6 +8,13 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W143 hosted test compile repair (2026-09-21):** static gates passed on
+8f130708, then full CI35583943094 found a W137 test-local registry value
+used outside its block. The block now returns the owned value, preserving
+all cloud/local assertions and separate lock lifetimes. See
+[W143](../docs/gold-wave143-verification.md). Hosted rerun remains required;
+W138 integration stays unadmitted. Counts remain 1324/1015/307/2.
+
 W137 hosted formatting follow-up: Code Quality 35583072869 passed on28b9facd.
 Preflight35583073252 supplied ten exact Rustfmt hunks (two CLI/eight Channel).
 All were imported from the complete saved log into frozen published-source

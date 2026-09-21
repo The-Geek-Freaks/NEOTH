@@ -8720,7 +8720,7 @@ mod tests {
             let views_conn = views_conn_with_authenticated_inbound(&home, &inbound_binding, &message, "retained-channel-fallback-operator");
             let handler = build_pipeline_handler(PipelineHandlerDeps { inbound_binding, provider: provider.clone(), live_channel: None, writer: writer.clone(), operator_id: Some("retained-channel-fallback-operator".to_owned()), goal_max_turns: 1, meter: crate::providers::meter::Meter::with_default_window(), rate_limiter: Arc::new(crate::channels::rate_limit::RateLimiter::with_defaults()), segment_path: wal_path.clone(), neoth_home: home.clone(), profile_config: crate::config::ProfileConfig::default(), reload_controller: Arc::new(crate::config::reload::ReloadController::new(config, home.join("freedom.yaml"))), views_conn: Some(views_conn), views_executor: None, confirm_bus: None, abliterated_loader: Some(loader) });
             let recovered = "recovered channel reply after local shadow and cloud continuation"; let outbound = handler(message).await.expect("fallback channel route completes").expect("fallback channel emits outbound"); assert_eq!(outbound.text, recovered);
-            {
+            let registry_a = {
                 let requests = provider.requests.lock().expect("read fallback channel cloud requests");
                 assert_eq!(
                     requests.len(),
@@ -8750,7 +8750,8 @@ mod tests {
                 assert!(continuation_system.contains("\"source_id\":\"abliterated:local-shadow\""));
                 assert!(continuation_system.contains("local channel shadow draft"));
                 assert!(continuation_system.contains("Continue by independently verifying and correcting the draft before answering."));
-            }
+                registry_a
+            };
             {
                 let local = local_requests.lock().expect("read fallback channel local requests");
                 assert_eq!(local.len(), 1, "one local shadow request precedes the direct cloud continuation");

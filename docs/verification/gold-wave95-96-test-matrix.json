@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W140_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "28b9facd150e7ef5744f625ea6995be0d71de2bf",
+  "status": "W95_W143_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "base": "8f1307089a31b0a1320963cef9958dd2b265353c",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 53204,
-    "sha256": "E094ACA962BE1A0CE5042AF6D018FBDB02A5DBEDF899F0641EF409F2F39A81AD"
+    "bytes": 53188,
+    "sha256": "DA1F4CC9949AA688F4588CFAF7740A3B8BCDB1228DA22EA78AE074C22B92E9DA"
   },
   "sourceInputs": 308,
   "requiredNativeTests": [
@@ -246,7 +246,7 @@
     {
       "test": "cli::serve_pipeline::tests::build_pipeline_handler_retains_selected_generation_through_truthful_retry_before_final_channel_result",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "95BEBF390875D5649116652D43DBDB67F0F303EB2A2503D5A099A02D08EB714A",
+      "sourceSha256": "ABFBA03E90A52E230ED6464B50B2D6C0D02910CEBA255EFB77F32702AB412DD9",
       "junitClass": "neoth"
     },
     {
@@ -258,7 +258,7 @@
     {
       "test": "cli::serve_pipeline::tests::build_pipeline_handler_retains_context_through_direct_local_shadow_cloud_fallback_final_result",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "95BEBF390875D5649116652D43DBDB67F0F303EB2A2503D5A099A02D08EB714A",
+      "sourceSha256": "ABFBA03E90A52E230ED6464B50B2D6C0D02910CEBA255EFB77F32702AB412DD9",
       "junitClass": "neoth"
     },
     {
@@ -846,19 +846,19 @@
     {
       "test": "cli::serve_pipeline::tests::authenticated_channel_policy_cannot_inject_a_disabled_subject_skill",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "95BEBF390875D5649116652D43DBDB67F0F303EB2A2503D5A099A02D08EB714A",
+      "sourceSha256": "ABFBA03E90A52E230ED6464B50B2D6C0D02910CEBA255EFB77F32702AB412DD9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::channel_delegate_to_uses_authorized_installed_skill_real_agent_loader_and_child_scope",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "95BEBF390875D5649116652D43DBDB67F0F303EB2A2503D5A099A02D08EB714A",
+      "sourceSha256": "ABFBA03E90A52E230ED6464B50B2D6C0D02910CEBA255EFB77F32702AB412DD9",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::delegated_bundle_preserves_required_attachment_data",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "95BEBF390875D5649116652D43DBDB67F0F303EB2A2503D5A099A02D08EB714A",
+      "sourceSha256": "ABFBA03E90A52E230ED6464B50B2D6C0D02910CEBA255EFB77F32702AB412DD9",
       "junitClass": "neoth"
     }
   ],
@@ -1805,6 +1805,16 @@
     "failedSource": "12048d6c225c50faa42147632c54be7c5039716d",
     "failedJob": 106275797909,
     "diagnostics": 4,
+    "execution": "PENDING_GITHUB_ONLY",
+    "localValidationRan": false
+  },
+  "wave143": {
+    "report": "docs/gold-wave143-verification.md",
+    "sourceReview": "EXACT_TEST_SCOPE_FIX_REVIEWED",
+    "failedCi": 35583943094,
+    "failedSource": "8f1307089a31b0a1320963cef9958dd2b265353c",
+    "failedJob": 106282931940,
+    "diagnostic": "E0425 registry_a outside defining block",
     "execution": "PENDING_GITHUB_ONLY",
     "localValidationRan": false
   }

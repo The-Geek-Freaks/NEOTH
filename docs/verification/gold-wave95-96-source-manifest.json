@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W136-skill-registry-and-type-hierarchy",
-  "base": "28b9facd150e7ef5744f625ea6995be0d71de2bf",
-  "capturedUtc": "2026-09-21T09:31:02.3520865Z",
-  "validationStatus": "W137_HOSTED_FORMAT_IMPORT_REMOTE_EXECUTION_REQUIRED",
-  "scopeNote": "308 inputs; exact10 hosted Rustfmt hunks in frozen W137 sources, W140 preserved, W138 work excluded. No local validation or Road closure.",
+  "base": "8f1307089a31b0a1320963cef9958dd2b265353c",
+  "capturedUtc": "2026-09-21T09:40:22.5454737Z",
+  "validationStatus": "W143_OBSERVED_TEST_SCOPE_REPAIR_REMOTE_EXECUTION_REQUIRED",
+  "scopeNote": "308 inputs, one observed W137 test scope repair; W138 working changes excluded. No local execution or Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -648,8 +648,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "bytes": 433028,
-      "sha256": "95BEBF390875D5649116652D43DBDB67F0F303EB2A2503D5A099A02D08EB714A"
+      "bytes": 433073,
+      "sha256": "ABFBA03E90A52E230ED6464B50B2D6C0D02910CEBA255EFB77F32702AB412DD9"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
