@@ -7,6 +7,7 @@
 //! a future apply path cannot silently weaken an OpenClaw setup.
 
 pub mod pinned_inventory;
+pub mod pinned_schema;
 
 use anyhow::{Context as _, Result};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
@@ -122,252 +123,6 @@ const KNOWN_ROOT_KEYS: &[&str] = &[
     "proxy",
 ];
 
-const COMMON_CHANNEL_FIELDS: &[&str] = &[
-    "name",
-    "enabled",
-    "accounts",
-    "defaultAccount",
-    "capabilities",
-    "markdown",
-    "configWrites",
-    "commands",
-    "dmPolicy",
-    "allowFrom",
-    "defaultTo",
-    "groupAllowFrom",
-    "groupPolicy",
-    "contextVisibility",
-    "groups",
-    "historyLimit",
-    "dmHistoryLimit",
-    "dms",
-    "textChunkLimit",
-    "chunkMode",
-    "blockStreaming",
-    "blockStreamingCoalesce",
-    "streaming",
-    "mediaMaxMb",
-    "replyToMode",
-    "actions",
-    "heartbeat",
-    "healthMonitor",
-    "responsePrefix",
-    "ackReaction",
-    "reactionLevel",
-    "reactionNotifications",
-    "threadBindings",
-    "execApprovals",
-    "botLoopProtection",
-    "allowBots",
-    "dangerouslyAllowNameMatching",
-    "requireMention",
-];
-
-const TELEGRAM_FIELDS: &[&str] = &[
-    "botToken",
-    "tokenFile",
-    "customCommands",
-    "replyToMode",
-    "dm",
-    "direct",
-    "groupAllowFrom",
-    "timeoutSeconds",
-    "mediaGroupFlushMs",
-    "pollingStallThresholdMs",
-    "retry",
-    "network",
-    "proxy",
-    "webhookUrl",
-    "webhookSecret",
-    "webhookPath",
-    "webhookHost",
-    "webhookPort",
-    "webhookCertPath",
-    "reactionLevel",
-    "linkPreview",
-    "silentErrorReplies",
-    "errorPolicy",
-    "errorCooldownMs",
-    "apiRoot",
-    "trustedLocalFileRoots",
-    "autoTopicLabel",
-];
-
-const SLACK_FIELDS: &[&str] = &[
-    "mode",
-    "socketMode",
-    "signingSecret",
-    "webhookPath",
-    "botToken",
-    "appToken",
-    "userToken",
-    "userTokenReadOnly",
-    "unfurlLinks",
-    "unfurlMedia",
-    "reactionAllowlist",
-    "replyToModeByChatType",
-    "thread",
-    "slashCommand",
-    "dm",
-    "channels",
-    "typingReaction",
-];
-
-const WHATSAPP_FIELDS: &[&str] = &[
-    "authDir",
-    "sendReadReceipts",
-    "messagePrefix",
-    "selfChatMode",
-    "direct",
-    "debounceMs",
-];
-
-const DISCORD_FIELDS: &[&str] = &[
-    "token",
-    "applicationId",
-    "proxy",
-    "gatewayInfoTimeoutMs",
-    "gatewayReadyTimeoutMs",
-    "gatewayRuntimeReadyTimeoutMs",
-    "mentionAliases",
-    "maxLinesPerMessage",
-    "thread",
-    "dm",
-    "guilds",
-    "agentComponents",
-    "ui",
-    "slashCommand",
-    "intents",
-    "voice",
-    "pluralkit",
-    "ackReactionScope",
-    "activity",
-    "status",
-    "autoPresence",
-    "activityType",
-    "activityUrl",
-    "inboundWorker",
-    "eventQueue",
-];
-
-const SIGNAL_FIELDS: &[&str] = &[
-    "account",
-    "accountUuid",
-    "httpUrl",
-    "httpHost",
-    "httpPort",
-    "cliPath",
-    "autoStart",
-    "startupTimeoutMs",
-    "receiveMode",
-    "ignoreAttachments",
-    "ignoreStories",
-    "sendReadReceipts",
-    "reactionAllowlist",
-    "apiMode",
-];
-
-const IMESSAGE_FIELDS: &[&str] = &[
-    "cliPath",
-    "dbPath",
-    "remoteHost",
-    "service",
-    "region",
-    "includeAttachments",
-    "attachmentRoots",
-    "remoteAttachmentRoots",
-    "probeTimeoutMs",
-    "sendReadReceipts",
-    "coalesceSameSenderDms",
-    "catchup",
-];
-
-const MATRIX_FIELDS: &[&str] = &[
-    "homeserver",
-    "network",
-    "proxy",
-    "userId",
-    "accessToken",
-    "password",
-    "deviceId",
-    "deviceName",
-    "avatarUrl",
-    "initialSyncLimit",
-    "encryption",
-    "allowlistOnly",
-    "blockStreaming",
-    "threadReplies",
-    "ackReactionScope",
-    "startupVerification",
-    "startupVerificationCooldownHours",
-    "autoJoin",
-    "autoJoinAllowlist",
-    "dm",
-    "rooms",
-];
-
-const LINE_FIELDS: &[&str] = &[
-    "channelAccessToken",
-    "channelSecret",
-    "tokenFile",
-    "secretFile",
-    "webhookPath",
-];
-
-const IRC_FIELDS: &[&str] = &[
-    "host",
-    "port",
-    "tls",
-    "nick",
-    "username",
-    "realname",
-    "password",
-    "passwordFile",
-    "nickserv",
-    "channels",
-    "mentionPatterns",
-];
-
-const MATTERMOST_FIELDS: &[&str] = &[
-    "botToken",
-    "baseUrl",
-    "chatmode",
-    "oncharPrefixes",
-    "chunkMode",
-    "commands",
-    "interactions",
-    "network",
-    "dmChannelRetry",
-];
-
-const TWITCH_FIELDS: &[&str] = &[
-    "username",
-    "accessToken",
-    "clientId",
-    "channel",
-    "allowedRoles",
-    "clientSecret",
-    "refreshToken",
-    "expiresIn",
-    "obtainmentTimestamp",
-];
-
-const NOSTR_FIELDS: &[&str] = &["privateKey", "relays", "profile"];
-
-const GOOGLECHAT_FIELDS: &[&str] = &[
-    "serviceAccount",
-    "serviceAccountRef",
-    "serviceAccountFile",
-    "audienceType",
-    "audience",
-    "appPrincipal",
-    "webhookPath",
-    "webhookUrl",
-    "botUser",
-    "dm",
-    "typingIndicator",
-];
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImportDisposition {
@@ -411,6 +166,22 @@ pub struct FieldLedgerEntry {
     pub disposition: ImportDisposition,
     pub sensitive: bool,
     pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_account_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_value_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema_binding: Option<SchemaLedgerBinding>,
+}
+
+/// Additive redacted W169 provenance for one ledger row. It identifies the
+/// frozen schema row and declared custody action, never the source value.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SchemaLedgerBinding {
+    pub schema_id: String,
+    pub path_template: String,
+    pub scope: String,
+    pub action_id: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -671,9 +442,10 @@ struct IncludeLoader {
 /// Parse and inspect an OpenClaw `openclaw.json` without writing target state.
 pub fn inspect_openclaw_config(path: &Path) -> Result<OpenClawImportReport> {
     pinned_inventory::validate_pinned_channel_inventory()?;
+    pinned_schema::validate_pinned_schema()?;
     let loaded = load_config(path)?;
     let mut ledger = Vec::new();
-    walk_leaves(&loaded.value, &mut Vec::new(), &mut ledger);
+    walk_leaves(&loaded.value, &mut Vec::new(), &mut ledger)?;
     ledger.sort_by(|left, right| left.source_path.cmp(&right.source_path));
 
     let mut summary = ImportSummary::default();
@@ -1177,59 +949,86 @@ fn deep_merge(target: &mut Value, source: Value) {
     }
 }
 
-fn walk_leaves(value: &Value, path: &mut Vec<PathPart>, ledger: &mut Vec<FieldLedgerEntry>) {
-    if is_secret_ref(value) {
-        ledger.push(classify_leaf(path, true));
-        return;
+fn walk_leaves(
+    value: &Value,
+    path: &mut Vec<PathPart>,
+    ledger: &mut Vec<FieldLedgerEntry>,
+) -> Result<()> {
+    match secret_ref_state(value) {
+        SecretRefState::Valid => {
+            ledger.push(classify_leaf(value, path, true, false)?);
+            return Ok(());
+        }
+        SecretRefState::InvalidCandidate => {
+            ledger.push(classify_leaf(value, path, false, true)?);
+            return Ok(());
+        }
+        SecretRefState::NotSecretRef => {}
+    }
+    if schema_lookup(path, value)?.is_some_and(|schema| schema.scope == pinned_schema::SchemaScope::OpaqueSubtree) {
+        ledger.push(classify_leaf(value, path, false, false)?);
+        return Ok(());
+    }
+    if is_account_container(path, value) {
+        ledger.push(classify_account_container(path)?);
+        if value.as_object().is_some_and(|object| object.is_empty()) {
+            return Ok(());
+        }
     }
     match value {
         Value::Object(object) if !object.is_empty() => {
             for (key, value) in object {
                 path.push(PathPart::Key(key.clone()));
-                walk_leaves(value, path, ledger);
+                walk_leaves(value, path, ledger)?;
                 path.pop();
             }
         }
         Value::Array(values) if !values.is_empty() => {
             for (index, value) in values.iter().enumerate() {
                 path.push(PathPart::Index(index));
-                walk_leaves(value, path, ledger);
+                walk_leaves(value, path, ledger)?;
                 path.pop();
             }
         }
         Value::Object(object) if object.is_empty() && path.is_empty() => {}
         Value::Array(values) if values.is_empty() && path.is_empty() => {}
-        _ => ledger.push(classify_leaf(path, false)),
+        _ => ledger.push(classify_leaf(value, path, false, false)?),
     }
+    Ok(())
 }
 
-fn classify_leaf(path: &[PathPart], secret_ref: bool) -> FieldLedgerEntry {
+fn classify_leaf(
+    value: &Value,
+    path: &[PathPart],
+    secret_ref: bool,
+    invalid_secret_ref: bool,
+) -> Result<FieldLedgerEntry> {
     let source_path = display_path(path);
-    let sensitive = secret_ref || path_is_sensitive(path);
+    let sensitive = secret_ref || invalid_secret_ref || path_is_sensitive(path);
+    let account_label = source_account_label(path);
     let root = key_at(path, 0);
     if root != Some("channels") {
         let known = root.is_some_and(|root| KNOWN_ROOT_KEYS.contains(&root));
-        return FieldLedgerEntry {
+        return Ok(FieldLedgerEntry {
             source_path,
             source_channel: None,
             target_channel: None,
             target_path: None,
-            disposition: if known {
-                ImportDisposition::Unsupported
-            } else {
-                ImportDisposition::Unknown
-            },
+            disposition: if known { ImportDisposition::Unsupported } else { ImportDisposition::Unknown },
             sensitive,
             reason: if known {
                 "known OpenClaw field is outside this channel-import slice".to_string()
             } else {
                 "unknown OpenClaw root field".to_string()
             },
-        };
+            source_account_label: None,
+            effective_value_sha256: None,
+            schema_binding: None,
+        });
     }
 
     let Some(channel) = key_at(path, 1) else {
-        return FieldLedgerEntry {
+        return Ok(FieldLedgerEntry {
             source_path,
             source_channel: None,
             target_channel: None,
@@ -1237,10 +1036,13 @@ fn classify_leaf(path: &[PathPart], secret_ref: bool) -> FieldLedgerEntry {
             disposition: ImportDisposition::Mapped,
             sensitive,
             reason: "empty channel configuration".to_string(),
-        };
+            source_account_label: None,
+            effective_value_sha256: None,
+            schema_binding: None,
+        });
     };
     if matches!(channel, "defaults" | "modelByChannel") {
-        return FieldLedgerEntry {
+        return Ok(FieldLedgerEntry {
             source_path,
             source_channel: Some(channel.to_string()),
             target_channel: None,
@@ -1248,24 +1050,75 @@ fn classify_leaf(path: &[PathPart], secret_ref: bool) -> FieldLedgerEntry {
             disposition: ImportDisposition::Unsupported,
             sensitive,
             reason: format!("OpenClaw channels.{channel} has no NEOTH import target yet"),
-        };
+            source_account_label: None,
+            effective_value_sha256: None,
+            schema_binding: None,
+        });
     }
 
     let target_channel = alias_target(channel);
     if !KNOWN_CHANNEL_KEYS.contains(&channel) {
-        return FieldLedgerEntry {
+        return Ok(FieldLedgerEntry {
             source_path,
             source_channel: Some(channel.to_string()),
             target_channel: None,
             target_path: None,
             disposition: ImportDisposition::Unknown,
             sensitive,
-            reason: "unknown or third-party OpenClaw channel; explicit adoption is required"
+            reason: "unknown or third-party OpenClaw channel; explicit adoption is required".to_string(),
+            source_account_label: None,
+            effective_value_sha256: None,
+            schema_binding: None,
+        });
+    }
+
+    if invalid_secret_ref {
+        return Ok(FieldLedgerEntry {
+            source_path,
+            source_channel: Some(channel.to_string()),
+            target_channel: target_channel.map(str::to_string),
+            target_path: None,
+            disposition: ImportDisposition::Unknown,
+            sensitive: true,
+            reason: "invalid OpenClaw SecretRef shape; explicit schema-compatible reference is required"
                 .to_string(),
-        };
+            source_account_label: account_label,
+            effective_value_sha256: None,
+            schema_binding: None,
+        });
+    }
+
+    let schema = schema_lookup(path, value)?;
+    let Some(schema) = schema else {
+        return Ok(FieldLedgerEntry {
+            source_path,
+            source_channel: Some(channel.to_string()),
+            target_channel: target_channel.map(str::to_string),
+            target_path: None,
+            disposition: ImportDisposition::Unknown,
+            sensitive,
+            reason: format!("unknown OpenClaw {channel} field or incompatible schema type"),
+            source_account_label: account_label,
+            effective_value_sha256: None,
+            schema_binding: None,
+        });
+    };
+    if schema.scope == pinned_schema::SchemaScope::OpaqueSubtree {
+        return Ok(FieldLedgerEntry {
+            source_path,
+            source_channel: Some(channel.to_string()),
+            target_channel: target_channel.map(str::to_string),
+            target_path: None,
+            disposition: ImportDisposition::Unknown,
+            sensitive,
+            reason: "pinned OpenClaw schema has an opaque subtree; explicit leaf mapping is required".to_string(),
+            source_account_label: account_label,
+            effective_value_sha256: None,
+            schema_binding: Some(schema_binding(schema, "blocked_requires_explicit_leaf_mapping")),
+        });
     }
     let Some(target_channel) = target_channel else {
-        return FieldLedgerEntry {
+        return Ok(FieldLedgerEntry {
             source_path,
             source_channel: Some(channel.to_string()),
             target_channel: None,
@@ -1273,48 +1126,37 @@ fn classify_leaf(path: &[PathPart], secret_ref: bool) -> FieldLedgerEntry {
             disposition: ImportDisposition::Unsupported,
             sensitive,
             reason: "known OpenClaw channel has no NEOTH adapter".to_string(),
-        };
+            source_account_label: account_label,
+            effective_value_sha256: value_binding(value, path, sensitive),
+            schema_binding: Some(schema_binding(schema, "requires_neoth_adapter")),
+        });
     };
-
-    let field = account_or_channel_field(path);
-    let account_scoped = key_at(path, 2) == Some("accounts");
-    if account_scoped {
-        return FieldLedgerEntry {
+    if account_label.is_some() {
+        return Ok(FieldLedgerEntry {
             source_path,
             source_channel: Some(channel.to_string()),
             target_channel: Some(target_channel.to_string()),
             target_path: None,
             disposition: ImportDisposition::Unsupported,
             sensitive,
-            reason: "OpenClaw multi-account config cannot be flattened into NEOTH's single account"
-                .to_string(),
-        };
-    }
-    let Some(field) = field else {
-        return FieldLedgerEntry {
-            source_path,
-            source_channel: Some(channel.to_string()),
-            target_channel: Some(target_channel.to_string()),
-            target_path: None,
-            disposition: ImportDisposition::Mapped,
-            sensitive,
-            reason: "empty channel object".to_string(),
-        };
-    };
-    if !known_channel_field(channel, field) {
-        return FieldLedgerEntry {
-            source_path,
-            source_channel: Some(channel.to_string()),
-            target_channel: Some(target_channel.to_string()),
-            target_path: None,
-            disposition: ImportDisposition::Unknown,
-            sensitive,
-            reason: format!("unknown OpenClaw {channel} field `{field}`"),
-        };
+            reason: "OpenClaw account-scoped config has no NEOTH account-scoped runtime target".to_string(),
+            source_account_label: account_label,
+            effective_value_sha256: value_binding(value, path, sensitive),
+            schema_binding: Some(schema_binding(schema, "requires_account_scoped_runtime")),
+        });
     }
 
-    let (disposition, target_path, reason) = classify_known_field(channel, field, sensitive);
-    FieldLedgerEntry {
+    let direct_field = direct_channel_field(path);
+    let (disposition, target_path, reason) = match direct_field {
+        Some(field) => classify_known_field(channel, field, sensitive),
+        None => (
+            ImportDisposition::Unsupported,
+            None,
+            "recognized pinned OpenClaw schema leaf has no direct NEOTH target yet",
+        ),
+    };
+    let action_id = action_id(disposition, target_path, direct_field);
+    Ok(FieldLedgerEntry {
         source_path,
         source_channel: Some(channel.to_string()),
         target_channel: Some(target_channel.to_string()),
@@ -1322,9 +1164,146 @@ fn classify_leaf(path: &[PathPart], secret_ref: bool) -> FieldLedgerEntry {
         disposition,
         sensitive,
         reason: reason.to_string(),
+        source_account_label: None,
+        effective_value_sha256: value_binding(value, path, sensitive),
+        schema_binding: Some(schema_binding(schema, action_id)),
+    })
+}
+
+fn classify_account_container(path: &[PathPart]) -> Result<FieldLedgerEntry> {
+    let source_path = display_path(path);
+    let channel = key_at(path, 1).context("account container missing channel")?;
+    let account_label = source_account_label(path).context("account container missing account label")?;
+    let target_channel = alias_target(channel);
+    let schema = pinned_schema::account_container(channel)?;
+    let (disposition, reason, action_id) = if schema.is_some() && target_channel.is_some() {
+        (
+            ImportDisposition::Unsupported,
+            "configured OpenClaw account has no NEOTH account-scoped runtime target",
+            "requires_account_scoped_runtime",
+        )
+    } else {
+        (
+            ImportDisposition::Unknown,
+            "configured OpenClaw account is not represented by the pinned channel schema",
+            "blocked_requires_explicit_account_mapping",
+        )
+    };
+    Ok(FieldLedgerEntry {
+        source_path,
+        source_channel: Some(channel.to_string()),
+        target_channel: target_channel.map(str::to_string),
+        target_path: None,
+        disposition,
+        sensitive: false,
+        reason: reason.to_string(),
+        source_account_label: Some(account_label),
+        effective_value_sha256: None,
+        schema_binding: schema.map(|schema| schema_binding(schema, action_id)),
+    })
+}
+
+fn schema_lookup(path: &[PathPart], value: &Value) -> Result<Option<pinned_schema::SchemaMatch>> {
+    if key_at(path, 0) != Some("channels") {
+        return Ok(None);
+    }
+    let Some(channel) = key_at(path, 1) else {
+        return Ok(None);
+    };
+    let parts: Vec<_> = path[2..]
+        .iter()
+        .map(|part| match part {
+            PathPart::Key(key) => pinned_schema::PathPart::Key(key),
+            PathPart::Index(_) => pinned_schema::PathPart::Index,
+        })
+        .collect();
+    pinned_schema::lookup(channel, &parts, observed_json_type(value))
+}
+
+fn observed_json_type(value: &Value) -> &'static str {
+    if is_secret_ref(value) {
+        "secret_ref"
+    } else if value.is_string() {
+        "string"
+    } else if value.is_boolean() {
+        "boolean"
+    } else if value.is_i64() || value.is_u64() {
+        "integer"
+    } else if value.is_number() {
+        "number"
+    } else if value.is_null() {
+        "null"
+    } else if value.is_array() {
+        "array"
+    } else {
+        "object"
     }
 }
 
+fn is_account_container(path: &[PathPart], value: &Value) -> bool {
+    value.is_object()
+        && key_at(path, 0) == Some("channels")
+        && key_at(path, 2) == Some("accounts")
+        && key_at(path, 3).is_some()
+        && path.len() == 4
+}
+
+fn source_account_label(path: &[PathPart]) -> Option<String> {
+    (key_at(path, 0) == Some("channels") && key_at(path, 2) == Some("accounts"))
+        .then(|| key_at(path, 3).map(str::to_string))
+        .flatten()
+}
+
+fn direct_channel_field(path: &[PathPart]) -> Option<&str> {
+    (path.len() == 3).then(|| key_at(path, 2)).flatten()
+}
+
+fn schema_binding(schema: pinned_schema::SchemaMatch, action_id: &str) -> SchemaLedgerBinding {
+    SchemaLedgerBinding {
+        schema_id: schema.schema_id,
+        path_template: schema.path_template,
+        scope: match schema.scope {
+            pinned_schema::SchemaScope::TypedLeaf => "typed_leaf",
+            pinned_schema::SchemaScope::OpaqueSubtree => "opaque_subtree",
+            pinned_schema::SchemaScope::AccountContainer => "account_container",
+        }
+        .to_string(),
+        action_id: action_id.to_string(),
+    }
+}
+
+fn value_binding(value: &Value, path: &[PathPart], sensitive: bool) -> Option<String> {
+    if sensitive || source_account_label(path).is_some() || !(value.is_boolean() || value.is_number()) {
+        return None;
+    }
+    let canonical = serde_json::to_vec(value).ok()?;
+    let mut digest = Sha256::new();
+    digest.update(b"neoth-w169-effective-value-v1\0");
+    digest.update(display_path(path).as_bytes());
+    digest.update(b"\0");
+    digest.update(pinned_schema::FIXTURE_SHA256.as_bytes());
+    digest.update(b"\0");
+    digest.update(canonical);
+    Some(format!("{:x}", digest.finalize()))
+}
+
+fn action_id(
+    disposition: ImportDisposition,
+    target_path: Option<&str>,
+    direct_field: Option<&str>,
+) -> &'static str {
+    match (disposition, target_path, direct_field) {
+        (ImportDisposition::Mapped, Some(_), _) => "direct_credential_mapping",
+        (ImportDisposition::NeedsSecret, Some(_), _) => "neoth_credential_flow",
+        (ImportDisposition::NeedsRelink, _, _) => "relink_required",
+        (ImportDisposition::NeedsRuntime, _, _) => "runtime_prerequisite_required",
+        (ImportDisposition::Unsupported, _, Some(_)) => "requires_target_contract",
+        (ImportDisposition::Unsupported, _, None) => "requires_target_contract",
+        (ImportDisposition::Unknown, _, _) => "blocked_requires_explicit_leaf_mapping",
+        (ImportDisposition::Mapped, None, _) => "mapped",
+        (ImportDisposition::NeedsSecret, None, _) => "neoth_credential_flow",
+    }
+}
 fn classify_known_field(
     channel: &str,
     field: &str,
@@ -1405,7 +1384,7 @@ fn classify_known_field(
     (
         ImportDisposition::Unsupported,
         None,
-        "known OpenClaw field has no lossless NEOTH target yet",
+        "recognized pinned OpenClaw schema field has no direct NEOTH target yet",
     )
 }
 
@@ -1452,37 +1431,6 @@ fn alias_target(channel: &str) -> Option<&'static str> {
         .find_map(|(source, target)| (*source == channel).then_some(*target))
 }
 
-fn known_channel_field(channel: &str, field: &str) -> bool {
-    if COMMON_CHANNEL_FIELDS.contains(&field) {
-        return true;
-    }
-    let fields = match channel {
-        "telegram" => TELEGRAM_FIELDS,
-        "slack" => SLACK_FIELDS,
-        "whatsapp" => WHATSAPP_FIELDS,
-        "discord" => DISCORD_FIELDS,
-        "signal" => SIGNAL_FIELDS,
-        "imessage" => IMESSAGE_FIELDS,
-        "matrix" => MATRIX_FIELDS,
-        "line" => LINE_FIELDS,
-        "irc" => IRC_FIELDS,
-        "mattermost" => MATTERMOST_FIELDS,
-        "twitch" => TWITCH_FIELDS,
-        "nostr" => NOSTR_FIELDS,
-        "googlechat" => GOOGLECHAT_FIELDS,
-        _ => &[],
-    };
-    fields.contains(&field)
-}
-
-fn account_or_channel_field(path: &[PathPart]) -> Option<&str> {
-    if key_at(path, 2) == Some("accounts") {
-        key_at(path, 4).or(Some("accounts"))
-    } else {
-        key_at(path, 2)
-    }
-}
-
 fn key_at(path: &[PathPart], index: usize) -> Option<&str> {
     match path.get(index) {
         Some(PathPart::Key(key)) => Some(key),
@@ -1509,14 +1457,35 @@ fn display_path(path: &[PathPart]) -> String {
     output
 }
 
-fn is_secret_ref(value: &Value) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SecretRefState {
+    NotSecretRef,
+    Valid,
+    InvalidCandidate,
+}
+
+fn secret_ref_state(value: &Value) -> SecretRefState {
     let Value::Object(object) = value else {
-        return false;
+        return SecretRefState::NotSecretRef;
     };
-    matches!(
-        object.get("source").and_then(Value::as_str),
-        Some("env" | "file" | "exec")
-    ) && object.get("id").and_then(Value::as_str).is_some()
+    let source = object.get("source").and_then(Value::as_str);
+    let id = object.get("id").and_then(Value::as_str);
+    if !matches!(source, Some("env" | "file" | "exec")) || id.is_none() {
+        return SecretRefState::NotSecretRef;
+    }
+    let allowed = ["source", "provider", "id"];
+    if object.len() == allowed.len()
+        && allowed.iter().all(|key| object.contains_key(*key))
+        && object.get("provider").and_then(Value::as_str).is_some()
+    {
+        SecretRefState::Valid
+    } else {
+        SecretRefState::InvalidCandidate
+    }
+}
+
+fn is_secret_ref(value: &Value) -> bool {
+    secret_ref_state(value) == SecretRefState::Valid
 }
 
 fn path_is_sensitive(path: &[PathPart]) -> bool {
@@ -2129,5 +2098,132 @@ mod tests {
             Err(error) => error,
         };
         assert!(!format!("{error:#}").contains(secret));
+    }
+
+    #[test]
+    fn w169_ledgers_separate_account_containers_and_redacts_account_secrets() {
+        let temp = tempdir().unwrap();
+        let path = write_config(
+            temp.path(),
+            "{ channels: { telegram: { accounts: { work: { botToken: 'work-secret' }, personal: { botToken: 'personal-secret' } } } } }",
+        );
+        let report = inspect_openclaw_config(&path).unwrap();
+        for label in ["work", "personal"] {
+            let container = report
+                .ledger
+                .iter()
+                .find(|entry| entry.source_path == format!("channels.telegram.accounts.{label}"))
+                .unwrap();
+            assert_eq!(container.source_account_label.as_deref(), Some(label));
+            assert_eq!(container.disposition, ImportDisposition::Unsupported);
+            assert_eq!(
+                container.schema_binding.as_ref().map(|binding| binding.scope.as_str()),
+                Some("account_container")
+            );
+            assert_eq!(
+                container.schema_binding.as_ref().map(|binding| binding.action_id.as_str()),
+                Some("requires_account_scoped_runtime")
+            );
+            let token = report
+                .ledger
+                .iter()
+                .find(|entry| entry.source_path == format!("channels.telegram.accounts.{label}.botToken"))
+                .unwrap();
+            assert!(token.sensitive);
+            assert!(token.effective_value_sha256.is_none());
+            assert_eq!(token.source_account_label.as_deref(), Some(label));
+        }
+        let rendered = serde_json::to_string(&report).unwrap();
+        assert!(!rendered.contains("work-secret"));
+        assert!(!rendered.contains("personal-secret"));
+    }
+
+    #[test]
+    fn w169_opaque_subtree_blocks_at_its_exact_account_path() {
+        let temp = tempdir().unwrap();
+        let path = write_config(
+            temp.path(),
+            "{ channels: { matrix: { accounts: { work: { arbitraryFutureOption: true } } } } }",
+        );
+        let report = inspect_openclaw_config(&path).unwrap();
+        let entry = report
+            .ledger
+            .iter()
+            .find(|entry| entry.source_path == "channels.matrix.accounts.work")
+            .unwrap();
+        assert_eq!(entry.disposition, ImportDisposition::Unknown);
+        assert_eq!(entry.source_account_label.as_deref(), Some("work"));
+        assert!(entry.effective_value_sha256.is_none());
+        assert_eq!(
+            entry.schema_binding.as_ref().map(|binding| binding.scope.as_str()),
+            Some("opaque_subtree")
+        );
+    }
+
+    #[test]
+    fn w169_typed_nonsecret_leaf_has_schema_binding_and_value_binding() {
+        let temp = tempdir().unwrap();
+        let path = write_config(temp.path(), "{ channels: { telegram: { enabled: true } } }");
+        let report = inspect_openclaw_config(&path).unwrap();
+        let entry = report
+            .ledger
+            .iter()
+            .find(|entry| entry.source_path == "channels.telegram.enabled")
+            .unwrap();
+        assert!(!entry.sensitive);
+        assert!(entry.effective_value_sha256.is_some());
+        assert_eq!(
+            entry.schema_binding.as_ref().map(|binding| binding.scope.as_str()),
+            Some("typed_leaf")
+        );
+        assert_ne!(entry.disposition, ImportDisposition::Mapped);
+    }
+
+    #[test]
+    fn w169_rejects_unbacked_or_malformed_secret_refs_without_serializing_ids() {
+        let temp = tempdir().unwrap();
+        let path = write_config(
+            temp.path(),
+            "{ channels: { telegram: { proxy: { source: 'env', provider: 'default', id: 'PROXY_SECRET' }, botToken: { source: 'env', provider: 'default', id: 'EXTRA_SECRET', unexpected: true } } } }",
+        );
+        let report = inspect_openclaw_config(&path).unwrap();
+        for source_path in ["channels.telegram.proxy", "channels.telegram.botToken"] {
+            let entry = report.ledger.iter().find(|entry| entry.source_path == source_path).unwrap();
+            assert_eq!(entry.disposition, ImportDisposition::Unknown);
+            assert!(entry.sensitive);
+            assert!(entry.effective_value_sha256.is_none());
+            assert!(entry.schema_binding.is_none());
+        }
+        let rendered = format!(
+            "{}\n{}",
+            serde_json::to_string(&report).unwrap(),
+            render_human(&report)
+        );
+        assert!(!rendered.contains("PROXY_SECRET"));
+        assert!(!rendered.contains("EXTRA_SECRET"));
+    }
+
+    #[test]
+    fn w169_never_binds_credential_bearing_string_urls() {
+        let temp = tempdir().unwrap();
+        let credential_url = "http://operator:private-password@proxy.example.invalid";
+        let path = write_config(
+            temp.path(),
+            &format!("{{ channels: {{ telegram: {{ proxy: '{credential_url}' }} }} }}"),
+        );
+        let report = inspect_openclaw_config(&path).unwrap();
+        let entry = report
+            .ledger
+            .iter()
+            .find(|entry| entry.source_path == "channels.telegram.proxy")
+            .unwrap();
+        assert!(entry.schema_binding.is_some());
+        assert!(entry.effective_value_sha256.is_none());
+        let rendered = format!(
+            "{}\n{}",
+            serde_json::to_string(&report).unwrap(),
+            render_human(&report)
+        );
+        assert!(!rendered.contains(credential_url));
     }
 }

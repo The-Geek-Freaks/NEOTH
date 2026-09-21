@@ -30,6 +30,8 @@ jobs:
           fi
           printf '{"status":%s,"commit":"%s"}\n' "$status" "$OPENCLAW_COMMIT" > "$RUNNER_TEMP/w169/status.json"
           exit "$status"
+      - name: Compare frozen package schema with pinned extraction
+        run: cmp "$RUNNER_TEMP/w169/openclaw_channel_schema_v1.json" SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json
       - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         if: always()
         with:
@@ -37,3 +39,52 @@ jobs:
           path: ${{ runner.temp }}/w169
           if-no-files-found: warn
           retention-days: 14
+
+  custody:
+    name: Pinned custody package regressions
+    needs: extract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CARGO_BUILD_JOBS: "1"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with: { persist-credentials: false, fetch-depth: 1 }
+      - name: Install pinned Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+          components: clippy, rustfmt
+      - name: Record exact package source
+        run: |
+          git rev-parse HEAD
+          sha256sum SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json
+      - name: Run custody package regressions
+        timeout-minutes: 8
+        working-directory: SRC
+        run: cargo test --locked -p neoth-openclaw-custody -- --test-threads=1
+      - name: Check custody package lint
+        timeout-minutes: 3
+        working-directory: SRC
+        run: cargo clippy --locked -p neoth-openclaw-custody --all-targets --no-deps -- -D warnings
+      - name: Check custody package formatting
+        id: format
+        working-directory: SRC
+        run: cargo fmt -p neoth-openclaw-custody -- --check
+      - name: Generate package formatting patch
+        if: failure() && steps.format.outcome == 'failure'
+        working-directory: SRC
+        run: |
+          cargo fmt -p neoth-openclaw-custody
+          git diff --binary -- neoth-openclaw-custody > ../custody-rustfmt.patch
+      - name: Retain package formatting patch
+        if: failure() && steps.format.outcome == 'failure'
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: custody-rustfmt-${{ github.sha }}
+          path: custody-rustfmt.patch
+          if-no-files-found: error
+          retention-days: 3

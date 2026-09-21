@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W169 package schema/account ledger (2026-09-21):** independently reviewed
+custody integration now embeds the exact Hosted 3252-row fixture. Structural
+lookup, explicit account containers, strict fixture-backed SecretRef shapes and
+safe boolean/number-only value bindings preserve all opaque/unknown blockers.
+Eight new package tests include every schema row and all 22 opaque boundaries;
+Hosted execution is still required. The manual schema workflow now compares
+raw fixture bytes and runs isolated package tests/Clippy/formatting on GitHub.
+W171 is published at ceea62cb; its two exact Hosted format hunks are imported,
+and CLI reference build 35655672068 is running. CI 35655045794 on 6c69ce79
+has a newly observed headless-GUI unused-item lint failure; other native jobs
+continue for their source-bound results. No Road checkbox closes. See
+[W169](../docs/gold-wave169-verification.md).
+
 **W171 immediate arXiv ingest (2026-09-21):** source is independently reviewed
 for `neoth arxiv ingest --now`, using the existing opt-in/configured pass and
 outbound/provider audit paths. Topic fetch failures and skipped index writes

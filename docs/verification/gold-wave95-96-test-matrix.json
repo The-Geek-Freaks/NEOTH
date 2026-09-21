@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W171_REVIEWED_IMMEDIATE_ARXIV_HOSTED_PENDING",
-  "base": "6c69ce79b1bec175f6d3cff11dc6fc0a1e83b83b",
+  "status": "W169_REVIEWED_CUSTODY_INTEGRATION_HOSTED_PENDING",
+  "base": "ceea62cbb2126f6fa1e4cce9f772e61f65851189",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 66752,
-    "sha256": "C705BB39A9947C97302DFF19F68802F455027C25C1D505D1A5745CA28A08F4AD"
+    "bytes": 67156,
+    "sha256": "A65F1DE33216335721BC19324EE89BECE734976D7F0AFCBFCA86FCBF56BC65A6"
   },
-  "sourceInputs": 386,
+  "sourceInputs": 388,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -2364,25 +2364,25 @@
     {
       "test": "cli::arxiv_ingest_task::tests::configured_one_shot_requires_the_existing_opt_in_and_topics",
       "sourcePath": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
-      "sourceSha256": "6B79BCD7E33162632E1E3946D05BE25A8F7E0F58FDDCA9B66F6FF03CEA9ED5E8",
+      "sourceSha256": "EF558133E8415F619E8523BBC3D1CBD10F7E96407F9C54AE41DDFD949540D0FF",
       "junitClass": "neoth"
     },
     {
       "test": "cli::arxiv_ingest_task::tests::non_2xx_arxiv_skips_topic_no_panic",
       "sourcePath": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
-      "sourceSha256": "6B79BCD7E33162632E1E3946D05BE25A8F7E0F58FDDCA9B66F6FF03CEA9ED5E8",
+      "sourceSha256": "EF558133E8415F619E8523BBC3D1CBD10F7E96407F9C54AE41DDFD949540D0FF",
       "junitClass": "neoth"
     },
     {
       "test": "cli::arxiv_ingest_task::tests::one_shot_rejects_skipped_index_writes_without_claiming_rollback",
       "sourcePath": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
-      "sourceSha256": "6B79BCD7E33162632E1E3946D05BE25A8F7E0F58FDDCA9B66F6FF03CEA9ED5E8",
+      "sourceSha256": "EF558133E8415F619E8523BBC3D1CBD10F7E96407F9C54AE41DDFD949540D0FF",
       "junitClass": "neoth"
     },
     {
       "test": "cli::arxiv_ingest_task::tests::combine_one_shot_results_preserves_pass_and_audit_failures",
       "sourcePath": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
-      "sourceSha256": "6B79BCD7E33162632E1E3946D05BE25A8F7E0F58FDDCA9B66F6FF03CEA9ED5E8",
+      "sourceSha256": "EF558133E8415F619E8523BBC3D1CBD10F7E96407F9C54AE41DDFD949540D0FF",
       "junitClass": "neoth"
     },
     {
@@ -2402,6 +2402,54 @@
       "sourcePath": "SRC/neothd/src/cli/arxiv.rs",
       "sourceSha256": "7D7926E983556C77770E3AE13188201941CFA7209E50F5067D467334FD5BB0AA",
       "junitClass": "neoth"
+    },
+    {
+      "test": "pinned_schema::tests::hosted_fixture_has_the_frozen_inventory_and_opaque_boundary",
+      "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
+      "sourceSha256": "40C532E5BF08DC13E6794A38157E287451CA7B3F82966C8E638814BDE7793B30",
+      "junitClass": "neoth-openclaw-custody"
+    },
+    {
+      "test": "pinned_schema::tests::every_frozen_row_resolves_or_blocks_at_its_exact_structural_path",
+      "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
+      "sourceSha256": "40C532E5BF08DC13E6794A38157E287451CA7B3F82966C8E638814BDE7793B30",
+      "junitClass": "neoth-openclaw-custody"
+    },
+    {
+      "test": "pinned_schema::tests::secret_refs_require_a_fixture_backed_object_composition_family",
+      "sourcePath": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
+      "sourceSha256": "40C532E5BF08DC13E6794A38157E287451CA7B3F82966C8E638814BDE7793B30",
+      "junitClass": "neoth-openclaw-custody"
+    },
+    {
+      "test": "tests::w169_ledgers_separate_account_containers_and_redacts_account_secrets",
+      "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
+      "sourceSha256": "0CC46CB1C873C942CF670439BB72475C94AA4AB4E5B7B5F231CA5CA0F0E6B089",
+      "junitClass": "neoth-openclaw-custody"
+    },
+    {
+      "test": "tests::w169_opaque_subtree_blocks_at_its_exact_account_path",
+      "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
+      "sourceSha256": "0CC46CB1C873C942CF670439BB72475C94AA4AB4E5B7B5F231CA5CA0F0E6B089",
+      "junitClass": "neoth-openclaw-custody"
+    },
+    {
+      "test": "tests::w169_typed_nonsecret_leaf_has_schema_binding_and_value_binding",
+      "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
+      "sourceSha256": "0CC46CB1C873C942CF670439BB72475C94AA4AB4E5B7B5F231CA5CA0F0E6B089",
+      "junitClass": "neoth-openclaw-custody"
+    },
+    {
+      "test": "tests::w169_rejects_unbacked_or_malformed_secret_refs_without_serializing_ids",
+      "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
+      "sourceSha256": "0CC46CB1C873C942CF670439BB72475C94AA4AB4E5B7B5F231CA5CA0F0E6B089",
+      "junitClass": "neoth-openclaw-custody"
+    },
+    {
+      "test": "tests::w169_never_binds_credential_bearing_string_urls",
+      "sourcePath": "SRC/neoth-openclaw-custody/src/lib.rs",
+      "sourceSha256": "0CC46CB1C873C942CF670439BB72475C94AA4AB4E5B7B5F231CA5CA0F0E6B089",
+      "junitClass": "neoth-openclaw-custody"
     }
   ],
   "requiredGuiTests": [
@@ -6132,5 +6180,25 @@
     "generatedReference": "Hosted export pending",
     "runtime": "pending",
     "localExecution": "none"
+  },
+  "wave169CustodyIntegration": {
+    "schemaRows": 3252,
+    "opaqueRows": 22,
+    "nativeIdentities": 8,
+    "review": "work/gold-20260906/wave169-channel-schema/CUSTODY-INTEGRATION-REVIEW.md",
+    "reviewSha256": "946A7E1B7BFB409674AE5ABEB6AA692201AB5FEA22E5377F967AE05A962C123B",
+    "workflowReview": "work/gold-20260906/wave169-channel-schema/HOSTED-CUSTODY-WORKFLOW-REVIEW.md",
+    "workflowReviewSha256": "A93BE9B0266E46E5BBC135A096C8CA07D3750C24EE2D74F364965769D2F9D176",
+    "fixtureSha256": "A7E60AFBB1E0D013100EE8C30F5237307E6552923F34B55A39B2DC1263B0283F",
+    "runtime": "Hosted package/native acceptance pending",
+    "boundary": "Schema inspection only; account-scoped runtime migration remains blocked"
+  },
+  "wave171HostedFormat": {
+    "run": 35655674720,
+    "hunks": 2,
+    "receipt": "work/gold-20260906/wave171-next-batch/FORMAT-HOSTED.json",
+    "sha256": "B0E68658C390814E9B12923C926B1EF12135F2801F542BEE7B5F2C6B1F8407D7",
+    "referenceRun": 35655672068,
+    "referenceStatus": "in_progress"
   }
 }

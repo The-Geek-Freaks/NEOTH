@@ -1,8 +1,9 @@
 # W169 — pinned channel schema extraction
 
 Status: diagnostic extraction passed GitHub run 35653170374 at source
-61eaa58fc060d211e73e1535caf3dcd04b80d7f0. The custody schema fixture and importer
-integration are in progress. GOLD-LF-001-02 is not closed.
+61eaa58fc060d211e73e1535caf3dcd04b80d7f0. The package-owned fixture and importer
+integration are implemented and source-reviewed; hosted package/runtime gates
+remain pending. GOLD-LF-001-02 is not closed.
 
 The manual GitHub workflow reads OpenClaw's generated bundled channel metadata
 at commit 4c667aac8859114bd8f0a589ac6cd1de8bfe1474. Before decoding, the extractor
@@ -46,3 +47,33 @@ The matching test now admits that specific command in its existing order;
 fresh hosted preflight is required. Full CI 35653174520 and Windows preview
 35653179383 are running on the same published source. No local parser, test,
 fixture, compiler or product execution is permitted by this batch.
+
+## Package integration
+
+The custody package embeds the unchanged hosted fixture and validates its
+digest, source commit, channel set, row identities and structural templates.
+The inspector resolves actual path segments, array indices, account names and
+schema alternatives without parsing a rendered path back into keys. Each
+configured account has a separate `account_container` binding; accounts are
+never flattened or selected implicitly. Opaque subtrees stop traversal at
+their exact configured path and remain `Unknown` migration blockers.
+
+Ledger entries have additive optional account labels, schema/action bindings
+and value provenance. Value digests are restricted to non-sensitive,
+non-account boolean/number primitives. Strings, URLs, proxies, SecretRefs,
+objects, arrays, null and opaque subtrees never receive a value digest.
+SecretRefs require both the exact supported shape and an explicit object
+composition in the pinned field schema. Malformed shapes and string-only
+fields block without exposing reference IDs or traversing secret object values.
+
+Eight package regression identities include a fixture-driven traversal of all
+3252 actual schema rows and every one of the 22 opaque boundaries, separate
+accounts, SecretRef shape/type rejection and credential-bearing URL redaction.
+These are test sources until the hosted job actually executes them.
+
+The manual extraction workflow compares its output byte-for-byte with the
+package fixture, then runs the small custody package's tests, strict Clippy and
+formatting on GitHub. A formatting failure retains a reviewable package-only
+patch. This focused lane does not replace broader native/GUI/release gates.
+The source reviews and retained rejected revisions are under
+`work/gold-20260906/wave169-channel-schema/`.

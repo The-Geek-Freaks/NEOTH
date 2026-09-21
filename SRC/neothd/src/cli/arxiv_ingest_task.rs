@@ -57,9 +57,8 @@ pub async fn run_configured_one_shot(
     config: &crate::config::FreedomConfig,
 ) -> Result<PassReport> {
     let (topics, max_per_topic, source_category) = configured_pass_parameters(config)?;
-    let http = crate::tools::external_http::ExternalHttpAuthorizer::interactive(
-        config.autonomy_policy(),
-    )?;
+    let http =
+        crate::tools::external_http::ExternalHttpAuthorizer::interactive(config.autonomy_policy())?;
     let mut provider_audit = None;
     let provider = match crate::providers::from_config_for_utility_at(config, home).await {
         Ok(provider) => {
@@ -677,11 +676,8 @@ mod tests {
             .expect_err("pass failure remains");
         assert!(pass_only.to_string().contains("pass failed"));
 
-        let audit_only = combine_one_shot_results(
-            Ok(report),
-            Err(anyhow::anyhow!("audit failed")),
-        )
-        .expect_err("audit failure remains");
+        let audit_only = combine_one_shot_results(Ok(report), Err(anyhow::anyhow!("audit failed")))
+            .expect_err("audit failure remains");
         assert!(audit_only.to_string().contains("finalize arxiv ingest"));
 
         let both = combine_one_shot_results(

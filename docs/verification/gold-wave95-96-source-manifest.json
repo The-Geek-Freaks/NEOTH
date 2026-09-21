@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W172-hosted-repair-candidate",
-  "base": "6c69ce79b1bec175f6d3cff11dc6fc0a1e83b83b",
-  "capturedUtc": "2026-09-21T21:09:23.6594738Z",
-  "validationStatus": "W171_REVIEWED_IMMEDIATE_ARXIV_HOSTED_PENDING",
-  "scopeNote": "Reviewed immediate configured arXiv ingest with explicit topic/index failure counters and preserved pass/audit errors; W169 custody implementation excluded. Hosted native and generated CLI reference required.",
+  "base": "ceea62cbb2126f6fa1e4cce9f772e61f65851189",
+  "capturedUtc": "2026-09-21T21:16:53.8526191Z",
+  "validationStatus": "W169_REVIEWED_CUSTODY_INTEGRATION_HOSTED_PENDING",
+  "scopeNote": "Package-owned frozen3252row schema, strict structural/SecretRef/account ledger and eight package tests; W171 exact two Hosted formatting hunks. W173 ongoing work excluded. Hosted package/native/GUI acceptance pending.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -23,8 +23,8 @@
     },
     {
       "path": ".github/workflows/openclaw-schema-inventory.yml",
-      "bytes": 1922,
-      "sha256": "4E67CE195CF222BFD6D5746C9321D6C6547D824DFCECB6CC48FE528A2CCA9B59"
+      "bytes": 4096,
+      "sha256": "AF91A9EF852BABD2CD41A0B11F18FE1FEF727B3FD23234431D7FED2330C3ACD1"
     },
     {
       "path": ".github/workflows/preflight.yml",
@@ -93,8 +93,8 @@
     },
     {
       "path": "docs/gold-wave169-verification.md",
-      "bytes": 2944,
-      "sha256": "EEF17F2431E7FB64530EE04B8F705AB5B836CD0E4709710850A2D1BD75AA89F2"
+      "bytes": 4791,
+      "sha256": "61FC6F6B48296920FCFEACFA01B4D7DF5C50AB9A33E8FA89D6EE7C7E9A8DDE7E"
     },
     {
       "path": "docs/gold-wave170-verification.md",
@@ -188,13 +188,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1005051,
-      "sha256": "9D9D51EB640779D6D96AE34AC0AF41379594F9DAAF8C4576A161CDB49D3306DA"
+      "bytes": 1005945,
+      "sha256": "98B575168381C03059D94A32A07ADCD205889C0CDA440165A3A0527E18B92061"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1600498,
-      "sha256": "6B9DB350398BEA03829645AA084748AB0C774F5C456AC1646FFD9BCC9DB211DA"
+      "bytes": 1601392,
+      "sha256": "DBA6926E990F12124FADB23743AD1B40E11F71B3A668968319978AAB0049F395"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -282,6 +282,11 @@
       "sha256": "8925B0D248CB58F233A227F22946B395789F88FFF808622FB9A5D571EB115817"
     },
     {
+      "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_channel_schema_v1.json",
+      "bytes": 384625,
+      "sha256": "A7E60AFBB1E0D013100EE8C30F5237307E6552923F34B55A39B2DC1263B0283F"
+    },
+    {
       "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_upstream_evidence_v1.json",
       "bytes": 6225,
       "sha256": "A38299E9E80DE3FA3DBD31DB8093AAA211172CADB50333746855589E25D7800B"
@@ -293,13 +298,18 @@
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "bytes": 69468,
-      "sha256": "3C21A11107154D5212D5399204CB089B8C5DD5A693CF25E9F762C161DBAE8379"
+      "bytes": 79146,
+      "sha256": "0CC46CB1C873C942CF670439BB72475C94AA4AB4E5B7B5F231CA5CA0F0E6B089"
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/pinned_inventory.rs",
       "bytes": 14873,
       "sha256": "E1753A6D7AE8F9D3D91EB742A3B887F781955EEA470E80596F72A202E631E33D"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
+      "bytes": 16841,
+      "sha256": "40C532E5BF08DC13E6794A38157E287451CA7B3F82966C8E638814BDE7793B30"
     },
     {
       "path": "SRC/neothd-gui/build.rs",
@@ -633,8 +643,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
-      "bytes": 27186,
-      "sha256": "6B79BCD7E33162632E1E3946D05BE25A8F7E0F58FDDCA9B66F6FF03CEA9ED5E8"
+      "bytes": 27148,
+      "sha256": "EF558133E8415F619E8523BBC3D1CBD10F7E96407F9C54AE41DDFD949540D0FF"
     },
     {
       "path": "SRC/neothd/src/cli/arxiv.rs",
