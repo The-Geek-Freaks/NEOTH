@@ -2,6 +2,16 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W124/W125 (2026-09-21):** completed CI `35543099210` on `55ec9225` ran
+16800 Windows tests (16799 pass, one failure, 22 skipped). The remaining
+isolated MCP fixture retains only PATH for its real Python child. Linux/macOS
+GUI-test compilation receives its missing module import. Preview `35541731629`
+built CLI/GUI but rejected an intentionally absent optional diagnostic field;
+the helper now checks the actual no-repair receipt contract and keeps its hash
+guard. See [W124](../docs/gold-wave124-verification.md) and
+[W125](../docs/gold-wave125-verification.md). Fresh remote execution remains
+required. No local validation, Road closure or count change.
+
 **W121–W123 (2026-09-21):** mapped Telegram accounts gain pending-request
 visibility and explicit exact-request dismissal through the existing scoped
 CLI. Strict receipts, serialized callback admission and separate empty/error

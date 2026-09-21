@@ -343,7 +343,8 @@ $corruptHash = (Get-FileHash -LiteralPath $database -Algorithm SHA256).Hash
 Add-Result -Results $results -Name 'code_map_corrupt' -Process $corrupt
 
 $normal = Invoke-PortableJson -Executable $neoth -Arguments @('--output', 'json', 'code-map', 'refresh', $repoA) -NeothHome $neothHome -Label 'portable normal corrupt refresh' -ExpectFailure
-if ($normal.Json.outcome -ne 'corrupt_repair_required' -or [string]::IsNullOrWhiteSpace([string]$normal.Json.failure_diagnostic) -or (Get-FileHash -LiteralPath $database -Algorithm SHA256).Hash -cne $corruptHash) { Stop-Acceptance 'normal corrupt refresh did not preserve corrupt-repair provenance' }
+$normalFailureDiagnostic = $normal.Json.PSObject.Properties['failure_diagnostic']
+if ($normal.Json.outcome -ne 'corrupt_repair_required' -or $null -ne $normalFailureDiagnostic -or (Get-FileHash -LiteralPath $database -Algorithm SHA256).Hash -cne $corruptHash) { Stop-Acceptance 'normal corrupt refresh did not preserve corrupt-repair provenance or its no-failure receipt contract' }
 Add-Result -Results $results -Name 'code_map_corrupt_no_implicit_repair' -Process $normal
 
 $repaired = Invoke-PortableJson -Executable $neoth -Arguments @('--output', 'json', 'code-map', 'refresh', $repoA, '--repair-corrupt') -NeothHome $neothHome -Label 'portable explicit corrupt repair'

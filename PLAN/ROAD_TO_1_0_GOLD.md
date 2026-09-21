@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W124/W125 observed CI and preview recovery (2026-09-21):** full CI
+`35543099210` on `55ec9225` executed 16800 Windows tests: 16799 passed, one
+failed, 22 skipped. Linux/macOS stopped on a missing nested-module GUI-test
+import. W124 adds that import and preserves PATH for the isolated MCP fixture's
+real Python launcher without weakening its provider/receipt assertions. The
+preview `35541731629` completed CLI and GUI compilation, including the GUI in
+77m52s, but its lifecycle helper accessed an intentionally omitted optional
+diagnostic. W125 aligns that check with the actual no-implicit-repair receipt
+while retaining the database hash guard. See [W124](../docs/gold-wave124-verification.md)
+and [W125](../docs/gold-wave125-verification.md). Fresh GitHub native and portable
+acceptance remains required. All local validation stays suspended; no checkbox
+or count changes (**1324/1015/307/2**, raw309/pre-tag308).
+
 **W121–W123 pairing requests and remote compile recovery (2026-09-21):**
 Settings exposes the existing account-bound pending Telegram request list and
 explicit exact-request dismissal. Loading, empty and stale/error states remain

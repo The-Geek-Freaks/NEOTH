@@ -3174,14 +3174,14 @@ mod tests {
                 .await
                 .expect("configured ReadPath provider-loop dispatch");
 
-                assert_eq!(outcome.iterations, 2);
-                assert_eq!(outcome.successful_calls, 1, "one actual tools/call");
                 assert_eq!(
                     crate::mcp::client::stdio_fixture_call_count(&counter),
                     1,
                     "the external child observes exactly one tools/call"
                 );
                 assert_eq!(outcome.failed_calls, 0);
+                assert_eq!(outcome.successful_calls, 1, "one actual tools/call");
+                assert_eq!(outcome.iterations, 2);
                 assert_eq!(outcome.tool_call_records.len(), 1);
                 assert_eq!(
                     outcome.tool_call_records[0].server,
@@ -3242,6 +3242,14 @@ mod tests {
             .arg("mcp::dispatch_loop::tests::w95_configured_read_path_provider_loop_child")
             .arg("--nocapture")
             .env_clear()
+            // The child keeps the outer isolation boundary, but its real
+            // configured stdio fixture deliberately uses the supported bare
+            // Python launcher. Retain only PATH so the nested MCP child can
+            // resolve that launcher on Windows and Unix.
+            .env(
+                "PATH",
+                std::env::var_os("PATH").expect("provider-loop fixture launcher PATH"),
+            )
             .env(W95_PROVIDER_LOOP_CHILD, "1")
             .env(W95_PROVIDER_LOOP_DATABASE, &database)
             .env(W95_PROVIDER_LOOP_HOME, &home)

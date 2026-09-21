@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W123_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "034a2b4585d5f44ba537aa07b444e9baf87a7452",
+  "status": "W95_W125_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "base": "55ec92254c0223c4d64e9eb7c42a32aa18c80c2a",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 51979,
-    "sha256": "79438B1F2E3D81850932104E2C387D166EE770C5431E6A98ED117E6D2EBA3E86"
+    "bytes": 51948,
+    "sha256": "5AA1E60F51E18C4FDD1978BC164BCDD0DA2C1A20662609EF57A1567D0924B1B7"
   },
   "sourceInputs": 300,
   "requiredNativeTests": [
@@ -96,25 +96,25 @@
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_summarizes_over_threshold",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "00FEA9031FA5A6556CD081C077127D83D3DD92223D363113D04CBC9BF133F01C",
+      "sourceSha256": "D3B1C6BA7EBC5669F9C8A142F1B4ACD094FBF3E89D17D8D8B71EA992C728B5D8",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_sends_canonical_outer_history_to_the_driver",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "00FEA9031FA5A6556CD081C077127D83D3DD92223D363113D04CBC9BF133F01C",
+      "sourceSha256": "D3B1C6BA7EBC5669F9C8A142F1B4ACD094FBF3E89D17D8D8B71EA992C728B5D8",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_blocks_oversized_fanout_before_the_first_call",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "00FEA9031FA5A6556CD081C077127D83D3DD92223D363113D04CBC9BF133F01C",
+      "sourceSha256": "D3B1C6BA7EBC5669F9C8A142F1B4ACD094FBF3E89D17D8D8B71EA992C728B5D8",
       "junitClass": "neoth"
     },
     {
       "test": "mcp::dispatch_loop::tests::compact_if_needed_is_noop_under_threshold",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "00FEA9031FA5A6556CD081C077127D83D3DD92223D363113D04CBC9BF133F01C",
+      "sourceSha256": "D3B1C6BA7EBC5669F9C8A142F1B4ACD094FBF3E89D17D8D8B71EA992C728B5D8",
       "junitClass": "neoth"
     },
     {
@@ -330,7 +330,7 @@
     {
       "test": "mcp::dispatch_loop::tests::w95_configured_read_path_provider_loop_uses_same_loaded_server_snapshot",
       "sourcePath": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "sourceSha256": "00FEA9031FA5A6556CD081C077127D83D3DD92223D363113D04CBC9BF133F01C",
+      "sourceSha256": "D3B1C6BA7EBC5669F9C8A142F1B4ACD094FBF3E89D17D8D8B71EA992C728B5D8",
       "junitClass": "neoth"
     },
     {
@@ -713,6 +713,12 @@
       "sha256": "8C6A6D052A81D0307618B8C4DC2464EBF53FDE5299ADF5C5595153BCB41BA873",
       "verdict": "APPROVE",
       "scope": "Six frozen W121-W123 source files; native/runtime/visible acceptance pending"
+    },
+    {
+      "record": "work/gold-20260906/wave124-125-review/REVIEW.md",
+      "sha256": "19660CDD34826289FC69160BF7388D90C4CBC1D32BEE2A9DB07E581D7D6679CC",
+      "verdict": "APPROVE",
+      "scope": "Three exact W124/W125 repair paths only; W126 excluded"
     }
   ],
   "priorCi": {
@@ -784,8 +790,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1699584,
-      "sha256": "E091A3E2FF8D61F2C61D2B167A34750CBF1C209254204FE739F3568BF8CC756D"
+      "bytes": 1699613,
+      "sha256": "3A2AB380B885FC710047C66F8204AE0202D698C860445D16A76BF1F9400E54EF"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
@@ -1190,5 +1196,23 @@
       "localFormatterRan": false,
       "newRemoteGates": "PENDING"
     }
+  },
+  "wave124To125": {
+    "failedCi": 35543099210,
+    "failedCiSource": "55ec92254c0223c4d64e9eb7c42a32aa18c80c2a",
+    "windowsRun": 16800,
+    "windowsPass": 16799,
+    "windowsFail": 1,
+    "windowsSkip": 22,
+    "unixFailure": "Missing panel_logic import in GUI-test module",
+    "mcpDiagnosis": "PATH lost by env_clear; source-supported, remote runtime confirmation required",
+    "preview": 35541731629,
+    "previewSource": "927f6894908aa96305219a5fe6a2a6e576fc77cc",
+    "previewCliBuild": "46m14s",
+    "previewGuiBuild": "77m52s",
+    "previewFailure": "Optional failure_diagnostic omitted by correct corrupt_repair_required receipt",
+    "sourceReview": "APPROVE",
+    "execution": "PENDING_GITHUB_ONLY",
+    "localValidationRan": false
   }
 }

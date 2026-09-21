@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W123-pending-pairing-requests-and-native-callback-regressions",
-  "base": "034a2b4585d5f44ba537aa07b444e9baf87a7452",
-  "capturedUtc": "2026-09-20T22:51:48.8209692Z",
-  "validationStatus": "W121_W122_W123_SOURCE_REVIEW_REMOTE_VALIDATION_REQUIRED",
-  "scopeNote": "300 cumulative inputs. Two Rust files receive exactly thirteen distinct hosted Rustfmt hunks from Preflight35542857009 on034a2b45; CodeQuality35542856926 passed. Implementation review unchanged; new remote gates pending. No local formatter or Road closure.",
+  "item": "GOLD-W95-W125-observed-CI-and-portable-receipt-recovery",
+  "base": "55ec92254c0223c4d64e9eb7c42a32aa18c80c2a",
+  "capturedUtc": "2026-09-21T06:07:57.1221684Z",
+  "validationStatus": "W124_W125_SOURCE_REVIEW_APPROVED_REMOTE_EXECUTION_REQUIRED",
+  "scopeNote": "300 cumulative inputs. Admit only reviewed GUI-test import, MCP fixture PATH/counter and portable no-repair receipt check. W126 work-in-progress excluded: its manifest entries retain published hashes. No local validation or Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -128,8 +128,8 @@
     },
     {
       "path": "packaging/tests/Test-PortablePreview.ps1",
-      "bytes": 19623,
-      "sha256": "B13CCCB5C703837957126A2AA80EA703B41A9C9B12E683B3C4B5EACF6D1E20E6"
+      "bytes": 19705,
+      "sha256": "8522FAF56CEEB54503D164E7E7A93444252BB20685B4A025F8485BE10EFC7AB8"
     },
     {
       "path": "packaging/tests/verify_macos_native_gui_fixture_discovery.py",
@@ -273,8 +273,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1699584,
-      "sha256": "E091A3E2FF8D61F2C61D2B167A34750CBF1C209254204FE739F3568BF8CC756D"
+      "bytes": 1699613,
+      "sha256": "3A2AB380B885FC710047C66F8204AE0202D698C860445D16A76BF1F9400E54EF"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
@@ -1043,8 +1043,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/dispatch_loop.rs",
-      "bytes": 304759,
-      "sha256": "00FEA9031FA5A6556CD081C077127D83D3DD92223D363113D04CBC9BF133F01C"
+      "bytes": 305189,
+      "sha256": "D3B1C6BA7EBC5669F9C8A142F1B4ACD094FBF3E89D17D8D8B71EA992C728B5D8"
     },
     {
       "path": "SRC/neothd/src/mcp/gate.rs",

@@ -37649,6 +37649,8 @@ mod w58_gui_callback_runtime_tests {
     use slint::{ComponentHandle as _, Model as _};
     use tempfile::TempDir;
 
+    use crate::panel_logic;
+
     use super::{
         CODE_MAP_ENRICHMENT_READINESS_PUBLICATION_COUNT, CODE_MAP_ENRICHMENT_READINESS_UI_REVISION,
         CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION, CODE_MAP_ROOT_SELECTION_REVISION, MainWindow,
