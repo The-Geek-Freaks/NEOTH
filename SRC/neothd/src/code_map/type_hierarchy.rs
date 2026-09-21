@@ -553,7 +553,7 @@ fn python_edges(file_path: &str, source: &str) -> (Vec<TypeHierarchyEdge>, BTree
     let lines: Vec<&str> = stripped.lines().collect();
     let mut index = 0usize;
     while index < lines.len() {
-        let code = lines[index].trim_end();
+        let code = lines[index].split('#').next().unwrap_or_default().trim_end();
         if code.chars().next().is_some_and(char::is_whitespace) {
             index += 1;
             continue;
@@ -569,7 +569,11 @@ fn python_edges(file_path: &str, source: &str) -> (Vec<TypeHierarchyEdge>, BTree
             && consumed < MAX_PYTHON_HEADER_LINES
             && index + consumed < lines.len()
         {
-            let continuation = lines[index + consumed].trim();
+            let continuation = lines[index + consumed]
+                .split('#')
+                .next()
+                .unwrap_or_default()
+                .trim();
             header.push(' ');
             header.push_str(continuation);
             if header.len() > MAX_PYTHON_HEADER_BYTES {
@@ -713,11 +717,13 @@ mod tests {
         )
         .unwrap();
         assert!(
-            hierarchy
+            !hierarchy
                 .edges()
                 .iter()
-                .any(|edge| edge.child.symbol == "Model")
+                .any(|edge| edge.child.symbol == "Model"),
+            "function-local impls must not escape into the file hierarchy"
         );
+        assert!(hierarchy.endpoints().contains(&endpoint("src/types.rs", "Model")));
         assert!(
             !hierarchy
                 .edges()

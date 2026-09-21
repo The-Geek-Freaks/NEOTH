@@ -284,7 +284,7 @@ pub(crate) fn test_invocation_policy_for_skill_id(
     };
     let runtime = RuntimeSkill::from_trusted_bundled(Skill::from_trusted_bundled(
         manifest,
-        std::path::PathBuf::from("<test>/skill.yaml"),
+        std::path::PathBuf::from("<bundled>/test/skill.yaml"),
         "test-route-hash".to_owned(),
     ))?;
     let snapshot = SkillSnapshot::from_test_skills(vec![runtime]);

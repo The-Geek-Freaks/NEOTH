@@ -11,6 +11,9 @@ use std::process::{Command, Output};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+mod ouro_q8;
+pub(crate) use ouro_q8::{run_ouro_q8_verify, OuroQ8VerifyError, OuroQ8VerifyOutcome};
+
 const MAX_DIAGNOSTIC_CHARS: usize = 400;
 const EXPECTED_CATALOG_VERSION: u32 = 2;
 const MAX_CATALOG_PROVIDERS: usize = 16;

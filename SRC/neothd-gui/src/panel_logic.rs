@@ -7096,6 +7096,7 @@ where
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SelfImproveProposalWire {
     id: String,
     skill: String,
@@ -7213,6 +7214,15 @@ fn selfimprove_quality_reason(state: &str, reason: Option<String>) -> Result<Str
 pub fn parse_selfimprove_proposals(json: &str) -> Result<Vec<SelfImproveProposalRow>, String> {
     let rows: Vec<SelfImproveProposalWire> = serde_json::from_str(json)
         .map_err(|error| format!("invalid self-improve review JSON: {error}"))?;
+    project_selfimprove_proposal_wires(rows)
+}
+
+/// Shared strict W142 projection for both Self-improve review and Buddy's
+/// passive quality snapshot. Callers must deserialize into these wires first;
+/// never route a nested snapshot through a lossy JSON value.
+fn project_selfimprove_proposal_wires(
+    rows: Vec<SelfImproveProposalWire>,
+) -> Result<Vec<SelfImproveProposalRow>, String> {
     rows.into_iter()
         .map(|row| {
             let id = selfimprove_display_text(&row.id, "proposal id")?;
@@ -7803,8 +7813,7 @@ pub struct BuddySkillAutonomyCap {
 }
 
 /// Snapshot from `neoth buddy status --output json`.
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug)]
 pub struct BuddyStatusSnap {
     pub sovereign_buddy: bool,
     pub self_activation_enabled: bool,
@@ -7813,6 +7822,37 @@ pub struct BuddyStatusSnap {
     pub autonomy: String,
     pub proactive_enabled: bool,
     pub skill_autonomy_caps: Vec<BuddySkillAutonomyCap>,
+    pub self_improve_quality: BuddySelfImproveQualitySnap,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BuddySelfImproveQualitySnap {
+    Available { proposals: Vec<SelfImproveProposalRow> },
+    Unavailable { reason: String },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+enum BuddySelfImproveQualityWire {
+    Available {
+        proposals: Vec<SelfImproveProposalWire>,
+    },
+    Unavailable {
+        reason: String,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BuddyStatusWire {
+    sovereign_buddy: bool,
+    self_activation_enabled: bool,
+    self_activation_skills: Vec<String>,
+    smart_approve_any: bool,
+    autonomy: String,
+    proactive_enabled: bool,
+    skill_autonomy_caps: Vec<BuddySkillAutonomyCap>,
+    self_improve_quality: BuddySelfImproveQualityWire,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -8056,10 +8096,37 @@ pub fn filter_wiki_rows(rows: Vec<WikiRowData>, search: &str, kind: &str) -> Vec
 ///
 /// Expected shape: `{"sovereign_buddy":true,"self_activation_enabled":true,
 ///   "self_activation_skills":["sk1","sk2"],"smart_approve_any":false,
-///   "autonomy":"standard","proactive_enabled":true,"skill_autonomy_caps":[]}`
+///   "autonomy":"standard","proactive_enabled":true,"skill_autonomy_caps":[],
+///   "self_improve_quality":{"state":"available","proposals":[]}}`
 pub fn parse_buddy_status(json: &str) -> Result<BuddyStatusSnap, String> {
-    let snapshot: BuddyStatusSnap = serde_json::from_str(json)
+    let wire: BuddyStatusWire = serde_json::from_str(json)
         .map_err(|error| format!("invalid Buddy status JSON: {error}"))?;
+    let self_improve_quality = match wire.self_improve_quality {
+        BuddySelfImproveQualityWire::Available { proposals } => {
+            BuddySelfImproveQualitySnap::Available {
+                proposals: project_selfimprove_proposal_wires(proposals)
+                    .map_err(|error| format!("invalid Buddy self-improve quality: {error}"))?,
+            }
+        }
+        BuddySelfImproveQualityWire::Unavailable { reason } => {
+            if reason.trim().is_empty() {
+                return Err("Buddy self-improve quality is unavailable without a reason".into());
+            }
+            BuddySelfImproveQualitySnap::Unavailable {
+                reason: selfimprove_display_narrative(&reason),
+            }
+        }
+    };
+    let snapshot = BuddyStatusSnap {
+        sovereign_buddy: wire.sovereign_buddy,
+        self_activation_enabled: wire.self_activation_enabled,
+        self_activation_skills: wire.self_activation_skills,
+        smart_approve_any: wire.smart_approve_any,
+        autonomy: wire.autonomy,
+        proactive_enabled: wire.proactive_enabled,
+        skill_autonomy_caps: wire.skill_autonomy_caps,
+        self_improve_quality,
+    };
     if !matches!(
         snapshot.autonomy.as_str(),
         "strict" | "standard" | "elevated" | "full" | "custom"
@@ -12622,7 +12689,7 @@ mod tests {
 
     #[test]
     fn parse_buddy_status_happy_path() {
-        let json = r#"{"sovereign_buddy":true,"self_activation_enabled":true,"self_activation_skills":["code","review"],"smart_approve_any":true,"autonomy":"standard","proactive_enabled":true,"skill_autonomy_caps":[{"id":"code","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"effective_cap":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"origin":"bundled"}]}"#;
+        let json = r#"{"sovereign_buddy":true,"self_activation_enabled":true,"self_activation_skills":["code","review"],"smart_approve_any":true,"autonomy":"standard","proactive_enabled":true,"skill_autonomy_caps":[{"id":"code","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"effective_cap":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"origin":"bundled"}],"self_improve_quality":{"state":"available","proposals":[]}}"#;
         let snap = super::parse_buddy_status(json).expect("valid Buddy status");
         assert!(snap.sovereign_buddy);
         assert!(snap.self_activation_enabled);
@@ -12632,6 +12699,10 @@ mod tests {
         assert_eq!(snap.autonomy, "standard");
         assert!(snap.proactive_enabled);
         assert_eq!(snap.skill_autonomy_caps.len(), 1);
+        assert!(matches!(
+            snap.self_improve_quality,
+            super::BuddySelfImproveQualitySnap::Available { ref proposals } if proposals.is_empty()
+        ));
     }
 
     #[test]
@@ -12646,17 +12717,65 @@ mod tests {
         );
         assert!(
             super::parse_buddy_status(
-                r#"{"sovereign_buddy":false,"self_activation_enabled":"false","self_activation_skills":[],"smart_approve_any":false,"autonomy":"standard","proactive_enabled":false,"skill_autonomy_caps":[]}"#
+                r#"{"sovereign_buddy":false,"self_activation_enabled":"false","self_activation_skills":[],"smart_approve_any":false,"autonomy":"standard","proactive_enabled":false,"skill_autonomy_caps":[],"self_improve_quality":{"state":"available","proposals":[]}}"#
             )
             .is_err(),
             "wrong-typed booleans must not render as false"
         );
         assert!(
             super::parse_buddy_status(
-                r#"{"sovereign_buddy":false,"self_activation_enabled":false,"self_activation_skills":[],"smart_approve_any":false,"autonomy":"future","proactive_enabled":false,"skill_autonomy_caps":[]}"#
+                r#"{"sovereign_buddy":false,"self_activation_enabled":false,"self_activation_skills":[],"smart_approve_any":false,"autonomy":"future","proactive_enabled":false,"skill_autonomy_caps":[],"self_improve_quality":{"state":"available","proposals":[]}}"#
             )
             .is_err(),
             "unknown autonomy must be explicit"
+        );
+    }
+
+    #[test]
+    fn w149_buddy_quality_rejects_partial_evidence_and_keeps_unavailable_explicit() {
+        let base = r#"{"sovereign_buddy":false,"self_activation_enabled":false,"self_activation_skills":[],"smart_approve_any":false,"autonomy":"standard","proactive_enabled":false,"skill_autonomy_caps":[]"#;
+        let unavailable = format!(
+            r#"{base},"self_improve_quality":{{"state":"unavailable","reason":"stage recovery is pending"}}}}"#
+        );
+        let unavailable = super::parse_buddy_status(&unavailable).expect("explicit unavailable");
+        assert!(matches!(
+            unavailable.self_improve_quality,
+            super::BuddySelfImproveQualitySnap::Unavailable { ref reason }
+                if reason == "stage recovery is pending"
+        ));
+
+        assert!(
+            super::parse_buddy_status(&format!("{base}}}")).is_err(),
+            "the self-improve quality snapshot is required"
+        );
+        assert!(
+            super::parse_buddy_status(&format!(
+                r#"{base},"self_improve_quality":{{"state":"future"}}}}"#
+            ))
+            .is_err(),
+            "unknown quality snapshot states must not become available"
+        );
+
+        let buddy_with_quality = |quality: &str| {
+            format!(
+                r#"{base},"self_improve_quality":{{"state":"available","proposals":[{{"id":"proposal-1","skill":"quality-check","summary":"Current quality evidence","status":"verified_approved","quality":{quality}}}]}}}}"#
+            )
+        };
+        let current_without_evidence = r#"{"state":"current","reason":null,"metric":"quality_score","score_before":0.1,"score_after":0.2,"score_delta":0.1,"evaluator_source_short_id":"aaaaaaaaaaaa","corpus_manifest_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","regression_total":1,"regression_passed":1,"evidence_sha256":null}"#;
+        assert!(
+            super::parse_buddy_status(&buddy_with_quality(current_without_evidence)).is_err(),
+            "current quality cannot publish null evidence as success"
+        );
+        let current_missing_evidence = r#"{"state":"current","reason":null,"metric":"quality_score","score_before":0.1,"score_after":0.2,"score_delta":0.1,"evaluator_source_short_id":"aaaaaaaaaaaa","corpus_manifest_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","regression_total":1,"regression_passed":1}"#;
+        assert!(
+            super::parse_buddy_status(&buddy_with_quality(current_missing_evidence)).is_err(),
+            "current quality cannot omit evidence"
+        );
+        let current_with_unknown_quality_field = r#"{"state":"current","reason":null,"metric":"quality_score","score_before":0.1,"score_after":0.2,"score_delta":0.1,"evaluator_source_short_id":"aaaaaaaaaaaa","corpus_manifest_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","regression_total":1,"regression_passed":1,"evidence_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","unexpected":true}"#;
+        assert!(
+            super::parse_buddy_status(&buddy_with_quality(current_with_unknown_quality_field))
+                .is_err(),
+            "unknown nested quality fields must fail through the shared W142 parser"
         );
     }
 

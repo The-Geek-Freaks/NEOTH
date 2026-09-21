@@ -47,7 +47,7 @@ import { ActivitySidecar, ActivityRow } from "activity.slint";
 import { ObsidianView } from "obsidian.slint";
 import { DreamingView, DreamDayRow, DreamEntryRow } from "dreaming.slint";
 import { WikiView, WikiRow } from "wiki.slint";
-import { BuddyConfigView, SelfActSkill } from "buddyconfig.slint";
+import { BuddyConfigView, SelfActSkill, BuddySelfImproveProposal } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow, MeshConflictRow, MeshSyncRow } from "mesh.slint";
 export { SettingsTab, ChatMessage, ChatChannelRow, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow, MenuItem, BgJobRow, SlashCmdRow, ChannelAccountRow, TelegramPairingRequestRow }
@@ -66,6 +66,7 @@ export { HemiCard, CalEvent, ConsentEntry }
 export { DreamDayRow, DreamEntryRow }
 export { WikiRow }
 export { SelfActSkill }
+export { BuddySelfImproveProposal }
 export { MeshPeerRow, MeshForeignRow, MeshConflictRow, MeshSyncRow }
 // DES-12 — plugin WAL-feed detail pane event row.
 export { PluginEventRow }
@@ -911,6 +912,11 @@ export component MainWindow inherits Window {
     in property <string>          bc-refreshed-at: "";
     in property <bool>            bc-status-valid: false;
     in property <string>          bc-status-error: "";
+    in property <string> bc-self-improve-quality-state: "unavailable";
+    in property <string> bc-self-improve-quality-reason: "Refresh Buddy status to inspect proposal quality.";
+    in property <[BuddySelfImproveProposal]> bc-self-improve-proposals: [];
+    in-out property <string> bc-self-improve-selected-id: "";
+    callback bc-self-improve-review(string);
     in property <string>          bc-cluster-summary: "";
     in property <string>          bc-cluster-pending-id: "";
     in property <string>          bc-cluster-revocable-id: "";
@@ -1306,6 +1312,15 @@ export component MainWindow inherits Window {
     // GU-01 — Hemispheres + Skills panels, forwarded to SettingsView.
     in property <[HemisphereRow]> hemisphere-bindings: [];
     in property <string> hemispheres-mode: "";
+    in-out property <bool> ouro-q8-verify-running: false;
+    in-out property <bool> ouro-q8-verify-unavailable: false;
+    in-out property <bool> ouro-q8-verify-verified: false;
+    in-out property <string> ouro-q8-verify-status: "Not verified.";
+    in-out property <string> ouro-q8-verify-configured-mode: "";
+    in-out property <string> ouro-q8-verify-receipt: "";
+    in-out property <string> ouro-q8-verify-device: "";
+    in-out property <string> ouro-q8-verify-forward-summary: "";
+    callback ouro-q8-verify-clicked();
     /// GOLD-GUI-OVERHAUL — model-picker options for the rebind row, refreshed by
     /// Rust when the operator picks a provider (local GGUF refs / cloud catalog).
     in property <[string]> hemisphere-model-ids: ["(provider default)"];
@@ -3866,6 +3881,15 @@ export component MainWindow inherits Window {
             council-last-debate: root.council-last-debate;
             hemisphere-bindings: root.hemisphere-bindings;
             hemispheres-mode: root.hemispheres-mode;
+            ouro-q8-verify-running: root.ouro-q8-verify-running;
+            ouro-q8-verify-unavailable: root.ouro-q8-verify-unavailable;
+            ouro-q8-verify-verified: root.ouro-q8-verify-verified;
+            ouro-q8-verify-status: root.ouro-q8-verify-status;
+            ouro-q8-verify-configured-mode: root.ouro-q8-verify-configured-mode;
+            ouro-q8-verify-receipt: root.ouro-q8-verify-receipt;
+            ouro-q8-verify-device: root.ouro-q8-verify-device;
+            ouro-q8-verify-forward-summary: root.ouro-q8-verify-forward-summary;
+            ouro-q8-verify-clicked => { root.ouro-q8-verify-clicked(); }
             hemisphere-model-ids: root.hemisphere-model-ids;
             provider-ids: root.provider-ids;
             skills: root.skills;
@@ -4692,6 +4716,7 @@ export component MainWindow inherits Window {
                     si-last-run: root.si-last-run;
                     si-autonomy: root.si-autonomy;
                     si-proposals: root.si-proposals;
+                    si-selected-proposal-id: root.bc-self-improve-selected-id;
                     si-accept-in-flight: root.si-accept-in-flight;
                     si-log: root.si-log;
                     si-refreshed-at: root.si-refreshed-at;
@@ -4791,6 +4816,13 @@ export component MainWindow inherits Window {
                     bc-refreshed-at: root.bc-refreshed-at;
                     bc-status-valid: root.bc-status-valid;
                     bc-status-error: root.bc-status-error;
+                    bc-self-improve-quality-state: root.bc-self-improve-quality-state;
+                    bc-self-improve-quality-reason: root.bc-self-improve-quality-reason;
+                    bc-self-improve-proposals: root.bc-self-improve-proposals;
+                    bc-self-improve-selected-id: root.bc-self-improve-selected-id;
+                    bc-self-improve-review(id) => {
+                        root.bc-self-improve-review(id);
+                    }
                     bc-cluster-summary: root.bc-cluster-summary;
                     bc-cluster-pending-id: root.bc-cluster-pending-id;
                     bc-cluster-revocable-id: root.bc-cluster-revocable-id;

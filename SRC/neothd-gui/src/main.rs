@@ -1137,6 +1137,7 @@ mod coding_controller;
 mod gui_action;
 mod gui_chat_bridge_controller;
 mod gui_stream;
+mod ouro_gui;
 mod panel_logic;
 mod tray;
 mod trusted_probe_supervisor;
@@ -8432,6 +8433,7 @@ fn main() -> Result<()> {
         });
 
         register_selfimprove_accept_callback(window);
+        ouro_gui::register(window);
 
         let weak_si_rb = window.as_weak();
         window.on_si_rollback_clicked(move |id| {
@@ -8975,6 +8977,7 @@ fn main() -> Result<()> {
 
     // ── Wave 4b — Buddy Config panel callbacks ───────────────────────────────
     {
+        register_buddy_quality_handoff_callback(window);
         let weak_bc = window.as_weak();
         window.on_bc_refresh_clicked(move || {
             if let Some(window) = weak_bc.upgrade()
@@ -31187,6 +31190,17 @@ fn apply_wiki(weak: slint::Weak<MainWindow>, rows: Vec<panel_logic::WikiRowData>
 }
 
 // ── Wave 4b — Buddy Config probe ─────────────────────────────────────────────
+/// Registers the passive Buddy-to-Self-improve selection hand-off. This has no
+/// command, worker, proposal mutation, or acceptance authority.
+fn register_buddy_quality_handoff_callback(window: &MainWindow) {
+    let weak = window.as_weak();
+    window.on_bc_self_improve_review(move |id| {
+        let Some(window) = weak.upgrade() else { return };
+        window.set_bc_self_improve_selected_id(id);
+        window.set_nav_active("evolve".into());
+    });
+}
+
 fn refresh_buddyconfig(weak: slint::Weak<MainWindow>) {
     use slint::VecModel;
     let result = fetch_buddy_status();
@@ -31212,6 +31226,40 @@ fn refresh_buddyconfig(weak: slint::Weak<MainWindow>) {
                 w.set_bc_smart_approve(snap.smart_approve_any);
                 w.set_bc_autonomy(snap.autonomy.as_str().into());
                 w.set_bc_proactive_enabled(snap.proactive_enabled);
+                match snap.self_improve_quality {
+                    panel_logic::BuddySelfImproveQualitySnap::Available { proposals } => {
+                        let rows: Vec<BuddySelfImproveProposal> = proposals
+                            .into_iter()
+                            .map(|proposal| BuddySelfImproveProposal {
+                                id: proposal.id.into(),
+                                skill: proposal.description.into(),
+                                summary: proposal.title.into(),
+                                status: proposal.status.into(),
+                                quality_state: proposal.quality_state.into(),
+                                quality_reason: proposal.quality_reason.into(),
+                                quality_metric: proposal.quality_metric.into(),
+                                score_delta: proposal.score_delta.into(),
+                                evaluator_source_short_id: proposal.evaluator_source_short_id.into(),
+                                corpus_manifest_short_sha256: proposal.corpus_manifest_short_sha256.into(),
+                                regression_summary: proposal.regression_summary.into(),
+                                evidence_sha256: proposal.evidence_sha256.into(),
+                                review_ready: proposal.accept_ready,
+                            })
+                            .collect();
+                        w.set_bc_self_improve_proposals(slint::ModelRc::new(std::rc::Rc::new(
+                            VecModel::from(rows),
+                        )));
+                        w.set_bc_self_improve_quality_state("available".into());
+                        w.set_bc_self_improve_quality_reason("".into());
+                    }
+                    panel_logic::BuddySelfImproveQualitySnap::Unavailable { reason } => {
+                        w.set_bc_self_improve_proposals(slint::ModelRc::new(std::rc::Rc::new(
+                            VecModel::<BuddySelfImproveProposal>::from(Vec::new()),
+                        )));
+                        w.set_bc_self_improve_quality_state("unavailable".into());
+                        w.set_bc_self_improve_quality_reason(reason.into());
+                    }
+                }
                 w.set_bc_refreshed_at(panel_logic::now_hhmm().into());
                 w.set_bc_status_valid(true);
                 w.set_bc_status_error("".into());
@@ -38321,14 +38369,16 @@ mod w58_gui_callback_runtime_tests {
         code_map_impact_controller::CodeMapImpactController,
         coding_controller::CodingController,
         native_coding_terminal_bridge_accepts, neothd_executable_names,
-        publish_code_map_enrichment_readiness, refresh_selfimprove,
+        ouro_gui, publish_code_map_enrichment_readiness, refresh_selfimprove,
         register_buddy_code_map_impact_callback, register_buddy_code_map_status_callback,
+        register_buddy_quality_handoff_callback,
         register_buddy_native_coding_callbacks, register_channel_account_dm_pairing_callback,
         register_channel_account_retirement_callback, register_channel_legacy_migration_callback,
         register_channel_pairing_approval_callback, register_channel_pairing_request_callbacks,
         register_code_map_enrichment_readiness_callbacks, register_selfimprove_accept_callback,
         register_skill_autonomy_callbacks, selfimprove_accept_readback_matches,
         start_code_map_lifecycle_config_apply, start_code_map_lifecycle_refresh, which_neothd,
+        SiProposalRow,
     };
 
     static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -40081,6 +40131,20 @@ if [ "$1" = self-improve ] && [ "$2" = accept ] && [ "$3" = p142 ] && [ "$4" = -
   esac
   exit 0
 fi
+if [ "$1" = ouro ] && [ "$2" = verify-q8 ] && [ "$3" = --output ] && [ "$4" = json ] && [ "$#" -eq 4 ]; then
+  printf 'ouro-verify-q8\n' >> "$base/calls"
+  if [ "$mode" = w151_blocked ]; then
+    : > "$base/w151-ouro-started"
+    while [ ! -f "$base/w151-ouro-release" ]; do /bin/sleep 0.01; done
+  fi
+  case "$mode" in
+    w151_invalid) printf 'not-json\n' ;;
+    w151_typed_failure) printf '{"configured_quant_mode":"q8","tested_quant_mode":"q8","result":{"verified":false,"quant_mode":"q8","repo":"ByteDance/Ouro-1.4B-Thinking","cache_dir":"ouro-cache","receipt":null,"resolved_device":null,"loop_steps":null,"forward_checked":false,"forward_digest":null,"alternate_forward_digest":null,"context_sensitive":false,"detail":"published cache was unavailable"}}\n' ; exit 23 ;;
+    w151_success|w151_blocked) printf '{"configured_quant_mode":"none","tested_quant_mode":"q8","result":{"verified":true,"quant_mode":"q8","repo":"ByteDance/Ouro-1.4B-Thinking","cache_dir":"ouro-cache","receipt":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","resolved_device":"Cpu","loop_steps":4,"forward_checked":true,"forward_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","alternate_forward_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","context_sensitive":true,"detail":null}}\n' ;;
+    *) printf 'unexpected ouro mode: %s\n' "$mode" >&2; exit 92 ;;
+  esac
+  exit 0
+fi
 printf 'unexpected argv: %s %s %s %s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" >&2
 exit 72
 "#,
@@ -41423,8 +41487,242 @@ exit 72
             .count()
     }
 
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w149_buddy_quality_handoff_selects_the_exact_selfimprove_proposal() {
+        let window = MainWindow::new().expect("construct generated MainWindow");
+        let mutations = Rc::new(Cell::new(0));
+        let accepts = Rc::clone(&mutations);
+        window.on_si_accept_clicked(move |_, _| accepts.set(accepts.get() + 1));
+        let rollbacks = Rc::clone(&mutations);
+        window.on_si_rollback_clicked(move |_| rollbacks.set(rollbacks.get() + 1));
+        let proposals = vec![
+            SiProposalRow {
+                id: "proposal-other".into(),
+                title: "Other proposal".into(),
+                description: "unselected".into(),
+                status: "pending".into(),
+                quality_state: "incomplete".into(),
+                quality_reason: "evidence pending".into(),
+                quality_metric: "".into(),
+                score_delta: "".into(),
+                evaluator_source_short_id: "".into(),
+                corpus_manifest_short_sha256: "".into(),
+                regression_summary: "".into(),
+                evidence_short_sha256: "".into(),
+                evidence_sha256: "".into(),
+                accept_ready: false,
+            },
+            SiProposalRow {
+                id: "proposal-current".into(),
+                title: "Exact Buddy proposal".into(),
+                description: "current evidence".into(),
+                status: "verified_approved".into(),
+                quality_state: "current".into(),
+                quality_reason: "".into(),
+                quality_metric: "quality_score@v1".into(),
+                score_delta: "+0.50".into(),
+                evaluator_source_short_id: "cccccccccccc".into(),
+                corpus_manifest_short_sha256: "aaaaaaaaaaaa".into(),
+                regression_summary: "1/1 passed".into(),
+                evidence_short_sha256: "bbbbbbbbbbbb".into(),
+                evidence_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+                accept_ready: true,
+            },
+        ];
+        window.set_si_proposals(slint::ModelRc::new(std::rc::Rc::new(
+            slint::VecModel::from(proposals),
+        )));
+        let initial_toasts = window.get_toasts().row_count();
+        register_buddy_quality_handoff_callback(&window);
+
+        window.invoke_bc_self_improve_review("proposal-current".into());
+
+        assert_eq!(window.get_nav_active().to_string(), "evolve");
+        assert_eq!(window.get_bc_self_improve_selected_id().to_string(), "proposal-current");
+        let selected = window
+            .get_si_proposals()
+            .row_data(1)
+            .expect("selected proposal remains in the real review model");
+        assert_eq!(selected.id.to_string(), "proposal-current");
+        assert_eq!(selected.status.to_string(), "verified_approved");
+        assert_eq!(selected.quality_state.to_string(), "current");
+        assert_eq!(
+            selected.evidence_sha256.to_string(),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        );
+        window.invoke_bc_self_improve_review("proposal-no-longer-present".into());
+        assert_eq!(
+            window.get_bc_self_improve_selected_id().to_string(),
+            "proposal-no-longer-present"
+        );
+        assert_eq!(window.get_si_proposals().row_count(), 2);
+        assert_eq!(
+            window.get_si_proposals().row_data(1).unwrap().id.to_string(),
+            "proposal-current"
+        );
+        assert_eq!(mutations.get(), 0, "navigation must not accept or roll back");
+        assert_eq!(
+            window.get_toasts().row_count(), initial_toasts,
+            "the hand-off is UI-only and cannot publish a mutation result"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[derive(Clone, Copy)]
+    struct W151Expectation {
+        calls: usize,
+        verified: bool,
+        configured_mode: &'static str,
+        receipt: &'static str,
+        device: &'static str,
+        forward_summary: &'static str,
+        status_fragment: &'static str,
+    }
+
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight() {
+        const RECEIPT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("serial GUI fixture environment");
+        let fixture = TempDir::new().expect("create W151 Ouro fixture");
+        let bin = w116_stage_fake_neoth(&fixture);
+        let mode = fixture.path().join("mode");
+        let calls = fixture.path().join("calls");
+        std::fs::write(&calls, b"").expect("initialize W151 call log");
+        let _path = PathGuard::install(fixture.path());
+        assert_eq!(
+            std::fs::canonicalize(which_neothd().expect("resolve staged W151 CLI"))
+                .expect("canonicalize W151 CLI"),
+            std::fs::canonicalize(&bin).expect("canonicalize staged W151 CLI"),
+        );
+        let window = MainWindow::new().expect("construct generated MainWindow");
+        ouro_gui::register(&window);
+
+        let verified = W151Expectation {
+            calls: 1,
+            verified: true,
+            configured_mode: "none",
+            receipt: RECEIPT,
+            device: "Cpu",
+            forward_summary: "4 model loops · two distinct Q8 forwards verified",
+            status_fragment: "Published Q8 cache verified.",
+        };
+        std::fs::write(&mode, b"w151_success").expect("select typed W151 success");
+        window.invoke_ouro_q8_verify_clicked();
+        w151_drain_ouro_q8(&window, &calls, verified);
+
+        std::fs::write(&mode, b"w151_invalid").expect("select malformed W151 receipt");
+        window.invoke_ouro_q8_verify_clicked();
+        w151_drain_ouro_q8(
+            &window,
+            &calls,
+            W151Expectation {
+                calls: 2, verified: false, configured_mode: "", receipt: "", device: "",
+                forward_summary: "", status_fragment: "Not verified:",
+            },
+        );
+
+        std::fs::write(&mode, b"w151_success").expect("restore typed W151 success");
+        window.invoke_ouro_q8_verify_clicked();
+        w151_drain_ouro_q8(&window, &calls, W151Expectation { calls: 3, ..verified });
+
+        std::fs::write(&mode, b"w151_typed_failure").expect("select typed W151 failure");
+        window.invoke_ouro_q8_verify_clicked();
+        w151_drain_ouro_q8(
+            &window,
+            &calls,
+            W151Expectation {
+                calls: 4, verified: false, configured_mode: "q8", receipt: "", device: "",
+                forward_summary: "", status_fragment: "Not verified: published cache was unavailable",
+            },
+        );
+
+        std::fs::write(&mode, b"w151_success").expect("restore typed W151 success after failure");
+        window.invoke_ouro_q8_verify_clicked();
+        w151_drain_ouro_q8(&window, &calls, W151Expectation { calls: 5, ..verified });
+
+        let started = fixture.path().join("w151-ouro-started");
+        let release = fixture.path().join("w151-ouro-release");
+        let _ = std::fs::remove_file(&started);
+        let _ = std::fs::remove_file(&release);
+        std::fs::write(&mode, b"w151_blocked").expect("select blocked W151 success");
+        window.invoke_ouro_q8_verify_clicked();
+        assert!(!window.get_ouro_q8_verify_verified(), "a new W151 action clears the prior verified projection before the child returns");
+        w151_wait_for_file(&window, &started, "W151 Ouro child did not start");
+        window.invoke_ouro_q8_verify_clicked();
+        assert_eq!(w151_ouro_call_count(&calls), 6, "blocked duplicate must not launch a second Ouro child");
+        std::fs::write(&release, b"release").expect("release blocked W151 Ouro child");
+        w151_drain_ouro_q8(&window, &calls, W151Expectation { calls: 6, ..verified });
+        assert_eq!(
+            w116_call_lines(&calls),
+            vec!["ouro-verify-q8"; 6],
+            "the fixture permits only the exact cache-only verify-q8 command; no fetch or status probe ran"
+        );
+    }
+
+    #[cfg(not(windows))]
+    fn w151_drain_ouro_q8(window: &MainWindow, calls: &Path, expected: W151Expectation) {
+        let done = Rc::new(Cell::new(false));
+        let seen = Rc::clone(&done);
+        let weak = window.as_weak();
+        let calls = calls.to_path_buf();
+        let ticks = Rc::new(Cell::new(0_u16));
+        let seen_ticks = Rc::clone(&ticks);
+        let timer = slint::Timer::default();
+        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
+            if weak.upgrade().is_some_and(|window| {
+                !window.get_ouro_q8_verify_running()
+                    && !window.get_ouro_q8_verify_unavailable()
+                    && w151_ouro_call_count(&calls) == expected.calls
+                    && window.get_ouro_q8_verify_verified() == expected.verified
+                    && window.get_ouro_q8_verify_configured_mode().to_string() == expected.configured_mode
+                    && window.get_ouro_q8_verify_receipt().to_string() == expected.receipt
+                    && window.get_ouro_q8_verify_device().to_string() == expected.device
+                    && window.get_ouro_q8_verify_forward_summary().to_string() == expected.forward_summary
+                    && window.get_ouro_q8_verify_status().to_string().contains(expected.status_fragment)
+            }) {
+                seen.set(true);
+                let _ = slint::quit_event_loop();
+            }
+            let next = seen_ticks.get().saturating_add(1);
+            seen_ticks.set(next);
+            if next >= 500 { let _ = slint::quit_event_loop(); }
+        });
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("drain W151 Ouro callback");
+        drop(timer);
+        assert!(done.get(), "W151 Ouro callback did not settle");
+    }
+
+    #[cfg(not(windows))]
+    fn w151_wait_for_file(window: &MainWindow, path: &Path, failure: &str) {
+        let done = Rc::new(Cell::new(false));
+        let seen = Rc::clone(&done);
+        let weak = window.as_weak();
+        let path = path.to_path_buf();
+        let ticks = Rc::new(Cell::new(0_u16));
+        let seen_ticks = Rc::clone(&ticks);
+        let timer = slint::Timer::default();
+        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
+            if weak.upgrade().is_some() && path.exists() { seen.set(true); let _ = slint::quit_event_loop(); }
+            let next = seen_ticks.get().saturating_add(1);
+            seen_ticks.set(next);
+            if next >= 500 { let _ = slint::quit_event_loop(); }
+        });
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("wait for W151 Ouro child");
+        drop(timer);
+        assert!(done.get(), "{failure}");
+    }
+
+    #[cfg(not(windows))]
+    fn w151_ouro_call_count(calls: &Path) -> usize {
+        w116_call_lines(calls).iter().filter(|line| line.as_str() == "ouro-verify-q8").count()
+    }
+
     #[cfg(target_os = "macos")]
-    const MACOS_NATIVE_HARNESS_TESTS: [&str; 12] = [
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 14] = [
         "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
         "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
@@ -41437,6 +41735,8 @@ exit 72
         "w58_gui_callback_runtime_tests::w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt",
         "w58_gui_callback_runtime_tests::w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback",
         "w58_gui_callback_runtime_tests::w142_selfimprove_accept_requires_exact_bound_receipt_and_fresh_readback",
+        "w58_gui_callback_runtime_tests::w149_buddy_quality_handoff_selects_the_exact_selfimprove_proposal",
+        "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight",
     ];
 
     /// Native macOS Nextest bridge. Keep its stdout restricted to the libtest
@@ -41528,6 +41828,12 @@ exit 72
                     }
                     "w58_gui_callback_runtime_tests::w142_selfimprove_accept_requires_exact_bound_receipt_and_fresh_readback" => {
                         w142_selfimprove_accept_requires_exact_bound_receipt_and_fresh_readback()
+                    }
+                    "w58_gui_callback_runtime_tests::w149_buddy_quality_handoff_selects_the_exact_selfimprove_proposal" => {
+                        w149_buddy_quality_handoff_selects_the_exact_selfimprove_proposal()
+                    }
+                    "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight" => {
+                        w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight()
                     }
                     _ => return Err(format!("unknown macOS native GUI test {test_name:?}")),
                 }

@@ -4267,7 +4267,7 @@ fn root() { alpha(); beta(); }
         let _restore = RestoreCwd(prior_cwd);
         let request = serde_json::json!({
             "jsonrpc":"2.0", "id":"types-1", "method":"tools/call",
-            "params":{"name":"codegraph_types", "arguments":{"file":"src/types.rs","symbol":"Child"}}
+            "params":{"name":"codegraph_types", "arguments":{"file":"src/types.rs","symbol":"Child","depth":2}}
         });
         let mut session = StdioSession {
             initialize_seen: true,
@@ -4283,7 +4283,11 @@ fn root() { alpha(); beta(); }
             runtime,
         )
         .unwrap();
-        assert_eq!(response["result"]["isError"], false);
+        assert_eq!(
+            response["result"]["isError"],
+            false,
+            "initial stdio type response: {response}"
+        );
         assert_eq!(
             response["result"]["_meta"][CODEGRAPH_CONTEXT_BINDING_META_KEY]["tool"],
             "codegraph_types"
@@ -4324,7 +4328,7 @@ fn root() { alpha(); beta(); }
         let _restore = RestoreCwd(prior_cwd);
         let request = serde_json::json!({
             "jsonrpc":"2.0", "id":"imports-1", "method":"tools/call",
-            "params":{"name":"codegraph_imports", "arguments":{"file":"src/lib.rs"}}
+            "params":{"name":"codegraph_imports", "arguments":{"file":"src/lib.rs","depth":2}}
         });
         let mut session = StdioSession {
             initialize_seen: true,
@@ -4340,7 +4344,11 @@ fn root() { alpha(); beta(); }
             runtime,
         )
         .unwrap();
-        assert_eq!(response["result"]["isError"], false);
+        assert_eq!(
+            response["result"]["isError"],
+            false,
+            "initial stdio import response: {response}"
+        );
         assert_eq!(
             response["result"]["_meta"][CODEGRAPH_CONTEXT_BINDING_META_KEY]["tool"],
             "codegraph_imports"

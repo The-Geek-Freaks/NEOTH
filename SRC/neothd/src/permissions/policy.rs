@@ -904,12 +904,22 @@ mod tests {
         };
         let admitted_global = AutonomyPolicySnapshot::new(AutonomyLevel::Full, &configured);
         let retained = admitted_global.effective_for_selected_skill(&skill_id);
-        let tightened_global = AutonomyPolicySnapshot::builtin(AutonomyLevel::Strict).unwrap();
+        // Strict intentionally requires confirmation for ExecArbitrary. This
+        // retained-cap invariant specifically proves that a later global Deny
+        // wins over the route's admitted Full Allow, so use the exact current
+        // global policy shape that carries that Deny.
+        let tightened_global = AutonomyPolicySnapshot::new(
+            AutonomyLevel::Custom,
+            &CustomAutonomyConfig {
+                overrides: BTreeMap::from([(ActionKind::ExecArbitrary, CustomDecision::Deny)]),
+                skill_overrides: BTreeMap::new(),
+            },
+        );
         assert!(
             retained
                 .evaluate_with_current_global(&Action::ExecArbitrary, &tightened_global)
                 .is_deny(),
-            "a later global tightening must still win over the retained route cap"
+            "a later global Deny must still win over the retained route cap"
         );
     }
 }

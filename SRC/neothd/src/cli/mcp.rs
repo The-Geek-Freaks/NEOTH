@@ -2145,7 +2145,7 @@ code_map:
     #[test]
     fn built_in_codegraph_registration_is_hardened_and_complete() {
         let config = codegraph_server_config(std::path::Path::new("neothd"), None);
-        assert_eq!(crate::mcp::codegraph_server::TOOL_NAMES.len(), 10);
+        assert_eq!(crate::mcp::codegraph_server::TOOL_NAMES.len(), 12);
         assert!(crate::mcp::codegraph_server::TOOL_NAMES.contains(&"codegraph_diff_test_gaps"));
         assert_eq!(config.id, "neoth-codegraph");
         assert_eq!(config.command, "neothd");

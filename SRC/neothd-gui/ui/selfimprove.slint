@@ -56,13 +56,14 @@ component ProposalCard inherits Rectangle {
     in property <string> evidence-sha256;
     in property <bool> accept-ready;
     in property <bool> accept-enabled;
+    in property <bool> selected: false;
     callback accept-clicked();
     callback rollback-clicked();
 
     border-radius: Theme.radius-md;
-    background: Theme.surface-1;
+    background: root.selected ? Theme.audit-tint : Theme.surface-1;
     border-width: 1px;
-    border-color: Theme.border-subtle;
+    border-color: root.selected ? Theme.audit : Theme.border-subtle;
 
     VerticalLayout {
         padding: 12px; spacing: 6px;
@@ -215,6 +216,9 @@ export component SelfImproveView inherits Rectangle {
 
     // PENDING proposals
     in property <[SiProposalRow]> si-proposals: [];
+    /// Passive Buddy hand-off context. A nonempty value is highlighted only
+    /// when the current Self-improve review contains the exact proposal id.
+    in property <string> si-selected-proposal-id: "";
     in property <bool> si-accept-in-flight: false;
 
     // HISTORY log (capped 10 by Rust)
@@ -348,6 +352,14 @@ export component SelfImproveView inherits Rectangle {
 
                         Kicker { label: "PENDING PROPOSALS"; }
 
+                        if root.si-selected-proposal-id != "": Text {
+                            text: "Buddy selection: " + root.si-selected-proposal-id + " (highlighted when present in this review)";
+                            color: Theme.audit;
+                            font-size: Theme.font-size-caption;
+                            font-family: Theme.font-mono;
+                            wrap: word-wrap;
+                        }
+
                         if root.si-proposals.length == 0: Rectangle {
                             height: 48px;
                             Text {
@@ -376,6 +388,7 @@ export component SelfImproveView inherits Rectangle {
                             evidence-sha256: p.evidence_sha256;
                             accept-ready: p.accept_ready;
                             accept-enabled: !root.si-accept-in-flight;
+                            selected: p.id == root.si-selected-proposal-id;
                             accept-clicked => { root.si-accept-clicked(p.id, p.evidence_sha256); }
                             // Destructive — reverts an applied proposal;
                             // route through the confirm gate.

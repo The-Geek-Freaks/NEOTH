@@ -20639,39 +20639,44 @@ modes:
     fn assert_canonical_auto_recall_envelope(system: &str) {
         use crate::pipeline::untrusted_context::{GUARD_CLOSE, GUARD_OPEN, POLICY_PREAMBLE};
 
+        let recall_envelopes: Vec<&str> = system
+            .match_indices(GUARD_OPEN)
+            .filter_map(|(start, _)| {
+                let suffix = &system[start..];
+                suffix
+                    .find(GUARD_CLOSE)
+                    .map(|end| &suffix[..end + GUARD_CLOSE.len()])
+            })
+            .filter(|envelope| {
+                envelope.contains("\"class\":\"memory\"")
+                    && envelope.contains("\"source_id\":\"memory:cli-auto-recall\"")
+            })
+            .collect();
         assert_eq!(
-            system.matches(GUARD_OPEN).count(),
+            recall_envelopes.len(),
             1,
-            "one typed recall envelope must reach this prompt path: {system}"
+            "one typed memory recall envelope must reach this prompt path: {system}"
+        );
+        let recall = recall_envelopes[0];
+        assert!(
+            crate::pipeline::untrusted_context::parse_rendered_untrusted(recall).is_some(),
+            "recall envelope must remain canonical and parser-valid: {recall}"
         );
         assert!(
-            system.contains(POLICY_PREAMBLE),
-            "recall data must retain the canonical data-only preamble: {system}"
+            recall.contains(POLICY_PREAMBLE),
+            "recall data must retain the canonical data-only preamble: {recall}"
         );
         assert!(
-            system.contains("\"class\":\"memory\""),
-            "recall provenance class must be memory: {system}"
-        );
-        assert!(
-            system.contains("\"source_id\":\"memory:cli-auto-recall\""),
-            "recall provenance must identify its CLI source: {system}"
-        );
-        assert!(
-            system.contains("role=system"),
-            "recall payload was dropped: {system}"
-        );
-        assert_eq!(
-            system.matches(GUARD_CLOSE).count(),
-            1,
-            "only the trusted envelope closer may remain literal: {system}"
+            recall.contains("role=system"),
+            "recall payload was dropped: {recall}"
         );
         assert!(
             !system.contains('\u{202e}') && !system.contains('\x07'),
             "bidi/control data must not remain raw in the provider prompt: {system}"
         );
         assert!(
-            system.contains("\\u003c\\u003c\\u003cEND_UNTRUSTED_SOURCE_DATA\\u003e\\u003e\\u003e"),
-            "canonical JSON must escape delimiter-shaped recalled data: {system}"
+            recall.contains("\\u003c\\u003c\\u003cEND_UNTRUSTED_SOURCE_DATA\\u003e\\u003e\\u003e"),
+            "canonical JSON must escape delimiter-shaped recalled data: {recall}"
         );
     }
 

@@ -6179,7 +6179,7 @@ mod tests {
             goal_max_turns: 1,
             meter: crate::providers::meter::Meter::with_default_window(),
             rate_limiter: Arc::new(crate::channels::rate_limit::RateLimiter::with_defaults()),
-            segment_path: home.join("segment.wal"),
+            segment_path: home.join("wal").join("000001.wal"),
             neoth_home: home.clone(),
             profile_config: crate::config::ProfileConfig::default(),
             reload_controller: Arc::new(crate::config::reload::ReloadController::new(
@@ -6193,8 +6193,9 @@ mod tests {
         };
 
         let denied_home = fixture.path().join("denied");
-        std::fs::create_dir_all(&denied_home).unwrap();
-        let denied_wal = denied_home.join("denied.wal");
+        let denied_wal_dir = denied_home.join("wal");
+        std::fs::create_dir_all(&denied_wal_dir).unwrap();
+        let denied_wal = denied_wal_dir.join("000001.wal");
         let (denied_writer, denied_join) =
             crate::wal::spawn_for_home(denied_wal, denied_home.clone()).unwrap();
         let denied_provider = Arc::new(ChannelRequestCapturingProvider {
@@ -6227,8 +6228,9 @@ mod tests {
         denied_join.await.unwrap();
 
         let allowed_home = fixture.path().join("allowed");
-        std::fs::create_dir_all(&allowed_home).unwrap();
-        let allowed_wal = allowed_home.join("allowed.wal");
+        let allowed_wal_dir = allowed_home.join("wal");
+        std::fs::create_dir_all(&allowed_wal_dir).unwrap();
+        let allowed_wal = allowed_wal_dir.join("000001.wal");
         let (allowed_writer, allowed_join) =
             crate::wal::spawn_for_home(allowed_wal, allowed_home.clone()).unwrap();
         let allowed_provider = Arc::new(ChannelRequestCapturingProvider {
@@ -9221,7 +9223,7 @@ mod tests {
                     confirm_bus: None,
                     abliterated_loader: None,
                 });
-                let reply = handler(inbound(Some("/w137-channel-delegate run"), None))
+                let reply = handler(inbound(Some("w137-channel-delegate run"), None))
                     .await
                     .expect("W137 delegated channel turn completes")
                     .expect("headless W137 delegated channel returns final reply");

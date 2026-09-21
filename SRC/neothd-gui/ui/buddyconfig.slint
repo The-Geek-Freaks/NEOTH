@@ -23,6 +23,23 @@ export struct SelfActSkill {
     name: string,
 }
 
+/// Read-only W142 quality projection supplied by `buddy status`.
+export struct BuddySelfImproveProposal {
+    id: string,
+    skill: string,
+    summary: string,
+    status: string,
+    quality-state: string,
+    quality-reason: string,
+    quality-metric: string,
+    score-delta: string,
+    evaluator-source-short-id: string,
+    corpus-manifest-short-sha256: string,
+    regression-summary: string,
+    evidence-sha256: string,
+    review-ready: bool,
+}
+
 // ── Internal micro-components ─────────────────────────────────────────────────
 
 // Explanation text — small, muted, left-aligned.
@@ -140,6 +157,13 @@ export component BuddyConfigView inherits Rectangle {
     /// Proactive messaging: buddy sends scheduled / context-triggered messages.
     in property <bool>   bc-proactive-enabled: false;
 
+    /// Passive Buddy snapshot of the canonical self-improve quality readback.
+    /// `unavailable` is explicit and never rendered as an empty success list.
+    in property <string> bc-self-improve-quality-state: "";
+    in property <string> bc-self-improve-quality-reason: "";
+    in property <[BuddySelfImproveProposal]> bc-self-improve-proposals: [];
+    in property <string> bc-self-improve-selected-id: "";
+
     /// Refresh timestamp — shown in footer of each card.
     in property <string> bc-refreshed-at: "";
 
@@ -180,6 +204,9 @@ export component BuddyConfigView inherits Rectangle {
 
     /// Proactive messaging toggled.
     callback bc-proactive-toggle(bool);
+
+    /// Read-only handoff. The integrator changes only Self-improve navigation.
+    callback bc-self-improve-review(string);
 
     /// Refresh requested.
     callback bc-refresh-clicked();
@@ -405,6 +432,185 @@ export component BuddyConfigView inherits Rectangle {
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    // ────────────────────────────────────────────────────────
+                    // SELF-IMPROVE QUALITY — passive readback, no lifecycle control
+                    // ────────────────────────────────────────────────────────
+                    Card {
+                        VerticalLayout {
+                            padding: Theme.space-4;
+                            spacing: Theme.space-3;
+                            alignment: start;
+
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                alignment: start;
+                                height: 18px;
+                                Kicker { label: "SELF-IMPROVE QUALITY"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Led {
+                                    state: root.bc-self-improve-quality-state == "available" ? "live"
+                                        : root.bc-self-improve-quality-state == "unavailable" ? "error"
+                                        : "connecting";
+                                    dot-size: 7px;
+                                }
+                            }
+
+                            Text {
+                                text: "Passive quality evidence readback. Review opens Self-improve; it does not evaluate, execute, or accept a proposal.";
+                                color: Theme.text-tertiary;
+                                font-family: Theme.font-sans;
+                                font-size: Theme.font-size-xs;
+                                wrap: word-wrap;
+                            }
+
+                            if root.bc-self-improve-quality-state == "unavailable": Rectangle {
+                                border-radius: Theme.radius-md;
+                                background: Theme.consent-tint;
+                                border-width: 1px;
+                                border-color: Theme.consent;
+                                VerticalLayout {
+                                    padding: Theme.space-3;
+                                    spacing: Theme.space-1;
+                                    Text {
+                                        text: "Self-improve quality is unavailable";
+                                        color: Theme.consent;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-xs;
+                                    }
+                                    Text {
+                                        text: root.bc-self-improve-quality-reason;
+                                        color: Theme.text-secondary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-xs;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            if root.bc-self-improve-quality-state == "": Text {
+                                text: "Quality snapshot has not been refreshed.";
+                                color: Theme.text-tertiary;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-xs;
+                            }
+
+                            if root.bc-self-improve-quality-state != ""
+                                && root.bc-self-improve-quality-state != "available"
+                                && root.bc-self-improve-quality-state != "unavailable": Rectangle {
+                                border-radius: Theme.radius-md;
+                                background: Theme.warning-tint;
+                                border-width: 1px;
+                                border-color: Theme.warning;
+                                VerticalLayout {
+                                    padding: Theme.space-3;
+                                    spacing: Theme.space-1;
+                                    Text {
+                                        text: "Self-improve quality is not current";
+                                        color: Theme.warning;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-xs;
+                                    }
+                                    Text {
+                                        text: root.bc-self-improve-quality-reason != ""
+                                            ? root.bc-self-improve-quality-reason
+                                            : "Refresh Buddy status for a complete quality snapshot.";
+                                        color: Theme.text-secondary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-xs;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            if root.bc-self-improve-quality-state == "available"
+                                && root.bc-self-improve-proposals.length == 0: Text {
+                                text: "No self-improve proposals are currently staged.";
+                                color: Theme.text-disabled;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-xs;
+                            }
+
+                            if root.bc-self-improve-quality-state == "available": VerticalLayout {
+                                spacing: Theme.space-2;
+                                alignment: start;
+                                for proposal in root.bc-self-improve-proposals: Rectangle {
+                                    min-height: 98px;
+                                    border-radius: Theme.radius-md;
+                                    background: proposal.id == root.bc-self-improve-selected-id
+                                        ? Theme.audit-tint : Theme.surface-1;
+                                    border-width: 1px;
+                                    border-color: proposal.id == root.bc-self-improve-selected-id
+                                        ? Theme.audit : Theme.border-subtle;
+                                    VerticalLayout {
+                                        padding: Theme.space-3;
+                                        spacing: Theme.space-1;
+                                        HorizontalLayout {
+                                            spacing: Theme.space-2;
+                                            Text {
+                                                text: proposal.id + " · " + proposal.status;
+                                                color: proposal.review-ready ? Theme.accent : Theme.warning;
+                                                font-family: Theme.font-mono;
+                                                font-size: Theme.font-size-2xs;
+                                                overflow: elide;
+                                                horizontal-stretch: 1;
+                                            }
+                                            Text {
+                                                text: proposal.quality-state;
+                                                color: proposal.quality-state == "current" ? Theme.accent
+                                                    : proposal.quality-state == "failed" ? Theme.consent
+                                                    : Theme.warning;
+                                                font-family: Theme.font-mono;
+                                                font-size: Theme.font-size-2xs;
+                                            }
+                                        }
+                                        Text {
+                                            text: proposal.summary;
+                                            color: Theme.text-secondary;
+                                            font-family: Theme.font-sans;
+                                            font-size: Theme.font-size-xs;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: proposal.quality-reason != "" ? proposal.quality-reason
+                                                : proposal.quality-metric + " " + proposal.score-delta
+                                                    + " · " + proposal.regression-summary;
+                                            color: Theme.text-tertiary;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            overflow: elide;
+                                        }
+                                        if proposal.evaluator-source-short-id != "": Text {
+                                            text: "Verifier " + proposal.evaluator-source-short-id
+                                                + " · corpus " + proposal.corpus-manifest-short-sha256;
+                                            color: Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            overflow: elide;
+                                        }
+                                        if proposal.evidence-sha256 != "": Text {
+                                            text: "Evidence " + proposal.evidence-sha256;
+                                            color: Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            overflow: elide;
+                                        }
+                                        HorizontalLayout {
+                                            Rectangle { horizontal-stretch: 1; }
+                                            NeothButton {
+                                                label: "Review in Self-improve";
+                                                size: "sm";
+                                                enabled: true;
+                                                clicked => { root.bc-self-improve-review(proposal.id); }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            RefreshFooter { ts: root.bc-refreshed-at; }
                         }
                     }
 

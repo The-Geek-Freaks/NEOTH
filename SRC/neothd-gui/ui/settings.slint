@@ -818,6 +818,15 @@ export component SettingsView inherits Rectangle {
     // `neoth hemispheres show --output json` / `neoth skills --list --output json`.
     in property <[HemisphereRow]> hemisphere-bindings: [];
     in property <string> hemispheres-mode: "";
+    in property <bool> ouro-q8-verify-running: false;
+    in property <bool> ouro-q8-verify-unavailable: false;
+    in property <bool> ouro-q8-verify-verified: false;
+    in property <string> ouro-q8-verify-status: "Not verified.";
+    in property <string> ouro-q8-verify-configured-mode: "";
+    in property <string> ouro-q8-verify-receipt: "";
+    in property <string> ouro-q8-verify-device: "";
+    in property <string> ouro-q8-verify-forward-summary: "";
+    callback ouro-q8-verify-clicked();
     // SPEC-06 — implemented provider ids for the per-role rebind picker.
     in property <[string]> provider-ids: [];
     // GOLD-GUI-OVERHAUL — model-picker options for the rebind row (local GGUF
@@ -1727,6 +1736,72 @@ export component SettingsView inherits Rectangle {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            if root.active == SettingsTab.hemispheres: Card {
+                shimmer: false;
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-base;
+                    Text {
+                        text: "Ouro Q8 verification";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-h2;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text-primary;
+                    }
+                    Text {
+                        text: "Tests Q8 against the published local cache. The check loads the model and runs two short inputs; it does not download or change your model settings.";
+                        font-family: Theme.font-sans;
+                        font-size: Theme.font-size-body;
+                        color: Theme.text-secondary;
+                        wrap: word-wrap;
+                    }
+                    NeothButton {
+                        label: root.ouro-q8-verify-running ? "Verifying Q8…" : "Verify cached Q8 model";
+                        loading: root.ouro-q8-verify-running;
+                        enabled: !root.ouro-q8-verify-running && !root.ouro-q8-verify-unavailable;
+                        clicked => { root.ouro-q8-verify-clicked(); }
+                    }
+                    Text {
+                        text: root.ouro-q8-verify-status;
+                        font-family: Theme.font-sans;
+                        font-size: Theme.font-size-body;
+                        color: root.ouro-q8-verify-verified ? Theme.accent-cyan : Theme.text-primary;
+                        wrap: word-wrap;
+                    }
+                    if root.ouro-q8-verify-running: Text {
+                        text: "A timeout or closing this view does not confirm that an in-flight device operation has stopped.";
+                        font-family: Theme.font-sans;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-secondary;
+                        wrap: word-wrap;
+                    }
+                    if root.ouro-q8-verify-configured-mode != "": Text {
+                        text: "Configured: " + root.ouro-q8-verify-configured-mode + " · Tested: q8";
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-secondary;
+                        wrap: word-wrap;
+                    }
+                    if root.ouro-q8-verify-verified: VerticalLayout {
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "Device: " + root.ouro-q8-verify-device + " · " + root.ouro-q8-verify-forward-summary;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: "Receipt: " + root.ouro-q8-verify-receipt;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.accent-cyan;
+                            overflow: elide;
                         }
                     }
                 }

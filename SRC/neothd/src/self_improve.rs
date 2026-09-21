@@ -19,6 +19,7 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod passive;
 mod quality;
 pub(crate) use quality::{
     FixedCorpus, ProposalQualityEvidenceV1, ProposalQualityReadback, ProposalQualityState,

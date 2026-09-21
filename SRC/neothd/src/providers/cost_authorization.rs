@@ -6050,7 +6050,9 @@ mod tests {
             (
                 "channels/irc.rs",
                 1usize,
-                "08370bc276c05eedcae42dfeba84ee0fad41e42acd7ce09310dd327edc57f3a7",
+                // IRC Client::stream is the inbound protocol stream, not a
+                // Provider call. W128 adds the adjacent registration state.
+                "e18f8a2861c2d455e675c29be094daf75ab720684df137daae2ad86dac200d84",
             ),
             (
                 "cli/arxiv_ingest_task.rs",

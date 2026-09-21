@@ -48,6 +48,7 @@ use serde_json::{Value, json};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
+use crate::self_improve::passive;
 
 const SELF_ACTIVATION_ACTION: &str = "set_self_activation";
 const PROACTIVE_ACTION: &str = "set_proactive";
@@ -380,6 +381,7 @@ async fn run_status(output: OutputFormat) -> Result<()> {
     let autonomy = cfg.autonomy.as_str().to_owned();
     let proactive_enabled = cfg.proactive.enabled;
     let home = FreedomConfig::default_neoth_home();
+    let self_improve_quality = passive::quality_snapshot(&home);
     let path = FreedomConfig::default_path();
     let mut skill_autonomy_caps = Vec::new();
     for (skill_id, configured) in &cfg.custom_autonomy.skill_overrides {
@@ -408,6 +410,7 @@ async fn run_status(output: OutputFormat) -> Result<()> {
                     "autonomy": autonomy,
                     "proactive_enabled": proactive_enabled,
                     "skill_autonomy_caps": skill_autonomy_caps,
+                    "self_improve_quality": self_improve_quality,
                 })
             );
         }
@@ -426,6 +429,10 @@ async fn run_status(output: OutputFormat) -> Result<()> {
             println!(
                 "skill_autonomy_caps     : {}",
                 serde_json::to_string(&skill_autonomy_caps)?
+            );
+            println!(
+                "self_improve_quality    : {}",
+                serde_json::to_string(&self_improve_quality)?
             );
         }
     }

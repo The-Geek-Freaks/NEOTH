@@ -8,6 +8,25 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W149 / W151 / W152 batch (2026-09-21):** Buddy now projects the canonical
+Self-improve evidence through a passive, bounded reader and hands the exact
+selected proposal into Self-improve. Settings now invokes the real cache-only
+Ouro Q8 verification and displays only validated receipts; an unobserved child
+exit keeps a second run disabled. Native fixtures cover both callbacks, with
+14 exact macOS harness entries. See [W149](../docs/gold-wave149-verification.md)
+and [W151](../docs/gold-wave151-verification.md).
+
+The preceding full Windows CI35591362095 compiled successfully, then stopped
+at its fail-fast limit: 11,217 passed, 20 failed, 22 skipped, 11,237/16,882 run.
+[W152](../docs/gold-wave152-verification.md) repairs the observed fixture,
+budget, inventory and Python-header issues; all twenty identities are required
+in the new matrix. Final runtime acceptance remains pending. The integrated
+manifest has 320 inputs and requires 186 native, 35 universal GUI and nine
+Linux/macOS callback identities. Prior main3ad404ca passed Preflight35596717043
+and CodeQuality35596716516. All executable validation remains GitHub-only.
+Road counts remain **1324 total / 1015 checked / 307 open / 2 partial**;
+source review does not close any Road item.
+
 W142 fixture follow-up aligns the shared fake CLI with the production global
 JSON option spelling; all exact argument/receipt assertions remain. Source
 review passed, hosted callback execution is still pending.

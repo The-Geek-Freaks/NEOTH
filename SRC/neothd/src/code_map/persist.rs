@@ -5144,8 +5144,8 @@ mod tests {
             &tx,
             &map.root,
             &[crate::code_map::imports::ImportEdge {
-                from_file: "a.rs".into(),
-                to_file: "b.rs".into(),
+                from_file: "src/main.rs".into(),
+                to_file: "README.md".into(),
                 language: "rust".into(),
             }],
         )
