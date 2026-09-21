@@ -2,12 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
-W162 source642525f3 passed Code Quality35633810126. Preflight35633811067
-requested 33 exact formatting hunks in five files; these are imported.
-Core35633811647 reported two E0308 expansions at one interval select: tick()
-returns Instant rather than (). The producer and both matching regression
-patterns now accept that return value without changing timer ordering. Fresh
-hosted compilation and native/GUI behavior remain pending; W163 stays excluded.
+**Current hosted evidence (2026-09-21):** source6003175f passed Core/reference
+35634495862, Preflight35634494324 and Code Quality35634493973. Full CI35634988336
+continues native compilation, but Linux job106450108773 found two strict-Clippy
+style errors in the W162 producer. The exact is_none_or and let-chain repairs
+preserve measurement and idle-error behavior. Preview35635024193 remains in
+progress. W163 is unpublished and excluded; no roadmap checkbox closes.
+
+The historical W159 core-review file was accidentally overwritten. Its expected
+hash remains recorded as unavailable, never reconstructed as original evidence.
+A new independent CURRENT-CORE-REVIEW.md approves the current WAL foundation
+with exact source hashes; caller/runtime acceptance remains separately required.
 
 **W162 live throughput and hosted repair (2026-09-21):** the integrated producer,
 strict request-bound reducer, Chat and Buddy display are source-reviewed.

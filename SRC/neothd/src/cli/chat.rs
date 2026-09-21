@@ -4182,7 +4182,7 @@ impl LiveThroughputProducer {
                     && (0.0..=LIVE_THROUGHPUT_PROTOCOL_MAX_PER_SECOND).contains(&per_second)
                     && completed_second
                     && (self.last_kind != Some(LiveThroughputWireKind::Measuring)
-                        || self.last_measurement_at.map_or(true, |last| {
+                        || self.last_measurement_at.is_none_or(|last| {
                             now.duration_since(last) >= std::time::Duration::from_secs(1)
                         }))
             }
@@ -6090,14 +6090,13 @@ pub(super) async fn dispatch_provider(
                     _ = throughput_idle_tick.tick() => {
                         if let (Some(throughput), Some(token)) =
                             (live_throughput.as_mut(), stream_control_token)
-                        {
-                            if let Err(error) = throughput.observe_idle(
+                            && let Err(error) = throughput.observe_idle(
                                 std::time::Instant::now(),
                                 output,
                                 token,
-                            ) {
-                                return_dispatch_error!("throughput_idle", error);
-                            }
+                            )
+                        {
+                            return_dispatch_error!("throughput_idle", error);
                         }
                         continue;
                     }

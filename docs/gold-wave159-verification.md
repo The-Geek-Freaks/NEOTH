@@ -99,3 +99,17 @@ None selectors and the decoded payload tuple slot. The contextual scan now
 requires its successful Result instead of discarding it. Hosted rerun remains
 required. Retained logs are 784-linux-quality.log and 784-adapters.log; review is
 HOSTED-REPAIR-REVIEW.md. This repair is integrated with W162, excluding W163.
+
+## Current review availability
+
+**Current hosted evidence (2026-09-21):** source6003175f passed Core/reference
+35634495862, Preflight35634494324 and Code Quality35634493973. Full CI35634988336
+continues native compilation, but Linux job106450108773 found two strict-Clippy
+style errors in the W162 producer. The exact is_none_or and let-chain repairs
+preserve measurement and idle-error behavior. Preview35635024193 remains in
+progress. W163 is unpublished and excluded; no roadmap checkbox closes.
+
+The historical W159 core-review file was accidentally overwritten. Its expected
+hash remains recorded as unavailable, never reconstructed as original evidence.
+A new independent CURRENT-CORE-REVIEW.md approves the current WAL foundation
+with exact source hashes; caller/runtime acceptance remains separately required.

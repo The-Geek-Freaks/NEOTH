@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W162-live-throughput-and-hosted-repair-candidate",
-  "base": "642525f3345510ce9601fca6f6d43aaf8788121f",
-  "capturedUtc": "2026-09-21T17:47:33.8852388Z",
-  "validationStatus": "W162_HOSTED_FORMAT_AND_INTERVAL_TICK_TYPE_REPAIR_PENDING",
-  "scopeNote": "353 inputs; W162 admitted visible-event throughput producer/core/request-bound GUI/Buddy with persistent idle timer and 15 regression sources. W159 actual13Clippy+6testcompile repairs and older14GUI compile repairs included. Required325universalnative+3Windows+2Unix;61GUI+13Linux/macOScallbacks;7optional. All hosted execution pending. W163 excluded.",
+  "base": "6003175f29de1f081054ce10a5f16e10e715cecd",
+  "capturedUtc": "2026-09-21T18:02:03.1618293Z",
+  "validationStatus": "W162_HOSTED_STRICT_CLIPPY_REPAIR_PENDING",
+  "scopeNote": "353 inputs; W162 source600 passed Core/reference, Preflight and Code Quality. Linux slim Clippy found two chat.rs style errors, repaired without behavior changes. Native/GUI and Windows preview600 still running. W163 excluded.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -553,8 +553,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "sha256": "CC128A12E4B108C961710BB4037A44A752550F9956772F99C472A61DB0493B0B",
-      "bytes": 1017276
+      "sha256": "0D6A9A436F50F94B6E3D0C41E3E55932308E3C473F54B65DD65564F8D7ECE9AE",
+      "bytes": 1017238
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
