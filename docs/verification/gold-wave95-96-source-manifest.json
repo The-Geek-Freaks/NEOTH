@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W153A-provider-reasoning-and-metadata-audit",
-  "base": "772a60195d80af431e7b1e8c79eed21a16666298",
-  "capturedUtc": "2026-09-21T13:51:03.5697568Z",
-  "validationStatus": "W153A_PROVIDER_AUDIT_HOSTED_EXECUTION_PENDING",
+  "base": "96b975150bcac6efa9e1cc4339a0c7e4884c0515",
+  "capturedUtc": "2026-09-21T14:06:54.6106152Z",
+  "validationStatus": "W153A_PROVIDER_COMPILE_REPAIR_HOSTED_REBUILD_PENDING",
   "scopeNote": "325 source inputs; W153A provider event compatibility and metadata-only reasoning audit. Concurrent CLI/daemon/GUI W153 changes are excluded. No Road closure; executable gates GitHub-only.",
   "files": [
     {
@@ -1268,8 +1268,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/claude_cli.rs",
-      "bytes": 159241,
-      "sha256": "19F0DADD39A887F8EEB17790B277A62DA536E432B256E0069C3C0776EF3C9D29"
+      "bytes": 159382,
+      "sha256": "BD513E912FE25A47863C4AD8FF5D64C987842213F2C0C8A517434467CF722766"
     },
     {
       "path": "SRC/neothd/src/providers/claude_tmux.rs",
@@ -1293,8 +1293,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 250290,
-      "sha256": "E7E2A55C1D8B078CF16F6F3D359B5F73B947D6C1E0348DFED80331B0ECB8C442"
+      "bytes": 250287,
+      "sha256": "C437229E8E3DC64B1E08DE3220D5C6D4D4F8D5B8899C11DD2F58352F5D9CCDEE"
     },
     {
       "path": "SRC/neothd/src/providers/fallback.rs",
@@ -1313,8 +1313,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/mod.rs",
-      "bytes": 214948,
-      "sha256": "9029D0561C8AEF49CDCCC80ACA178E241636E4C1F36AA8E9A848171F1C9EE7C2"
+      "bytes": 214983,
+      "sha256": "FB82D2C55AC1695D8757A9520861F23D69ED1EB70FB1871EB550D175E08EA38C"
     },
     {
       "path": "SRC/neothd/src/providers/ollama_api.rs",

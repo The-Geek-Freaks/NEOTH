@@ -1228,14 +1228,6 @@ fn event_stream_from_chunks(mut stream: ChunkStream) -> ProviderEventStream {
             // A terminal chunk may carry its final visible delta. It is
             // delivered only by `Done { chunk }`, so consumers that render
             // the progressive and terminal projections never duplicate it.
-            if !chunk.done {
-                sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
-                yield ProviderStreamEvent {
-                    identity: chunk.identity.clone(),
-                    sequence,
-                    payload: ProviderStreamPayload::VisibleText { chunk },
-                };
-            }
             if chunk.done {
                 sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
                 yield ProviderStreamEvent {
@@ -1256,6 +1248,12 @@ fn event_stream_from_chunks(mut stream: ChunkStream) -> ProviderEventStream {
                 };
                 return;
             }
+            sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
+            yield ProviderStreamEvent {
+                identity: chunk.identity.clone(),
+                sequence,
+                payload: ProviderStreamPayload::VisibleText { chunk },
+            };
         }
         Err(anyhow::anyhow!("provider stream ended before the required done=true terminal chunk"))?;
     })
@@ -1289,38 +1287,40 @@ fn normalize_event_stream(mut stream: ProviderEventStream) -> ProviderEventStrea
         let mut done = false;
         while let Some(item) = stream.next().await {
             let event = item?;
-            anyhow::ensure!(
-                event.sequence == expected_sequence,
-                "provider event sequence must be contiguous from one"
-            );
+            if event.sequence != expected_sequence {
+                Err(anyhow::anyhow!("provider event sequence must be contiguous from one"))?;
+            }
             expected_sequence = expected_sequence
                 .checked_add(1)
                 .context("provider event sequence exhausted")?;
-            anyhow::ensure!(!done, "provider emitted event after Done");
+            if done {
+                Err(anyhow::anyhow!("provider emitted event after Done"))?;
+            }
             match &event.payload {
                 ProviderStreamPayload::ReasoningDelta { .. } => {
-                    anyhow::ensure!(
-                        !reasoning_terminal,
-                        "provider emitted reasoning after its terminal state"
-                    );
+                    if reasoning_terminal {
+                        Err(anyhow::anyhow!("provider emitted reasoning after its terminal state"))?;
+                    }
                 }
                 ProviderStreamPayload::ReasoningTerminal { .. } => {
-                    anyhow::ensure!(
-                        !reasoning_terminal,
-                        "provider emitted duplicate reasoning terminal state"
-                    );
+                    if reasoning_terminal {
+                        Err(anyhow::anyhow!("provider emitted duplicate reasoning terminal state"))?;
+                    }
                     reasoning_terminal = true;
                 }
                 ProviderStreamPayload::Done { chunk } => {
-                    anyhow::ensure!(chunk.done, "provider event Done carried a non-terminal chunk");
-                    anyhow::ensure!(reasoning_terminal, "provider Done omitted reasoning terminal state");
+                    if !chunk.done {
+                        Err(anyhow::anyhow!("provider event Done carried a non-terminal chunk"))?;
+                    }
+                    if !reasoning_terminal {
+                        Err(anyhow::anyhow!("provider Done omitted reasoning terminal state"))?;
+                    }
                     done = true;
                 }
                 ProviderStreamPayload::VisibleText { chunk } => {
-                    anyhow::ensure!(
-                        !chunk.done,
-                        "provider event VisibleText carried a terminal chunk"
-                    );
+                    if chunk.done {
+                        Err(anyhow::anyhow!("provider event VisibleText carried a terminal chunk"))?;
+                    }
                 }
             }
             yield event;

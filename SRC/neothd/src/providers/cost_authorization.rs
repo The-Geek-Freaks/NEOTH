@@ -1232,7 +1232,7 @@ impl ProviderCallAuditGuard {
                             audit.cache_read_tokens =
                                 chunk.cache_read_tokens.or(audit.cache_read_tokens);
                         }
-                        if let ProviderStreamPayload::Done { chunk } = &event.payload {
+                        if let ProviderStreamPayload::Done { .. } = &event.payload {
                             let ticket = audit.ticket.as_ref().expect("unsettled provider event-stream audit");
                             let terminal = ProviderCallTerminal::Success {
                                 response_hash_sha256: finish_sha256(response_hasher),

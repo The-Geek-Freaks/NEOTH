@@ -36,3 +36,15 @@ identities. Concurrent CLI, daemon and GUI edits are excluded.
 All executable checks run on GitHub-hosted runners. Source review is not
 native, live-provider, UI or release acceptance. Fresh hosted formatting,
 compilation and the listed regression tests remain required for this source.
+
+## Hosted compiler repair
+
+GitHub core/reference run 35608152765 on 772a6019 failed before producing
+a reference. The eight compiler diagnostics and unused-binding warning are
+repaired in three provider files. The UTF-8 view now borrows a live zeroizing
+byte owner; async-stream failures propagate through the stream error path;
+terminal chunks move once and preserve text and usage. The independent repair
+review and complete failed log are retained in
+`work/gold-20260906/wave153-provider-compile/`. A new hosted build must verify
+these repaired sources. Preflight 35608485779 and Code Quality 35608485777
+passed on the earlier formatting commit 96b97515 only.

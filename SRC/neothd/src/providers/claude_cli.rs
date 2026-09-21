@@ -1234,12 +1234,14 @@ impl Provider for ClaudeCliAdapter {
                 )
                 .await?
                 {
-                    let line = Zeroizing::new(line);
-                    let line = Zeroizing::new(response_bounds::frame_utf8(
-                        &line,
+                    // `frame_utf8` borrows these owned bytes. Keep their
+                    // `Zeroizing` owner alive for the frame's entire use.
+                    let line_bytes = Zeroizing::new(line);
+                    let line = response_bounds::frame_utf8(
+                        &line_bytes,
                         "claude_cli",
                         CLI_STREAM_EVIDENCE_DOMAIN,
-                    )?);
+                    )?;
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
                         continue;
@@ -1434,7 +1436,7 @@ impl Provider for ClaudeCliAdapter {
                     let mut reasoning_redacted = false;
 
                     loop {
-                        let line = match response_bounds::read_bounded_line(
+                        let line_bytes = match response_bounds::read_bounded_line(
                             &mut reader,
                             "claude_cli",
                             CLI_STREAM_EVIDENCE_DOMAIN,
@@ -1459,11 +1461,11 @@ impl Provider for ClaudeCliAdapter {
                             }
                         };
                         let line = match response_bounds::frame_utf8(
-                            &line,
+                            &line_bytes,
                             "claude_cli",
                             CLI_STREAM_EVIDENCE_DOMAIN,
                         ) {
-                            Ok(line) => Zeroizing::new(line),
+                            Ok(line) => line,
                             Err(error) => {
                                 sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
                                 yield ProviderStreamEvent {

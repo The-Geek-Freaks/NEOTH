@@ -8,11 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
-W153A source772a6019 passed CodeQuality35608035463. The19 exact Rustfmt
-postimages from Preflight35608035307 are imported across five frozen files.
-Core build/reference35608152765 is running on772a6019; fresh formatting and
-native test execution remain pending. All CLI/daemon/GUI working changes stay
-outside this provider/audit format follow-up.
+**W153A hosted compiler repair (2026-09-21):** GitHub build 35608152765
+on 772a6019 reported eight compiler diagnostics and one unused binding.
+The three provider sources now keep the zeroizing byte owner alive for its
+borrowed UTF-8 view, propagate async-stream validation errors through `?`,
+and move each visible/terminal chunk exactly once. Independent source review
+approved the exact repaired files. A fresh hosted rebuild is required; no
+CLI reference or native-test success is claimed for this repair.
+
+The preceding formatting source 96b97515 passed Preflight 35608485779 and
+Code Quality 35608485777. The separate ff146652 Windows/macOS native jobs
+and Windows preview remain useful pending evidence and continue running.
 
 **W153A provider/audit subsystem (2026-09-21):** the new provider event plane,
 correct native Claude assistant/result parsing, decorator authorization and
