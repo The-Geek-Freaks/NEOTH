@@ -219,8 +219,7 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
         };
         let recall_batch = match &event {
             neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::RecallChipBatch {
-                batch,
-                ..
+                batch, ..
             } => Some(batch.clone()),
             _ => None,
         };
@@ -558,7 +557,9 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                                 operation.id,
                             );
                             match daemon_surface {
-                                GuiChatSurface::Main => crate::clear_main_throughput_projection(&window),
+                                GuiChatSurface::Main => {
+                                    crate::clear_main_throughput_projection(&window)
+                                }
                                 GuiChatSurface::Buddy => {
                                     if let Some(overlay) = overlay.upgrade() {
                                         crate::clear_buddy_throughput_projection(&overlay);
@@ -617,7 +618,9 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                                 operation.id,
                             );
                             match daemon_surface {
-                                GuiChatSurface::Main => crate::clear_main_recall_chip_projection(&window),
+                                GuiChatSurface::Main => {
+                                    crate::clear_main_recall_chip_projection(&window)
+                                }
                                 GuiChatSurface::Buddy => {
                                     if let Some(overlay) = overlay.upgrade() {
                                         crate::clear_buddy_recall_chip_projection(&overlay);
@@ -1167,7 +1170,13 @@ fn start_receipt(
                         return;
                     }
                     let turn = Arc::new(turn);
-                    let (bridge, reducer, throughput_projections, recall_chip_projections, response_feedback_projections) = {
+                    let (
+                        bridge,
+                        reducer,
+                        throughput_projections,
+                        recall_chip_projections,
+                        response_feedback_projections,
+                    ) = {
                         let mut locked = state.lock().unwrap_or_else(|p| p.into_inner());
                         if !locked.operation_is_current(operation) {
                             return;
@@ -1668,10 +1677,7 @@ fn handoff_buddy_to_main(
     let retained_turn_options = {
         let locked = state.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(operation) = locked.active_operation {
-            crate::clear_daemon_throughput_projection(
-                &locked.throughput_projections,
-                operation.id,
-            );
+            crate::clear_daemon_throughput_projection(&locked.throughput_projections, operation.id);
             crate::clear_daemon_recall_chip_projection(
                 &locked.recall_chip_projections,
                 operation.id,
@@ -1753,7 +1759,13 @@ fn reopen_surface(
                 }
             };
             let returned_turn_id = turn.metadata.turn_id.as_uuid().to_string();
-            let (bridge, reducer, throughput_projections, recall_chip_projections, response_feedback_projections) = {
+            let (
+                bridge,
+                reducer,
+                throughput_projections,
+                recall_chip_projections,
+                response_feedback_projections,
+            ) = {
                 let mut locked = state.lock().unwrap_or_else(|p| p.into_inner());
                 if !locked.operation_is_current(operation) {
                     return;

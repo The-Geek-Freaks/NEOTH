@@ -558,21 +558,25 @@ mod tests {
             .expect("accept daemon-reduced W163 batch");
         projection.provider_done();
         assert_eq!(projection.snapshot(), Some(accepted));
-        assert!(projection
-            .accept_issued_batch(RecallChipStatus::Ready, Vec::new())
-            .is_err());
+        assert!(
+            projection
+                .accept_issued_batch(RecallChipStatus::Ready, Vec::new())
+                .is_err()
+        );
 
         projection.replace_request("daemon-operation-10".into());
-        assert!(projection
-            .accept_issued_batch(
-                RecallChipStatus::Ready,
-                vec![RecallChip {
-                    tier: RecallChipTier::Unknown,
-                    score: None,
-                    source_state: RecallChipSourceState::Available,
-                }],
-            )
-            .is_err());
+        assert!(
+            projection
+                .accept_issued_batch(
+                    RecallChipStatus::Ready,
+                    vec![RecallChip {
+                        tier: RecallChipTier::Unknown,
+                        score: None,
+                        source_state: RecallChipSourceState::Available,
+                    }],
+                )
+                .is_err()
+        );
         assert!(projection.snapshot().is_none());
         assert!(projection.is_frozen());
     }

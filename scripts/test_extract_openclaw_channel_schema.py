@@ -48,6 +48,10 @@ class SchemaWalkerTests(unittest.TestCase):
     def test_git_blob_uses_actual_nul_framing(self):
         self.assertEqual(module.git_blob(b""), "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391")
 
+    def test_manifest_pin_matches_the_real_custody_fixture(self):
+        fixture = SCRIPT.parent.parent / "SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json"
+        self.assertEqual(module.digest(fixture.read_bytes()), module.INVENTORY_SHA256)
+
     def test_missing_and_true_additional_properties_are_blocked(self):
         for root in ({"type": "object"}, {"type": "object", "additionalProperties": True}):
             leaves, blockers = [], []

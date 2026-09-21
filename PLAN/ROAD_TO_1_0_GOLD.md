@@ -8,6 +8,12 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**Latest Hosted boundary (2026-09-21):** CLI build/reference35652041976 on
+45c31447 passed. All 29 remaining GUI format hunks are imported exactly from
+GitHub. W169 run35652260374 passed nine tests, then correctly rejected a
+mistyped custody fixture digest; the literal is corrected and a real-package
+fixture regression added. Full native/GUI and schema extraction remain pending.
+
 **W169 schema extraction preparation (2026-09-21):** the independently reviewed
 GitHub-only extractor binds exact upstream bytes/SHA/Git blob and W166 manifest
 IDs before decoding generated static schema data. Unknown structures produce

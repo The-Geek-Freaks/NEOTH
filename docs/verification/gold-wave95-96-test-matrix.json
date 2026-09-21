@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W169_EXTRACTION_SOURCE_APPROVED_HOSTED_REQUIRED",
+  "status": "HOSTED_GUI_FORMAT_IMPORTED_AND_EXTRACTION_PIN_REPAIRED",
   "base": "319d84f6886a77efd7fa9076879fdc9e826a2d37",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 65690,
-    "sha256": "F8D38B9B15946F9998D0F3FAC071FEF3F85A9B6A724CBD68D4F314B328D7A44D"
+    "bytes": 65728,
+    "sha256": "C4297C763C0DB1DEBD532BA9DDE8E755B16BE967910F241B9BD13D41108B1E61"
   },
   "sourceInputs": 380,
   "requiredNativeTests": [
@@ -2908,13 +2908,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/gui_chat_bridge_controller.rs",
-      "bytes": 77391,
-      "sha256": "05ABDC5816BE4891FCD5F5EE348801B0FCCC14D77C2604D24C6A8233B3756CEF"
+      "bytes": 77708,
+      "sha256": "10ADC0CEE8C8825F63F140D081705DE4C02721CEE51DF48661877C1D6F3BBC35"
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2022134,
-      "sha256": "63165FE336A938A26C2FF47134ECB51CCFCC16F264ACC67C7FB29341DC5EA666"
+      "bytes": 2022665,
+      "sha256": "DA1EC992439400265310EF21335F399D8C370BF48EE2AABA9BA1F7BD2EA30ABB"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -6009,5 +6009,24 @@
     "reviewSha256": "BD0F4E34F0888DF58399745818B6E0E177368F48F12E17EB67FE68BE658AC6C8",
     "localExecution": false,
     "productIntegration": "not yet implemented"
+  },
+  "wave168FinalFormat": {
+    "source": "45c314471d3c06d122456f743ad93c818990dcf4",
+    "preflight": 35651447634,
+    "formatHunks": 29,
+    "receipt": "work/gold-20260906/wave168-throughput-bridge/FORMAT-45C.json",
+    "receiptSha256": "CB6AE49D9F3204A3EB8BDE04E10A52FF6916B2E1DF0A14E6592AF28F94BBCE7B",
+    "cliBuild": 35652041976,
+    "cliBuildConclusion": "success",
+    "localExecution": false
+  },
+  "wave169FirstHosted": {
+    "source": "769105adbe78f94489a9af5170543b99f2a1b6d8",
+    "run": 35652260374,
+    "testsPassed": 9,
+    "extraction": "failed: expected custody digest contained one extra e",
+    "repair": "correct literal to real64hex hash; add real-fixture pin regression",
+    "freshRun": "required",
+    "localExecution": false
   }
 }

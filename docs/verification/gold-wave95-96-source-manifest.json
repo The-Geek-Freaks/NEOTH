@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W170-schema-extraction-candidate",
-  "base": "45c314471d3c06d122456f743ad93c818990dcf4",
-  "capturedUtc": "2026-09-21T20:35:48.3668073Z",
-  "validationStatus": "W169_EXTRACTION_SOURCE_APPROVED_HOSTED_REQUIRED",
-  "scopeNote": "W169 diagnostic extraction tooling; no schema fixture/importer claim. Current W168 final Hosted GUI formatting remains unadmitted WIP.",
+  "base": "769105adbe78f94489a9af5170543b99f2a1b6d8",
+  "capturedUtc": "2026-09-21T20:39:16.5701077Z",
+  "validationStatus": "HOSTED_GUI_FORMAT_IMPORTED_AND_EXTRACTION_PIN_REPAIRED",
+  "scopeNote": "All W167/W168 Hosted formatting admitted; W169 diagnostic fixture pin typo repaired with real package fixture regression. Native/GUI/schema extraction still pending.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -188,13 +188,13 @@
     },
     {
       "path": "scripts/extract_openclaw_channel_schema.py",
-      "bytes": 9913,
-      "sha256": "CAF8C03288CD434C5DD3016FA11A1C6A0B36D2A98B424D686455C9873B799351"
+      "bytes": 9912,
+      "sha256": "47DB787F3F732B38ADE10C0F3C888308984989DA347F920949FBEB862632A1E1"
     },
     {
       "path": "scripts/test_extract_openclaw_channel_schema.py",
-      "bytes": 4629,
-      "sha256": "F2EDF7D7F13F02734FF6E3300245CA22CD2F9D09A76055D96A0D00FDB94F075D"
+      "bytes": 4899,
+      "sha256": "392A7012CD46B29901F067B29A533E77D037263D53023BC573E5A4A686D07EC4"
     },
     {
       "path": "SRC/_gui_lint.ps1",
@@ -308,8 +308,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_recall_chips.rs",
-      "bytes": 19598,
-      "sha256": "EB19FCF4638EE00B878B583F377DEDCB1DD807EABF114CB3E4E04AD89336234F"
+      "bytes": 19686,
+      "sha256": "998EBEBB040819A60D7FF481898B0BD63AE42720742E5DBEA82EF8A60C596CDD"
     },
     {
       "path": "SRC/neothd-gui/src/chat_response_feedback.rs",
@@ -323,8 +323,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_throughput.rs",
-      "bytes": 23528,
-      "sha256": "076A86CC653E8528860BECD5AC4724FB132951A53E313B432DE60CD0E3B9EDA2"
+      "bytes": 23632,
+      "sha256": "D528F75162A983D4FA979FAD2BDCCB9541AB193C1569E0E3F0E40700F025AB4F"
     },
     {
       "path": "SRC/neothd-gui/src/citation_gui.rs",
@@ -358,8 +358,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/gui_chat_bridge_controller.rs",
-      "bytes": 77391,
-      "sha256": "05ABDC5816BE4891FCD5F5EE348801B0FCCC14D77C2604D24C6A8233B3756CEF"
+      "bytes": 77708,
+      "sha256": "10ADC0CEE8C8825F63F140D081705DE4C02721CEE51DF48661877C1D6F3BBC35"
     },
     {
       "path": "SRC/neothd-gui/src/gui_stream.rs",
@@ -368,8 +368,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2022134,
-      "sha256": "63165FE336A938A26C2FF47134ECB51CCFCC16F264ACC67C7FB29341DC5EA666"
+      "bytes": 2022665,
+      "sha256": "DA1EC992439400265310EF21335F399D8C370BF48EE2AABA9BA1F7BD2EA30ABB"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",

@@ -237,8 +237,8 @@ impl Projection {
                     terminal: false,
                 },
                 IssuedState::Unavailable {
-                    reason: reason @ (ThroughputReason::NoVisibleEvents
-                    | ThroughputReason::NoUsageReported),
+                    reason:
+                        reason @ (ThroughputReason::NoVisibleEvents | ThroughputReason::NoUsageReported),
                 } => ThroughputSnapshot {
                     state: ThroughputState::Unavailable,
                     basis: None,
@@ -656,14 +656,16 @@ mod tests {
             )
             .expect("accept typed daemon rate");
         assert_eq!(snapshot.unit, Some(ThroughputUnit::ProviderTokensPerSecond));
-        assert!(projection
-            .accept_issued_state(
-                3,
-                IssuedState::Unavailable {
-                    reason: ThroughputReason::NoUsageReported,
-                },
-            )
-            .is_err());
+        assert!(
+            projection
+                .accept_issued_state(
+                    3,
+                    IssuedState::Unavailable {
+                        reason: ThroughputReason::NoUsageReported,
+                    },
+                )
+                .is_err()
+        );
         assert!(projection.snapshot().is_none());
 
         projection.replace_request("daemon-operation-169".into());
@@ -679,13 +681,15 @@ mod tests {
                 .state,
             ThroughputState::Cancelled
         );
-        assert!(projection
-            .accept_issued_state(
-                2,
-                IssuedState::Paused {
-                    basis: ThroughputBasis::VisibleEvent,
-                },
-            )
-            .is_err());
+        assert!(
+            projection
+                .accept_issued_state(
+                    2,
+                    IssuedState::Paused {
+                        basis: ThroughputBasis::VisibleEvent,
+                    },
+                )
+                .is_err()
+        );
     }
 }
