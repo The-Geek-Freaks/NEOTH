@@ -2,6 +2,10 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+W160/W161 repair source ba26d52a passed Code Quality 35621786176. Preflight
+35621787111 requested one exact W137 diagnostic layout hunk; it is imported
+without local formatter execution. Full hosted CI/preview remains required.
+
 **W158/W160/W161 follow-up (2026-09-21):** the four W158 repair families
 are published in 1b672282. Its Code Quality run 35618942529 passed; Preflight
 35618943452 identified three exact formatting hunks, now imported. W160 repairs

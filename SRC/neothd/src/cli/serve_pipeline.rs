@@ -6138,10 +6138,12 @@ mod tests {
             {
                 route_reports += 1;
                 if first_route_payload.is_none() {
-                    first_route_payload = Some(match serde_json::from_slice::<serde_json::Value>(frame.payload) {
-                        Ok(payload) => payload.to_string(),
-                        Err(error) => format!("payload_decode_error({error})"),
-                    });
+                    first_route_payload = Some(
+                        match serde_json::from_slice::<serde_json::Value>(frame.payload) {
+                            Ok(payload) => payload.to_string(),
+                            Err(error) => format!("payload_decode_error({error})"),
+                        },
+                    );
                 }
             }
             cursor = &cursor[frame_len..];

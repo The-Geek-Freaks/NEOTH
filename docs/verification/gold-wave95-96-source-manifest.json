@@ -1,8 +1,8 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W161-hosted-repair-candidate",
-  "base": "1b672282ede16ecf5ac8c2f8f998fb5de58d706c",
-  "capturedUtc": "2026-09-21T15:46:31.3239168Z",
+  "base": "ba26d52ae67f89baad8005208ceb4c7602634ddc",
+  "capturedUtc": "2026-09-21T15:53:45.8909257Z",
   "validationStatus": "W158_FORMAT_W160_COMPILE_W161_PORTABLE_REPAIRS_HOSTED_PENDING",
   "scopeNote": "327 source inputs; W158 three hosted formatter postimages, W160 reviewed test-compile/strict-lint fixes, W161 reviewed equivalent Windows root normalization. Reviewed W137/W142 diagnostics still require hosted execution. W155 and W159 unpublished work excluded. Required tests225 universal native+3 Windows;46 universal GUI+11 callbacks;7 optional.",
   "files": [
@@ -683,8 +683,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "bytes": 438646,
-      "sha256": "7DEE515EF4F0EFD8479B7C527A02484A3605091A86C7CD1B3FA31484768F9732"
+      "bytes": 438705,
+      "sha256": "FB14AA688AF2FC80BE0BAE456F0C8A65720327A86638B5764E23EB35129F7884"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
