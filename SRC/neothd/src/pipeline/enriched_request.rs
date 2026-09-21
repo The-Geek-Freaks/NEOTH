@@ -1047,7 +1047,10 @@ mod tests {
             .iter()
             .position(|item| item.content == "selected alpha instructions")
             .unwrap();
-        assert!(registry_index < skill_index, "registry data precedes the selected body");
+        assert!(
+            registry_index < skill_index,
+            "registry data precedes the selected body"
+        );
     }
 
     #[test]

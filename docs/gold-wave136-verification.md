@@ -35,3 +35,9 @@ proved. No Road checkbox or count is changed by source presence alone.
 
 All validation remains GitHub-hosted. No local compiler, formatter, parser,
 test, fixture, product or GUI execution runs under the workstation restriction.
+
+W136 hosted formatting follow-up: Code Quality 35579924103 passed on 6c9955d0.
+Preflight 35579924445 supplied eleven Rustfmt hunks in four W136 files; the
+complete log was imported against exact published source mirrors so pending
+W137/W138 edits are excluded. Fresh static/full CI remains required. No local
+formatter, compiler, test or product was executed and Road counts are unchanged.

@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W136-skill-registry-and-type-hierarchy",
-  "base": "73f87a717fbc44f6139b786bef3bc16f0d142f0a",
-  "capturedUtc": "2026-09-21T08:43:36.9069055Z",
+  "base": "6c9955d08b352d1a6b44278c8e145cdb89f49d35",
+  "capturedUtc": "2026-09-21T08:52:27.5203494Z",
   "validationStatus": "W136_INTEGRATED_SOURCE_APPROVED_REMOTE_EXECUTION_REQUIRED",
-  "scopeNote": "308 cumulative inputs. W136 source plus complete49-hunk/four-file W132 hosted formatting. W137 mutable tests excluded; no local validation or Road closure.",
+  "scopeNote": "308 cumulative inputs. W136 exact11-hunk/four-file hosted format from35579924445, with separate expected-source/index proof. Unadmitted W137/W138 working source excluded. No local validation or Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -513,13 +513,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "bytes": 104722,
-      "sha256": "D8E311DC3E9579A6069B97A1F55D6ACCD36378D140A8075313C154472D549430"
+      "bytes": 104748,
+      "sha256": "B693A9B6FCD16B26D9F1C80450D26B2FF3F303D61CE34D823C818C2E50E886FE"
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 930230,
-      "sha256": "4AB3201FA0FE6FC601ECE78EEFBABBFB45812CD5E7A05726B5F333B3787DC8F7"
+      "bytes": 930281,
+      "sha256": "4721AB9B10BA15EFC1CB1A277EB92F07AB56B51E794CFB50166DC39D25281AB2"
     },
     {
       "path": "SRC/neothd/src/cli/code_intel.rs",
@@ -1183,8 +1183,8 @@
     },
     {
       "path": "SRC/neothd/src/pipeline/enriched_request.rs",
-      "bytes": 55861,
-      "sha256": "5ADFE159EB107EBC2035101A542274DC2C4F98FC0A0DBA56A127FC0101780A21"
+      "bytes": 55895,
+      "sha256": "97E7A6E69823F6B70A2D7ECE358855B68BB75CECFC23441E52F0F925D61C85E8"
     },
     {
       "path": "SRC/neothd/src/proactive/action_staging.rs",
@@ -1338,8 +1338,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/resolver.rs",
-      "bytes": 51554,
-      "sha256": "F329D7974180B861138CDD20DA5C86809AE5057896B9AEBFC32FC7A4576811B1"
+      "bytes": 51728,
+      "sha256": "3CC81107BA87E90A3A178FFE5D1555095D2BFB66BD79E1E6AE09293508E86885"
     },
     {
       "path": "SRC/neothd/src/skills/schema.rs",

@@ -20583,7 +20583,10 @@ modes:
             crate::pipeline::UntrustedContextClass::OtherReviewed
         );
         assert!(
-            registry_context.source_id().as_str().starts_with("skills:registry:"),
+            registry_context
+                .source_id()
+                .as_str()
+                .starts_with("skills:registry:"),
             "registry context must remain bound to its resolver fingerprint"
         );
         assert!(

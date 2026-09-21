@@ -1047,7 +1047,9 @@ mod tests {
             1,
             "a request must contain exactly one complete canonical Skill registry context"
         );
-        registry_contexts.pop().expect("one retained Skill registry context")
+        registry_contexts
+            .pop()
+            .expect("one retained Skill registry context")
     }
 
     #[derive(Default)]

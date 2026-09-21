@@ -312,7 +312,9 @@ impl SkillRouteResolver {
                 .checked_add(SESSION_REGISTRY_ENTRY_OVERHEAD_BYTES)
                 .and_then(|total| total.checked_add(skill.id().len()))
                 .and_then(|total| total.checked_add(skill.description().len()))
-                .ok_or_else(|| anyhow::anyhow!("skill session registry raw metadata size overflow"))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!("skill session registry raw metadata size overflow")
+                })?;
             anyhow::ensure!(
                 raw_metadata_bytes <= class.max_payload_bytes(),
                 "complete skill session registry exceeds the raw metadata bound of {} bytes",
@@ -464,15 +466,12 @@ impl SkillRouteResolver {
         &'a self,
         active_files: &'a [String],
     ) -> impl Iterator<Item = usize> + 'a {
-        self.eligible_indices
-            .iter()
-            .copied()
-            .filter(move |&index| {
-                let skill = &self.snapshot.skills()[index];
-                skill.is_enabled()
-                    && skill.visibility() == crate::config::SkillVisibility::On
-                    && passes_path_gate(skill.paths(), active_files)
-            })
+        self.eligible_indices.iter().copied().filter(move |&index| {
+            let skill = &self.snapshot.skills()[index];
+            skill.is_enabled()
+                && skill.visibility() == crate::config::SkillVisibility::On
+                && passes_path_gate(skill.paths(), active_files)
+        })
     }
 
     fn auto_eligible_indices(&self, active_files: &[String]) -> Vec<usize> {
@@ -1336,7 +1335,10 @@ mod tests {
 
         let first = resolver.session_registry_context(&active_files).unwrap();
         let second = resolver.session_registry_context(&active_files).unwrap();
-        assert_eq!(first, second, "same snapshot and files must serialize identically");
+        assert_eq!(
+            first, second,
+            "same snapshot and files must serialize identically"
+        );
         assert_eq!(
             first.class(),
             crate::pipeline::UntrustedContextClass::OtherReviewed
@@ -1345,14 +1347,21 @@ mod tests {
             first.source_id().as_str(),
             format!("skills:registry:{}", resolver.snapshot_sha256())
         );
-        assert!(!first.was_truncated(), "an exact inventory may not be silently shortened");
+        assert!(
+            !first.was_truncated(),
+            "an exact inventory may not be silently shortened"
+        );
         assert!(
             first.included_bytes()
                 <= crate::pipeline::UntrustedContextClass::OtherReviewed.max_payload_bytes() as u64
         );
         let payload: serde_json::Value = serde_json::from_str(first.payload()).unwrap();
         let payload_object = payload.as_object().unwrap();
-        assert_eq!(payload_object.len(), 4, "registry payload has metadata only");
+        assert_eq!(
+            payload_object.len(),
+            4,
+            "registry payload has metadata only"
+        );
         assert_eq!(payload["config_epoch"].as_u64(), Some(0));
         assert_eq!(payload["authority_epoch"].as_u64(), Some(0));
         assert_eq!(
@@ -1372,7 +1381,11 @@ mod tests {
         assert!(!first.payload().contains("user-only"));
         assert!(!first.payload().contains("outside-path"));
         assert!(!first.payload().contains("excluded"));
-        assert!(!first.payload().contains("private body must not be inventoried"));
+        assert!(
+            !first
+                .payload()
+                .contains("private body must not be inventoried")
+        );
         assert!(!first.payload().contains("private-tool-authority"));
         assert!(!first.payload().contains("private-model-authority"));
         assert_eq!(
@@ -1387,9 +1400,8 @@ mod tests {
 
     #[test]
     fn session_registry_context_rejects_oversized_complete_inventory() {
-        let oversized = "x".repeat(
-            crate::pipeline::UntrustedContextClass::OtherReviewed.max_payload_bytes(),
-        );
+        let oversized =
+            "x".repeat(crate::pipeline::UntrustedContextClass::OtherReviewed.max_payload_bytes());
         let resolver = resolver(vec![registry_skill(
             "too-large",
             &oversized,
@@ -1442,7 +1454,10 @@ mod tests {
         let a_after = resolver_a.session_registry_context(&[]).unwrap();
         let b = resolver_b.session_registry_context(&[]).unwrap();
 
-        assert_eq!(a_before, a_after, "resolver A must retain its original snapshot");
+        assert_eq!(
+            a_before, a_after,
+            "resolver A must retain its original snapshot"
+        );
         assert!(a_after.payload().contains("generation-a"));
         assert!(!a_after.payload().contains("generation-b"));
         assert!(b.payload().contains("generation-b"));

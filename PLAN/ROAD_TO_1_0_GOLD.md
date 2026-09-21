@@ -23,6 +23,13 @@ these were imported without a local formatter. Fresh consolidated hosted
 gates remain required. W135 sidebar source awaits native/render/release
 acceptance. Road counts remain **1324/1015/307/2**.
 
+
+W136 hosted formatting follow-up: Code Quality 35579924103 passed on 6c9955d0.
+Preflight 35579924445 supplied eleven Rustfmt hunks in four W136 files; the
+complete log was imported against exact published source mirrors so pending
+W137/W138 edits are excluded. Fresh static/full CI remains required. No local
+formatter, compiler, test or product was executed and Road counts are unchanged.
+
 **W133 CI recovery (2026-09-21):** current-source Windows/macOS GUI compilation,
 Linux strict lint and optional-adapter WAL fixture failures are diagnosed and
 repaired in three source paths. Independent review and hosted reruns remain
