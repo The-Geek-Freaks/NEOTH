@@ -108,8 +108,8 @@ use super::walker::{Language, RepoFile, RepoMap, ScanReport};
 /// v9 records the graph-edge provenance tier and its canonical ordinal
 /// confidence. Legacy heuristic rows are deliberately migrated as inferred.
 /// v10 adds nullable exact target-file identity; legacy NULL rows are never
-/// exact TestedBy evidence.
-pub const CODE_MAP_SCHEMA_VERSION: i64 = 10;
+/// exact TestedBy evidence. v11 adds a separate generation-bound import graph.
+pub const CODE_MAP_SCHEMA_VERSION: i64 = 11;
 
 /// Hard ceiling for one filesystem freshness receipt. The count gate runs
 /// before row materialisation and every SELECT still carries `LIMIT cap + 1`
@@ -211,7 +211,11 @@ mod v10_migration_tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "10");
+        assert_eq!(version, "11");
+        let import_generation: i64 = conn
+            .query_row("SELECT import_generation FROM code_map_roots WHERE root = '/r'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(import_generation, -1, "legacy imports are invalid until rebuilt");
         let rows: Vec<(String, Option<String>)> = conn
             .prepare("SELECT kind, target_file FROM code_map_edges ORDER BY id")
             .unwrap()
@@ -566,6 +570,29 @@ where
         .context("v9→v10: stamp schema_version=10")?;
     }
 
+    // Legacy snapshots have no evidence that an import graph was built, so
+    // use an invalid sentinel rather than silently treating zero rows as a
+    // current empty graph.
+    if v < 11 {
+        tx.execute_batch(
+            "ALTER TABLE code_map_roots ADD COLUMN import_generation INTEGER NOT NULL DEFAULT -1; \
+             CREATE TABLE code_map_import_edges ( \
+                 id INTEGER PRIMARY KEY, root TEXT NOT NULL, from_file TEXT NOT NULL, \
+                 to_file TEXT NOT NULL, language TEXT NOT NULL, \
+                 FOREIGN KEY(root) REFERENCES code_map_roots(root) ON DELETE CASCADE, \
+                 UNIQUE(root, from_file, to_file, language) \
+             ); \
+             CREATE INDEX idx_code_map_import_edges_source ON code_map_import_edges(root, from_file); \
+             CREATE INDEX idx_code_map_import_edges_target ON code_map_import_edges(root, to_file);",
+        )
+        .context("v10→v11: add generation-bound import graph")?;
+        tx.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '11')",
+            [],
+        )
+        .context("v10→v11: stamp schema_version=11")?;
+    }
+
     tx.commit().context("commit locked code-map migration")?;
     Ok(())
 }
@@ -699,6 +726,7 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             truncated_at     INTEGER,
             index_generation INTEGER NOT NULL DEFAULT 0,
             graph_generation INTEGER NOT NULL DEFAULT 0,
+            import_generation INTEGER NOT NULL DEFAULT 0,
             root_identity    TEXT
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_code_map_roots_identity
@@ -754,6 +782,20 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             ON code_map_edges(to_name);
         CREATE INDEX IF NOT EXISTS idx_code_map_edges_source
             ON code_map_edges(from_file, from_symbol);
+
+        CREATE TABLE IF NOT EXISTS code_map_import_edges (
+            id        INTEGER PRIMARY KEY,
+            root      TEXT NOT NULL,
+            from_file TEXT NOT NULL,
+            to_file   TEXT NOT NULL,
+            language  TEXT NOT NULL,
+            FOREIGN KEY(root) REFERENCES code_map_roots(root) ON DELETE CASCADE,
+            UNIQUE(root, from_file, to_file, language)
+        );
+        CREATE INDEX IF NOT EXISTS idx_code_map_import_edges_source
+            ON code_map_import_edges(root, from_file);
+        CREATE INDEX IF NOT EXISTS idx_code_map_import_edges_target
+            ON code_map_import_edges(root, to_file);
 
         CREATE TABLE IF NOT EXISTS code_map_lifecycle_attempts (
             root_identity TEXT PRIMARY KEY NOT NULL,
@@ -1391,7 +1433,8 @@ fn persist_map_in_transaction(
              oversize_skipped = excluded.oversize_skipped, \
              truncated_at     = excluded.truncated_at, \
              root_identity    = excluded.root_identity, \
-             index_generation = index_generation + 1",
+             index_generation = index_generation + 1, \
+             import_generation = 0",
         rusqlite::params![
             &map.root,
             now_unix,
@@ -1523,6 +1566,7 @@ pub(crate) fn persist_map_and_edges_bound(
     conn: &mut Connection,
     map: &RepoMap,
     edges: &[crate::code_map::graph::CodeEdge],
+    import_edges: &[crate::code_map::imports::ImportEdge],
     expected_root: &super::root_identity::CanonicalRepoRoot,
 ) -> Result<BoundPersistResult> {
     let tx = conn
@@ -1535,14 +1579,15 @@ pub(crate) fn persist_map_and_edges_bound(
         Some(expected_root),
     )?;
     let inserted = replace_edges_in_transaction(&tx, &map.root, edges)?;
+    replace_import_edges_in_transaction(&tx, &map.root, import_edges)?;
     let observed = super::root_identity::CanonicalRepoRoot::discover(Path::new(&map.root))?;
     ensure!(
         observed == *expected_root,
         "code-map repository root was replaced before bound snapshot commit"
     );
-    let (stored_identity, index_generation, graph_generation) = tx
+    let (stored_identity, index_generation, graph_generation, import_generation) = tx
         .query_row(
-            "SELECT root_identity, index_generation, graph_generation \
+            "SELECT root_identity, index_generation, graph_generation, import_generation \
              FROM code_map_roots WHERE root = ?1",
             rusqlite::params![&map.root],
             |row| {
@@ -1550,6 +1595,7 @@ pub(crate) fn persist_map_and_edges_bound(
                     row.get::<_, Option<String>>(0)?,
                     row.get::<_, i64>(1)?,
                     row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
                 ))
             },
         )
@@ -1559,8 +1605,10 @@ pub(crate) fn persist_map_and_edges_bound(
         "bound code-map snapshot persisted a different physical root identity"
     );
     ensure!(
-        index_generation > 0 && index_generation == graph_generation,
-        "bound code-map snapshot published mismatched index/graph generations"
+        index_generation > 0
+            && index_generation == graph_generation
+            && index_generation == import_generation,
+        "bound code-map snapshot published mismatched index/graph/import generations"
     );
     tx.commit()
         .context("commit bound atomic code-map snapshot transaction")?;
@@ -1579,6 +1627,7 @@ pub(crate) fn persist_delta_map_and_edges_bound<PreCommitFence>(
     conn: &mut Connection,
     map: &RepoMap,
     published_edges: &[crate::code_map::graph::CodeEdge],
+    import_edges: &[crate::code_map::imports::ImportEdge],
     replacement_edges: &[crate::code_map::graph::CodeEdge],
     replacement_sources: &std::collections::BTreeSet<String>,
     removed_paths: &std::collections::BTreeSet<String>,
@@ -1670,6 +1719,10 @@ where
             inserted += 1;
         }
     }
+    // Import resolution can change when a module is added, removed or moved,
+    // so delta publication deliberately replaces the complete root-local import
+    // graph in this same transaction instead of retaining selected sources.
+    replace_import_edges_in_transaction(&tx, &map.root, import_edges)?;
     pre_commit_fence().context("validate delta source fence under writer transaction")?;
     let observed = super::root_identity::CanonicalRepoRoot::discover(Path::new(&map.root))?;
     ensure!(
@@ -1686,7 +1739,7 @@ where
         "bound delta snapshot persisted a different physical root identity"
     );
     let updated = tx.execute(
-        "UPDATE code_map_roots SET graph_generation = ?2 WHERE root = ?1",
+        "UPDATE code_map_roots SET graph_generation = ?2, import_generation = ?2 WHERE root = ?1",
         rusqlite::params![&map.root, index_generation],
     )?;
     ensure!(updated == 1, "bind delta graph generation");
@@ -1784,6 +1837,125 @@ fn replace_edges_in_transaction(
         );
     }
     Ok(inserted)
+}
+
+fn replace_import_edges_in_transaction(
+    tx: &Transaction<'_>,
+    root: &str,
+    edges: &[crate::code_map::imports::ImportEdge],
+) -> Result<usize> {
+    ensure!(
+        edges.len() <= crate::code_map::imports::DEFAULT_MAX_IMPORT_EDGES,
+        "import graph exceeds bounded {}-edge publish cap",
+        crate::code_map::imports::DEFAULT_MAX_IMPORT_EDGES
+    );
+    for edge in edges {
+        ensure!(
+            valid_repo_relative_import_path(&edge.from_file)
+                && valid_repo_relative_import_path(&edge.to_file)
+                && !edge.language.is_empty(),
+            "import edge has an invalid persisted endpoint or language"
+        );
+        let endpoints: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM code_map_files WHERE root = ?1 AND path IN (?2, ?3)",
+            rusqlite::params![root, &edge.from_file, &edge.to_file],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            endpoints == 2,
+            "import edge endpoint is not a current file in the published root"
+        );
+    }
+    tx.execute(
+        "DELETE FROM code_map_import_edges WHERE root = ?1",
+        rusqlite::params![root],
+    )
+    .context("clear prior import edges for root")?;
+    let mut inserted = 0usize;
+    let mut statement = tx.prepare(
+        "INSERT INTO code_map_import_edges (root, from_file, to_file, language) \
+         VALUES (?1, ?2, ?3, ?4)",
+    )?;
+    for edge in edges {
+        statement.execute(rusqlite::params![root, &edge.from_file, &edge.to_file, &edge.language])?;
+        inserted += 1;
+    }
+    let index_generation: i64 = tx.query_row(
+        "SELECT index_generation FROM code_map_roots WHERE root = ?1",
+        rusqlite::params![root],
+        |row| row.get(0),
+    )?;
+    let updated = tx.execute(
+        "UPDATE code_map_roots SET import_generation = ?2 WHERE root = ?1",
+        rusqlite::params![root, index_generation],
+    )?;
+    ensure!(updated == 1, "bind import graph generation");
+    Ok(inserted)
+}
+
+fn valid_repo_relative_import_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.contains('\\')
+        && !std::path::Path::new(path).is_absolute()
+        && std::path::Path::new(path).components().all(|component| {
+            matches!(component, std::path::Component::Normal(_))
+        })
+}
+
+/// Reject an unknown, absolute or traversal-shaped import query before an
+/// empty adjacency result can be mistaken for a current known file with zero
+/// imports. The lookup is against the active transaction's same-root file set.
+pub(crate) fn ensure_current_import_file(
+    conn: &Connection,
+    root: &str,
+    path: &str,
+) -> Result<()> {
+    ensure!(
+        valid_repo_relative_import_path(path),
+        "codegraph import file must be a normalized repository-relative indexed path"
+    );
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM code_map_files WHERE root = ?1 AND path = ?2)",
+        rusqlite::params![root, path],
+        |row| row.get(0),
+    )?;
+    ensure!(exists, "codegraph import file is not present in the active code-map snapshot");
+    Ok(())
+}
+
+/// Load only a root's import edges. An empty vector is meaningful only after
+/// callers independently verify `import_generation == index_generation > 0`.
+pub(crate) fn load_import_edges_for_root_bounded(
+    conn: &Connection,
+    root: &str,
+    limit: usize,
+    text_byte_limit: usize,
+) -> Result<(Vec<crate::code_map::imports::ImportEdge>, bool)> {
+    let row_limit = i64::try_from(limit.saturating_add(1)).context("import edge row limit")?;
+    let mut stmt = conn.prepare(
+        "SELECT from_file, to_file, language FROM code_map_import_edges \
+         WHERE root = ?1 ORDER BY from_file, to_file, language LIMIT ?2",
+    )?;
+    let mut rows = stmt.query(rusqlite::params![root, row_limit])?;
+    let mut edges = Vec::new();
+    let mut text_bytes = 0usize;
+    while let Some(row) = rows.next()? {
+        if edges.len() >= limit { return Ok((edges, true)); }
+        let edge = crate::code_map::imports::ImportEdge {
+            from_file: row.get(0)?, to_file: row.get(1)?, language: row.get(2)?,
+        };
+        text_bytes = text_bytes
+            .checked_add(edge.from_file.len())
+            .and_then(|bytes| bytes.checked_add(edge.to_file.len()))
+            .and_then(|bytes| bytes.checked_add(edge.language.len()))
+            .context("import edge text byte count overflow")?;
+        ensure!(
+            text_bytes <= text_byte_limit,
+            "code-map import graph exceeds bounded {text_byte_limit}-byte text budget"
+        );
+        edges.push(edge);
+    }
+    Ok((edges, false))
 }
 
 /// QM-2 Phase 2: load edges for `root`. Empty Vec when none stored.
@@ -4509,7 +4681,7 @@ mod tests {
             confidence: EdgeConfidenceTier::INFERRED_CONFIDENCE,
             confidence_tier: EdgeConfidenceTier::Inferred,
         }];
-        persist_map_and_edges_bound(&mut conn, &map, &old_edges, &root).unwrap();
+        persist_map_and_edges_bound(&mut conn, &map, &old_edges, &[], &root).unwrap();
         let before_index = root_index_generation(&conn, root.display()).unwrap();
         let before_graph = root_graph_generation(&conn, root.display()).unwrap();
 
@@ -4522,6 +4694,7 @@ mod tests {
         let result = persist_delta_map_and_edges_bound(
             &mut conn,
             &changed_map,
+            &[],
             &[],
             &[],
             &std::collections::BTreeSet::from(["lib.rs".to_owned()]),
@@ -4637,6 +4810,67 @@ mod tests {
         persist_map(&mut conn, &other).unwrap();
         assert_eq!(root_index_generation(&conn, "/repo/y").unwrap(), Some(1));
         assert_eq!(root_index_generation(&conn, "/repo/x").unwrap(), Some(2));
+    }
+
+    #[test]
+    fn import_generation_is_invalidated_by_map_persist_and_bound_to_replacement() {
+        let (_dir, mut conn) = temp_db();
+        let map = sample_map("/repo/imports");
+        persist_map(&mut conn, &map).unwrap();
+        let tx = conn.transaction().unwrap();
+        replace_import_edges_in_transaction(
+            &tx,
+            &map.root,
+            &[crate::code_map::imports::ImportEdge {
+                from_file: "a.rs".into(), to_file: "b.rs".into(), language: "rust".into(),
+            }],
+        ).unwrap();
+        tx.commit().unwrap();
+        let generation: i64 = conn.query_row(
+            "SELECT import_generation FROM code_map_roots WHERE root = ?1",
+            rusqlite::params![&map.root], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(generation, root_index_generation(&conn, &map.root).unwrap().unwrap());
+        let (edges, truncated) = load_import_edges_for_root_bounded(&conn, &map.root, 10, 1024).unwrap();
+        assert!(!truncated);
+        assert_eq!(edges.len(), 1);
+        persist_map(&mut conn, &map).unwrap();
+        let invalidated: i64 = conn.query_row(
+            "SELECT import_generation FROM code_map_roots WHERE root = ?1",
+            rusqlite::params![&map.root], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(invalidated, 0, "map-only publication cannot leave imports current");
+    }
+
+    #[test]
+    fn delta_publication_replaces_imports_after_removed_module() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = super::root_identity::CanonicalRepoRoot::discover(dir.path()).unwrap();
+        std::fs::write(dir.path().join("a.rs"), "mod b;\n").unwrap();
+        std::fs::write(dir.path().join("b.rs"), "").unwrap();
+        let first = RepoMapBuilder::new(root.path()).with_symbols(true).scan().unwrap();
+        let db = dir.path().join("code_map.db");
+        let mut conn = open(&db).unwrap();
+        let imports = [crate::code_map::imports::ImportEdge {
+            from_file: "a.rs".into(), to_file: "b.rs".into(), language: "rust".into(),
+        }];
+        persist_map_and_edges_bound(&mut conn, &first, &[], &imports, &root).unwrap();
+        std::fs::remove_file(dir.path().join("b.rs")).unwrap();
+        let second = RepoMapBuilder::new(root.path()).with_symbols(true).scan().unwrap();
+        persist_delta_map_and_edges_bound(
+            &mut conn, &second, &[], &[], &[],
+            &std::collections::BTreeSet::from(["a.rs".to_owned()]),
+            &std::collections::BTreeSet::from(["b.rs".to_owned()]),
+            &root, || Ok(()),
+        ).unwrap();
+        let (stored, truncated) = load_import_edges_for_root_bounded(&conn, &second.root, 10, 1024).unwrap();
+        assert!(!truncated);
+        assert!(stored.is_empty(), "removed module must not retain import edges");
+        let generation: i64 = conn.query_row(
+            "SELECT import_generation FROM code_map_roots WHERE root = ?1",
+            rusqlite::params![&second.root], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(generation, root_index_generation(&conn, &second.root).unwrap().unwrap());
     }
 
     #[test]
@@ -5336,7 +5570,7 @@ mod tests {
         // Open via the public API — should trigger v1→v2 migration.
         let mut conn = open(&path).expect("open must succeed on a v1 DB");
 
-        // schema_version must now be "10" (v1→…→v9→v10 chain).
+        // schema_version must now be "11" (v1→…→v10→v11 chain).
         let version: String = conn
             .query_row(
                 "SELECT value FROM meta WHERE key='schema_version'",
@@ -5345,8 +5579,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            version, "10",
-            "schema_version must advance to 10 after migration"
+            version, "11",
+            "schema_version must advance to 11 after migration"
         );
 
         // v3 column: code_map_roots.index_generation exists, and the migrated

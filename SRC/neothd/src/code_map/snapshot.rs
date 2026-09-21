@@ -12,6 +12,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use sha2::{Digest, Sha256};
 
 use super::graph::{CallGraph, DEFAULT_MAX_GRAPH_EDGES, FileInput};
+use super::imports::{DEFAULT_MAX_IMPORT_EDGES, ImportGraph};
 use super::incremental;
 use super::persist::PersistStats;
 use super::root_identity::CanonicalRepoRoot;
@@ -516,6 +517,21 @@ pub(crate) fn rebuild_snapshot_delta_cancellable(
     let mut all_edges = prepared.retained_edges.clone();
     all_edges.extend(replacement_edges.iter().cloned());
     super::persist::enforce_incoming_edge_bounds(&prepared.map.root, &all_edges)?;
+    // A new module can resolve an unchanged import, and a removed module can
+    // invalidate it. Rebuild imports over the complete selected corpus for the
+    // same delta generation instead of retaining source-local import rows.
+    let imports = build_import_graph_from_scan_snapshot_controlled(
+        &prepared.map,
+        |path| {
+            read_file_bounded(path, max_file_bytes)?.ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "delta import source exceeded bound",
+                )
+            })
+        },
+        cancellation,
+    )?;
     let cycles = CallGraph::from_edges(all_edges.clone()).find_cycles(50)?;
     cancellation.checkpoint()?;
     let source_fingerprint_sha256 = source_fingerprint_digest(root, &prepared.map, &[], &[]);
@@ -524,6 +540,7 @@ pub(crate) fn rebuild_snapshot_delta_cancellable(
         &mut conn,
         &prepared.map,
         &all_edges,
+        imports.edges(),
         &replacement_edges,
         &prepared.edge_sources,
         &prepared.removed_paths,
@@ -789,6 +806,7 @@ where
     ensure_root_unchanged(root, &map)?;
 
     let graph = build_graph_from_scan_snapshot_controlled(&map, &mut read_file, cancellation)?;
+    let imports = build_import_graph_from_scan_snapshot_controlled(&map, &mut read_file, cancellation)?;
     // A file validated early during graph construction can still change while
     // later files are read. Revalidate the complete corpus immediately before
     // entering the publication transaction.
@@ -827,8 +845,10 @@ where
     let mut conn = super::persist::open(db_path)
         .with_context(|| format!("open code-map database at {}", db_path.display()))?;
     let publication =
-        super::persist::persist_map_and_edges_bound(&mut conn, &map, graph.edges(), root)
-            .context("atomically persist identity-bound code-map index and call graph")?;
+        super::persist::persist_map_and_edges_bound(
+            &mut conn, &map, graph.edges(), imports.edges(), root,
+        )
+        .context("atomically persist identity-bound code-map index, call graph, and import graph")?;
 
     Ok(RebuildSnapshot {
         root: root.clone(),
@@ -873,6 +893,43 @@ where
         MAX_GRAPH_SOURCE_BYTES,
         cancellation,
     )
+}
+
+fn build_import_graph_from_scan_snapshot_controlled<F>(
+    map: &RepoMap,
+    mut read_file: F,
+    cancellation: &ScanCancellation,
+) -> Result<ImportGraph>
+where
+    F: FnMut(&Path) -> std::io::Result<Vec<u8>>,
+{
+    let root_dir = PathBuf::from(&map.root);
+    let mut sources = Vec::new();
+    let mut retained_source_bytes = 0usize;
+    for file in &map.files {
+        cancellation.checkpoint()?;
+        if !matches!(file.language, Language::Rust | Language::Python) { continue; }
+        let absolute = root_dir.join(&file.path);
+        let raw = read_file(&absolute)
+            .with_context(|| format!("re-read scanned import source {}", absolute.display()))?;
+        ensure!(
+            raw.len() as u64 == file.bytes && hex::encode(Sha256::digest(&raw)) == file.sha256,
+            "code-map import source changed after the scan: {}; no generation was published",
+            file.path
+        );
+        retained_source_bytes = retained_source_bytes
+            .checked_add(raw.len())
+            .context("native import-graph source-byte count overflow")?;
+        ensure!(
+            retained_source_bytes <= MAX_GRAPH_SOURCE_BYTES,
+            "native import-graph source exceeds bounded {}-byte work budget; no generation was published",
+            MAX_GRAPH_SOURCE_BYTES
+        );
+        sources.push((
+            file.path.clone(), file.language, String::from_utf8_lossy(&raw).into_owned(),
+        ));
+    }
+    ImportGraph::build_bounded(&sources, DEFAULT_MAX_IMPORT_EDGES)
 }
 
 #[cfg(test)]
@@ -1606,6 +1663,7 @@ mod tests {
         let error = super::super::persist::persist_map_and_edges_bound(
             &mut conn,
             &replacement_map,
+            &[],
             &[],
             &expected,
         )

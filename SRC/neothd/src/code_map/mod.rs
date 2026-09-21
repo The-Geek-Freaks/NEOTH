@@ -24,6 +24,7 @@ pub mod diff_impact;
 pub mod enrichment_readiness;
 pub mod graph;
 pub mod impact;
+pub mod imports;
 mod incremental;
 pub mod lifecycle;
 pub mod lifecycle_config;
@@ -62,6 +63,11 @@ pub use impact::{
     ImpactedFile, ImpactedNode, UnresolvedEdge, UnresolvedEdgeEndpoint, UnresolvedEdgeReason,
     UnresolvedSeed, UnresolvedSeedReason, impact_radius, impact_radius_for_diff_seeds,
     impact_radius_for_path,
+};
+#[allow(unused_imports)]
+pub use imports::{
+    DEFAULT_MAX_IMPORT_EDGES, DEFAULT_MAX_IMPORT_QUERY_NODES, DEFAULT_MAX_IMPORT_QUERY_TEXT_BYTES,
+    ImportDirection, ImportEdge, ImportEntry, ImportGraph,
 };
 #[allow(unused_imports)]
 pub use lifecycle::{

@@ -15,14 +15,14 @@ required; see [W133](../docs/gold-wave133-verification.md). The first five
 optional-adapter checks passed, while the two delivery outcomes need rerunning.
 No current-source native or portable pass is claimed. Counts stay 1324/1015/307/2.
 
-**W131/W132 in progress (2026-09-21):** the remaining P2-11 graph work is now
-being implemented as separate ImportGraph and TypeHierarchy structures with
-bounded traversal. W131 integrates root-local import edges into full/delta
-snapshot publication and the real MCP query/receipt path; W132 prepares a
-conservative type-relation engine for the next integration. Ambiguous lexical
-resolution stays unknown. Independent review and focused source regressions are
-in progress; none of these mutable inputs is admitted in the published W130
-manifest or claimed as a runtime pass. P2-11 and the Road counts stay unchanged.
+**W131 ImportGraph admitted (2026-09-21):** separate Rust/Python import edges
+now share atomic full/delta publication and generation/freshness authority
+with the native snapshot. Bounded forward/reverse MCP queries return the
+existing context witness; unknown files and stale generations are refused.
+Six source files and twelve focused regressions passed independent source
+review; hosted compilation/runtime remain required. See [W131](../docs/gold-wave131-verification.md).
+W132 TypeHierarchy is being repaired after review before persistence/MCP
+integration. P2-11, Graphify/self-knowledge and Road counts stay open/unchanged.
 
 **W128/W130 existing-connection delivery and migration (2026-09-21):**
 IRC/Twitch/Nostr proactive delivery acquires only the daemon's current ready

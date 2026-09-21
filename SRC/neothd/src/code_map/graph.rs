@@ -1117,78 +1117,73 @@ pub fn strip_comments_and_strings_c_family(src: &str) -> String {
 /// (false negatives) rather than under-strips (false positives).
 pub fn strip_comments_and_strings_hash_family(src: &str) -> String {
     let bytes = src.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
+    let mut out = bytes.to_vec();
+    let mask = |range: &mut [u8]| {
+        for byte in range {
+            if !matches!(*byte, b'\n' | b'\r') {
+                *byte = b' ';
+            }
+        }
+    };
     let mut i = 0;
     while i < bytes.len() {
         let c = bytes[i];
-        // Triple-quoted strings — """ … """ or ''' … '''.
-        if (c == b'"' || c == b'\'') && bytes.get(i + 1) == Some(&c) && bytes.get(i + 2) == Some(&c)
-        {
-            out.push(c);
-            out.push(c);
-            out.push(c);
-            i += 3;
-            while i + 2 < bytes.len() && !(bytes[i] == c && bytes[i + 1] == c && bytes[i + 2] == c)
-            {
-                if bytes[i] == b'\n' {
-                    out.push(b'\n');
-                } else {
-                    out.push(b' ');
-                }
-                i += 1;
-            }
-            if i + 2 < bytes.len() {
-                out.push(c);
-                out.push(c);
-                out.push(c);
-                i += 3;
-            }
-            continue;
-        }
-        // Single-quoted string "…" or '…'.
+        // Detect strings anywhere in the line, including assignment values
+        // and prefixed/raw strings. Escaped quotes cannot terminate a string.
         if c == b'"' || c == b'\'' {
-            let quote = c;
-            out.push(quote);
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    out.push(b' ');
-                    out.push(b' ');
-                    i += 2;
+            let width = if bytes.get(i + 1) == Some(&c) && bytes.get(i + 2) == Some(&c) {
+                3
+            } else {
+                1
+            };
+            i += width;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' {
+                    let escaped_width = if bytes.get(i + 1) == Some(&b'\r')
+                        && bytes.get(i + 2) == Some(&b'\n')
+                    {
+                        3
+                    } else {
+                        2
+                    };
+                    let end = (i + escaped_width).min(bytes.len());
+                    mask(&mut out[i..end]);
+                    i = end;
                     continue;
                 }
-                if bytes[i] == b'\n' {
-                    out.push(b'\n');
+                if bytes[i] == c
+                    && (width == 1
+                        || (bytes.get(i + 1) == Some(&c) && bytes.get(i + 2) == Some(&c)))
+                {
+                    i += width;
                     break;
-                } else {
-                    out.push(b' ');
                 }
-                i += 1;
-            }
-            if i < bytes.len() && bytes[i] == quote {
-                out.push(quote);
+                if width == 1 && matches!(bytes[i], b'\n' | b'\r') {
+                    // This conservative scanner does not support unescaped
+                    // short-string newlines. Keep the remainder opaque.
+                    mask(&mut out[i..]);
+                    i = bytes.len();
+                    break;
+                }
+                mask(&mut out[i..i + 1]);
                 i += 1;
             }
             continue;
         }
         // # comment to EOL.
         if c == b'#' {
-            out.push(b'#');
             i += 1;
             while i < bytes.len() && bytes[i] != b'\n' {
-                if bytes[i].is_ascii_whitespace() {
-                    out.push(bytes[i]);
-                } else {
-                    out.push(b' ');
-                }
+                mask(&mut out[i..i + 1]);
                 i += 1;
             }
             continue;
         }
-        out.push(c);
         i += 1;
     }
-    String::from_utf8(out).unwrap_or_else(|_| src.to_string())
+    // ASCII delimiters bound every masked region, so retained Unicode stays
+    // intact. Never restore the unfiltered source if decoding unexpectedly fails.
+    String::from_utf8(out).unwrap_or_default()
 }
 
 /// Extract defined identifiers immediately followed by `(`. One linear scan
@@ -1599,6 +1594,50 @@ fn caller() {
         // Identifier inside the string literal gets neutralised.
         assert!(!stripped.contains("foo()"));
         assert!(stripped.starts_with("msg ="));
+    }
+
+    #[test]
+    fn strip_hash_family_assignment_strings_keep_escaped_terminators_opaque() {
+        let src = concat!(
+            "doc = \"\"\"Unicode α\n",
+            "escaped \\\"\"\" terminator\n",
+            "import hidden\n",
+            "\"\"\"\n",
+            "import visible\n",
+        );
+        let stripped = strip_comments_and_strings_hash_family(src);
+        assert!(!stripped.contains("import hidden"));
+        assert!(!stripped.contains("terminator"));
+        assert!(stripped.contains("import visible"));
+        assert_eq!(stripped.len(), src.len());
+        for (before, after) in src.bytes().zip(stripped.bytes()) {
+            assert_eq!(before == b'\n', after == b'\n');
+        }
+    }
+
+    #[test]
+    fn strip_hash_family_invalid_short_string_masks_tail_without_line_drift() {
+        let src = "import real\r\nvalue = 'unterminated α\r\nimport hidden\r\n";
+        let stripped = strip_comments_and_strings_hash_family(src);
+        assert!(stripped.starts_with("import real\r\n"));
+        assert!(!stripped.contains("import hidden"));
+        assert_eq!(stripped.len(), src.len());
+        for (before, after) in src.bytes().zip(stripped.bytes()) {
+            assert_eq!(matches!(before, b'\n' | b'\r'), matches!(after, b'\n' | b'\r'));
+        }
+    }
+
+    #[test]
+    fn strip_hash_family_crlf_continuation_preserves_following_code() {
+        let src = "text = 'continued\\\r\nstring'\r\nimport visible\r\n";
+        let stripped = strip_comments_and_strings_hash_family(src);
+        assert!(!stripped.contains("continued"));
+        assert!(!stripped.contains("string"));
+        assert!(stripped.contains("import visible"));
+        assert_eq!(stripped.len(), src.len());
+        for (before, after) in src.bytes().zip(stripped.bytes()) {
+            assert_eq!(matches!(before, b'\n' | b'\r'), matches!(after, b'\n' | b'\r'));
+        }
     }
 
     #[test]

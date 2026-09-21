@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W133-hosted-ci-recovery",
-  "base": "1f96e099e82fec6ef8efa13b6dbb3d1edee97f93",
-  "capturedUtc": "2026-09-21T07:48:35.3815073Z",
-  "validationStatus": "W133_SOURCE_REVIEW_APPROVED_REMOTE_EXECUTION_REQUIRED",
-  "scopeNote": "303 cumulative inputs. Admit only three independently reviewed W133 repair paths. W131 and W132 mutable sources excluded. GitHub-only execution; no Road closure.",
+  "item": "GOLD-W95-W131-import-graph-and-W133-recovery",
+  "base": "687efe17a2fc4f552dbe2f2393d7a0a7e7b6e61a",
+  "capturedUtc": "2026-09-21T07:51:33.5804631Z",
+  "validationStatus": "W131_SOURCE_REVIEW_APPROVED_REMOTE_EXECUTION_REQUIRED",
+  "scopeNote": "304 cumulative inputs. Admit six independently reviewed W131 source files including shared Python string neutralizer; retains published W133 repairs. W132 not admitted. GitHub-only execution; no Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -688,13 +688,18 @@
     },
     {
       "path": "SRC/neothd/src/code_map/graph.rs",
-      "bytes": 70322,
-      "sha256": "155CA83AFF00D44367AE978826EF08BD8323484B5EF920E7B8CC1C473DABD095"
+      "bytes": 72367,
+      "sha256": "51F7E021CB2AA61ED5F3DD5049EC0B01CAFF1D78CD05313AFAFD729000718D74"
     },
     {
       "path": "SRC/neothd/src/code_map/impact.rs",
       "bytes": 81757,
       "sha256": "E64955918BC4E2EBEE6093A6EC8FCAAD63089D615DC1B7FB2E6270DC58B4239F"
+    },
+    {
+      "path": "SRC/neothd/src/code_map/imports.rs",
+      "bytes": 17815,
+      "sha256": "5C2DF8C8DF330B7A067D440C087BD925405E0ACC2A99D22F980DED2DC1D54256"
     },
     {
       "path": "SRC/neothd/src/code_map/lifecycle_config.rs",
@@ -713,13 +718,13 @@
     },
     {
       "path": "SRC/neothd/src/code_map/mod.rs",
-      "bytes": 4869,
-      "sha256": "B76269B19F761C0C7B99FA797539A045E6EE8EFDCAC1C0FE8E31A69D67F6A41F"
+      "bytes": 5091,
+      "sha256": "9C8A860FB375A308854C4AF6FEFFEF2AE16CADBB56D117CF61E1143D8AFD6608"
     },
     {
       "path": "SRC/neothd/src/code_map/persist.rs",
-      "bytes": 221556,
-      "sha256": "A990899DF62AFBE9D9D776310A80C471E2073FF2188235CA4FB12814A295FF85"
+      "bytes": 232232,
+      "sha256": "07BBFBCF6BFFA973835CF7A22587CB626A1F0D073786E81B0880F473CCA3C2E9"
     },
     {
       "path": "SRC/neothd/src/code_map/recall_wire.rs",
@@ -733,8 +738,8 @@
     },
     {
       "path": "SRC/neothd/src/code_map/snapshot.rs",
-      "bytes": 62464,
-      "sha256": "B14EFB301DAFE731CF270672F44FD919BA0B31222390EC1245A192EE03AB2DCC"
+      "bytes": 64865,
+      "sha256": "9F8F21E946B2EF413C8E64779FCEF40E8E8EF31AE01B3E602C4F549F1E2AD2E9"
     },
     {
       "path": "SRC/neothd/src/code_map/symbols.rs",
@@ -1048,8 +1053,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "bytes": 178390,
-      "sha256": "17A6F5805D8A8CBDBC7C95D7522D1CDF98A228EBB01368602BC238A88C27F6B9"
+      "bytes": 191221,
+      "sha256": "A26851EB16B2A3ADF021036AE364C0A6C41BA4AD77191F6E9D37EB49941377C8"
     },
     {
       "path": "SRC/neothd/src/mcp/config.rs",
