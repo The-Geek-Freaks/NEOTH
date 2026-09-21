@@ -5,10 +5,6 @@
 #[path = "../../neothd-gui/src/code_map_impact_controller.rs"]
 mod code_map_impact_controller;
 
-#[expect(
-    dead_code,
-    reason = "headless impact harness omits desktop callers checked by the GUI gate"
-)]
 #[path = "../../neothd-gui/src/gui_action.rs"]
 pub mod gui_action;
 

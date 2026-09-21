@@ -16553,16 +16553,28 @@ mod tests {
         let start = producer.started_at;
         let mut sink = RecordingSink::default();
         producer
-            .observe_idle(start + std::time::Duration::from_secs(1), &mut sink, token)
+            .observe_idle(
+                start + std::time::Duration::from_secs(1),
+                &mut sink,
+                Some(token),
+            )
             .unwrap();
         producer
-            .observe_visible_event(start + std::time::Duration::from_secs(2), &mut sink, token)
+            .observe_visible_event(
+                start + std::time::Duration::from_secs(2),
+                &mut sink,
+                Some(token),
+            )
             .unwrap();
         producer
-            .observe_idle(start + std::time::Duration::from_secs(3), &mut sink, token)
+            .observe_idle(
+                start + std::time::Duration::from_secs(3),
+                &mut sink,
+                Some(token),
+            )
             .unwrap();
         producer
-            .terminal(LiveThroughputUnavailable::Cancelled, &mut sink, token)
+            .terminal(LiveThroughputUnavailable::Cancelled, &mut sink, Some(token))
             .unwrap();
 
         let frames = sink

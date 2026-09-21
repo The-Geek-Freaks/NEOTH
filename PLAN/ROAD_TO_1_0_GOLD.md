@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W172 Hosted compile/lint repair (2026-09-21):** CI 35653174520 on 61eaa58f
+is confirmed cancelled after the adapter lane exposed four outdated test-token
+arguments and Linux Clippy rejected an obsolete dead-code expectation. Both
+narrow repairs are independently source-approved; fresh Hosted gates remain
+required. Windows preview 35653179383 continues independently. Source 9c2a4215
+passed Preflight 35653959335 and Code Quality 35653958110. W169 custody and W171
+manual arXiv ingest are separate active implementation batches. No Road item
+closes. See [W172](../docs/gold-wave172-verification.md).
+
 **W169 verified extraction and custody implementation (2026-09-21):**
 GitHub run 35653170374 on 61eaa58f passed the extractor regressions and captured
 3252 schema rows across all 26 expected channels, with zero uncovered extraction
