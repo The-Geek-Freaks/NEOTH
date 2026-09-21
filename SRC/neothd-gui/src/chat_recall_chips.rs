@@ -266,7 +266,8 @@ impl Projection {
 
         let mut rows = Vec::with_capacity(frame.rows.len());
         for row in &frame.rows {
-            let tier = RecallChipTier::parse(row.tier.as_str()).ok_or("unknown recall chip tier")?;
+            let tier =
+                RecallChipTier::parse(row.tier.as_str()).ok_or("unknown recall chip tier")?;
             let source_state = RecallChipSourceState::parse(row.source_state.as_str())
                 .ok_or("unknown recall chip source state")?;
             if tier == RecallChipTier::Unknown && source_state != RecallChipSourceState::Untrusted {
@@ -361,7 +362,11 @@ mod tests {
         assert!(
             projection
                 .apply_json(
-                    &batch(1, "ready", vec![row("hot", serde_json::json!(0.4), "available")]),
+                    &batch(
+                        1,
+                        "ready",
+                        vec![row("hot", serde_json::json!(0.4), "available")]
+                    ),
                     "token-a",
                     3,
                 )
@@ -386,7 +391,11 @@ mod tests {
         assert!(
             projection
                 .apply_json(
-                    &batch(2, "ready", vec![row("warm", serde_json::json!(0.5), "available")]),
+                    &batch(
+                        2,
+                        "ready",
+                        vec![row("warm", serde_json::json!(0.5), "available")]
+                    ),
                     "token-a",
                     3,
                 )
@@ -398,7 +407,11 @@ mod tests {
         let rows = (0..MAX_RECALL_CHIP_ROWS + 1)
             .map(|_| row("warm", serde_json::json!(0.5), "available"))
             .collect();
-        assert!(projection.apply_json(&batch(1, "ready", rows), "token-a", 3).is_err());
+        assert!(
+            projection
+                .apply_json(&batch(1, "ready", rows), "token-a", 3)
+                .is_err()
+        );
         assert!(projection.snapshot().is_none());
     }
 
@@ -407,7 +420,11 @@ mod tests {
         let mut projection = Projection::new("request-a".into());
         let accepted = projection
             .apply_json(
-                &batch(1, "ready", vec![row("warm", serde_json::json!(0.5), "available")]),
+                &batch(
+                    1,
+                    "ready",
+                    vec![row("warm", serde_json::json!(0.5), "available")],
+                ),
                 "token-a",
                 3,
             )
@@ -418,7 +435,11 @@ mod tests {
         assert!(
             projection
                 .apply_json(
-                    &batch(2, "ready", vec![row("warm", serde_json::json!(0.6), "available")]),
+                    &batch(
+                        2,
+                        "ready",
+                        vec![row("warm", serde_json::json!(0.6), "available")]
+                    ),
                     "token-a",
                     3,
                 )
@@ -435,7 +456,11 @@ mod tests {
         let mut projection = Projection::new("request-a".into());
         projection
             .apply_json(
-                &batch(1, "ready", vec![row("warm", serde_json::json!(0.5), "available")]),
+                &batch(
+                    1,
+                    "ready",
+                    vec![row("warm", serde_json::json!(0.5), "available")],
+                ),
                 "token-a",
                 3,
             )
@@ -447,8 +472,16 @@ mod tests {
         projection.replace_request("request-b".into());
         assert!(projection.snapshot().is_none());
         assert!(!projection.is_frozen());
-        let request_b = batch(1, "ready", vec![row("warm", serde_json::json!(0.25), "available")])
-            .replacen("\"request_id\":\"request-a\"", "\"request_id\":\"request-b\"", 1);
+        let request_b = batch(
+            1,
+            "ready",
+            vec![row("warm", serde_json::json!(0.25), "available")],
+        )
+        .replacen(
+            "\"request_id\":\"request-a\"",
+            "\"request_id\":\"request-b\"",
+            1,
+        );
         assert!(projection.apply_json(&request_b, "token-a", 3).is_ok());
         projection.clear_and_fence();
         assert!(projection.snapshot().is_none());

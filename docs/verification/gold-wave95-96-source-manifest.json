@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W163-recall-provenance-chip-candidate",
-  "base": "40dac1ad98b7a848f9e0a84c09b49495bee1b3c2",
-  "capturedUtc": "2026-09-21T18:25:36.1282255Z",
-  "validationStatus": "W163_REVIEWED_INTEGRATION_PENDING_HOSTED_VALIDATION",
+  "base": "7091979ccc6ac50d8931b264f7dbc0908c89ebee",
+  "capturedUtc": "2026-09-21T18:37:13.9296078Z",
+  "validationStatus": "W163_HOSTED_FORMAT_IMPORTED_NATIVE_GUI_PENDING",
   "scopeNote": "358 inputs; W163 same-query paired provenance through warm snapshot route, preload, source cap and final dedup; authenticated content-free chip frame and Main/Buddy transient display. Successful response freezes, request activation/error/cancel/session clears. Required350native+3Windows+2Unix/67GUI+14Linux-macOS fixtures/7optional. 19-name macOS catalog. All W163 executable and rendered acceptance pending.",
   "files": [
     {
@@ -243,8 +243,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_recall_chips.rs",
-      "sha256": "5A04766DD6F291804661AE79BF1A8F0A19F7A6B92FA1DBEF0BA64F39828E1825",
-      "bytes": 15917
+      "sha256": "72CAF5FB9785ED6E00E8CA535A76527721F917AF95A46F843EEFA6C7F4EA37DE",
+      "bytes": 16519
     },
     {
       "path": "SRC/neothd-gui/src/chat_stream_phase.rs",
@@ -298,8 +298,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1954252,
-      "sha256": "8396843CD91E8524490D2663112762E12EA71B6A5B623A9A6AE39A297269D3DF"
+      "bytes": 1954988,
+      "sha256": "45581CDEEC04D76C53E384A8D491F3D7C16035E55B172CE48778862564A12968"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -563,8 +563,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "sha256": "19CAE9817B8C276C6A6AA66354F20B01799988138060EAF58597BBC03F9AF68A",
-      "bytes": 1032522
+      "sha256": "B0A675F4FC3D2516B99DCFF10C5151773A79C61CD96102C1114AA95A43B9EA67",
+      "bytes": 1032538
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -698,8 +698,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/recall.rs",
-      "sha256": "D8398C704D0323E3BB9846B60A03E010993A3C31807B09A03BC73CD1D2BD3953",
-      "bytes": 139682
+      "sha256": "5BAE6DA59107BA89AEA7337868ED8696EC8C9350BDBB03FF58C231C2E7A1625F",
+      "bytes": 139809
     },
     {
       "path": "SRC/neothd/src/cli/recipe.rs",
@@ -1253,13 +1253,13 @@
     },
     {
       "path": "SRC/neothd/src/memory/recall_presentation.rs",
-      "sha256": "A3E409C1F9DA687493CFB0F3E46874BAD45423C4AA650CBC3CF75C415CE22926",
-      "bytes": 12825
+      "sha256": "10EEB51176EA6810FA4E220F4AC3F7E46A2962D205FE9EDA67C34AA8E1C8C5F4",
+      "bytes": 12883
     },
     {
       "path": "SRC/neothd/src/memory/region_router.rs",
-      "sha256": "2C05AE23B8E3E30E7C2054D8F4F2C03610D6005A4E3C6BB7FBF5BDFD8579B7F0",
-      "bytes": 26792
+      "sha256": "B6F07AA8FE2F44CB05982552289A1CEBB7CD56913054F4EA3F94A66369CA2B1B",
+      "bytes": 26862
     },
     {
       "path": "SRC/neothd/src/memory/session_start_recall.rs",

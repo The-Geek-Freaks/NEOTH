@@ -1282,10 +1282,12 @@ fn recall_like(conn: &Connection, query: &str, limit: usize) -> Result<Vec<Episo
 /// gives them a stable negative id that cannot collide with any
 /// `idx_episode.event_id` (which is always positive).
 fn recall_warm_like(conn: &Connection, query: &str, limit: usize) -> Result<Vec<EpisodeHit>> {
-    Ok(crate::memory::region_router::recall_warm_like_with_source(conn, query, limit, None)?
-        .into_iter()
-        .map(|row| row.hit)
-        .collect())
+    Ok(
+        crate::memory::region_router::recall_warm_like_with_source(conn, query, limit, None)?
+            .into_iter()
+            .map(|row| row.hit)
+            .collect(),
+    )
 }
 
 /// LIKE search over `idx_longterm` (cold tier, >90d Hebbian survivors).
@@ -1652,9 +1654,8 @@ pub(crate) fn query_three_lanes_checked_enriched(
     limit: usize,
 ) -> Result<RecallEnrichedOutput> {
     let canonical = recall_groundtruth_like(conn, prompt, limit)?;
-    let routed_rows = crate::memory::region_router::run_routed_recall_with_source(
-        conn, plan, prompt, limit,
-    )?;
+    let routed_rows =
+        crate::memory::region_router::run_routed_recall_with_source(conn, plan, prompt, limit)?;
     let source_by_identity: HashMap<_, _> = routed_rows
         .iter()
         .map(|row| (episode_source_identity(&row.hit), row.source.clone()))
@@ -1668,7 +1669,10 @@ pub(crate) fn query_three_lanes_checked_enriched(
     let contradictions = recall_pending_contradictions(conn, prompt, CONTRADICTION_LANE_LIMIT)?;
     let output = RecallOutput {
         canonical,
-        episodes: final_scored.iter().map(|scored| scored.hit.clone()).collect(),
+        episodes: final_scored
+            .iter()
+            .map(|scored| scored.hit.clone())
+            .collect(),
         contradictions,
     }
     .sanitize_for_egress();
@@ -1701,7 +1705,9 @@ pub(crate) fn query_three_lanes_checked_enriched(
                 .unwrap_or_else(|| source_for_stage_three_candidate(&scored.hit));
             let (_, final_score) = scored.into_presentation_parts();
             crate::memory::recall_presentation::RecallPresentationHit::from_final_parts(
-                hit, final_score, source,
+                hit,
+                final_score,
+                source,
             )
         })
         .collect();
@@ -1713,7 +1719,12 @@ pub(crate) fn query_three_lanes_checked_enriched(
 }
 
 fn episode_source_identity(hit: &EpisodeHit) -> (i64, u8, String, String) {
-    (hit.event_id, hit.event_type, hit.tier.clone(), hit.text_hash.clone())
+    (
+        hit.event_id,
+        hit.event_type,
+        hit.tier.clone(),
+        hit.text_hash.clone(),
+    )
 }
 
 fn source_for_stage_three_candidate(
@@ -2432,10 +2443,9 @@ mod tests {
             ids.iter().any(|&i| i < 0),
             "summary row has negative sentinel id"
         );
-        let sourced = crate::memory::region_router::recall_warm_like_with_source(
-            &conn, "berlin", 10, None,
-        )
-        .expect("warm source");
+        let sourced =
+            crate::memory::region_router::recall_warm_like_with_source(&conn, "berlin", 10, None)
+                .expect("warm source");
         assert!(sourced.iter().any(|row| {
             row.hit.event_id == 100
                 && matches!(

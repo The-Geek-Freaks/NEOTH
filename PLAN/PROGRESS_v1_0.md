@@ -2,6 +2,14 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W163 hosted follow-up (2026-09-21):** published source7091979c passed
+Code Quality35638612862 and CLI build/reference35638614813. The generated
+reference is byte-identical to the committed snapshot. Preflight35638613969
+requested 32 exact formatting hunks in six sources; all are imported from the
+retained Hosted log without local executable validation. Native/GUI, direct
+activation callbacks, rendering and accessibility remain pending. Historical
+reviews retain their original hashes; the separate post-format receipt binds
+the current source. Road counts remain 1324 / 1015 checked / 307 open / 2 partial.
 **W163 recall-chip integration (2026-09-21):** same-query typed output and
 provenance remain paired through source capping and final context deduplication.
 The enriched router retains real warm snapshot identity and final Stage-3 scores;
@@ -21,12 +29,12 @@ closes; counts remain 1324 total / 1015 checked / 307 open / 2 partial.
 Published repair40dac1ad passed Preflight35637598123 and Code Quality35637597705.
 The earlier source600 native/preview results remain source-specific and cannot
 establish W163 acceptance.
-**Current hosted evidence (2026-09-21):** source6003175f passed Core/reference
+**Historical pre-W163 hosted evidence (2026-09-21):** source6003175f passed Core/reference
 35634495862, Preflight35634494324 and Code Quality35634493973. Full CI35634988336
 continues native compilation, but Linux job106450108773 found two strict-Clippy
 style errors in the W162 producer. The exact is_none_or and let-chain repairs
 preserve measurement and idle-error behavior. Preview35635024193 remains in
-progress. W163 is unpublished and excluded; no roadmap checkbox closes.
+progress. That source excludes W163; no roadmap checkbox closes.
 
 The historical W159 core-review file was accidentally overwritten. Its expected
 hash remains recorded as unavailable, never reconstructed as original evidence.

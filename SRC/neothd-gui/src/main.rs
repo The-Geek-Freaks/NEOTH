@@ -4370,7 +4370,12 @@ fn main() -> Result<()> {
             };
             clear_active_chat_reasoning_projection(&projections, stream.as_ref(), Some(&w), None);
             clear_active_chat_throughput_projection(&throughput, stream.as_ref(), Some(&w), None);
-            clear_active_chat_recall_chip_projection(&recall_chips, stream.as_ref(), Some(&w), None);
+            clear_active_chat_recall_chip_projection(
+                &recall_chips,
+                stream.as_ref(),
+                Some(&w),
+                None,
+            );
             if let Ok(mut store) = citations.lock() {
                 store.set_historical(true);
             }
@@ -13728,11 +13733,7 @@ fn main() -> Result<()> {
                     }
                 };
                 claim_chat_presentation_owner(presentation_owner.as_ref(), request.request_id);
-                clear_chat_recall_chip_replacement(
-                    &recall_chip_projections,
-                    &win,
-                    Some(&ov),
-                );
+                clear_chat_recall_chip_replacement(&recall_chip_projections, &win, Some(&ov));
                 if let Ok(mut displays) = reasoning_displays.lock() {
                     displays.insert(request.request_id, reasoning_display);
                 }
@@ -16076,10 +16077,13 @@ fn install_legacy_child_chat_transport_callbacks(
                                                 let is_current = stream_recall_chips
                                                     .lock()
                                                     .ok()
-                                                    .and_then(|controller| controller.current_request())
+                                                    .and_then(|controller| {
+                                                        controller.current_request()
+                                                    })
                                                     .is_some_and(|current| {
                                                         current.request_id == request_id
-                                                            && current.surface == ChatStreamSurface::Buddy
+                                                            && current.surface
+                                                                == ChatStreamSurface::Buddy
                                                             && !current.cancel_requested
                                                     });
                                                 if is_current {
@@ -26373,7 +26377,13 @@ fn recall_chip_source_label(source: chat_recall_chips::RecallChipSourceState) ->
 
 fn recall_chip_lines(snapshot: &chat_recall_chips::RecallChipSnapshot) -> Vec<slint::SharedString> {
     if !snapshot.status.is_ready() {
-        return vec![format!("Recall unavailable · {}", recall_chip_status_label(snapshot.status)).into()];
+        return vec![
+            format!(
+                "Recall unavailable · {}",
+                recall_chip_status_label(snapshot.status)
+            )
+            .into(),
+        ];
     }
     snapshot
         .rows
@@ -40599,16 +40609,15 @@ mod w58_gui_callback_runtime_tests {
     use super::{
         CHAT_STREAM_CONTROL_PREFIX, ChatRecallChipProjections, ChatThroughputProjections,
         RecallChipControlFrame, ThroughputControlFrame, apply_chat_recall_chip_controls,
-        apply_chat_throughput_controls,
-        begin_chat_recall_chip_projection, begin_chat_throughput_projection,
-        cancel_citation_child, cancel_citation_live_flow,
+        apply_chat_throughput_controls, begin_chat_recall_chip_projection,
+        begin_chat_throughput_projection, cancel_citation_child, cancel_citation_live_flow,
+        chat_recall_chips, chat_stream_request_id,
         citation_gui::{CitationGuiBindingStore, CitationGuiRequest},
-        clear_citation_consent_projection, clear_citation_projection,
         clear_buddy_recall_chip_projection, clear_buddy_throughput_projection,
+        clear_citation_consent_projection, clear_citation_projection,
         clear_main_recall_chip_projection, clear_main_throughput_projection,
         discard_chat_recall_chip_projection, discard_chat_throughput_projection,
-        final_sentinel_chat_recall_chip_projection,
-        chat_recall_chips, chat_stream_request_id, parse_chat_stream_protocol_incremental,
+        final_sentinel_chat_recall_chip_projection, parse_chat_stream_protocol_incremental,
         project_chat_recall_chip_snapshot, project_chat_throughput_snapshot,
         provider_done_chat_recall_chip_projection, provider_done_chat_throughput_projection,
         register_citation_gui_callbacks,
@@ -44566,7 +44575,11 @@ exit 0
             ChatStreamSurface::Main,
             false,
         );
-        begin_chat_recall_chip_projection(&runtime.chat_recall_chip_projections, old_request, token);
+        begin_chat_recall_chip_projection(
+            &runtime.chat_recall_chip_projections,
+            old_request,
+            token,
+        );
         let old_snapshot = apply_chat_recall_chip_controls(
             &runtime.chat_recall_chip_projections,
             old_request,
@@ -44629,8 +44642,14 @@ exit 0
             &format!("{CHAT_STREAM_CONTROL_PREFIX}{ready}\n"),
             Some(token),
         );
-        assert!(parsed.protocol_valid, "authenticated W163 control must parse cleanly");
-        assert!(parsed.text.is_empty(), "recall controls cannot become reply text");
+        assert!(
+            parsed.protocol_valid,
+            "authenticated W163 control must parse cleanly"
+        );
+        assert!(
+            parsed.text.is_empty(),
+            "recall controls cannot become reply text"
+        );
         assert_eq!(parsed.recall_chip_controls.len(), 1);
 
         begin_chat_recall_chip_projection(&projections, main_request, token);
@@ -44650,12 +44669,29 @@ exit 0
         assert!(window.get_chat_recall_chips_active());
         let lines = window.get_chat_recall_chip_lines();
         assert!(lines.row_count() <= chat_recall_chips::MAX_RECALL_CHIP_ROWS);
-        assert!(lines.iter().any(|line| line.contains("warm · score 0.75 · source available")));
-        assert!(lines.iter().any(|line| line.contains("canonical · score unavailable · source available")));
         assert!(
-            !window.get_chat_live_messages().iter().any(|row| row.text.contains("Recall ·"))
-                && !window.get_chat_messages().iter().any(|row| row.text.contains("Recall ·"))
-                && !overlay.get_recent_lines().iter().any(|line| line.contains("Recall ·")),
+            lines
+                .iter()
+                .any(|line| line.contains("warm · score 0.75 · source available"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("canonical · score unavailable · source available"))
+        );
+        assert!(
+            !window
+                .get_chat_live_messages()
+                .iter()
+                .any(|row| row.text.contains("Recall ·"))
+                && !window
+                    .get_chat_messages()
+                    .iter()
+                    .any(|row| row.text.contains("Recall ·"))
+                && !overlay
+                    .get_recent_lines()
+                    .iter()
+                    .any(|line| line.contains("Recall ·")),
             "recall metadata must stay out of chat/history/recents",
         );
 
@@ -44691,8 +44727,9 @@ exit 0
                 .to_string(),
             ),
         };
-        let snapshots = apply_chat_recall_chip_controls(&projections, buddy_request, token, &[missing])
-            .expect("accept W163 missing recall state");
+        let snapshots =
+            apply_chat_recall_chip_controls(&projections, buddy_request, token, &[missing])
+                .expect("accept W163 missing recall state");
         project_chat_recall_chip_snapshot(
             Some(&window),
             Some(&overlay),
@@ -44700,7 +44737,10 @@ exit 0
             &snapshots[0],
         );
         assert!(overlay.get_recall_chips_active());
-        assert_eq!(overlay.get_recall_chip_lines()[0].as_str(), "Recall unavailable · missing");
+        assert_eq!(
+            overlay.get_recall_chip_lines()[0].as_str(),
+            "Recall unavailable · missing"
+        );
 
         discard_chat_recall_chip_projection(&projections, buddy_request);
         clear_main_recall_chip_projection(&window);
@@ -44711,9 +44751,11 @@ exit 0
         assert!(overlay.get_recall_chip_lines().is_empty());
 
         let forged = RecallChipControlFrame {
-            raw: zeroize::Zeroizing::new(
-                ready.replacen(&chat_stream_request_id(token), "forged-request", 1),
-            ),
+            raw: zeroize::Zeroizing::new(ready.replacen(
+                &chat_stream_request_id(token),
+                "forged-request",
+                1,
+            )),
         };
         begin_chat_recall_chip_projection(&projections, main_request, token);
         assert!(

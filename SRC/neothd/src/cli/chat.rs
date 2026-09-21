@@ -4355,8 +4355,8 @@ fn recall_chip_batch_frame_line(
     batch: &crate::memory::recall_presentation::RecallChipBatch,
 ) -> std::io::Result<String> {
     use crate::memory::recall_presentation::{
-        RecallChipBatchStatus, RecallChipScore, RecallChipSourceState, RecallChipTier,
-        MAX_RECALL_CHIP_ROWS,
+        MAX_RECALL_CHIP_ROWS, RecallChipBatchStatus, RecallChipScore, RecallChipSourceState,
+        RecallChipTier,
     };
 
     #[derive(serde::Serialize)]
@@ -22246,10 +22246,10 @@ modes:
                     prompt_bundle_hash: &prompt_hash,
                     writer: &route_writer,
                     current_path: &repo,
-                attachment_contexts: None,
-                output: &mut output,
-                stream_control_token: None,
-                session_recall: None,
+                    attachment_contexts: None,
+                    output: &mut output,
+                    stream_control_token: None,
+                    session_recall: None,
                 },
                 PromptBuildOptions {
                     slash_skill_name: None,

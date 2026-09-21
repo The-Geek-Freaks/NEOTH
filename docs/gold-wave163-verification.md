@@ -1,6 +1,6 @@
 # W163 - recall provenance chips
 
-Status: source-reviewed integration prepared for GitHub-hosted verification.
+Status: published source7091979c passed Hosted CLI build/reference and Code Quality; native/GUI acceptance remains pending.
 GOLD-LF-P2-27 remains open.
 All executable validation runs on GitHub-hosted runners during the workstation
 BSOD hold. Static review, a source test declaration, or an uploaded artifact
@@ -81,3 +81,9 @@ warm provenance and replacement-clearing defects; a conflicting debug assertion
 was removed while preserving the six-input/five-output wire-cap regression.
 Two pure CRLF-to-LF normalizations are separately recorded. No local validation
 was executed and no Road checkbox closes from this admission.
+
+## Hosted format correction
+
+Source7091979c passed Code Quality35638612862 and CLI build/reference35638614813.
+The reference has SHA-256 9BE613783FC2C1E8DBD2A203BF75A65F9644889E260F29526B859E498119419C, identical to the committed file.
+Preflight35638613969 reported 32 exact hunks across six sources. Those Hosted formatter results were imported without local execution. FORMAT-HOSTED.json and the separate POST-FORMAT inventories bind that delta; original semantic reviews are preserved as historical scoped evidence. Fresh Hosted Preflight and native/GUI gates are still required.

@@ -17,7 +17,10 @@ const MAX_PRESENTABLE_SCORE: f64 = 1.0;
 /// chat control frame or UI model.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RecallSourceRef {
-    Event { event_id: i64, event_type: u8 },
+    Event {
+        event_id: i64,
+        event_type: u8,
+    },
     WarmSnapshot {
         consolidated_id: i64,
         kind: RecallWarmKind,
@@ -25,7 +28,9 @@ pub(crate) enum RecallSourceRef {
         /// event authority because the warm snapshot stores no event type.
         original_event_id: Option<i64>,
     },
-    GroundTruth { fact_id: i64 },
+    GroundTruth {
+        fact_id: i64,
+    },
     Unavailable,
 }
 
@@ -366,9 +371,10 @@ mod tests {
     #[test]
     fn batch_is_capped_and_never_carries_hit_content() {
         let hits = (1..=MAX_RECALL_CHIP_ROWS + 1).map(|id| {
-            let scored = crate::memory::recall_lanes::score_ranked_hits(vec![hit("warm", id as i64)])
-                .pop()
-                .unwrap();
+            let scored =
+                crate::memory::recall_lanes::score_ranked_hits(vec![hit("warm", id as i64)])
+                    .pop()
+                    .unwrap();
             RecallPresentationHit::from_final_scored(
                 scored,
                 RecallSourceRef::Event {

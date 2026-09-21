@@ -412,7 +412,12 @@ pub(crate) fn run_routed_recall_with_source(
     } else {
         return Ok(merge_routed_source_rows(rows, limit));
     };
-    rows.extend(recall_warm_like_with_source(conn, query, limit, warm_minimum)?);
+    rows.extend(recall_warm_like_with_source(
+        conn,
+        query,
+        limit,
+        warm_minimum,
+    )?);
     Ok(merge_routed_source_rows(rows, limit))
 }
 
@@ -424,7 +429,9 @@ fn merge_routed_source_rows(
     for row in rows {
         let event_id = row.hit.event_id;
         let keep = match merged.get(&event_id) {
-            Some(existing) => row.hit.importance.unwrap_or(0.0) > existing.hit.importance.unwrap_or(0.0),
+            Some(existing) => {
+                row.hit.importance.unwrap_or(0.0) > existing.hit.importance.unwrap_or(0.0)
+            }
             None => true,
         };
         if keep {
