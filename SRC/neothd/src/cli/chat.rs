@@ -8777,7 +8777,6 @@ async fn run_chat_with_consent(
         provider,
         ephemeral_consent,
         stream_control_token,
-        false,
         cancellation,
         &mut output,
     )
@@ -9482,6 +9481,7 @@ async fn finish_chat_turn_preparation(
         config,
         ephemeral_consent,
         stream_control_token,
+        typed_gui_controls,
         cancellation,
         session_canary,
         instance_paths,
@@ -15880,10 +15880,9 @@ mod tests {
                 },
             ],
         };
-        let line = recall_chip_batch_frame_line("0123456789abcdef0123456789abcdef", &batch)
-            .unwrap();
-        let frame: serde_json::Value = serde_json::from_str(&line)
-        .unwrap();
+        let line =
+            recall_chip_batch_frame_line("0123456789abcdef0123456789abcdef", &batch).unwrap();
+        let frame: serde_json::Value = serde_json::from_str(&line).unwrap();
         let rows = frame["rows"].as_array().unwrap();
         assert_eq!(rows[0]["score"], 0.42);
         for row in &rows[1..] {
@@ -15903,10 +15902,9 @@ mod tests {
             (RecallChipBatchStatus::Failed, "failed"),
             (RecallChipBatchStatus::Incognito, "incognito"),
         ] {
-            let line = recall_chip_batch_frame_line(token, &RecallChipBatch::unavailable(status))
-                .unwrap();
-            let frame: serde_json::Value = serde_json::from_str(&line)
-            .unwrap();
+            let line =
+                recall_chip_batch_frame_line(token, &RecallChipBatch::unavailable(status)).unwrap();
+            let frame: serde_json::Value = serde_json::from_str(&line).unwrap();
             assert_eq!(frame["status"], wire_status);
             assert_eq!(frame["rows"], serde_json::json!([]));
             assert_eq!(frame["request_id"], stream_request_id(token));

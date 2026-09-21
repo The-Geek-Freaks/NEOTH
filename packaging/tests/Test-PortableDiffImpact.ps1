@@ -289,7 +289,11 @@ if ($impact.Json.stale -or $impact.Json.direction -ne 'callers') { Stop-Acceptan
 if ([int64]$impact.Json.index_generation -ne [int64]$refresh.Json.published_generation.index_generation) {
     Stop-Acceptance 'diff impact generation did not bind to the refreshed root generation'
 }
-$exactSeeds = @($impact.Json.requested_seeds | Where-Object { $_.file -ceq 'src/lib.rs' -and $_.symbol -ceq 'changed_symbol' })
+$exactSeeds = @($impact.Json.requested_seeds | Where-Object {
+    $_.file -ceq 'src/lib.rs' -and
+    $null -ne $_.PSObject.Properties['symbol'] -and
+    $_.symbol -ceq 'changed_symbol'
+})
 if ($exactSeeds.Count -ne 1) { Stop-Acceptance 'one-hunk diff did not produce the exact changed_symbol seed' }
 $callerNodes = @($impact.Json.impacted_nodes | Where-Object { $_.file -ceq 'src/lib.rs' -and $_.symbol -ceq 'caller_symbol' })
 if ($callerNodes.Count -lt 1) { Stop-Acceptance 'callers impact did not retain caller_symbol as a concrete affected declaration' }

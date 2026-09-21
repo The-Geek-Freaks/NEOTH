@@ -931,7 +931,9 @@ pub(crate) fn validate_recall_chip_batch(batch: &GuiChatRecallChipBatch) -> GuiC
         return Err(GuiChatProtocolError::Invalid("recall_chip_rows"));
     }
     if batch.status != GuiChatRecallChipStatus::Ready && !batch.rows.is_empty() {
-        return Err(GuiChatProtocolError::Invalid("recall_chip_unavailable_rows"));
+        return Err(GuiChatProtocolError::Invalid(
+            "recall_chip_unavailable_rows",
+        ));
     }
     for row in &batch.rows {
         if row.tier == GuiChatRecallChipTier::Unknown
@@ -1694,7 +1696,9 @@ mod tests {
         });
         assert!(matches!(
             validate_stream_frame(&unavailable_with_row),
-            Err(GuiChatProtocolError::Invalid("recall_chip_unavailable_rows"))
+            Err(GuiChatProtocolError::Invalid(
+                "recall_chip_unavailable_rows"
+            ))
         ));
 
         let too_many = frame(GuiChatRecallChipBatch {

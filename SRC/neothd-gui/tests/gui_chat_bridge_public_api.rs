@@ -6,8 +6,8 @@ use neothd::daemon::gui_chat_bridge::{
     GuiChatBridge, GuiChatBridgeEvent, GuiChatBridgePreflight, GuiChatBridgePreflightInput,
     GuiChatBridgeRecallChipBatch, GuiChatBridgeRecallChipRow, GuiChatBridgeRecallChipSourceState,
     GuiChatBridgeRecallChipStatus, GuiChatBridgeRecallChipTier,
-    GuiChatBridgeThroughputBasis, GuiChatBridgeThroughputState,
-    GuiChatBridgeResponseFeedbackTarget, GuiChatConsentDecision, GuiChatConsentPrompt,
+    GuiChatBridgeResponseFeedbackTarget, GuiChatBridgeThroughputBasis,
+    GuiChatBridgeThroughputState, GuiChatConsentDecision, GuiChatConsentPrompt,
     GuiChatConsentRoute, GuiChatPhase, GuiChatSubscriptionMetadata, GuiChatSurface,
     GuiChatTerminalState, GuiChatTurnMetadata, gui_bridge_test_support,
 };

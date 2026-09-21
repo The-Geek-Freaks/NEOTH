@@ -2,6 +2,15 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W168/W170 Hosted repairs (2026-09-21):** source319d84f6 passed Code Quality
+35650411051; CLI35650436144 reported three typed-GUI-flag plumbing errors, and
+Preflight35650411113 exposed an invalid struct-pattern binding plus six format
+hunks. All are repaired and independently source-reviewed. Full CI35650440533
+is confirmed cancelled; fresh compilation is required. W170 guards the optional
+ImpactSeed symbol before strict PowerShell access and preserves the exact seed,
+caller, generation and TestedBy assertions. Fresh portable acceptance is pending.
+Admission: 376 source inputs; test identities and Road checkbox counts unchanged.
+
 **W167/W168 active daemon presentation (2026-09-21):** the existing recall
 batch and throughput producer states now cross the actual daemon protocol and
 installed GUI controller to Main/Buddy. Independent integrated source review

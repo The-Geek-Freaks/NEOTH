@@ -237,7 +237,7 @@ impl Projection {
                     terminal: false,
                 },
                 IssuedState::Unavailable {
-                    reason @ (ThroughputReason::NoVisibleEvents
+                    reason: reason @ (ThroughputReason::NoVisibleEvents
                     | ThroughputReason::NoUsageReported),
                 } => ThroughputSnapshot {
                     state: ThroughputState::Unavailable,

@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W168-active-daemon-presentation-candidate",
-  "base": "649cb106a36b443459453938180ad6364cd3ae2e",
-  "capturedUtc": "2026-09-21T20:17:52.9516934Z",
-  "validationStatus": "W167_W168_STATIC_APPROVED_PENDING_HOSTED",
-  "scopeNote": "Complete reviewed W167/W168 producer-to-installed-controller transport; W166 exact Hosted formatting; W169 and W170 WIP excluded.",
+  "item": "GOLD-W95-W170-hosted-repair-candidate",
+  "base": "319d84f6886a77efd7fa9076879fdc9e826a2d37",
+  "capturedUtc": "2026-09-21T20:28:10.6209856Z",
+  "validationStatus": "W168_W170_REPAIRS_REVIEWED_HOSTED_REQUIRED",
+  "scopeNote": "W168 exact Hosted syntax/flag/format repairs and W170 strict PowerShell optional-seed repair. W169 extractor unpublished.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -87,6 +87,11 @@
       "sha256": "627BE5B7056F07A00C5F629E2EB940F7212A78976BB212D1DD805019E937E265"
     },
     {
+      "path": "docs/gold-wave170-verification.md",
+      "bytes": 1248,
+      "sha256": "CD6C11EBE510FEBD57D972698451CAAEDD62D917F4F5CF4B4F0DB70027C1A3FF"
+    },
+    {
       "path": "docs/install.md",
       "bytes": 13637,
       "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
@@ -138,8 +143,8 @@
     },
     {
       "path": "packaging/tests/Test-PortableDiffImpact.ps1",
-      "bytes": 17485,
-      "sha256": "6B582DC904E5FA590DB3036754BAB9005C881E1A33088B30B9B1D717CE1ECAEC"
+      "bytes": 17899,
+      "sha256": "1B8083F799053E55D92F13CA9C5DE20D0BB4754BBAF18220830406253389B38C"
     },
     {
       "path": "packaging/tests/Test-PortablePreview.ps1",
@@ -298,8 +303,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_throughput.rs",
-      "bytes": 23520,
-      "sha256": "1F70266DFA169F3CA0B5A0BFB26C6095F8E102F8B1CA28DAC9672F6F232604F0"
+      "bytes": 23528,
+      "sha256": "076A86CC653E8528860BECD5AC4724FB132951A53E313B432DE60CD0E3B9EDA2"
     },
     {
       "path": "SRC/neothd-gui/src/citation_gui.rs",
@@ -374,7 +379,7 @@
     {
       "path": "SRC/neothd-gui/tests/gui_chat_bridge_public_api.rs",
       "bytes": 7847,
-      "sha256": "0B6A4357259B373DF3B73F1C558B44B35955BB4CBF640D9064FFCFE561CB72CF"
+      "sha256": "98C5CC9B32B841CF880F85CD8A2CD3134B3B241B62FD9B95BF6A2FD4A97C2CF4"
     },
     {
       "path": "SRC/neothd-gui/ui/activity.slint",
@@ -608,8 +613,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1053622,
-      "sha256": "9285ED5960B2BA19E398A1BCABBB45EEE0CD95DDCFBF7F36BC7EE1CC3FD7A59F"
+      "bytes": 1053611,
+      "sha256": "1A994CE473F534B7BD1892741D3E4CCD66227800FBA7264D12AEE220BEDE87E5"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -1098,13 +1103,13 @@
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_protocol.rs",
-      "bytes": 71827,
-      "sha256": "4E0D771DFCE5707E6425E2C95A9F83962D1AEEF31ABF449C4D5DBB6B0FA201C9"
+      "bytes": 71880,
+      "sha256": "02F3221B6D532F0C5BB45D6D92DC78EF86BD7901F4A50CE86E14447BA93CF77E"
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "bytes": 138443,
-      "sha256": "F80318DAAB38BACA4DB9659DCD783B035C233B4A7ADAE88F6DEFA07C68BAB7D5"
+      "bytes": 138396,
+      "sha256": "23C74E5E3E88C0141BBA01BB6B3084C66DF8884EDFD8ADE7A7E597FF65344C1C"
     },
     {
       "path": "SRC/neothd/src/daemon/live_throughput.rs",

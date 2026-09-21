@@ -1332,15 +1332,13 @@ fn map_live_throughput_state(
     };
 
     match state {
-        LiveThroughputState::Measuring { basis, per_second } => {
-            GuiChatThroughputState::Measuring {
-                basis: match basis {
-                    LiveThroughputBasis::VisibleEvent => GuiChatThroughputBasis::VisibleEvent,
-                    LiveThroughputBasis::TokenDelta => GuiChatThroughputBasis::TokenDelta,
-                },
-                per_second,
-            }
-        }
+        LiveThroughputState::Measuring { basis, per_second } => GuiChatThroughputState::Measuring {
+            basis: match basis {
+                LiveThroughputBasis::VisibleEvent => GuiChatThroughputBasis::VisibleEvent,
+                LiveThroughputBasis::TokenDelta => GuiChatThroughputBasis::TokenDelta,
+            },
+            per_second,
+        },
         LiveThroughputState::Paused { basis } => GuiChatThroughputState::Paused {
             basis: match basis {
                 LiveThroughputBasis::VisibleEvent => GuiChatThroughputBasis::VisibleEvent,
