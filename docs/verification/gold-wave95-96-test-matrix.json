@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W95_W149_W151_W152_SOURCE_HOSTED_EXECUTION_REQUIRED",
-  "base": "53767f9a922c5367c925393d9993fccbc05572d9",
+  "base": "340252fc74b31bc9a13b899b7a90be21b47699cf",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 55300,
-    "sha256": "B323431F6D15945E4B36957270EA93FCFEA13F0D58B5DB74342003A4C024BC09"
+    "bytes": 55270,
+    "sha256": "CD1AD9C1AD27C139377F3B31E8C480F014632C03F58BE1E01278258745AF2C75"
   },
   "sourceInputs": 320,
   "requiredNativeTests": [
@@ -1414,7 +1414,7 @@
     },
     {
       "record": "work/gold-20260906/wave151-ouro-gui/GUI-REVIEW.md",
-      "sha256": "37270B15634DDC4195CD6DC5F197296A0CAC50B6DB6C1E8C3AC6E32CAFB1590E",
+      "sha256": "362FDAC2E88B236EA07BC9940E940DB3A477E7C4B499F76EB26F4987A0C94666",
       "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
       "executionClaim": false
     },
@@ -1428,6 +1428,12 @@
       "record": "work/gold-20260906/wave152-windows-hosted/FORMAT-REVIEW.md",
       "sha256": "0A466A7022B2D950B93AFF59890EF2D1D8FE8A21F39BB793EC19A4A7C8F24729",
       "verdict": "APPROVE_EXACT_HOSTED_FORMAT_IMPORT",
+      "executionClaim": false
+    },
+    {
+      "record": "work/gold-20260906/wave154-preview-owner/REVIEW.md",
+      "sha256": "597BC7FD0D38670E652A5034EC4408FFCBF20C845DB1B74C785A3C011A54C418",
+      "verdict": "APPROVE_FOR_REMOTE_CI_ADMISSION",
       "executionClaim": false
     }
   ],
@@ -2343,7 +2349,13 @@
     "execution": "PENDING_GITHUB_ONLY",
     "localValidationRan": false,
     "releaseClosure": false,
-    "sourceReview": "INDEPENDENT_STATIC_APPROVAL_RUNTIME_PENDING"
+    "sourceReview": "INDEPENDENT_STATIC_APPROVAL_RUNTIME_PENDING",
+    "modulePathFollowup": {
+      "observedRun": 35600252846,
+      "logSha256": "B3F17EDD58E5E2C1C08FF0BB3E9ADD218B0BEB391349299E1BD9E680EA1F523D",
+      "reviewSha256": "362FDAC2E88B236EA07BC9940E940DB3A477E7C4B499F76EB26F4987A0C94666",
+      "execution": "PENDING_FRESH_GITHUB_GATE"
+    }
   },
   "wave152": {
     "report": "docs/gold-wave152-verification.md",
@@ -2390,5 +2402,38 @@
       "localValidationRan": false,
       "reviewSha256": "0A466A7022B2D950B93AFF59890EF2D1D8FE8A21F39BB793EC19A4A7C8F24729"
     }
+  },
+  "requiredNativeTestsByPlatform": {
+    "Windows": [
+      {
+        "test": "wal::win_native::tests::fresh_private_file_and_directory_bind_owner_to_token_user",
+        "sourcePath": "SRC/neothd/src/wal/win_native.rs",
+        "sourceSha256": "FB1E4A73608E0CB377895ACB618D94E69CC56A5362C68D5A8557177C19DADE4C",
+        "junitClass": "neoth"
+      },
+      {
+        "test": "wal::win_native::tests::relative_private_child_delete_uses_the_pinned_parent_capability",
+        "sourcePath": "SRC/neothd/src/wal/win_native.rs",
+        "sourceSha256": "FB1E4A73608E0CB377895ACB618D94E69CC56A5362C68D5A8557177C19DADE4C",
+        "junitClass": "neoth"
+      },
+      {
+        "test": "wal::win_native::tests::owner_policy_rejects_a_valid_foreign_sid",
+        "sourcePath": "SRC/neothd/src/wal/win_native.rs",
+        "sourceSha256": "FB1E4A73608E0CB377895ACB618D94E69CC56A5362C68D5A8557177C19DADE4C",
+        "junitClass": "neoth"
+      }
+    ]
+  },
+  "wave154": {
+    "report": "docs/gold-wave154-verification.md",
+    "observedPreviewRun": 35590348875,
+    "observedSource": "e2de082a2c6cf0c77b3e510862c789089b0e6ca7",
+    "logSha256": "BCA240CEFBE1132EC2233DFE400D6A26EFCD0AC368CB232E866E1F8171119BDE",
+    "observation": "CLI and GUI compiled; lifecycle failed private manifest owner check",
+    "execution": "PENDING_CURRENT_WINDOWS_NATIVE_AND_PREVIEW",
+    "localValidationRan": false,
+    "releaseClosure": false,
+    "reviewSha256": "597BC7FD0D38670E652A5034EC4408FFCBF20C845DB1B74C785A3C011A54C418"
   }
 }

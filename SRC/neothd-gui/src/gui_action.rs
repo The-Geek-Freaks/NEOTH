@@ -11,6 +11,7 @@ use std::process::{Command, Output};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+#[path = "gui_action/ouro_q8.rs"]
 mod ouro_q8;
 pub(crate) use ouro_q8::{OuroQ8VerifyError, OuroQ8VerifyOutcome, run_ouro_q8_verify};
 

@@ -2,6 +2,16 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W154 / W151 hosted repair (2026-09-21):** prior preview35590348875 built
+CLI and desktop GUI, then rejected the newly created corrupt-repair manifest's
+Windows owner. [W154](../docs/gold-wave154-verification.md) binds TokenUser
+ownership explicitly at all three private Windows creation paths, preserving
+DACL and durable-write guards. Three Windows-only test identities supplement
+the 186 universal native requirements. The W151 nested module now has an
+explicit path for both headless test inclusions after Preflight35600252846.
+Current native compilation, tests and portable-package acceptance remain open.
+No local executable validation or Road closure.
+
 W149/W151/W152 hosted follow-up: source53767f9a passed CodeQuality35599451472.
 All42 exact Rustfmt hunks across eight files from Preflight35599452190 are
 imported. Fresh Preflight and full native/GUI execution remain required.

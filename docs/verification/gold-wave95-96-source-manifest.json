@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W149-W151-W152-passive-quality-q8-and-hosted-regressions",
-  "base": "53767f9a922c5367c925393d9993fccbc05572d9",
-  "capturedUtc": "2026-09-21T12:28:44.6902404Z",
-  "validationStatus": "HOSTED_FORMAT_IMPORTED_CURRENT_NATIVE_EXECUTION_PENDING",
-  "scopeNote": "320 inputs; W149 passive Buddy quality and exact UI handoff; W151 typed Q8 GUI verification; W152 actual hosted Windows failure repairs. No local executable validation or Road closure.",
+  "item": "GOLD-W95-W149-W154-GUI-and-Windows-private-creation",
+  "base": "340252fc74b31bc9a13b899b7a90be21b47699cf",
+  "capturedUtc": "2026-09-21T12:38:52.4182370Z",
+  "validationStatus": "W151_MODULE_PATH_W154_WINDOWS_OWNER_SOURCE_RUNTIME_PENDING",
+  "scopeNote": "320 inputs; W149/W151/W152 plus W151 explicit nested-module path and W154 TokenUser owner at private Windows creation. Executable gates GitHub-only; no Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -258,8 +258,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/gui_action.rs",
-      "bytes": 336013,
-      "sha256": "C9D8E8E72249F3C88B9EFEFBF4E290AB312F6CCFF62864F7C88BA2AE091955A8"
+      "bytes": 336047,
+      "sha256": "E71614F9E40DAE318DAD6F92584F6C821B6E7691DD7C686D2A6122CC773E6E66"
     },
     {
       "path": "SRC/neothd-gui/src/gui_action/ouro_q8.rs",
@@ -1503,8 +1503,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/win_native.rs",
-      "bytes": 113062,
-      "sha256": "52011DC5EB3BF0EAD1BF13C263B2D722A816DADB385058C586F0487D53CD6692"
+      "bytes": 114415,
+      "sha256": "FB1E4A73608E0CB377895ACB618D94E69CC56A5362C68D5A8557177C19DADE4C"
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",

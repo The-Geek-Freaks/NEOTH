@@ -90,3 +90,8 @@ cache behavior.
 The typed capture test is an important child-observation seam, but it is not
 evidence that a real descendant retaining a production pipe, a real Ouro
 device-load worker, or a real published model cache completed as intended.
+
+Hosted module follow-up: Preflight35600252846 on340252fc exposed two headless
+test inclusions that resolved the nested Ouro module beside gui_action.rs.
+The explicit gui_action/ouro_q8.rs path now binds all three inclusion contexts.
+The runner is unchanged. Fresh hosted formatting and compilation remain required.

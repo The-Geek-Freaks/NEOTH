@@ -44,8 +44,8 @@ use windows_sys::Win32::Security::{
     GetLengthSid, GetSecurityDescriptorControl, GetTokenInformation, INHERITED_ACE,
     InitializeSecurityDescriptor, IsValidAcl, IsValidSid, NO_INHERITANCE, OBJECT_INHERIT_ACE,
     OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
-    SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SetSecurityDescriptorControl,
-    SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
+    SetSecurityDescriptorOwner, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -712,6 +712,9 @@ pub(crate) fn create_private_child_file_relative(
             "InitializeSecurityDescriptor(context child)",
         ));
     }
+    if unsafe { SetSecurityDescriptorOwner(descriptor_ptr, sid.as_ptr().cast_mut().cast(), 0) } == 0 {
+        return Err(last_win32_error("SetSecurityDescriptorOwner(context child)"));
+    }
     if unsafe { SetSecurityDescriptorDacl(descriptor_ptr, 1, acl.0, 0) } == 0
         || unsafe {
             SetSecurityDescriptorControl(descriptor_ptr, SE_DACL_PROTECTED, SE_DACL_PROTECTED)
@@ -826,6 +829,9 @@ fn create_private_file_new_with_share(path: &Path, share_mode: u32) -> io::Resul
     if unsafe { InitializeSecurityDescriptor(descriptor_ptr, SECURITY_DESCRIPTOR_REVISION) } == 0 {
         return Err(last_win32_error("InitializeSecurityDescriptor"));
     }
+    if unsafe { SetSecurityDescriptorOwner(descriptor_ptr, sid.as_ptr().cast_mut().cast(), 0) } == 0 {
+        return Err(last_win32_error("SetSecurityDescriptorOwner"));
+    }
     // SAFETY:
     // - `descriptor_ptr` is initialized above.
     // - `acl.0` is a valid LocalAlloc-owned ACL and stays live through
@@ -927,6 +933,9 @@ pub fn create_private_directory_new(path: &Path) -> io::Result<()> {
     // storage and the revision is the documented Win32 value.
     if unsafe { InitializeSecurityDescriptor(descriptor_ptr, SECURITY_DESCRIPTOR_REVISION) } == 0 {
         return Err(last_win32_error("InitializeSecurityDescriptor"));
+    }
+    if unsafe { SetSecurityDescriptorOwner(descriptor_ptr, sid.as_ptr().cast_mut().cast(), 0) } == 0 {
+        return Err(last_win32_error("SetSecurityDescriptorOwner"));
     }
     // SAFETY: the descriptor and LocalAlloc-owned ACL remain live through
     // CreateDirectoryW; Win32 copies rather than retains them.
@@ -1962,6 +1971,21 @@ mod tests {
 
         set_private_current_user_dacl(&path).expect("set protected token-SID DACL");
         verify_private_dacl(&path).expect("read-back must match process TokenUser SID");
+    }
+
+    #[test]
+    fn fresh_private_file_and_directory_bind_owner_to_token_user() {
+        let root = tempdir().unwrap();
+        let file_path = root.path().join("created-private-state.json");
+        let file = create_private_file_new(&file_path).expect("create private file");
+        verify_private_file_handle(&file).expect("fresh private file owner is TokenUser");
+        verify_private_dacl(&file_path).expect("fresh private file path owner is TokenUser");
+        drop(file);
+
+        let directory_path = root.path().join("created-private-directory");
+        create_private_directory_new(&directory_path).expect("create private directory");
+        verify_private_directory_dacl(&directory_path)
+            .expect("fresh private directory owner is TokenUser");
     }
 
     #[test]
