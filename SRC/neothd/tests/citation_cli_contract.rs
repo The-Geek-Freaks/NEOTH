@@ -20,11 +20,7 @@ fn ordinary_and_gui_offline_lookups_emit_typed_receipts_before_nonzero_without_a
         ("gui-ready", vec!["--request-id", "gui-revision-7"]),
         (
             "gui-confirm",
-            vec![
-                "--request-id",
-                "gui-revision-7",
-                "--gui-approval-stdin",
-            ],
+            vec!["--request-id", "gui-revision-7", "--gui-approval-stdin"],
         ),
     ];
 
@@ -59,8 +55,8 @@ fn ordinary_and_gui_offline_lookups_emit_typed_receipts_before_nonzero_without_a
             !output.status.success(),
             "{label}: offline cache miss must remain a command failure after its receipt"
         );
-        let receipt: serde_json::Value = serde_json::from_slice(&output.stdout)
-            .expect("stdout must contain one JSON receipt");
+        let receipt: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("stdout must contain one JSON receipt");
         assert_eq!(
             field_set(&receipt),
             BTreeSet::from([
@@ -130,12 +126,16 @@ fn gui_lookup_rejects_invalid_input_before_private_proof_or_authorizer() {
         .expect("run real invalid GUI citation command");
 
     assert!(!output.status.success());
-    assert!(output.stdout.is_empty(), "invalid input must not emit a receipt");
+    assert!(
+        output.stdout.is_empty(),
+        "invalid input must not emit a receipt"
+    );
     assert!(
         !home.join("wal").exists(),
         "invalid GUI input must not read a proof or construct an authorizer"
     );
 }
+
 #[test]
 fn gui_decide_rejects_oversized_private_stdin_before_consent_mutation() {
     let temp = tempfile::tempdir().expect("isolated GUI decision fixture");
@@ -175,10 +175,15 @@ fn gui_decide_rejects_oversized_private_stdin_before_consent_mutation() {
         .write_all(&vec![b'x'; 257])
         .expect("write oversized private envelope");
     drop(child.stdin.take());
-    let output = child.wait_with_output().expect("wait for GUI citation decision");
+    let output = child
+        .wait_with_output()
+        .expect("wait for GUI citation decision");
 
     assert!(!output.status.success());
-    assert!(output.stdout.is_empty(), "invalid private envelope must not emit a receipt");
+    assert!(
+        output.stdout.is_empty(),
+        "invalid private envelope must not emit a receipt"
+    );
     assert!(
         !home.join("consent").exists() && !home.join("wal").exists(),
         "invalid private envelope must not create consent state or an authorizer WAL sink"

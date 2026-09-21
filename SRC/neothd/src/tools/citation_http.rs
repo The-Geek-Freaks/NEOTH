@@ -6,18 +6,19 @@
 //! in the core; [`lookup_cache_first`] makes its required pre-egress order
 //! explicit for the future CLI and GUI ingress.
 
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use std::path::Path;
 
+use anyhow::Context as _;
 use serde_json::Value;
 
 use crate::providers::http_client;
-use crate::tools::citation_lookup::{
-    validate_claim, CitationCache, CitationLookupResult, CitationLookupState, CitationProvider,
-    CitationQuery, CitationRecord, MAX_PROVIDER_RESPONSE_BYTES, REQUEST_TIMEOUT_SECS,
-};
 use crate::tools::citation_consent::{CitationConsentPreflight, ConsumedGuiCitationLookupApproval};
+use crate::tools::citation_lookup::{
+    CitationCache, CitationLookupResult, CitationLookupState, CitationProvider, CitationQuery,
+    CitationRecord, MAX_PROVIDER_RESPONSE_BYTES, REQUEST_TIMEOUT_SECS, validate_claim,
+};
 use crate::tools::external_http::{
     ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface,
 };
@@ -196,7 +197,10 @@ fn cache_first_decision(
 ) -> CitationCacheFirstDecision {
     if query.validate().is_err() {
         return CitationCacheFirstDecision::Terminal(CitationCacheFirstReport {
-            lookup: CitationLookupResult::unavailable(query.provider, CitationLookupState::InvalidQuery),
+            lookup: CitationLookupResult::unavailable(
+                query.provider,
+                CitationLookupState::InvalidQuery,
+            ),
             cache_read: CitationCacheReadState::NotConfigured,
             cache_write: CitationCacheWriteState::NotAttempted,
         });
@@ -205,7 +209,10 @@ fn cache_first_decision(
         Ok(normalized_claim) => normalized_claim,
         Err(_) => {
             return CitationCacheFirstDecision::Terminal(CitationCacheFirstReport {
-                lookup: CitationLookupResult::unavailable(query.provider, CitationLookupState::InvalidQuery),
+                lookup: CitationLookupResult::unavailable(
+                    query.provider,
+                    CitationLookupState::InvalidQuery,
+                ),
                 cache_read: CitationCacheReadState::NotConfigured,
                 cache_write: CitationCacheWriteState::NotAttempted,
             });
@@ -255,7 +262,9 @@ pub(crate) fn gui_citation_preflight_cache_first(
     consent_factory: impl FnOnce(GuiCitationLiveMiss) -> anyhow::Result<CitationConsentPreflight>,
 ) -> anyhow::Result<GuiCitationPreflightCacheFirst> {
     match cache_first_decision(query, claim, cache, now_secs, offline) {
-        CitationCacheFirstDecision::Terminal(report) => Ok(GuiCitationPreflightCacheFirst::Terminal(report)),
+        CitationCacheFirstDecision::Terminal(report) => {
+            Ok(GuiCitationPreflightCacheFirst::Terminal(report))
+        }
         CitationCacheFirstDecision::Live {
             cache_read,
             normalized_claim,
@@ -289,30 +298,23 @@ pub(crate) async fn lookup_cache_first_with_gui_citation_approval(
     let query_for_authorizer = query.clone();
     let claim_for_authorizer = claim.to_owned();
     let gui_request_id = gui_request_id.to_owned();
-    lookup_cache_first(
-        query,
-        claim,
-        cache,
-        now_secs,
-        offline,
-        move || {
-            // The proof has already been minted by a user-visible GUI Approve;
-            // consuming it here is intentionally after cache/offline policy.
-            let approval = consume_approval()?;
-            let (policy, _generation_sha256) = crate::tools::citation_consent::
-                current_citation_consent_policy_generation(&home)
+    lookup_cache_first(query, claim, cache, now_secs, offline, move || {
+        // The proof has already been minted by a user-visible GUI Approve;
+        // consuming it here is intentionally after cache/offline policy.
+        let approval = consume_approval()?;
+        let (policy, _generation_sha256) =
+            crate::tools::citation_consent::current_citation_consent_policy_generation(&home)
                 .context("read GUI citation consent policy generation")?;
-            let authorizer = ExternalHttpAuthorizer::interactive(policy.clone())?;
-            authorizer.attach_consumed_gui_citation_lookup_approval(
-                home,
-                policy,
-                query_for_authorizer,
-                &claim_for_authorizer,
-                &gui_request_id,
-                approval,
-            )
-        },
-    )
+        let authorizer = ExternalHttpAuthorizer::interactive(policy.clone())?;
+        authorizer.attach_consumed_gui_citation_lookup_approval(
+            home,
+            policy,
+            query_for_authorizer,
+            &claim_for_authorizer,
+            &gui_request_id,
+            approval,
+        )
+    })
     .await
 }
 
@@ -334,26 +336,19 @@ pub(crate) async fn lookup_cache_first_with_gui_citation_ready(
     let query_for_authorizer = query.clone();
     let claim_for_authorizer = claim.to_owned();
     let gui_request_id = gui_request_id.to_owned();
-    lookup_cache_first(
-        query,
-        claim,
-        cache,
-        now_secs,
-        offline,
-        move || {
-            let (policy, _) = crate::tools::citation_consent::
-                current_citation_consent_policy_generation(&home)
+    lookup_cache_first(query, claim, cache, now_secs, offline, move || {
+        let (policy, _) =
+            crate::tools::citation_consent::current_citation_consent_policy_generation(&home)
                 .context("read GUI citation ready policy generation")?;
-            let authorizer = ExternalHttpAuthorizer::interactive(policy.clone())?;
-            authorizer.attach_gui_citation_lookup_ready(
-                home,
-                policy,
-                query_for_authorizer,
-                &claim_for_authorizer,
-                &gui_request_id,
-            )
-        },
-    )
+        let authorizer = ExternalHttpAuthorizer::interactive(policy.clone())?;
+        authorizer.attach_gui_citation_lookup_ready(
+            home,
+            policy,
+            query_for_authorizer,
+            &claim_for_authorizer,
+            &gui_request_id,
+        )
+    })
     .await
 }
 
@@ -367,14 +362,7 @@ pub async fn lookup_live(
     authorizer: &ExternalHttpAuthorizer,
 ) -> CitationLookupResult {
     let timeout = Duration::from_secs(REQUEST_TIMEOUT_SECS);
-    lookup_live_at(
-        query,
-        claim,
-        authorizer,
-        query.fixed_request_url(),
-        timeout,
-    )
-    .await
+    lookup_live_at(query, claim, authorizer, query.fixed_request_url(), timeout).await
 }
 
 async fn lookup_live_at(
@@ -427,7 +415,10 @@ async fn lookup_live_at(
         // The authorizer is the only path that can issue the permit.  Its
         // denied/audit failure is deliberately a closed, data-free outcome.
         Err(_) => {
-            return CitationLookupResult::unavailable(provider, CitationLookupState::PermissionDenied);
+            return CitationLookupResult::unavailable(
+                provider,
+                CitationLookupState::PermissionDenied,
+            );
         }
         Ok(ProviderNetworkOutcome::Timeout) => {
             return CitationLookupResult::unavailable(provider, CitationLookupState::Timeout);
@@ -460,15 +451,18 @@ async fn lookup_live_at(
     if !(200..300).contains(&response.status) {
         // A no-redirect client leaves 3xx responses here.  They are closed
         // provider failures and cannot cause a second request to `Location`.
-        return CitationLookupResult::unavailable(provider, CitationLookupState::ProviderUnavailable);
+        return CitationLookupResult::unavailable(
+            provider,
+            CitationLookupState::ProviderUnavailable,
+        );
     }
 
     let record = parse_provider_record(query, &response.body, now_secs);
-    match record
-        .and_then(|record| CitationLookupResult::from_live(query, claim, record).ok())
-    {
+    match record.and_then(|record| CitationLookupResult::from_live(query, claim, record).ok()) {
         Some(result) => result,
-        None => CitationLookupResult::unavailable(provider, CitationLookupState::ProviderUnavailable),
+        None => {
+            CitationLookupResult::unavailable(provider, CitationLookupState::ProviderUnavailable)
+        }
     }
 }
 
@@ -476,7 +470,9 @@ fn active_cooldown(provider: CitationProvider, now_secs: u64) -> Option<u64> {
     let until = provider_cooldowns_until()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)[provider_index(provider)];
-    until.checked_sub(now_secs).filter(|remaining| *remaining > 0)
+    until
+        .checked_sub(now_secs)
+        .filter(|remaining| *remaining > 0)
 }
 
 fn install_cooldown(provider: CitationProvider, now_secs: u64, retry_after_secs: u64) {
@@ -623,7 +619,10 @@ fn parse_semantic_scholar(value: &Value) -> Option<ParsedProviderRecord> {
             .get("year")
             .and_then(Value::as_u64)
             .and_then(|year| u16::try_from(year).ok()),
-        venue: value.get("venue").and_then(Value::as_str).map(ToOwned::to_owned),
+        venue: value
+            .get("venue")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
     })
 }
 
@@ -654,7 +653,12 @@ fn openalex_authors(value: Option<&Value>) -> Vec<String> {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|authorship| authorship.pointer("/author/display_name")?.as_str().map(ToOwned::to_owned))
+        .filter_map(|authorship| {
+            authorship
+                .pointer("/author/display_name")?
+                .as_str()
+                .map(ToOwned::to_owned)
+        })
         .collect()
 }
 
@@ -712,10 +716,10 @@ fn clear_cooldowns_for_test() {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    use std::time::Duration;
     use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -753,9 +757,11 @@ mod tests {
             query(CitationProvider::Crossref).fixed_request_url(),
             "https://api.crossref.org/works/10.1000%2Fexample"
         );
-        assert!(query(CitationProvider::OpenAlex)
-            .fixed_request_url()
-            .starts_with("https://api.openalex.org/works/https://doi.org/"));
+        assert!(
+            query(CitationProvider::OpenAlex)
+                .fixed_request_url()
+                .starts_with("https://api.openalex.org/works/https://doi.org/")
+        );
     }
 
     #[tokio::test]
@@ -841,31 +847,31 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(matches!(hit, GuiCitationPreflightCacheFirst::Terminal(CitationCacheFirstReport {
-            cache_read: CitationCacheReadState::Hit,
-            ..
-        })));
+        assert!(matches!(
+            hit,
+            GuiCitationPreflightCacheFirst::Terminal(CitationCacheFirstReport {
+                cache_read: CitationCacheReadState::Hit,
+                ..
+            })
+        ));
 
         let offline_mint_calls = Arc::clone(&mint_calls);
-        let offline_preflight = gui_citation_preflight_cache_first(
-            &query,
-            "claim",
-            None,
-            11,
-            true,
-            move |_| {
+        let offline_preflight =
+            gui_citation_preflight_cache_first(&query, "claim", None, 11, true, move |_| {
                 offline_mint_calls.fetch_add(1, Ordering::SeqCst);
                 anyhow::bail!("preflight must remain uncalled offline")
-            },
-        )
-        .unwrap();
-        assert!(matches!(offline_preflight, GuiCitationPreflightCacheFirst::Terminal(CitationCacheFirstReport {
-            lookup: CitationLookupResult::Unavailable {
-                state: CitationLookupState::OfflineCacheMiss,
+            })
+            .unwrap();
+        assert!(matches!(
+            offline_preflight,
+            GuiCitationPreflightCacheFirst::Terminal(CitationCacheFirstReport {
+                lookup: CitationLookupResult::Unavailable {
+                    state: CitationLookupState::OfflineCacheMiss,
+                    ..
+                },
                 ..
-            },
-            ..
-        })));
+            })
+        ));
         assert_eq!(mint_calls.load(Ordering::SeqCst), 0);
 
         let consume_calls = Arc::new(AtomicUsize::new(0));
@@ -976,7 +982,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/works/10.1000/example"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(crossref_body("10.1000/example")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(crossref_body("10.1000/example")),
+            )
             .mount(&server)
             .await;
         let query = query(CitationProvider::Crossref);
@@ -1001,7 +1009,8 @@ mod tests {
             "publication_year":2024,
             "primary_location":{"source":{"display_name":"Journal"}}
         }"#;
-        let semantic = CitationQuery::new(CitationProvider::SemanticScholar, "10.1000/example").unwrap();
+        let semantic =
+            CitationQuery::new(CitationProvider::SemanticScholar, "10.1000/example").unwrap();
         let semantic_body = br#"{
             "paperId":"0123456789abcdef0123456789abcdef01234567",
             "externalIds":{"DOI":"10.1000/example"},
@@ -1010,7 +1019,10 @@ mod tests {
             "year":2024,
             "venue":"Journal"
         }"#;
-        for (query, body) in [(openalex, openalex_body.as_slice()), (semantic, semantic_body.as_slice())] {
+        for (query, body) in [
+            (openalex, openalex_body.as_slice()),
+            (semantic, semantic_body.as_slice()),
+        ] {
             let record = parse_provider_record(&query, body, 1).unwrap();
             let result = CitationLookupResult::from_live(&query, "claim", record).unwrap();
             assert!(result.validate_for_claim(&query, "claim"));
@@ -1023,7 +1035,9 @@ mod tests {
         clear_cooldowns_for_test();
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(crossref_body("10.1000/other")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(crossref_body("10.1000/other")),
+            )
             .mount(&server)
             .await;
         let result = lookup_live_against(
@@ -1080,7 +1094,8 @@ mod tests {
         let first = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(
-                ResponseTemplate::new(302).insert_header("location", format!("{}/second", second.uri())),
+                ResponseTemplate::new(302)
+                    .insert_header("location", format!("{}/second", second.uri())),
             )
             .mount(&first)
             .await;
@@ -1128,14 +1143,18 @@ mod tests {
         assert!(matches!(
             first,
             CitationLookupResult::Unavailable {
-                state: CitationLookupState::RateLimited { retry_after_secs: Some(30) },
+                state: CitationLookupState::RateLimited {
+                    retry_after_secs: Some(30)
+                },
                 ..
             }
         ));
         assert!(matches!(
             second,
             CitationLookupResult::Unavailable {
-                state: CitationLookupState::RateLimited { retry_after_secs: Some(_) },
+                state: CitationLookupState::RateLimited {
+                    retry_after_secs: Some(_)
+                },
                 ..
             }
         ));
@@ -1168,7 +1187,9 @@ mod tests {
                 assert!(matches!(
                     result,
                     CitationLookupResult::Unavailable {
-                        state: CitationLookupState::RateLimited { retry_after_secs: None },
+                        state: CitationLookupState::RateLimited {
+                            retry_after_secs: None
+                        },
                         ..
                     }
                 ));

@@ -173,14 +173,11 @@ async fn run_gui_preflight(
         Some(&cache),
         now_secs,
         offline,
-        |live_miss| crate::tools::citation_consent::create_gui_citation_lookup_preflight(
-            &home,
-            &query,
-            &claim,
-            request_id,
-            now_secs,
-            live_miss,
-        ),
+        |live_miss| {
+            crate::tools::citation_consent::create_gui_citation_lookup_preflight(
+                &home, &query, &claim, request_id, now_secs, live_miss,
+            )
+        },
     )?;
     let receipt = match result {
         citation_http::GuiCitationPreflightCacheFirst::Consent {
@@ -224,19 +221,24 @@ async fn run_gui_preflight(
             expires_unix: Some(expires_unix),
             challenge_token: Some(challenge_token.to_string()),
         },
-        citation_http::GuiCitationPreflightCacheFirst::Terminal(report) => GuiCitationPreflightReceipt {
-            kind: "citation_gui_preflight",
-            status: if matches!(report.cache_read, citation_http::CitationCacheReadState::Hit) {
-                "cache_hit"
-            } else {
-                "offline"
-            },
-            request_key_sha256: query.request_key_sha256(),
-            cache_read: report.cache_read,
-            result: Some(report.lookup),
-            expires_unix: None,
-            challenge_token: None,
-        },
+        citation_http::GuiCitationPreflightCacheFirst::Terminal(report) => {
+            GuiCitationPreflightReceipt {
+                kind: "citation_gui_preflight",
+                status: if matches!(
+                    report.cache_read,
+                    citation_http::CitationCacheReadState::Hit
+                ) {
+                    "cache_hit"
+                } else {
+                    "offline"
+                },
+                request_key_sha256: query.request_key_sha256(),
+                cache_read: report.cache_read,
+                result: Some(report.lookup),
+                expires_unix: None,
+                challenge_token: None,
+            }
+        }
     };
     print_gui_receipt(&receipt, output)
 }
@@ -249,7 +251,10 @@ fn run_gui_decide(
     approval_stdin: bool,
     output: OutputFormat,
 ) -> Result<()> {
-    ensure!(approval_stdin, "private GUI citation decisions require --approval-stdin");
+    ensure!(
+        approval_stdin,
+        "private GUI citation decisions require --approval-stdin"
+    );
     let query = gui_query(provider, doi)?;
     let token = read_gui_token_from_stdin("GUI citation challenge token")?;
     let home = FreedomConfig::default_neoth_home();
@@ -264,7 +269,11 @@ fn run_gui_decide(
     )?;
     let receipt = GuiCitationDecisionReceipt {
         kind: "citation_gui_decision",
-        status: if proof_token.is_some() { "approved" } else { "denied" },
+        status: if proof_token.is_some() {
+            "approved"
+        } else {
+            "denied"
+        },
         proof_token: proof_token.map(|token| token.to_string()),
     };
     print_gui_receipt(&receipt, output)
@@ -327,9 +336,13 @@ pub async fn run_citation(args: CitationArgs) -> Result<()> {
                 None => run_lookup(&claim, &doi, provider.as_deref(), offline, args.output).await,
             }
         }
-        CitationAction::GuiPreflight { claim, doi, provider, request_id, offline } => {
-            run_gui_preflight(&claim, &doi, &provider, &request_id, offline, args.output).await
-        }
+        CitationAction::GuiPreflight {
+            claim,
+            doi,
+            provider,
+            request_id,
+            offline,
+        } => run_gui_preflight(&claim, &doi, &provider, &request_id, offline, args.output).await,
         CitationAction::GuiDecide {
             claim,
             doi,
@@ -359,7 +372,8 @@ async fn run_gui_lookup(
     output: OutputFormat,
 ) -> Result<()> {
     let claim = validate_claim(claim)?;
-    let provider = provider.ok_or_else(|| anyhow!("GUI citation lookup requires one explicit provider"))?;
+    let provider =
+        provider.ok_or_else(|| anyhow!("GUI citation lookup requires one explicit provider"))?;
     let query = gui_query(provider, doi)?;
     let cache = CitationCache::at_default()?;
     let home = FreedomConfig::default_neoth_home();
@@ -376,12 +390,7 @@ async fn run_gui_lookup(
             || {
                 let proof = read_gui_token_from_stdin("GUI citation approval proof")?;
                 crate::tools::citation_consent::consume_gui_citation_lookup_approval(
-                    &home,
-                    &proof,
-                    &query,
-                    &claim,
-                    request_id,
-                    now_secs,
+                    &home, &proof, &query, &claim, request_id, now_secs,
                 )
             },
         )
@@ -430,20 +439,27 @@ async fn run_lookup(
     let cache = CitationCache::at_default()?;
     let cache_ref = &cache;
     let now_secs = crate::time::now_unix_secs();
-    let receipt = run_lookup_with(claim, doi, provider, offline, now_secs, move |query, claim, offline, now_secs| async move {
-        citation_http::lookup_cache_first(
-            &query,
-            &claim,
-            Some(cache_ref),
-            now_secs,
-            offline,
-            || {
-                let config = FreedomConfig::load_from_default_path_or_default()?;
-                ExternalHttpAuthorizer::interactive(config.autonomy_policy())
-            },
-        )
-        .await
-    })
+    let receipt = run_lookup_with(
+        claim,
+        doi,
+        provider,
+        offline,
+        now_secs,
+        move |query, claim, offline, now_secs| async move {
+            citation_http::lookup_cache_first(
+                &query,
+                &claim,
+                Some(cache_ref),
+                now_secs,
+                offline,
+                || {
+                    let config = FreedomConfig::load_from_default_path_or_default()?;
+                    ExternalHttpAuthorizer::interactive(config.autonomy_policy())
+                },
+            )
+            .await
+        },
+    )
     .await?;
     emit_lookup(receipt, output)
 }
@@ -504,7 +520,9 @@ where
         }
     }
 
-    let last = attempts.last().ok_or_else(|| anyhow!("citation lookup selected no provider"))?;
+    let last = attempts
+        .last()
+        .ok_or_else(|| anyhow!("citation lookup selected no provider"))?;
     let result = last.result.clone();
     let cache_read = last.cache_read;
     let cache_write = last.cache_write;
@@ -590,11 +608,14 @@ fn lookup_source_label(source: LookupSource) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
     use crate::tools::citation_lookup::{CitationLookupState, CitationRecord};
+    use clap::Parser;
     use std::sync::{Arc, Mutex};
 
-    fn unavailable_report(provider: CitationProvider, state: CitationLookupState) -> citation_http::CitationCacheFirstReport {
+    fn unavailable_report(
+        provider: CitationProvider,
+        state: CitationLookupState,
+    ) -> citation_http::CitationCacheFirstReport {
         citation_http::CitationCacheFirstReport {
             lookup: CitationLookupResult::unavailable(provider, state),
             cache_read,
@@ -605,7 +626,10 @@ mod tests {
     #[test]
     fn provider_omission_order_and_explicit_limit_are_pinned() {
         assert_eq!(selected_providers(None).unwrap(), DEFAULT_PROVIDER_ORDER);
-        assert_eq!(selected_providers(Some("openalex")).unwrap(), vec![CitationProvider::OpenAlex]);
+        assert_eq!(
+            selected_providers(Some("openalex")).unwrap(),
+            vec![CitationProvider::OpenAlex]
+        );
         assert!(selected_providers(Some("other")).is_err());
     }
 
@@ -618,8 +642,16 @@ mod tests {
     #[test]
     fn clap_binds_explicit_provider_and_offline_without_a_network_path() {
         let parsed = crate::cli::Cli::try_parse_from([
-            "neoth", "citation", "lookup", "--claim", "bound claim", "--doi",
-            "10.1000/example", "--provider", "openalex", "--offline",
+            "neoth",
+            "citation",
+            "lookup",
+            "--claim",
+            "bound claim",
+            "--doi",
+            "10.1000/example",
+            "--provider",
+            "openalex",
+            "--offline",
         ])
         .unwrap();
         assert!(matches!(
@@ -639,7 +671,10 @@ mod tests {
         let result = cache.lookup_offline(&query, "bound claim", 1).unwrap();
         assert!(matches!(
             result,
-            CitationLookupResult::Unavailable { state: CitationLookupState::OfflineCacheMiss, .. }
+            CitationLookupResult::Unavailable {
+                state: CitationLookupState::OfflineCacheMiss,
+                ..
+            }
         ));
     }
 
@@ -651,7 +686,11 @@ mod tests {
         );
         let query = CitationQuery::new(CitationProvider::Crossref, "10.1000/example").unwrap();
         assert!(result.validate_for_claim(&query, "a valid explicit claim"));
-        assert!(result.display_for_claim(&query, "a valid explicit claim").is_none());
+        assert!(
+            result
+                .display_for_claim(&query, "a valid explicit claim")
+                .is_none()
+        );
     }
 
     #[test]
@@ -701,70 +740,128 @@ mod tests {
         .unwrap();
         assert_eq!(*seen.lock().unwrap(), DEFAULT_PROVIDER_ORDER);
         assert_eq!(receipt.attempts.len(), 3);
-        assert!(matches!(&receipt.attempts[0].result, CitationLookupResult::Unavailable { state: CitationLookupState::NotFound, .. }));
-        assert!(matches!(&receipt.attempts[1].result, CitationLookupResult::Unavailable { state: CitationLookupState::ProviderUnavailable, .. }));
-        assert!(matches!(&receipt.attempts[2].result, CitationLookupResult::Unavailable { state: CitationLookupState::RateLimited { retry_after_secs: Some(12) }, .. }));
+        assert!(matches!(
+            &receipt.attempts[0].result,
+            CitationLookupResult::Unavailable {
+                state: CitationLookupState::NotFound,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &receipt.attempts[1].result,
+            CitationLookupResult::Unavailable {
+                state: CitationLookupState::ProviderUnavailable,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &receipt.attempts[2].result,
+            CitationLookupResult::Unavailable {
+                state: CitationLookupState::RateLimited {
+                    retry_after_secs: Some(12)
+                },
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
     async fn runner_offline_and_invalid_inputs_construct_zero_authorizers() {
         let authorizers = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let observed = Arc::clone(&authorizers);
-        let receipt = run_lookup_with(
-            "bound claim",
-            "10.1000/example",
-            Some("crossref"),
-            true,
-            7,
-            move |query, _claim, offline, _now| {
-                if !offline {
-                    observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
-                async move { unavailable_report(query.provider, CitationLookupState::OfflineCacheMiss) }
-            },
-        )
-        .await
-        .unwrap();
+        let receipt =
+            run_lookup_with(
+                "bound claim",
+                "10.1000/example",
+                Some("crossref"),
+                true,
+                7,
+                move |query, _claim, offline, _now| {
+                    if !offline {
+                        observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    async move {
+                        unavailable_report(query.provider, CitationLookupState::OfflineCacheMiss)
+                    }
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(authorizers.load(std::sync::atomic::Ordering::Relaxed), 0);
         assert_eq!(receipt.attempts.len(), 1);
 
         let invalid_authorizers = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let invalid_seen = Arc::clone(&invalid_authorizers);
-        let invalid = run_lookup_with("\n", "10.1000/example", None, false, 7, move |query, _claim, _offline, _now| {
-            invalid_seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            async move { unavailable_report(query.provider, CitationLookupState::NotFound) }
-        })
+        let invalid = run_lookup_with(
+            "\n",
+            "10.1000/example",
+            None,
+            false,
+            7,
+            move |query, _claim, _offline, _now| {
+                invalid_seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                async move { unavailable_report(query.provider, CitationLookupState::NotFound) }
+            },
+        )
         .await;
         assert!(invalid.is_err());
-        assert_eq!(invalid_authorizers.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert_eq!(
+            invalid_authorizers.load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
     }
 
     #[tokio::test]
     async fn permission_denied_stops_fallback_and_query_drift_is_rejected() {
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let call_counter = Arc::clone(&calls);
-        let denied = run_lookup_with("bound claim", "10.1000/example", None, false, 7, move |query, _claim, _offline, _now| {
-            call_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            async move { unavailable_report(query.provider, CitationLookupState::PermissionDenied) }
-        })
-        .await
-        .unwrap();
+        let denied =
+            run_lookup_with(
+                "bound claim",
+                "10.1000/example",
+                None,
+                false,
+                7,
+                move |query, _claim, _offline, _now| {
+                    call_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    async move {
+                        unavailable_report(query.provider, CitationLookupState::PermissionDenied)
+                    }
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
         assert_eq!(denied.attempts.len(), 1);
 
-        let drift = run_lookup_with("bound claim", "10.1000/example", Some("crossref"), false, 7, |_query, claim, _offline, _now| async move {
-            let wrong = CitationQuery::new(CitationProvider::Crossref, "10.1000/other").unwrap();
-            let record = CitationRecord::new(
-                &wrong, "10.1000/other", Some("10.1000/other"), "Bounded title",
-                &["Author".to_string()], Some(2026), None, 1, None,
-            )
-            .unwrap();
-            citation_http::CitationCacheFirstReport {
-                lookup: CitationLookupResult::from_live(&wrong, &claim, record).unwrap(),
-                cache_read,
-                cache_write: citation_http::CitationCacheWriteState::NotAttempted,
-            }
-        })
+        let drift = run_lookup_with(
+            "bound claim",
+            "10.1000/example",
+            Some("crossref"),
+            false,
+            7,
+            |_query, claim, _offline, _now| async move {
+                let wrong =
+                    CitationQuery::new(CitationProvider::Crossref, "10.1000/other").unwrap();
+                let record = CitationRecord::new(
+                    &wrong,
+                    "10.1000/other",
+                    Some("10.1000/other"),
+                    "Bounded title",
+                    &["Author".to_string()],
+                    Some(2026),
+                    None,
+                    1,
+                    None,
+                )
+                .unwrap();
+                citation_http::CitationCacheFirstReport {
+                    lookup: CitationLookupResult::from_live(&wrong, &claim, record).unwrap(),
+                    cache_read,
+                    cache_write: citation_http::CitationCacheWriteState::NotAttempted,
+                }
+            },
+        )
         .await;
         assert!(drift.is_err());
     }

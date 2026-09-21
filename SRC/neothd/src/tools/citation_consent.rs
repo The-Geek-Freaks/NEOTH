@@ -5,9 +5,9 @@
 //! normalized claim, GUI request revision, and `freedom.yaml` generation.
 //! It never stores a DOI, claim, URL, request body, or reusable permission.
 
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{Read as _, Seek as _, SeekFrom};
-use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -19,7 +19,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::config::FreedomConfig;
 use crate::permissions::{self, Action, Decision};
-use crate::tools::citation_lookup::{validate_claim, CitationProvider, CitationQuery};
+use crate::tools::citation_lookup::{CitationProvider, CitationQuery, validate_claim};
 use crate::tools::external_http::ExternalHttpSurface;
 
 /// Both records are intentionally short-lived.  A proof starts only after an
@@ -234,9 +234,12 @@ impl CitationRecordLock {
 }
 
 fn verify_private_store_dir(dir: &cap_std::fs::Dir, display_path: &Path) -> Result<()> {
-    let metadata = dir
-        .dir_metadata()
-        .with_context(|| format!("inspect private citation consent directory {}", display_path.display()))?;
+    let metadata = dir.dir_metadata().with_context(|| {
+        format!(
+            "inspect private citation consent directory {}",
+            display_path.display()
+        )
+    })?;
     anyhow::ensure!(
         metadata.is_dir() && !crate::skills::store::cap_metadata_is_link_like(&metadata),
         "citation consent namespace is not a real non-link directory"
@@ -302,22 +305,21 @@ fn record_slot(home: &Path, kind_domain: &[u8], id: &str) -> Result<CitationReco
 fn record_lock(slot: &CitationRecordSlot) -> Result<CitationRecordLock> {
     let lock_name = OsString::from(format!("{}.lock", slot.file_name.to_string_lossy()));
     let lock_path = slot.display_path.with_extension("lock");
-    let (file, binding) = crate::skills::store::open_or_create_bound_lockfile(
-        &slot.dir,
-        &lock_name,
-        &lock_path,
-    )?;
+    let (file, binding) =
+        crate::skills::store::open_or_create_bound_lockfile(&slot.dir, &lock_name, &lock_path)?;
     let started = Instant::now();
     loop {
         match file.try_lock() {
             Ok(()) => break,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+            Err(std::fs::TryLockError::WouldBlock) => {
                 if started.elapsed() >= Duration::from_secs(5) {
                     anyhow::bail!("citation consent record lock held for >5s")
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            Err(error) => return Err(error).context("lock citation consent record"),
+            Err(std::fs::TryLockError::Error(error)) => {
+                return Err(error).context("lock citation consent record");
+            }
         }
     }
     anyhow::ensure!(
@@ -383,9 +385,9 @@ fn gui_request_digest(request_id: &str) -> Result<String> {
     anyhow::ensure!(
         !request_id.is_empty()
             && request_id.len() <= MAX_GUI_REQUEST_ID_BYTES
-            && request_id.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
-            }),
+            && request_id
+                .bytes()
+                .all(|byte| { byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') }),
         "invalid opaque GUI citation request id"
     );
     Ok(domain_hash(GUI_REQUEST_DOMAIN, &[request_id.as_bytes()]))
@@ -399,12 +401,7 @@ fn surface_for(provider: CitationProvider) -> ExternalHttpSurface {
     }
 }
 
-fn write_record<T: Serialize>(
-    home: &Path,
-    kind_domain: &[u8],
-    id: &str,
-    record: &T,
-) -> Result<()> {
+fn write_record<T: Serialize>(home: &Path, kind_domain: &[u8], id: &str, record: &T) -> Result<()> {
     let bytes = serde_json::to_vec(record).context("serialize citation consent record")?;
     anyhow::ensure!(
         bytes.len() <= MAX_RECORD_BYTES,
@@ -433,7 +430,9 @@ fn read_record<T: for<'de> Deserialize<'de>>(slot: &CitationRecordSlot) -> Resul
 fn consume_record(slot: &CitationRecordSlot) -> Result<()> {
     anyhow::ensure!(
         crate::skills::store::remove_child_file_if_present(
-        &slot.dir, &slot.file_name, &slot.display_path,
+            &slot.dir,
+            &slot.file_name,
+            &slot.display_path,
         )?,
         "citation consent record was already consumed"
     );
@@ -455,7 +454,10 @@ fn split_token(token: &str) -> Result<TokenParts> {
         "invalid citation consent token"
     );
     canonical_uuid(id)?;
-    anyhow::ensure!(secret.bytes().all(|byte| byte.is_ascii_hexdigit()), "invalid citation consent token");
+    anyhow::ensure!(
+        secret.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "invalid citation consent token"
+    );
     Ok(TokenParts {
         id: id.to_owned(),
         secret: secret.to_owned(),
@@ -474,7 +476,10 @@ fn record_is_live(
     expires_unix: u64,
     now: u64,
 ) -> Result<()> {
-    anyhow::ensure!(version == RECORD_VERSION, "unsupported citation consent record version");
+    anyhow::ensure!(
+        version == RECORD_VERSION,
+        "unsupported citation consent record version"
+    );
     canonical_uuid(id)?;
     for value in [
         secret_sha256,
@@ -483,7 +488,10 @@ fn record_is_live(
         gui_request_sha256,
         config_sha256,
     ] {
-        anyhow::ensure!(is_sha256_hex(value), "invalid citation consent record binding");
+        anyhow::ensure!(
+            is_sha256_hex(value),
+            "invalid citation consent record binding"
+        );
     }
     anyhow::ensure!(
         created_unix <= now
@@ -612,16 +620,21 @@ fn config_snapshot(home: &Path) -> Result<(FreedomConfig, String)> {
         let mut file = open_config_no_follow(&path).context("open citation consent config")?;
         let before = file.metadata().context("inspect citation consent config")?;
         anyhow::ensure!(
-            before.file_type().is_file() && !metadata_is_link_like(&before) && before.len() <= MAX_CONFIG_BYTES,
+            before.file_type().is_file()
+                && !metadata_is_link_like(&before)
+                && before.len() <= MAX_CONFIG_BYTES,
             "citation consent config must be a bounded regular non-link file"
         );
         let mut bytes = Zeroizing::new(Vec::with_capacity(before.len() as usize));
-        file.seek(SeekFrom::Start(0)).context("seek citation consent config")?;
+        file.seek(SeekFrom::Start(0))
+            .context("seek citation consent config")?;
         (&mut file)
             .take(MAX_CONFIG_BYTES + 1)
             .read_to_end(&mut bytes)
             .context("read citation consent config")?;
-        let after = file.metadata().context("reinspect citation consent config")?;
+        let after = file
+            .metadata()
+            .context("reinspect citation consent config")?;
         if bytes.len() as u64 != before.len()
             || before.len() != after.len()
             || !after.file_type().is_file()
@@ -674,7 +687,10 @@ fn create_challenge_at(
     now: u64,
 ) -> Result<Zeroizing<String>> {
     query.validate().context("validate citation query")?;
-    anyhow::ensure!(is_sha256_hex(config_sha256), "invalid citation consent config generation");
+    anyhow::ensure!(
+        is_sha256_hex(config_sha256),
+        "invalid citation consent config generation"
+    );
     let claim_sha256 = claim_digest(claim)?;
     let gui_request_sha256 = gui_request_digest(gui_request_id)?;
     let id = uuid::Uuid::now_v7().hyphenated().to_string();
@@ -714,11 +730,12 @@ pub(crate) fn create_gui_citation_lookup_preflight(
     let _ = claim_digest(claim)?;
     let _ = gui_request_digest(gui_request_id)?;
     let (config, config_sha256) = config_snapshot(home)?;
-    match permissions::evaluate(&preflight_action(query), config.autonomy_policy()) {
+    match permissions::evaluate(&preflight_action(query), &config.autonomy_policy()) {
         Decision::Allow => Ok(CitationConsentPreflight::Ready),
         Decision::Deny(_) => Ok(CitationConsentPreflight::Denied),
         Decision::Confirm(_) => {
-            let token = create_challenge_at(home, query, claim, gui_request_id, &config_sha256, now)?;
+            let token =
+                create_challenge_at(home, query, claim, gui_request_id, &config_sha256, now)?;
             Ok(CitationConsentPreflight::ConfirmationRequired {
                 challenge_token: token,
                 expires_unix: now.saturating_add(CITATION_CONSENT_TTL_SECS),
@@ -785,7 +802,10 @@ fn decide_at(
         expires_unix: now.saturating_add(CITATION_CONSENT_TTL_SECS),
     };
     write_record(home, PROOF_FILE_DOMAIN, &proof_id, &proof)?;
-    Ok(Some(Zeroizing::new(format!("{proof_id}.{}", proof_secret.as_str()))))
+    Ok(Some(Zeroizing::new(format!(
+        "{proof_id}.{}",
+        proof_secret.as_str()
+    ))))
 }
 
 pub(crate) fn decide_gui_citation_lookup(
@@ -910,38 +930,181 @@ mod tests {
     fn store_create_consume_and_replay_are_one_shot() {
         let home = tempfile::tempdir().unwrap();
         let challenge = issue_challenge(home.path(), 100);
-        let proof = decide_at(home.path(), challenge.as_str(), &query(), &claim_digest("the concrete claim").unwrap(), &gui_request_digest("gui-revision-7").unwrap(), &config_hash(TEST_CONFIG_A), CitationConsentDecision::Approve, 101).unwrap().unwrap();
-        let consumed = consume_at(home.path(), proof.as_str(), &query(), &claim_digest("the concrete claim").unwrap(), &gui_request_digest("gui-revision-7").unwrap(), &config_hash(TEST_CONFIG_A), 102).unwrap();
-        assert!(consumed.matches_lookup(&query(), "the concrete claim", "gui-revision-7", &config_hash(TEST_CONFIG_A)));
-        assert!(consumed.authorizes_fixed_get(&query(), "the concrete claim", "gui-revision-7", &config_hash(TEST_CONFIG_A), "GET", &query().fixed_request_url(), ExternalHttpSurface::Crossref, true));
-        assert!(!consumed.authorizes_fixed_get(&query(), "changed claim", "gui-revision-7", &config_hash(TEST_CONFIG_A), "GET", &query().fixed_request_url(), ExternalHttpSurface::Crossref, true));
-        assert!(!consumed.authorizes_fixed_get(&query(), "the concrete claim", "gui-revision-8", &config_hash(TEST_CONFIG_A), "GET", &query().fixed_request_url(), ExternalHttpSurface::Crossref, true));
-        assert!(consume_at(home.path(), proof.as_str(), &query(), &claim_digest("the concrete claim").unwrap(), &gui_request_digest("gui-revision-7").unwrap(), &config_hash(TEST_CONFIG_A), 103).is_err());
+        let proof = decide_at(
+            home.path(),
+            challenge.as_str(),
+            &query(),
+            &claim_digest("the concrete claim").unwrap(),
+            &gui_request_digest("gui-revision-7").unwrap(),
+            &config_hash(TEST_CONFIG_A),
+            CitationConsentDecision::Approve,
+            101,
+        )
+        .unwrap()
+        .unwrap();
+        let consumed = consume_at(
+            home.path(),
+            proof.as_str(),
+            &query(),
+            &claim_digest("the concrete claim").unwrap(),
+            &gui_request_digest("gui-revision-7").unwrap(),
+            &config_hash(TEST_CONFIG_A),
+            102,
+        )
+        .unwrap();
+        assert!(consumed.matches_lookup(
+            &query(),
+            "the concrete claim",
+            "gui-revision-7",
+            &config_hash(TEST_CONFIG_A)
+        ));
+        assert!(consumed.authorizes_fixed_get(
+            &query(),
+            "the concrete claim",
+            "gui-revision-7",
+            &config_hash(TEST_CONFIG_A),
+            "GET",
+            &query().fixed_request_url(),
+            ExternalHttpSurface::Crossref,
+            true
+        ));
+        assert!(!consumed.authorizes_fixed_get(
+            &query(),
+            "changed claim",
+            "gui-revision-7",
+            &config_hash(TEST_CONFIG_A),
+            "GET",
+            &query().fixed_request_url(),
+            ExternalHttpSurface::Crossref,
+            true
+        ));
+        assert!(!consumed.authorizes_fixed_get(
+            &query(),
+            "the concrete claim",
+            "gui-revision-8",
+            &config_hash(TEST_CONFIG_A),
+            "GET",
+            &query().fixed_request_url(),
+            ExternalHttpSurface::Crossref,
+            true
+        ));
+        assert!(
+            consume_at(
+                home.path(),
+                proof.as_str(),
+                &query(),
+                &claim_digest("the concrete claim").unwrap(),
+                &gui_request_digest("gui-revision-7").unwrap(),
+                &config_hash(TEST_CONFIG_A),
+                103
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn mismatch_and_expiry_fail_before_consumption() {
         let home = tempfile::tempdir().unwrap();
         let challenge = issue_challenge(home.path(), 300);
-        let proof = decide_at(home.path(), challenge.as_str(), &query(), &claim_digest("the concrete claim").unwrap(), &gui_request_digest("gui-revision-7").unwrap(), &config_hash(TEST_CONFIG_A), CitationConsentDecision::Approve, 301).unwrap().unwrap();
-        assert!(consume_at(home.path(), proof.as_str(), &query(), &claim_digest("other claim").unwrap(), &gui_request_digest("gui-revision-7").unwrap(), &config_hash(TEST_CONFIG_A), 302).is_err());
-        assert!(consume_at(home.path(), proof.as_str(), &query(), &claim_digest("the concrete claim").unwrap(), &gui_request_digest("gui-revision-7").unwrap(), &config_hash(TEST_CONFIG_A), 422).is_err());
+        let proof = decide_at(
+            home.path(),
+            challenge.as_str(),
+            &query(),
+            &claim_digest("the concrete claim").unwrap(),
+            &gui_request_digest("gui-revision-7").unwrap(),
+            &config_hash(TEST_CONFIG_A),
+            CitationConsentDecision::Approve,
+            301,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            consume_at(
+                home.path(),
+                proof.as_str(),
+                &query(),
+                &claim_digest("other claim").unwrap(),
+                &gui_request_digest("gui-revision-7").unwrap(),
+                &config_hash(TEST_CONFIG_A),
+                302
+            )
+            .is_err()
+        );
+        assert!(
+            consume_at(
+                home.path(),
+                proof.as_str(),
+                &query(),
+                &claim_digest("the concrete claim").unwrap(),
+                &gui_request_digest("gui-revision-7").unwrap(),
+                &config_hash(TEST_CONFIG_A),
+                422
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn deny_consumes_exact_challenge_without_proof() {
         let home = tempfile::tempdir().unwrap();
         let token = issue_challenge(home.path(), 100);
-        assert!(decide_at(home.path(), token.as_str(), &query(), &claim_digest("the concrete claim").unwrap(), &gui_request_digest("gui-revision-7").unwrap(), &config_hash(TEST_CONFIG_A), CitationConsentDecision::Deny, 101).unwrap().is_none());
-        assert!(decide_at(home.path(), token.as_str(), &query(), &claim_digest("the concrete claim").unwrap(), &gui_request_digest("gui-revision-7").unwrap(), &config_hash(TEST_CONFIG_A), CitationConsentDecision::Deny, 102).is_err());
+        assert!(
+            decide_at(
+                home.path(),
+                token.as_str(),
+                &query(),
+                &claim_digest("the concrete claim").unwrap(),
+                &gui_request_digest("gui-revision-7").unwrap(),
+                &config_hash(TEST_CONFIG_A),
+                CitationConsentDecision::Deny,
+                101
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            decide_at(
+                home.path(),
+                token.as_str(),
+                &query(),
+                &claim_digest("the concrete claim").unwrap(),
+                &gui_request_digest("gui-revision-7").unwrap(),
+                &config_hash(TEST_CONFIG_A),
+                CitationConsentDecision::Deny,
+                102
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn config_generation_invalidation_fails_closed() {
         let home = tempfile::tempdir().unwrap();
         let challenge = issue_challenge(home.path(), 100);
-        let proof = decide_at(home.path(), challenge.as_str(), &query(), &claim_digest("the concrete claim").unwrap(), &gui_request_digest("gui-revision-7").unwrap(), &config_hash(TEST_CONFIG_A), CitationConsentDecision::Approve, 101).unwrap().unwrap();
-        assert!(consume_at(home.path(), proof.as_str(), &query(), &claim_digest("the concrete claim").unwrap(), &gui_request_digest("gui-revision-7").unwrap(), &config_hash(TEST_CONFIG_B), 102).is_err());
+        let proof = decide_at(
+            home.path(),
+            challenge.as_str(),
+            &query(),
+            &claim_digest("the concrete claim").unwrap(),
+            &gui_request_digest("gui-revision-7").unwrap(),
+            &config_hash(TEST_CONFIG_A),
+            CitationConsentDecision::Approve,
+            101,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            consume_at(
+                home.path(),
+                proof.as_str(),
+                &query(),
+                &claim_digest("the concrete claim").unwrap(),
+                &gui_request_digest("gui-revision-7").unwrap(),
+                &config_hash(TEST_CONFIG_B),
+                102
+            )
+            .is_err()
+        );
     }
 
     #[cfg(unix)]
@@ -952,28 +1115,32 @@ mod tests {
         let redirected_home = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         symlink(outside.path(), redirected_home.path().join("consent")).unwrap();
-        assert!(create_challenge_at(
-            redirected_home.path(),
-            &query(),
-            "the concrete claim",
-            "gui-revision-7",
-            &config_hash(TEST_CONFIG_A),
-            100,
-        )
-        .is_err());
+        assert!(
+            create_challenge_at(
+                redirected_home.path(),
+                &query(),
+                "the concrete claim",
+                "gui-revision-7",
+                &config_hash(TEST_CONFIG_A),
+                100,
+            )
+            .is_err()
+        );
 
         let home = tempfile::tempdir().unwrap();
         let _ = issue_challenge(home.path(), 100);
         let root = home.path().join("consent").join(".gui-citation");
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(create_challenge_at(
-            home.path(),
-            &query(),
-            "the concrete claim",
-            "gui-revision-7",
-            &config_hash(TEST_CONFIG_A),
-            101,
-        )
-        .is_err());
+        assert!(
+            create_challenge_at(
+                home.path(),
+                &query(),
+                "the concrete claim",
+                "gui-revision-7",
+                &config_hash(TEST_CONFIG_A),
+                101,
+            )
+            .is_err()
+        );
     }
 }

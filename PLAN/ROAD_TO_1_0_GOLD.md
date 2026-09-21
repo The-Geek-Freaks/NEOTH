@@ -19,6 +19,15 @@ filesystem cases, the existing 46 universal GUI plus 11 Linux/macOS callbacks,
 and 7 optional adapter tests. GOLD-LF-P1-12 stays open until full integration and
 executable evidence. Generated CLI reference comes from the next hosted build.
 
+W155 source da2a5582 passed Code Quality35624480765. Preflight35624481124
+reported 119 exact Rustfmt hunks in eight Citation files; those hosted layouts
+are now imported. Reference build35624482185 found six Rust compiler errors:
+missing Context imports, TryLockError variants, a policy-reference argument,
+an Option mapping signature and the required geteuid unsafe block. The narrow
+repairs are reviewed separately and await a fresh hosted build. The 334-input
+manifest and all required test hashes bind the repaired source. No executable
+validation ran locally and no Road checkbox closes.
+
 Repair source b58ec47f passed Preflight35622231947 and Quality35622233230.
 Its full CI35622258375 found one additional test-only E0507 in an attach fixture;
 the borrowed TurnId is now cloned and independently reviewed. That failed-source
@@ -42,7 +51,7 @@ diff-impact root binding. Independent source review covers W160/W161; fresh
 hosted CI and preview remain required. W137 automatic routing and W142 terminal
 refresh still need their diagnostic reruns. See
 [W160-W161](../docs/gold-wave160-161-verification.md). No Road checkbox closes;
-W155 Citation and W159 WAL session identity remain separate unpublished work.
+W155 GUI and W159 WAL session identity remain separate unpublished work.
 
 **W158 native recovery (2026-09-21):** hosted ff146652 ran 16,938 Windows
 and 17,003 macOS tests; 12/13 failed respectively. Four independently reviewed

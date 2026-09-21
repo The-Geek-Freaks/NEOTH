@@ -18,9 +18,6 @@ pub mod caldav;
 /// EM-02b — CalDAV calendar (VEVENT) read/write. Reuses the `caldav` VTODO
 /// primitives + the shared `email::calendar` model/renderer.
 pub mod caldav_calendar;
-/// GOLD-LF-P1-12 — bounded bibliographic record, claim-binding, and private
-/// disk-cache core. Transport and CLI/GUI ingress deliberately live elsewhere.
-pub mod citation_lookup;
 /// GOLD-LF-P1-12 — opaque, one-time desktop GUI consent for an exact live
 /// citation lookup. It is intentionally separate from chat consent.
 pub(crate) mod citation_consent;
@@ -28,6 +25,9 @@ pub(crate) mod citation_consent;
 /// citation provider set. Cache-first selection and canonical records remain
 /// in `citation_lookup`.
 pub mod citation_http;
+/// GOLD-LF-P1-12 — bounded bibliographic record, claim-binding, and private
+/// disk-cache core. Transport and CLI/GUI ingress deliberately live elsewhere.
+pub mod citation_lookup;
 /// GOLD-ADAPT-ODY-17 — iterative deep-research engine (multi-step
 /// search→read→synthesize loop). Invoked via the `/research <topic>` slash
 /// command from `cli/chat.rs` (CLI) and `cli/serve_pipeline.rs` (channel).

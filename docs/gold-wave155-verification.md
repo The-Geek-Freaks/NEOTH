@@ -62,3 +62,14 @@ Required next evidence: hosted format/static gates, core/CLI-reference build,
 full native and GUI tests including macOS callback discovery, and applicable
 portable acceptance. Generated CLI documentation must come from the admitted
 binary. Earlier CI/preview runs do not validate this Citation implementation.
+
+## First hosted compilation and repairs
+
+W155 source da2a5582 passed Code Quality35624480765. Preflight35624481124
+reported 119 exact Rustfmt hunks in eight Citation files; those hosted layouts
+are now imported. Reference build35624482185 found six Rust compiler errors:
+missing Context imports, TryLockError variants, a policy-reference argument,
+an Option mapping signature and the required geteuid unsafe block. The narrow
+repairs are reviewed separately and await a fresh hosted build. The 334-input
+manifest and all required test hashes bind the repaired source. No executable
+validation ran locally and no Road checkbox closes.

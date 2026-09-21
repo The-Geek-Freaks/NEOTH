@@ -10,8 +10,8 @@ use std::fmt;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
@@ -19,10 +19,10 @@ use sha2::{Digest, Sha256};
 use crate::permissions::gate::{ChannelAsker, PermissionAuditSink};
 use crate::permissions::ifc::{EgressProvenance, ExplicitExternalResearchRelease};
 use crate::permissions::{Action, AutonomyPolicySnapshot, ConfirmStrategy, Gate};
+use crate::tools::citation_consent::ConsumedGuiCitationLookupApproval;
+use crate::tools::citation_lookup::{CitationProvider, CitationQuery, validate_claim};
 use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
 use crate::wal::writer::WalWriterHandle;
-use crate::tools::citation_consent::ConsumedGuiCitationLookupApproval;
-use crate::tools::citation_lookup::{validate_claim, CitationProvider, CitationQuery};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExternalHttpSurface {
@@ -387,12 +387,17 @@ impl ExternalHttpPolicySource {
     /// continuations prove only their fixed request shape and keep normal Gate
     /// confirmation; consumed approvals additionally prove their opaque
     /// binding and consume an in-memory one-shot authority.
-    fn policy_for_request(&self, request: &ExternalHttpRequest) -> Result<(AutonomyPolicySnapshot, bool)> {
+    fn policy_for_request(
+        &self,
+        request: &ExternalHttpRequest,
+    ) -> Result<(AutonomyPolicySnapshot, bool)> {
         match self {
             Self::Fixed(_) | Self::Reload(_) => return Ok((self.current(), false)),
             Self::GuiCitationLookupReady(context) => {
-                let (policy, _) = crate::tools::citation_consent::
-                    current_citation_consent_policy_generation(&context.home)
+                let (policy, _) =
+                    crate::tools::citation_consent::current_citation_consent_policy_generation(
+                        &context.home,
+                    )
                     .context("read current GUI citation ready policy")?;
                 anyhow::ensure!(
                     context.authorizes_fixed_get(request),
@@ -401,8 +406,10 @@ impl ExternalHttpPolicySource {
                 return Ok((policy, false));
             }
             Self::GuiCitationLookup(context) => {
-                let (policy, current_config_sha256) = crate::tools::citation_consent::
-                    current_citation_consent_policy_generation(&context.home)
+                let (policy, current_config_sha256) =
+                    crate::tools::citation_consent::current_citation_consent_policy_generation(
+                        &context.home,
+                    )
                     .context("read current GUI citation consent policy")?;
                 let empty_body = request.body_binding_sha256 == hex::encode(Sha256::digest(b""));
                 anyhow::ensure!(
@@ -446,7 +453,9 @@ impl ExternalHttpAuthorizer {
         claim: &str,
         gui_request_id: &str,
     ) -> Result<Self> {
-        query.validate().context("validate GUI citation ready query")?;
+        query
+            .validate()
+            .context("validate GUI citation ready query")?;
         let claim = validate_claim(claim).context("validate GUI citation ready claim")?;
         anyhow::ensure!(
             !gui_request_id.is_empty(),
@@ -478,7 +487,9 @@ impl ExternalHttpAuthorizer {
         gui_request_id: &str,
         approval: ConsumedGuiCitationLookupApproval,
     ) -> Result<Self> {
-        query.validate().context("validate GUI citation lookup query")?;
+        query
+            .validate()
+            .context("validate GUI citation lookup query")?;
         let claim = validate_claim(claim).context("validate GUI citation lookup claim")?;
         self.policy = ExternalHttpPolicySource::GuiCitationLookup(GuiCitationLookupApproval {
             home,
@@ -713,7 +724,8 @@ impl ExternalHttpAuthorizer {
         }
 
         let parsed = validate_request_url(&request.url)?;
-        let (effective_policy, gui_citation_preconfirmed) = self.policy.policy_for_request(&request)?;
+        let (effective_policy, gui_citation_preconfirmed) =
+            self.policy.policy_for_request(&request)?;
         let local = classify_local_searxng(&request, &parsed)?;
         let request_id = uuid::Uuid::now_v7().to_string();
         let egress_provenance_binding = self.egress_provenance.binding_material();
@@ -1159,9 +1171,8 @@ mod tests {
     async fn gui_ready_rechecks_current_policy_and_keeps_normal_http_lifecycle() {
         let home = tempfile::tempdir().unwrap();
         let query = CitationQuery::new(CitationProvider::Crossref, "10.1000/example").unwrap();
-        let request = || {
-            ExternalHttpRequest::get(query.fixed_request_url(), ExternalHttpSurface::Crossref)
-        };
+        let request =
+            || ExternalHttpRequest::get(query.fixed_request_url(), ExternalHttpSurface::Crossref);
 
         write_gui_citation_ready_config(
             home.path(),
@@ -1196,7 +1207,8 @@ mod tests {
                 false,
             );
             let sink = Arc::new(RecordingSink::default());
-            let authorizer = gui_citation_ready_authorizer(home.path(), sink.clone(), query.clone());
+            let authorizer =
+                gui_citation_ready_authorizer(home.path(), sink.clone(), query.clone());
             // This models a GUI preflight that observed `Allow`, then loses
             // that state before the side-effect leaf.
             write_gui_citation_ready_config(home.path(), autonomy, deny_external_http);

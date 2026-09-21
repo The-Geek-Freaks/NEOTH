@@ -116,7 +116,10 @@ impl CitationProvider {
 
     fn canonical_permalink(self, record_id: &str, doi: Option<&str>) -> String {
         match self {
-            Self::Crossref => format!("https://doi.org/{}", percent_encode_path(doi.unwrap_or(record_id))),
+            Self::Crossref => format!(
+                "https://doi.org/{}",
+                percent_encode_path(doi.unwrap_or(record_id))
+            ),
             Self::OpenAlex => format!("https://openalex.org/{record_id}"),
             Self::SemanticScholar => format!(
                 "https://www.semanticscholar.org/paper/{}",
@@ -167,7 +170,9 @@ impl CitationQuery {
         let doi = percent_encode_path(&self.doi);
         match self.provider {
             CitationProvider::Crossref => format!("{}/works/{doi}", self.provider.origin()),
-            CitationProvider::OpenAlex => format!("{}/works/https://doi.org/{doi}", self.provider.origin()),
+            CitationProvider::OpenAlex => {
+                format!("{}/works/https://doi.org/{doi}", self.provider.origin())
+            }
             CitationProvider::SemanticScholar => format!(
                 "{}/graph/v1/paper/DOI:{doi}?fields=paperId,title,authors,year,venue,externalIds",
                 self.provider.origin()
@@ -235,10 +240,13 @@ impl CitationRecord {
         {
             return Err(CitationValidationError::QueryBinding);
         }
-        let title = normalize_required_text(title, MAX_TITLE_BYTES, CitationValidationError::Title)?;
+        let title =
+            normalize_required_text(title, MAX_TITLE_BYTES, CitationValidationError::Title)?;
         let authors = normalize_authors(authors)?;
         let venue = venue
-            .map(|value| normalize_required_text(value, MAX_VENUE_BYTES, CitationValidationError::Venue))
+            .map(|value| {
+                normalize_required_text(value, MAX_VENUE_BYTES, CitationValidationError::Venue)
+            })
             .transpose()?;
         let response_version = response_version
             .map(|value| normalize_required_text(value, 64, CitationValidationError::Provenance))
@@ -247,7 +255,8 @@ impl CitationRecord {
             schema_version: CITATION_RECORD_SCHEMA_VERSION,
             provider,
             provider_record_id: provider_record_id.clone(),
-            provider_permalink: provider.canonical_permalink(&provider_record_id, canonical_doi.as_deref()),
+            provider_permalink: provider
+                .canonical_permalink(&provider_record_id, canonical_doi.as_deref()),
             canonical_doi,
             title,
             authors,
@@ -269,15 +278,24 @@ impl CitationRecord {
     pub fn fingerprint_sha256(&self) -> Result<String, CitationValidationError> {
         self.validate()?;
         let mut bytes = Vec::new();
-        append_field(&mut bytes, CITATION_RECORD_SCHEMA_VERSION.to_string().as_bytes());
+        append_field(
+            &mut bytes,
+            CITATION_RECORD_SCHEMA_VERSION.to_string().as_bytes(),
+        );
         append_field(&mut bytes, self.provider.wire_name().as_bytes());
         append_field(&mut bytes, self.provider_record_id.as_bytes());
-        append_field(&mut bytes, self.canonical_doi.as_deref().unwrap_or("").as_bytes());
+        append_field(
+            &mut bytes,
+            self.canonical_doi.as_deref().unwrap_or("").as_bytes(),
+        );
         append_field(&mut bytes, self.title.as_bytes());
         for author in &self.authors {
             append_field(&mut bytes, author.as_bytes());
         }
-        append_field(&mut bytes, self.year.map(u16::to_string).unwrap_or_default().as_bytes());
+        append_field(
+            &mut bytes,
+            self.year.map(|year| year.to_string()).unwrap_or_default().as_bytes(),
+        );
         append_field(&mut bytes, self.venue.as_deref().unwrap_or("").as_bytes());
         Ok(digest_hex(&[RECORD_FINGERPRINT_DOMAIN, &bytes]))
     }
@@ -286,7 +304,8 @@ impl CitationRecord {
         if self.schema_version != CITATION_RECORD_SCHEMA_VERSION {
             return Err(CitationValidationError::SchemaVersion);
         }
-        if canonical_record_id(self.provider, &self.provider_record_id)? != self.provider_record_id {
+        if canonical_record_id(self.provider, &self.provider_record_id)? != self.provider_record_id
+        {
             return Err(CitationValidationError::ProviderRecordId);
         }
         if let Some(doi) = &self.canonical_doi
@@ -294,14 +313,17 @@ impl CitationRecord {
         {
             return Err(CitationValidationError::Doi);
         }
-        if normalize_required_text(&self.title, MAX_TITLE_BYTES, CitationValidationError::Title)? != self.title {
+        if normalize_required_text(&self.title, MAX_TITLE_BYTES, CitationValidationError::Title)?
+            != self.title
+        {
             return Err(CitationValidationError::Title);
         }
         if normalize_authors(&self.authors)? != self.authors {
             return Err(CitationValidationError::Authors);
         }
         if let Some(venue) = &self.venue
-            && normalize_required_text(venue, MAX_VENUE_BYTES, CitationValidationError::Venue)? != *venue
+            && normalize_required_text(venue, MAX_VENUE_BYTES, CitationValidationError::Venue)?
+                != *venue
         {
             return Err(CitationValidationError::Venue);
         }
@@ -312,7 +334,8 @@ impl CitationRecord {
             return Err(CitationValidationError::Provenance);
         }
         if let Some(version) = &self.provenance.response_version
-            && normalize_required_text(version, 64, CitationValidationError::Provenance)? != *version
+            && normalize_required_text(version, 64, CitationValidationError::Provenance)?
+                != *version
         {
             return Err(CitationValidationError::Provenance);
         }
@@ -418,9 +441,7 @@ impl CitationLookupResult {
     ) -> Result<Self, CitationValidationError> {
         query.validate()?;
         record.validate()?;
-        if record.provenance.source != RecordSource::Live
-            || !record_matches_query(&record, query)
-        {
+        if record.provenance.source != RecordSource::Live || !record_matches_query(&record, query) {
             return Err(CitationValidationError::QueryBinding);
         }
         Ok(Self::Found {
@@ -436,7 +457,11 @@ impl CitationLookupResult {
 
     pub fn validate_for_claim(&self, query: &CitationQuery, claim: &str) -> bool {
         match self {
-            Self::Found { record, binding, source } => {
+            Self::Found {
+                record,
+                binding,
+                source,
+            } => {
                 query.validate().is_ok()
                     && record_matches_query(record, query)
                     && record.validate().is_ok()
@@ -453,7 +478,12 @@ impl CitationLookupResult {
 
     /// Single shared, display-safe projection for the future CLI and GUI.
     pub fn display_for_claim(&self, query: &CitationQuery, claim: &str) -> Option<CitationDisplay> {
-        let Self::Found { record, binding, source } = self else {
+        let Self::Found {
+            record,
+            binding,
+            source,
+        } = self
+        else {
             return None;
         };
         if !self.validate_for_claim(query, claim) {
@@ -529,7 +559,9 @@ impl CitationAdapterOutcome {
     ) -> Result<CitationLookupResult, CitationValidationError> {
         match self {
             Self::Record(record) => CitationLookupResult::from_live(query, claim, record),
-            Self::Unavailable(state) => Ok(CitationLookupResult::unavailable(query.provider, state)),
+            Self::Unavailable(state) => {
+                Ok(CitationLookupResult::unavailable(query.provider, state))
+            }
         }
     }
 }
@@ -556,7 +588,9 @@ pub enum CitationCacheError {
 impl std::fmt::Display for CitationCacheError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidPolicy => formatter.write_str("citation cache policy has a zero cap or TTL"),
+            Self::InvalidPolicy => {
+                formatter.write_str("citation cache policy has a zero cap or TTL")
+            }
             Self::Io(error) => write!(formatter, "citation cache I/O: {error}"),
         }
     }
@@ -703,7 +737,8 @@ impl CitationCache {
     ) -> Result<(), CitationCacheError> {
         query.validate().map_err(validation_io_error)?;
         record.validate().map_err(validation_io_error)?;
-        if record.provenance.source != RecordSource::Live || !record_matches_query(record, query)
+        if record.provenance.source != RecordSource::Live
+            || !record_matches_query(record, query)
             || record.fetched_at_unix > now_secs
         {
             return Err(std::io::Error::new(
@@ -837,7 +872,9 @@ impl CitationCache {
             entries.push((path, entry.last_accessed_unix, bytes.len() as u64));
         }
         entries.sort_by(|left, right| {
-            left.1.cmp(&right.1).then_with(|| left.0.file_name().cmp(&right.0.file_name()))
+            left.1
+                .cmp(&right.1)
+                .then_with(|| left.0.file_name().cmp(&right.0.file_name()))
         });
         let mut total_bytes = entries.iter().map(|entry| entry.2).sum::<u64>();
         while entries.len() > self.max_entries || total_bytes > self.max_bytes {
@@ -868,7 +905,10 @@ fn ensure_no_redirected_ancestor(path: &Path) -> std::io::Result<()> {
 }
 
 fn create_private_cache_directory(path: &Path) -> std::io::Result<()> {
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(parent)?;
     }
     #[cfg(windows)]
@@ -904,7 +944,8 @@ fn verify_private_cache_directory(path: &Path) -> std::io::Result<()> {
     {
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
-        if metadata.uid() != libc::geteuid() {
+        // SAFETY: `geteuid` has no preconditions and does not retain a pointer.
+        if metadata.uid() != unsafe { libc::geteuid() } {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 "citation cache directory is not owned by the current user",
@@ -964,7 +1005,8 @@ fn open_cache_child_nofollow(path: &Path) -> std::io::Result<std::fs::File> {
     use std::os::windows::io::{FromRawHandle as _, RawHandle};
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING,
+        CreateFileW, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_SHARE_READ,
+        OPEN_EXISTING,
     };
 
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -1093,7 +1135,10 @@ fn normalize_claim(value: &str) -> Result<String, CitationValidationError> {
 
 fn normalize_doi(value: &str) -> Result<String, CitationValidationError> {
     let mut value = value.trim();
-    if let Some(stripped) = value.strip_prefix("doi:").or_else(|| value.strip_prefix("DOI:")) {
+    if let Some(stripped) = value
+        .strip_prefix("doi:")
+        .or_else(|| value.strip_prefix("DOI:"))
+    {
         value = stripped;
     }
     if let Some(stripped) = value
@@ -1166,7 +1211,8 @@ fn normalize_authors(authors: &[String]) -> Result<Vec<String>, CitationValidati
     let mut total = 0usize;
     let mut normalized = Vec::with_capacity(authors.len());
     for author in authors {
-        let author = normalize_required_text(author, MAX_AUTHOR_BYTES, CitationValidationError::Authors)?;
+        let author =
+            normalize_required_text(author, MAX_AUTHOR_BYTES, CitationValidationError::Authors)?;
         total = total.saturating_add(author.len());
         if total > MAX_AUTHORS_BYTES {
             return Err(CitationValidationError::Authors);
@@ -1228,7 +1274,9 @@ fn percent_encode_path(value: &str) -> String {
 }
 
 fn fixed_cache_entry_path(dir: &Path, path: &Path) -> bool {
-    if path.parent() != Some(dir) || path.extension().and_then(|value| value.to_str()) != Some("json") {
+    if path.parent() != Some(dir)
+        || path.extension().and_then(|value| value.to_str()) != Some("json")
+    {
         return false;
     }
     path.file_stem()
@@ -1263,24 +1311,45 @@ mod tests {
         .unwrap()
     }
 
-    fn cache(tmp: &tempfile::TempDir, ttl_secs: u64, max_entries: usize, max_bytes: u64) -> CitationCache {
-        CitationCache::new(tmp.path().join("citations"), ttl_secs, max_entries, max_bytes).unwrap()
+    fn cache(
+        tmp: &tempfile::TempDir,
+        ttl_secs: u64,
+        max_entries: usize,
+        max_bytes: u64,
+    ) -> CitationCache {
+        CitationCache::new(
+            tmp.path().join("citations"),
+            ttl_secs,
+            max_entries,
+            max_bytes,
+        )
+        .unwrap()
     }
 
     #[test]
     fn doi_canonicalization_rejects_arbitrary_urls_and_has_fixed_endpoints() {
-        let query = query(CitationProvider::Crossref, " HTTPS://doi.org/10.1000/ABC.def ");
+        let query = query(
+            CitationProvider::Crossref,
+            " HTTPS://doi.org/10.1000/ABC.def ",
+        );
         assert_eq!(query.doi, "10.1000/abc.def");
-        assert_eq!(query.fixed_request_url(), "https://api.crossref.org/works/10.1000%2Fabc.def");
-        assert!(CitationQuery::new(CitationProvider::OpenAlex, "https://evil.invalid/10.1/x").is_err());
+        assert_eq!(
+            query.fixed_request_url(),
+            "https://api.crossref.org/works/10.1000%2Fabc.def"
+        );
+        assert!(
+            CitationQuery::new(CitationProvider::OpenAlex, "https://evil.invalid/10.1/x").is_err()
+        );
         assert!(CitationQuery::new(CitationProvider::OpenAlex, "10.1/a?host=evil").is_err());
         assert!(CitationQuery::new(CitationProvider::SemanticScholar, "10.1/a bad").is_err());
-        assert!(CitationQuery {
-            provider: CitationProvider::Crossref,
-            doi: "10.1000/Upper".into(),
-        }
-        .validate()
-        .is_err());
+        assert!(
+            CitationQuery {
+                provider: CitationProvider::Crossref,
+                doi: "10.1000/Upper".into(),
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]
@@ -1308,18 +1377,20 @@ mod tests {
     #[test]
     fn record_bounds_and_serialized_invariant_tampering_are_rejected() {
         let q = query(CitationProvider::OpenAlex, "10.1000/a");
-        assert!(CitationRecord::new(
-            &q,
-            "W123",
-            Some(&q.doi),
-            &"x".repeat(MAX_TITLE_BYTES + 1),
-            &[],
-            None,
-            None,
-            1,
-            None,
-        )
-        .is_err());
+        assert!(
+            CitationRecord::new(
+                &q,
+                "W123",
+                Some(&q.doi),
+                &"x".repeat(MAX_TITLE_BYTES + 1),
+                &[],
+                None,
+                None,
+                1,
+                None,
+            )
+            .is_err()
+        );
         let mut record = live_record(&q, "W123", "Good", 1);
         record.provider_permalink = "https://evil.invalid/record".into();
         assert!(record.validate().is_err());
@@ -1330,11 +1401,27 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let q = query(CitationProvider::Crossref, "10.1000/a");
         let cache = cache(&tmp, 100, 8, 100_000);
-        cache.put(&q, &live_record(&q, "10.1000/a", "One", 10), 10).unwrap();
+        cache
+            .put(&q, &live_record(&q, "10.1000/a", "One", 10), 10)
+            .unwrap();
         let first = cache.get(&q, "claim one", 20).unwrap().unwrap();
         let second = cache.get(&q, "claim two", 20).unwrap().unwrap();
-        let CitationLookupResult::Found { binding: first, source, .. } = first else { panic!() };
-        let CitationLookupResult::Found { binding: second, source: second_source, .. } = second else { panic!() };
+        let CitationLookupResult::Found {
+            binding: first,
+            source,
+            ..
+        } = first
+        else {
+            panic!()
+        };
+        let CitationLookupResult::Found {
+            binding: second,
+            source: second_source,
+            ..
+        } = second
+        else {
+            panic!()
+        };
         assert_eq!(source, LookupSource::Cache);
         assert_eq!(second_source, LookupSource::Cache);
         assert_ne!(first.binding_sha256, second.binding_sha256);
@@ -1351,16 +1438,26 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let q = query(CitationProvider::OpenAlex, "10.1000/a");
         let cache = cache(&tmp, 100, 8, 100_000);
-        cache.put(&q, &live_record(&q, "W1", "One", 10), 10).unwrap();
+        cache
+            .put(&q, &live_record(&q, "W1", "One", 10), 10)
+            .unwrap();
         let path = cache.entry_path(&CitationCache::cache_key(&q));
         std::fs::write(&path, b"not json").unwrap();
         assert!(cache.get(&q, "claim", 20).unwrap().is_none());
         assert!(!path.exists());
 
-        cache.put(&q, &live_record(&q, "W1", "One", 30), 30).unwrap();
-        assert!(cache.get(&q, "claim", 20).unwrap().is_none(), "future entry is evicted");
-        cache.put(&q, &live_record(&q, "W1", "One", 40), 40).unwrap();
-        let mut entry: CitationCacheEntry = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        cache
+            .put(&q, &live_record(&q, "W1", "One", 30), 30)
+            .unwrap();
+        assert!(
+            cache.get(&q, "claim", 20).unwrap().is_none(),
+            "future entry is evicted"
+        );
+        cache
+            .put(&q, &live_record(&q, "W1", "One", 40), 40)
+            .unwrap();
+        let mut entry: CitationCacheEntry =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         entry.record_fingerprint_sha256 = "0".repeat(64);
         std::fs::write(&path, serde_json::to_vec(&entry).unwrap()).unwrap();
         assert!(cache.get(&q, "claim", 50).unwrap().is_none());
@@ -1372,14 +1469,23 @@ mod tests {
         let cache = cache(&tmp, 1000, 2, 2_000);
         for (index, doi) in ["10.1000/a", "10.1000/b", "10.1000/c"].iter().enumerate() {
             let q = query(CitationProvider::Crossref, doi);
-            cache.put(&q, &live_record(&q, doi, doi, 10 + index as u64), 10 + index as u64).unwrap();
+            cache
+                .put(
+                    &q,
+                    &live_record(&q, doi, doi, 10 + index as u64),
+                    10 + index as u64,
+                )
+                .unwrap();
         }
         let names: Vec<_> = std::fs::read_dir(tmp.path().join("citations"))
             .unwrap()
             .flatten()
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(names.iter().filter(|name| name.ends_with(".json")).count(), 2);
+        assert_eq!(
+            names.iter().filter(|name| name.ends_with(".json")).count(),
+            2
+        );
         assert!(names.iter().all(|name| !name.ends_with(".tmp")));
         let total_bytes: u64 = std::fs::read_dir(tmp.path().join("citations"))
             .unwrap()
@@ -1390,8 +1496,14 @@ mod tests {
         assert!(total_bytes <= 2_000, "byte cap is enforced with count cap");
 
         let q = query(CitationProvider::Crossref, "10.1000/c");
-        cache.put(&q, &live_record(&q, "10.1000/c", "Replacement", 20), 20).unwrap();
-        let CitationLookupResult::Found { record, .. } = cache.get(&q, "claim", 21).unwrap().unwrap() else { panic!() };
+        cache
+            .put(&q, &live_record(&q, "10.1000/c", "Replacement", 20), 20)
+            .unwrap();
+        let CitationLookupResult::Found { record, .. } =
+            cache.get(&q, "claim", 21).unwrap().unwrap()
+        else {
+            panic!()
+        };
         assert_eq!(record.title, "Replacement");
     }
 
@@ -1413,9 +1525,11 @@ mod tests {
             .provider
             .canonical_permalink(&record.provider_record_id, record.canonical_doi.as_deref());
         assert!(CitationLookupResult::from_live(&query_a, "claim", record.clone()).is_err());
-        assert!(CitationAdapterOutcome::Record(record)
-            .into_lookup_result(&query_a, "claim")
-            .is_err());
+        assert!(
+            CitationAdapterOutcome::Record(record)
+                .into_lookup_result(&query_a, "claim")
+                .is_err()
+        );
         assert!(CitationCache::new(std::env::temp_dir().join("citation-zero"), 0, 1, 1).is_err());
     }
 
@@ -1424,10 +1538,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let q = query(CitationProvider::Crossref, "10.1000/a");
         let mut cache = cache(&tmp, 100, 8, 100_000);
-        cache.put(&q, &live_record(&q, "10.1000/a", "One", 9), 9).unwrap();
+        cache
+            .put(&q, &live_record(&q, "10.1000/a", "One", 9), 9)
+            .unwrap();
         let path = cache.entry_path(&CitationCache::cache_key(&q));
         cache.max_bytes = std::fs::metadata(path).unwrap().len();
-        assert!(cache.get(&q, "claim", 10).is_err(), "touch growth is observable");
+        assert!(
+            cache.get(&q, "claim", 10).is_err(),
+            "touch growth is observable"
+        );
     }
 
     #[cfg(unix)]
@@ -1438,7 +1557,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let q = query(CitationProvider::Crossref, "10.1000/a");
         let cache = cache(&tmp, 100, 8, 100_000);
-        cache.put(&q, &live_record(&q, "10.1000/a", "One", 1), 1).unwrap();
+        cache
+            .put(&q, &live_record(&q, "10.1000/a", "One", 1), 1)
+            .unwrap();
         let path = cache.entry_path(&CitationCache::cache_key(&q));
         std::fs::remove_file(&path).unwrap();
         let outside = tmp.path().join("outside.json");
