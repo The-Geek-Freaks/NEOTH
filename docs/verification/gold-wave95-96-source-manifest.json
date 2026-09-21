@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W129-private-pairing-and-observed-lint-repair",
   "base": "f87e063432e73b6d86f12bcb87d8435ebd0c28bc",
-  "capturedUtc": "2026-09-21T06:36:04.7569877Z",
+  "capturedUtc": "2026-09-21T06:42:11.9845438Z",
   "validationStatus": "W126_W127_W129_SOURCE_REVIEW_APPROVED_REMOTE_EXECUTION_REQUIRED",
   "scopeNote": "300 cumulative inputs. Admit ten independently reviewed W126/W127 source paths and the W129 observed test-only Clippy repair. Private selected-request approval and identifiable first challenge. All execution remains GitHub-only; no Road closure.",
   "files": [
@@ -53,8 +53,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 227682,
-      "sha256": "47C2E0E65CE1C1CD81CFCCDFF03C3FB8C1F071BFCBF50448AD573480AEA1FF05"
+      "bytes": 227841,
+      "sha256": "057842020535AFF4EFDB2C21C3FC460702A4EC8B7A936D54F967F881B240F6FB"
     },
     {
       "path": "docs/code-map-lifecycle.md",

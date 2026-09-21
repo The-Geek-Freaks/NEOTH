@@ -31,6 +31,13 @@ W126/W127 source `f4283ea8` passed Code Quality `35568978710`. Preflight
 layouts were imported without a local formatter. Fresh static gates and the
 SHA-bound remote CLI-reference export remain required.
 
+
+The formatter follow-up `ded1e26d` passed Preflight `35569315937` and Code
+Quality `35569315168`. CLI-reference export `35568994162` completed on
+`f4283ea8`; its source and SHA-256 were verified before importing the generated
+hidden-command entry. No local product binary ran. Native and portable gates
+remain separate.
+
 **W124/W125 observed CI and preview recovery (2026-09-21):** full CI
 `35543099210` on `55ec9225` executed 16800 Windows tests: 16799 passed, one
 failed, 22 skipped. Linux/macOS stopped on a missing nested-module GUI-test

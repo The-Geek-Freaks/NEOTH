@@ -400,6 +400,13 @@ Explicit local Telegram DM-pairing request administration
 - `--account <ACCOUNT>`
 - `--code <CODE>`
 
+#### `neoth channel pairing approve-request` _(hidden)_
+
+Private GUI approval for one already-selected pairing request
+
+- `<CHANNEL>`
+- `--account <ACCOUNT>`
+
 #### `neoth channel pairing dismiss`
 
 - `<CHANNEL>`

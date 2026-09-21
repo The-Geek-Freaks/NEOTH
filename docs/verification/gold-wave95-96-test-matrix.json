@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 51961,
-    "sha256": "40A483816AB46B7F1019807CEE859718CA62BD6CC400136FBACF18BF7CB7AEE5"
+    "sha256": "D87EABFA897DACF9DE2A8FA9E33EED48D6DE9C1051958737522DF07516F0F279"
   },
   "sourceInputs": 300,
   "requiredNativeTests": [
@@ -1284,7 +1284,7 @@
     "additionalUnixGuiRequired": 4,
     "execution": "PENDING_GITHUB_ONLY",
     "localValidationRan": false,
-    "cliReference": "Remote regeneration required: generator includes hidden commands",
+    "cliReference": "SHA_BOUND_REMOTE_OUTPUT_IMPORTED",
     "formatFollowup": {
       "run": 35568979275,
       "source": "f4283ea8281bb91c4863626e5744961657ffee56",
@@ -1293,7 +1293,14 @@
       "codeQuality": 35568978710,
       "codeQualityConclusion": "success",
       "localFormatterRan": false,
-      "rerun": "PENDING"
+      "rerun": "PASS_PREFLIGHT35569315937_CODEQUALITY35569315168_ONded1e26d"
+    },
+    "referenceImport": {
+      "run": 35568994162,
+      "source": "f4283ea8281bb91c4863626e5744961657ffee56",
+      "sha256": "057842020535AFF4EFDB2C21C3FC460702A4EC8B7A936D54F967F881B240F6FB",
+      "path": "docs/cli-commands.md",
+      "localProductRan": false
     }
   },
   "wave129": {
