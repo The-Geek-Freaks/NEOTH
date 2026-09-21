@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W153A provider/audit subsystem (2026-09-21):** the new provider event plane,
+correct native Claude assistant/result parsing, decorator authorization and
+metadata-only reasoning audit are independently reviewed. Fourteen new native
+test requirements bind these ten source files. See
+[W153A](../docs/gold-wave153-provider-verification.md). The manifest now has
+325 inputs and 200 universal native requirements, plus the existing three
+Windows-only and all existing GUI requirements. CLI/daemon/Main/Buddy W153
+integration remains uncommitted while its actual dispatch/attach/child fixtures
+are completed. Hosted execution remains pending; no Road checkbox closes.
+
+W157 source 02c16320 passed Preflight35605937904 and CodeQuality35605937355.
+Full native/GUI proof remains pending; W153 is not part of these quick gates.
+
 **W157 hosted strict-lint follow-up (2026-09-21):** source ff146652 passed
 workspace formatting and slim-core Clippy; full Linux Clippy then rejected
 one now-unfulfilled `dead_code` expectation in the shared GUI integration

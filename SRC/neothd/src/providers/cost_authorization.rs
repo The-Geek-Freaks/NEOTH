@@ -18,7 +18,8 @@ use sha2::{Digest, Sha256};
 
 use super::{
     ChatTurnEffectGate, ChunkStream, Completion, CompletionIdentity, Provider,
-    ProviderDispatchPermit, ProviderEffectContext, ProviderRequestControls, Request,
+    ProviderDispatchPermit, ProviderEffectContext, ProviderEventStream, ProviderRequestControls,
+    ProviderStreamPayload, ReasoningDisplayGrant, Request,
 };
 #[cfg(test)]
 use crate::permissions::AutonomyLevel;
@@ -1190,6 +1191,89 @@ impl ProviderCallAuditGuard {
             Err(anyhow::anyhow!(
                 "provider stream ended before the required done=true terminal chunk"
             ))?;
+        })
+    }
+
+    /// Event-plane twin of [`Self::wrap_stream`]. Only visible response text
+    /// and the terminal `CompletionChunk` participate in provider accounting;
+    /// ephemeral reasoning is deliberately neither hashed nor sampled here.
+    pub(crate) fn wrap_event_stream(self, mut inner: ProviderEventStream) -> ProviderEventStream {
+        Box::pin(async_stream::try_stream! {
+            let mut audit = self;
+            let collect_babel_sample = audit
+                .ticket
+                .as_ref()
+                .is_some_and(|ticket| !ticket.context.incognito);
+            let mut babel_response = String::new();
+            let mut response_hasher = Sha256::new();
+            let mut response_bytes = 0usize;
+            let mut response_xxh3 = xxhash_rust::xxh3::Xxh3::new();
+            while let Some(item) = inner.next().await {
+                match item {
+                    Ok(event) => {
+                        let chunk = match &event.payload {
+                            ProviderStreamPayload::VisibleText { chunk }
+                            | ProviderStreamPayload::Done { chunk } => Some(chunk),
+                            ProviderStreamPayload::ReasoningDelta { .. }
+                            | ProviderStreamPayload::ReasoningTerminal { .. } => None,
+                        };
+                        if let Some(chunk) = chunk {
+                            let visible = chunk.delta.as_str();
+                            if collect_babel_sample {
+                                babel_response.push_str(visible);
+                            }
+                            response_hasher.update(visible.as_bytes());
+                            response_xxh3.update(visible.as_bytes());
+                            response_bytes = response_bytes.saturating_add(visible.len());
+                            audit.input_tokens = chunk.input_tokens.or(audit.input_tokens);
+                            audit.output_tokens = chunk.output_tokens.or(audit.output_tokens);
+                            audit.cache_creation_tokens =
+                                chunk.cache_creation_tokens.or(audit.cache_creation_tokens);
+                            audit.cache_read_tokens =
+                                chunk.cache_read_tokens.or(audit.cache_read_tokens);
+                        }
+                        if let ProviderStreamPayload::Done { chunk } = &event.payload {
+                            let ticket = audit.ticket.as_ref().expect("unsettled provider event-stream audit");
+                            let terminal = ProviderCallTerminal::Success {
+                                response_hash_sha256: finish_sha256(response_hasher),
+                                response_hash_xxh3: response_xxh3.digest(),
+                                response_bytes,
+                                latency_ns: Self::elapsed_ns(ticket),
+                                provider_latency_ns: 0,
+                                input_tokens: audit.input_tokens,
+                                output_tokens: audit.output_tokens,
+                                cache_creation_tokens: audit.cache_creation_tokens,
+                                cache_read_tokens: audit.cache_read_tokens,
+                                terminal_kind: "stream_done",
+                            };
+                            audit.finish(terminal).await?;
+                            if collect_babel_sample {
+                                crate::analytics::babel::khist::submit_response_text(
+                                    crate::time::now_unix_i64(),
+                                    &babel_response,
+                                );
+                            }
+                            yield event;
+                            return;
+                        }
+                        yield event;
+                    }
+                    Err(error) => {
+                        if let Err(audit_error) = audit.failure("stream_error").await {
+                            Err(anyhow::anyhow!(
+                                "provider event stream failed and terminal audit failed: {audit_error}; provider error: {error}"
+                            ))?;
+                        }
+                        Err(error)?;
+                    }
+                }
+            }
+            if let Err(audit_error) = audit.failure("stream_truncated").await {
+                Err(anyhow::anyhow!(
+                    "provider event stream ended before Done and terminal audit failed: {audit_error}"
+                ))?;
+            }
+            Err(anyhow::anyhow!("provider event stream ended before Done"))?;
         })
     }
 }
@@ -2365,12 +2449,51 @@ impl Provider for CostAuthorizingProvider<'_> {
         )
     }
 
+    async fn stream_events(
+        &self,
+        mut req: Request,
+        reasoning_display: ReasoningDisplayGrant,
+    ) -> Result<ProviderEventStream> {
+        self.bind_model(&mut req);
+        if req.model.is_none() {
+            anyhow::bail!(
+                "provider `{}` has no explicit request model or declared default",
+                self.inner.name()
+            );
+        }
+        self.inner
+            .stream_events_authorized(req, &self.authorizer, self.call_scope, reasoning_display)
+            .await
+    }
+
+    async fn stream_events_authorized(
+        &self,
+        req: Request,
+        _outer_authorizer: &ProviderCallAuthorizer,
+        _outer_call_scope: &'static str,
+        _reasoning_display: ReasoningDisplayGrant,
+    ) -> Result<ProviderEventStream> {
+        let _ = req;
+        anyhow::bail!(
+            "nested provider authorization boundaries are forbidden; dispatch through the canonical inner boundary"
+        )
+    }
+
     async fn stream_raw(
         &self,
         req: Request,
         _permit: &ProviderDispatchPermit,
     ) -> Result<ChunkStream> {
         self.stream(req).await
+    }
+
+    async fn stream_events_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+        reasoning_display: ReasoningDisplayGrant,
+    ) -> Result<ProviderEventStream> {
+        self.stream_events(req, reasoning_display).await
     }
 }
 
@@ -2531,12 +2654,45 @@ impl Provider for AuthorizedProvider {
         )
     }
 
+    async fn stream_events(
+        &self,
+        mut req: Request,
+        reasoning_display: ReasoningDisplayGrant,
+    ) -> Result<ProviderEventStream> {
+        self.bind_model(&mut req);
+        self.inner
+            .stream_events_authorized(req, &self.authorizer, self.call_scope, reasoning_display)
+            .await
+    }
+
+    async fn stream_events_authorized(
+        &self,
+        req: Request,
+        _outer_authorizer: &ProviderCallAuthorizer,
+        _outer_call_scope: &'static str,
+        _reasoning_display: ReasoningDisplayGrant,
+    ) -> Result<ProviderEventStream> {
+        let _ = req;
+        anyhow::bail!(
+            "nested provider authorization boundaries are forbidden; dispatch through the canonical inner boundary"
+        )
+    }
+
     async fn stream_raw(
         &self,
         req: Request,
         _permit: &ProviderDispatchPermit,
     ) -> Result<ChunkStream> {
         self.stream(req).await
+    }
+
+    async fn stream_events_raw(
+        &self,
+        req: Request,
+        _permit: &ProviderDispatchPermit,
+        reasoning_display: ReasoningDisplayGrant,
+    ) -> Result<ProviderEventStream> {
+        self.stream_events(req, reasoning_display).await
     }
 }
 

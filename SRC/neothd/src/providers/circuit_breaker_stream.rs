@@ -27,7 +27,9 @@ use anyhow::Result;
 use futures_util::Stream;
 
 use super::circuit_breaker::acquire_for;
-use super::{ChunkStream, CompletionChunk};
+use super::{
+    ChunkStream, CompletionChunk, ProviderEventStream, ProviderStreamEvent, ProviderStreamPayload,
+};
 
 // ── StreamGuard ──────────────────────────────────────────────────────────────
 
@@ -48,6 +50,47 @@ pub struct StreamGuard {
     inner: ChunkStream,
     /// `None` once the permit has been settled (success or failure).
     permit: Option<super::circuit_breaker::OwnedPermit>,
+}
+
+/// Event-plane counterpart of [`StreamGuard`]. A provider invocation is
+/// successful only after its required `Done` event; a reason terminal alone
+/// never settles the circuit breaker successfully.
+#[pin_project::pin_project(PinnedDrop)]
+pub struct EventStreamGuard {
+    #[pin]
+    inner: ProviderEventStream,
+    permit: Option<super::circuit_breaker::OwnedPermit>,
+}
+
+impl Stream for EventStreamGuard {
+    type Item = Result<ProviderStreamEvent>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.project();
+        match this.inner.poll_next(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Some(Ok(event))) => {
+                if matches!(&event.payload, ProviderStreamPayload::Done { .. })
+                    && let Some(permit) = this.permit.take()
+                {
+                    permit.record_success();
+                }
+                Poll::Ready(Some(Ok(event)))
+            }
+            Poll::Ready(Some(Err(error))) => {
+                if let Some(permit) = this.permit.take() {
+                    permit.record_failure();
+                }
+                Poll::Ready(Some(Err(error)))
+            }
+            Poll::Ready(None) => {
+                if let Some(permit) = this.permit.take() {
+                    permit.record_failure();
+                }
+                Poll::Ready(None)
+            }
+        }
+    }
 }
 
 impl Stream for StreamGuard {
@@ -100,6 +143,14 @@ impl PinnedDrop for StreamGuard {
     }
 }
 
+#[pin_project::pinned_drop]
+impl PinnedDrop for EventStreamGuard {
+    fn drop(self: Pin<&mut Self>) {
+        let this = self.project();
+        drop(this.permit.take());
+    }
+}
+
 // ── Public helper — the one-liner used at every stream call site ─────────────
 
 /// Acquire the circuit-breaker permit for `provider_id`, then wrap the
@@ -137,6 +188,26 @@ where
     };
 
     Ok(Box::pin(guard))
+}
+
+/// Acquire the circuit-breaker permit for `provider_id`, then keep it alive
+/// through an additive provider event stream. The breaker succeeds only on
+/// `ProviderStreamPayload::Done`; errors, premature EOF, and consumer drops
+/// settle as failures.
+pub async fn run_event_stream_with_breaker<F>(
+    provider_id: &str,
+    stream_fut: F,
+) -> Result<ProviderEventStream>
+where
+    F: std::future::Future<Output = Result<ProviderEventStream>>,
+{
+    let permit = acquire_for(provider_id)
+        .map_err(|e| anyhow::anyhow!("circuit breaker open for {provider_id}: {e}"))?;
+    let inner = stream_fut.await?;
+    Ok(Box::pin(EventStreamGuard {
+        inner,
+        permit: Some(permit),
+    }))
 }
 
 #[cfg(test)]

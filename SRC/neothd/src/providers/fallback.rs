@@ -38,7 +38,8 @@ use std::path::PathBuf;
 
 use super::quota::{QuotaError, QuotaTracker};
 use super::{
-    ChunkStream, Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request,
+    ChunkStream, Completion, Provider, ProviderDispatchPermit, ProviderEventStream,
+    ProviderRequestControls, ProviderStreamPayload, ReasoningDisplayGrant, Request,
 };
 
 /// Ordered primary + fallbacks. See module docs.
@@ -84,6 +85,20 @@ impl FallbackProvider {
             item.and_then(|mut chunk| {
                 chunk.identity.prepend_dispatch_slot(slot)?;
                 Ok(chunk)
+            })
+        }))
+    }
+
+    fn stamp_event_stream_route(stream: ProviderEventStream, slot: usize) -> ProviderEventStream {
+        Box::pin(stream.map(move |item| {
+            item.and_then(|mut event| {
+                event.identity.prepend_dispatch_slot(slot)?;
+                if let ProviderStreamPayload::VisibleText { chunk }
+                | ProviderStreamPayload::Done { chunk } = &mut event.payload
+                {
+                    chunk.identity.prepend_dispatch_slot(slot)?;
+                }
+                Ok(event)
             })
         }))
     }
@@ -612,6 +627,41 @@ impl Provider for FallbackProvider {
             .stream_authorized(req, authorizer, call_scope)
             .await?;
         Ok(Self::stamp_stream_route(stream, 0))
+    }
+
+    async fn stream_events_raw(
+        &self,
+        req: Request,
+        permit: &ProviderDispatchPermit,
+        reasoning_display: ReasoningDisplayGrant,
+    ) -> Result<ProviderEventStream> {
+        let primary = self
+            .chain
+            .first()
+            .expect("FallbackProvider chain is non-empty");
+        let req = self.request_for_candidate(0, primary.as_ref(), &req)?;
+        let stream = primary
+            .stream_events_raw(req, permit, reasoning_display)
+            .await?;
+        Ok(Self::stamp_event_stream_route(stream, 0))
+    }
+
+    async fn stream_events_authorized(
+        &self,
+        req: Request,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+        reasoning_display: ReasoningDisplayGrant,
+    ) -> Result<ProviderEventStream> {
+        let primary = self
+            .chain
+            .first()
+            .expect("FallbackProvider chain is non-empty");
+        let req = self.request_for_candidate(0, primary.as_ref(), &req)?;
+        let stream = primary
+            .stream_events_authorized(req, authorizer, call_scope, reasoning_display)
+            .await?;
+        Ok(Self::stamp_event_stream_route(stream, 0))
     }
 }
 

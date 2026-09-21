@@ -37,6 +37,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tracing::{debug, info, warn};
+use zeroize::{Zeroize, Zeroizing};
 
 /// Bridge.py-derived signal: when this string lands in a Claude
 /// response, Claude has just rewritten its context window to save
@@ -51,7 +52,9 @@ use super::response_bounds;
 use super::termination::{ProviderTermination, RefusalOrigin, Retryability};
 use super::{
     ChatTurnEffectKind, ChunkStream, Completion, CompletionChunk, CompletionUsageMeasurements,
-    Provider, ProviderDispatchPermit, ProviderRequestControls, Request,
+    Provider, ProviderDispatchPermit, ProviderEventStream, ProviderRequestControls,
+    ProviderStreamEvent, ProviderStreamPayload, ReasoningDisplayGrant, ReasoningTerminalState,
+    ReasoningText, Request,
 };
 
 /// The `claude` CLI is a governed local subprocess, but its stdout carries
@@ -1144,13 +1147,11 @@ impl Provider for ClaudeCliAdapter {
     }
 
     /// Streaming: read claude stdout line-by-line and emit each line as a
-    /// chunk. Uses `--output-format stream-json` (B-8): claude-cli emits
-    /// one Anthropic SSE event per stdout line, NDJSON-style. We parse
-    /// each line, extract text deltas from `content_block_delta` events,
-    /// and capture final token usage from `message_delta`. Unrecognised
-    /// event types are skipped — Anthropic adds new types occasionally
-    /// (e.g. tool-use blocks) and we do not want to fail the stream when
-    /// the CLI version is ahead of NEOTH's parser.
+    /// chunk. Uses `--output-format stream-json` (B-8): normal Claude CLI
+    /// output is NDJSON `assistant` and `result` records. We also accept
+    /// explicit partial-message delta records when a CLI configuration emits
+    /// them. Unrecognised event types are skipped so tool-use and future
+    /// metadata records cannot corrupt the visible stream.
     async fn stream_raw(
         &self,
         mut req: Request,
@@ -1214,14 +1215,16 @@ impl Provider for ClaudeCliAdapter {
                 .context("claude CLI stdout pipe missing for stream")?;
             let mut reader = BufReader::new(stdout);
 
-            // Build the stream as an async-iter over NDJSON events. Each line
-            // is one Anthropic SSE event reformatted as JSON. We extract
-            // text deltas + final usage; non-text events are ignored.
+            // Build the stream as an async iterator over Claude CLI NDJSON
+            // records. Normal `assistant`/`result` records are primary;
+            // partial Anthropic-style deltas remain a compatibility input.
             let s = async_stream::try_stream! {
                 let mut input_tokens: Option<u32> = None;
                 let mut output_tokens: Option<u32> = None;
                 let mut stop_reason: Option<String> = None;
                 let mut visible_text = String::new();
+                let mut saw_visible_text = false;
+                let mut terminal_visible_text: Option<String> = None;
 
                 while let Some(line) = response_bounds::read_bounded_line(
                     &mut reader,
@@ -1231,11 +1234,12 @@ impl Provider for ClaudeCliAdapter {
                 )
                 .await?
                 {
-                    let line = response_bounds::frame_utf8(
+                    let line = Zeroizing::new(line);
+                    let line = Zeroizing::new(response_bounds::frame_utf8(
                         &line,
                         "claude_cli",
                         CLI_STREAM_EVIDENCE_DOMAIN,
-                    )?;
+                    )?);
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
                         continue;
@@ -1247,6 +1251,7 @@ impl Provider for ClaudeCliAdapter {
                             if visible_text.len() + text.len() <= MAX_RETAINED_VISIBLE_BYTES {
                                 visible_text.push_str(&text);
                             }
+                            saw_visible_text = true;
                             yield CompletionChunk {
                                 delta: text,
                                 done: false,
@@ -1258,26 +1263,57 @@ impl Provider for ClaudeCliAdapter {
                                 cache_read_tokens: None,
                             };
                         }
+                        StreamEvent::ReasoningDelta(_) => {}
+                        StreamEvent::Assistant {
+                            content,
+                            input,
+                            output,
+                            stop_reason: event_stop_reason,
+                        } => {
+                            if let Some(value) = input { input_tokens = Some(value); }
+                            if let Some(value) = output { output_tokens = Some(value); }
+                            if event_stop_reason.is_some() { stop_reason = event_stop_reason; }
+                            for item in content {
+                                let AssistantContent::Text(text) = item else { continue; };
+                                if visible_text.len() + text.len() <= MAX_RETAINED_VISIBLE_BYTES {
+                                    visible_text.push_str(&text);
+                                }
+                                saw_visible_text = true;
+                                yield CompletionChunk {
+                                    delta: text,
+                                    done: false,
+                                    termination: Default::default(),
+                                    identity: Default::default(),
+                                    input_tokens: None,
+                                    output_tokens: None,
+                                    cache_creation_tokens: None,
+                                    cache_read_tokens: None,
+                                };
+                            }
+                        }
                         StreamEvent::Metadata {
                             input,
                             output,
                             stop_reason: event_stop_reason,
+                            terminal_visible_text: event_terminal_visible_text,
                         } => {
                             if let Some(v) = input { input_tokens = Some(v); }
                             if let Some(v) = output { output_tokens = Some(v); }
                             if event_stop_reason.is_some() {
                                 stop_reason = event_stop_reason;
                             }
+                            if event_terminal_visible_text.is_some() {
+                                terminal_visible_text = event_terminal_visible_text;
+                            }
                         }
                         StreamEvent::Ignore => {}
                         StreamEvent::ParseError(err) => {
                             // A malformed line is loud — better to surface
                             // than silently drop, since stream-json is the
-                            // contract between NEOTH and claude-cli.
-                            Err(anyhow::anyhow!(
-                                "claude stream-json parse error on `{}`: {err}",
-                                trimmed.chars().take(120).collect::<String>(),
-                            ))?;
+                            // contract between NEOTH and claude-cli. Do not
+                            // retain a raw frame prefix in the error: it may
+                            // contain provider reasoning.
+                            Err(anyhow::anyhow!("claude stream-json parse error: {err}"))?;
                         }
                     }
                 }
@@ -1294,11 +1330,17 @@ impl Provider for ClaudeCliAdapter {
                         quoted_stderr(&output.stderr)
                     ))?;
                 }
-                // Final done-chunk with usage populated from the message_delta /
-                // result events we saw mid-stream. Empty delta — the visible
-                // text was already emitted as content_block_delta chunks.
+                // `result.result` repeats assistant text on normal Claude CLI
+                // streams. Keep it only as the fallback when no assistant or
+                // partial text event arrived, so terminal text is visible once.
+                let terminal_delta = terminal_visible_delta(saw_visible_text, terminal_visible_text);
+                if !terminal_delta.is_empty()
+                    && visible_text.len() + terminal_delta.len() <= MAX_RETAINED_VISIBLE_BYTES
+                {
+                    visible_text.push_str(&terminal_delta);
+                }
                 yield CompletionChunk {
-                    delta: String::new(),
+                    delta: terminal_delta,
                     done: true,
                     termination: claude_termination(
                         stop_reason,
@@ -1316,6 +1358,322 @@ impl Provider for ClaudeCliAdapter {
             // already; wrap into the trait's ChunkStream type.
             Ok(Box::pin(s) as ChunkStream)
         })
+        .await
+    }
+
+    /// Additive native event stream. This keeps Claude's thinking deltas out
+    /// of the legacy `CompletionChunk` plane while preserving each visible
+    /// chunk and terminal accounting field exactly once.
+    async fn stream_events_raw(
+        &self,
+        mut req: Request,
+        permit: &ProviderDispatchPermit,
+        reasoning_display: ReasoningDisplayGrant,
+    ) -> Result<ProviderEventStream> {
+        self.canonicalize_request_model(&mut req);
+        crate::providers::circuit_breaker_stream::run_event_stream_with_breaker(
+            "claude_cli",
+            async {
+                let model = req.model.clone().unwrap_or_else(|| self.model.clone());
+                let prompt = build_prompt_payload(&req);
+                let args = build_claude_spawn_args(
+                    &[
+                        "--print",
+                        "--model",
+                        &model,
+                        "--output-format",
+                        "stream-json",
+                        "--verbose",
+                    ],
+                    &self.resume_session_id,
+                );
+                let mut child = if let Some(budget) = req.thinking_budget {
+                    spawn_claude_for_effect(permit, true, || {
+                        spawn_claude_with_extra_env(
+                            &self.binary,
+                            &args,
+                            &[("MAX_THINKING_TOKENS", budget.to_string())],
+                        )
+                    })
+                    .await
+                } else {
+                    spawn_claude_for_effect(permit, true, || spawn_claude(&self.binary, &args))
+                        .await
+                }
+                .with_context(|| {
+                    format!(
+                        "spawn `{}` --print --model {}` for provider event streaming",
+                        self.binary, model
+                    )
+                })?;
+
+                if let Some(mut stdin) = child.take_stdin() {
+                    stdin
+                        .write_all(prompt.as_bytes())
+                        .await
+                        .context("write prompt to claude stdin (event stream)")?;
+                    stdin
+                        .shutdown()
+                        .await
+                        .context("close claude stdin (event stream)")?;
+                }
+
+                let stdout = child
+                    .take_stdout()
+                    .context("claude CLI stdout pipe missing for event stream")?;
+                let mut reader = BufReader::new(stdout);
+                let s = async_stream::try_stream! {
+                    let mut sequence = 0_u64;
+                    let mut input_tokens: Option<u32> = None;
+                    let mut output_tokens: Option<u32> = None;
+                    let mut stop_reason: Option<String> = None;
+                    let mut visible_text = String::new();
+                    let mut saw_visible_text = false;
+                    let mut terminal_visible_text: Option<String> = None;
+                    let mut saw_reasoning = false;
+                    let mut reasoning_redacted = false;
+
+                    loop {
+                        let line = match response_bounds::read_bounded_line(
+                            &mut reader,
+                            "claude_cli",
+                            CLI_STREAM_EVIDENCE_DOMAIN,
+                            MAX_CLI_STREAM_LINE_BYTES,
+                        )
+                        .await {
+                            Ok(Some(line)) => Zeroizing::new(line),
+                            Ok(None) => break,
+                            Err(error) => {
+                                sequence = sequence
+                                    .checked_add(1)
+                                    .context("provider event sequence exhausted")?;
+                                yield ProviderStreamEvent {
+                                    identity: Default::default(),
+                                    sequence,
+                                    payload: ProviderStreamPayload::ReasoningTerminal {
+                                        state: ReasoningTerminalState::Redacted,
+                                    },
+                                };
+                                Err(error)?;
+                                unreachable!();
+                            }
+                        };
+                        let line = match response_bounds::frame_utf8(
+                            &line,
+                            "claude_cli",
+                            CLI_STREAM_EVIDENCE_DOMAIN,
+                        ) {
+                            Ok(line) => Zeroizing::new(line),
+                            Err(error) => {
+                                sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
+                                yield ProviderStreamEvent {
+                                    identity: Default::default(),
+                                    sequence,
+                                    payload: ProviderStreamPayload::ReasoningTerminal {
+                                        state: ReasoningTerminalState::Redacted,
+                                    },
+                                };
+                                Err(error)?;
+                                unreachable!();
+                            }
+                        };
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        match parse_stream_event(trimmed) {
+                            StreamEvent::TextDelta(text) => {
+                                if visible_text.len() + text.len() <= MAX_RETAINED_VISIBLE_BYTES {
+                                    visible_text.push_str(&text);
+                                }
+                                saw_visible_text = true;
+                                sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
+                                yield ProviderStreamEvent {
+                                    identity: Default::default(),
+                                    sequence,
+                                    payload: ProviderStreamPayload::VisibleText {
+                                        chunk: CompletionChunk {
+                                            delta: text,
+                                            done: false,
+                                            termination: Default::default(),
+                                            identity: Default::default(),
+                                            input_tokens: None,
+                                            output_tokens: None,
+                                            cache_creation_tokens: None,
+                                            cache_read_tokens: None,
+                                        },
+                                    },
+                                };
+                            }
+                            StreamEvent::ReasoningDelta(text) => {
+                                saw_reasoning = true;
+                                if reasoning_display.permits_display() {
+                                    sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
+                                    yield ProviderStreamEvent {
+                                        identity: Default::default(),
+                                        sequence,
+                                        payload: ProviderStreamPayload::ReasoningDelta {
+                                            delta: text,
+                                        },
+                                    };
+                                }
+                            }
+                            StreamEvent::Assistant {
+                                content,
+                                input,
+                                output,
+                                stop_reason: event_stop_reason,
+                            } => {
+                                if let Some(value) = input { input_tokens = Some(value); }
+                                if let Some(value) = output { output_tokens = Some(value); }
+                                if event_stop_reason.is_some() { stop_reason = event_stop_reason; }
+                                for item in content {
+                                    match item {
+                                        AssistantContent::Text(text) => {
+                                            if visible_text.len() + text.len() <= MAX_RETAINED_VISIBLE_BYTES {
+                                                visible_text.push_str(&text);
+                                            }
+                                            saw_visible_text = true;
+                                            sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
+                                            yield ProviderStreamEvent {
+                                                identity: Default::default(),
+                                                sequence,
+                                                payload: ProviderStreamPayload::VisibleText {
+                                                    chunk: CompletionChunk {
+                                                        delta: text,
+                                                        done: false,
+                                                        termination: Default::default(),
+                                                        identity: Default::default(),
+                                                        input_tokens: None,
+                                                        output_tokens: None,
+                                                        cache_creation_tokens: None,
+                                                        cache_read_tokens: None,
+                                                    },
+                                                },
+                                            };
+                                        }
+                                        AssistantContent::Reasoning(text) => {
+                                            saw_reasoning = true;
+                                            if reasoning_display.permits_display() {
+                                                sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
+                                                yield ProviderStreamEvent {
+                                                    identity: Default::default(),
+                                                    sequence,
+                                                    payload: ProviderStreamPayload::ReasoningDelta { delta: text },
+                                                };
+                                            }
+                                        }
+                                        AssistantContent::RedactedReasoning => {
+                                            reasoning_redacted = true;
+                                        }
+                                    }
+                                }
+                            }
+                            StreamEvent::Metadata {
+                                input,
+                                output,
+                                stop_reason: event_stop_reason,
+                                terminal_visible_text: event_terminal_visible_text,
+                            } => {
+                                if let Some(value) = input { input_tokens = Some(value); }
+                                if let Some(value) = output { output_tokens = Some(value); }
+                                if event_stop_reason.is_some() { stop_reason = event_stop_reason; }
+                                if event_terminal_visible_text.is_some() {
+                                    terminal_visible_text = event_terminal_visible_text;
+                                }
+                            }
+                            StreamEvent::Ignore => {}
+                            StreamEvent::ParseError(error) => {
+                                sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
+                                yield ProviderStreamEvent {
+                                    identity: Default::default(),
+                                    sequence,
+                                    payload: ProviderStreamPayload::ReasoningTerminal {
+                                        state: ReasoningTerminalState::Redacted,
+                                    },
+                                };
+                                Err(anyhow::anyhow!("claude stream-json parse error: {error}"))?;
+                            }
+                        }
+                    }
+
+                    let output = match child.wait_with_output().await {
+                        Ok(output) => output,
+                        Err(error) => {
+                            sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
+                            yield ProviderStreamEvent {
+                                identity: Default::default(),
+                                sequence,
+                                payload: ProviderStreamPayload::ReasoningTerminal {
+                                    state: ReasoningTerminalState::Redacted,
+                                },
+                            };
+                            Err(anyhow::Error::new(error).context("await claude CLI after event stream"))?;
+                            unreachable!();
+                        }
+                    };
+                    if !output.status.success() {
+                        sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
+                        yield ProviderStreamEvent {
+                            identity: Default::default(),
+                            sequence,
+                            payload: ProviderStreamPayload::ReasoningTerminal {
+                                state: ReasoningTerminalState::Redacted,
+                            },
+                        };
+                        Err(anyhow::anyhow!(
+                            "claude CLI exited with {:?} during event stream: {}",
+                            output.status.code(),
+                            quoted_stderr(&output.stderr)
+                        ))?;
+                    }
+
+                    let terminal_delta = terminal_visible_delta(saw_visible_text, terminal_visible_text);
+                    if !terminal_delta.is_empty()
+                        && visible_text.len() + terminal_delta.len() <= MAX_RETAINED_VISIBLE_BYTES
+                    {
+                        visible_text.push_str(&terminal_delta);
+                    }
+                    sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
+                    yield ProviderStreamEvent {
+                        identity: Default::default(),
+                        sequence,
+                        payload: ProviderStreamPayload::ReasoningTerminal {
+                            state: if reasoning_redacted {
+                                ReasoningTerminalState::Redacted
+                            } else if !saw_reasoning {
+                                ReasoningTerminalState::Unsupported
+                            } else if reasoning_display.permits_display() {
+                                ReasoningTerminalState::Complete
+                            } else {
+                                ReasoningTerminalState::Hidden
+                            },
+                        },
+                    };
+                    sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
+                    yield ProviderStreamEvent {
+                        identity: Default::default(),
+                        sequence,
+                        payload: ProviderStreamPayload::Done {
+                            chunk: CompletionChunk {
+                                delta: terminal_delta,
+                                done: true,
+                                termination: claude_termination(
+                                    stop_reason,
+                                    (!visible_text.is_empty()).then_some(visible_text),
+                                ),
+                                identity: Default::default(),
+                                input_tokens,
+                                output_tokens,
+                                cache_creation_tokens: None,
+                                cache_read_tokens: None,
+                            },
+                        },
+                    };
+                };
+                Ok(Box::pin(s) as ProviderEventStream)
+            },
+        )
         .await
     }
 }
@@ -1911,27 +2269,109 @@ async fn complete_tmux_uncached(
 /// tool-use blocks — claude-cli adds variants over time and ignoring is
 /// forward-compatible). `ParseError` carries the serde error message so
 /// the caller can surface a precise diagnostic.
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 enum StreamEvent {
     TextDelta(String),
+    ReasoningDelta(ReasoningText),
+    Assistant {
+        content: Vec<AssistantContent>,
+        input: Option<u32>,
+        output: Option<u32>,
+        stop_reason: Option<String>,
+    },
     Metadata {
         input: Option<u32>,
         output: Option<u32>,
         stop_reason: Option<String>,
+        terminal_visible_text: Option<String>,
     },
     Ignore,
     ParseError(String),
 }
 
+#[derive(PartialEq)]
+enum AssistantContent {
+    Text(String),
+    Reasoning(ReasoningText),
+    RedactedReasoning,
+}
+
+impl std::fmt::Debug for StreamEvent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TextDelta(text) => formatter.debug_tuple("TextDelta").field(text).finish(),
+            Self::ReasoningDelta(_) => formatter.write_str("ReasoningDelta(<redacted>)"),
+            Self::Assistant {
+                content,
+                input,
+                output,
+                stop_reason,
+            } => formatter
+                .debug_struct("Assistant")
+                .field("content_blocks", &content.len())
+                .field("input", input)
+                .field("output", output)
+                .field("stop_reason", stop_reason)
+                .finish(),
+            Self::Metadata {
+                input,
+                output,
+                stop_reason,
+                ..
+            } => formatter
+                .debug_struct("Metadata")
+                .field("input", input)
+                .field("output", output)
+                .field("stop_reason", stop_reason)
+                .finish(),
+            Self::Ignore => formatter.write_str("Ignore"),
+            Self::ParseError(error) => formatter.debug_tuple("ParseError").field(error).finish(),
+        }
+    }
+}
+
+/// Owns a parsed stream-json record until every needed field has been copied
+/// into its typed destination. `serde_json::Value` stores strings normally;
+/// wiping every value string here closes the raw-thinking copy that exists
+/// before `ReasoningText` can take its zeroizing ownership.
+struct ZeroizingJsonValue(serde_json::Value);
+
+impl Drop for ZeroizingJsonValue {
+    fn drop(&mut self) {
+        zeroize_json_strings(&mut self.0);
+    }
+}
+
+fn zeroize_json_strings(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(text) => text.zeroize(),
+        serde_json::Value::Array(values) => {
+            for value in values {
+                zeroize_json_strings(value);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            for value in values.values_mut() {
+                zeroize_json_strings(value);
+            }
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+    }
+}
+
 /// Parse one NDJSON line from claude-cli's stream-json output.
 ///
-/// Anthropic's streaming event shape (subset we care about):
-///   - `content_block_delta.delta.text` → incremental text chunk
-///   - `message_delta.usage.{input_tokens, output_tokens}` → token totals
-///   - `result.usage.{...}` → claude-cli's own summary at stream end
+/// Claude CLI's `stream-json` shape (subset we care about):
+///   - `assistant.message.content[]` → completed assistant text/thinking blocks
+///   - `result.result` → terminal visible fallback when no assistant text was
+///     emitted (it otherwise duplicates the assistant content)
+///   - `assistant.message.usage` and `result.usage` → token totals
+///
+/// `content_block_delta` and `message_delta` remain accepted only for CLI
+/// builds explicitly configured to expose Anthropic partial-message records.
 ///
 /// Everything else (`message_start`, `content_block_start/stop`,
-/// `message_stop`, `system`, `assistant` wrapper, unknown tool events)
+/// `message_stop`, `system`, and unknown tool events)
 /// is classified `Ignore`. A line that fails JSON parse altogether is
 /// `ParseError` — surfaces as an error chunk in the stream because the
 /// CLI contract is violated.
@@ -1940,6 +2380,8 @@ fn parse_stream_event(line: &str) -> StreamEvent {
         Ok(v) => v,
         Err(e) => return StreamEvent::ParseError(e.to_string()),
     };
+    let value = ZeroizingJsonValue(value);
+    let value = &value.0;
     let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
     match event_type {
@@ -1964,8 +2406,79 @@ fn parse_stream_event(line: &str) -> StreamEvent {
                 } else {
                     StreamEvent::TextDelta(text.to_string())
                 }
+            } else if matches!(delta_type, "thinking_delta" | "reasoning_delta") {
+                let reasoning = delta
+                    .and_then(|d| d.get("thinking").or_else(|| d.get("reasoning")))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if reasoning.is_empty() {
+                    StreamEvent::Ignore
+                } else {
+                    StreamEvent::ReasoningDelta(ReasoningText::new(reasoning.to_string()))
+                }
             } else {
                 StreamEvent::Ignore
+            }
+        }
+        "assistant" => {
+            let message = value.get("message");
+            let mut content = Vec::new();
+            for block in message
+                .and_then(|message| message.get("content"))
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let block_type = block.get("type").and_then(serde_json::Value::as_str);
+                match block_type {
+                    Some("text") => {
+                        if let Some(text) = block.get("text").and_then(serde_json::Value::as_str)
+                            && !text.is_empty()
+                        {
+                            content.push(AssistantContent::Text(text.to_owned()));
+                        }
+                    }
+                    Some("thinking") | Some("reasoning") => {
+                        let reasoning = block
+                            .get("thinking")
+                            .or_else(|| block.get("reasoning"))
+                            .or_else(|| block.get("text"))
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("");
+                        if !reasoning.is_empty() {
+                            content.push(AssistantContent::Reasoning(ReasoningText::new(
+                                reasoning.to_owned(),
+                            )));
+                        }
+                    }
+                    Some("redacted_thinking") | Some("redacted_reasoning") => {
+                        content.push(AssistantContent::RedactedReasoning);
+                    }
+                    _ => {}
+                }
+            }
+            let usage = message.and_then(|message| message.get("usage"));
+            let input = usage
+                .and_then(|usage| usage.get("input_tokens"))
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok());
+            let output = usage
+                .and_then(|usage| usage.get("output_tokens"))
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok());
+            let stop_reason = message
+                .and_then(|message| message.get("stop_reason"))
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned);
+            if content.is_empty() && input.is_none() && output.is_none() && stop_reason.is_none() {
+                StreamEvent::Ignore
+            } else {
+                StreamEvent::Assistant {
+                    content,
+                    input,
+                    output,
+                    stop_reason,
+                }
             }
         }
         "message_delta" | "result" => {
@@ -1986,17 +2499,39 @@ fn parse_stream_event(line: &str) -> StreamEvent {
                 .or_else(|| value.get("stop_reason"))
                 .and_then(serde_json::Value::as_str)
                 .map(ToOwned::to_owned);
-            if input.is_none() && output.is_none() && stop_reason.is_none() {
+            let terminal_visible_text = (event_type == "result")
+                .then(|| value.get("result").and_then(serde_json::Value::as_str))
+                .flatten()
+                .filter(|text| !text.is_empty())
+                .map(ToOwned::to_owned);
+            if input.is_none()
+                && output.is_none()
+                && stop_reason.is_none()
+                && terminal_visible_text.is_none()
+            {
                 StreamEvent::Ignore
             } else {
                 StreamEvent::Metadata {
                     input,
                     output,
                     stop_reason,
+                    terminal_visible_text,
                 }
             }
         }
         _ => StreamEvent::Ignore,
+    }
+}
+
+/// Claude CLI's terminal `result.result` normally repeats the text carried by
+/// its preceding `assistant` record. Keep the terminal text only when no
+/// visible record was delivered, which preserves a result-only stream without
+/// duplicating the ordinary assistant/result pair.
+fn terminal_visible_delta(saw_visible_text: bool, terminal_visible_text: Option<String>) -> String {
+    if saw_visible_text {
+        String::new()
+    } else {
+        terminal_visible_text.unwrap_or_default()
     }
 }
 
@@ -2458,6 +2993,97 @@ mod tests {
     }
 
     #[test]
+    fn parse_stream_event_extracts_cli_assistant_envelope() {
+        let line = r#"{
+            "type":"assistant",
+            "message":{
+                "role":"assistant",
+                "content":[
+                    {"type":"thinking","thinking":"private reasoning"},
+                    {"type":"text","text":"visible answer"}
+                ],
+                "stop_reason":"end_turn",
+                "usage":{"input_tokens":42,"output_tokens":17}
+            }
+        }"#;
+        let StreamEvent::Assistant {
+            content,
+            input,
+            output,
+            stop_reason,
+        } = parse_stream_event(line) else {
+            panic!("assistant stream-json envelope must not be ignored");
+        };
+        assert_eq!(input, Some(42));
+        assert_eq!(output, Some(17));
+        assert_eq!(stop_reason.as_deref(), Some("end_turn"));
+        assert!(matches!(
+            &content[0],
+            AssistantContent::Reasoning(text) if text.as_str() == "private reasoning"
+        ));
+        assert!(matches!(
+            &content[1],
+            AssistantContent::Text(text) if text == "visible answer"
+        ));
+    }
+
+    #[test]
+    fn parse_stream_event_recognises_redacted_cli_reasoning_block() {
+        let line = r#"{"type":"assistant","message":{"content":[{"type":"redacted_thinking"}]}}"#;
+        let StreamEvent::Assistant { content, .. } = parse_stream_event(line) else {
+            panic!("redacted reasoning block must be classified");
+        };
+        assert!(matches!(content.as_slice(), [AssistantContent::RedactedReasoning]));
+    }
+
+    #[test]
+    fn parsed_stream_json_strings_are_recursively_zeroized_after_extraction() {
+        let mut value = serde_json::json!({
+            "message": {
+                "content": [
+                    {"type": "thinking", "thinking": "private reasoning"},
+                    {"type": "text", "text": "visible answer"}
+                ]
+            },
+            "result": "terminal response"
+        });
+        zeroize_json_strings(&mut value);
+        assert_eq!(value.pointer("/message/content/0/thinking").and_then(serde_json::Value::as_str), Some(""));
+        assert_eq!(value.pointer("/message/content/1/text").and_then(serde_json::Value::as_str), Some(""));
+        assert_eq!(value.get("result").and_then(serde_json::Value::as_str), Some(""));
+    }
+
+    #[test]
+    fn cli_result_text_is_only_a_fallback_after_visible_assistant_content() {
+        assert_eq!(
+            terminal_visible_delta(true, Some("duplicate terminal result".into())),
+            ""
+        );
+        assert_eq!(
+            terminal_visible_delta(false, Some("result-only response".into())),
+            "result-only response"
+        );
+    }
+
+    #[test]
+    fn parse_stream_event_extracts_native_thinking_delta_without_mixing_visible_text() {
+        let line = r#"{"type":"content_block_delta","index":1,"delta":{"type":"thinking_delta","thinking":"private reasoning"}}"#;
+        assert_eq!(
+            parse_stream_event(line),
+            StreamEvent::ReasoningDelta(ReasoningText::new("private reasoning".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_stream_event_extracts_reasoning_alias_delta() {
+        let line = r#"{"type":"content_block_delta","index":1,"delta":{"type":"reasoning_delta","reasoning":"private reasoning"}}"#;
+        assert_eq!(
+            parse_stream_event(line),
+            StreamEvent::ReasoningDelta(ReasoningText::new("private reasoning".to_string()))
+        );
+    }
+
+    #[test]
     fn parse_stream_event_ignores_empty_text_delta() {
         // A `text_delta` event with empty text contributes nothing — drop
         // it before the chunk reaches the operator. Anthropic emits
@@ -2476,6 +3102,7 @@ mod tests {
                 input: Some(42),
                 output: Some(17),
                 stop_reason: Some("end_turn".into()),
+                terminal_visible_text: None,
             }
         );
     }
@@ -2492,6 +3119,7 @@ mod tests {
                 input: Some(10),
                 output: Some(3),
                 stop_reason: Some("end_turn".into()),
+                terminal_visible_text: Some("final text".into()),
             }
         );
     }
@@ -2552,6 +3180,7 @@ mod tests {
                 input: None,
                 output: None,
                 stop_reason: Some("end_turn".into()),
+                terminal_visible_text: None,
             }
         );
     }

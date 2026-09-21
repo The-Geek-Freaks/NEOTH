@@ -273,6 +273,10 @@ pub enum ExtendedSubtype {
     /// bearer material or consent proof. Default immediate-sync is intentional:
     /// Accepted, cancel and terminal ACKs linearise provider effect admission.
     GuiChatLifecycle = 0x2C,
+    /// W153 — one closed, terminal-only metadata receipt for a provider's
+    /// ephemeral reasoning stream. The codec deliberately excludes reasoning
+    /// text, content hashes, prompts, sessions, and replay handles.
+    ReasoningStreamAuditV1 = 0x2D,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -371,6 +375,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::TrustDecision => "trust_decision",
             ExtendedSubtype::CouncilAgreementEvaluated => "council_agreement_evaluated",
             ExtendedSubtype::GuiChatLifecycle => "gui_chat_lifecycle",
+            ExtendedSubtype::ReasoningStreamAuditV1 => "reasoning_stream_audit_v1",
         }
     }
 
@@ -421,6 +426,7 @@ impl ExtendedSubtype {
             0x2A => Some(ExtendedSubtype::TrustDecision),
             0x2B => Some(ExtendedSubtype::CouncilAgreementEvaluated),
             0x2C => Some(ExtendedSubtype::GuiChatLifecycle),
+            0x2D => Some(ExtendedSubtype::ReasoningStreamAuditV1),
             _ => None,
         }
     }
@@ -473,6 +479,7 @@ impl ExtendedSubtype {
             Self::TrustDecision,
             Self::CouncilAgreementEvaluated,
             Self::GuiChatLifecycle,
+            Self::ReasoningStreamAuditV1,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -4087,6 +4094,7 @@ mod tests {
             ExtendedSubtype::TrustDecision,
             ExtendedSubtype::CouncilAgreementEvaluated,
             ExtendedSubtype::GuiChatLifecycle,
+            ExtendedSubtype::ReasoningStreamAuditV1,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

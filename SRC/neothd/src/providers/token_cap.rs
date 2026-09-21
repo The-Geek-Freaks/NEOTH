@@ -10,7 +10,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use super::cost_authorization::ProviderCallAuthorizer;
-use super::{ChunkStream, Completion, Provider, ProviderRequestControls, Request};
+use super::{
+    ChunkStream, Completion, Provider, ProviderEventStream, ProviderRequestControls,
+    ReasoningDisplayGrant, Request,
+};
 
 // Provider adapters expose one optional system message and one user message.
 // These reserves cover role/control tokens and request framing; model and stop
@@ -147,6 +150,19 @@ impl Provider for TokenCappedProvider<'_> {
         ensure_request_fits(&req, self.cap)?;
         self.inner
             .stream_authorized(req, authorizer, call_scope)
+            .await
+    }
+
+    async fn stream_events_authorized(
+        &self,
+        req: Request,
+        authorizer: &ProviderCallAuthorizer,
+        call_scope: &'static str,
+        reasoning_display: ReasoningDisplayGrant,
+    ) -> Result<ProviderEventStream> {
+        ensure_request_fits(&req, self.cap)?;
+        self.inner
+            .stream_events_authorized(req, authorizer, call_scope, reasoning_display)
             .await
     }
 }

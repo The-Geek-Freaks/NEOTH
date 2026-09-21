@@ -77,6 +77,7 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use futures_util::stream::{self, Stream};
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use crate::cli::init::ProviderKind;
 use crate::config::FreedomConfig;
@@ -1116,6 +1117,213 @@ pub struct CompletionChunk {
 /// the consumer should stop reading.
 pub type ChunkStream = Pin<Box<dyn Stream<Item = Result<CompletionChunk>> + Send>>;
 
+/// Captured once at the request boundary. The provider plane never consults
+/// configuration or ambient state to turn reasoning presentation back on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReasoningDisplayGrant {
+    #[default]
+    Hidden,
+    Display,
+}
+
+impl ReasoningDisplayGrant {
+    pub const fn permits_display(self) -> bool {
+        matches!(self, Self::Display)
+    }
+}
+
+/// Raw provider reasoning must never acquire a derived `Debug` formatter.
+/// Keeping the value zeroizing and redacted at this first cross-adapter type
+/// prevents a future diagnostic from accidentally exposing it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ReasoningText(Zeroizing<String>);
+
+impl ReasoningText {
+    pub fn new(text: String) -> Self {
+        Self(Zeroizing::new(text))
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn into_zeroizing(self) -> Zeroizing<String> {
+        self.0
+    }
+}
+
+impl std::fmt::Debug for ReasoningText {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ReasoningText(<redacted>)")
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningTerminalState {
+    Unsupported,
+    Hidden,
+    Redacted,
+    Complete,
+    Cancelled,
+}
+
+impl ReasoningTerminalState {
+    pub const fn as_wire(self) -> &'static str {
+        match self {
+            Self::Unsupported => "unsupported",
+            Self::Hidden => "hidden",
+            Self::Redacted => "redacted",
+            Self::Complete => "complete",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+/// Additive event plane for ephemeral provider reasoning. The legacy
+/// `CompletionChunk` plane remains visible-text-only. `Done` deliberately
+/// owns the unmodified chunk so a provider's terminal chunk may still carry
+/// visible text and all existing leaf accounting fields.
+#[derive(Debug, Clone)]
+pub enum ProviderStreamPayload {
+    /// Original non-terminal legacy chunk. This intentionally carries empty
+    /// deltas and usage-only metadata so the event plane preserves the same
+    /// audit inputs as `ChunkStream`.
+    VisibleText { chunk: CompletionChunk },
+    ReasoningDelta { delta: ReasoningText },
+    ReasoningTerminal { state: ReasoningTerminalState },
+    Done { chunk: CompletionChunk },
+}
+
+#[derive(Debug, Clone)]
+pub struct ProviderStreamEvent {
+    pub identity: CompletionIdentity,
+    pub sequence: u64,
+    pub payload: ProviderStreamPayload,
+}
+
+pub type ProviderEventStream = Pin<Box<dyn Stream<Item = Result<ProviderStreamEvent>> + Send>>;
+
+fn event_stream_from_chunks(mut stream: ChunkStream) -> ProviderEventStream {
+    Box::pin(async_stream::try_stream! {
+        let mut sequence = 0_u64;
+        while let Some(item) = stream.next().await {
+            let chunk = item?;
+            // A terminal chunk may carry its final visible delta. It is
+            // delivered only by `Done { chunk }`, so consumers that render
+            // the progressive and terminal projections never duplicate it.
+            if !chunk.done {
+                sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
+                yield ProviderStreamEvent {
+                    identity: chunk.identity.clone(),
+                    sequence,
+                    payload: ProviderStreamPayload::VisibleText { chunk },
+                };
+            }
+            if chunk.done {
+                sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
+                yield ProviderStreamEvent {
+                    identity: chunk.identity.clone(),
+                    sequence,
+                    payload: ProviderStreamPayload::ReasoningTerminal {
+                        // The legacy chunk plane has no native reasoning
+                        // signal. A presentation grant cannot manufacture
+                        // one, so the default adapter reports Unsupported.
+                        state: ReasoningTerminalState::Unsupported,
+                    },
+                };
+                sequence = sequence.checked_add(1).context("provider event sequence exhausted")?;
+                yield ProviderStreamEvent {
+                    identity: chunk.identity.clone(),
+                    sequence,
+                    payload: ProviderStreamPayload::Done { chunk },
+                };
+                return;
+            }
+        }
+        Err(anyhow::anyhow!("provider stream ended before the required done=true terminal chunk"))?;
+    })
+}
+
+fn stamp_event_stream_identity(
+    stream: ProviderEventStream,
+    identity: CompletionIdentity,
+    preserve_bound_identity: bool,
+) -> ProviderEventStream {
+    Box::pin(stream.map(move |item| {
+        item.map(|mut event| {
+            if !preserve_bound_identity || !event.identity.is_bound() {
+                event.identity = identity.clone();
+            }
+            if let ProviderStreamPayload::VisibleText { chunk }
+            | ProviderStreamPayload::Done { chunk } = &mut event.payload
+                && (!preserve_bound_identity || !chunk.identity.is_bound())
+            {
+                chunk.identity = event.identity.clone();
+            }
+            event
+        })
+    }))
+}
+
+fn normalize_event_stream(mut stream: ProviderEventStream) -> ProviderEventStream {
+    Box::pin(async_stream::try_stream! {
+        let mut expected_sequence = 1_u64;
+        let mut reasoning_terminal = false;
+        let mut done = false;
+        while let Some(item) = stream.next().await {
+            let event = item?;
+            anyhow::ensure!(
+                event.sequence == expected_sequence,
+                "provider event sequence must be contiguous from one"
+            );
+            expected_sequence = expected_sequence
+                .checked_add(1)
+                .context("provider event sequence exhausted")?;
+            anyhow::ensure!(!done, "provider emitted event after Done");
+            match &event.payload {
+                ProviderStreamPayload::ReasoningDelta { .. } => {
+                    anyhow::ensure!(
+                        !reasoning_terminal,
+                        "provider emitted reasoning after its terminal state"
+                    );
+                }
+                ProviderStreamPayload::ReasoningTerminal { .. } => {
+                    anyhow::ensure!(
+                        !reasoning_terminal,
+                        "provider emitted duplicate reasoning terminal state"
+                    );
+                    reasoning_terminal = true;
+                }
+                ProviderStreamPayload::Done { chunk } => {
+                    anyhow::ensure!(chunk.done, "provider event Done carried a non-terminal chunk");
+                    anyhow::ensure!(reasoning_terminal, "provider Done omitted reasoning terminal state");
+                    done = true;
+                }
+                ProviderStreamPayload::VisibleText { chunk } => {
+                    anyhow::ensure!(
+                        !chunk.done,
+                        "provider event VisibleText carried a terminal chunk"
+                    );
+                }
+            }
+            yield event;
+            if done {
+                return;
+            }
+        }
+        Err(anyhow::anyhow!("provider event stream ended before Done"))?;
+    })
+}
+
 /// Canonical "is this concrete `Provider::name()` guaranteed offline"
 /// predicate. This is the SINGLE place the trusted local-provider set is
 /// enumerated — quota tracking, privacy classification, WAL audit gating
@@ -2153,6 +2361,86 @@ pub trait Provider: Send + Sync {
         }
     }
 
+    /// Authorized additive event stream. This mirrors the legacy streaming
+    /// authorization boundary exactly, but keeps ephemeral reasoning on a
+    /// typed side plane so existing `CompletionChunk` consumers remain
+    /// visible-text-only. Decorators that already forward `stream_authorized`
+    /// must forward this method to the same concrete leaf rather than opening
+    /// a second authorization/audit lifecycle.
+    async fn stream_events_authorized(
+        &self,
+        mut req: Request,
+        authorizer: &cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+        reasoning_display: ReasoningDisplayGrant,
+    ) -> Result<ProviderEventStream> {
+        self.validate_request_controls(&req)?;
+        let identity = bind_wire_identity(self, &mut req)?;
+        let output_token_ceiling = validated_output_token_ceiling(self, &req)?;
+        let streaming = self.streams_on_wire();
+        let mut authorized = authorizer
+            .authorize_leaf(
+                self.name(),
+                &req,
+                call_scope,
+                streaming,
+                output_token_ceiling,
+            )
+            .await?;
+        let provider_subject = authorized.take_provider_subject();
+        let effect = authorized.effect_context();
+        let gated_effect = effect.is_some();
+        let mut audit = authorized.begin_dispatch().await?;
+        let effect_start_adapter = self.w41_effect_start_adapter(W41EffectStartProbe::new());
+        if gated_effect && !effect_start_adapter {
+            let error = anyhow::anyhow!(
+                "GUI-gated provider has no verified W41 concrete effect-start adapter"
+            );
+            if let Err(audit_error) = audit.failure("provider_effect_start_unsupported").await {
+                return Err(anyhow::anyhow!(
+                    "unsupported GUI-gated provider and terminal audit failed: {audit_error}; provider error: {error}"
+                ));
+            }
+            return Err(error);
+        }
+        if !gated_effect
+            && let Err(error) = authorizer.ensure_live_consent(self.consent_route().as_ref())
+        {
+            if let Err(audit_error) = audit.failure("provider_consent_revoked").await {
+                return Err(anyhow::anyhow!(
+                    "provider event stream consent was revoked and terminal audit failed: {audit_error}; consent error: {error}"
+                ));
+            }
+            return Err(error);
+        }
+        let permit = ProviderDispatchPermit::transport_only(
+            provider_subject,
+            effect,
+            Some(ProviderLiveConsent {
+                authorizer: authorizer.clone(),
+                consent_route: self.consent_route(),
+            }),
+            effect_start_adapter,
+        );
+        match self.stream_events_raw(req, &permit, reasoning_display).await {
+            Ok(stream) => Ok(audit.wrap_event_stream(normalize_event_stream(
+                stamp_event_stream_identity(
+                    stream,
+                    identity,
+                    self.preserves_inner_response_identity(),
+                ),
+            ))),
+            Err(error) => {
+                if let Err(audit_error) = audit.failure("stream_open_failed").await {
+                    return Err(anyhow::anyhow!(
+                        "provider event stream open failed and terminal audit failed: {audit_error}; provider error: {error}"
+                    ));
+                }
+                Err(error)
+            }
+        }
+    }
+
     /// Concrete transport execution. The unforgeable permit is created only
     /// after cost WAL + permission WAL + policy approval succeed.
     async fn complete_raw(
@@ -2248,6 +2536,19 @@ pub trait Provider: Send + Sync {
         Ok(Box::pin(stream::iter(vec![Ok(chunk)])))
     }
 
+    /// Native adapters override this only when they can classify reasoning
+    /// independently of visible text. The default preserves every legacy
+    /// `CompletionChunk` field, including a nonempty terminal delta, and
+    /// exposes no raw reasoning.
+    async fn stream_events_raw(
+        &self,
+        req: Request,
+        permit: &ProviderDispatchPermit,
+        _reasoning_display: ReasoningDisplayGrant,
+    ) -> Result<ProviderEventStream> {
+        Ok(event_stream_from_chunks(self.stream_raw(req, permit).await?))
+    }
+
     /// Safe streaming entry. Bare leaves fail closed in production.
     async fn stream(&self, req: Request) -> Result<ChunkStream> {
         #[cfg(test)]
@@ -2264,6 +2565,34 @@ pub trait Provider: Send + Sync {
             let _ = req;
             anyhow::bail!(
                 "raw provider `{}` is not stream-dispatchable; wrap it in an authorized provider boundary",
+                self.name()
+            )
+        }
+    }
+
+    /// Test-safe/raw event entry matching [`Self::stream`]. Production callers
+    /// must enter through an owned authorization decorator.
+    async fn stream_events(
+        &self,
+        req: Request,
+        reasoning_display: ReasoningDisplayGrant,
+    ) -> Result<ProviderEventStream> {
+        #[cfg(test)]
+        {
+            let mut req = req;
+            self.validate_request_controls(&req)?;
+            let identity = bind_wire_identity(self, &mut req)?;
+            let permit = ProviderDispatchPermit::transport_only(None, None, None, false);
+            let stream = self.stream_events_raw(req, &permit, reasoning_display).await?;
+            return Ok(normalize_event_stream(stamp_event_stream_identity(
+                stream, identity, false,
+            )));
+        }
+        #[cfg(not(test))]
+        {
+            let _ = (req, reasoning_display);
+            anyhow::bail!(
+                "raw provider `{}` is not event-stream-dispatchable; wrap it in an authorized provider boundary",
                 self.name()
             )
         }
@@ -3340,6 +3669,122 @@ mod tests {
         OpenAiCompatibleProfile, SubHemisphereSlots, TopologyMode,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn event_test_chunk(
+        delta: &str,
+        done: bool,
+        input_tokens: Option<u32>,
+        output_tokens: Option<u32>,
+        cache_creation_tokens: Option<u32>,
+        cache_read_tokens: Option<u32>,
+    ) -> CompletionChunk {
+        CompletionChunk {
+            delta: delta.to_owned(),
+            done,
+            identity: Default::default(),
+            termination: Default::default(),
+            input_tokens,
+            output_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_chunk_event_adapter_preserves_usage_and_terminal_delta_once() {
+        let chunks: ChunkStream = Box::pin(futures_util::stream::iter(vec![
+            Ok(event_test_chunk("", false, Some(3), None, Some(5), None)),
+            Ok(event_test_chunk(
+                "final",
+                true,
+                Some(8),
+                Some(13),
+                Some(17),
+                Some(21),
+            )),
+        ]));
+        let mut events = event_stream_from_chunks(chunks);
+        let mut observed = Vec::new();
+        while let Some(event) = events.next().await {
+            observed.push(event.expect("valid event adapter output"));
+        }
+
+        assert_eq!(
+            observed.iter().map(|event| event.sequence).collect::<Vec<_>>(),
+            vec![1, 2, 3],
+            "event sequence starts at one and remains contiguous"
+        );
+        let ProviderStreamPayload::VisibleText { chunk } = &observed[0].payload else {
+            panic!("usage-only non-final chunk must remain visible-plane data");
+        };
+        assert_eq!(chunk.delta, "");
+        assert_eq!(chunk.input_tokens, Some(3));
+        assert_eq!(chunk.cache_creation_tokens, Some(5));
+        assert!(matches!(
+            &observed[1].payload,
+            ProviderStreamPayload::ReasoningTerminal {
+                state: ReasoningTerminalState::Unsupported
+            }
+        ));
+        let ProviderStreamPayload::Done { chunk } = &observed[2].payload else {
+            panic!("terminal legacy chunk must remain Done");
+        };
+        assert_eq!(chunk.delta, "final");
+        assert_eq!(chunk.input_tokens, Some(8));
+        assert_eq!(chunk.output_tokens, Some(13));
+        assert_eq!(chunk.cache_creation_tokens, Some(17));
+        assert_eq!(chunk.cache_read_tokens, Some(21));
+        assert!(
+            observed.iter().all(|event| !matches!(
+                &event.payload,
+                ProviderStreamPayload::ReasoningDelta { .. }
+            )),
+            "default legacy projection must never invent reasoning"
+        );
+        let rendered = observed.iter().fold(String::new(), |mut text, event| {
+            match &event.payload {
+                ProviderStreamPayload::VisibleText { chunk }
+                | ProviderStreamPayload::Done { chunk } => text.push_str(&chunk.delta),
+                ProviderStreamPayload::ReasoningDelta { .. }
+                | ProviderStreamPayload::ReasoningTerminal { .. } => {}
+            }
+            text
+        });
+        assert_eq!(rendered, "final", "terminal visible text projects exactly once");
+    }
+
+    #[tokio::test]
+    async fn event_normalizer_requires_reasoning_terminal_before_done() {
+        let raw: ProviderEventStream = Box::pin(futures_util::stream::iter(vec![Ok(
+            ProviderStreamEvent {
+                identity: Default::default(),
+                sequence: 1,
+                payload: ProviderStreamPayload::Done {
+                    chunk: event_test_chunk("final", true, None, None, None, None),
+                },
+            },
+        )]));
+        let mut normalized = normalize_event_stream(raw);
+        let error = normalized
+            .next()
+            .await
+            .expect("normalizer must reject an event")
+            .expect_err("Done without a reasoning terminal is invalid");
+        assert!(error.to_string().contains("omitted reasoning terminal"));
+    }
+
+    #[test]
+    fn reasoning_contract_is_redacted_and_wire_closed() {
+        assert_eq!(
+            format!("{:?}", ReasoningText::new("private chain of thought".into())),
+            "ReasoningText(<redacted>)"
+        );
+        assert_eq!(
+            serde_json::to_string(&ReasoningTerminalState::Cancelled).unwrap(),
+            "\"cancelled\""
+        );
+        assert!(serde_json::from_str::<ReasoningTerminalState>("\"aborted\"").is_err());
+    }
 
     #[test]
     fn blank_native_refusal_gets_a_neoth_authored_operator_notice() {

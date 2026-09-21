@@ -40,7 +40,8 @@ use sha2::{Digest, Sha256};
 use crate::config::policy::TokensConfig;
 use crate::context::compress::content_detector::{ContentType, detect_content_type};
 use crate::providers::{
-    ChunkStream, Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request,
+    ChunkStream, Completion, Provider, ProviderDispatchPermit, ProviderEventStream,
+    ProviderRequestControls, ReasoningDisplayGrant, Request,
 };
 use crate::wal::events::EVENT_TYPE_HISTORY_COMPACTION_FIRED;
 use crate::wal::writer::WalWriterHandle;
@@ -644,6 +645,18 @@ impl Provider for CompactingProvider {
         self.inner.stream_raw(req, permit).await
     }
 
+    async fn stream_events_raw(
+        &self,
+        req: Request,
+        permit: &ProviderDispatchPermit,
+        reasoning_display: ReasoningDisplayGrant,
+    ) -> Result<ProviderEventStream> {
+        let req = self.maybe_compact(req, None, Some(permit)).await?;
+        self.inner
+            .stream_events_raw(req, permit, reasoning_display)
+            .await
+    }
+
     async fn complete_authorized(
         &self,
         req: Request,
@@ -684,6 +697,21 @@ impl Provider for CompactingProvider {
             .await?;
         self.inner
             .stream_authorized(req, authorizer, call_scope)
+            .await
+    }
+
+    async fn stream_events_authorized(
+        &self,
+        req: Request,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+        reasoning_display: ReasoningDisplayGrant,
+    ) -> Result<ProviderEventStream> {
+        let req = self
+            .maybe_compact(req, Some((authorizer, call_scope)), None)
+            .await?;
+        self.inner
+            .stream_events_authorized(req, authorizer, call_scope, reasoning_display)
             .await
     }
 }
@@ -745,6 +773,14 @@ pub fn arc_from_config(
         ) -> Result<ChunkStream> {
             self.0.stream_raw(req, permit).await
         }
+        async fn stream_events_raw(
+            &self,
+            req: Request,
+            permit: &ProviderDispatchPermit,
+            reasoning_display: ReasoningDisplayGrant,
+        ) -> Result<ProviderEventStream> {
+            self.0.stream_events_raw(req, permit, reasoning_display).await
+        }
         async fn complete_authorized(
             &self,
             req: Request,
@@ -773,6 +809,17 @@ pub fn arc_from_config(
             call_scope: &'static str,
         ) -> Result<ChunkStream> {
             self.0.stream_authorized(req, authorizer, call_scope).await
+        }
+        async fn stream_events_authorized(
+            &self,
+            req: Request,
+            authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+            call_scope: &'static str,
+            reasoning_display: ReasoningDisplayGrant,
+        ) -> Result<ProviderEventStream> {
+            self.0
+                .stream_events_authorized(req, authorizer, call_scope, reasoning_display)
+                .await
         }
     }
 
