@@ -27217,12 +27217,14 @@ fn clear_chat_recall_chip_replacement(
 }
 
 fn clear_main_recall_chip_projection(window: &MainWindow) {
-    window.set_chat_recall_chip_lines(Vec::<slint::SharedString>::new().into());
+    let lines = slint::VecModel::<slint::SharedString>::from(Vec::new());
+    window.set_chat_recall_chip_lines(slint::ModelRc::new(lines));
     window.set_chat_recall_chips_active(false);
 }
 
 fn clear_buddy_recall_chip_projection(overlay: &MiniOverlay) {
-    overlay.set_recall_chip_lines(Vec::<slint::SharedString>::new().into());
+    let lines = slint::VecModel::<slint::SharedString>::from(Vec::new());
+    overlay.set_recall_chip_lines(slint::ModelRc::new(lines));
     overlay.set_recall_chips_active(false);
 }
 
@@ -27299,13 +27301,15 @@ fn project_chat_recall_chip_snapshot(
     match surface {
         ChatStreamSurface::Main => {
             if let Some(window) = window {
-                window.set_chat_recall_chip_lines(lines.into());
+                window.set_chat_recall_chip_lines(slint::ModelRc::new(slint::VecModel::from(
+                    lines,
+                )));
                 window.set_chat_recall_chips_active(true);
             }
         }
         ChatStreamSurface::Buddy => {
             if let Some(overlay) = overlay {
-                overlay.set_recall_chip_lines(lines.into());
+                overlay.set_recall_chip_lines(slint::ModelRc::new(slint::VecModel::from(lines)));
                 overlay.set_recall_chips_active(true);
             }
         }

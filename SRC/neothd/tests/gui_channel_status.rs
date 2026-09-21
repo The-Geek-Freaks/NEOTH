@@ -8,6 +8,10 @@
 #[path = "../../neothd-gui/src/code_map_impact_controller.rs"]
 pub mod code_map_impact_controller;
 
+#[allow(
+    dead_code,
+    reason = "headless channel-status harness imports gui_action without the desktop ouro_gui consumer, leaving production Q8 verification runtime symbols unobserved"
+)]
 #[path = "../../neothd-gui/src/gui_action.rs"]
 pub mod gui_action;
 

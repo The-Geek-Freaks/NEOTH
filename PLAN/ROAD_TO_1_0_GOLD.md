@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**Current Hosted boundary (2026-09-21):** W169 run 35656420591 on
+3750a81f passed exact schema extraction/byte comparison and package compilation.
+Its package tests reached 36/38; the two real classification failures are being
+repaired and require another Hosted run. W171 CLI build/reference 35655672068
+passed on ceea62cb; the generated reference is imported byte-for-byte. W172's
+four Slint ModelRc errors and the headless import lint are repaired in source.
+CI 35655045794 and Windows preview 35653179383 are confirmed cancelled and
+require fresh runs after publication. W173 prompt-tax implementation is under
+independent review; it is excluded from this repair publication. Road counts
+remain 1324 total / 1015 checked / 307 open / 2 partial. No checkbox closes on
+source review or compilation alone. See [W169](../docs/gold-wave169-verification.md),
+[W171](../docs/gold-wave171-verification.md), and
+[W172](../docs/gold-wave172-verification.md). Older entries below are historical.
+
 **W169 package schema/account ledger (2026-09-21):** independently reviewed
 custody integration now embeds the exact Hosted 3252-row fixture. Structural
 lookup, explicit account containers, strict fixture-backed SecretRef shapes and

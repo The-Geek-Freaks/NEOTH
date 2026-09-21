@@ -965,7 +965,11 @@ fn walk_leaves(
         }
         SecretRefState::NotSecretRef => {}
     }
-    if schema_lookup(path, value)?.is_some_and(|schema| schema.scope == pinned_schema::SchemaScope::OpaqueSubtree) {
+    let opaque_subtree = schema_lookup(path, value)?
+        .is_some_and(|schema| schema.scope == pinned_schema::SchemaScope::OpaqueSubtree);
+    if opaque_subtree
+        && (!(value.is_object() || value.is_array()) || !schema_has_typed_descendant(path)?)
+    {
         ledger.push(classify_leaf(value, path, false, false)?);
         return Ok(());
     }
@@ -1014,7 +1018,11 @@ fn classify_leaf(
             source_channel: None,
             target_channel: None,
             target_path: None,
-            disposition: if known { ImportDisposition::Unsupported } else { ImportDisposition::Unknown },
+            disposition: if known {
+                ImportDisposition::Unsupported
+            } else {
+                ImportDisposition::Unknown
+            },
             sensitive,
             reason: if known {
                 "known OpenClaw field is outside this channel-import slice".to_string()
@@ -1065,7 +1073,8 @@ fn classify_leaf(
             target_path: None,
             disposition: ImportDisposition::Unknown,
             sensitive,
-            reason: "unknown or third-party OpenClaw channel; explicit adoption is required".to_string(),
+            reason: "unknown or third-party OpenClaw channel; explicit adoption is required"
+                .to_string(),
             source_account_label: None,
             effective_value_sha256: None,
             schema_binding: None,
@@ -1080,9 +1089,28 @@ fn classify_leaf(
             target_path: None,
             disposition: ImportDisposition::Unknown,
             sensitive: true,
-            reason: "invalid OpenClaw SecretRef shape; explicit schema-compatible reference is required"
-                .to_string(),
+            reason:
+                "invalid OpenClaw SecretRef shape; explicit schema-compatible reference is required"
+                    .to_string(),
             source_account_label: account_label,
+            effective_value_sha256: None,
+            schema_binding: None,
+        });
+    }
+
+    let direct_field = direct_channel_field(path);
+    if channel == "whatsapp" && direct_field == Some("authDir") && value.is_string() {
+        let (disposition, target_path, reason) =
+            classify_known_field(channel, "authDir", sensitive);
+        return Ok(FieldLedgerEntry {
+            source_path,
+            source_channel: Some(channel.to_string()),
+            target_channel: target_channel.map(str::to_string),
+            target_path: target_path.map(str::to_string),
+            disposition,
+            sensitive,
+            reason: reason.to_string(),
+            source_account_label: None,
             effective_value_sha256: None,
             schema_binding: None,
         });
@@ -1111,10 +1139,15 @@ fn classify_leaf(
             target_path: None,
             disposition: ImportDisposition::Unknown,
             sensitive,
-            reason: "pinned OpenClaw schema has an opaque subtree; explicit leaf mapping is required".to_string(),
+            reason:
+                "pinned OpenClaw schema has an opaque subtree; explicit leaf mapping is required"
+                    .to_string(),
             source_account_label: account_label,
             effective_value_sha256: None,
-            schema_binding: Some(schema_binding(schema, "blocked_requires_explicit_leaf_mapping")),
+            schema_binding: Some(schema_binding(
+                schema,
+                "blocked_requires_explicit_leaf_mapping",
+            )),
         });
     }
     let Some(target_channel) = target_channel else {
@@ -1139,14 +1172,14 @@ fn classify_leaf(
             target_path: None,
             disposition: ImportDisposition::Unsupported,
             sensitive,
-            reason: "OpenClaw account-scoped config has no NEOTH account-scoped runtime target".to_string(),
+            reason: "OpenClaw account-scoped config has no NEOTH account-scoped runtime target"
+                .to_string(),
             source_account_label: account_label,
             effective_value_sha256: value_binding(value, path, sensitive),
             schema_binding: Some(schema_binding(schema, "requires_account_scoped_runtime")),
         });
     }
 
-    let direct_field = direct_channel_field(path);
     let (disposition, target_path, reason) = match direct_field {
         Some(field) => classify_known_field(channel, field, sensitive),
         None => (
@@ -1173,7 +1206,8 @@ fn classify_leaf(
 fn classify_account_container(path: &[PathPart]) -> Result<FieldLedgerEntry> {
     let source_path = display_path(path);
     let channel = key_at(path, 1).context("account container missing channel")?;
-    let account_label = source_account_label(path).context("account container missing account label")?;
+    let account_label =
+        source_account_label(path).context("account container missing account label")?;
     let target_channel = alias_target(channel);
     let schema = pinned_schema::account_container(channel)?;
     let (disposition, reason, action_id) = if schema.is_some() && target_channel.is_some() {
@@ -1218,6 +1252,23 @@ fn schema_lookup(path: &[PathPart], value: &Value) -> Result<Option<pinned_schem
         })
         .collect();
     pinned_schema::lookup(channel, &parts, observed_json_type(value))
+}
+
+fn schema_has_typed_descendant(path: &[PathPart]) -> Result<bool> {
+    if key_at(path, 0) != Some("channels") {
+        return Ok(false);
+    }
+    let Some(channel) = key_at(path, 1) else {
+        return Ok(false);
+    };
+    let parts: Vec<_> = path[2..]
+        .iter()
+        .map(|part| match part {
+            PathPart::Key(key) => pinned_schema::PathPart::Key(key),
+            PathPart::Index(_) => pinned_schema::PathPart::Index,
+        })
+        .collect();
+    pinned_schema::has_typed_descendant(channel, &parts)
 }
 
 fn observed_json_type(value: &Value) -> &'static str {
@@ -1273,7 +1324,10 @@ fn schema_binding(schema: pinned_schema::SchemaMatch, action_id: &str) -> Schema
 }
 
 fn value_binding(value: &Value, path: &[PathPart], sensitive: bool) -> Option<String> {
-    if sensitive || source_account_label(path).is_some() || !(value.is_boolean() || value.is_number()) {
+    if sensitive
+        || source_account_label(path).is_some()
+        || !(value.is_boolean() || value.is_number())
+    {
         return None;
     }
     let canonical = serde_json::to_vec(value).ok()?;
@@ -1731,11 +1785,34 @@ mod tests {
             .unwrap();
         assert_eq!(auth.target_channel.as_deref(), Some("whatsapp_baileys"));
         assert_eq!(auth.disposition, ImportDisposition::NeedsRelink);
+        assert!(auth.sensitive);
+        assert!(auth.effective_value_sha256.is_none());
+        assert!(auth.schema_binding.is_none());
         assert!(
             !serde_json::to_string(&report)
                 .unwrap()
                 .contains("whatsapp_business")
         );
+    }
+
+    #[test]
+    fn whatsapp_auth_dir_requires_the_legacy_string_shape() {
+        let temp = tempdir().unwrap();
+        let path = write_config(
+            temp.path(),
+            "{ channels: { whatsapp: { authDir: 42 } } }",
+        );
+        let report = inspect_openclaw_config(&path).unwrap();
+        let auth = report
+            .ledger
+            .iter()
+            .find(|entry| entry.source_path == "channels.whatsapp.authDir")
+            .unwrap();
+        assert_eq!(auth.target_channel.as_deref(), Some("whatsapp_baileys"));
+        assert_eq!(auth.disposition, ImportDisposition::Unknown);
+        assert!(auth.sensitive);
+        assert!(auth.effective_value_sha256.is_none());
+        assert!(auth.schema_binding.is_none());
     }
 
     #[test]
@@ -2117,17 +2194,25 @@ mod tests {
             assert_eq!(container.source_account_label.as_deref(), Some(label));
             assert_eq!(container.disposition, ImportDisposition::Unsupported);
             assert_eq!(
-                container.schema_binding.as_ref().map(|binding| binding.scope.as_str()),
+                container
+                    .schema_binding
+                    .as_ref()
+                    .map(|binding| binding.scope.as_str()),
                 Some("account_container")
             );
             assert_eq!(
-                container.schema_binding.as_ref().map(|binding| binding.action_id.as_str()),
+                container
+                    .schema_binding
+                    .as_ref()
+                    .map(|binding| binding.action_id.as_str()),
                 Some("requires_account_scoped_runtime")
             );
             let token = report
                 .ledger
                 .iter()
-                .find(|entry| entry.source_path == format!("channels.telegram.accounts.{label}.botToken"))
+                .find(|entry| {
+                    entry.source_path == format!("channels.telegram.accounts.{label}.botToken")
+                })
                 .unwrap();
             assert!(token.sensitive);
             assert!(token.effective_value_sha256.is_none());
@@ -2155,7 +2240,51 @@ mod tests {
         assert_eq!(entry.source_account_label.as_deref(), Some("work"));
         assert!(entry.effective_value_sha256.is_none());
         assert_eq!(
-            entry.schema_binding.as_ref().map(|binding| binding.scope.as_str()),
+            entry
+                .schema_binding
+                .as_ref()
+                .map(|binding| binding.scope.as_str()),
+            Some("opaque_subtree")
+        );
+    }
+
+    #[test]
+    fn w169_walks_typed_descendants_under_opaque_map_prefixes() {
+        let temp = tempdir().unwrap();
+        let path = write_config(
+            temp.path(),
+            "{ channels: { qqbot: { accounts: { work: { audioFormatPolicy: { transcodeEnabled: true }, arbitraryFutureOption: true } } } } }",
+        );
+        let report = inspect_openclaw_config(&path).unwrap();
+        let typed = report
+            .ledger
+            .iter()
+            .find(|entry| {
+                entry.source_path
+                    == "channels.qqbot.accounts.work.audioFormatPolicy.transcodeEnabled"
+            })
+            .unwrap();
+        assert_eq!(
+            typed
+                .schema_binding
+                .as_ref()
+                .map(|binding| binding.scope.as_str()),
+            Some("typed_leaf")
+        );
+
+        let opaque = report
+            .ledger
+            .iter()
+            .find(|entry| {
+                entry.source_path == "channels.qqbot.accounts.work.arbitraryFutureOption"
+            })
+            .unwrap();
+        assert_eq!(opaque.disposition, ImportDisposition::Unknown);
+        assert_eq!(
+            opaque
+                .schema_binding
+                .as_ref()
+                .map(|binding| binding.scope.as_str()),
             Some("opaque_subtree")
         );
     }
@@ -2173,7 +2302,10 @@ mod tests {
         assert!(!entry.sensitive);
         assert!(entry.effective_value_sha256.is_some());
         assert_eq!(
-            entry.schema_binding.as_ref().map(|binding| binding.scope.as_str()),
+            entry
+                .schema_binding
+                .as_ref()
+                .map(|binding| binding.scope.as_str()),
             Some("typed_leaf")
         );
         assert_ne!(entry.disposition, ImportDisposition::Mapped);
@@ -2188,7 +2320,11 @@ mod tests {
         );
         let report = inspect_openclaw_config(&path).unwrap();
         for source_path in ["channels.telegram.proxy", "channels.telegram.botToken"] {
-            let entry = report.ledger.iter().find(|entry| entry.source_path == source_path).unwrap();
+            let entry = report
+                .ledger
+                .iter()
+                .find(|entry| entry.source_path == source_path)
+                .unwrap();
             assert_eq!(entry.disposition, ImportDisposition::Unknown);
             assert!(entry.sensitive);
             assert!(entry.effective_value_sha256.is_none());

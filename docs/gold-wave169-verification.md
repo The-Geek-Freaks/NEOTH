@@ -77,3 +77,25 @@ formatting on GitHub. A formatting failure retains a reviewable package-only
 patch. This focused lane does not replace broader native/GUI/release gates.
 The source reviews and retained rejected revisions are under
 `work/gold-20260906/wave169-channel-schema/`.
+
+## Hosted classification repair
+
+Run 35656420591 on 3750a81fee7cf08b8ae3cc70f1e8c2fa53065964 passed
+extractor tests, exact fixture comparison and package compilation. The package
+ran 38 tests: 36 passed, two failed. The failing assertions exposed opaque
+wildcard precedence over explicit typed leaves and the legacy WhatsApp authDir
+classification. Clippy and package formatting were not reached after failure.
+
+The repair gives exact typed or supported SecretRef matches precedence over
+opaque prefixes. Object/array walking proceeds through a matching opaque map
+only when the frozen schema contains an explicit typed descendant; unknown
+siblings still stop at their own path. A full inspector regression covers the
+QQBot account audioFormatPolicy/transcodeEnabled case. Legacy whatsapp.authDir
+requires a string, retains NeedsRelink with no invented schema/value binding,
+and has a wrong-type regression. All original assertions remain in force.
+
+The 32 formatting hunks from Preflight 35656421057 are imported from its actual
+log. Three new regression identities are admitted. The raw schema fixture is
+unchanged. Retained logs and the independent repair review are in the W169 work
+directory. A new Hosted package run must prove the changed behavior; source
+review is not runtime acceptance and no Road checkbox closes.

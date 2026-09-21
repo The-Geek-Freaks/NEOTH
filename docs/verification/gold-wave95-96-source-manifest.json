@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W172-hosted-repair-candidate",
-  "base": "ceea62cbb2126f6fa1e4cce9f772e61f65851189",
-  "capturedUtc": "2026-09-21T21:16:53.8526191Z",
-  "validationStatus": "W169_REVIEWED_CUSTODY_INTEGRATION_HOSTED_PENDING",
-  "scopeNote": "Package-owned frozen3252row schema, strict structural/SecretRef/account ledger and eight package tests; W171 exact two Hosted formatting hunks. W173 ongoing work excluded. Hosted package/native/GUI acceptance pending.",
+  "base": "3750a81fee7cf08b8ae3cc70f1e8c2fa53065964",
+  "capturedUtc": "2026-09-21T21:32:51.2416881Z",
+  "validationStatus": "W169_W172_HOSTED_FAILURE_REPAIRS_PENDING_REEXECUTION",
+  "scopeNote": "W169 exact typed-descendant and legacy shape repairs, W172 GUI ModelRc/headless import fixes, W171 actual hosted CLI reference. W173 unreviewed source excluded. Hosted behavior/GUI/release gates still required.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -58,8 +58,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 231534,
-      "sha256": "D4026EA859078483FB3055064A75286ECBB460EC999A3D233AC7B2726768321F"
+      "bytes": 231743,
+      "sha256": "C948D52B50F47917AD9E8510178974FFA9C4AD3D603B18B0CCE33E308FAE0493"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -93,8 +93,8 @@
     },
     {
       "path": "docs/gold-wave169-verification.md",
-      "bytes": 4791,
-      "sha256": "61FC6F6B48296920FCFEACFA01B4D7DF5C50AB9A33E8FA89D6EE7C7E9A8DDE7E"
+      "bytes": 6117,
+      "sha256": "E0E3F351C57D79E156AFDA3346EA1E9A02AFBACBCD4D236DC1ACF204A490D90C"
     },
     {
       "path": "docs/gold-wave170-verification.md",
@@ -103,13 +103,13 @@
     },
     {
       "path": "docs/gold-wave171-verification.md",
-      "bytes": 1709,
-      "sha256": "FFC408E219E8D5B9DBDAFA13AD053A9E2B8FE584F29FEA0BF944B1859E20C2CB"
+      "bytes": 1887,
+      "sha256": "34E8367E49EE7B7DBD000D7A164EBFF87FFAFA74CB19232D7E26EB61E167F74D"
     },
     {
       "path": "docs/gold-wave172-verification.md",
-      "bytes": 1420,
-      "sha256": "3284536274150EF6CC50E3227C3EA51A168A3DC91A8BB4D54F560CE7482E177A"
+      "bytes": 2632,
+      "sha256": "B1F163C09751DBBFE18F6AD3E3FF5B403764AED8442F71D53AA15C39227B351C"
     },
     {
       "path": "docs/install.md",
@@ -188,13 +188,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1005945,
-      "sha256": "98B575168381C03059D94A32A07ADCD205889C0CDA440165A3A0527E18B92061"
+      "bytes": 1006935,
+      "sha256": "4A7EEB0318F9959C827FA00142809EFA7DBF72683B1BE9B8F6225BC717DA6FCC"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1601392,
-      "sha256": "DBA6926E990F12124FADB23743AD1B40E11F71B3A668968319978AAB0049F395"
+      "bytes": 1602382,
+      "sha256": "D54C4A35BFB6407BEE857F74A0CCA6C748E363488268A592C202BB468EA7C2CA"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -298,8 +298,8 @@
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "bytes": 79146,
-      "sha256": "0CC46CB1C873C942CF670439BB72475C94AA4AB4E5B7B5F231CA5CA0F0E6B089"
+      "bytes": 83281,
+      "sha256": "4414546D495F1C2E1A84FE9E21441CFF890F6C58FC44A6773E1884AD001A5DEB"
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/pinned_inventory.rs",
@@ -308,8 +308,8 @@
     },
     {
       "path": "SRC/neoth-openclaw-custody/src/pinned_schema.rs",
-      "bytes": 16841,
-      "sha256": "40C532E5BF08DC13E6794A38157E287451CA7B3F82966C8E638814BDE7793B30"
+      "bytes": 20983,
+      "sha256": "621F4A9B581A63D34C32372D83BFD68EB5BC99BA887F72BD876905D63954BAB1"
     },
     {
       "path": "SRC/neothd-gui/build.rs",
@@ -398,8 +398,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2022665,
-      "sha256": "DA1EC992439400265310EF21335F399D8C370BF48EE2AABA9BA1F7BD2EA30ABB"
+      "bytes": 2022898,
+      "sha256": "ED7996B3B82B32359FF6AEB5127E1BFA96E5FE1689918CA18D3F4AD02610097A"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -1888,8 +1888,8 @@
     },
     {
       "path": "SRC/neothd/tests/gui_channel_status.rs",
-      "bytes": 16308,
-      "sha256": "43AFCED4C0E2E33D002A7BF076F4B08EDC51D7B52B745B7AD01932493A4F024D"
+      "bytes": 16502,
+      "sha256": "43AE6BD82A3E9901FD4E0EF87AC243A503C91DA71161B0632E50F8F650CE6DEB"
     },
     {
       "path": "SRC/neothd/tests/gui_code_map_controller.rs",

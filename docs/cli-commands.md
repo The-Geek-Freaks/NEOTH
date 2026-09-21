@@ -62,7 +62,13 @@ Dump the full TOML-style record for a single agent including the system prompt. 
 
 ## `neoth arxiv`
 
-Search ArXiv for papers (A-24)
+Search arXiv papers or ingest the configured topic feed
+
+### `neoth arxiv ingest`
+
+Run one immediate pass of the enabled configured arXiv ingest feed
+
+- `--now` — Confirm the immediate one-shot pass; this never enables the daemon cadence
 
 ### `neoth arxiv search`
 

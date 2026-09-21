@@ -16,8 +16,12 @@ the pass and audit finalization fail, both causes are preserved.
 
 Successful table, JSON and single-line JSONL output contain counters only.
 Configuration and usage are documented in [configuration.md](configuration.md).
-The generated full CLI reference must be exported by the GitHub workflow from
-the published source and imported with its exact source/hash receipt.
+The generated full CLI reference was exported by successful GitHub run
+35655672068 from ceea62cbb2126f6fa1e4cce9f772e61f65851189 and imported
+byte-for-byte at SHA-256
+C948D52B50F47917AD9E8510178974FFA9C4AD3D603B18B0CCE33E308FAE0493.
+The source/hash receipt is in
+`work/gold-20260906/wave171-next-batch/REFERENCE-IMPORT.json`.
 
 Focused regressions cover the explicit flag, CLI parsing, opt-in/topics,
 configuration parameter forwarding, counter serialization, the existing real

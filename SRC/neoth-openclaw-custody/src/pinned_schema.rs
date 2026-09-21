@@ -4,7 +4,7 @@
 //! validates and looks up its structural paths; it never evaluates upstream
 //! JavaScript or invents descendants for open schema subtrees.
 
-use anyhow::{bail, ensure, Context as _, Result};
+use anyhow::{Context as _, Result, bail, ensure};
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
@@ -20,10 +20,32 @@ const EXPECTED_OPAQUE_ROW_COUNT: usize = 22;
 const FIXTURE_BYTES: &str = include_str!("fixtures/openclaw_channel_schema_v1.json");
 
 const EXPECTED_CHANNELS: &[&str] = &[
-    "clickclack", "discord", "feishu", "googlechat", "imessage", "irc", "line", "matrix",
-    "mattermost", "msteams", "nextcloud-talk", "nostr", "qa-channel", "qqbot", "raft",
-    "reef", "signal", "slack", "sms", "synology-chat", "telegram", "tlon", "twitch",
-    "whatsapp", "zalo", "zalouser",
+    "clickclack",
+    "discord",
+    "feishu",
+    "googlechat",
+    "imessage",
+    "irc",
+    "line",
+    "matrix",
+    "mattermost",
+    "msteams",
+    "nextcloud-talk",
+    "nostr",
+    "qa-channel",
+    "qqbot",
+    "raft",
+    "reef",
+    "signal",
+    "slack",
+    "sms",
+    "synology-chat",
+    "telegram",
+    "tlon",
+    "twitch",
+    "whatsapp",
+    "zalo",
+    "zalouser",
 ];
 
 #[derive(Clone, Copy, Debug)]
@@ -105,35 +127,55 @@ pub fn validate_pinned_schema() -> Result<()> {
     fixture().map(|_| ())
 }
 
-pub fn lookup(channel: &str, path: &[PathPart<'_>], actual_json_type: &str) -> Result<Option<SchemaMatch>> {
+pub fn lookup(
+    channel: &str,
+    path: &[PathPart<'_>],
+    actual_json_type: &str,
+) -> Result<Option<SchemaMatch>> {
     let fixture = fixture()?;
     let Some(channel_schema) = fixture.channels.iter().find(|item| item.channel_id == channel) else {
         return Ok(None);
     };
 
+    if actual_json_type == "secret_ref" {
+        if let Some(schema) = secret_ref_match(channel, channel_schema, path) {
+            return Ok(Some(schema));
+        }
+    } else {
+        let mut candidates = channel_schema
+            .leaves
+            .iter()
+            .filter(|row| row.scope.is_none() && template_matches(row, path, false))
+            .filter(|row| json_type_matches(row.json_type.as_str(), actual_json_type));
+        if let Some(first) = candidates.next() {
+            // The validator guarantees same path/type rows cannot disagree in
+            // their outcome. Composition branches are schema provenance, not
+            // runtime paths.
+            return Ok(Some(schema_match(channel, first, SchemaScope::TypedLeaf)));
+        }
+    }
+
     let opaque = channel_schema
         .leaves
         .iter()
-        .find(|row| row.scope.as_deref() == Some("opaque_subtree") && template_matches(row, path, true));
-    if let Some(row) = opaque {
-        return Ok(Some(schema_match(channel, row, SchemaScope::OpaqueSubtree)));
-    }
+        .find(|row| {
+            row.scope.as_deref() == Some("opaque_subtree") && template_matches(row, path, true)
+        });
+    Ok(opaque.map(|row| schema_match(channel, row, SchemaScope::OpaqueSubtree)))
+}
 
-    if actual_json_type == "secret_ref" {
-        return Ok(secret_ref_match(channel, channel_schema, path));
-    }
-
-    let mut candidates = channel_schema
+/// Whether a container matching an opaque subtree has an explicitly typed
+/// descendant in the pinned fixture. Callers use this to traverse known nested
+/// fields while still blocking unknown dynamic map children at their own path.
+pub fn has_typed_descendant(channel: &str, path: &[PathPart<'_>]) -> Result<bool> {
+    let fixture = fixture()?;
+    let Some(channel_schema) = fixture.channels.iter().find(|item| item.channel_id == channel) else {
+        return Ok(false);
+    };
+    Ok(channel_schema
         .leaves
         .iter()
-        .filter(|row| row.scope.is_none() && template_matches(row, path, false))
-        .filter(|row| json_type_matches(row.json_type.as_str(), actual_json_type));
-    let Some(first) = candidates.next() else {
-        return Ok(None);
-    };
-    // The validator guarantees same path/type rows cannot disagree in their
-    // outcome. Composition branches are schema provenance, not runtime paths.
-    Ok(Some(schema_match(channel, first, SchemaScope::TypedLeaf)))
+        .any(|row| row.scope.is_none() && template_has_prefix(row, path)))
 }
 
 fn secret_ref_match(
@@ -200,27 +242,60 @@ fn fixture() -> Result<&'static Fixture> {
 
 fn load_fixture() -> Result<Fixture> {
     let actual = format!("{:X}", Sha256::digest(FIXTURE_BYTES.as_bytes()));
-    ensure!(actual == FIXTURE_SHA256, "W169 schema fixture digest mismatch");
-    let fixture: Fixture = serde_json::from_str(FIXTURE_BYTES).context("parse pinned W169 schema fixture")?;
-    ensure!(fixture.schema_version == FIXTURE_VERSION, "unexpected W169 schema fixture version");
-    ensure!(fixture.source.repository == OPENCLAW_REPOSITORY, "unexpected W169 source repository");
-    ensure!(fixture.source.commit == OPENCLAW_COMMIT, "unexpected W169 source commit");
-    ensure!(fixture.source.metadata_path == OPENCLAW_METADATA_PATH, "unexpected W169 metadata path");
+    ensure!(
+        actual == FIXTURE_SHA256,
+        "W169 schema fixture digest mismatch"
+    );
+    let fixture: Fixture =
+        serde_json::from_str(FIXTURE_BYTES).context("parse pinned W169 schema fixture")?;
+    ensure!(
+        fixture.schema_version == FIXTURE_VERSION,
+        "unexpected W169 schema fixture version"
+    );
+    ensure!(
+        fixture.source.repository == OPENCLAW_REPOSITORY,
+        "unexpected W169 source repository"
+    );
+    ensure!(
+        fixture.source.commit == OPENCLAW_COMMIT,
+        "unexpected W169 source commit"
+    );
+    ensure!(
+        fixture.source.metadata_path == OPENCLAW_METADATA_PATH,
+        "unexpected W169 metadata path"
+    );
     for blocker in &fixture.uncovered_blockers {
         let _ = (&blocker.channel, &blocker.path, &blocker.reason);
     }
-    ensure!(fixture.uncovered_blockers.is_empty(), "W169 schema fixture has uncovered blockers");
+    ensure!(
+        fixture.uncovered_blockers.is_empty(),
+        "W169 schema fixture has uncovered blockers"
+    );
 
     let expected: BTreeSet<_> = EXPECTED_CHANNELS.iter().copied().collect();
-    let actual_channels: BTreeSet<_> = fixture.channels.iter().map(|item| item.channel_id.as_str()).collect();
-    ensure!(actual_channels == expected, "W169 schema fixture channel inventory drift");
-    ensure!(fixture.channels.len() == EXPECTED_CHANNELS.len(), "duplicate W169 channel IDs");
+    let actual_channels: BTreeSet<_> = fixture
+        .channels
+        .iter()
+        .map(|item| item.channel_id.as_str())
+        .collect();
+    ensure!(
+        actual_channels == expected,
+        "W169 schema fixture channel inventory drift"
+    );
+    ensure!(
+        fixture.channels.len() == EXPECTED_CHANNELS.len(),
+        "duplicate W169 channel IDs"
+    );
 
     let mut identities = BTreeSet::new();
     let mut rows = 0usize;
     let mut opaque_rows = 0usize;
     for channel in &fixture.channels {
-        let _ = (&channel.aliases, channel.default_account_present, &channel.plugin_id);
+        let _ = (
+            &channel.aliases,
+            channel.default_account_present,
+            &channel.plugin_id,
+        );
         if let Some(blocker) = channel.blockers.first() {
             let _ = (&blocker.path, &blocker.reason);
             bail!("W169 fixture retains legacy channel blocker outside normalized rows");
@@ -228,36 +303,70 @@ fn load_fixture() -> Result<Fixture> {
         for row in &channel.leaves {
             rows += 1;
             validate_template(row.path_template.as_str())?;
-            let identity = format!("{}\u{1f}{}\u{1f}{}", channel.channel_id, row.path_template, row.json_type);
-            ensure!(identities.insert(identity), "duplicate W169 schema row identity");
+            let identity = format!(
+                "{}\u{1f}{}\u{1f}{}",
+                channel.channel_id, row.path_template, row.json_type
+            );
+            ensure!(
+                identities.insert(identity),
+                "duplicate W169 schema row identity"
+            );
             match row.scope.as_deref() {
                 None => {
-                    ensure!(row.disposition.is_none(), "typed W169 row unexpectedly carries a disposition");
-                    ensure!(row.json_type != "any", "typed W169 row cannot have json_type any");
+                    ensure!(
+                        row.disposition.is_none(),
+                        "typed W169 row unexpectedly carries a disposition"
+                    );
+                    ensure!(
+                        row.json_type != "any",
+                        "typed W169 row cannot have json_type any"
+                    );
                 }
                 Some("opaque_subtree") => {
                     opaque_rows += 1;
-                    ensure!(row.json_type == "any", "opaque W169 row must have json_type any");
-                    ensure!(row.disposition.as_deref() == Some("blocked_requires_explicit_leaf_mapping"), "opaque W169 row disposition drift");
+                    ensure!(
+                        row.json_type == "any",
+                        "opaque W169 row must have json_type any"
+                    );
+                    ensure!(
+                        row.disposition.as_deref()
+                            == Some("blocked_requires_explicit_leaf_mapping"),
+                        "opaque W169 row disposition drift"
+                    );
                 }
                 Some(other) => bail!("unknown W169 schema scope `{other}`"),
             }
         }
         if channel.account_template_present {
-            ensure!(channel.leaves.iter().any(|row| row.path_template.starts_with("accounts.{key}")), "account-template channel lacks accounts.{{key}} schema row");
+            ensure!(
+                channel
+                    .leaves
+                    .iter()
+                    .any(|row| row.path_template.starts_with("accounts.{key}")),
+                "account-template channel lacks accounts.{{key}} schema row"
+            );
         }
     }
     ensure!(rows == EXPECTED_ROW_COUNT, "W169 schema row count drift");
-    ensure!(opaque_rows == EXPECTED_OPAQUE_ROW_COUNT, "W169 opaque schema row count drift");
+    ensure!(
+        opaque_rows == EXPECTED_OPAQUE_ROW_COUNT,
+        "W169 opaque schema row count drift"
+    );
     Ok(fixture)
 }
 
 fn validate_template(template: &str) -> Result<()> {
-    ensure!(!template.is_empty() && !template.starts_with('.') && !template.ends_with('.'), "invalid empty W169 path template");
+    ensure!(
+        !template.is_empty() && !template.starts_with('.') && !template.ends_with('.'),
+        "invalid empty W169 path template"
+    );
     for component in template.split('.') {
         ensure!(!component.is_empty(), "invalid empty W169 path component");
         let stripped = strip_composition(component);
-        ensure!(!stripped.is_empty() || component.contains("{anyOf:") || component.contains("{oneOf:"), "invalid W169 path component");
+        ensure!(
+            !stripped.is_empty() || component.contains("{anyOf:") || component.contains("{oneOf:"),
+            "invalid W169 path component"
+        );
         ensure!(
             stripped == "{key}"
                 || stripped == "{key}[]"
@@ -276,7 +385,7 @@ fn schema_match(channel: &str, row: &SchemaLeaf, scope: SchemaScope) -> SchemaMa
     }
 }
 
-fn template_matches(row: &SchemaLeaf, path: &[PathPart<'_>], prefix: bool) -> bool {
+fn template_parts(row: &SchemaLeaf) -> Vec<TemplatePart> {
     let mut expected = Vec::new();
     for component in row.path_template.split('.') {
         let component = strip_composition(component);
@@ -290,6 +399,11 @@ fn template_matches(row: &SchemaLeaf, path: &[PathPart<'_>], prefix: bool) -> bo
             expected.push(TemplatePart::Key(component));
         }
     }
+    expected
+}
+
+fn template_matches(row: &SchemaLeaf, path: &[PathPart<'_>], prefix: bool) -> bool {
+    let expected = template_parts(row);
     if prefix {
         if path.len() < expected.len() {
             return false;
@@ -297,12 +411,28 @@ fn template_matches(row: &SchemaLeaf, path: &[PathPart<'_>], prefix: bool) -> bo
     } else if path.len() != expected.len() {
         return false;
     }
-    expected.iter().zip(path).all(|(expected, actual)| match (expected, actual) {
+    expected
+        .iter()
+        .zip(path)
+        .all(|(expected, actual)| template_part_matches(expected, actual))
+}
+
+fn template_has_prefix(row: &SchemaLeaf, path: &[PathPart<'_>]) -> bool {
+    let expected = template_parts(row);
+    path.len() < expected.len()
+        && expected
+            .iter()
+            .zip(path)
+            .all(|(expected, actual)| template_part_matches(expected, actual))
+}
+
+fn template_part_matches(expected: &TemplatePart, actual: &PathPart<'_>) -> bool {
+    match (expected, actual) {
         (TemplatePart::Index, PathPart::Index) => true,
         (TemplatePart::Key(expected), PathPart::Key(_)) if expected == "{key}" => true,
         (TemplatePart::Key(expected), PathPart::Key(actual)) => expected == actual,
         _ => false,
-    })
+    }
 }
 
 enum TemplatePart {
@@ -404,8 +534,8 @@ mod tests {
                 rows += 1;
                 saw_map |= row.path_template.contains("{key}");
                 saw_array |= row.path_template.contains("[]");
-                saw_composition |= row.path_template.contains("{anyOf:")
-                    || row.path_template.contains("{oneOf:");
+                saw_composition |=
+                    row.path_template.contains("{anyOf:") || row.path_template.contains("{oneOf:");
                 let owned = sample_parts(row.path_template.as_str());
                 let parts: Vec<_> = owned
                     .iter()
@@ -421,12 +551,20 @@ mod tests {
                 };
                 let matched = lookup(channel.channel_id.as_str(), &parts, observed)
                     .unwrap()
-                    .unwrap_or_else(|| panic!("fixture row did not resolve: {}:{}", channel.channel_id, row.path_template));
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "fixture row did not resolve: {}:{}",
+                            channel.channel_id, row.path_template
+                        )
+                    });
                 match row.scope.as_deref() {
                     Some("opaque_subtree") => {
                         opaque += 1;
                         assert_eq!(matched.scope, SchemaScope::OpaqueSubtree);
-                        assert_eq!(row.disposition.as_deref(), Some("blocked_requires_explicit_leaf_mapping"));
+                        assert_eq!(
+                            row.disposition.as_deref(),
+                            Some("blocked_requires_explicit_leaf_mapping")
+                        );
                     }
                     None => {
                         assert_eq!(matched.scope, SchemaScope::TypedLeaf);
@@ -443,11 +581,72 @@ mod tests {
 
     #[test]
     fn secret_refs_require_a_fixture_backed_object_composition_family() {
-        assert!(lookup("telegram", &[PathPart::Key("botToken")], "secret_ref")
+        assert!(
+            lookup("telegram", &[PathPart::Key("botToken")], "secret_ref")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            lookup("telegram", &[PathPart::Key("proxy")], "secret_ref")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn explicit_typed_leaves_take_precedence_over_opaque_map_prefixes() {
+        let typed = lookup(
+            "qqbot",
+            &[
+                PathPart::Key("accounts"),
+                PathPart::Key("work"),
+                PathPart::Key("audioFormatPolicy"),
+                PathPart::Key("transcodeEnabled"),
+            ],
+            "boolean",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(typed.scope, SchemaScope::TypedLeaf);
+        assert_eq!(
+            typed.path_template,
+            "accounts.{key}.audioFormatPolicy.transcodeEnabled"
+        );
+        assert!(
+            has_typed_descendant(
+                "qqbot",
+                &[
+                    PathPart::Key("accounts"),
+                    PathPart::Key("work"),
+                    PathPart::Key("audioFormatPolicy"),
+                ],
+            )
             .unwrap()
-            .is_some());
-        assert!(lookup("telegram", &[PathPart::Key("proxy")], "secret_ref")
+        );
+
+        let opaque = lookup(
+            "qqbot",
+            &[
+                PathPart::Key("accounts"),
+                PathPart::Key("work"),
+                PathPart::Key("futureOption"),
+            ],
+            "boolean",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(opaque.scope, SchemaScope::OpaqueSubtree);
+        assert_eq!(opaque.path_template, "accounts.{key}.{key}");
+        assert!(
+            !has_typed_descendant(
+                "qqbot",
+                &[
+                    PathPart::Key("accounts"),
+                    PathPart::Key("work"),
+                    PathPart::Key("futureOption"),
+                ],
+            )
             .unwrap()
-            .is_none());
+        );
     }
 }

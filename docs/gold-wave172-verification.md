@@ -23,3 +23,24 @@ run. The small cadence-only correction 9c2a4215 passed Preflight 35653959335
 and Code Quality 35653958110 before these Rust test repairs.
 
 No local compiler, formatter, tests, fixtures, or product execution ran.
+
+## Follow-up on 6c69ce79
+
+The channel-adapter lane in CI 35655045794 passed after the four token fixes.
+Linux quality reached a different headless target, `gui_channel_status`, whose
+import of the desktop `gui_action` module leaves four production Q8 executor
+symbols unused. A `dead_code` allowance is limited to that test-only import
+and explains the absent desktop consumer. Product GUI linting is unchanged.
+
+The beta workspace build also exposed four actual E0277 errors in the new
+recall-chip projection: a `Vec<SharedString>` does not implement conversion to
+Slint's `ModelRc`. The two clearing and two populated Main/Buddy assignments
+now construct the existing `VecModel`/`ModelRc` representation. Recall
+lifecycle fences, line content and callback ordering remain unchanged.
+
+Full CI 35655045794 and Windows preview 35653179383 are confirmed cancelled.
+The preview's GUI source was byte-equivalent in Git to the compiler-failing
+source before cancellation. Both require fresh execution after publication.
+Retained logs, source freezes and root integration review are in the same W172
+evidence directory. No result from these failed/cancelled runs closes a Road
+item or establishes release acceptance.
