@@ -41,3 +41,10 @@ system text, model-only resolution, absent-versus-empty system, delegated agent
 injection, terminal/WAL projection parity, legacy snapshots and CLI rendering.
 They have not yet run for this source. No local compiler, formatter, parser,
 test, fixture or product was executed; all executable gates belong to GitHub.
+
+Hosted Preflight 35660482045 on cdaae0a4 requested exactly 18 formatting
+hunks across six source files. They are imported from the retained GitHub log;
+the source-bound receipt is FORMAT-HOSTED.json in the W173 work directory
+(SHA-256 16ECA5542841BF20F78DDD1B18D7E8BBAA71E8C0873679F8B46263CDF26E6D58).
+Code Quality 35660480451 passed. CLI build/reference 35660480510 remains in
+progress; fresh formatting and behavioral acceptance are still required.

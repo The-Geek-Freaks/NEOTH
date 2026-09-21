@@ -724,10 +724,10 @@ mod tests {
 
     #[test]
     fn prompt_tax_uses_only_explicit_retained_sources() {
-        let tagged_skill = item(Block::B, 0.5, 0, 11)
-            .with_prompt_tax_source(PromptTaxSource::Skill);
-        let tagged_repo = item(Block::D, 0.5, 1, 7)
-            .with_prompt_tax_source(PromptTaxSource::RepoContext);
+        let tagged_skill =
+            item(Block::B, 0.5, 0, 11).with_prompt_tax_source(PromptTaxSource::Skill);
+        let tagged_repo =
+            item(Block::D, 0.5, 1, 7).with_prompt_tax_source(PromptTaxSource::RepoContext);
         let untagged = item(Block::E, 0.5, 0, 13);
 
         let tax = PromptTax::from_retained_items(&[tagged_skill, tagged_repo, untagged]);
@@ -741,8 +741,8 @@ mod tests {
 
     #[test]
     fn prompt_tax_excludes_tagged_items_dropped_by_budget_enforcement() {
-        let dropped_recall = item(Block::D, 0.5, 1, 100)
-            .with_prompt_tax_source(PromptTaxSource::Memory);
+        let dropped_recall =
+            item(Block::D, 0.5, 1, 100).with_prompt_tax_source(PromptTaxSource::Memory);
         let user = item(Block::E, 0.5, 0, 10);
         let mut items = vec![dropped_recall, user];
 

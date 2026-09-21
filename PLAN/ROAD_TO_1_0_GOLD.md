@@ -17,6 +17,8 @@ records remain unavailable and zero remains a real measured zero. Hosted
 compilation and behavioral tests are pending; no ADOPT31-D3 checkbox closes.
 See [W173](../docs/gold-wave173-verification.md). W174 video-ingest F1/F3 is
 a separate work-in-progress and is excluded from this publication.
+W173 Code Quality 35660480451 passed; 18 Hosted format hunks are imported
+from Preflight 35660482045. CLI/reference build 35660480510 is still running.
 
 **W172 GUI test compile repair (2026-09-21):** the beta job in CI
 35658155763 exposed eight test-only errors after product GUI compilation.

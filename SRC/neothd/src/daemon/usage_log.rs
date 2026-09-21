@@ -112,12 +112,18 @@ pub struct PromptTaxTotals {
 impl PromptTaxTotals {
     fn absorb(&mut self, tax: crate::tokens::budget::PromptTax) {
         self.observed_call_count = self.observed_call_count.saturating_add(1);
-        self.skill_tokens = self.skill_tokens.saturating_add(u64::from(tax.skill_tokens));
-        self.memory_tokens = self.memory_tokens.saturating_add(u64::from(tax.memory_tokens));
+        self.skill_tokens = self
+            .skill_tokens
+            .saturating_add(u64::from(tax.skill_tokens));
+        self.memory_tokens = self
+            .memory_tokens
+            .saturating_add(u64::from(tax.memory_tokens));
         self.repo_context_tokens = self
             .repo_context_tokens
             .saturating_add(u64::from(tax.repo_context_tokens));
-        self.council_tokens = self.council_tokens.saturating_add(u64::from(tax.council_tokens));
+        self.council_tokens = self
+            .council_tokens
+            .saturating_add(u64::from(tax.council_tokens));
         self.unattributed_tokens = self
             .unattributed_tokens
             .saturating_add(u64::from(tax.unattributed_tokens));
@@ -868,7 +874,9 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
                 None => roll.total_unknown_output_token_count += 1,
             }
             if let Some(prompt_tax) = ev.prompt_tax {
-                roll.prompt_tax.get_or_insert_with(Default::default).absorb(prompt_tax);
+                roll.prompt_tax
+                    .get_or_insert_with(Default::default)
+                    .absorb(prompt_tax);
             }
             let event_known_cost = valid_known_cost(ev.cost_usd);
             match event_known_cost {
@@ -2040,8 +2048,8 @@ mod tests {
             .as_object_mut()
             .expect("terminal payload object")
             .remove("prompt_tax");
-        let legacy_payload = serde_json::to_vec(&legacy_payload)
-            .expect("serialize legacy terminal payload");
+        let legacy_payload =
+            serde_json::to_vec(&legacy_payload).expect("serialize legacy terminal payload");
         let legacy = usage_event_from_terminal_payload(&legacy_payload)
             .expect("valid legacy terminal payload")
             .expect("terminal payload projects a usage event");

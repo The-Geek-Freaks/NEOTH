@@ -2197,11 +2197,9 @@ fn build_agent_system_from_layers(
     }
     if !flags.recall {
         if let Some(guidance) = layers.guidance_block.as_deref() {
-            let mut item = crate::tokens::budget::BlockItem::new(
-                crate::tokens::budget::Block::D,
-                guidance,
-            )
-            .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory);
+            let mut item =
+                crate::tokens::budget::BlockItem::new(crate::tokens::budget::Block::D, guidance)
+                    .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory);
             item.ts_ns = 1;
             items.push(item);
         }
@@ -3021,20 +3019,16 @@ pub(super) async fn build_prompt_bundle(
         .filter(|item| item.block == crate::tokens::budget::Block::E)
         .ok_or_else(|| anyhow::anyhow!("prompt assembler lost the typed Block E item"))?;
     if let Some(guidance) = guidance_block {
-        let mut item = crate::tokens::budget::BlockItem::new(
-            crate::tokens::budget::Block::D,
-            guidance,
-        )
-        .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory);
+        let mut item =
+            crate::tokens::budget::BlockItem::new(crate::tokens::budget::Block::D, guidance)
+                .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory);
         item.ts_ns = 1;
         budget_items.push(item);
     }
     if let Some(recall) = recall_block.as_ref() {
-        let mut item = crate::tokens::budget::BlockItem::new(
-            crate::tokens::budget::Block::D,
-            recall.as_str(),
-        )
-        .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory);
+        let mut item =
+            crate::tokens::budget::BlockItem::new(crate::tokens::budget::Block::D, recall.as_str())
+                .with_prompt_tax_source(crate::tokens::budget::PromptTaxSource::Memory);
         item.ts_ns = 2;
         budget_items.push(item);
     }
@@ -17185,11 +17179,11 @@ modes:
         let (writer, writer_join) = wal_spawn(home.path().join("budget.wal")).unwrap();
         let mut config = FreedomConfig::default();
         config.tokens.max_per_request = 20_000;
-        let mut dropped_memory =
-            BlockItem::new(Block::D, "d".repeat(100_000)).with_prompt_tax_source(PromptTaxSource::Memory);
+        let mut dropped_memory = BlockItem::new(Block::D, "d".repeat(100_000))
+            .with_prompt_tax_source(PromptTaxSource::Memory);
         dropped_memory.ts_ns = 1;
-        let mut retained_memory =
-            BlockItem::new(Block::D, "retained memory").with_prompt_tax_source(PromptTaxSource::Memory);
+        let mut retained_memory = BlockItem::new(Block::D, "retained memory")
+            .with_prompt_tax_source(PromptTaxSource::Memory);
         retained_memory.ts_ns = 2;
         let items = vec![
             BlockItem::new(Block::A, "protected system"),

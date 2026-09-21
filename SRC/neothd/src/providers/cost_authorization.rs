@@ -249,11 +249,7 @@ fn prompt_tax_request_binding_sha256(prompt: &str, system: Option<&str>) -> Stri
         b"neoth.prompt-tax-request-binding.v1",
     );
     hash_binding_field(&mut hasher, "system_present", &[u8::from(system.is_some())]);
-    hash_binding_field(
-        &mut hasher,
-        "system",
-        system.unwrap_or_default().as_bytes(),
-    );
+    hash_binding_field(&mut hasher, "system", system.unwrap_or_default().as_bytes());
     hash_binding_field(&mut hasher, "prompt", prompt.as_bytes());
     finish_sha256(hasher)
 }
@@ -2860,7 +2856,13 @@ mod tests {
             bound_system,
         );
         authorizer
-            .authorize_leaf(provider, &request, "test.prompt_tax_binding", false, Some(64))
+            .authorize_leaf(
+                provider,
+                &request,
+                "test.prompt_tax_binding",
+                false,
+                Some(64),
+            )
             .await
             .expect("test authorizer must mint a leaf ticket")
             .ticket

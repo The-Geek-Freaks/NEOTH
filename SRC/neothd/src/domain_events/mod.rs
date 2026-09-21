@@ -273,16 +273,12 @@ impl UsageMeter {
                     .fetch_add(u64::from(prompt_tax.skill_tokens), Ordering::Relaxed);
                 self.prompt_tax_memory_tokens
                     .fetch_add(u64::from(prompt_tax.memory_tokens), Ordering::Relaxed);
-                self.prompt_tax_repo_context_tokens.fetch_add(
-                    u64::from(prompt_tax.repo_context_tokens),
-                    Ordering::Relaxed,
-                );
+                self.prompt_tax_repo_context_tokens
+                    .fetch_add(u64::from(prompt_tax.repo_context_tokens), Ordering::Relaxed);
                 self.prompt_tax_council_tokens
                     .fetch_add(u64::from(prompt_tax.council_tokens), Ordering::Relaxed);
-                self.prompt_tax_unattributed_tokens.fetch_add(
-                    u64::from(prompt_tax.unattributed_tokens),
-                    Ordering::Relaxed,
-                );
+                self.prompt_tax_unattributed_tokens
+                    .fetch_add(u64::from(prompt_tax.unattributed_tokens), Ordering::Relaxed);
             }
         }
     }
