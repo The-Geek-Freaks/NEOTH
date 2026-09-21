@@ -5826,6 +5826,9 @@ pub(crate) async fn spawn_channel_adapters(
     // calls in channel handlers use a pool reader (non-serialising).
     views_executor: &Option<std::sync::Arc<crate::memory::store::ViewsExecutor>>,
 ) {
+    #[cfg(not(any(feature = "irc-channel", feature = "nostr-channel")))]
+    let _ = (live_channels, channel_fingerprints, readiness_publishers);
+
     let selected_credentials =
         only.map(|channel_ref| credentials_for_channel(creds, channel_ref.channel_id));
     let creds = selected_credentials.as_ref().unwrap_or(creds);

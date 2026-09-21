@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W130-live-channel-delivery-and-legacy-migration",
-  "base": "33f64007a406f91c9f49f97629b25042025e42ae",
-  "capturedUtc": "2026-09-21T07:23:03.1216537Z",
-  "validationStatus": "W128_W130_SOURCE_REVIEW_APPROVED_REMOTE_EXECUTION_REQUIRED",
-  "scopeNote": "303 cumulative inputs. Admit only the sixteen frozen and independently reviewed W128/W130 source/workflow paths. Includes connection-owned egress, transactional migration GUI and macOS discovery binding. W131 work is excluded. Execution remains GitHub-only; no Road closure.",
+  "item": "GOLD-W95-W133-hosted-ci-recovery",
+  "base": "1f96e099e82fec6ef8efa13b6dbb3d1edee97f93",
+  "capturedUtc": "2026-09-21T07:48:35.3815073Z",
+  "validationStatus": "W133_SOURCE_REVIEW_APPROVED_REMOTE_EXECUTION_REQUIRED",
+  "scopeNote": "303 cumulative inputs. Admit only three independently reviewed W133 repair paths. W131 and W132 mutable sources excluded. GitHub-only execution; no Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -418,8 +418,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/settings.slint",
-      "bytes": 429598,
-      "sha256": "D27BB01A4513EC8B6F8FBC2824167E36E586F860612F3BBB034AB4ABEF13E7D2"
+      "bytes": 429592,
+      "sha256": "F134DAE01BDBB804CB70E62A54496B781172FD33B49068FBD57F3743C26C2F15"
     },
     {
       "path": "SRC/neothd-gui/ui/tabs.slint",
@@ -648,8 +648,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
-      "bytes": 517367,
-      "sha256": "75E603A3F657214B5D37F667CE07A5D1493E84378A476004401A2BE4B0B1C565"
+      "bytes": 517514,
+      "sha256": "D6C575A19965338D4F7ED3B49D2F09B83685287E82023ACEBD7834896DAF2782"
     },
     {
       "path": "SRC/neothd/src/cli/serve.rs",
@@ -973,8 +973,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "bytes": 116286,
-      "sha256": "BE99C703BBB71BBCD48C0D3F8D3875430E9F61AA7D5B3E06BF43C377F263C906"
+      "bytes": 117278,
+      "sha256": "AB7C73078A214737F5761050F4DB6D77FB62715968C6CE6DBD76AD13CC807D66"
     },
     {
       "path": "SRC/neothd/src/daemon/proactive_egress.rs",

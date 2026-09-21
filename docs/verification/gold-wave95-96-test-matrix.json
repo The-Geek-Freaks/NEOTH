@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W130_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "33f64007a406f91c9f49f97629b25042025e42ae",
+  "status": "W95_W133_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "base": "1f96e099e82fec6ef8efa13b6dbb3d1edee97f93",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 52504,
-    "sha256": "5F3D636ADFE75539B014144CF67303055D96A7FF84C1D795A4A8959DEEBF2361"
+    "bytes": 52362,
+    "sha256": "8726C5348CE8EA1FDFAE43FC314B151DBCA1FF5C63C966F2D834A673A0D5CE59"
   },
   "sourceInputs": 303,
   "requiredNativeTests": [
@@ -552,7 +552,7 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::paired_reply_binding_releases_a_retired_telegram_adapter",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "75E603A3F657214B5D37F667CE07A5D1493E84378A476004401A2BE4B0B1C565",
+      "sourceSha256": "D6C575A19965338D4F7ED3B49D2F09B83685287E82023ACEBD7834896DAF2782",
       "junitClass": "neoth"
     },
     {
@@ -588,37 +588,37 @@
     {
       "test": "daemon::proactive_dispatcher::tests::connection_bound_delivery_uses_only_the_exact_live_channel_ref",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "BE99C703BBB71BBCD48C0D3F8D3875430E9F61AA7D5B3E06BF43C377F263C906",
+      "sourceSha256": "AB7C73078A214737F5761050F4DB6D77FB62715968C6CE6DBD76AD13CC807D66",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::unavailable_connection_bound_handles_settle_sidecar_before_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "BE99C703BBB71BBCD48C0D3F8D3875430E9F61AA7D5B3E06BF43C377F263C906",
+      "sourceSha256": "AB7C73078A214737F5761050F4DB6D77FB62715968C6CE6DBD76AD13CC807D66",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::malformed_connection_bound_targets_never_acquire_or_arm_live_transport",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "BE99C703BBB71BBCD48C0D3F8D3875430E9F61AA7D5B3E06BF43C377F263C906",
+      "sourceSha256": "AB7C73078A214737F5761050F4DB6D77FB62715968C6CE6DBD76AD13CC807D66",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "BE99C703BBB71BBCD48C0D3F8D3875430E9F61AA7D5B3E06BF43C377F263C906",
+      "sourceSha256": "AB7C73078A214737F5761050F4DB6D77FB62715968C6CE6DBD76AD13CC807D66",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::proactive_dispatcher::tests::plan_delivery_connection_bound_channels_require_the_live_registry",
       "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "sourceSha256": "BE99C703BBB71BBCD48C0D3F8D3875430E9F61AA7D5B3E06BF43C377F263C906",
+      "sourceSha256": "AB7C73078A214737F5761050F4DB6D77FB62715968C6CE6DBD76AD13CC807D66",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::tests::readiness_publisher_revokes_on_false_and_cannot_republish_a_replaced_lease",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "75E603A3F657214B5D37F667CE07A5D1493E84378A476004401A2BE4B0B1C565",
+      "sourceSha256": "D6C575A19965338D4F7ED3B49D2F09B83685287E82023ACEBD7834896DAF2782",
       "junitClass": "neoth"
     },
     {
@@ -1449,7 +1449,20 @@
       "localFormatterRan": false,
       "codeQuality": 35572544462,
       "codeQualityConclusion": "success",
-      "rerun": "PENDING"
+      "rerun": "PASS_PREFLIGHT35572946068_CODEQUALITY35572946388_ON1f96e099"
     }
+  },
+  "wave133": {
+    "report": "docs/gold-wave133-verification.md",
+    "sourceReview": "APPROVED_STATIC_ONLY",
+    "reviewSha256": "24DBEDADDACBF664E9B2B7501AA003C691E8517C8794E7230E4D75CF7E7004ED",
+    "failedCi": 35573074634,
+    "failedSource": "1f96e099e82fec6ef8efa13b6dbb3d1edee97f93",
+    "preview": 35573077459,
+    "previewConclusion": "cancelled",
+    "optionalPassed": 5,
+    "optionalRequired": 7,
+    "execution": "PENDING_GITHUB_ONLY",
+    "localValidationRan": false
   }
 }

@@ -2,6 +2,22 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W133 CI recovery (2026-09-21):** current-source Windows/macOS GUI compilation,
+Linux strict lint and optional-adapter WAL fixture failures are diagnosed and
+repaired in three source paths. Independent review and hosted reruns remain
+required; see [W133](../docs/gold-wave133-verification.md). The first five
+optional-adapter checks passed, while the two delivery outcomes need rerunning.
+No current-source native or portable pass is claimed. Counts stay 1324/1015/307/2.
+
+**W131/W132 in progress (2026-09-21):** the remaining P2-11 graph work is now
+being implemented as separate ImportGraph and TypeHierarchy structures with
+bounded traversal. W131 integrates root-local import edges into full/delta
+snapshot publication and the real MCP query/receipt path; W132 prepares a
+conservative type-relation engine for the next integration. Ambiguous lexical
+resolution stays unknown. Independent review and focused source regressions are
+in progress; none of these mutable inputs is admitted in the published W130
+manifest or claimed as a runtime pass. P2-11 and the Road counts stay unchanged.
+
 **W128/W130 (2026-09-21):** existing IRC/Twitch/Nostr adapters gain proactive
 delivery through exact live-generation leases and the established durable egress
 path. The Telegram singleton migration becomes accessible in Settings through
@@ -20,6 +36,13 @@ remain required. The older `f87e0634` Windows job `106231815079` in CI
 `35567383561` passed all 16800 executed tests (one marked leaky), with 22 skipped.
 That result validates the older source, not W128/W130; macOS and current-source
 native/portable acceptance remain pending.
+
+The exact formatter follow-up `1f96e099` passed Preflight `35572946068` and
+Code Quality `35572946388`. Full CI `35573074634` and Windows preview
+`35573077459` have finished: full CI failed and preview was cancelled. W133 repairs the observed compile/lint/fixture failures; fresh hosted acceptance remains required. The older macOS job finished its test
+compile in 72m39s, then failed the obsolete five-fixture discovery contract;
+the ten-fixture W130 correction is included in the new run. No current-source
+native or portable pass is claimed before those runs finish.
 
 **W126/W127 (2026-09-21):** selected Telegram DM requests gain private-code
 approval in the GUI. The bounded stdin envelope and atomic request-ID/code match

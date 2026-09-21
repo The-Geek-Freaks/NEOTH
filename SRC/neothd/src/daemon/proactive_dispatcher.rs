@@ -461,15 +461,22 @@ enum LiveRouteError {
     Durability(String),
 }
 
+/// Immutable route inputs selected once for a delivery tick. Grouping these
+/// related configuration and live-handle authorities keeps the sole egress
+/// seam explicit without widening any adapter construction authority.
+struct LiveRouteContext<'a> {
+    credentials: &'a Credentials,
+    config: &'a FreedomConfig,
+    live_channels: &'a crate::daemon::channel_live_registry::ChannelLiveRegistry,
+    channel_fingerprints: &'a std::collections::HashMap<crate::channels::registry::ChannelRef, u64>,
+}
+
 /// Construct one configured adapter and route it through the sole durable
 /// proactive transport seam. Constructor failures happen before a Prepared
 /// claim exists.
 async fn deliver_live_route(
     egress: &crate::daemon::proactive_egress::ProactiveEgressContext<'_>,
-    credentials: &Credentials,
-    config: &FreedomConfig,
-    live_channels: &crate::daemon::channel_live_registry::ChannelLiveRegistry,
-    channel_fingerprints: &std::collections::HashMap<crate::channels::registry::ChannelRef, u64>,
+    live: &LiveRouteContext<'_>,
     item: crate::proactive::ProactiveItem,
     queue_generation: &str,
     target_channel: &str,
@@ -513,7 +520,7 @@ async fn deliver_live_route(
             channel_ref,
             recipient,
         } => {
-            let Some(fingerprint) = channel_fingerprints.get(&channel_ref).copied() else {
+            let Some(fingerprint) = live.channel_fingerprints.get(&channel_ref).copied() else {
                 return crate::daemon::proactive_egress::record_sidecar_only_once(
                     egress,
                     item,
@@ -523,7 +530,7 @@ async fn deliver_live_route(
                 .await
                 .map_err(LiveRouteError::Durability);
             };
-            match live_channels.acquire(&channel_ref, fingerprint).await {
+            match live.live_channels.acquire(&channel_ref, fingerprint).await {
                 Some(channel) => execute!(&recipient, channel),
                 None => crate::daemon::proactive_egress::record_sidecar_only_once(
                     egress,
@@ -536,23 +543,26 @@ async fn deliver_live_route(
             }
         }
         DeliveryRoute::Telegram { chat_id } => {
-            let token = config.telegram_token.clone().ok_or_else(|| {
+            let token = live.config.telegram_token.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "Telegram proactive route lost its token".to_string(),
                 )
             })?;
             let channel: Arc<dyn crate::channels::Channel> = Arc::new(
-                crate::channels::telegram::TelegramChannel::new(token, config.telegram_user_id),
+                crate::channels::telegram::TelegramChannel::new(
+                    token,
+                    live.config.telegram_user_id,
+                ),
             );
             execute!(&chat_id, channel)
         }
         DeliveryRoute::Slack { channel_id } => {
-            let bot = credentials.slack_bot_token.clone().ok_or_else(|| {
+            let bot = live.credentials.slack_bot_token.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "Slack proactive route lost its bot token".to_string(),
                 )
             })?;
-            let app = credentials.slack_app_token.clone().ok_or_else(|| {
+            let app = live.credentials.slack_app_token.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "Slack proactive route lost its app token".to_string(),
                 )
@@ -562,7 +572,7 @@ async fn deliver_live_route(
             execute!(&channel_id, channel)
         }
         DeliveryRoute::Discord { channel_id } => {
-            let token = credentials.discord_bot_token.clone().ok_or_else(|| {
+            let token = live.credentials.discord_bot_token.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "Discord proactive route lost its token".to_string(),
                 )
@@ -577,17 +587,17 @@ async fn deliver_live_route(
             execute!(&channel_id, channel)
         }
         DeliveryRoute::WhatsApp { recipient } => {
-            let access = credentials.whatsapp_token.clone().ok_or_else(|| {
+            let access = live.credentials.whatsapp_token.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "WhatsApp proactive route lost its token".to_string(),
                 )
             })?;
-            let phone_id = credentials.whatsapp_phone_id.clone().ok_or_else(|| {
+            let phone_id = live.credentials.whatsapp_phone_id.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "WhatsApp proactive route lost its phone id".to_string(),
                 )
             })?;
-            let verify = credentials.whatsapp_verify_token.clone().ok_or_else(|| {
+            let verify = live.credentials.whatsapp_verify_token.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "WhatsApp proactive route lost its verify token".to_string(),
                 )
@@ -598,17 +608,17 @@ async fn deliver_live_route(
             execute!(&recipient, channel)
         }
         DeliveryRoute::WhatsAppBaileys { recipient } => {
-            let url = credentials.whatsapp_baileys_url.clone().ok_or_else(|| {
+            let url = live.credentials.whatsapp_baileys_url.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "Baileys proactive route lost its URL".to_string(),
                 )
             })?;
-            let token = credentials.whatsapp_baileys_token.clone().ok_or_else(|| {
+            let token = live.credentials.whatsapp_baileys_token.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "Baileys proactive route lost its token".to_string(),
                 )
             })?;
-            let senders = credentials
+            let senders = live.credentials
                 .whatsapp_baileys_allowed_senders
                 .clone()
                 .ok_or_else(|| {
@@ -621,7 +631,7 @@ async fn deliver_live_route(
                     url,
                     token,
                     senders,
-                    credentials.whatsapp_baileys_allowed_groups.as_deref(),
+                    live.credentials.whatsapp_baileys_allowed_groups.as_deref(),
                     egress
                         .home()
                         .join("channel-state/whatsapp-baileys-cursor.json"),
@@ -635,12 +645,12 @@ async fn deliver_live_route(
             execute!(&recipient, channel)
         }
         DeliveryRoute::Keet => {
-            let url = credentials.keet_bridge_url.as_deref().ok_or_else(|| {
+            let url = live.credentials.keet_bridge_url.as_deref().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "Keet proactive route lost its bridge URL".to_string(),
                 )
             })?;
-            let token = credentials
+            let token = live.credentials
                 .keet_bridge_bearer_token
                 .clone()
                 .ok_or_else(|| {
@@ -648,13 +658,13 @@ async fn deliver_live_route(
                         "Keet proactive route lost its bearer token".to_string(),
                     )
                 })?;
-            let topic = credentials.keet_topic.as_ref().ok_or_else(|| {
+            let topic = live.credentials.keet_topic.as_ref().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "Keet proactive route lost its topic".to_string(),
                 )
             })?;
             let topic_capability = topic.expose();
-            let allowed_senders = credentials.keet_allowed_senders.as_deref().ok_or_else(|| {
+            let allowed_senders = live.credentials.keet_allowed_senders.as_deref().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "Keet proactive route lost its sender policy".to_string(),
                 )
@@ -678,12 +688,12 @@ async fn deliver_live_route(
             execute!(topic_capability, channel)
         }
         DeliveryRoute::Signal { recipient } => {
-            let url = credentials.signal_cli_url.clone().ok_or_else(|| {
+            let url = live.credentials.signal_cli_url.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "Signal proactive route lost its CLI URL".to_string(),
                 )
             })?;
-            let number = credentials.signal_phone_number.clone().ok_or_else(|| {
+            let number = live.credentials.signal_phone_number.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "Signal proactive route lost its phone number".to_string(),
                 )
@@ -698,7 +708,7 @@ async fn deliver_live_route(
             execute!(&recipient, channel)
         }
         DeliveryRoute::Line { recipient } => {
-            let token = credentials
+            let token = live.credentials
                 .line_channel_access_token
                 .clone()
                 .ok_or_else(|| {
@@ -715,12 +725,12 @@ async fn deliver_live_route(
             execute!(&recipient, channel)
         }
         DeliveryRoute::Mattermost { channel_id } => {
-            let url = credentials.mattermost_url.clone().ok_or_else(|| {
+            let url = live.credentials.mattermost_url.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "Mattermost proactive route lost its URL".to_string(),
                 )
             })?;
-            let token = credentials.mattermost_token.clone().ok_or_else(|| {
+            let token = live.credentials.mattermost_token.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "Mattermost proactive route lost its token".to_string(),
                 )
@@ -731,12 +741,12 @@ async fn deliver_live_route(
             execute!(&channel_id, channel)
         }
         DeliveryRoute::IMessage { chat_guid } => {
-            let url = credentials.bluebubbles_url.clone().ok_or_else(|| {
+            let url = live.credentials.bluebubbles_url.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "BlueBubbles proactive route lost its URL".to_string(),
                 )
             })?;
-            let password = credentials.bluebubbles_password.clone().ok_or_else(|| {
+            let password = live.credentials.bluebubbles_password.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "BlueBubbles proactive route lost its password".to_string(),
                 )
@@ -755,12 +765,12 @@ async fn deliver_live_route(
         }
         #[cfg(feature = "matrix-channel")]
         DeliveryRoute::Matrix { room_id } => {
-            let homeserver = credentials.matrix_homeserver.clone().ok_or_else(|| {
+            let homeserver = live.credentials.matrix_homeserver.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "Matrix proactive route lost its homeserver".to_string(),
                 )
             })?;
-            let user_id = credentials.matrix_user_id.clone().ok_or_else(|| {
+            let user_id = live.credentials.matrix_user_id.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
                     "Matrix proactive route lost its user id".to_string(),
                 )
@@ -769,18 +779,18 @@ async fn deliver_live_route(
                 crate::channels::matrix::MatrixChannel::new(
                     homeserver,
                     user_id,
-                    credentials.matrix_password.clone(),
-                    credentials.matrix_access_token.clone(),
-                    credentials
+                    live.credentials.matrix_password.clone(),
+                    live.credentials.matrix_access_token.clone(),
+                    live.credentials
                         .matrix_store_path
                         .as_deref()
                         .filter(|value| !value.trim().is_empty())
                         .map(PathBuf::from),
                 )
                 .with_policy(
-                    credentials.matrix_allowed_user_id.clone(),
-                    credentials.matrix_allowed_room_ids.clone(),
-                    credentials.matrix_requires_encryption(),
+                    live.credentials.matrix_allowed_user_id.clone(),
+                    live.credentials.matrix_allowed_room_ids.clone(),
+                    live.credentials.matrix_requires_encryption(),
                     egress.writer().clone(),
                 ),
             );
@@ -788,7 +798,7 @@ async fn deliver_live_route(
         }
         #[cfg(feature = "gchat-channel")]
         DeliveryRoute::GoogleChat { space } => {
-            let service_account = credentials
+            let service_account = live.credentials
                 .gchat_service_account_json
                 .as_deref()
                 .filter(|value| !value.trim().is_empty())
@@ -797,7 +807,7 @@ async fn deliver_live_route(
                         "Google Chat proactive route lost its service-account key path".to_string(),
                     )
                 })?;
-            let subscription = credentials
+            let subscription = live.credentials
                 .gchat_subscription
                 .as_deref()
                 .ok_or_else(|| {
@@ -812,7 +822,7 @@ async fn deliver_live_route(
                         )
                     })
                 })?;
-            let allowed_sender = credentials
+            let allowed_sender = live.credentials
                 .gchat_allowed_sender
                 .as_deref()
                 .ok_or_else(|| {
@@ -1078,6 +1088,12 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
         &[],
         home,
     );
+    let live_route_context = LiveRouteContext {
+        credentials: &runtime.credentials,
+        config,
+        live_channels: live_channels.as_ref(),
+        channel_fingerprints: &channel_fingerprints,
+    };
     let mut delivered = 0usize;
     for (item, queue_generation) in drained {
         // An explicit account was selected and persisted with this item. Its
@@ -1204,10 +1220,7 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
         let item_for_configuration_failure = item.clone();
         let status = match deliver_live_route(
             &egress,
-            &runtime.credentials,
-            config,
-            live_channels.as_ref(),
-            &channel_fingerprints,
+            &live_route_context,
             item,
             &queue_generation,
             &target_channel,
@@ -1892,7 +1905,9 @@ mod tests {
         assert!(registry.publish(&irc_lease, irc.clone()).await);
         assert!(registry.publish(&twitch_lease, twitch.clone()).await);
 
-        let segment = tmp.path().join("connection-bound.wal");
+        let wal_dir = tmp.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("000001.wal");
         let (writer, join, ready) =
             crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
                 .unwrap();
@@ -1981,7 +1996,9 @@ mod tests {
                 registry.revoke_and_drain(&irc_ref).await;
             }
 
-            let segment = tmp.path().join("connection-unavailable.wal");
+            let wal_dir = tmp.path().join("wal");
+            std::fs::create_dir_all(&wal_dir).unwrap();
+            let segment = wal_dir.join("000001.wal");
             let (writer, join, ready) =
                 crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
                     .unwrap();
@@ -2064,7 +2081,9 @@ mod tests {
             let channel = Arc::new(CountingConnectionChannel::new(channel_name));
             let lease = registry.begin_replacement(channel_ref, fingerprint).await;
             assert!(registry.publish(&lease, channel.clone()).await);
-            let segment = tmp.path().join("connection-malformed-target.wal");
+            let wal_dir = tmp.path().join("wal");
+            std::fs::create_dir_all(&wal_dir).unwrap();
+            let segment = wal_dir.join("000001.wal");
             let (writer, join, ready) =
                 crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
                     .unwrap();
@@ -2136,7 +2155,9 @@ mod tests {
         let channel = Arc::new(CountingConnectionChannel::failing("irc"));
         let lease = registry.begin_replacement(channel_ref, fingerprint).await;
         assert!(registry.publish(&lease, channel.clone()).await);
-        let segment = tmp.path().join("connection-failing-adapter.wal");
+        let wal_dir = tmp.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("000001.wal");
         let (writer, join, ready) =
             crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
                 .unwrap();

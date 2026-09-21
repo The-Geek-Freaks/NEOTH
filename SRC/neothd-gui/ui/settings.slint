@@ -2772,7 +2772,7 @@ export component SettingsView inherits Rectangle {
                                                     label: "Confirm approval";
                                                     primary: false;
                                                     loading: root.channel-pairing-in-flight;
-                                                    enabled: approve-code.length == 8
+                                                    enabled: approve-code != ""
                                                         && root.channel-pairing-loaded
                                                         && root.channel-pairing-error == ""
                                                         && !root.channel-account-retirement-in-flight

@@ -41,3 +41,13 @@ remain required. The cadence contract now binds the verifier inventory to the
 actual source declaration so another added callback cannot silently invalidate
 the hosted discovery gate. This is a source-found mismatch; no failing macOS
 result is invented and no native callback pass is claimed.
+
+Hosted update: the older f87e0634 macOS job 106231815170 finished test
+compilation in 72m39s and then failed the exact five-fixture discovery gate.
+The correction above is now included in CI 35573074634 on 1f96e099; its
+Preflight and Code Quality gates passed. Native results remain pending.
+
+CI 35573074634 later failed current-source Windows/macOS GUI compilation on
+an unsupported Slint string.length expression. W133 repairs this observed
+failure; preview 35573077459 was confirmed cancelled. The new macOS discovery
+contract still requires a successful compile and actual fixture execution.
