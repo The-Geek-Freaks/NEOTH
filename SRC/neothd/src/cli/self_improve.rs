@@ -51,7 +51,13 @@ pub enum SelfImproveAction {
     /// List staged proposals + their diffs (review before adopting).
     Review,
     /// Adopt a proposal into its skill file (backs up the replaced content).
-    Accept { id: String },
+    Accept {
+        id: String,
+        /// Optional binding from a fresh review readback. GUI callers should
+        /// send the selected proposal's exact 64-hex quality evidence digest.
+        #[arg(long, value_name = "SHA256")]
+        expected_evidence_sha256: Option<String>,
+    },
     /// Restore a previously accepted proposal's backup (undo the change).
     Rollback { id: String },
     /// Contribute an ACCEPTED improvement to a BUNDLED skill back to NEOTH:
@@ -65,10 +71,15 @@ pub enum SelfImproveAction {
     },
     /// Print the improvement ledger (what changed, when, accepted or not).
     Log,
-    /// IMPR-03: run a pending proposal through the verification-gated execute
-    /// workflow (verification_command + advisor diff-review loop, max 2 revises).
+    /// Run a pending proposal through the fixed-corpus quality evaluator, then
+    /// the verification-gated advisor review loop (max 2 revises).
     /// Does NOT write the skill file — accept is still gated by the operator.
-    Execute { id: String },
+    Execute {
+        id: String,
+        /// Exact command already listed in self_improve.yaml's operator-approved verifier allowlist.
+        #[arg(long, value_name = "COMMAND")]
+        verifier: String,
+    },
     /// Show the crash-recovery journal WITHOUT running recovery. Read-only, and
     /// the one self-improve command that still answers while an unresolvable
     /// journal is blocking every other one (including the daemon's startup).
@@ -179,17 +190,20 @@ pub async fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Re
             .await
         }
         SelfImproveAction::Review => review(&home, output),
-        SelfImproveAction::Accept { id } => {
+        SelfImproveAction::Accept { id, expected_evidence_sha256 } => {
             // Resolve optional GUI metadata before the mutation and perform the
             // fingerprint/Git/package/fsync work off the async runtime. The
             // closure returns only already-known rendering state, so no read can
             // turn a committed accept into a false failure.
             let accept_home = home.clone();
             let accept_id = id.clone();
-            let bundled_skill = tokio::task::spawn_blocking(move || {
+            let expected_evidence = expected_evidence_sha256.clone();
+            let (bundled_skill, receipt) = tokio::task::spawn_blocking(move || {
                 let bundled_skill = bundled_proposal_skill(&accept_home, &accept_id)?;
-                si::accept_proposal(&accept_home, &accept_id)?;
-                Ok::<_, anyhow::Error>(bundled_skill)
+                let receipt = si::accept_proposal_with_expected_evidence(
+                    &accept_home, &accept_id, expected_evidence.as_deref(),
+                )?;
+                Ok::<_, anyhow::Error>((bundled_skill, receipt))
             })
             .await
             .context("self-improve accept task panicked")??;
@@ -200,8 +214,10 @@ pub async fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Re
                         serde_json::json!({
                             "ok": true,
                             "action": "accept",
-                            "id": id,
+                            "id": receipt.id,
                             "status": "accepted",
+                            "evidence_sha256": receipt.evidence_sha256,
+                            "quality_state": "current",
                             "upstream_pr_available": bundled_skill.is_some(),
                         })
                     );
@@ -247,7 +263,9 @@ pub async fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Re
         }
         SelfImproveAction::Pr { id, submit } => pr(&home, &id, submit, output),
         SelfImproveAction::Log => log(&home, output),
-        SelfImproveAction::Execute { id } => execute(&home, &id, autonomy, output).await,
+        SelfImproveAction::Execute { id, verifier } => {
+            execute(&home, &id, &verifier, autonomy, output).await
+        }
         // Both returned above, before the recovery gate.
         SelfImproveAction::JournalStatus | SelfImproveAction::DiscardJournal { .. } => {
             unreachable!("journal commands return before the recovery gate")
@@ -405,6 +423,11 @@ fn status(
                 "shell_verify_enabled": shell_verify_enabled,
                 "shell_verify_master_enabled": shell_verify_master_enabled,
                 "approved_verification_command_count": approved_verifier_count,
+                "quality_evaluation": {
+                    "requires_explicit_approved_verifier": true,
+                    "fixed_corpus_root": "self_improve_eval/v1",
+                    "proposal_quality_readback": "available from self-improve review",
+                },
                 "shell_verify_filesystem_isolated": false,
                 "shell_verify_network_isolated": false,
                 "skillopt_installed": installed, "last": last,
@@ -449,6 +472,9 @@ fn status(
         }
     );
     println!("  approved verifier commands: {approved_verifier_count}");
+    println!(
+        "  quality   : select one exact approved verifier with `self-improve execute <id> --verifier \"<command>\"`; review reports the fixed-corpus evidence state"
+    );
     match last {
         Some(r) => println!(
             "  last      : {} — \"{}\" ({})",
@@ -640,6 +666,8 @@ async fn run_pass(
         why_this_improves: quality.why_this_improves,
         risk_notes: quality.risk_notes,
         code_map_analysis: si::ProposalCodeMapAnalysis::LegacyMissing,
+        // SkillOpt's narrative output is not quality evidence.
+        quality_evidence: None,
         // IMPR-01: carry the parsed spec (drift_sha populated inside stage_proposal).
         spec: parsed_spec,
     };
@@ -661,17 +689,31 @@ async fn run_pass(
         );
     } else {
         println!(
-            "staged proposal {staged_id} (skill file UNCHANGED). Review: `neoth self-improve review` · verify: `neoth self-improve execute {staged_id}` · then adopt with `neoth self-improve accept {staged_id}`"
+            "staged proposal {staged_id} (skill file UNCHANGED). Review: `neoth self-improve review` · evaluate + verify: `neoth self-improve execute {staged_id} --verifier \"<exact approved verifier>\"` · then adopt with `neoth self-improve accept {staged_id}`"
         );
         print_code_map_analysis(&staged_analysis);
     }
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+struct ReviewProposal<'a> {
+    #[serde(flatten)]
+    proposal: &'a si::Proposal,
+    quality: si::ProposalQualityReadback,
+}
+
 fn review(home: &std::path::Path, output: OutputFormat) -> Result<()> {
     let props = si::load_proposals(home)?;
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
-        println!("{}", serde_json::to_string_pretty(&props)?);
+        let rows = props
+            .iter()
+            .map(|proposal| ReviewProposal {
+                proposal,
+                quality: si::proposal_quality_readback(home, proposal),
+            })
+            .collect::<Vec<_>>();
+        println!("{}", serde_json::to_string_pretty(&rows)?);
         return Ok(());
     }
     if props.is_empty() {
@@ -695,8 +737,10 @@ fn review(home: &std::path::Path, output: OutputFormat) -> Result<()> {
             p.status,
             public_status_text(&p.summary)
         );
+        print_proposal_quality_readback(&si::proposal_quality_readback(home, p));
         if p.status == si::ProposalStatus::Pending {
-            // The "why", not just the diff — the quality score block.
+            // Narrative scores are retained as context only; core quality
+            // evidence above is the sole acceptance authority.
             let q = quality_lines(
                 p.score_before,
                 p.score_after,
@@ -735,13 +779,48 @@ fn review(home: &std::path::Path, output: OutputFormat) -> Result<()> {
                     "    [sensitive/control content redacted in table output; use protected JSON output for exact bytes]"
                 );
             }
-            println!("    → `neoth self-improve execute {public_id}`");
+            println!("    → `neoth self-improve execute {public_id} --verifier \"<exact approved verifier>\"`");
         } else if p.status == si::ProposalStatus::VerifiedApproved {
             print_code_map_analysis(&p.code_map_analysis);
             println!("    → `neoth self-improve accept {public_id}`");
         }
     }
     Ok(())
+}
+
+fn print_proposal_quality_readback(readback: &si::ProposalQualityReadback) {
+    let state = match &readback.state {
+        si::ProposalQualityState::Current => "current",
+        si::ProposalQualityState::Incomplete => "incomplete",
+        si::ProposalQualityState::Stale => "stale",
+        si::ProposalQualityState::Failed => "failed",
+    };
+    println!("    quality: {state}");
+    if let Some(reason) = &readback.reason {
+        println!("      reason: {}", public_status_text(reason));
+    }
+    if let (Some(metric), Some(before), Some(after), Some(delta)) = (
+        &readback.metric,
+        readback.score_before,
+        readback.score_after,
+        readback.score_delta,
+    ) {
+        println!("      metric: {} · {before:.3} → {after:.3} ({delta:+.3})", public_status_text(metric));
+    }
+    if let (Some(verifier), Some(corpus), Some(evidence)) = (
+        &readback.evaluator_source_short_id,
+        &readback.corpus_manifest_sha256,
+        &readback.evidence_sha256,
+    ) {
+        println!(
+            "      verifier: {} · corpus: {} · regressions: {}/{} passed · evidence: {}",
+            public_status_text(verifier),
+            public_status_text(corpus),
+            readback.regression_passed,
+            readback.regression_total,
+            public_status_text(evidence),
+        );
+    }
 }
 
 fn print_code_map_analysis(analysis: &si::ProposalCodeMapAnalysis) {
@@ -776,10 +855,8 @@ fn print_code_map_analysis(analysis: &si::ProposalCodeMapAnalysis) {
     }
 }
 
-/// Render the quality-score block (indented, trailing newline) for a proposal —
-/// scores, held-out eval, why-it-improves, risks. Empty string when nothing was
-/// reported (operator-supplied `--from` proposal with no rationale), so the
-/// review/dry-run output stays clean.
+/// Render untrusted legacy narrative quality context. Typed quality evidence is
+/// rendered separately by `print_proposal_quality_readback`.
 fn quality_lines(
     score_before: f64,
     score_after: f64,
@@ -834,10 +911,11 @@ fn bundled_proposal_skill(home: &std::path::Path, id: &str) -> Result<Option<Str
         }))
 }
 
-/// IMPR-03: verification-gated execute scaffold for a pending proposal.
+/// Fixed-corpus quality evaluation plus the verification-gated execute scaffold.
 ///
-/// Runs the ProposalSpec's `verification_command` (if any), checks
-/// `stop_conditions`, then enters a two-round, provider-backed typed-QA loop.
+/// The core first mints and rechecks quality evidence from an exact approved
+/// verifier. It then runs the ProposalSpec's `verification_command` (if any),
+/// checks `stop_conditions`, and enters a two-round, provider-backed typed-QA loop.
 /// Every actual leaf call crosses the B22 authorization boundary; Fail may
 /// retry once, Blocked/malformed/error stops immediately.
 ///
@@ -845,6 +923,7 @@ fn bundled_proposal_skill(home: &std::path::Path, id: &str) -> Result<Option<Str
 async fn execute(
     home: &std::path::Path,
     id: &str,
+    verifier: &str,
     autonomy: crate::permissions::AutonomyLevel,
     output: OutputFormat,
 ) -> Result<()> {
@@ -862,8 +941,8 @@ async fn execute(
         );
     }
     // Receipt refresh is an admission gate, not provider context assembly.
-    // Complete it and persist the exact state before allocating provider or WAL
-    // resources; errors leave status and ledger untouched.
+    // The refreshed source-map receipt is bound into the quality evidence, so
+    // it must complete before the evaluator is permitted to start.
     let preflight_home = home.to_path_buf();
     let preflight_id = id.to_owned();
     let mut code_map_analysis = tokio::task::spawn_blocking(move || {
@@ -871,7 +950,35 @@ async fn execute(
     })
     .await
     .context("self-improve code-map preflight task panicked")?
-    .context("refresh self-improve code-map analysis before QA allocation")?;
+    .context("refresh self-improve code-map analysis before quality evaluation")?;
+    // The core resolves the fixed corpus, checks that this command is an exact
+    // operator-approved verifier, parses its v1 result, and persists the
+    // bound evidence. It runs before any provider or WAL allocation.
+    let quality_home = home.to_path_buf();
+    let quality_id = id.to_owned();
+    let quality_verifier = verifier.to_owned();
+    tokio::task::spawn_blocking(move || {
+        si::evaluate_proposal_quality_with_approved_verifier(
+            &quality_home,
+            &quality_id,
+            &quality_verifier,
+        )
+    })
+    .await
+    .context("self-improve fixed quality evaluation task panicked")?
+    .context("evaluate proposal with the fixed corpus and exact approved verifier")?;
+    let gate_home = home.to_path_buf();
+    let gate_id = id.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let proposal = si::load_proposals(&gate_home)?
+            .into_iter()
+            .find(|proposal| proposal.id == gate_id)
+            .ok_or_else(|| anyhow::anyhow!("proposal disappeared after quality evaluation"))?;
+        si::require_current_proposal_quality(&gate_home, &proposal)
+    })
+    .await
+    .context("self-improve current-quality gate task panicked")?
+    .context("proposal quality is incomplete or stale; re-stage and run the fixed approved verifier before QA allocation")?;
     let raw_provider = crate::providers::from_config_for_utility_at(&config, home)
         .await
         .context("build self-improve QA provider")?;
@@ -960,6 +1067,7 @@ async fn execute(
                 "revises": revises,
                 "reason": reason,
                 "code_map_analysis": code_map_analysis,
+                "quality": proposal_quality_readback_for_id(home, id)?,
             })
         );
     } else {
@@ -983,6 +1091,17 @@ async fn execute(
         }
     }
     Ok(())
+}
+
+fn proposal_quality_readback_for_id(
+    home: &std::path::Path,
+    id: &str,
+) -> Result<si::ProposalQualityReadback> {
+    let proposal = si::load_proposals(home)?
+        .into_iter()
+        .find(|proposal| proposal.id == id)
+        .ok_or_else(|| anyhow::anyhow!("proposal `{id}` not found after quality evaluation"))?;
+    Ok(si::proposal_quality_readback(home, &proposal))
 }
 
 struct ProviderProposalAdvisor {

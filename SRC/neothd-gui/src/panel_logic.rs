@@ -13,6 +13,7 @@
 //! depended-on, keeping the GUI crate decoupled from the daemon — the same
 //! pattern as the `MinimalFreedomYaml` / `CodingSessionJson` mirrors in main.rs.
 
+use serde::Deserialize;
 use zeroize::Zeroizing;
 
 // ── Native code-map lifecycle presentation ──────────────────────────────────
@@ -7038,33 +7039,204 @@ pub fn parse_selfimprove_status(json: &str) -> (bool, bool, bool, String, String
     (enabled, auto, skillopt, last, autonomy)
 }
 
-/// Parse `neoth self-improve review --output json` → Vec<(id, title, description)>.
+/// Canonical, display-only quality projection from `self-improve review`.
 ///
-/// Tolerates `{"proposals":[...]}` or top-level array.
-pub fn parse_selfimprove_proposals(json: &str) -> Vec<(String, String, String)> {
-    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let arr = v
-        .get("proposals")
-        .and_then(|x| x.as_array())
-        .cloned()
-        .or_else(|| v.as_array().cloned())
-        .unwrap_or_default();
-    arr.iter()
-        .filter_map(|item| {
-            let id = item.get("id").and_then(|x| x.as_str())?.to_string();
-            let title = item
-                .get("title")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_string();
-            let desc = item
-                .get("description")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_string();
-            Some((id, title, desc))
+/// `accept_ready` is deliberately derived only from the two explicit CLI/core
+/// fields required by W142. Narrative SkillOpt scores never affect it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfImproveProposalRow {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub status: String,
+    pub quality_state: String,
+    pub quality_reason: String,
+    pub quality_metric: String,
+    pub score_delta: String,
+    pub evaluator_source_short_id: String,
+    pub corpus_manifest_short_sha256: String,
+    pub regression_summary: String,
+    pub evidence_short_sha256: String,
+    pub evidence_sha256: String,
+    pub accept_ready: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SelfImproveQualityWire {
+    state: String,
+    #[serde(deserialize_with = "required_selfimprove_nullable")]
+    reason: Option<String>,
+    #[serde(deserialize_with = "required_selfimprove_nullable")]
+    metric: Option<String>,
+    #[serde(deserialize_with = "required_selfimprove_nullable")]
+    score_before: Option<f64>,
+    #[serde(deserialize_with = "required_selfimprove_nullable")]
+    score_after: Option<f64>,
+    #[serde(deserialize_with = "required_selfimprove_nullable")]
+    score_delta: Option<f64>,
+    #[serde(deserialize_with = "required_selfimprove_nullable")]
+    evaluator_source_short_id: Option<String>,
+    #[serde(deserialize_with = "required_selfimprove_nullable")]
+    corpus_manifest_sha256: Option<String>,
+    regression_total: usize,
+    regression_passed: usize,
+    #[serde(deserialize_with = "required_selfimprove_nullable")]
+    evidence_sha256: Option<String>,
+}
+
+// A field-level deserializer without `default` makes Serde reject omission;
+// this function still accepts explicit null. Derive also rejects duplicates.
+fn required_selfimprove_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
+#[derive(Debug, Deserialize)]
+struct SelfImproveProposalWire {
+    id: String,
+    skill: String,
+    summary: String,
+    status: String,
+    quality: SelfImproveQualityWire,
+}
+
+const SELF_IMPROVE_TEXT_MAX_CHARS: usize = 512;
+
+fn selfimprove_display_text(value: &str, field: &str) -> Result<String, String> {
+    if value.trim() != value || value.chars().count() > SELF_IMPROVE_TEXT_MAX_CHARS || value.chars().any(char::is_control) {
+        return Err(format!("self-improve {field} is not bounded display text"));
+    }
+    Ok(value.to_string())
+}
+
+/// Core-provided summary/reason text is display-only. Preserve a valid row when
+/// its narrative is multiline or long, while keeping trust decisions on the
+/// unnormalized wire fields below.
+fn selfimprove_display_narrative(value: &str) -> String {
+    let normalized = value
+        .chars()
+        .map(|character| if character.is_control() { ' ' } else { character })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut clipped = normalized
+        .chars()
+        .take(SELF_IMPROVE_TEXT_MAX_CHARS)
+        .collect::<String>();
+    if normalized.chars().count() > SELF_IMPROVE_TEXT_MAX_CHARS {
+        clipped.push('…');
+    }
+    clipped
+}
+
+fn selfimprove_sha256(value: &str, field: &str) -> Result<(), String> {
+    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) {
+        Ok(())
+    } else {
+        Err(format!("self-improve {field} is not a canonical SHA-256 digest"))
+    }
+}
+
+fn selfimprove_short_sha256(value: &str, field: &str) -> Result<(), String> {
+    if value.len() == 12 && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) {
+        Ok(())
+    } else {
+        Err(format!("self-improve {field} is not a canonical short SHA-256 digest"))
+    }
+}
+
+fn selfimprove_metric(value: &str) -> Result<String, String> {
+    if value.is_empty()
+        || value.len() > 128
+        || value.trim() != value
+        || value.chars().any(|character| character.is_control() || matches!(character, '/' | '\\'))
+    {
+        Err("self-improve quality metric is not a canonical component".into())
+    } else {
+        Ok(value.to_string())
+    }
+}
+
+fn selfimprove_score_delta_matches(before: f64, after: f64, delta: f64) -> bool {
+    let expected = after - before;
+    let scale = before.abs().max(after.abs()).max(delta.abs()).max(1.0);
+    delta > 0.0 && (delta - expected).abs() <= 8.0 * f64::EPSILON * scale
+}
+
+fn selfimprove_quality_reason(
+    state: &str,
+    reason: Option<String>,
+) -> Result<String, String> {
+    let has_reason = reason.as_deref().is_some_and(|value| !value.trim().is_empty());
+    match state {
+        "current" if reason.is_none() => Ok(String::new()),
+        "incomplete" | "stale" | "failed" if has_reason => {
+            Ok(selfimprove_display_narrative(reason.as_deref().unwrap_or_default()))
+        }
+        "current" => Err("current self-improve quality must not carry a refusal reason".into()),
+        "incomplete" | "stale" | "failed" => Err("non-current self-improve quality requires a refusal reason".into()),
+        _ => Err("unknown self-improve quality state".into()),
+    }
+}
+
+/// Parse the exact current W142 review fields. A malformed row rejects the
+/// complete response so callers retain their last verified projection.
+pub fn parse_selfimprove_proposals(json: &str) -> Result<Vec<SelfImproveProposalRow>, String> {
+    let rows: Vec<SelfImproveProposalWire> = serde_json::from_str(json)
+        .map_err(|error| format!("invalid self-improve review JSON: {error}"))?;
+    rows.into_iter().map(|row| {
+        let id = selfimprove_display_text(&row.id, "proposal id")?;
+        if id.is_empty() { return Err("self-improve proposal id is empty".into()); }
+        let status = selfimprove_display_text(&row.status, "proposal status")?;
+        let title = selfimprove_display_narrative(&row.summary);
+        let description = selfimprove_display_text(&row.skill, "proposal skill")?;
+        let quality_state = row.quality.state;
+        let quality_reason = selfimprove_quality_reason(&quality_state, row.quality.reason)?;
+        let metric = row.quality.metric.map(|value| selfimprove_metric(&value)).transpose()?;
+        let evaluator = row.quality.evaluator_source_short_id.map(|value| { selfimprove_short_sha256(&value, "evaluator identifier")?; Ok(value) }).transpose()?;
+        let corpus = row.quality.corpus_manifest_sha256.map(|value| { selfimprove_sha256(&value, "corpus digest")?; Ok(value) }).transpose()?;
+        let evidence = row.quality.evidence_sha256.map(|value| { selfimprove_sha256(&value, "evidence digest")?; Ok(value) }).transpose()?;
+        let scores_present = row.quality.score_before.is_some() && row.quality.score_after.is_some() && row.quality.score_delta.is_some();
+        let scores_any = row.quality.score_before.is_some() || row.quality.score_after.is_some() || row.quality.score_delta.is_some();
+        if [&row.quality.score_before, &row.quality.score_after, &row.quality.score_delta].into_iter().flatten().any(|score| !score.is_finite()) {
+            return Err("self-improve quality score is not finite".into());
+        }
+        if quality_state == "current" && (!scores_present || metric.as_deref().unwrap_or("").is_empty() || evaluator.as_deref().unwrap_or("").is_empty() || corpus.is_none() || evidence.is_none() || row.quality.regression_total == 0 || row.quality.regression_passed != row.quality.regression_total) {
+            return Err("current self-improve quality is incomplete".into());
+        }
+        if quality_state == "current" {
+            let (Some(before), Some(after), Some(delta)) = (
+                row.quality.score_before,
+                row.quality.score_after,
+                row.quality.score_delta,
+            ) else {
+                return Err("current self-improve quality is incomplete".into());
+            };
+            if after <= before || !selfimprove_score_delta_matches(before, after, delta) {
+                return Err("current self-improve quality score binding is invalid".into());
+            }
+        }
+        if quality_state != "current" && (scores_any || metric.is_some() || evaluator.is_some() || corpus.is_some() || evidence.is_some() || row.quality.regression_total != 0 || row.quality.regression_passed != 0) {
+            return Err("non-current self-improve quality contains acceptance evidence".into());
+        }
+        let score_delta = row.quality.score_delta.map(|delta| format!("{delta:+.3}")).unwrap_or_default();
+        let evidence_sha256 = evidence.unwrap_or_default();
+        Ok(SelfImproveProposalRow {
+            accept_ready: status == "verified_approved" && quality_state == "current",
+            id, title, description, status, quality_state, quality_reason,
+            quality_metric: metric.unwrap_or_default(), score_delta,
+            evaluator_source_short_id: evaluator.unwrap_or_default(),
+            corpus_manifest_short_sha256: corpus.map(|value| value[..12].to_string()).unwrap_or_default(),
+            regression_summary: format!("{}/{} passed", row.quality.regression_passed, row.quality.regression_total),
+            evidence_short_sha256: evidence_sha256.get(..12).unwrap_or_default().to_string(),
+            evidence_sha256,
         })
-        .collect()
+    }).collect()
 }
 
 /// Parse `neoth self-improve log --output json` → Vec<(id, title, status, ts)>,
@@ -12107,22 +12279,97 @@ mod tests {
         assert!(autonomy.is_empty());
     }
 
-    // ── Wave 4a: parse_selfimprove_proposals ──────────────────────────────────
+    // ── W142: strict self-improve quality readback ────────────────────────────
+
+    #[test]
+    fn w142_selfimprove_review_projects_only_current_verified_evidence() {
+        let json = r#"[{"id":"p1","skill":"retry","summary":"Add retry logic","status":"verified_approved","quality":{"state":"current","reason":null,"metric":"quality_score@v1","score_before":0.2,"score_after":0.7,"score_delta":0.5,"evaluator_source_short_id":"cccccccccccc","corpus_manifest_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","regression_total":2,"regression_passed":2,"evidence_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}]"#;
+        let props = super::parse_selfimprove_proposals(json).unwrap();
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0].id, "p1");
+        assert_eq!(props[0].title, "Add retry logic");
+        assert_eq!(props[0].corpus_manifest_short_sha256, "aaaaaaaaaaaa");
+        assert_eq!(props[0].evidence_sha256, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        assert!(props[0].accept_ready);
+        let forged_current_reason = json.replace("\"reason\":null", "\"reason\":\" \\n \"");
+        assert!(super::parse_selfimprove_proposals(&forged_current_reason).is_err());
+        let binary_exact = json
+            .replace("\"score_before\":0.2", "\"score_before\":0.25")
+            .replace("\"score_after\":0.7", "\"score_after\":0.75");
+        assert!(super::parse_selfimprove_proposals(&binary_exact).is_ok());
+    }
+
+    #[test]
+    fn w142_selfimprove_review_rejects_stale_or_mismatched_quality_without_false_success() {
+        let stale = r#"[{"id":"p1","skill":"retry","summary":"Add retry logic","status":"verified_approved","quality":{"state":"stale","reason":"corpus changed","metric":null,"score_before":null,"score_after":null,"score_delta":null,"evaluator_source_short_id":null,"corpus_manifest_sha256":null,"regression_total":0,"regression_passed":0,"evidence_sha256":null}}]"#;
+        let rows = super::parse_selfimprove_proposals(stale).unwrap();
+        assert!(!rows[0].accept_ready, "stale evidence cannot enable accept");
+
+        let narrative = format!(
+            r#"[{{"id":"p1","skill":"retry","summary":"first line\n{}","status":"pending","quality":{{"state":"incomplete","reason":"first line\nsecond line","metric":null,"score_before":null,"score_after":null,"score_delta":null,"evaluator_source_short_id":null,"corpus_manifest_sha256":null,"regression_total":0,"regression_passed":0,"evidence_sha256":null}}}}]"#,
+            "x".repeat(super::SELF_IMPROVE_TEXT_MAX_CHARS + 1),
+        );
+        let rows = super::parse_selfimprove_proposals(&narrative).unwrap();
+        assert_eq!(rows[0].quality_reason, "first line second line");
+        assert!(rows[0].title.ends_with('…'));
+        assert!(!rows[0].accept_ready);
+
+        let mismatched = r#"[{"id":"p1","skill":"retry","summary":"Add retry logic","status":"verified_approved","quality":{"state":"current","reason":null,"metric":"quality_score@v1","score_before":0.2,"score_after":0.7,"score_delta":0.5,"evaluator_source_short_id":"cccccccccccc","corpus_manifest_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","regression_total":2,"regression_passed":1,"evidence_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}]"#;
+        assert!(super::parse_selfimprove_proposals(mismatched).is_err());
+    }
+
+    #[test]
+    fn w142_selfimprove_review_rejects_missing_or_unknown_quality_fields() {
+        let complete = serde_json::json!([{
+            "id": "p1", "skill": "retry", "summary": "Add retry logic", "status": "pending",
+            "quality": {
+                "state": "incomplete", "reason": "run verifier", "metric": null,
+                "score_before": null, "score_after": null, "score_delta": null,
+                "evaluator_source_short_id": null, "corpus_manifest_sha256": null,
+                "regression_total": 0, "regression_passed": 0, "evidence_sha256": null,
+            }
+        }]);
+        for required_key in [
+            "state", "reason", "metric", "score_before", "score_after", "score_delta",
+            "evaluator_source_short_id", "corpus_manifest_sha256", "regression_total",
+            "regression_passed", "evidence_sha256",
+        ] {
+            let mut missing = complete.clone();
+            missing[0]["quality"].as_object_mut().unwrap().remove(required_key);
+            assert!(
+                super::parse_selfimprove_proposals(&missing.to_string()).is_err(),
+                "missing required quality key `{required_key}` must reject the row"
+            );
+        }
+        let duplicate_state = complete.to_string().replacen(
+            "\"state\":\"incomplete\"",
+            "\"state\":\"incomplete\",\"state\":\"incomplete\"",
+            1,
+        );
+        assert!(super::parse_selfimprove_proposals(&duplicate_state).is_err());
+        let duplicate_nullable = complete.to_string().replacen(
+            "\"metric\":null",
+            "\"metric\":null,\"metric\":null",
+            1,
+        );
+        assert!(super::parse_selfimprove_proposals(&duplicate_nullable).is_err());
+        let unknown = r#"[{"id":"p1","skill":"retry","summary":"Add retry logic","status":"pending","quality":{"state":"incomplete","reason":"run verifier","metric":null,"score_before":null,"score_after":null,"score_delta":null,"evaluator_source_short_id":null,"corpus_manifest_sha256":null,"regression_total":0,"regression_passed":0,"evidence_sha256":null,"accept_ready":true}}]"#;
+        assert!(super::parse_selfimprove_proposals(unknown).is_err());
+    }
 
     #[test]
     fn parse_selfimprove_proposals_happy_path() {
-        let json = r#"{"proposals":[{"id":"p1","title":"Add retry logic","description":"Retries failed ops"},{"id":"p2","title":"Cache headers","description":""}]}"#;
-        let props = super::parse_selfimprove_proposals(json);
-        assert_eq!(props.len(), 2);
-        assert_eq!(props[0].0, "p1");
-        assert_eq!(props[0].1, "Add retry logic");
-        assert_eq!(props[1].2, "");
+        let json = r#"[{"id":"p1","skill":"retry","summary":"Add retry logic","status":"pending","quality":{"state":"incomplete","reason":"run verifier","metric":null,"score_before":null,"score_after":null,"score_delta":null,"evaluator_source_short_id":null,"corpus_manifest_sha256":null,"regression_total":0,"regression_passed":0,"evidence_sha256":null}}]"#;
+        let props = super::parse_selfimprove_proposals(json).unwrap();
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0].id, "p1");
+        assert_eq!(props[0].title, "Add retry logic");
     }
 
     #[test]
     fn parse_selfimprove_proposals_empty_and_malformed() {
-        assert!(super::parse_selfimprove_proposals("not json").is_empty());
-        assert!(super::parse_selfimprove_proposals(r#"{"proposals":[]}"#).is_empty());
+        assert!(super::parse_selfimprove_proposals("not json").is_err());
+        assert_eq!(super::parse_selfimprove_proposals("[]").unwrap(), Vec::new());
     }
 
     // ── Wave 4a: parse_selfimprove_log ────────────────────────────────────────

@@ -742,13 +742,14 @@ export component MainWindow inherits Window {
     in property <string> si-last-run: "";
     in property <string> si-autonomy: "";
     in property <[SiProposalRow]> si-proposals: [];
+    in property <bool>          si-accept-in-flight: false;
     in property <[SiLogRow]>      si-log: [];
     in property <string>          si-refreshed-at: "";
     callback si-refresh-clicked();
     callback si-enable-clicked();
     callback si-disable-clicked();
     callback si-run-dry-clicked();
-    callback si-accept-clicked(string);
+    callback si-accept-clicked(string, string);
     callback si-rollback-clicked(string);
 
     // ── FEAT-05 — Self-Dev Proposal Review panel ─────────────────────────────
@@ -4691,13 +4692,14 @@ export component MainWindow inherits Window {
                     si-last-run: root.si-last-run;
                     si-autonomy: root.si-autonomy;
                     si-proposals: root.si-proposals;
+                    si-accept-in-flight: root.si-accept-in-flight;
                     si-log: root.si-log;
                     si-refreshed-at: root.si-refreshed-at;
                     si-refresh-clicked => { root.si-refresh-clicked(); }
                     si-enable-clicked => { root.si-enable-clicked(); }
                     si-disable-clicked => { root.si-disable-clicked(); }
                     si-run-dry-clicked => { root.si-run-dry-clicked(); }
-                    si-accept-clicked(id) => { root.si-accept-clicked(id); }
+                    si-accept-clicked(id, evidence) => { root.si-accept-clicked(id, evidence); }
                     si-rollback-clicked(id) => { root.si-rollback-clicked(id); }
                 }
 

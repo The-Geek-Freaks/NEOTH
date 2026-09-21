@@ -17,6 +17,17 @@ export struct SiProposalRow {
     id: string,
     title: string,
     description: string,
+    status: string,
+    quality_state: string,
+    quality_reason: string,
+    quality_metric: string,
+    score_delta: string,
+    evaluator_source_short_id: string,
+    corpus_manifest_short_sha256: string,
+    regression_summary: string,
+    evidence_short_sha256: string,
+    evidence_sha256: string,
+    accept_ready: bool,
 }
 
 /// One history log row (from `self-improve log --output json`).
@@ -33,6 +44,18 @@ component ProposalCard inherits Rectangle {
     in property <string> proposal-id;
     in property <string> title;
     in property <string> description;
+    in property <string> status;
+    in property <string> quality-state;
+    in property <string> quality-reason;
+    in property <string> quality-metric;
+    in property <string> score-delta;
+    in property <string> evaluator-source-short-id;
+    in property <string> corpus-manifest-short-sha256;
+    in property <string> regression-summary;
+    in property <string> evidence-short-sha256;
+    in property <string> evidence-sha256;
+    in property <bool> accept-ready;
+    in property <bool> accept-enabled;
     callback accept-clicked();
     callback rollback-clicked();
 
@@ -71,22 +94,53 @@ component ProposalCard inherits Rectangle {
             }
         }
 
+        Text {
+            text: "Quality: " + root.quality-state + " · " + root.regression-summary;
+            color: root.quality-state == "current" ? Theme.audit
+                : root.quality-state == "stale" || root.quality-state == "failed" ? Theme.consent
+                : Theme.warning;
+            font-size: Theme.font-size-caption;
+            font-family: Theme.font-mono;
+            overflow: elide;
+        }
+        if root.quality-metric != "": Text {
+            text: root.quality-metric + " " + root.score-delta;
+            color: Theme.text-secondary;
+            font-size: Theme.font-size-caption;
+            font-family: Theme.font-mono;
+            overflow: elide;
+        }
+        if root.evaluator-source-short-id != "": Text {
+            text: "Verifier " + root.evaluator-source-short-id + " · corpus " + root.corpus-manifest-short-sha256 + " · evidence " + root.evidence-short-sha256;
+            color: Theme.text-secondary;
+            font-size: Theme.font-size-caption;
+            font-family: Theme.font-mono;
+            overflow: elide;
+        }
+        if root.quality-reason != "": Text {
+            text: root.quality-reason;
+            color: Theme.warning;
+            font-size: Theme.font-size-caption;
+            wrap: word-wrap;
+        }
+
         HorizontalLayout {
             alignment: end; spacing: 8px;
             // Accept — consent-pink backing (authorization action)
             Rectangle {
                 width: 80px; height: 28px;
                 border-radius: Theme.radius-md;
-                background: Theme.consent;
+                background: root.accept-ready && root.accept-enabled ? Theme.consent : Theme.surface-2;
                 TouchArea {
+                    enabled: root.accept-ready && root.accept-enabled;
                     clicked => { root.accept-clicked(); }
                     accessible-role: button;
                     accessible-label: "accept proposal";
                     accessible-action-default => { root.accept-clicked(); }
                 }
                 Text {
-                    text: "Accept";
-                    color: Theme.text-primary;
+                    text: root.accept-ready ? root.accept-enabled ? "Accept" : "Working" : "Not ready";
+                    color: root.accept-ready && root.accept-enabled ? Theme.text-primary : Theme.text-disabled;
                     font-size: Theme.font-size-sm;
                     font-weight: Theme.weight-semibold;
                     horizontal-alignment: center;
@@ -161,6 +215,7 @@ export component SelfImproveView inherits Rectangle {
 
     // PENDING proposals
     in property <[SiProposalRow]> si-proposals: [];
+    in property <bool> si-accept-in-flight: false;
 
     // HISTORY log (capped 10 by Rust)
     in property <[SiLogRow]> si-log: [];
@@ -171,7 +226,7 @@ export component SelfImproveView inherits Rectangle {
     callback si-enable-clicked();
     callback si-disable-clicked();
     callback si-run-dry-clicked();
-    callback si-accept-clicked(string);    // proposal id
+    callback si-accept-clicked(string, string); // proposal id, bound evidence digest
     callback si-rollback-clicked(string);  // proposal id
     // Proposal id awaiting rollback confirmation; "" = no dialog.
     property <string> rollback-confirm-id: "";
@@ -309,7 +364,19 @@ export component SelfImproveView inherits Rectangle {
                             proposal-id: p.id;
                             title: p.title;
                             description: p.description;
-                            accept-clicked => { root.si-accept-clicked(p.id); }
+                            status: p.status;
+                            quality-state: p.quality_state;
+                            quality-reason: p.quality_reason;
+                            quality-metric: p.quality_metric;
+                            score-delta: p.score_delta;
+                            evaluator-source-short-id: p.evaluator_source_short_id;
+                            corpus-manifest-short-sha256: p.corpus_manifest_short_sha256;
+                            regression-summary: p.regression_summary;
+                            evidence-short-sha256: p.evidence_short_sha256;
+                            evidence-sha256: p.evidence_sha256;
+                            accept-ready: p.accept_ready;
+                            accept-enabled: !root.si-accept-in-flight;
+                            accept-clicked => { root.si-accept-clicked(p.id, p.evidence_sha256); }
                             // Destructive — reverts an applied proposal;
                             // route through the confirm gate.
                             rollback-clicked => { root.rollback-confirm-id = p.id; }

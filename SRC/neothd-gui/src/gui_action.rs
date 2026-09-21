@@ -27,11 +27,15 @@ fn valid_catalog_text(value: &str, max_chars: usize) -> bool {
         && !value.chars().any(char::is_control)
 }
 
-fn valid_sha256(value: &str) -> bool {
+pub fn is_canonical_sha256(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_sha256(value: &str) -> bool {
+    is_canonical_sha256(value)
 }
 
 pub struct JsonReceipt<T> {
@@ -4621,6 +4625,37 @@ impl ProposalMutationAck {
     }
 }
 
+/// Exact W142 receipt for a Self-Improve acceptance bound to the selected
+/// current quality evidence. Rollback and Self-Dev retain `ProposalMutationAck`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelfImproveAcceptAck {
+    pub ok: bool,
+    pub action: String,
+    pub id: String,
+    pub status: String,
+    pub quality_state: String,
+    pub evidence_sha256: String,
+    pub upstream_pr_available: bool,
+}
+
+impl SelfImproveAcceptAck {
+    pub fn verify(&self, id: &str, evidence_sha256: &str) -> Result<(), String> {
+        if !self.ok {
+            return Err("Self-Improve accept did not acknowledge success".to_string());
+        }
+        require_action(&self.action, "accept")?;
+        require_id(&self.id, id)?;
+        if self.status != "accepted" || self.quality_state != "current" {
+            return Err("Self-Improve accept receipt is not accepted current evidence".to_string());
+        }
+        if !is_canonical_sha256(&self.evidence_sha256) || self.evidence_sha256 != evidence_sha256 {
+            return Err("Self-Improve accept receipt did not bind the selected evidence digest".to_string());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SelfDevScanAck {
@@ -7372,6 +7407,19 @@ mod tests {
                 .unwrap();
         ack.verify("accept", "p42", "accepted").unwrap();
         assert!(ack.verify("accept", "p41", "accepted").is_err());
+    }
+
+    #[test]
+    fn w142_selfimprove_accept_ack_requires_selected_current_evidence() {
+        let digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let ack: SelfImproveAcceptAck = serde_json::from_str(&format!(
+            r#"{{"ok":true,"action":"accept","id":"p142","status":"accepted","quality_state":"current","evidence_sha256":"{digest}","upstream_pr_available":false}}"#
+        )).unwrap();
+        ack.verify("p142", digest).unwrap();
+        assert!(ack.verify("p142", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").is_err());
+        assert!(serde_json::from_str::<SelfImproveAcceptAck>(&format!(
+            r#"{{"ok":true,"action":"accept","id":"p142","status":"accepted","quality_state":"current","evidence_sha256":"{digest}","upstream_pr_available":false,"extra":true}}"#
+        )).is_err());
     }
 
     #[test]

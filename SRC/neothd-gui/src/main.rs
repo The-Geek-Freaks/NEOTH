@@ -93,6 +93,16 @@ static NATIVE_CODING_UI_REVISION: std::sync::atomic::AtomicU64 =
 // may publish its list or clear the loading state.
 static BG_JOBS_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+// A self-improve acceptance changes durable proposal state. One callback owns
+// the mutation and its receipt/readback; older review probes cannot repaint it.
+static SELFIMPROVE_UI_REVISION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+static SELFIMPROVE_ACCEPT_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+static SELFIMPROVE_REFRESH_CALLBACKS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 // Startup and rapid chat completions may overlap history reloads. Only the
 // newest canonical raw-turn snapshot may replace the sidebar model.
 static CHAT_HISTORY_REFRESH_REVISION: std::sync::atomic::AtomicU64 =
@@ -8422,42 +8432,7 @@ fn main() -> Result<()> {
             });
         });
 
-        let weak_si_acc = window.as_weak();
-        window.on_si_accept_clicked(move |id| {
-            let id = id.to_string();
-            let weak = weak_si_acc.clone();
-            std::thread::spawn(move || {
-                let result = run_neothd_json_action::<gui_action::ProposalMutationAck>(
-                    &["self-improve", "accept", id.trim()],
-                    "Self-Improve accept",
-                )
-                .and_then(|ack| {
-                    ack.verify("accept", id.trim(), "accepted")?;
-                    Ok(ack)
-                });
-                match result {
-                    Ok(ack) => {
-                        let weak2 = weak.clone();
-                        let message = if ack.upstream_pr_available == Some(true) {
-                            format!(
-                                "{} accepted. This bundled skill can be contributed with `neoth self-improve pr {}`.",
-                                id.trim(),
-                                id.trim()
-                            )
-                        } else {
-                            id.trim().to_string()
-                        };
-                        push_toast(&weak, "consent", "Accepted", &message);
-                        std::thread::spawn(move || refresh_selfimprove(weak2));
-                    }
-                    Err(error) => {
-                        let weak2 = weak.clone();
-                        push_toast(&weak, "warn", "Self-Improve accept failed", &error);
-                        std::thread::spawn(move || refresh_selfimprove(weak2));
-                    }
-                }
-            });
-        });
+        register_selfimprove_accept_callback(window);
 
         let weak_si_rb = window.as_weak();
         window.on_si_rollback_clicked(move |id| {
@@ -30955,8 +30930,79 @@ fn refresh_calendar(weak: slint::Weak<MainWindow>) {
 }
 
 // ── Design Wave 4a — Self-Improve panel probe ─────────────────────────────────
+fn register_selfimprove_accept_callback(window: &MainWindow) {
+    let weak = window.as_weak();
+    window.on_si_accept_clicked(move |id, evidence_sha256| {
+        let id = id.to_string();
+        let evidence_sha256 = evidence_sha256.to_string();
+        let weak = weak.clone();
+        if SELFIMPROVE_ACCEPT_ACTIVE.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            push_toast(&weak, "warn", "Self-Improve accept already running", "Wait for the receipt and verified review readback.");
+            return;
+        }
+        let revision = SELFIMPROVE_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel).wrapping_add(1);
+        let Some(window) = weak.upgrade() else {
+            SELFIMPROVE_ACCEPT_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+            return;
+        };
+        window.set_si_accept_in_flight(true);
+        std::thread::spawn(move || {
+            let result = if !gui_action::is_canonical_sha256(evidence_sha256.trim()) {
+                Err("Review evidence is missing or malformed. Refresh, then re-evaluate.".to_string())
+            } else {
+                run_neothd_json_action::<gui_action::SelfImproveAcceptAck>(
+                    &["self-improve", "accept", id.trim(), "--expected-evidence-sha256", evidence_sha256.trim()],
+                    "Self-Improve accept",
+                ).and_then(|ack| {
+                    ack.verify(id.trim(), evidence_sha256.trim())?;
+                    let review = run_neothd_probe(&["self-improve", "review", "--output", "json"]);
+                    selfimprove_accept_readback_matches(&review, id.trim(), evidence_sha256.trim())?;
+                    Ok(ack)
+                })
+            };
+            let weak_result = weak.clone();
+            let scheduled = slint::invoke_from_event_loop(move || {
+                if SELFIMPROVE_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision { return; }
+                SELFIMPROVE_ACCEPT_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+                let Some(window) = weak_result.upgrade() else { return };
+                window.set_si_accept_in_flight(false);
+                SELFIMPROVE_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                match result {
+                    Ok(ack) => {
+                        let message = if ack.upstream_pr_available { format!("{} accepted. This bundled skill can be contributed with `neoth self-improve pr {} `.", id.trim(), id.trim()) } else { id.trim().to_string() };
+                        push_toast(&weak_result, "consent", "Accepted", &message);
+                        std::thread::spawn(move || refresh_selfimprove(weak_result));
+                    }
+                    Err(error) => {
+                        push_toast(&weak_result, "warn", "Self-Improve accept failed", &error);
+                        std::thread::spawn(move || refresh_selfimprove(weak_result));
+                    }
+                }
+            });
+            if scheduled.is_err() { SELFIMPROVE_ACCEPT_ACTIVE.store(false, std::sync::atomic::Ordering::Release); }
+        });
+    });
+}
+
+fn selfimprove_accept_readback_matches(
+    review_json: &str,
+    id: &str,
+    evidence_sha256: &str,
+) -> std::result::Result<(), String> {
+    let refreshed = panel_logic::parse_selfimprove_proposals(review_json)
+        .map_err(|error| format!("Self-Improve accept needs a valid refreshed review: {error}"))?;
+    let row = refreshed.iter().find(|row| row.id == id)
+        .ok_or_else(|| "Self-Improve accept receipt has no matching refreshed proposal".to_string())?;
+    if row.status == "accepted" && row.quality_state == "current" && row.evidence_sha256 == evidence_sha256 {
+        Ok(())
+    } else {
+        Err("Self-Improve accept did not preserve the selected current evidence; refresh and reconcile before retrying".to_string())
+    }
+}
+
 fn refresh_selfimprove(weak: slint::Weak<MainWindow>) {
     use slint::VecModel;
+    let revision = SELFIMPROVE_UI_REVISION.load(std::sync::atomic::Ordering::Acquire);
     let status_json = run_neothd_probe(&["self-improve", "status", "--output", "json"]);
     let review_json = run_neothd_probe(&["self-improve", "review", "--output", "json"]);
     let log_json = run_neothd_probe(&["self-improve", "log", "--output", "json"]);
@@ -30968,19 +31014,35 @@ fn refresh_selfimprove(weak: slint::Weak<MainWindow>) {
 
     let ts = panel_logic::now_hhmm();
     let _ = slint::invoke_from_event_loop(move || {
+        #[cfg(test)]
+        SELFIMPROVE_REFRESH_CALLBACKS.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        if SELFIMPROVE_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+            return;
+        }
         let Some(w) = weak.upgrade() else { return };
         w.set_si_enabled(si_enabled);
         w.set_si_auto(si_auto);
         w.set_si_skillopt_installed(si_skillopt);
         w.set_si_last_run(si_last.as_str().into());
         w.set_si_autonomy(si_autonomy.as_str().into());
-        {
+        if let Ok(proposals) = proposals {
             let rows: Vec<SiProposalRow> = proposals
                 .into_iter()
-                .map(|(id, title, description)| SiProposalRow {
-                    id: id.into(),
-                    title: title.into(),
-                    description: description.into(),
+                .map(|proposal| SiProposalRow {
+                    id: proposal.id.into(),
+                    title: proposal.title.into(),
+                    description: proposal.description.into(),
+                    status: proposal.status.into(),
+                    quality_state: proposal.quality_state.into(),
+                    quality_reason: proposal.quality_reason.into(),
+                    quality_metric: proposal.quality_metric.into(),
+                    score_delta: proposal.score_delta.into(),
+                    evaluator_source_short_id: proposal.evaluator_source_short_id.into(),
+                    corpus_manifest_short_sha256: proposal.corpus_manifest_short_sha256.into(),
+                    regression_summary: proposal.regression_summary.into(),
+                    evidence_short_sha256: proposal.evidence_short_sha256.into(),
+                    evidence_sha256: proposal.evidence_sha256.into(),
+                    accept_ready: proposal.accept_ready,
                 })
                 .collect();
             w.set_si_proposals(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
@@ -33106,164 +33168,6 @@ fn launch_cli_terminal(bin: &Path, home: &Path, launch: TerminalLaunch) -> Resul
                 Err(anyhow::Error::new(error).context("open Windows PowerShell for the NEOTH CLI")),
             ),
         }
-    }
-
-    #[cfg(not(windows))]
-    fn w138_pump_until_skill_autonomy_settles(window: &MainWindow) {
-        let settled = Rc::new(Cell::new(false));
-        let observed = Rc::clone(&settled);
-        let weak = window.as_weak();
-        let timer = slint::Timer::default();
-        timer.start(
-            slint::TimerMode::Repeated,
-            Duration::from_millis(10),
-            move || {
-                let Some(window) = weak.upgrade() else {
-                    let _ = slint::quit_event_loop();
-                    return;
-                };
-                if !window.get_skill_autonomy_in_flight() {
-                    observed.set(true);
-                    let _ = slint::quit_event_loop();
-                }
-            },
-        );
-        let _ = window.hide();
-        slint::run_event_loop_until_quit().expect("pump bounded W138 callback event loop");
-        drop(timer);
-        assert!(
-            settled.get(),
-            "timed out waiting for W138 callback settlement"
-        );
-    }
-
-    #[cfg(not(windows))]
-    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
-    fn w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback() {
-        let _environment = GUI_CALLBACK_ENV_LOCK
-            .lock()
-            .expect("serial GUI fixture environment");
-        let fixture = TempDir::new().expect("create W138 CLI fixture");
-        let bin = w116_stage_fake_neoth(&fixture);
-        let mode = fixture.path().join("mode");
-        let calls = fixture.path().join("calls");
-        let show = fixture.path().join("autonomy-show.json");
-        std::fs::write(&calls, b"").expect("initialize W138 call log");
-        std::fs::write(&mode, b"w138_set_wrong").expect("select wrong receipt mode");
-        std::fs::write(&show, br#"{"id":"web-research","configured":null,"effective_cap":null,"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write initial show");
-        let _path = PathGuard::install(fixture.path());
-        assert_eq!(
-            std::fs::canonicalize(which_neothd().expect("resolve staged W138 CLI"))
-                .expect("canonicalize W138 CLI"),
-            std::fs::canonicalize(&bin).expect("canonicalize staged W138 CLI")
-        );
-        let window = MainWindow::new().expect("construct generated MainWindow");
-        register_skill_autonomy_callbacks(&window);
-
-        window.invoke_skill_autonomy_inspect("web-research".into());
-        assert!(window.get_skill_autonomy_in_flight());
-        w138_pump_until_skill_autonomy_settles(&window);
-        assert_eq!(
-            window.get_skill_autonomy_configured().to_string(),
-            "Not configured"
-        );
-
-        window.invoke_skill_autonomy_set(
-            "web-research".into(),
-            "custom".into(),
-            "exec_arbitrary=deny".into(),
-        );
-        assert!(window.get_skill_autonomy_in_flight());
-        w138_pump_until_skill_autonomy_settles(&window);
-        assert_eq!(
-            window.get_skill_autonomy_configured().to_string(),
-            "Not configured",
-            "wrong-ID receipt cannot repaint the prior readback"
-        );
-
-        std::fs::write(&mode, b"w138_set_valid").expect("select exact set receipt");
-        std::fs::write(&show, br#"{"id":"web-research","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"effective_cap":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write post-set readback");
-        window.invoke_skill_autonomy_set(
-            "web-research".into(),
-            "custom".into(),
-            "exec_arbitrary=deny".into(),
-        );
-        w138_pump_until_skill_autonomy_settles(&window);
-        assert_eq!(
-            window.get_skill_autonomy_configured().to_string(),
-            "custom (exec_arbitrary=deny)"
-        );
-
-        std::fs::write(&mode, b"w138_set_idempotent").expect("select idempotent set receipt");
-        window.invoke_skill_autonomy_set(
-            "web-research".into(),
-            "custom".into(),
-            "exec_arbitrary=deny".into(),
-        );
-        w138_pump_until_skill_autonomy_settles(&window);
-        assert_eq!(
-            window.get_skill_autonomy_configured().to_string(),
-            "custom (exec_arbitrary=deny)",
-            "idempotent set keeps the exact readback"
-        );
-        assert!(
-            window
-                .get_skill_autonomy_status()
-                .to_string()
-                .contains("no daemon reload was requested")
-        );
-
-        std::fs::write(&show, br#"{"id":"web-research","configured":null,"effective_cap":null,"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write conflicting set readback");
-        window.invoke_skill_autonomy_set(
-            "web-research".into(),
-            "custom".into(),
-            "exec_arbitrary=deny".into(),
-        );
-        w138_pump_until_skill_autonomy_settles(&window);
-        assert_eq!(
-            window.get_skill_autonomy_configured().to_string(),
-            "custom (exec_arbitrary=deny)",
-            "conflicting set readback cannot repaint"
-        );
-
-        std::fs::write(&show, br#"{"id":"web-research","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"effective_cap":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("restore cap before reset readback test");
-        // A valid reset acknowledgement is still insufficient when its fresh
-        // show readback disagrees; the prior verified cap must remain visible.
-        window.invoke_skill_autonomy_reset("web-research".into());
-        w138_pump_until_skill_autonomy_settles(&window);
-        assert_eq!(
-            window.get_skill_autonomy_configured().to_string(),
-            "custom (exec_arbitrary=deny)",
-            "conflicting reset readback cannot repaint"
-        );
-
-        std::fs::write(&show, br#"{"id":"web-research","configured":null,"effective_cap":null,"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write post-reset readback");
-        window.invoke_skill_autonomy_reset("web-research".into());
-        w138_pump_until_skill_autonomy_settles(&window);
-        assert_eq!(
-            window.get_skill_autonomy_configured().to_string(),
-            "Not configured"
-        );
-        assert_eq!(
-            w116_call_lines(&calls),
-            [
-                "autonomy-show:web-research",
-                "autonomy-set:web-research",
-                "autonomy-set:web-research",
-                "autonomy-show:web-research",
-                "skills-list",
-                "autonomy-set:web-research",
-                "autonomy-show:web-research",
-                "skills-list",
-                "autonomy-set:web-research",
-                "autonomy-show:web-research",
-                "autonomy-reset:web-research",
-                "autonomy-show:web-research",
-                "autonomy-reset:web-research",
-                "autonomy-show:web-research",
-                "skills-list"
-            ]
-        );
     }
 
     #[cfg(target_os = "macos")]
@@ -38420,7 +38324,9 @@ mod w58_gui_callback_runtime_tests {
         register_channel_legacy_migration_callback, register_channel_pairing_approval_callback,
         register_channel_pairing_request_callbacks,
         register_code_map_enrichment_readiness_callbacks, start_code_map_lifecycle_config_apply,
-        start_code_map_lifecycle_refresh, which_neothd,
+        register_selfimprove_accept_callback, register_skill_autonomy_callbacks,
+        refresh_selfimprove, start_code_map_lifecycle_refresh, selfimprove_accept_readback_matches,
+        which_neothd,
     };
 
     static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -38463,6 +38369,164 @@ mod w58_gui_callback_runtime_tests {
                 None => unsafe { std::env::remove_var("PATH") },
             }
         }
+    }
+
+    #[cfg(not(windows))]
+    fn w138_pump_until_skill_autonomy_settles(window: &MainWindow) {
+        let settled = Rc::new(Cell::new(false));
+        let observed = Rc::clone(&settled);
+        let weak = window.as_weak();
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                let Some(window) = weak.upgrade() else {
+                    let _ = slint::quit_event_loop();
+                    return;
+                };
+                if !window.get_skill_autonomy_in_flight() {
+                    observed.set(true);
+                    let _ = slint::quit_event_loop();
+                }
+            },
+        );
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("pump bounded W138 callback event loop");
+        drop(timer);
+        assert!(
+            settled.get(),
+            "timed out waiting for W138 callback settlement"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback() {
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial GUI fixture environment");
+        let fixture = TempDir::new().expect("create W138 CLI fixture");
+        let bin = w116_stage_fake_neoth(&fixture);
+        let mode = fixture.path().join("mode");
+        let calls = fixture.path().join("calls");
+        let show = fixture.path().join("autonomy-show.json");
+        std::fs::write(&calls, b"").expect("initialize W138 call log");
+        std::fs::write(&mode, b"w138_set_wrong").expect("select wrong receipt mode");
+        std::fs::write(&show, br#"{"id":"web-research","configured":null,"effective_cap":null,"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write initial show");
+        let _path = PathGuard::install(fixture.path());
+        assert_eq!(
+            std::fs::canonicalize(which_neothd().expect("resolve staged W138 CLI"))
+                .expect("canonicalize W138 CLI"),
+            std::fs::canonicalize(&bin).expect("canonicalize staged W138 CLI")
+        );
+        let window = MainWindow::new().expect("construct generated MainWindow");
+        register_skill_autonomy_callbacks(&window);
+
+        window.invoke_skill_autonomy_inspect("web-research".into());
+        assert!(window.get_skill_autonomy_in_flight());
+        w138_pump_until_skill_autonomy_settles(&window);
+        assert_eq!(
+            window.get_skill_autonomy_configured().to_string(),
+            "Not configured"
+        );
+
+        window.invoke_skill_autonomy_set(
+            "web-research".into(),
+            "custom".into(),
+            "exec_arbitrary=deny".into(),
+        );
+        assert!(window.get_skill_autonomy_in_flight());
+        w138_pump_until_skill_autonomy_settles(&window);
+        assert_eq!(
+            window.get_skill_autonomy_configured().to_string(),
+            "Not configured",
+            "wrong-ID receipt cannot repaint the prior readback"
+        );
+
+        std::fs::write(&mode, b"w138_set_valid").expect("select exact set receipt");
+        std::fs::write(&show, br#"{"id":"web-research","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"effective_cap":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write post-set readback");
+        window.invoke_skill_autonomy_set(
+            "web-research".into(),
+            "custom".into(),
+            "exec_arbitrary=deny".into(),
+        );
+        w138_pump_until_skill_autonomy_settles(&window);
+        assert_eq!(
+            window.get_skill_autonomy_configured().to_string(),
+            "custom (exec_arbitrary=deny)"
+        );
+
+        std::fs::write(&mode, b"w138_set_idempotent").expect("select idempotent set receipt");
+        window.invoke_skill_autonomy_set(
+            "web-research".into(),
+            "custom".into(),
+            "exec_arbitrary=deny".into(),
+        );
+        w138_pump_until_skill_autonomy_settles(&window);
+        assert_eq!(
+            window.get_skill_autonomy_configured().to_string(),
+            "custom (exec_arbitrary=deny)",
+            "idempotent set keeps the exact readback"
+        );
+        assert!(
+            window
+                .get_skill_autonomy_status()
+                .to_string()
+                .contains("no daemon reload was requested")
+        );
+
+        std::fs::write(&show, br#"{"id":"web-research","configured":null,"effective_cap":null,"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write conflicting set readback");
+        window.invoke_skill_autonomy_set(
+            "web-research".into(),
+            "custom".into(),
+            "exec_arbitrary=deny".into(),
+        );
+        w138_pump_until_skill_autonomy_settles(&window);
+        assert_eq!(
+            window.get_skill_autonomy_configured().to_string(),
+            "custom (exec_arbitrary=deny)",
+            "conflicting set readback cannot repaint"
+        );
+
+        std::fs::write(&show, br#"{"id":"web-research","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"effective_cap":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("restore cap before reset readback test");
+        // A valid reset acknowledgement is still insufficient when its fresh
+        // show readback disagrees; the prior verified cap must remain visible.
+        window.invoke_skill_autonomy_reset("web-research".into());
+        w138_pump_until_skill_autonomy_settles(&window);
+        assert_eq!(
+            window.get_skill_autonomy_configured().to_string(),
+            "custom (exec_arbitrary=deny)",
+            "conflicting reset readback cannot repaint"
+        );
+
+        std::fs::write(&show, br#"{"id":"web-research","configured":null,"effective_cap":null,"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write post-reset readback");
+        window.invoke_skill_autonomy_reset("web-research".into());
+        w138_pump_until_skill_autonomy_settles(&window);
+        assert_eq!(
+            window.get_skill_autonomy_configured().to_string(),
+            "Not configured"
+        );
+        assert_eq!(
+            w116_call_lines(&calls),
+            [
+                "autonomy-show:web-research",
+                "autonomy-set:web-research",
+                "autonomy-set:web-research",
+                "autonomy-show:web-research",
+                "skills-list",
+                "autonomy-set:web-research",
+                "autonomy-show:web-research",
+                "skills-list",
+                "autonomy-set:web-research",
+                "autonomy-show:web-research",
+                "autonomy-reset:web-research",
+                "autonomy-show:web-research",
+                "autonomy-reset:web-research",
+                "autonomy-show:web-research",
+                "skills-list"
+            ]
+        );
     }
 
     fn pump_until_automatic_context(window: &MainWindow, expected: &str) {
@@ -39973,6 +40037,41 @@ if [ "$1" = autonomy ] && [ "$2" = skill ] && [ "$3" = reset ] && [ "$4" = web-r
   printf '{"id":"web-research","configured":null,"previous":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"changed":true,"reload_requested":true}\n'
   exit 0
 fi
+if [ "$1" = self-improve ] && [ "$2" = review ] && [ "$3" = --output ] && [ "$4" = json ] && [ "$#" -eq 4 ]; then
+  printf 'si-review\n' >> "$base/calls"
+  if [ -f "$base/w142-review-block-once" ] && [ ! -f "$base/w142-review-started" ]; then
+    /bin/cp "$base/si-review.json" "$base/w142-review-blocked-response"
+    : > "$base/w142-review-started"
+    while [ ! -f "$base/w142-review-release" ]; do /bin/sleep 0.01; done
+    /bin/cat "$base/w142-review-blocked-response"
+    exit 0
+  fi
+  /bin/cat "$base/si-review.json"
+  exit 0
+fi
+if [ "$1" = self-improve ] && [ "$2" = status ] && [ "$3" = --output ] && [ "$4" = json ] && [ "$#" -eq 4 ]; then
+  printf 'si-status\n' >> "$base/calls"
+  printf '{"enabled":true,"auto":false,"skillopt_installed":true,"last":"fixture","autonomy":"full"}\n'
+  exit 0
+fi
+if [ "$1" = self-improve ] && [ "$2" = log ] && [ "$3" = --output ] && [ "$4" = json ] && [ "$#" -eq 4 ]; then
+  printf 'si-log\n' >> "$base/calls"
+  printf '{"log":[]}\n'
+  exit 0
+fi
+if [ "$1" = self-improve ] && [ "$2" = accept ] && [ "$3" = p142 ] && [ "$4" = --expected-evidence-sha256 ] && [ "$5" = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ] && [ "$6" = --output ] && [ "$7" = json ] && [ "$#" -eq 7 ]; then
+  printf 'si-accept\n' >> "$base/calls"
+  if [ "$mode" = w142_blocked ]; then
+    : > "$base/w142-accept-started"
+    while [ ! -f "$base/w142-release" ]; do /bin/sleep 0.01; done
+  fi
+  case "$mode" in
+    w142_wrong) printf '{"ok":true,"action":"accept","id":"other","status":"accepted","quality_state":"current","evidence_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","upstream_pr_available":false}\n' ;;
+    w142_stale|w142_success|w142_blocked) printf '{"ok":true,"action":"accept","id":"p142","status":"accepted","quality_state":"current","evidence_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","upstream_pr_available":false}\n' ;;
+    *) printf 'unexpected self-improve mode: %s\n' "$mode" >&2; exit 91 ;;
+  esac
+  exit 0
+fi
 printf 'unexpected argv: %s %s %s %s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" >&2
 exit 72
 "#,
@@ -40263,32 +40362,38 @@ exit 72
         window: &MainWindow,
         generation: i32,
         snapshot: Vec<panel_logic::ChannelStatus>,
-    ) -> Rc<Cell<Option<bool>>> {
-        let applied = Rc::new(Cell::new(None));
-        let observed_applied = Rc::clone(&applied);
+    ) -> Arc<Mutex<Option<bool>>> {
+        let applied = Arc::new(Mutex::new(None));
+        let observed_applied = Arc::clone(&applied);
         let weak = window.as_weak();
         slint::invoke_from_event_loop(move || {
             let decision = weak
                 .upgrade()
                 .map(|window| apply_channel_snapshot(&window, generation, Ok(snapshot)))
                 .unwrap_or(false);
-            observed_applied.set(Some(decision));
+            *observed_applied
+                .lock()
+                .expect("record queued stale migration inventory decision") = Some(decision);
         })
         .expect("queue stale migration inventory callback");
         applied
     }
 
     #[cfg(not(windows))]
-    fn w130_drain_queued_inventory_apply(window: &MainWindow, applied: &Rc<Cell<Option<bool>>>) {
+    fn w130_drain_queued_inventory_apply(window: &MainWindow, applied: &Arc<Mutex<Option<bool>>>) {
         let ticks = Rc::new(Cell::new(0_u8));
         let observed_ticks = Rc::clone(&ticks);
-        let observed_applied = Rc::clone(applied);
+        let observed_applied = Arc::clone(applied);
         let timer = slint::Timer::default();
         timer.start(
             slint::TimerMode::Repeated,
             Duration::from_millis(10),
             move || {
-                if observed_applied.get().is_some() {
+                if observed_applied
+                    .lock()
+                    .expect("read queued stale migration inventory decision")
+                    .is_some()
+                {
                     let _ = slint::quit_event_loop();
                     return;
                 }
@@ -40304,7 +40409,9 @@ exit 72
             .expect("drain queued stale migration inventory callback");
         drop(timer);
         assert_eq!(
-            applied.get(),
+            *applied
+                .lock()
+                .expect("read settled stale migration inventory decision"),
             Some(false),
             "stale inventory snapshot must be rejected"
         );
@@ -40957,8 +41064,161 @@ exit 72
         );
     }
 
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w142_selfimprove_accept_requires_exact_bound_receipt_and_fresh_readback() {
+        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("serial GUI fixture environment");
+        super::SELFIMPROVE_REFRESH_CALLBACKS.store(0, std::sync::atomic::Ordering::Release);
+        let fixture = TempDir::new().expect("create W142 CLI fixture");
+        let bin = w116_stage_fake_neoth(&fixture);
+        let mode = fixture.path().join("mode");
+        let review = fixture.path().join("si-review.json");
+        let calls = fixture.path().join("calls");
+        std::fs::write(&calls, b"").unwrap();
+        let accepted = r#"[{"id":"p142","skill":"retry","summary":"seed current","status":"accepted","quality":{"state":"current","reason":null,"metric":"quality_score@v1","score_before":0.2,"score_after":0.7,"score_delta":0.5,"evaluator_source_short_id":"cccccccccccc","corpus_manifest_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","regression_total":1,"regression_passed":1,"evidence_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}]"#;
+        let accepted_newer = r#"[{"id":"p142","skill":"retry","summary":"newest current","status":"accepted","quality":{"state":"current","reason":null,"metric":"quality_score@v1","score_before":0.2,"score_after":0.7,"score_delta":0.5,"evaluator_source_short_id":"cccccccccccc","corpus_manifest_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","regression_total":1,"regression_passed":1,"evidence_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}]"#;
+        let stale = r#"[{"id":"p142","skill":"retry","summary":"quality fixture","status":"accepted","quality":{"state":"stale","reason":"corpus changed","metric":null,"score_before":null,"score_after":null,"score_delta":null,"evaluator_source_short_id":null,"corpus_manifest_sha256":null,"regression_total":0,"regression_passed":0,"evidence_sha256":null}}]"#;
+        std::fs::write(&review, accepted).unwrap();
+        std::fs::write(&mode, b"w142_success").unwrap();
+        let _path = PathGuard::install(fixture.path());
+        assert_eq!(std::fs::canonicalize(which_neothd().unwrap()).unwrap(), std::fs::canonicalize(bin).unwrap());
+        let window = MainWindow::new().unwrap();
+        register_selfimprove_accept_callback(&window);
+
+        let initial_refresh = window.as_weak();
+        std::thread::spawn(move || refresh_selfimprove(initial_refresh));
+        w142_drain_refresh(&window, &calls, [0, 1, 1, 1, 1, 0], "current", "seed current");
+        assert_eq!(w142_toast_count(&window, "Accepted"), 0, "refresh alone cannot publish acceptance");
+
+        std::fs::write(&review, b"not-json").unwrap();
+        let malformed_refresh = window.as_weak();
+        std::thread::spawn(move || refresh_selfimprove(malformed_refresh));
+        w142_drain_refresh(&window, &calls, [0, 2, 2, 2, 2, 0], "current", "seed current");
+        assert_eq!(w142_toast_count(&window, "Accepted"), 0, "malformed review cannot publish acceptance");
+
+        std::fs::write(&calls, b"").unwrap();
+        std::fs::write(&review, stale).unwrap();
+        std::fs::write(&mode, b"w142_wrong").unwrap();
+        window.invoke_si_accept_clicked("p142".into(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+        window.invoke_si_accept_clicked("p142".into(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+        w142_drain_refresh(&window, &calls, [1, 1, 1, 1, 3, 0], "stale", "quality fixture");
+        assert!(!window.get_si_accept_in_flight(), "wrong receipt clears the singleflight state");
+        assert_eq!(w142_toast_count(&window, "Accepted"), 0, "foreign receipt cannot publish success");
+
+        std::fs::write(&mode, b"w142_stale").unwrap();
+        window.invoke_si_accept_clicked("p142".into(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+        w142_drain_refresh(&window, &calls, [2, 3, 2, 2, 4, 0], "stale", "quality fixture");
+        assert!(!window.get_si_accept_in_flight(), "fresh stale readback cannot claim success");
+        assert_eq!(w142_toast_count(&window, "Accepted"), 0, "stale readback cannot publish success");
+
+        std::fs::write(&review, accepted).unwrap();
+        std::fs::write(&mode, b"w142_success").unwrap();
+        window.invoke_si_accept_clicked("p142".into(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+        w142_drain_refresh(&window, &calls, [3, 5, 3, 3, 5, 1], "current", "seed current");
+        assert!(!window.get_si_accept_in_flight(), "exact receipt and readback settle the callback");
+        assert_eq!(w142_toast_count(&window, "Accepted"), 1, "only exact receipt plus current readback publishes success");
+        assert_eq!(w116_call_lines(&calls).iter().filter(|line| line.as_str() == "si-accept").count(), 3, "duplicate click must not spawn a second child");
+        assert_eq!(w116_call_lines(&calls).iter().filter(|line| line.as_str() == "si-review").count(), 5, "wrong acknowledgement refreshes once; stale and success each perform direct plus terminal review");
+
+        std::fs::write(&mode, b"w142_blocked").unwrap();
+        let accept_started = fixture.path().join("w142-accept-started");
+        let accept_release = fixture.path().join("w142-release");
+        let _ = std::fs::remove_file(&accept_started);
+        let _ = std::fs::remove_file(&accept_release);
+        window.invoke_si_accept_clicked("p142".into(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+        w142_wait_for_file(&window, &accept_started, "W142 accept child did not start");
+        window.invoke_si_accept_clicked("p142".into(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+        assert_eq!(w116_call_lines(&calls).iter().filter(|line| line.as_str() == "si-accept").count(), 4, "blocked duplicate must not create a second child");
+        std::fs::write(&accept_release, b"release").unwrap();
+        w142_drain_refresh(&window, &calls, [4, 7, 4, 4, 6, 2], "current", "seed current");
+        assert!(!window.get_si_accept_in_flight(), "released blocked completion clears active state");
+        assert_eq!(w142_toast_count(&window, "Accepted"), 2, "released exact completion publishes one additional success");
+
+        let review_started = fixture.path().join("w142-review-started");
+        let review_release = fixture.path().join("w142-review-release");
+        let review_once = fixture.path().join("w142-review-block-once");
+        let _ = std::fs::remove_file(&review_started);
+        let _ = std::fs::remove_file(&review_release);
+        std::fs::write(&review, accepted).unwrap();
+        std::fs::write(&mode, b"w142_success").unwrap();
+        std::fs::write(&review_once, b"block once").unwrap();
+        let old_refresh = window.as_weak();
+        std::thread::spawn(move || refresh_selfimprove(old_refresh));
+        w142_wait_for_file(&window, &review_started, "older terminal refresh did not reach its review");
+
+        std::fs::write(&review, accepted_newer).unwrap();
+        window.invoke_si_accept_clicked("p142".into(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+        w142_drain_refresh(&window, &calls, [5, 10, 6, 5, 7, 3], "current", "newest current");
+        std::fs::write(&review_release, b"release old refresh").unwrap();
+        w142_drain_refresh(&window, &calls, [5, 10, 6, 6, 8, 3], "current", "newest current");
+        assert_eq!(w142_toast_count(&window, "Accepted"), 3, "late old refresh cannot publish another terminal toast");
+    }
+
+    #[cfg(not(windows))]
+    fn w142_drain_refresh(
+        window: &MainWindow,
+        calls: &Path,
+        expected_counts: [usize; 6],
+        expected_quality: &str,
+        expected_summary: &str,
+    ) {
+        let done = Rc::new(Cell::new(false)); let seen = Rc::clone(&done); let weak = window.as_weak(); let ticks = Rc::new(Cell::new(0_u16)); let seen_ticks = Rc::clone(&ticks);
+        // Counts are accept/review/status/log children, processed UI refreshes,
+        // and accepted toasts. The callback counter proves even rejected late
+        // replies have actually reached the same event loop before we finish.
+        let [expected_accepts, expected_reviews, expected_statuses, expected_logs, expected_callbacks, expected_accepted_toasts] = expected_counts;
+        let calls = calls.to_path_buf(); let expected_quality = expected_quality.to_owned(); let expected_summary = expected_summary.to_owned();
+        let timer = slint::Timer::default();
+        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
+            let call_lines = w116_call_lines(&calls);
+            let call_count = |name: &str| call_lines.iter().filter(|line| line.as_str() == name).count();
+            if weak.upgrade().is_some_and(|w| {
+                !w.get_si_accept_in_flight()
+                    && call_count("si-accept") == expected_accepts
+                    && call_count("si-review") == expected_reviews
+                    && call_count("si-status") == expected_statuses
+                    && call_count("si-log") == expected_logs
+                    && super::SELFIMPROVE_REFRESH_CALLBACKS.load(std::sync::atomic::Ordering::Acquire) == expected_callbacks as u64
+                    && w142_toast_count(&w, "Accepted") == expected_accepted_toasts
+                    && w142_proposal_matches(&w, &expected_quality, &expected_summary)
+            }) { seen.set(true); let _ = slint::quit_event_loop(); }
+            if seen_ticks.get().saturating_add(1) >= 500 { let _ = slint::quit_event_loop(); } else { seen_ticks.set(seen_ticks.get() + 1); }
+        });
+        let _ = window.hide(); slint::run_event_loop_until_quit().unwrap(); drop(timer);
+        assert!(done.get(), "W142 terminal refresh did not settle");
+    }
+
+    #[cfg(not(windows))]
+    fn w142_wait_for_file(window: &MainWindow, path: &Path, failure: &str) {
+        let done = Rc::new(Cell::new(false)); let seen = Rc::clone(&done); let weak = window.as_weak(); let ticks = Rc::new(Cell::new(0_u16)); let seen_ticks = Rc::clone(&ticks);
+        let path = path.to_path_buf();
+        let timer = slint::Timer::default();
+        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
+            if weak.upgrade().is_some() && path.exists() { seen.set(true); let _ = slint::quit_event_loop(); }
+            if seen_ticks.get().saturating_add(1) >= 500 { let _ = slint::quit_event_loop(); } else { seen_ticks.set(seen_ticks.get() + 1); }
+        });
+        let _ = window.hide(); slint::run_event_loop_until_quit().unwrap(); drop(timer);
+        assert!(done.get(), "{failure}");
+    }
+
+    #[cfg(not(windows))]
+    fn w142_proposal_matches(window: &MainWindow, quality: &str, summary: &str) -> bool {
+        window.get_si_proposals().row_data(0).is_some_and(|row| {
+            row.id.to_string() == "p142"
+                && row.status.to_string() == "accepted"
+                && row.quality_state.to_string() == quality
+                && row.evidence_sha256.to_string() == if quality == "current" { "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } else { "" }
+                && row.title.to_string() == summary
+        })
+    }
+
+    #[cfg(not(windows))]
+    fn w142_toast_count(window: &MainWindow, title: &str) -> usize {
+        (0..window.get_toasts().row_count()).filter_map(|index| window.get_toasts().row_data(index)).filter(|toast| toast.title.to_string() == title).count()
+    }
+
     #[cfg(target_os = "macos")]
-    const MACOS_NATIVE_HARNESS_TESTS: [&str; 11] = [
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 12] = [
         "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
         "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
@@ -40970,6 +41230,7 @@ exit 72
         "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt",
         "w58_gui_callback_runtime_tests::w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt",
         "w58_gui_callback_runtime_tests::w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback",
+        "w58_gui_callback_runtime_tests::w142_selfimprove_accept_requires_exact_bound_receipt_and_fresh_readback",
     ];
 
     /// Native macOS Nextest bridge. Keep its stdout restricted to the libtest
@@ -41058,6 +41319,9 @@ exit 72
                     }
                     "w58_gui_callback_runtime_tests::w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback" => {
                         w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback()
+                    }
+                    "w58_gui_callback_runtime_tests::w142_selfimprove_accept_requires_exact_bound_receipt_and_fresh_readback" => {
+                        w142_selfimprove_accept_requires_exact_bound_receipt_and_fresh_readback()
                     }
                     _ => return Err(format!("unknown macOS native GUI test {test_name:?}")),
                 }

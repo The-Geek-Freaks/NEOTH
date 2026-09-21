@@ -16,6 +16,8 @@ NEOTH's normal path is the GUI/CLI wizard. Advanced users can edit config files 
 | `~/.neoth/profile/communication.json` | Local, typed communication-preference state. It contains evidence hashes and estimates, not raw messages. |
 | `~/.neoth/wal/` | Event log. Do not edit manually. |
 | `~/.neoth/models/` | Local model cache. |
+| `~/.neoth/self_improve.yaml` | Operator switch and exact verifier-command allowlist for self-improvement. |
+| `~/.neoth/self_improve_eval/v1/` | Fixed, operator-maintained evaluation corpora for self-improvement quality evidence. |
 
 ### Custom instance homes
 
@@ -508,6 +510,138 @@ typed permission actions, while cloud TTS additionally requires the separate
 default-off `media.cloud_tts_enabled` switch. Other integrations retain their
 own allowlists, consent records, endpoint validation, and audit requirements. The
 [threat model](security/threat-model.md) is the authoritative per-surface map.
+
+## Self-improvement quality verification
+
+Self-improvement stages a proposal; it does not treat SkillOpt output,
+`--from` content, a proposal's `verification_command`, or a successful process
+exit as quality proof. Every staged proposal starts with incomplete quality
+evidence. It can become accept-capable only after the fixed corpus and an
+operator-approved verifier produce the bound v1 result described below.
+
+The configuration is `~/.neoth/self_improve.yaml`:
+
+```yaml
+enabled: false
+auto: false
+asked: false
+allow_shell_verify: false
+approved_verification_commands: []
+```
+
+`allow_shell_verify` and an exact byte-for-byte entry in
+`approved_verification_commands` are both required. The CLI accepts the
+selected text through `--verifier`, but the core rejects any value that is not
+an exact configured entry; proposals, SkillOpt, GUI, Buddy, environment, and
+verifier output cannot add or alter a command. There is no prefix, token, path,
+whitespace-normalized, or shell-equivalent matching. Add only a command you
+fully operate and trust.
+
+The verifier runs in a fresh bounded workspace with a timeout, capped output,
+scrubbed environment, and process-tree containment. It is **not** a filesystem
+or network sandbox. The command's exact operator allowlist entry remains the
+authority boundary.
+
+### Fixed corpus layout
+
+For a proposal whose canonical skill ID is `<skill>`, the only evaluation root
+is:
+
+```text
+~/.neoth/self_improve_eval/v1/<skill>/
+  manifest.json
+  cases/<case-id>.json
+```
+
+`manifest.json` is strict JSON with exactly the v1 schema fields:
+
+```json
+{
+  "schema_version": 1,
+  "metric": "<metric-id>",
+  "cases": [
+    { "id": "<case-id>", "sha256": "<sha256 of cases/<case-id>.json>" }
+  ]
+}
+```
+
+`metric` and each case ID are single path components. The manifest must contain
+one to 1,024 unique cases. NEOTH reads only this fixed root with bounded,
+regular-file reads, rejects links and special files, hashes every listed case,
+and derives the corpus manifest digest from the ordered metric, case IDs, and
+case hashes. A missing, malformed, changed, or unreadable corpus has no
+fallback and cannot certify a proposal.
+
+### Verifier inputs and result v1
+
+The evaluator runs with its current directory set to an empty `runner/`
+directory. Core materializes a snapshot at these paths relative to that
+directory; the verifier must read `../input/...`, never the live skill or live
+corpus:
+
+```text
+../input/baseline.md
+../input/candidate.md
+../input/corpus/manifest.json
+../input/corpus/cases/<case-id>.json
+../input/evaluator_source_id.txt
+../input/source_map_receipt.sha256
+../input/corpus_manifest.sha256
+```
+
+The verifier's stdout must be one bounded, strict JSON object with
+`kind: "self_improve_eval_result.v1"` and `schema_version: 1`. It must contain
+`evaluator_source_id`, `corpus_manifest_sha256`, `before_sha256`,
+`after_sha256`, `source_map_receipt_sha256`, `metric`, `score_before`,
+`score_after`, and `regressions`. The identity fields must bind to the exact
+selected allowlist command, supplied input digests, and manifest metric.
+Scores must be finite with strict improvement. `regressions` must contain one
+passing record for every and only fixed corpus case; each record contains its
+case `id`, `passed: true`, and an evidence SHA-256. The core parses, validates,
+hashes, and persists this evidence; the CLI never turns verifier stdout into
+authority itself.
+
+### Lifecycle, readback, and migration
+
+Stage first with `neoth self-improve run` (or `--from`), then select the exact
+configured verifier during execution:
+
+```text
+neoth self-improve execute <proposal-id> --verifier "<exact approved verifier command>"
+neoth --output json self-improve review
+neoth self-improve accept <proposal-id>
+```
+
+Execution refreshes the proposal's source-map receipt before quality evaluation.
+The core then rechecks the evidence before provider QA/approval, and rechecks it
+again immediately before the existing acceptance journal and skill write. A
+review row is accept-ready only when its existing `status` is
+`verified_approved` and its canonical `quality.state` is `current`; acceptance
+still performs the final core check.
+
+To bind acceptance to the exact evidence selected from that review, use:
+
+```text
+neoth self-improve accept <proposal-id> --expected-evidence-sha256 <review-quality-evidence-sha256>
+```
+
+The GUI uses this form. Core compares the selected digest inside its existing
+proposal transaction before the skill write. A proposal re-evaluated since
+review is rejected even if the replacement evidence is valid. The acceptance
+receipt returns the digest and quality state from the accepted transaction;
+the GUI also requires a matching fresh readback before displaying success.
+Repeating acceptance with the same still-current evidence returns the accepted
+receipt without another skill or ledger write. Revoked or changed evidence
+requires a new review.
+
+`quality.state: incomplete` means no typed evidence exists, including all
+legacy proposals and proposals staged from untrusted claims. `stale` means
+stored evidence no longer validates against its proposal, source-map receipt,
+fixed corpus, metric/cases, or exact enabled command authority. Disabling
+`allow_shell_verify`, removing or changing the selected allowlist command, or
+changing the corpus revokes current evidence into `stale`. Re-stage legacy or
+incomplete proposals and execute them against a configured fixed corpus; NEOTH
+does not upgrade old score/rationale fields into evidence.
 
 ## Inference
 

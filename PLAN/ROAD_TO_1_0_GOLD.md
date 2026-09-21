@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W142 / W150 source batch (2026-09-21):** Self-improve now evaluates a fixed
+corpus through an explicitly approved verifier and binds acceptance to current
+quality evidence, including the full digest selected in the GUI. Eight Core
+fixtures, four GUI parser/receipt fixtures and the genuine native callback
+fixture are required; see [W142](../docs/gold-wave142-verification.md).
+[W150](../docs/gold-wave150-verification.md) repairs the hosted GUI fixture
+scope/Send compilation errors without dropping their assertions. The matrix
+now requires 179 native, 26 universal GUI and seven Linux/macOS callback tests
+across 317 source inputs. Buddy quality presentation and all fresh runtime,
+render/accessibility acceptance remain pending. No Road checkbox closes.
+The prior W147 follow-up2285835e passed both quick gates35593995819 and
+35593995639. All executable validation continues exclusively on GitHub.
+
 **W147 hosted follow-up (2026-09-21):** GitHub CLI build/reference35592976685
 passed on3a1da19e; its SHA-bound snapshot is imported. Exactly nine observed
 Preflight35592975695 formatter hunks are imported; CodeQuality35592975120
