@@ -43,3 +43,13 @@ Core and GUI source reviews are recorded with their hashes in the matrix.
 All executable checks remain GitHub-hosted. Exact-source native execution,
 GUI render/accessibility evidence and the passive Buddy consumer remain
 separate requirements. GOLD-LF-P2-05 stays open until those are proven.
+
+Hosted follow-up: CLI-reference35595632250 built source
+fb16a751da809951be8e656c5927f1b935288c86 successfully and exported reference
+SHA-256 A223E291DBE80B7ED69247CCED489A9588B632685BFBC8789649BFC0116AE7E4.
+CodeQuality35595614650 passed. Preflight35595614938 emitted 113 raw Rustfmt
+hunks: 87 unique postimages across six files after identical test-path
+aliases were collapsed. All postimages are imported; no local formatter ran.
+Complete hosted-log SHA-256:
+84AB4590657781B47AC192116F7C33B0F271F648FE48B36CA299C57B7C67C8AD.
+Fresh native/GUI test execution remains required.

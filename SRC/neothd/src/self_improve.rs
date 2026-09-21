@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 mod quality;
 pub(crate) use quality::{
     FixedCorpus, ProposalQualityEvidenceV1, ProposalQualityReadback, ProposalQualityState,
-    load_fixed_corpus, mint_from_verifier_output, proposal_quality_readback, require_current_proposal_quality,
-    source_map_receipt_digest,
+    load_fixed_corpus, mint_from_verifier_output, proposal_quality_readback,
+    require_current_proposal_quality, source_map_receipt_digest,
 };
 
 const SELF_IMPROVE_CONFIG_MAX_BYTES: usize = 1024 * 1024;
@@ -2345,9 +2345,12 @@ pub fn accept_proposal_with_expected_evidence(
         }
         require_current_proposal_quality(home, &p)
             .context("proposal quality evidence is incomplete or stale; re-stage and run the fixed approved verifier before accepting")?;
-        let evidence_sha256 = p.quality_evidence.as_ref()
+        let evidence_sha256 = p
+            .quality_evidence
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("current quality evidence disappeared before accept"))?
-            .evidence_sha256.clone();
+            .evidence_sha256
+            .clone();
         if let Some(expected) = expected_evidence_sha256 {
             anyhow::ensure!(
                 expected.len() == 64 && expected.bytes().all(|byte| byte.is_ascii_hexdigit()),
@@ -2404,10 +2407,14 @@ pub fn accept_proposal_with_expected_evidence(
                     )?;
                     Ok(view.content)
                 })?;
-                require_current_proposal_quality(home, &p)
-                    .context("proposal quality evidence is incomplete or stale immediately before accepting")?;
+                require_current_proposal_quality(home, &p).context(
+                    "proposal quality evidence is incomplete or stale immediately before accepting",
+                )?;
                 if let Some(expected) = expected_evidence_sha256 {
-                    anyhow::ensure!(expected == evidence_sha256.as_str(), "proposal `{id_owned}` quality evidence changed since review; refresh review before accepting");
+                    anyhow::ensure!(
+                        expected == evidence_sha256.as_str(),
+                        "proposal `{id_owned}` quality evidence changed since review; refresh review before accepting"
+                    );
                 }
                 let generations = installed_generation_transition(&p, ProposalStatus::Accepted)?;
                 commit_accept_skill_write_locked(
@@ -2441,10 +2448,14 @@ pub fn accept_proposal_with_expected_evidence(
                         p.id
                     );
                 }
-                require_current_proposal_quality(home, &p)
-                    .context("proposal quality evidence is incomplete or stale immediately before accepting")?;
+                require_current_proposal_quality(home, &p).context(
+                    "proposal quality evidence is incomplete or stale immediately before accepting",
+                )?;
                 if let Some(expected) = expected_evidence_sha256 {
-                    anyhow::ensure!(expected == evidence_sha256.as_str(), "proposal `{id_owned}` quality evidence changed since review; refresh review before accepting");
+                    anyhow::ensure!(
+                        expected == evidence_sha256.as_str(),
+                        "proposal `{id_owned}` quality evidence changed since review; refresh review before accepting"
+                    );
                 }
                 commit_accept_skill_write_locked(home, &jp, &id_owned, &p, &current, None, || {
                     let report = target
@@ -4147,26 +4158,40 @@ pub(crate) async fn execute_proposal_with_prepared_code_map_analysis(
 /// Make an approved proposal accept-ready only after the caller has proven its
 /// provider/cost/verdict WAL writer completed successfully.
 pub(crate) fn evaluate_proposal_quality_with_approved_verifier(
-    home: &Path, id: &str, verifier: &str,
+    home: &Path,
+    id: &str,
+    verifier: &str,
 ) -> Result<ProposalQualityEvidenceV1> {
     let config = SelfImproveConfig::load(home)?;
     anyhow::ensure!(
         config.allow_shell_verify
-            && config.approved_verification_commands.iter().any(|entry| entry == verifier),
+            && config
+                .approved_verification_commands
+                .iter()
+                .any(|entry| entry == verifier),
         "quality verifier is not an exact operator-approved verification command"
     );
     let proposal = unique_proposal_by_id(&load_proposals(home)?, id)?.clone();
-    anyhow::ensure!(proposal.status == ProposalStatus::Pending, "proposal is not pending");
-    verify_proposal_code_map_capture(home, &proposal, &proposal.code_map_analysis)
-        .context("revalidate proposal target and source-map immediately before fixed quality evaluation")?;
+    anyhow::ensure!(
+        proposal.status == ProposalStatus::Pending,
+        "proposal is not pending"
+    );
+    verify_proposal_code_map_capture(home, &proposal, &proposal.code_map_analysis).context(
+        "revalidate proposal target and source-map immediately before fixed quality evaluation",
+    )?;
     let corpus = load_fixed_corpus(home, &proposal.skill)?;
     // The verifier never reads the live skill or corpus. It receives a
     // core-owned snapshot at fixed paths under its fresh workspace:
     // input/baseline.md, input/candidate.md, input/corpus/manifest.json and
     // input/corpus/cases/<case-id>.json. Its result must bind all of them.
     let output = run_approved_quality_verification_command(
-        Path::new(&proposal.skill_path), &proposal, &corpus, verifier, SKILLOPT_TIMEOUT,
-    ).map_err(|error| anyhow::anyhow!("approved quality verifier failed: {error}"))?;
+        Path::new(&proposal.skill_path),
+        &proposal,
+        &corpus,
+        verifier,
+        SKILLOPT_TIMEOUT,
+    )
+    .map_err(|error| anyhow::anyhow!("approved quality verifier failed: {error}"))?;
     let evidence = mint_from_verifier_output(&proposal, verifier, &corpus, &output)?;
     let expected_id = proposal.id.clone();
     let expected_code_map_analysis = proposal.code_map_analysis.clone();
@@ -4177,9 +4202,18 @@ pub(crate) fn evaluate_proposal_quality_with_approved_verifier(
             (Some(entry), None) => entry,
             _ => anyhow::bail!("proposal identity changed during quality evaluation"),
         };
-        anyhow::ensure!(entry.status == ProposalStatus::Pending, "proposal changed during quality evaluation");
-        anyhow::ensure!(entry.before == proposal.before && entry.after == proposal.after, "proposal changed during quality evaluation");
-        anyhow::ensure!(entry.code_map_analysis == expected_code_map_analysis, "proposal source-map receipt changed during quality evaluation");
+        anyhow::ensure!(
+            entry.status == ProposalStatus::Pending,
+            "proposal changed during quality evaluation"
+        );
+        anyhow::ensure!(
+            entry.before == proposal.before && entry.after == proposal.after,
+            "proposal changed during quality evaluation"
+        );
+        anyhow::ensure!(
+            entry.code_map_analysis == expected_code_map_analysis,
+            "proposal source-map receipt changed during quality evaluation"
+        );
         entry.quality_evidence = Some(stored);
         Ok(())
     })?;
@@ -4327,12 +4361,18 @@ fn run_approved_quality_verification_command(
     cmd: &str,
     timeout: std::time::Duration,
 ) -> std::result::Result<String, VerificationCommandError> {
-    let source_map_receipt_sha256 = source_map_receipt_digest(proposal)
-        .map_err(|error| VerificationCommandError::Setup(format!("quality source-map receipt: {error:#}")))?;
+    let source_map_receipt_sha256 = source_map_receipt_digest(proposal).map_err(|error| {
+        VerificationCommandError::Setup(format!("quality source-map receipt: {error:#}"))
+    })?;
     run_approved_verification_command_with_inputs(
         skill_path,
         &proposal.after,
-        Some((proposal.before.as_str(), corpus, cmd, &source_map_receipt_sha256)),
+        Some((
+            proposal.before.as_str(),
+            corpus,
+            cmd,
+            &source_map_receipt_sha256,
+        )),
         cmd,
         timeout,
     )
@@ -4367,7 +4407,8 @@ fn run_approved_verification_command_with_inputs(
         .ok_or_else(|| VerificationCommandError::Setup("skill_path has no filename".into()))?;
     std::fs::write(input_dir.join(basename), after_content.as_bytes())
         .map_err(|e| VerificationCommandError::Setup(e.to_string()))?;
-    if let Some((baseline, corpus, evaluator_source_id, source_map_receipt_sha256)) = quality_inputs {
+    if let Some((baseline, corpus, evaluator_source_id, source_map_receipt_sha256)) = quality_inputs
+    {
         let corpus_dir = input_dir.join("corpus");
         let corpus_cases_dir = corpus_dir.join("cases");
         std::fs::create_dir(&corpus_dir)
@@ -4375,14 +4416,37 @@ fn run_approved_verification_command_with_inputs(
             .map_err(|error| VerificationCommandError::Setup(error.to_string()))?;
         std::fs::write(input_dir.join("baseline.md"), baseline.as_bytes())
             .and_then(|()| std::fs::write(input_dir.join("candidate.md"), after_content.as_bytes()))
-            .and_then(|()| std::fs::write(corpus_dir.join("manifest.json"), corpus.manifest_bytes.as_bytes()))
-            .and_then(|()| std::fs::write(input_dir.join("evaluator_source_id.txt"), evaluator_source_id.as_bytes()))
-            .and_then(|()| std::fs::write(input_dir.join("source_map_receipt.sha256"), source_map_receipt_sha256.as_bytes()))
-            .and_then(|()| std::fs::write(input_dir.join("corpus_manifest.sha256"), corpus.manifest_sha256.as_bytes()))
+            .and_then(|()| {
+                std::fs::write(
+                    corpus_dir.join("manifest.json"),
+                    corpus.manifest_bytes.as_bytes(),
+                )
+            })
+            .and_then(|()| {
+                std::fs::write(
+                    input_dir.join("evaluator_source_id.txt"),
+                    evaluator_source_id.as_bytes(),
+                )
+            })
+            .and_then(|()| {
+                std::fs::write(
+                    input_dir.join("source_map_receipt.sha256"),
+                    source_map_receipt_sha256.as_bytes(),
+                )
+            })
+            .and_then(|()| {
+                std::fs::write(
+                    input_dir.join("corpus_manifest.sha256"),
+                    corpus.manifest_sha256.as_bytes(),
+                )
+            })
             .map_err(|error| VerificationCommandError::Setup(error.to_string()))?;
         for case in &corpus.cases {
-            std::fs::write(corpus_cases_dir.join(format!("{}.json", case.id)), case.bytes.as_bytes())
-                .map_err(|error| VerificationCommandError::Setup(error.to_string()))?;
+            std::fs::write(
+                corpus_cases_dir.join(format!("{}.json", case.id)),
+                case.bytes.as_bytes(),
+            )
+            .map_err(|error| VerificationCommandError::Setup(error.to_string()))?;
         }
     }
 
@@ -5635,24 +5699,32 @@ mod tests {
             "metric": "quality_score",
             "cases": [{ "id": "case-1", "sha256": sha256_hex(case) }],
         });
-        std::fs::write(root.join("manifest.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        std::fs::write(
+            root.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
         std::fs::write(root.join("cases").join("case-1.json"), case).unwrap();
     }
 
     fn w142_stage_quality_proposal(home: &Path) -> (String, PathBuf) {
         let skill = home.join("quality-target.md");
         std::fs::write(&skill, "baseline quality document\n").unwrap();
-        let id = stage_proposal(home, Proposal {
-            id: "w142-quality".into(),
-            skill: "quality-test".into(),
-            skill_path: skill.display().to_string(),
-            before: "baseline quality document\n".into(),
-            after: "candidate quality document\n".into(),
-            summary: "W142 quality fixture".into(),
-            status: ProposalStatus::Pending,
-            at_unix: 1,
-            ..Default::default()
-        }).unwrap();
+        let id = stage_proposal(
+            home,
+            Proposal {
+                id: "w142-quality".into(),
+                skill: "quality-test".into(),
+                skill_path: skill.display().to_string(),
+                before: "baseline quality document\n".into(),
+                after: "candidate quality document\n".into(),
+                summary: "W142 quality fixture".into(),
+                status: ProposalStatus::Pending,
+                at_unix: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         w142_write_fixed_corpus(home, "quality-test");
         (id, skill)
     }
@@ -5660,7 +5732,11 @@ mod tests {
     /// Writes an exact-approved verifier that must read every materialized W142
     /// input before emitting the supplied closed result. The result itself is
     /// calculated by the test from the staged core inputs, never from SkillOpt.
-    pub(super) fn w142_write_verifier(home: &Path, proposal: &Proposal, result_patch: serde_json::Value) -> String {
+    pub(super) fn w142_write_verifier(
+        home: &Path,
+        proposal: &Proposal,
+        result_patch: serde_json::Value,
+    ) -> String {
         #[cfg(windows)]
         let helper = home.join("w142-fixed-verifier.cmd");
         #[cfg(not(windows))]
@@ -5702,8 +5778,14 @@ mod tests {
     pub(super) fn w142_enable_verifier(home: &Path, command: &str) {
         let mut config = SelfImproveConfig::load(home).unwrap();
         config.allow_shell_verify = true;
-        if !config.approved_verification_commands.iter().any(|entry| entry == command) {
-            config.approved_verification_commands.push(command.to_owned());
+        if !config
+            .approved_verification_commands
+            .iter()
+            .any(|entry| entry == command)
+        {
+            config
+                .approved_verification_commands
+                .push(command.to_owned());
         }
         config.save(home).unwrap();
     }
@@ -5712,28 +5794,49 @@ mod tests {
     async fn w142_fixed_verifier_materializes_inputs_mints_evidence_and_accepts() {
         let home = tempfile::tempdir().unwrap();
         let (id, skill) = w142_stage_quality_proposal(home.path());
-        let proposal = load_proposals(home.path()).unwrap().into_iter()
-            .find(|proposal| proposal.id == id).unwrap();
+        let proposal = load_proposals(home.path())
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.id == id)
+            .unwrap();
         let verifier = w142_write_verifier(home.path(), &proposal, serde_json::json!({}));
         w142_enable_verifier(home.path(), &verifier);
 
-        let evidence = evaluate_proposal_quality_with_approved_verifier(home.path(), &id, &verifier)
-            .expect("the exact approved verifier must consume the fixed materialized inputs");
+        let evidence =
+            evaluate_proposal_quality_with_approved_verifier(home.path(), &id, &verifier)
+                .expect("the exact approved verifier must consume the fixed materialized inputs");
         assert_eq!(evidence.evaluator_source_id, verifier);
-        let stored = load_proposals(home.path()).unwrap().into_iter()
-            .find(|proposal| proposal.id == id).unwrap();
-        assert_eq!(proposal_quality_readback(home.path(), &stored).state, ProposalQualityState::Current);
+        let stored = load_proposals(home.path())
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.id == id)
+            .unwrap();
+        assert_eq!(
+            proposal_quality_readback(home.path(), &stored).state,
+            ProposalQualityState::Current
+        );
         assert_eq!(stored.quality_evidence.as_ref(), Some(&evidence));
 
         let analysis = stored.code_map_analysis.clone();
         let advisor = passing_advisor();
         let (verdict, _) = execute_proposal_with_prepared_code_map_analysis(
-            home.path(), &id, 1, crate::permissions::AutonomyLevel::Standard, &analysis, &advisor,
-        ).await.unwrap();
+            home.path(),
+            &id,
+            1,
+            crate::permissions::AutonomyLevel::Standard,
+            &analysis,
+            &advisor,
+        )
+        .await
+        .unwrap();
         assert_eq!(verdict, ExecutionVerdict::Approved);
         persist_verified_approval_after_audit(home.path(), &id, &analysis).unwrap();
-        accept_proposal(home.path(), &id).expect("current fixed evidence must allow the existing accept path");
-        assert_eq!(std::fs::read_to_string(skill).unwrap(), "candidate quality document\n");
+        accept_proposal(home.path(), &id)
+            .expect("current fixed evidence must allow the existing accept path");
+        assert_eq!(
+            std::fs::read_to_string(skill).unwrap(),
+            "candidate quality document\n"
+        );
     }
 
     #[test]
@@ -5742,32 +5845,66 @@ mod tests {
             "id": "wrong-case", "passed": true, "evidence_sha256": sha256_hex("wrong-case")
         }]);
         for (label, patch) in [
-            ("schema", serde_json::json!({ "kind": "wrong.result", "schema_version": 9 })),
-            ("evaluator", serde_json::json!({ "evaluator_source_id": "not-the-approved-command" })),
-            ("corpus", serde_json::json!({ "corpus_manifest_sha256": sha256_hex("wrong corpus") })),
+            (
+                "schema",
+                serde_json::json!({ "kind": "wrong.result", "schema_version": 9 }),
+            ),
+            (
+                "evaluator",
+                serde_json::json!({ "evaluator_source_id": "not-the-approved-command" }),
+            ),
+            (
+                "corpus",
+                serde_json::json!({ "corpus_manifest_sha256": sha256_hex("wrong corpus") }),
+            ),
             ("case", serde_json::json!({ "regressions": wrong_cases })),
-            ("baseline", serde_json::json!({ "before_sha256": sha256_hex("wrong baseline") })),
-            ("candidate", serde_json::json!({ "after_sha256": sha256_hex("wrong candidate") })),
-            ("source-map", serde_json::json!({ "source_map_receipt_sha256": sha256_hex("wrong source map") })),
+            (
+                "baseline",
+                serde_json::json!({ "before_sha256": sha256_hex("wrong baseline") }),
+            ),
+            (
+                "candidate",
+                serde_json::json!({ "after_sha256": sha256_hex("wrong candidate") }),
+            ),
+            (
+                "source-map",
+                serde_json::json!({ "source_map_receipt_sha256": sha256_hex("wrong source map") }),
+            ),
             ("metric", serde_json::json!({ "metric": "wrong_metric" })),
-            ("failed-regression", serde_json::json!({ "regressions": [{ "id": "case-1", "passed": false, "evidence_sha256": sha256_hex("case-1") }] })),
-            ("duplicate-regression", serde_json::json!({ "regressions": [
+            (
+                "failed-regression",
+                serde_json::json!({ "regressions": [{ "id": "case-1", "passed": false, "evidence_sha256": sha256_hex("case-1") }] }),
+            ),
+            (
+                "duplicate-regression",
+                serde_json::json!({ "regressions": [
                 { "id": "case-1", "passed": true, "evidence_sha256": sha256_hex("case-1") },
                 { "id": "case-1", "passed": true, "evidence_sha256": sha256_hex("case-1-again") }
-            ] })),
+            ] }),
+            ),
         ] {
             let home = tempfile::tempdir().unwrap();
             let (id, _) = w142_stage_quality_proposal(home.path());
-            let proposal = load_proposals(home.path()).unwrap().into_iter()
-                .find(|proposal| proposal.id == id).unwrap();
+            let proposal = load_proposals(home.path())
+                .unwrap()
+                .into_iter()
+                .find(|proposal| proposal.id == id)
+                .unwrap();
             let verifier = w142_write_verifier(home.path(), &proposal, patch);
             w142_enable_verifier(home.path(), &verifier);
-            let error = evaluate_proposal_quality_with_approved_verifier(home.path(), &id, &verifier)
-                .expect_err("{label} result binding must be rejected");
+            let error =
+                evaluate_proposal_quality_with_approved_verifier(home.path(), &id, &verifier)
+                    .expect_err("{label} result binding must be rejected");
             assert!(!format!("{error:#}").is_empty());
-            let stored = load_proposals(home.path()).unwrap().into_iter()
-                .find(|proposal| proposal.id == id).unwrap();
-            assert!(stored.quality_evidence.is_none(), "{label} must not persist evidence");
+            let stored = load_proposals(home.path())
+                .unwrap()
+                .into_iter()
+                .find(|proposal| proposal.id == id)
+                .unwrap();
+            assert!(
+                stored.quality_evidence.is_none(),
+                "{label} must not persist evidence"
+            );
         }
     }
 
@@ -5775,8 +5912,11 @@ mod tests {
     fn w142_quality_evaluation_rejects_target_drift_before_verifier_spawn() {
         let home = tempfile::tempdir().unwrap();
         let (id, skill) = w142_stage_quality_proposal(home.path());
-        let proposal = load_proposals(home.path()).unwrap().into_iter()
-            .find(|proposal| proposal.id == id).unwrap();
+        let proposal = load_proposals(home.path())
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.id == id)
+            .unwrap();
         let verifier = w142_write_verifier(home.path(), &proposal, serde_json::json!({}));
         w142_enable_verifier(home.path(), &verifier);
         std::fs::write(&skill, "externally changed target\n").unwrap();
@@ -5784,51 +5924,89 @@ mod tests {
         let error = evaluate_proposal_quality_with_approved_verifier(home.path(), &id, &verifier)
             .expect_err("current target drift must fail before fixed verifier egress");
         assert!(format!("{error:#}").contains("changed after proposal"));
-        assert!(load_proposals(home.path()).unwrap()[0].quality_evidence.is_none());
+        assert!(
+            load_proposals(home.path()).unwrap()[0]
+                .quality_evidence
+                .is_none()
+        );
     }
 
     #[test]
     fn w142_corpus_drift_stales_readback_blocks_verified_approval_and_accept() {
         let home = tempfile::tempdir().unwrap();
         let (id, skill) = w142_stage_quality_proposal(home.path());
-        let proposal = load_proposals(home.path()).unwrap().into_iter()
-            .find(|proposal| proposal.id == id).unwrap();
+        let proposal = load_proposals(home.path())
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.id == id)
+            .unwrap();
         let verifier = w142_write_verifier(home.path(), &proposal, serde_json::json!({}));
         w142_enable_verifier(home.path(), &verifier);
         evaluate_proposal_quality_with_approved_verifier(home.path(), &id, &verifier).unwrap();
-        let analysis = load_proposals(home.path()).unwrap()[0].code_map_analysis.clone();
-        let case_path = quality::fixed_skill_corpus_root(home.path(), "quality-test").unwrap()
-            .join("cases").join("case-1.json");
+        let analysis = load_proposals(home.path()).unwrap()[0]
+            .code_map_analysis
+            .clone();
+        let case_path = quality::fixed_skill_corpus_root(home.path(), "quality-test")
+            .unwrap()
+            .join("cases")
+            .join("case-1.json");
         std::fs::write(case_path, "corpus drift\n").unwrap();
 
         let stored = load_proposals(home.path()).unwrap().remove(0);
-        assert_eq!(proposal_quality_readback(home.path(), &stored).state, ProposalQualityState::Stale);
+        assert_eq!(
+            proposal_quality_readback(home.path(), &stored).state,
+            ProposalQualityState::Stale
+        );
         assert!(persist_verified_approval_after_audit(home.path(), &id, &analysis).is_err());
-        assert_eq!(std::fs::read_to_string(skill).unwrap(), "baseline quality document\n");
+        assert_eq!(
+            std::fs::read_to_string(skill).unwrap(),
+            "baseline quality document\n"
+        );
 
         let accept_home = tempfile::tempdir().unwrap();
         let (accept_id, accept_skill) = w142_stage_quality_proposal(accept_home.path());
-        let accept_proposal_snapshot = load_proposals(accept_home.path()).unwrap().into_iter()
-            .find(|proposal| proposal.id == accept_id).unwrap();
-        let accept_verifier = w142_write_verifier(accept_home.path(), &accept_proposal_snapshot, serde_json::json!({}));
+        let accept_proposal_snapshot = load_proposals(accept_home.path())
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.id == accept_id)
+            .unwrap();
+        let accept_verifier = w142_write_verifier(
+            accept_home.path(),
+            &accept_proposal_snapshot,
+            serde_json::json!({}),
+        );
         w142_enable_verifier(accept_home.path(), &accept_verifier);
-        evaluate_proposal_quality_with_approved_verifier(accept_home.path(), &accept_id, &accept_verifier).unwrap();
+        evaluate_proposal_quality_with_approved_verifier(
+            accept_home.path(),
+            &accept_id,
+            &accept_verifier,
+        )
+        .unwrap();
         force_verified_approved(accept_home.path(), &accept_id);
         std::fs::write(
-            quality::fixed_skill_corpus_root(accept_home.path(), "quality-test").unwrap()
-                .join("cases").join("case-1.json"),
+            quality::fixed_skill_corpus_root(accept_home.path(), "quality-test")
+                .unwrap()
+                .join("cases")
+                .join("case-1.json"),
             "changed after verified approval\n",
-        ).unwrap();
+        )
+        .unwrap();
         assert!(accept_proposal(accept_home.path(), &accept_id).is_err());
-        assert_eq!(std::fs::read_to_string(accept_skill).unwrap(), "baseline quality document\n");
+        assert_eq!(
+            std::fs::read_to_string(accept_skill).unwrap(),
+            "baseline quality document\n"
+        );
     }
 
     #[test]
     fn w142_verifier_revocation_stales_current_evidence_and_refuses_accept() {
         let home = tempfile::tempdir().unwrap();
         let (id, skill) = w142_stage_quality_proposal(home.path());
-        let proposal = load_proposals(home.path()).unwrap().into_iter()
-            .find(|proposal| proposal.id == id).unwrap();
+        let proposal = load_proposals(home.path())
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.id == id)
+            .unwrap();
         let verifier = w142_write_verifier(home.path(), &proposal, serde_json::json!({}));
         w142_enable_verifier(home.path(), &verifier);
         evaluate_proposal_quality_with_approved_verifier(home.path(), &id, &verifier).unwrap();
@@ -5836,21 +6014,33 @@ mod tests {
         SelfImproveConfig::default().save(home.path()).unwrap();
 
         let stored = load_proposals(home.path()).unwrap().remove(0);
-        assert_eq!(proposal_quality_readback(home.path(), &stored).state, ProposalQualityState::Stale);
+        assert_eq!(
+            proposal_quality_readback(home.path(), &stored).state,
+            ProposalQualityState::Stale
+        );
         assert!(accept_proposal(home.path(), &id).is_err());
-        assert_eq!(std::fs::read_to_string(skill).unwrap(), "baseline quality document\n");
+        assert_eq!(
+            std::fs::read_to_string(skill).unwrap(),
+            "baseline quality document\n"
+        );
     }
 
     #[test]
     fn w142_expected_evidence_digest_refuses_stale_gui_consent_before_mutation() {
         let home = tempfile::tempdir().unwrap();
         let (id, skill) = w142_stage_quality_proposal(home.path());
-        let proposal = load_proposals(home.path()).unwrap().into_iter()
-            .find(|proposal| proposal.id == id).unwrap();
+        let proposal = load_proposals(home.path())
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.id == id)
+            .unwrap();
         let verifier = w142_write_verifier(home.path(), &proposal, serde_json::json!({}));
         w142_enable_verifier(home.path(), &verifier);
-        let evidence = evaluate_proposal_quality_with_approved_verifier(home.path(), &id, &verifier).unwrap();
-        let analysis = load_proposals(home.path()).unwrap()[0].code_map_analysis.clone();
+        let evidence =
+            evaluate_proposal_quality_with_approved_verifier(home.path(), &id, &verifier).unwrap();
+        let analysis = load_proposals(home.path()).unwrap()[0]
+            .code_map_analysis
+            .clone();
         persist_verified_approval_after_audit(home.path(), &id, &analysis).unwrap();
         let ledger_before = load_ledger(home.path()).unwrap();
         let wrong = sha256_hex("different GUI selection");
@@ -5858,22 +6048,37 @@ mod tests {
         let error = accept_proposal_with_expected_evidence(home.path(), &id, Some(&wrong))
             .expect_err("a stale selected evidence digest must not authorize accept");
         assert!(format!("{error:#}").contains("changed since review"));
-        assert_eq!(std::fs::read_to_string(&skill).unwrap(), "baseline quality document\n");
+        assert_eq!(
+            std::fs::read_to_string(&skill).unwrap(),
+            "baseline quality document\n"
+        );
         assert_eq!(load_ledger(home.path()).unwrap(), ledger_before);
-        assert_eq!(load_proposals(home.path()).unwrap()[0].status, ProposalStatus::VerifiedApproved);
+        assert_eq!(
+            load_proposals(home.path()).unwrap()[0].status,
+            ProposalStatus::VerifiedApproved
+        );
 
         let receipt = accept_proposal_with_expected_evidence(
-            home.path(), &id, Some(&evidence.evidence_sha256),
-        ).expect("the exact current evidence digest must accept");
+            home.path(),
+            &id,
+            Some(&evidence.evidence_sha256),
+        )
+        .expect("the exact current evidence digest must accept");
         assert_eq!(receipt.id, id);
         assert_eq!(receipt.status, ProposalStatus::Accepted);
         assert_eq!(receipt.quality_state, ProposalQualityState::Current);
         assert_eq!(receipt.evidence_sha256, evidence.evidence_sha256);
-        assert_eq!(std::fs::read_to_string(skill).unwrap(), "candidate quality document\n");
+        assert_eq!(
+            std::fs::read_to_string(skill).unwrap(),
+            "candidate quality document\n"
+        );
         let ledger_after_accept = load_ledger(home.path()).unwrap();
         let repeat = accept_proposal_with_expected_evidence(
-            home.path(), &id, Some(&evidence.evidence_sha256),
-        ).expect("same current evidence may report accepted idempotently");
+            home.path(),
+            &id,
+            Some(&evidence.evidence_sha256),
+        )
+        .expect("same current evidence may report accepted idempotently");
         assert_eq!(repeat, receipt);
         assert_eq!(load_ledger(home.path()).unwrap(), ledger_after_accept);
     }
@@ -5882,24 +6087,49 @@ mod tests {
     fn w142_re_evaluated_evidence_cannot_bypass_prior_expected_digest() {
         let home = tempfile::tempdir().unwrap();
         let (id, skill) = w142_stage_quality_proposal(home.path());
-        let proposal = load_proposals(home.path()).unwrap().into_iter()
-            .find(|proposal| proposal.id == id).unwrap();
+        let proposal = load_proposals(home.path())
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.id == id)
+            .unwrap();
         let verifier = w142_write_verifier(home.path(), &proposal, serde_json::json!({}));
         w142_enable_verifier(home.path(), &verifier);
-        let selected_evidence = evaluate_proposal_quality_with_approved_verifier(home.path(), &id, &verifier).unwrap();
+        let selected_evidence =
+            evaluate_proposal_quality_with_approved_verifier(home.path(), &id, &verifier).unwrap();
         // A fresh verifier result remains pending until audited approval, but
         // changes the evidence receipt the GUI originally selected.
-        w142_write_verifier(home.path(), &proposal, serde_json::json!({ "score_after": 3.0 }));
-        let replacement_evidence = evaluate_proposal_quality_with_approved_verifier(home.path(), &id, &verifier).unwrap();
-        assert_ne!(selected_evidence.evidence_sha256, replacement_evidence.evidence_sha256);
-        let analysis = load_proposals(home.path()).unwrap()[0].code_map_analysis.clone();
+        w142_write_verifier(
+            home.path(),
+            &proposal,
+            serde_json::json!({ "score_after": 3.0 }),
+        );
+        let replacement_evidence =
+            evaluate_proposal_quality_with_approved_verifier(home.path(), &id, &verifier).unwrap();
+        assert_ne!(
+            selected_evidence.evidence_sha256,
+            replacement_evidence.evidence_sha256
+        );
+        let analysis = load_proposals(home.path()).unwrap()[0]
+            .code_map_analysis
+            .clone();
         persist_verified_approval_after_audit(home.path(), &id, &analysis).unwrap();
 
-        assert!(accept_proposal_with_expected_evidence(
-            home.path(), &id, Some(&selected_evidence.evidence_sha256),
-        ).is_err());
-        assert_eq!(std::fs::read_to_string(skill).unwrap(), "baseline quality document\n");
-        assert_eq!(load_proposals(home.path()).unwrap()[0].status, ProposalStatus::VerifiedApproved);
+        assert!(
+            accept_proposal_with_expected_evidence(
+                home.path(),
+                &id,
+                Some(&selected_evidence.evidence_sha256),
+            )
+            .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(skill).unwrap(),
+            "baseline quality document\n"
+        );
+        assert_eq!(
+            load_proposals(home.path()).unwrap()[0].status,
+            ProposalStatus::VerifiedApproved
+        );
     }
 
     #[test]
@@ -5907,33 +6137,46 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let target = home.path().join("imported-quality.md");
         std::fs::write(&target, "before\n").unwrap();
-        let id = stage_proposal(home.path(), Proposal {
-            id: "w142-imported".into(),
-            skill: "quality-test".into(),
-            skill_path: target.display().to_string(),
-            before: "before\n".into(),
-            after: "after\n".into(),
-            summary: "operator imported proposal".into(),
-            quality_evidence: Some(ProposalQualityEvidenceV1 {
-                schema_version: quality::QUALITY_SCHEMA_V1,
-                evaluator_source_id: "untrusted import".into(),
-                corpus_manifest_sha256: sha256_hex("claimed corpus"),
-                before_sha256: sha256_hex("before\n"),
-                after_sha256: sha256_hex("after\n"),
-                source_map_receipt_sha256: sha256_hex("claimed source map"),
-                metric: "quality_score".into(),
-                score_before: 0.0,
-                score_after: 1.0,
-                regressions: vec![quality::QualityRegressionV1 {
-                    id: "claimed".into(), passed: true, evidence_sha256: sha256_hex("claimed"),
-                }],
-                evaluator_output_sha256: sha256_hex("claimed output"),
-                evidence_sha256: sha256_hex("claimed evidence"),
-            }),
-            ..Default::default()
-        }).unwrap();
-        assert!(load_proposals(home.path()).unwrap().into_iter()
-            .find(|proposal| proposal.id == id).unwrap().quality_evidence.is_none());
+        let id = stage_proposal(
+            home.path(),
+            Proposal {
+                id: "w142-imported".into(),
+                skill: "quality-test".into(),
+                skill_path: target.display().to_string(),
+                before: "before\n".into(),
+                after: "after\n".into(),
+                summary: "operator imported proposal".into(),
+                quality_evidence: Some(ProposalQualityEvidenceV1 {
+                    schema_version: quality::QUALITY_SCHEMA_V1,
+                    evaluator_source_id: "untrusted import".into(),
+                    corpus_manifest_sha256: sha256_hex("claimed corpus"),
+                    before_sha256: sha256_hex("before\n"),
+                    after_sha256: sha256_hex("after\n"),
+                    source_map_receipt_sha256: sha256_hex("claimed source map"),
+                    metric: "quality_score".into(),
+                    score_before: 0.0,
+                    score_after: 1.0,
+                    regressions: vec![quality::QualityRegressionV1 {
+                        id: "claimed".into(),
+                        passed: true,
+                        evidence_sha256: sha256_hex("claimed"),
+                    }],
+                    evaluator_output_sha256: sha256_hex("claimed output"),
+                    evidence_sha256: sha256_hex("claimed evidence"),
+                }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            load_proposals(home.path())
+                .unwrap()
+                .into_iter()
+                .find(|proposal| proposal.id == id)
+                .unwrap()
+                .quality_evidence
+                .is_none()
+        );
     }
 
     fn execution_verdict_kind(verdict: &ExecutionVerdict) -> &'static str {

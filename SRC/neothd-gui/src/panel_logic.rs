@@ -7107,7 +7107,10 @@ struct SelfImproveProposalWire {
 const SELF_IMPROVE_TEXT_MAX_CHARS: usize = 512;
 
 fn selfimprove_display_text(value: &str, field: &str) -> Result<String, String> {
-    if value.trim() != value || value.chars().count() > SELF_IMPROVE_TEXT_MAX_CHARS || value.chars().any(char::is_control) {
+    if value.trim() != value
+        || value.chars().count() > SELF_IMPROVE_TEXT_MAX_CHARS
+        || value.chars().any(char::is_control)
+    {
         return Err(format!("self-improve {field} is not bounded display text"));
     }
     Ok(value.to_string())
@@ -7119,7 +7122,13 @@ fn selfimprove_display_text(value: &str, field: &str) -> Result<String, String> 
 fn selfimprove_display_narrative(value: &str) -> String {
     let normalized = value
         .chars()
-        .map(|character| if character.is_control() { ' ' } else { character })
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -7135,18 +7144,30 @@ fn selfimprove_display_narrative(value: &str) -> String {
 }
 
 fn selfimprove_sha256(value: &str, field: &str) -> Result<(), String> {
-    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) {
+    if value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
         Ok(())
     } else {
-        Err(format!("self-improve {field} is not a canonical SHA-256 digest"))
+        Err(format!(
+            "self-improve {field} is not a canonical SHA-256 digest"
+        ))
     }
 }
 
 fn selfimprove_short_sha256(value: &str, field: &str) -> Result<(), String> {
-    if value.len() == 12 && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) {
+    if value.len() == 12
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
         Ok(())
     } else {
-        Err(format!("self-improve {field} is not a canonical short SHA-256 digest"))
+        Err(format!(
+            "self-improve {field} is not a canonical short SHA-256 digest"
+        ))
     }
 }
 
@@ -7154,7 +7175,9 @@ fn selfimprove_metric(value: &str) -> Result<String, String> {
     if value.is_empty()
         || value.len() > 128
         || value.trim() != value
-        || value.chars().any(|character| character.is_control() || matches!(character, '/' | '\\'))
+        || value
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '/' | '\\'))
     {
         Err("self-improve quality metric is not a canonical component".into())
     } else {
@@ -7168,18 +7191,19 @@ fn selfimprove_score_delta_matches(before: f64, after: f64, delta: f64) -> bool 
     delta > 0.0 && (delta - expected).abs() <= 8.0 * f64::EPSILON * scale
 }
 
-fn selfimprove_quality_reason(
-    state: &str,
-    reason: Option<String>,
-) -> Result<String, String> {
-    let has_reason = reason.as_deref().is_some_and(|value| !value.trim().is_empty());
+fn selfimprove_quality_reason(state: &str, reason: Option<String>) -> Result<String, String> {
+    let has_reason = reason
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
     match state {
         "current" if reason.is_none() => Ok(String::new()),
-        "incomplete" | "stale" | "failed" if has_reason => {
-            Ok(selfimprove_display_narrative(reason.as_deref().unwrap_or_default()))
-        }
+        "incomplete" | "stale" | "failed" if has_reason => Ok(selfimprove_display_narrative(
+            reason.as_deref().unwrap_or_default(),
+        )),
         "current" => Err("current self-improve quality must not carry a refusal reason".into()),
-        "incomplete" | "stale" | "failed" => Err("non-current self-improve quality requires a refusal reason".into()),
+        "incomplete" | "stale" | "failed" => {
+            Err("non-current self-improve quality requires a refusal reason".into())
+        }
         _ => Err("unknown self-improve quality state".into()),
     }
 }
@@ -7189,54 +7213,126 @@ fn selfimprove_quality_reason(
 pub fn parse_selfimprove_proposals(json: &str) -> Result<Vec<SelfImproveProposalRow>, String> {
     let rows: Vec<SelfImproveProposalWire> = serde_json::from_str(json)
         .map_err(|error| format!("invalid self-improve review JSON: {error}"))?;
-    rows.into_iter().map(|row| {
-        let id = selfimprove_display_text(&row.id, "proposal id")?;
-        if id.is_empty() { return Err("self-improve proposal id is empty".into()); }
-        let status = selfimprove_display_text(&row.status, "proposal status")?;
-        let title = selfimprove_display_narrative(&row.summary);
-        let description = selfimprove_display_text(&row.skill, "proposal skill")?;
-        let quality_state = row.quality.state;
-        let quality_reason = selfimprove_quality_reason(&quality_state, row.quality.reason)?;
-        let metric = row.quality.metric.map(|value| selfimprove_metric(&value)).transpose()?;
-        let evaluator = row.quality.evaluator_source_short_id.map(|value| { selfimprove_short_sha256(&value, "evaluator identifier")?; Ok(value) }).transpose()?;
-        let corpus = row.quality.corpus_manifest_sha256.map(|value| { selfimprove_sha256(&value, "corpus digest")?; Ok(value) }).transpose()?;
-        let evidence = row.quality.evidence_sha256.map(|value| { selfimprove_sha256(&value, "evidence digest")?; Ok(value) }).transpose()?;
-        let scores_present = row.quality.score_before.is_some() && row.quality.score_after.is_some() && row.quality.score_delta.is_some();
-        let scores_any = row.quality.score_before.is_some() || row.quality.score_after.is_some() || row.quality.score_delta.is_some();
-        if [&row.quality.score_before, &row.quality.score_after, &row.quality.score_delta].into_iter().flatten().any(|score| !score.is_finite()) {
-            return Err("self-improve quality score is not finite".into());
-        }
-        if quality_state == "current" && (!scores_present || metric.as_deref().unwrap_or("").is_empty() || evaluator.as_deref().unwrap_or("").is_empty() || corpus.is_none() || evidence.is_none() || row.quality.regression_total == 0 || row.quality.regression_passed != row.quality.regression_total) {
-            return Err("current self-improve quality is incomplete".into());
-        }
-        if quality_state == "current" {
-            let (Some(before), Some(after), Some(delta)) = (
-                row.quality.score_before,
-                row.quality.score_after,
-                row.quality.score_delta,
-            ) else {
-                return Err("current self-improve quality is incomplete".into());
-            };
-            if after <= before || !selfimprove_score_delta_matches(before, after, delta) {
-                return Err("current self-improve quality score binding is invalid".into());
+    rows.into_iter()
+        .map(|row| {
+            let id = selfimprove_display_text(&row.id, "proposal id")?;
+            if id.is_empty() {
+                return Err("self-improve proposal id is empty".into());
             }
-        }
-        if quality_state != "current" && (scores_any || metric.is_some() || evaluator.is_some() || corpus.is_some() || evidence.is_some() || row.quality.regression_total != 0 || row.quality.regression_passed != 0) {
-            return Err("non-current self-improve quality contains acceptance evidence".into());
-        }
-        let score_delta = row.quality.score_delta.map(|delta| format!("{delta:+.3}")).unwrap_or_default();
-        let evidence_sha256 = evidence.unwrap_or_default();
-        Ok(SelfImproveProposalRow {
-            accept_ready: status == "verified_approved" && quality_state == "current",
-            id, title, description, status, quality_state, quality_reason,
-            quality_metric: metric.unwrap_or_default(), score_delta,
-            evaluator_source_short_id: evaluator.unwrap_or_default(),
-            corpus_manifest_short_sha256: corpus.map(|value| value[..12].to_string()).unwrap_or_default(),
-            regression_summary: format!("{}/{} passed", row.quality.regression_passed, row.quality.regression_total),
-            evidence_short_sha256: evidence_sha256.get(..12).unwrap_or_default().to_string(),
-            evidence_sha256,
+            let status = selfimprove_display_text(&row.status, "proposal status")?;
+            let title = selfimprove_display_narrative(&row.summary);
+            let description = selfimprove_display_text(&row.skill, "proposal skill")?;
+            let quality_state = row.quality.state;
+            let quality_reason = selfimprove_quality_reason(&quality_state, row.quality.reason)?;
+            let metric = row
+                .quality
+                .metric
+                .map(|value| selfimprove_metric(&value))
+                .transpose()?;
+            let evaluator = row
+                .quality
+                .evaluator_source_short_id
+                .map(|value| {
+                    selfimprove_short_sha256(&value, "evaluator identifier")?;
+                    Ok(value)
+                })
+                .transpose()?;
+            let corpus = row
+                .quality
+                .corpus_manifest_sha256
+                .map(|value| {
+                    selfimprove_sha256(&value, "corpus digest")?;
+                    Ok(value)
+                })
+                .transpose()?;
+            let evidence = row
+                .quality
+                .evidence_sha256
+                .map(|value| {
+                    selfimprove_sha256(&value, "evidence digest")?;
+                    Ok(value)
+                })
+                .transpose()?;
+            let scores_present = row.quality.score_before.is_some()
+                && row.quality.score_after.is_some()
+                && row.quality.score_delta.is_some();
+            let scores_any = row.quality.score_before.is_some()
+                || row.quality.score_after.is_some()
+                || row.quality.score_delta.is_some();
+            if [
+                &row.quality.score_before,
+                &row.quality.score_after,
+                &row.quality.score_delta,
+            ]
+            .into_iter()
+            .flatten()
+            .any(|score| !score.is_finite())
+            {
+                return Err("self-improve quality score is not finite".into());
+            }
+            if quality_state == "current"
+                && (!scores_present
+                    || metric.as_deref().unwrap_or("").is_empty()
+                    || evaluator.as_deref().unwrap_or("").is_empty()
+                    || corpus.is_none()
+                    || evidence.is_none()
+                    || row.quality.regression_total == 0
+                    || row.quality.regression_passed != row.quality.regression_total)
+            {
+                return Err("current self-improve quality is incomplete".into());
+            }
+            if quality_state == "current" {
+                let (Some(before), Some(after), Some(delta)) = (
+                    row.quality.score_before,
+                    row.quality.score_after,
+                    row.quality.score_delta,
+                ) else {
+                    return Err("current self-improve quality is incomplete".into());
+                };
+                if after <= before || !selfimprove_score_delta_matches(before, after, delta) {
+                    return Err("current self-improve quality score binding is invalid".into());
+                }
+            }
+            if quality_state != "current"
+                && (scores_any
+                    || metric.is_some()
+                    || evaluator.is_some()
+                    || corpus.is_some()
+                    || evidence.is_some()
+                    || row.quality.regression_total != 0
+                    || row.quality.regression_passed != 0)
+            {
+                return Err("non-current self-improve quality contains acceptance evidence".into());
+            }
+            let score_delta = row
+                .quality
+                .score_delta
+                .map(|delta| format!("{delta:+.3}"))
+                .unwrap_or_default();
+            let evidence_sha256 = evidence.unwrap_or_default();
+            Ok(SelfImproveProposalRow {
+                accept_ready: status == "verified_approved" && quality_state == "current",
+                id,
+                title,
+                description,
+                status,
+                quality_state,
+                quality_reason,
+                quality_metric: metric.unwrap_or_default(),
+                score_delta,
+                evaluator_source_short_id: evaluator.unwrap_or_default(),
+                corpus_manifest_short_sha256: corpus
+                    .map(|value| value[..12].to_string())
+                    .unwrap_or_default(),
+                regression_summary: format!(
+                    "{}/{} passed",
+                    row.quality.regression_passed, row.quality.regression_total
+                ),
+                evidence_short_sha256: evidence_sha256.get(..12).unwrap_or_default().to_string(),
+                evidence_sha256,
+            })
         })
-    }).collect()
+        .collect()
 }
 
 /// Parse `neoth self-improve log --output json` → Vec<(id, title, status, ts)>,
@@ -12289,7 +12385,10 @@ mod tests {
         assert_eq!(props[0].id, "p1");
         assert_eq!(props[0].title, "Add retry logic");
         assert_eq!(props[0].corpus_manifest_short_sha256, "aaaaaaaaaaaa");
-        assert_eq!(props[0].evidence_sha256, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        assert_eq!(
+            props[0].evidence_sha256,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        );
         assert!(props[0].accept_ready);
         let forged_current_reason = json.replace("\"reason\":null", "\"reason\":\" \\n \"");
         assert!(super::parse_selfimprove_proposals(&forged_current_reason).is_err());
@@ -12330,12 +12429,23 @@ mod tests {
             }
         }]);
         for required_key in [
-            "state", "reason", "metric", "score_before", "score_after", "score_delta",
-            "evaluator_source_short_id", "corpus_manifest_sha256", "regression_total",
-            "regression_passed", "evidence_sha256",
+            "state",
+            "reason",
+            "metric",
+            "score_before",
+            "score_after",
+            "score_delta",
+            "evaluator_source_short_id",
+            "corpus_manifest_sha256",
+            "regression_total",
+            "regression_passed",
+            "evidence_sha256",
         ] {
             let mut missing = complete.clone();
-            missing[0]["quality"].as_object_mut().unwrap().remove(required_key);
+            missing[0]["quality"]
+                .as_object_mut()
+                .unwrap()
+                .remove(required_key);
             assert!(
                 super::parse_selfimprove_proposals(&missing.to_string()).is_err(),
                 "missing required quality key `{required_key}` must reject the row"
@@ -12347,11 +12457,10 @@ mod tests {
             1,
         );
         assert!(super::parse_selfimprove_proposals(&duplicate_state).is_err());
-        let duplicate_nullable = complete.to_string().replacen(
-            "\"metric\":null",
-            "\"metric\":null,\"metric\":null",
-            1,
-        );
+        let duplicate_nullable =
+            complete
+                .to_string()
+                .replacen("\"metric\":null", "\"metric\":null,\"metric\":null", 1);
         assert!(super::parse_selfimprove_proposals(&duplicate_nullable).is_err());
         let unknown = r#"[{"id":"p1","skill":"retry","summary":"Add retry logic","status":"pending","quality":{"state":"incomplete","reason":"run verifier","metric":null,"score_before":null,"score_after":null,"score_delta":null,"evaluator_source_short_id":null,"corpus_manifest_sha256":null,"regression_total":0,"regression_passed":0,"evidence_sha256":null,"accept_ready":true}}]"#;
         assert!(super::parse_selfimprove_proposals(unknown).is_err());
@@ -12369,7 +12478,10 @@ mod tests {
     #[test]
     fn parse_selfimprove_proposals_empty_and_malformed() {
         assert!(super::parse_selfimprove_proposals("not json").is_err());
-        assert_eq!(super::parse_selfimprove_proposals("[]").unwrap(), Vec::new());
+        assert_eq!(
+            super::parse_selfimprove_proposals("[]").unwrap(),
+            Vec::new()
+        );
     }
 
     // ── Wave 4a: parse_selfimprove_log ────────────────────────────────────────

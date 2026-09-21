@@ -8,6 +8,11 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W142 hosted follow-up (2026-09-21):** CLI build/reference35595632250
+succeeded onfb16a751 and its exact SHA-bound reference is imported. All87
+unique formatter hunks from Preflight35595614938 are imported; CodeQuality
+35595614650 passed. Native/GUI execution and final acceptance remain open.
+
 **W142 / W150 source batch (2026-09-21):** Self-improve now evaluates a fixed
 corpus through an explicitly approved verifier and binds acceptance to current
 quality evidence, including the full digest selected in the GUI. Eight Core

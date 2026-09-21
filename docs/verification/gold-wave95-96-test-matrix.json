@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W95_W142_W150_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "2285835e4ee63ee5c541892aa211503fa694e72a",
+  "base": "fb16a751da809951be8e656c5927f1b935288c86",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 54797,
-    "sha256": "088F6EE57DC6F5F8AE9983289C4C742C7760A61C343B0DC001C31558EB062FA7"
+    "bytes": 54808,
+    "sha256": "F5B95052309B95FA8C676D304144345FC55F7CF79605CF2302EAE99D203EB11E"
   },
   "sourceInputs": 317,
   "requiredNativeTests": [
@@ -222,13 +222,13 @@
     {
       "test": "cli::self_improve::tests::qa_candidate_preserves_hostile_data_without_inner_prompt_frames",
       "sourcePath": "SRC/neothd/src/cli/self_improve.rs",
-      "sourceSha256": "B5AD4018F50F30C6B9B142097E9EE09C0E427C4185C7EA4A119CDA3DD419314A",
+      "sourceSha256": "EB535584D0DA94614EB6B678C2F4E520E43522A940DD68E464AD144EF50EC529",
       "junitClass": "neoth"
     },
     {
       "test": "cli::self_improve::tests::qa_candidate_carries_the_exact_persisted_typed_analysis_as_json_data",
       "sourcePath": "SRC/neothd/src/cli/self_improve.rs",
-      "sourceSha256": "B5AD4018F50F30C6B9B142097E9EE09C0E427C4185C7EA4A119CDA3DD419314A",
+      "sourceSha256": "EB535584D0DA94614EB6B678C2F4E520E43522A940DD68E464AD144EF50EC529",
       "junitClass": "neoth"
     },
     {
@@ -1038,49 +1038,49 @@
     {
       "test": "self_improve::tests::w142_fixed_verifier_materializes_inputs_mints_evidence_and_accepts",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "6235FC088803F094318E74078A7B5AD759D6789E5A2616C1036B854766D71278",
+      "sourceSha256": "13E092BBB5A61F1A1A8526E82B22D5135FC965CDFC9422CFE9B90FCFEE36F26B",
       "junitClass": "neoth"
     },
     {
       "test": "self_improve::tests::w142_fixed_verifier_rejects_wrong_schema_echo_case_and_baseline_bindings",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "6235FC088803F094318E74078A7B5AD759D6789E5A2616C1036B854766D71278",
+      "sourceSha256": "13E092BBB5A61F1A1A8526E82B22D5135FC965CDFC9422CFE9B90FCFEE36F26B",
       "junitClass": "neoth"
     },
     {
       "test": "self_improve::tests::w142_quality_evaluation_rejects_target_drift_before_verifier_spawn",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "6235FC088803F094318E74078A7B5AD759D6789E5A2616C1036B854766D71278",
+      "sourceSha256": "13E092BBB5A61F1A1A8526E82B22D5135FC965CDFC9422CFE9B90FCFEE36F26B",
       "junitClass": "neoth"
     },
     {
       "test": "self_improve::tests::w142_corpus_drift_stales_readback_blocks_verified_approval_and_accept",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "6235FC088803F094318E74078A7B5AD759D6789E5A2616C1036B854766D71278",
+      "sourceSha256": "13E092BBB5A61F1A1A8526E82B22D5135FC965CDFC9422CFE9B90FCFEE36F26B",
       "junitClass": "neoth"
     },
     {
       "test": "self_improve::tests::w142_verifier_revocation_stales_current_evidence_and_refuses_accept",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "6235FC088803F094318E74078A7B5AD759D6789E5A2616C1036B854766D71278",
+      "sourceSha256": "13E092BBB5A61F1A1A8526E82B22D5135FC965CDFC9422CFE9B90FCFEE36F26B",
       "junitClass": "neoth"
     },
     {
       "test": "self_improve::tests::w142_expected_evidence_digest_refuses_stale_gui_consent_before_mutation",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "6235FC088803F094318E74078A7B5AD759D6789E5A2616C1036B854766D71278",
+      "sourceSha256": "13E092BBB5A61F1A1A8526E82B22D5135FC965CDFC9422CFE9B90FCFEE36F26B",
       "junitClass": "neoth"
     },
     {
       "test": "self_improve::tests::w142_re_evaluated_evidence_cannot_bypass_prior_expected_digest",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "6235FC088803F094318E74078A7B5AD759D6789E5A2616C1036B854766D71278",
+      "sourceSha256": "13E092BBB5A61F1A1A8526E82B22D5135FC965CDFC9422CFE9B90FCFEE36F26B",
       "junitClass": "neoth"
     },
     {
       "test": "self_improve::tests::w142_stage_discards_imported_quality_evidence",
       "sourcePath": "SRC/neothd/src/self_improve.rs",
-      "sourceSha256": "6235FC088803F094318E74078A7B5AD759D6789E5A2616C1036B854766D71278",
+      "sourceSha256": "13E092BBB5A61F1A1A8526E82B22D5135FC965CDFC9422CFE9B90FCFEE36F26B",
       "junitClass": "neoth"
     }
   ],
@@ -1403,7 +1403,7 @@
     "Provider-loop selected-route cancellation remains outside the W102 direct-CLI fixture; direct CLI deliberately uses unbound cancellation",
     "Portable, installed, visual and provider-live acceptance for final source; selector editing/Buddy enable-disable-explain remain open; no ROAD checkbox closes",
     "Imported CLI reference must pass unchanged docgen equality guard in next full CI",
-    "W142 changes public CLI acceptance options; generate and import a new SHA-bound hosted CLI reference, preserving the docgen equality guard"
+    "W142 public CLI reference imported from successful source/SHA-bound hosted generation35595632250; unchanged docgen equality guard remains required in full CI"
   ],
   "guiSourceBindings": [
     {
@@ -1413,13 +1413,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1774439,
-      "sha256": "4FFFC1AE7A6396A2A9FC593BBFBF5C9EFB59DF63FA3017AE3A71E34C77204AC8"
+      "bytes": 1777055,
+      "sha256": "8C50D6090B8C6384AF9E8586FA92DF22D8BA959D175EF13B786B0D54C24FA152"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 546555,
-      "sha256": "64D6879A91B56DBAAECBB27193CB9E26121A521AC95A5688E18DA678AFBB4B8C"
+      "bytes": 548457,
+      "sha256": "12801276AEFE43E889418765F74E424EFA536BF4EEB183CB93A756BECFB9575D"
     }
   ],
   "remoteFormatCorrection": {
@@ -2194,7 +2194,22 @@
     "execution": "PENDING_GITHUB_ONLY",
     "localValidationRan": false,
     "remaining": "Passive Buddy consumer, native runtime, visual and accessibility acceptance",
-    "guiReviewSha256": "C5D8DA564237831569B1E3BC30769F769E146D2A09363045B2CF193F2B8E545E"
+    "guiReviewSha256": "C5D8DA564237831569B1E3BC30769F769E146D2A09363045B2CF193F2B8E545E",
+    "hostedFollowup": {
+      "source": "fb16a751da809951be8e656c5927f1b935288c86",
+      "referenceRun": 35595632250,
+      "referenceSha256": "A223E291DBE80B7ED69247CCED489A9588B632685BFBC8789649BFC0116AE7E4",
+      "formatRun": 35595614938,
+      "rawHunks": 113,
+      "canonicalHunks": 87,
+      "files": 6,
+      "formatLogSha256": "84AB4590657781B47AC192116F7C33B0F271F648FE48B36CA299C57B7C67C8AD",
+      "formatReportSha256": "CEB0FD73C86F74F5CE396EFF93645929EB4DAFFE89DB2E83C8DADE10CE6B6E9E",
+      "qualityRun": 35595614650,
+      "qualityConclusion": "success",
+      "execution": "PENDING_FRESH_GITHUB_NATIVE_GUI",
+      "localValidation": false
+    }
   },
   "wave150": {
     "report": "docs/gold-wave150-verification.md",

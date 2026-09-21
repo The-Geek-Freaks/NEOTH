@@ -4650,7 +4650,9 @@ impl SelfImproveAcceptAck {
             return Err("Self-Improve accept receipt is not accepted current evidence".to_string());
         }
         if !is_canonical_sha256(&self.evidence_sha256) || self.evidence_sha256 != evidence_sha256 {
-            return Err("Self-Improve accept receipt did not bind the selected evidence digest".to_string());
+            return Err(
+                "Self-Improve accept receipt did not bind the selected evidence digest".to_string(),
+            );
         }
         Ok(())
     }
@@ -7416,7 +7418,13 @@ mod tests {
             r#"{{"ok":true,"action":"accept","id":"p142","status":"accepted","quality_state":"current","evidence_sha256":"{digest}","upstream_pr_available":false}}"#
         )).unwrap();
         ack.verify("p142", digest).unwrap();
-        assert!(ack.verify("p142", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").is_err());
+        assert!(
+            ack.verify(
+                "p142",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            )
+            .is_err()
+        );
         assert!(serde_json::from_str::<SelfImproveAcceptAck>(&format!(
             r#"{{"ok":true,"action":"accept","id":"p142","status":"accepted","quality_state":"current","evidence_sha256":"{digest}","upstream_pr_available":false,"extra":true}}"#
         )).is_err());

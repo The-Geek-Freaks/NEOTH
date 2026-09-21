@@ -190,7 +190,10 @@ pub async fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Re
             .await
         }
         SelfImproveAction::Review => review(&home, output),
-        SelfImproveAction::Accept { id, expected_evidence_sha256 } => {
+        SelfImproveAction::Accept {
+            id,
+            expected_evidence_sha256,
+        } => {
             // Resolve optional GUI metadata before the mutation and perform the
             // fingerprint/Git/package/fsync work off the async runtime. The
             // closure returns only already-known rendering state, so no read can
@@ -201,7 +204,9 @@ pub async fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Re
             let (bundled_skill, receipt) = tokio::task::spawn_blocking(move || {
                 let bundled_skill = bundled_proposal_skill(&accept_home, &accept_id)?;
                 let receipt = si::accept_proposal_with_expected_evidence(
-                    &accept_home, &accept_id, expected_evidence.as_deref(),
+                    &accept_home,
+                    &accept_id,
+                    expected_evidence.as_deref(),
                 )?;
                 Ok::<_, anyhow::Error>((bundled_skill, receipt))
             })
@@ -779,7 +784,9 @@ fn review(home: &std::path::Path, output: OutputFormat) -> Result<()> {
                     "    [sensitive/control content redacted in table output; use protected JSON output for exact bytes]"
                 );
             }
-            println!("    → `neoth self-improve execute {public_id} --verifier \"<exact approved verifier>\"`");
+            println!(
+                "    → `neoth self-improve execute {public_id} --verifier \"<exact approved verifier>\"`"
+            );
         } else if p.status == si::ProposalStatus::VerifiedApproved {
             print_code_map_analysis(&p.code_map_analysis);
             println!("    → `neoth self-improve accept {public_id}`");
@@ -805,7 +812,10 @@ fn print_proposal_quality_readback(readback: &si::ProposalQualityReadback) {
         readback.score_after,
         readback.score_delta,
     ) {
-        println!("      metric: {} · {before:.3} → {after:.3} ({delta:+.3})", public_status_text(metric));
+        println!(
+            "      metric: {} · {before:.3} → {after:.3} ({delta:+.3})",
+            public_status_text(metric)
+        );
     }
     if let (Some(verifier), Some(corpus), Some(evidence)) = (
         &readback.evaluator_source_short_id,

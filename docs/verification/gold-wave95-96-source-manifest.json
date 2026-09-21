@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W142-W150-self-improve-quality-and-gui-compile-recovery",
-  "base": "2285835e4ee63ee5c541892aa211503fa694e72a",
-  "capturedUtc": "2026-09-21T11:41:09.3986553Z",
-  "validationStatus": "W142_W150_REVIEWED_SOURCE_GITHUB_EXECUTION_REQUIRED",
+  "base": "fb16a751da809951be8e656c5927f1b935288c86",
+  "capturedUtc": "2026-09-21T11:48:49.3052775Z",
+  "validationStatus": "W142_HOSTED_FORMAT_AND_REFERENCE_IMPORTED_NATIVE_TESTS_PENDING",
   "scopeNote": "317 inputs; W142 fixed approved quality producer plus exact GUI consent and native callback; W150 observed fixture compile repairs. W149/W151 working files excluded. No local execution or Road closure.",
   "files": [
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 228534,
-      "sha256": "C62E540D19CA3662E30323231AE24431C8FB802FD7E29FEBA98B5ADA3852CCD6"
+      "bytes": 228814,
+      "sha256": "A223E291DBE80B7ED69247CCED489A9588B632685BFBC8789649BFC0116AE7E4"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -258,8 +258,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/gui_action.rs",
-      "bytes": 335801,
-      "sha256": "F019B5D18F6D14C2D90DF22700868DBCF2C3F31B8B429789C98973274E7F487B"
+      "bytes": 335913,
+      "sha256": "6536852EAB2792A48988E6D1557757FEF9EF46538D69E99F1DD6CB7880146455"
     },
     {
       "path": "SRC/neothd-gui/src/gui_chat_bridge_controller.rs",
@@ -273,13 +273,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1774439,
-      "sha256": "4FFFC1AE7A6396A2A9FC593BBFBF5C9EFB59DF63FA3017AE3A71E34C77204AC8"
+      "bytes": 1777055,
+      "sha256": "8C50D6090B8C6384AF9E8586FA92DF22D8BA959D175EF13B786B0D54C24FA152"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 546555,
-      "sha256": "64D6879A91B56DBAAECBB27193CB9E26121A521AC95A5688E18DA678AFBB4B8C"
+      "bytes": 548457,
+      "sha256": "12801276AEFE43E889418765F74E424EFA536BF4EEB183CB93A756BECFB9575D"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
@@ -658,8 +658,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/self_improve.rs",
-      "bytes": 56268,
-      "sha256": "B5AD4018F50F30C6B9B142097E9EE09C0E427C4185C7EA4A119CDA3DD419314A"
+      "bytes": 56405,
+      "sha256": "EB535584D0DA94614EB6B678C2F4E520E43522A940DD68E464AD144EF50EC529"
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
@@ -1348,13 +1348,13 @@
     },
     {
       "path": "SRC/neothd/src/self_improve.rs",
-      "bytes": 415618,
-      "sha256": "6235FC088803F094318E74078A7B5AD759D6789E5A2616C1036B854766D71278"
+      "bytes": 419010,
+      "sha256": "13E092BBB5A61F1A1A8526E82B22D5135FC965CDFC9422CFE9B90FCFEE36F26B"
     },
     {
       "path": "SRC/neothd/src/self_improve/quality.rs",
-      "bytes": 15272,
-      "sha256": "11C1EFC5903579E5755FEC737067F06EFE6D839FF12BB40C9AEFB10703DB4DFC"
+      "bytes": 16787,
+      "sha256": "10AB359E3AC1DCB7436AE0D68AF0DC5F66271C9CA8DB40FA9FDFEF042BAAD0CC"
     },
     {
       "path": "SRC/neothd/src/skills/creator.rs",

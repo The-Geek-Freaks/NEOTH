@@ -3644,6 +3644,7 @@ Self-improvement — evolve NEOTH's skills with SkillOpt (ask-first switch; stat
 Adopt a proposal into its skill file (backs up the replaced content)
 
 - `<ID>`
+- `--expected-evidence-sha256 <SHA256>` — Optional binding from a fresh review readback. GUI callers should send the selected proposal's exact 64-hex quality evidence digest
 
 ### `neoth self-improve disable`
 
@@ -3663,9 +3664,10 @@ Enable self-improvement. `--auto` also turns on the nightly sleep cycle
 
 ### `neoth self-improve execute`
 
-IMPR-03: run a pending proposal through the verification-gated execute workflow (verification_command + advisor diff-review loop, max 2 revises). Does NOT write the skill file — accept is still gated by the operator
+Run a pending proposal through the fixed-corpus quality evaluator, then the verification-gated advisor review loop (max 2 revises). Does NOT write the skill file — accept is still gated by the operator
 
 - `<ID>`
+- `--verifier <COMMAND>` — Exact command already listed in self_improve.yaml's operator-approved verifier allowlist
 
 ### `neoth self-improve journal-status`
 

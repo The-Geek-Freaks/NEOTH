@@ -95,8 +95,7 @@ static BG_JOBS_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 
 // A self-improve acceptance changes durable proposal state. One callback owns
 // the mutation and its receipt/readback; older review probes cannot repaint it.
-static SELFIMPROVE_UI_REVISION: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static SELFIMPROVE_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static SELFIMPROVE_ACCEPT_ACTIVE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 #[cfg(test)]
@@ -30991,9 +30990,13 @@ fn selfimprove_accept_readback_matches(
 ) -> std::result::Result<(), String> {
     let refreshed = panel_logic::parse_selfimprove_proposals(review_json)
         .map_err(|error| format!("Self-Improve accept needs a valid refreshed review: {error}"))?;
-    let row = refreshed.iter().find(|row| row.id == id)
-        .ok_or_else(|| "Self-Improve accept receipt has no matching refreshed proposal".to_string())?;
-    if row.status == "accepted" && row.quality_state == "current" && row.evidence_sha256 == evidence_sha256 {
+    let row = refreshed.iter().find(|row| row.id == id).ok_or_else(|| {
+        "Self-Improve accept receipt has no matching refreshed proposal".to_string()
+    })?;
+    if row.status == "accepted"
+        && row.quality_state == "current"
+        && row.evidence_sha256 == evidence_sha256
+    {
         Ok(())
     } else {
         Err("Self-Improve accept did not preserve the selected current evidence; refresh and reconcile before retrying".to_string())
@@ -38318,15 +38321,14 @@ mod w58_gui_callback_runtime_tests {
         code_map_impact_controller::CodeMapImpactController,
         coding_controller::CodingController,
         native_coding_terminal_bridge_accepts, neothd_executable_names,
-        publish_code_map_enrichment_readiness, register_buddy_code_map_impact_callback,
-        register_buddy_code_map_status_callback, register_buddy_native_coding_callbacks,
-        register_channel_account_dm_pairing_callback, register_channel_account_retirement_callback,
-        register_channel_legacy_migration_callback, register_channel_pairing_approval_callback,
-        register_channel_pairing_request_callbacks,
-        register_code_map_enrichment_readiness_callbacks, start_code_map_lifecycle_config_apply,
-        register_selfimprove_accept_callback, register_skill_autonomy_callbacks,
-        refresh_selfimprove, start_code_map_lifecycle_refresh, selfimprove_accept_readback_matches,
-        which_neothd,
+        publish_code_map_enrichment_readiness, refresh_selfimprove,
+        register_buddy_code_map_impact_callback, register_buddy_code_map_status_callback,
+        register_buddy_native_coding_callbacks, register_channel_account_dm_pairing_callback,
+        register_channel_account_retirement_callback, register_channel_legacy_migration_callback,
+        register_channel_pairing_approval_callback, register_channel_pairing_request_callbacks,
+        register_code_map_enrichment_readiness_callbacks, register_selfimprove_accept_callback,
+        register_skill_autonomy_callbacks, selfimprove_accept_readback_matches,
+        start_code_map_lifecycle_config_apply, start_code_map_lifecycle_refresh, which_neothd,
     };
 
     static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -41067,7 +41069,9 @@ exit 72
     #[cfg(not(windows))]
     #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w142_selfimprove_accept_requires_exact_bound_receipt_and_fresh_readback() {
-        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("serial GUI fixture environment");
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial GUI fixture environment");
         super::SELFIMPROVE_REFRESH_CALLBACKS.store(0, std::sync::atomic::Ordering::Release);
         let fixture = TempDir::new().expect("create W142 CLI fixture");
         let bin = w116_stage_fake_neoth(&fixture);
@@ -41081,58 +41085,172 @@ exit 72
         std::fs::write(&review, accepted).unwrap();
         std::fs::write(&mode, b"w142_success").unwrap();
         let _path = PathGuard::install(fixture.path());
-        assert_eq!(std::fs::canonicalize(which_neothd().unwrap()).unwrap(), std::fs::canonicalize(bin).unwrap());
+        assert_eq!(
+            std::fs::canonicalize(which_neothd().unwrap()).unwrap(),
+            std::fs::canonicalize(bin).unwrap()
+        );
         let window = MainWindow::new().unwrap();
         register_selfimprove_accept_callback(&window);
 
         let initial_refresh = window.as_weak();
         std::thread::spawn(move || refresh_selfimprove(initial_refresh));
-        w142_drain_refresh(&window, &calls, [0, 1, 1, 1, 1, 0], "current", "seed current");
-        assert_eq!(w142_toast_count(&window, "Accepted"), 0, "refresh alone cannot publish acceptance");
+        w142_drain_refresh(
+            &window,
+            &calls,
+            [0, 1, 1, 1, 1, 0],
+            "current",
+            "seed current",
+        );
+        assert_eq!(
+            w142_toast_count(&window, "Accepted"),
+            0,
+            "refresh alone cannot publish acceptance"
+        );
 
         std::fs::write(&review, b"not-json").unwrap();
         let malformed_refresh = window.as_weak();
         std::thread::spawn(move || refresh_selfimprove(malformed_refresh));
-        w142_drain_refresh(&window, &calls, [0, 2, 2, 2, 2, 0], "current", "seed current");
-        assert_eq!(w142_toast_count(&window, "Accepted"), 0, "malformed review cannot publish acceptance");
+        w142_drain_refresh(
+            &window,
+            &calls,
+            [0, 2, 2, 2, 2, 0],
+            "current",
+            "seed current",
+        );
+        assert_eq!(
+            w142_toast_count(&window, "Accepted"),
+            0,
+            "malformed review cannot publish acceptance"
+        );
 
         std::fs::write(&calls, b"").unwrap();
         std::fs::write(&review, stale).unwrap();
         std::fs::write(&mode, b"w142_wrong").unwrap();
-        window.invoke_si_accept_clicked("p142".into(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
-        window.invoke_si_accept_clicked("p142".into(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
-        w142_drain_refresh(&window, &calls, [1, 1, 1, 1, 3, 0], "stale", "quality fixture");
-        assert!(!window.get_si_accept_in_flight(), "wrong receipt clears the singleflight state");
-        assert_eq!(w142_toast_count(&window, "Accepted"), 0, "foreign receipt cannot publish success");
+        window.invoke_si_accept_clicked(
+            "p142".into(),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        );
+        window.invoke_si_accept_clicked(
+            "p142".into(),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        );
+        w142_drain_refresh(
+            &window,
+            &calls,
+            [1, 1, 1, 1, 3, 0],
+            "stale",
+            "quality fixture",
+        );
+        assert!(
+            !window.get_si_accept_in_flight(),
+            "wrong receipt clears the singleflight state"
+        );
+        assert_eq!(
+            w142_toast_count(&window, "Accepted"),
+            0,
+            "foreign receipt cannot publish success"
+        );
 
         std::fs::write(&mode, b"w142_stale").unwrap();
-        window.invoke_si_accept_clicked("p142".into(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
-        w142_drain_refresh(&window, &calls, [2, 3, 2, 2, 4, 0], "stale", "quality fixture");
-        assert!(!window.get_si_accept_in_flight(), "fresh stale readback cannot claim success");
-        assert_eq!(w142_toast_count(&window, "Accepted"), 0, "stale readback cannot publish success");
+        window.invoke_si_accept_clicked(
+            "p142".into(),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        );
+        w142_drain_refresh(
+            &window,
+            &calls,
+            [2, 3, 2, 2, 4, 0],
+            "stale",
+            "quality fixture",
+        );
+        assert!(
+            !window.get_si_accept_in_flight(),
+            "fresh stale readback cannot claim success"
+        );
+        assert_eq!(
+            w142_toast_count(&window, "Accepted"),
+            0,
+            "stale readback cannot publish success"
+        );
 
         std::fs::write(&review, accepted).unwrap();
         std::fs::write(&mode, b"w142_success").unwrap();
-        window.invoke_si_accept_clicked("p142".into(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
-        w142_drain_refresh(&window, &calls, [3, 5, 3, 3, 5, 1], "current", "seed current");
-        assert!(!window.get_si_accept_in_flight(), "exact receipt and readback settle the callback");
-        assert_eq!(w142_toast_count(&window, "Accepted"), 1, "only exact receipt plus current readback publishes success");
-        assert_eq!(w116_call_lines(&calls).iter().filter(|line| line.as_str() == "si-accept").count(), 3, "duplicate click must not spawn a second child");
-        assert_eq!(w116_call_lines(&calls).iter().filter(|line| line.as_str() == "si-review").count(), 5, "wrong acknowledgement refreshes once; stale and success each perform direct plus terminal review");
+        window.invoke_si_accept_clicked(
+            "p142".into(),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        );
+        w142_drain_refresh(
+            &window,
+            &calls,
+            [3, 5, 3, 3, 5, 1],
+            "current",
+            "seed current",
+        );
+        assert!(
+            !window.get_si_accept_in_flight(),
+            "exact receipt and readback settle the callback"
+        );
+        assert_eq!(
+            w142_toast_count(&window, "Accepted"),
+            1,
+            "only exact receipt plus current readback publishes success"
+        );
+        assert_eq!(
+            w116_call_lines(&calls)
+                .iter()
+                .filter(|line| line.as_str() == "si-accept")
+                .count(),
+            3,
+            "duplicate click must not spawn a second child"
+        );
+        assert_eq!(
+            w116_call_lines(&calls)
+                .iter()
+                .filter(|line| line.as_str() == "si-review")
+                .count(),
+            5,
+            "wrong acknowledgement refreshes once; stale and success each perform direct plus terminal review"
+        );
 
         std::fs::write(&mode, b"w142_blocked").unwrap();
         let accept_started = fixture.path().join("w142-accept-started");
         let accept_release = fixture.path().join("w142-release");
         let _ = std::fs::remove_file(&accept_started);
         let _ = std::fs::remove_file(&accept_release);
-        window.invoke_si_accept_clicked("p142".into(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+        window.invoke_si_accept_clicked(
+            "p142".into(),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        );
         w142_wait_for_file(&window, &accept_started, "W142 accept child did not start");
-        window.invoke_si_accept_clicked("p142".into(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
-        assert_eq!(w116_call_lines(&calls).iter().filter(|line| line.as_str() == "si-accept").count(), 4, "blocked duplicate must not create a second child");
+        window.invoke_si_accept_clicked(
+            "p142".into(),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        );
+        assert_eq!(
+            w116_call_lines(&calls)
+                .iter()
+                .filter(|line| line.as_str() == "si-accept")
+                .count(),
+            4,
+            "blocked duplicate must not create a second child"
+        );
         std::fs::write(&accept_release, b"release").unwrap();
-        w142_drain_refresh(&window, &calls, [4, 7, 4, 4, 6, 2], "current", "seed current");
-        assert!(!window.get_si_accept_in_flight(), "released blocked completion clears active state");
-        assert_eq!(w142_toast_count(&window, "Accepted"), 2, "released exact completion publishes one additional success");
+        w142_drain_refresh(
+            &window,
+            &calls,
+            [4, 7, 4, 4, 6, 2],
+            "current",
+            "seed current",
+        );
+        assert!(
+            !window.get_si_accept_in_flight(),
+            "released blocked completion clears active state"
+        );
+        assert_eq!(
+            w142_toast_count(&window, "Accepted"),
+            2,
+            "released exact completion publishes one additional success"
+        );
 
         let review_started = fixture.path().join("w142-review-started");
         let review_release = fixture.path().join("w142-review-release");
@@ -41144,14 +41262,37 @@ exit 72
         std::fs::write(&review_once, b"block once").unwrap();
         let old_refresh = window.as_weak();
         std::thread::spawn(move || refresh_selfimprove(old_refresh));
-        w142_wait_for_file(&window, &review_started, "older terminal refresh did not reach its review");
+        w142_wait_for_file(
+            &window,
+            &review_started,
+            "older terminal refresh did not reach its review",
+        );
 
         std::fs::write(&review, accepted_newer).unwrap();
-        window.invoke_si_accept_clicked("p142".into(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
-        w142_drain_refresh(&window, &calls, [5, 10, 6, 5, 7, 3], "current", "newest current");
+        window.invoke_si_accept_clicked(
+            "p142".into(),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        );
+        w142_drain_refresh(
+            &window,
+            &calls,
+            [5, 10, 6, 5, 7, 3],
+            "current",
+            "newest current",
+        );
         std::fs::write(&review_release, b"release old refresh").unwrap();
-        w142_drain_refresh(&window, &calls, [5, 10, 6, 6, 8, 3], "current", "newest current");
-        assert_eq!(w142_toast_count(&window, "Accepted"), 3, "late old refresh cannot publish another terminal toast");
+        w142_drain_refresh(
+            &window,
+            &calls,
+            [5, 10, 6, 6, 8, 3],
+            "current",
+            "newest current",
+        );
+        assert_eq!(
+            w142_toast_count(&window, "Accepted"),
+            3,
+            "late old refresh cannot publish another terminal toast"
+        );
     }
 
     #[cfg(not(windows))]
@@ -41162,42 +41303,92 @@ exit 72
         expected_quality: &str,
         expected_summary: &str,
     ) {
-        let done = Rc::new(Cell::new(false)); let seen = Rc::clone(&done); let weak = window.as_weak(); let ticks = Rc::new(Cell::new(0_u16)); let seen_ticks = Rc::clone(&ticks);
+        let done = Rc::new(Cell::new(false));
+        let seen = Rc::clone(&done);
+        let weak = window.as_weak();
+        let ticks = Rc::new(Cell::new(0_u16));
+        let seen_ticks = Rc::clone(&ticks);
         // Counts are accept/review/status/log children, processed UI refreshes,
         // and accepted toasts. The callback counter proves even rejected late
         // replies have actually reached the same event loop before we finish.
-        let [expected_accepts, expected_reviews, expected_statuses, expected_logs, expected_callbacks, expected_accepted_toasts] = expected_counts;
-        let calls = calls.to_path_buf(); let expected_quality = expected_quality.to_owned(); let expected_summary = expected_summary.to_owned();
+        let [
+            expected_accepts,
+            expected_reviews,
+            expected_statuses,
+            expected_logs,
+            expected_callbacks,
+            expected_accepted_toasts,
+        ] = expected_counts;
+        let calls = calls.to_path_buf();
+        let expected_quality = expected_quality.to_owned();
+        let expected_summary = expected_summary.to_owned();
         let timer = slint::Timer::default();
-        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
-            let call_lines = w116_call_lines(&calls);
-            let call_count = |name: &str| call_lines.iter().filter(|line| line.as_str() == name).count();
-            if weak.upgrade().is_some_and(|w| {
-                !w.get_si_accept_in_flight()
-                    && call_count("si-accept") == expected_accepts
-                    && call_count("si-review") == expected_reviews
-                    && call_count("si-status") == expected_statuses
-                    && call_count("si-log") == expected_logs
-                    && super::SELFIMPROVE_REFRESH_CALLBACKS.load(std::sync::atomic::Ordering::Acquire) == expected_callbacks as u64
-                    && w142_toast_count(&w, "Accepted") == expected_accepted_toasts
-                    && w142_proposal_matches(&w, &expected_quality, &expected_summary)
-            }) { seen.set(true); let _ = slint::quit_event_loop(); }
-            if seen_ticks.get().saturating_add(1) >= 500 { let _ = slint::quit_event_loop(); } else { seen_ticks.set(seen_ticks.get() + 1); }
-        });
-        let _ = window.hide(); slint::run_event_loop_until_quit().unwrap(); drop(timer);
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                let call_lines = w116_call_lines(&calls);
+                let call_count = |name: &str| {
+                    call_lines
+                        .iter()
+                        .filter(|line| line.as_str() == name)
+                        .count()
+                };
+                if weak.upgrade().is_some_and(|w| {
+                    !w.get_si_accept_in_flight()
+                        && call_count("si-accept") == expected_accepts
+                        && call_count("si-review") == expected_reviews
+                        && call_count("si-status") == expected_statuses
+                        && call_count("si-log") == expected_logs
+                        && super::SELFIMPROVE_REFRESH_CALLBACKS
+                            .load(std::sync::atomic::Ordering::Acquire)
+                            == expected_callbacks as u64
+                        && w142_toast_count(&w, "Accepted") == expected_accepted_toasts
+                        && w142_proposal_matches(&w, &expected_quality, &expected_summary)
+                }) {
+                    seen.set(true);
+                    let _ = slint::quit_event_loop();
+                }
+                if seen_ticks.get().saturating_add(1) >= 500 {
+                    let _ = slint::quit_event_loop();
+                } else {
+                    seen_ticks.set(seen_ticks.get() + 1);
+                }
+            },
+        );
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().unwrap();
+        drop(timer);
         assert!(done.get(), "W142 terminal refresh did not settle");
     }
 
     #[cfg(not(windows))]
     fn w142_wait_for_file(window: &MainWindow, path: &Path, failure: &str) {
-        let done = Rc::new(Cell::new(false)); let seen = Rc::clone(&done); let weak = window.as_weak(); let ticks = Rc::new(Cell::new(0_u16)); let seen_ticks = Rc::clone(&ticks);
+        let done = Rc::new(Cell::new(false));
+        let seen = Rc::clone(&done);
+        let weak = window.as_weak();
+        let ticks = Rc::new(Cell::new(0_u16));
+        let seen_ticks = Rc::clone(&ticks);
         let path = path.to_path_buf();
         let timer = slint::Timer::default();
-        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
-            if weak.upgrade().is_some() && path.exists() { seen.set(true); let _ = slint::quit_event_loop(); }
-            if seen_ticks.get().saturating_add(1) >= 500 { let _ = slint::quit_event_loop(); } else { seen_ticks.set(seen_ticks.get() + 1); }
-        });
-        let _ = window.hide(); slint::run_event_loop_until_quit().unwrap(); drop(timer);
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                if weak.upgrade().is_some() && path.exists() {
+                    seen.set(true);
+                    let _ = slint::quit_event_loop();
+                }
+                if seen_ticks.get().saturating_add(1) >= 500 {
+                    let _ = slint::quit_event_loop();
+                } else {
+                    seen_ticks.set(seen_ticks.get() + 1);
+                }
+            },
+        );
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().unwrap();
+        drop(timer);
         assert!(done.get(), "{failure}");
     }
 
@@ -41207,14 +41398,22 @@ exit 72
             row.id.to_string() == "p142"
                 && row.status.to_string() == "accepted"
                 && row.quality_state.to_string() == quality
-                && row.evidence_sha256.to_string() == if quality == "current" { "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } else { "" }
+                && row.evidence_sha256.to_string()
+                    == if quality == "current" {
+                        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    } else {
+                        ""
+                    }
                 && row.title.to_string() == summary
         })
     }
 
     #[cfg(not(windows))]
     fn w142_toast_count(window: &MainWindow, title: &str) -> usize {
-        (0..window.get_toasts().row_count()).filter_map(|index| window.get_toasts().row_data(index)).filter(|toast| toast.title.to_string() == title).count()
+        (0..window.get_toasts().row_count())
+            .filter_map(|index| window.get_toasts().row_data(index))
+            .filter(|toast| toast.title.to_string() == title)
+            .count()
     }
 
     #[cfg(target_os = "macos")]
