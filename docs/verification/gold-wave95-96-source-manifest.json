@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W136-skill-registry-and-type-hierarchy",
-  "base": "a7b78704bc9e295a70bbcce43472ba57724448c1",
-  "capturedUtc": "2026-09-21T08:38:32.3949062Z",
+  "base": "73f87a717fbc44f6139b786bef3bc16f0d142f0a",
+  "capturedUtc": "2026-09-21T08:43:36.9069055Z",
   "validationStatus": "W136_INTEGRATED_SOURCE_APPROVED_REMOTE_EXECUTION_REQUIRED",
-  "scopeNote": "308 cumulative inputs. Eight reviewed W136 source paths plus exact hosted W132 formatting from Preflight 35578149373. No local validation; full P2-10 and Road closures remain pending.",
+  "scopeNote": "308 cumulative inputs. W136 source plus complete49-hunk/four-file W132 hosted formatting. W137 mutable tests excluded; no local validation or Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -733,8 +733,8 @@
     },
     {
       "path": "SRC/neothd/src/code_map/persist.rs",
-      "bytes": 250714,
-      "sha256": "A0CCF0EAD8CBB4AB79BDB1F4E0130BB6C87952A4177D5EE21DBF73A84FFD5B8C"
+      "bytes": 251123,
+      "sha256": "2B98CDC649C55557AC4DF92AE7ADDF5A493953B1B8B75F6F3A82FDA6787BD55F"
     },
     {
       "path": "SRC/neothd/src/code_map/recall_wire.rs",
@@ -748,8 +748,8 @@
     },
     {
       "path": "SRC/neothd/src/code_map/snapshot.rs",
-      "bytes": 67383,
-      "sha256": "F5021294A0A4EA9F5AAC819FDC5B961F3CD9A11B2082FE5319184E7F4CDDB425"
+      "bytes": 67376,
+      "sha256": "03AFFD5B294F4894BA5D5195BF5F45AC043F95A340355DEC219F11F4A17EC753"
     },
     {
       "path": "SRC/neothd/src/code_map/symbols.rs",
@@ -763,8 +763,8 @@
     },
     {
       "path": "SRC/neothd/src/code_map/type_hierarchy.rs",
-      "bytes": 33512,
-      "sha256": "6F4161F51B04325955FAEAB01010AA20BDD5A9EB835112AFB8E8FB4EEB512BC8"
+      "bytes": 33489,
+      "sha256": "43B5488F7DE6B944ACFA3342FDDD050F55B8DDA3FC4ED9A0156C4C9F774CF1EA"
     },
     {
       "path": "SRC/neothd/src/coding/classifier.rs",

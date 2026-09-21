@@ -12,7 +12,7 @@ The cumulative matrix has 308 inputs and 138 required native identities;
 hosted compilation/runtime and the full P2-10 scope remain open.
 
 **W132 hosted formatting:** Code Quality 35578149332 passed on a7b78704.
-Preflight 35578149373 supplied 39 exact Rustfmt hunks across three files;
+Preflight 35578149373 supplied 49 Rustfmt hunks across four files;
 these were imported without a local formatter. Fresh consolidated hosted
 gates remain required. W135 sidebar source awaits native/render/release
 acceptance. Road counts remain **1324/1015/307/2**.

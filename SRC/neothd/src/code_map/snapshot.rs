@@ -13,12 +13,10 @@ use sha2::{Digest, Sha256};
 
 use super::graph::{CallGraph, DEFAULT_MAX_GRAPH_EDGES, FileInput};
 use super::imports::{DEFAULT_MAX_IMPORT_EDGES, ImportGraph};
-use super::type_hierarchy::{
-    DEFAULT_MAX_TYPE_EDGES, DEFAULT_MAX_TYPE_SOURCE_BYTES, TypeHierarchy,
-};
 use super::incremental;
 use super::persist::PersistStats;
 use super::root_identity::CanonicalRepoRoot;
+use super::type_hierarchy::{DEFAULT_MAX_TYPE_EDGES, DEFAULT_MAX_TYPE_SOURCE_BYTES, TypeHierarchy};
 use super::walker::{
     DEFAULT_MAX_FILE_BYTES, Language, RepoMap, RepoMapBuilder, ScanCancellation, ScanReport,
     normalize_relative_scope_paths, read_file_bounded,

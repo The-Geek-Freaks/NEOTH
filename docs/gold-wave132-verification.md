@@ -1,7 +1,7 @@
 # W132 — persisted TypeHierarchy and bounded MCP traversal
 
 Hosted format follow-up: Preflight `35578149373` on `a7b78704` reported
-39 Rustfmt hunks across `persist.rs`, `type_hierarchy.rs` and
+49 Rustfmt hunks across `persist.rs`, `snapshot.rs`, `type_hierarchy.rs` and
 `codegraph_server.rs`. Those exact layouts were imported without a local
 formatter. Code Quality `35578149332` passed on that source. Fresh hosted
 format, compilation and runtime gates are still required after this import.
@@ -47,3 +47,10 @@ same source continues because those reported errors are confined to test code.
 No local compiler, formatter, parser, test, fixture, product or GUI execution
 is permitted. P2-11 and all Road counts remain open/unchanged pending integrated
 native and release Graphify/self-knowledge regeneration evidence.
+
+Format-import correction: Preflight 35579188796 caught an incomplete hunk in
+the first import at 73f87a71. The tool-visible log had been truncated. The full
+log contains 49 hunks and four files, not the initially recorded 39/three.
+All four files were reconstructed from a7b78704 plus the complete hosted
+layouts. This restores the endpoint-cap assertion and edge-cap call and includes
+the omitted snapshot formatting. Fresh hosted verification remains required.

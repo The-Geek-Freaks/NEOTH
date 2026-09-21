@@ -5290,16 +5290,18 @@ mod tests {
             load_type_hierarchy_for_root_bounded(&conn, &first_map.root, 10, 1, 4096).unwrap();
         assert!(truncated, "endpoint cap is explicit");
         assert!(endpoint_capped.edges().is_empty());
-            &conn,
-            &first_map.root,
-            0,
-            10,
-            4096,
-        )
-        .unwrap();
+        assert!(
+            endpoint_capped.endpoints().is_empty(),
+            "endpoint cap must not publish a partial hierarchy"
+        );
+        let (edge_capped, truncated) =
+            load_type_hierarchy_for_root_bounded(&conn, &first_map.root, 0, 10, 4096).unwrap();
         assert!(truncated, "edge cap is explicit");
         assert!(edge_capped.edges().is_empty());
-        assert!(edge_capped.endpoints().is_empty(), "edge cap must not publish a partial hierarchy");
+        assert!(
+            edge_capped.endpoints().is_empty(),
+            "edge cap must not publish a partial hierarchy"
+        );
 
         conn.execute(
             "DELETE FROM code_map_type_endpoints WHERE root = ?1 AND file_path = ?2 AND symbol = ?3",
@@ -5310,47 +5312,65 @@ mod tests {
             load_type_hierarchy_for_root_bounded(&conn, &first_map.root, 10, 10, 4096).is_err(),
             "an edge whose endpoint inventory row was corrupted must not load"
         );
-        persist_map_and_edges_bound(
-            &mut conn, &first_map, &[], &[], &first_hierarchy, &root,
-        )
-        .unwrap();
+        persist_map_and_edges_bound(&mut conn, &first_map, &[], &[], &first_hierarchy, &root)
+            .unwrap();
 
         persist_map(&mut conn, &first_map).unwrap();
-        assert!(load_type_hierarchy_for_root_bounded(&conn, &first_map.root, 10, 10, 4096).is_err(), "map-only persist invalidates type generation");
+        assert!(
+            load_type_hierarchy_for_root_bounded(&conn, &first_map.root, 10, 10, 4096).is_err(),
+            "map-only persist invalidates type generation"
+        );
 
         let second_source = "struct Child;\n";
         std::fs::write(dir.path().join("types.rs"), second_source).unwrap();
-        let second_map = RepoMapBuilder::new(root.path()).with_symbols(true).scan().unwrap();
+        let second_map = RepoMapBuilder::new(root.path())
+            .with_symbols(true)
+            .scan()
+            .unwrap();
         let second_hierarchy = TypeHierarchy::build_bounded(
             &[("types.rs".into(), Language::Rust, second_source.into())],
             crate::code_map::type_hierarchy::DEFAULT_MAX_TYPE_EDGES,
-        ).unwrap();
+        )
+        .unwrap();
         persist_delta_map_and_edges_bound(
             &mut conn,
             &second_map,
             DeltaGraphPublication {
-                published_edges: &[], import_edges: &[], hierarchy: &second_hierarchy,
+                published_edges: &[],
+                import_edges: &[],
+                hierarchy: &second_hierarchy,
                 replacement_edges: &[],
                 replacement_sources: &std::collections::BTreeSet::from(["types.rs".to_owned()]),
                 removed_paths: &std::collections::BTreeSet::new(),
             },
             &root,
             || Ok(()),
-        ).unwrap();
-        let (replaced, truncated) = load_type_hierarchy_for_root_bounded(&conn, &second_map.root, 10, 10, 4096).unwrap();
+        )
+        .unwrap();
+        let (replaced, truncated) =
+            load_type_hierarchy_for_root_bounded(&conn, &second_map.root, 10, 10, 4096).unwrap();
         assert!(!truncated);
-        assert!(replaced.edges().is_empty(), "removed parent relationship is not retained after delta");
+        assert!(
+            replaced.edges().is_empty(),
+            "removed parent relationship is not retained after delta"
+        );
         assert_eq!(replaced.endpoints().len(), 1);
         assert!(replaced.endpoints().contains(&child));
-        assert!(load_type_hierarchy_for_root_bounded(&conn, &second_map.root, 10, 10, 1).is_err(), "text cap refuses before result");
+        assert!(
+            load_type_hierarchy_for_root_bounded(&conn, &second_map.root, 10, 10, 1).is_err(),
+            "text cap refuses before result"
+        );
 
         let foreign = TypeHierarchy::from_parts(
             Vec::new(),
             std::collections::BTreeSet::from([TypeEndpoint::new("foreign.rs", "Foreign").unwrap()]),
-        ).unwrap();
-        assert!(persist_map_and_edges_bound(
-            &mut conn, &second_map, &[], &[], &foreign, &root,
-        ).is_err(), "publisher rejects endpoint outside current root map");
+        )
+        .unwrap();
+        assert!(
+            persist_map_and_edges_bound(&mut conn, &second_map, &[], &[], &foreign, &root,)
+                .is_err(),
+            "publisher rejects endpoint outside current root map"
+        );
     }
 
     #[test]

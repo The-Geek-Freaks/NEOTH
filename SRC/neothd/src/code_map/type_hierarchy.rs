@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use syn::visit::Visit;
 
@@ -172,10 +172,7 @@ impl TypeHierarchy {
     /// Sources must be the exact byte/hash-validated corpus for one canonical
     /// root. There is no cross-file bare-name resolution: an edge must be
     /// proven in its own Rust module scope or Python top-level file scope.
-    pub fn build_bounded(
-        sources: &[(String, Language, String)],
-        max_edges: usize,
-    ) -> Result<Self> {
+    pub fn build_bounded(sources: &[(String, Language, String)], max_edges: usize) -> Result<Self> {
         let mut paths = BTreeSet::new();
         let mut source_bytes = 0usize;
         for (path, _, source) in sources {
