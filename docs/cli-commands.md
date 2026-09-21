@@ -1829,6 +1829,7 @@ Multimodal asset ingest pipeline
 - `--no-persist` — Skip the embedding persistence pass — useful when running the pipeline against fixtures in tests or when the operator is just inspecting the metadata
 - `--no-audit` — Skip emitting `INGEST_EXTRACTED` / `EMBED_PERSISTED` WAL audit events. Useful for batch reprocessing where the audit trail is already known
 - `--no-index` — Skip writing extracted text chunks into the ctx/recall memory store (`views.db`). Useful when the operator just wants the extraction report or embedding persistence without indexing the text for recall
+- `--analyze-video-frames` — Analyse an actual video frame sequence with the configured cloud-vision provider. This explicit mode does not require an audio transcript
 
 ## `neoth init`
 

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W174_HOSTED_COMPILE_FORMAT_REPAIR_PENDING",
-  "base": "96beb0a1f6a11c0c19ea410edba7026cfbe8a759",
+  "status": "W174_HOSTED_CORE_PASS_NATIVE_PENDING",
+  "base": "c151373fe90002b716960137890cfb48730d878b",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 68803,
-    "sha256": "4839E41E3569420E5AD2080113ADE4AF071E845B64F65641D4774464071882AD"
+    "bytes": 68758,
+    "sha256": "E388E40FA210DA4B7B5CC3EAE8EC6BFA9E044251B36F9348DE13934E531C98FE"
   },
   "sourceInputs": 398,
   "requiredNativeTests": [
@@ -6536,5 +6536,20 @@
     "status": "fresh_hosted_rerun_required",
     "review": "work/gold-20260906/wave174-next-batch/COMPILE-REVIEW.md",
     "reviewSha256": "7A71AEB07C9D33744A820509D34EBAFAC72B1686D1BA281F190213BF44AAE911"
+  },
+  "wave174HostedCorePass": {
+    "schema": "neoth-generated-cli-reference-import/v1",
+    "run": 35663525321,
+    "sourceHead": "c151373fe90002b716960137890cfb48730d878b",
+    "conclusion": "success",
+    "sha256": "F2F312BADF195DE962EA53453445E559D574D515A2D6168EB80F56AF9297DF5C",
+    "bytes": 231912,
+    "destination": "docs/cli-commands.md",
+    "method": "Exact source-head and artifact SHA256SUMS verified; byte-identical import",
+    "preflight": 35663525836,
+    "preflightConclusion": "success",
+    "quality": 35663525377,
+    "qualityConclusion": "success",
+    "boundary": "CLI compilation/reference and static Hosted gates pass; native/video behavior pending"
   }
 }

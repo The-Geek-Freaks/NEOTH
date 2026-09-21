@@ -68,3 +68,9 @@ SHA-256 B5FFC641CF700588E6607366F005A0B4E06C31A927040116241B7EA0A5178FEE;
 COMPILE-REPAIR.json has SHA-256
 F9EC3CA71716E340E85F2156D2530B1180C00ECCF28D33A075310C281ED33A36.
 A fresh Hosted CLI/format run and actual behavior tests remain necessary.
+
+Follow-up Hosted CLI/reference 35663525321 passed on c151373f. Preflight
+35663525836 and Code Quality 35663525377 also passed. The generated reference
+was imported byte-identically after source-head and SHA256SUMS verification:
+F2F312BADF195DE962EA53453445E559D574D515A2D6168EB80F56AF9297DF5C.
+Actual native/video behavior remains pending; compilation is not runtime proof.

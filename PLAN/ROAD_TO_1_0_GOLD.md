@@ -23,6 +23,9 @@ W174's first Hosted pass found three E0603 references through a private init
 module; the calls now use the existing public ProviderKind export. Preflight
 35662865859's exact 20 format hunks across five files are imported separately.
 Code Quality 35662866172 passed; a new CLI/native/format run is still required.
+W174 follow-up on c151373f passed CLI/reference 35663525321, Preflight
+35663525836 and Code Quality 35663525377. The exact generated public reference
+now includes --analyze-video-frames. Native/video behavior remains pending.
 
 **W173 Hosted compilation confirmed (2026-09-22):** CLI build/reference
 35660480510 passed on cdaae0a4. Its generated reference is byte-identical to the
