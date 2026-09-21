@@ -4284,8 +4284,7 @@ fn root() { alpha(); beta(); }
         )
         .unwrap();
         assert_eq!(
-            response["result"]["isError"],
-            false,
+            response["result"]["isError"], false,
             "initial stdio type response: {response}"
         );
         assert_eq!(
@@ -4345,8 +4344,7 @@ fn root() { alpha(); beta(); }
         )
         .unwrap();
         assert_eq!(
-            response["result"]["isError"],
-            false,
+            response["result"]["isError"], false,
             "initial stdio import response: {response}"
         );
         assert_eq!(

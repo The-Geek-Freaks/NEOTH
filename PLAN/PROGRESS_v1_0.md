@@ -2,6 +2,10 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+W149/W151/W152 hosted follow-up: source53767f9a passed CodeQuality35599451472.
+All42 exact Rustfmt hunks across eight files from Preflight35599452190 are
+imported. Fresh Preflight and full native/GUI execution remain required.
+
 **W149 / W151 / W152 batch (2026-09-21):** Buddy now projects the canonical
 Self-improve evidence through a passive, bounded reader and hands the exact
 selected proposal into Self-improve. Settings now invokes the real cache-only

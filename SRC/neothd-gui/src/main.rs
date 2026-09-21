@@ -31239,8 +31239,12 @@ fn refresh_buddyconfig(weak: slint::Weak<MainWindow>) {
                                 quality_reason: proposal.quality_reason.into(),
                                 quality_metric: proposal.quality_metric.into(),
                                 score_delta: proposal.score_delta.into(),
-                                evaluator_source_short_id: proposal.evaluator_source_short_id.into(),
-                                corpus_manifest_short_sha256: proposal.corpus_manifest_short_sha256.into(),
+                                evaluator_source_short_id: proposal
+                                    .evaluator_source_short_id
+                                    .into(),
+                                corpus_manifest_short_sha256: proposal
+                                    .corpus_manifest_short_sha256
+                                    .into(),
                                 regression_summary: proposal.regression_summary.into(),
                                 evidence_sha256: proposal.evidence_sha256.into(),
                                 review_ready: proposal.accept_ready,
@@ -38364,21 +38368,20 @@ mod w58_gui_callback_runtime_tests {
     use super::{
         CODE_MAP_ENRICHMENT_READINESS_PUBLICATION_COUNT, CODE_MAP_ENRICHMENT_READINESS_UI_REVISION,
         CODE_MAP_LIFECYCLE_CONFIG_UI_REVISION, CODE_MAP_ROOT_SELECTION_REVISION, MainWindow,
-        NATIVE_CODING_UI_REVISION, apply_channel_snapshot, apply_channels,
+        NATIVE_CODING_UI_REVISION, SiProposalRow, apply_channel_snapshot, apply_channels,
         code_map_controller::{AutomaticContextPresentationController, CodeMapLifecycleController},
         code_map_impact_controller::CodeMapImpactController,
         coding_controller::CodingController,
-        native_coding_terminal_bridge_accepts, neothd_executable_names,
-        ouro_gui, publish_code_map_enrichment_readiness, refresh_selfimprove,
+        native_coding_terminal_bridge_accepts, neothd_executable_names, ouro_gui,
+        publish_code_map_enrichment_readiness, refresh_selfimprove,
         register_buddy_code_map_impact_callback, register_buddy_code_map_status_callback,
-        register_buddy_quality_handoff_callback,
-        register_buddy_native_coding_callbacks, register_channel_account_dm_pairing_callback,
-        register_channel_account_retirement_callback, register_channel_legacy_migration_callback,
-        register_channel_pairing_approval_callback, register_channel_pairing_request_callbacks,
+        register_buddy_native_coding_callbacks, register_buddy_quality_handoff_callback,
+        register_channel_account_dm_pairing_callback, register_channel_account_retirement_callback,
+        register_channel_legacy_migration_callback, register_channel_pairing_approval_callback,
+        register_channel_pairing_request_callbacks,
         register_code_map_enrichment_readiness_callbacks, register_selfimprove_accept_callback,
         register_skill_autonomy_callbacks, selfimprove_accept_readback_matches,
         start_code_map_lifecycle_config_apply, start_code_map_lifecycle_refresh, which_neothd,
-        SiProposalRow,
     };
 
     static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -41526,7 +41529,8 @@ exit 72
                 corpus_manifest_short_sha256: "aaaaaaaaaaaa".into(),
                 regression_summary: "1/1 passed".into(),
                 evidence_short_sha256: "bbbbbbbbbbbb".into(),
-                evidence_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+                evidence_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    .into(),
                 accept_ready: true,
             },
         ];
@@ -41539,7 +41543,10 @@ exit 72
         window.invoke_bc_self_improve_review("proposal-current".into());
 
         assert_eq!(window.get_nav_active().to_string(), "evolve");
-        assert_eq!(window.get_bc_self_improve_selected_id().to_string(), "proposal-current");
+        assert_eq!(
+            window.get_bc_self_improve_selected_id().to_string(),
+            "proposal-current"
+        );
         let selected = window
             .get_si_proposals()
             .row_data(1)
@@ -41558,12 +41565,22 @@ exit 72
         );
         assert_eq!(window.get_si_proposals().row_count(), 2);
         assert_eq!(
-            window.get_si_proposals().row_data(1).unwrap().id.to_string(),
+            window
+                .get_si_proposals()
+                .row_data(1)
+                .unwrap()
+                .id
+                .to_string(),
             "proposal-current"
         );
-        assert_eq!(mutations.get(), 0, "navigation must not accept or roll back");
         assert_eq!(
-            window.get_toasts().row_count(), initial_toasts,
+            mutations.get(),
+            0,
+            "navigation must not accept or roll back"
+        );
+        assert_eq!(
+            window.get_toasts().row_count(),
+            initial_toasts,
             "the hand-off is UI-only and cannot publish a mutation result"
         );
     }
@@ -41584,7 +41601,9 @@ exit 72
     #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight() {
         const RECEIPT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("serial GUI fixture environment");
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial GUI fixture environment");
         let fixture = TempDir::new().expect("create W151 Ouro fixture");
         let bin = w116_stage_fake_neoth(&fixture);
         let mode = fixture.path().join("mode");
@@ -41618,14 +41637,26 @@ exit 72
             &window,
             &calls,
             W151Expectation {
-                calls: 2, verified: false, configured_mode: "", receipt: "", device: "",
-                forward_summary: "", status_fragment: "Not verified:",
+                calls: 2,
+                verified: false,
+                configured_mode: "",
+                receipt: "",
+                device: "",
+                forward_summary: "",
+                status_fragment: "Not verified:",
             },
         );
 
         std::fs::write(&mode, b"w151_success").expect("restore typed W151 success");
         window.invoke_ouro_q8_verify_clicked();
-        w151_drain_ouro_q8(&window, &calls, W151Expectation { calls: 3, ..verified });
+        w151_drain_ouro_q8(
+            &window,
+            &calls,
+            W151Expectation {
+                calls: 3,
+                ..verified
+            },
+        );
 
         std::fs::write(&mode, b"w151_typed_failure").expect("select typed W151 failure");
         window.invoke_ouro_q8_verify_clicked();
@@ -41633,14 +41664,26 @@ exit 72
             &window,
             &calls,
             W151Expectation {
-                calls: 4, verified: false, configured_mode: "q8", receipt: "", device: "",
-                forward_summary: "", status_fragment: "Not verified: published cache was unavailable",
+                calls: 4,
+                verified: false,
+                configured_mode: "q8",
+                receipt: "",
+                device: "",
+                forward_summary: "",
+                status_fragment: "Not verified: published cache was unavailable",
             },
         );
 
         std::fs::write(&mode, b"w151_success").expect("restore typed W151 success after failure");
         window.invoke_ouro_q8_verify_clicked();
-        w151_drain_ouro_q8(&window, &calls, W151Expectation { calls: 5, ..verified });
+        w151_drain_ouro_q8(
+            &window,
+            &calls,
+            W151Expectation {
+                calls: 5,
+                ..verified
+            },
+        );
 
         let started = fixture.path().join("w151-ouro-started");
         let release = fixture.path().join("w151-ouro-release");
@@ -41648,12 +41691,26 @@ exit 72
         let _ = std::fs::remove_file(&release);
         std::fs::write(&mode, b"w151_blocked").expect("select blocked W151 success");
         window.invoke_ouro_q8_verify_clicked();
-        assert!(!window.get_ouro_q8_verify_verified(), "a new W151 action clears the prior verified projection before the child returns");
+        assert!(
+            !window.get_ouro_q8_verify_verified(),
+            "a new W151 action clears the prior verified projection before the child returns"
+        );
         w151_wait_for_file(&window, &started, "W151 Ouro child did not start");
         window.invoke_ouro_q8_verify_clicked();
-        assert_eq!(w151_ouro_call_count(&calls), 6, "blocked duplicate must not launch a second Ouro child");
+        assert_eq!(
+            w151_ouro_call_count(&calls),
+            6,
+            "blocked duplicate must not launch a second Ouro child"
+        );
         std::fs::write(&release, b"release").expect("release blocked W151 Ouro child");
-        w151_drain_ouro_q8(&window, &calls, W151Expectation { calls: 6, ..verified });
+        w151_drain_ouro_q8(
+            &window,
+            &calls,
+            W151Expectation {
+                calls: 6,
+                ..verified
+            },
+        );
         assert_eq!(
             w116_call_lines(&calls),
             vec!["ouro-verify-q8"; 6],
@@ -41670,25 +41727,36 @@ exit 72
         let ticks = Rc::new(Cell::new(0_u16));
         let seen_ticks = Rc::clone(&ticks);
         let timer = slint::Timer::default();
-        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
-            if weak.upgrade().is_some_and(|window| {
-                !window.get_ouro_q8_verify_running()
-                    && !window.get_ouro_q8_verify_unavailable()
-                    && w151_ouro_call_count(&calls) == expected.calls
-                    && window.get_ouro_q8_verify_verified() == expected.verified
-                    && window.get_ouro_q8_verify_configured_mode().to_string() == expected.configured_mode
-                    && window.get_ouro_q8_verify_receipt().to_string() == expected.receipt
-                    && window.get_ouro_q8_verify_device().to_string() == expected.device
-                    && window.get_ouro_q8_verify_forward_summary().to_string() == expected.forward_summary
-                    && window.get_ouro_q8_verify_status().to_string().contains(expected.status_fragment)
-            }) {
-                seen.set(true);
-                let _ = slint::quit_event_loop();
-            }
-            let next = seen_ticks.get().saturating_add(1);
-            seen_ticks.set(next);
-            if next >= 500 { let _ = slint::quit_event_loop(); }
-        });
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                if weak.upgrade().is_some_and(|window| {
+                    !window.get_ouro_q8_verify_running()
+                        && !window.get_ouro_q8_verify_unavailable()
+                        && w151_ouro_call_count(&calls) == expected.calls
+                        && window.get_ouro_q8_verify_verified() == expected.verified
+                        && window.get_ouro_q8_verify_configured_mode().to_string()
+                            == expected.configured_mode
+                        && window.get_ouro_q8_verify_receipt().to_string() == expected.receipt
+                        && window.get_ouro_q8_verify_device().to_string() == expected.device
+                        && window.get_ouro_q8_verify_forward_summary().to_string()
+                            == expected.forward_summary
+                        && window
+                            .get_ouro_q8_verify_status()
+                            .to_string()
+                            .contains(expected.status_fragment)
+                }) {
+                    seen.set(true);
+                    let _ = slint::quit_event_loop();
+                }
+                let next = seen_ticks.get().saturating_add(1);
+                seen_ticks.set(next);
+                if next >= 500 {
+                    let _ = slint::quit_event_loop();
+                }
+            },
+        );
         let _ = window.hide();
         slint::run_event_loop_until_quit().expect("drain W151 Ouro callback");
         drop(timer);
@@ -41704,12 +41772,21 @@ exit 72
         let ticks = Rc::new(Cell::new(0_u16));
         let seen_ticks = Rc::clone(&ticks);
         let timer = slint::Timer::default();
-        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
-            if weak.upgrade().is_some() && path.exists() { seen.set(true); let _ = slint::quit_event_loop(); }
-            let next = seen_ticks.get().saturating_add(1);
-            seen_ticks.set(next);
-            if next >= 500 { let _ = slint::quit_event_loop(); }
-        });
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                if weak.upgrade().is_some() && path.exists() {
+                    seen.set(true);
+                    let _ = slint::quit_event_loop();
+                }
+                let next = seen_ticks.get().saturating_add(1);
+                seen_ticks.set(next);
+                if next >= 500 {
+                    let _ = slint::quit_event_loop();
+                }
+            },
+        );
         let _ = window.hide();
         slint::run_event_loop_until_quit().expect("wait for W151 Ouro child");
         drop(timer);
@@ -41718,7 +41795,10 @@ exit 72
 
     #[cfg(not(windows))]
     fn w151_ouro_call_count(calls: &Path) -> usize {
-        w116_call_lines(calls).iter().filter(|line| line.as_str() == "ouro-verify-q8").count()
+        w116_call_lines(calls)
+            .iter()
+            .filter(|line| line.as_str() == "ouro-verify-q8")
+            .count()
     }
 
     #[cfg(target_os = "macos")]

@@ -25,8 +25,12 @@ const MAX_PUBLIC_SUMMARY_BYTES: usize = 512;
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub(crate) enum PassiveQualitySnapshot {
-    Available { proposals: Vec<PassiveQualityProposal> },
-    Unavailable { reason: &'static str },
+    Available {
+        proposals: Vec<PassiveQualityProposal>,
+    },
+    Unavailable {
+        reason: &'static str,
+    },
 }
 
 /// Compact proposal identity/status plus the exact W142 core quality readback.
@@ -88,7 +92,8 @@ fn recovery_domains_clear(home: &Path) -> bool {
     // This helper is expressly read-only: no mutation lock, metadata creation,
     // cleanup, or reconciliation. An inspection error is conservatively not
     // clear, because Buddy must not report success from partial authority.
-    match crate::skills::installer::skill_mutation_recovery_pending_read_only(&home.join("skills")) {
+    match crate::skills::installer::skill_mutation_recovery_pending_read_only(&home.join("skills"))
+    {
         Ok(false) => {}
         Ok(true) | Err(_) => return false,
     }
@@ -176,7 +181,10 @@ mod tests {
 
         let snapshot = quality_snapshot(home.path());
 
-        assert!(matches!(snapshot, PassiveQualitySnapshot::Unavailable { .. }));
+        assert!(matches!(
+            snapshot,
+            PassiveQualitySnapshot::Unavailable { .. }
+        ));
         assert_eq!(
             std::fs::read(&journal).expect("passive observation retains journal"),
             before,
@@ -210,8 +218,14 @@ mod tests {
 
         let snapshot = quality_snapshot(home.path());
 
-        assert!(matches!(snapshot, PassiveQualitySnapshot::Unavailable { .. }));
-        assert!(journal.exists(), "final probe must not recover the observed journal");
+        assert!(matches!(
+            snapshot,
+            PassiveQualitySnapshot::Unavailable { .. }
+        ));
+        assert!(
+            journal.exists(),
+            "final probe must not recover the observed journal"
+        );
         assert!(
             !super::super::state_lock_path(home.path()).exists(),
             "final recovery probe must remain lock-free"
@@ -236,8 +250,14 @@ mod tests {
             panic!("clear recovery state and strict raw proposal must be available");
         };
         assert_eq!(proposals.len(), 1);
-        assert_eq!(proposals[0].id, proposal.id, "id must not be redacted or clipped");
-        assert_eq!(proposals[0].skill, proposal.skill, "skill must not be redacted or clipped");
+        assert_eq!(
+            proposals[0].id, proposal.id,
+            "id must not be redacted or clipped"
+        );
+        assert_eq!(
+            proposals[0].skill, proposal.skill,
+            "skill must not be redacted or clipped"
+        );
         assert_eq!(proposals[0].status, super::super::ProposalStatus::Pending);
         assert_eq!(
             proposals[0].quality.state,

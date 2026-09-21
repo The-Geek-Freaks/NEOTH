@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use slint::ComponentHandle;
 
-use super::gui_action::{OuroQ8VerifyError, OuroQ8VerifyOutcome};
 use super::MainWindow;
+use super::gui_action::{OuroQ8VerifyError, OuroQ8VerifyOutcome};
 
 static VERIFY_ACTIVE: AtomicBool = AtomicBool::new(false);
 static VERIFY_REVISION: AtomicU64 = AtomicU64::new(0);

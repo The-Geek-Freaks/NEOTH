@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W149-W151-W152-passive-quality-q8-and-hosted-regressions",
-  "base": "3ad404cab5e39629901333d6e293b5aa55b04583",
-  "capturedUtc": "2026-09-21T12:20:34.364319Z",
-  "validationStatus": "INDEPENDENT_SOURCE_REVIEW_HOSTED_EXECUTION_REQUIRED",
+  "base": "53767f9a922c5367c925393d9993fccbc05572d9",
+  "capturedUtc": "2026-09-21T12:28:44.6902404Z",
+  "validationStatus": "HOSTED_FORMAT_IMPORTED_CURRENT_NATIVE_EXECUTION_PENDING",
   "scopeNote": "320 inputs; W149 passive Buddy quality and exact UI handoff; W151 typed Q8 GUI verification; W152 actual hosted Windows failure repairs. No local executable validation or Road closure.",
   "files": [
     {
@@ -259,12 +259,12 @@
     {
       "path": "SRC/neothd-gui/src/gui_action.rs",
       "bytes": 336013,
-      "sha256": "A316D6870C3162746C97476713FE302E884B628BAC68C9F46590D9355BCAFD71"
+      "sha256": "C9D8E8E72249F3C88B9EFEFBF4E290AB312F6CCFF62864F7C88BA2AE091955A8"
     },
     {
       "path": "SRC/neothd-gui/src/gui_action/ouro_q8.rs",
-      "bytes": 20458,
-      "sha256": "74C8A4D0194D990DC36EAC22D3D831875C365403F4B7285F8E9C5E1CE44A969C"
+      "bytes": 21260,
+      "sha256": "8A6164EFB6434B6BA9CAADD92B5E31548BE3867E6C932433F23A97A23F125948"
     },
     {
       "path": "SRC/neothd-gui/src/gui_chat_bridge_controller.rs",
@@ -278,18 +278,18 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1793608,
-      "sha256": "006749A3782397CCA5A1274DEED178B1901FE554FE6BE84143A7210BF5975BC4"
+      "bytes": 1794981,
+      "sha256": "E1C17850DB9771D1FEDF10F0446D10B6BDD7DB7660889B211193F2171394E1E5"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
       "bytes": 4984,
-      "sha256": "97292808297CA89ECB8D540F28F2FD996184559D0645D959C9D375A4C476BEFA"
+      "sha256": "8CCBED4C9249EEEF0E5C008B87FDEF3C2169315191330A9676FB3DC831B8CC3E"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 554575,
-      "sha256": "2E37F66A14EC2D1622017199B2AC87DEB430E66CD5A72E09E8E7F92803C87E97"
+      "bytes": 554601,
+      "sha256": "8347AC1FFE5C259DEC6C44C2E364AC36417EC70D2DD6DA4D3A5A8C89CD143B1A"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
@@ -788,8 +788,8 @@
     },
     {
       "path": "SRC/neothd/src/code_map/type_hierarchy.rs",
-      "bytes": 33786,
-      "sha256": "4AD519F1B313895D7C593E30A92F6E920C6A43E4EA5F6623F80CEF4E6BE08A10"
+      "bytes": 33894,
+      "sha256": "4E02AFE2FA1C2DC8B10574C9B1AE0AE2BAFE72340829D7E524BE477F0604922C"
     },
     {
       "path": "SRC/neothd/src/coding/classifier.rs",
@@ -1093,8 +1093,8 @@
     },
     {
       "path": "SRC/neothd/src/mcp/codegraph_server.rs",
-      "bytes": 209484,
-      "sha256": "E63DC14ABA170AD97BF54ECEBA92E9155530508027F7C7058B86D200564AB61B"
+      "bytes": 209460,
+      "sha256": "A738F1F3C504D5D90E132E157FE5A5CA7FFF4A7F030D853C90649C8CFB46A402"
     },
     {
       "path": "SRC/neothd/src/mcp/config.rs",
@@ -1363,8 +1363,8 @@
     },
     {
       "path": "SRC/neothd/src/self_improve/passive.rs",
-      "bytes": 10832,
-      "sha256": "6ABD140A741A3D4A4D8DCBA7DA6E190475316ABEDA5C3FD7CA73BFC8647131E7"
+      "bytes": 11032,
+      "sha256": "D85859B5CF97256737B7E97EF399BBD9C63FD4048F47FBA66C3194BB9EC6B41A"
     },
     {
       "path": "SRC/neothd/src/self_improve/quality.rs",

@@ -7827,8 +7827,12 @@ pub struct BuddyStatusSnap {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BuddySelfImproveQualitySnap {
-    Available { proposals: Vec<SelfImproveProposalRow> },
-    Unavailable { reason: String },
+    Available {
+        proposals: Vec<SelfImproveProposalRow>,
+    },
+    Unavailable {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Deserialize)]

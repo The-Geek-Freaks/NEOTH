@@ -12,7 +12,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 mod ouro_q8;
-pub(crate) use ouro_q8::{run_ouro_q8_verify, OuroQ8VerifyError, OuroQ8VerifyOutcome};
+pub(crate) use ouro_q8::{OuroQ8VerifyError, OuroQ8VerifyOutcome, run_ouro_q8_verify};
 
 const MAX_DIAGNOSTIC_CHARS: usize = 400;
 const EXPECTED_CATALOG_VERSION: u32 = 2;

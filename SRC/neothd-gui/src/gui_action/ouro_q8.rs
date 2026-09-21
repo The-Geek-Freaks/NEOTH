@@ -9,8 +9,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde::de::Deserializer;
 use serde::Deserialize;
+use serde::de::Deserializer;
 
 const MAX_CAPTURE_BYTES: usize = 16 * 1024;
 const MAX_FIELD_CHARS: usize = 512;
@@ -24,7 +24,10 @@ const MAX_TOTAL_UT_STEPS: usize = 8;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OuroQ8VerifyOutcome {
     Verified(OuroQ8Verified),
-    Failed { configured_quant_mode: String, detail: String },
+    Failed {
+        configured_quant_mode: String,
+        detail: String,
+    },
 }
 
 /// A transport, wire, or GUI-observation failure. `process_exit_observed` is
@@ -118,7 +121,9 @@ pub(crate) fn run_ouro_q8_verify(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| OuroQ8VerifyError::observed(format!("could not start {action}: {error}")))?;
+        .map_err(|error| {
+            OuroQ8VerifyError::observed(format!("could not start {action}: {error}"))
+        })?;
     let stdout = match child.stdout.take() {
         Some(stdout) => stdout,
         None => {
@@ -304,7 +309,8 @@ fn classify_verified(wire: OuroQ8VerifyWire) -> Result<OuroQ8VerifyOutcome, Stri
         return Err("Ouro Q8 loop steps are outside the accepted 1..=8 range".into());
     }
     let forward_digest = required_field(result.forward_digest, "forward digest")?;
-    let alternate_forward_digest = required_field(result.alternate_forward_digest, "alternate forward digest")?;
+    let alternate_forward_digest =
+        required_field(result.alternate_forward_digest, "alternate forward digest")?;
     if !super::is_canonical_sha256(&forward_digest)
         || !super::is_canonical_sha256(&alternate_forward_digest)
         || forward_digest == alternate_forward_digest
@@ -336,8 +342,9 @@ fn classify_failed(wire: OuroQ8VerifyWire) -> Result<OuroQ8VerifyOutcome, String
     let detail = result
         .detail
         .ok_or_else(|| "Ouro Q8 failed acknowledgement lacks diagnostic detail".to_string())?;
-    let detail = normalized_detail(&detail)
-        .ok_or_else(|| "Ouro Q8 failed acknowledgement has unusable diagnostic detail".to_string())?;
+    let detail = normalized_detail(&detail).ok_or_else(|| {
+        "Ouro Q8 failed acknowledgement has unusable diagnostic detail".to_string()
+    })?;
     Ok(OuroQ8VerifyOutcome::Failed {
         configured_quant_mode: wire.configured_quant_mode,
         detail,
@@ -397,20 +404,50 @@ mod tests {
 
     #[test]
     fn accepts_verified_q8_even_when_configured_none() {
-        let result = decode_ouro_q8_verify(body("none", true, &success_fields()).as_bytes(), b"", true, "Ouro Q8 verify").unwrap();
+        let result = decode_ouro_q8_verify(
+            body("none", true, &success_fields()).as_bytes(),
+            b"",
+            true,
+            "Ouro Q8 verify",
+        )
+        .unwrap();
         assert!(matches!(result, OuroQ8VerifyOutcome::Verified(ref ok) if ok.loop_steps == 4));
     }
 
     #[test]
     fn accepts_typed_nonzero_failure_without_success_identity() {
-        let result = decode_ouro_q8_verify(body("q8", false, FAILURE_FIELDS).as_bytes(), b"Error: cache missing", false, "Ouro Q8 verify").unwrap();
-        assert!(matches!(result, OuroQ8VerifyOutcome::Failed { ref detail, .. } if detail == "published cache was unavailable"));
+        let result = decode_ouro_q8_verify(
+            body("q8", false, FAILURE_FIELDS).as_bytes(),
+            b"Error: cache missing",
+            false,
+            "Ouro Q8 verify",
+        )
+        .unwrap();
+        assert!(
+            matches!(result, OuroQ8VerifyOutcome::Failed { ref detail, .. } if detail == "published cache was unavailable")
+        );
     }
 
     #[test]
     fn rejects_crossed_exit_and_verification_claims() {
-        assert!(decode_ouro_q8_verify(body("q8", false, FAILURE_FIELDS).as_bytes(), b"", true, "q8").is_err());
-        assert!(decode_ouro_q8_verify(body("q8", true, &success_fields()).as_bytes(), b"", false, "q8").is_err());
+        assert!(
+            decode_ouro_q8_verify(
+                body("q8", false, FAILURE_FIELDS).as_bytes(),
+                b"",
+                true,
+                "q8"
+            )
+            .is_err()
+        );
+        assert!(
+            decode_ouro_q8_verify(
+                body("q8", true, &success_fields()).as_bytes(),
+                b"",
+                false,
+                "q8"
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -423,7 +460,8 @@ mod tests {
             "alternate_forward_digest",
             "detail",
         ] {
-            let mut value: serde_json::Value = serde_json::from_str(&body("q8", true, &success_fields())).unwrap();
+            let mut value: serde_json::Value =
+                serde_json::from_str(&body("q8", true, &success_fields())).unwrap();
             value["result"].as_object_mut().unwrap().remove(key);
             let missing = serde_json::to_vec(&value).unwrap();
             assert!(
@@ -431,7 +469,11 @@ mod tests {
                 "missing nullable key `{key}` must fail exact decoding"
             );
         }
-        let extra = body("q8", true, &format!("{},\"unexpected\":true", success_fields()));
+        let extra = body(
+            "q8",
+            true,
+            &format!("{},\"unexpected\":true", success_fields()),
+        );
         assert!(decode_ouro_q8_verify(extra.as_bytes(), b"", true, "q8").is_err());
     }
 
@@ -447,23 +489,45 @@ mod tests {
 
     #[test]
     fn rejects_wrong_loop_mode_and_context_claims() {
-        let wrong_loop = body("q8", true, &success_fields().replace("\"loop_steps\":4", "\"loop_steps\":0"));
+        let wrong_loop = body(
+            "q8",
+            true,
+            &success_fields().replace("\"loop_steps\":4", "\"loop_steps\":0"),
+        );
         assert!(decode_ouro_q8_verify(wrong_loop.as_bytes(), b"", true, "q8").is_err());
-        let wrong_mode = body("q8", true, &success_fields()).replace("\"tested_quant_mode\":\"q8\"", "\"tested_quant_mode\":\"none\"");
+        let wrong_mode = body("q8", true, &success_fields()).replace(
+            "\"tested_quant_mode\":\"q8\"",
+            "\"tested_quant_mode\":\"none\"",
+        );
         assert!(decode_ouro_q8_verify(wrong_mode.as_bytes(), b"", true, "q8").is_err());
         let same_digest = body("q8", true, &success_fields().replace(SHA_B, SHA_A));
         assert!(decode_ouro_q8_verify(same_digest.as_bytes(), b"", true, "q8").is_err());
-        let no_forward = body("q8", true, &success_fields().replace("\"forward_checked\":true", "\"forward_checked\":false"));
+        let no_forward = body(
+            "q8",
+            true,
+            &success_fields().replace("\"forward_checked\":true", "\"forward_checked\":false"),
+        );
         assert!(decode_ouro_q8_verify(no_forward.as_bytes(), b"", true, "q8").is_err());
-        let no_context = body("q8", true, &success_fields().replace("\"context_sensitive\":true", "\"context_sensitive\":false"));
+        let no_context = body(
+            "q8",
+            true,
+            &success_fields().replace("\"context_sensitive\":true", "\"context_sensitive\":false"),
+        );
         assert!(decode_ouro_q8_verify(no_context.as_bytes(), b"", true, "q8").is_err());
     }
 
     #[test]
     fn rejects_success_data_on_typed_failure_and_normalizes_detail() {
-        let contaminated = body("q8", false, &FAILURE_FIELDS.replace("\"receipt\":null", &format!("\"receipt\":\"{SHA_A}\"")));
+        let contaminated = body(
+            "q8",
+            false,
+            &FAILURE_FIELDS.replace("\"receipt\":null", &format!("\"receipt\":\"{SHA_A}\"")),
+        );
         assert!(decode_ouro_q8_verify(contaminated.as_bytes(), b"", false, "q8").is_err());
-        assert_eq!(normalized_detail("  cache\n unavailable  ").as_deref(), Some("cache  unavailable"));
+        assert_eq!(
+            normalized_detail("  cache\n unavailable  ").as_deref(),
+            Some("cache  unavailable")
+        );
     }
 
     #[test]
@@ -503,10 +567,13 @@ mod tests {
         finished_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         let err = result.unwrap_err();
         assert!(err.process_exit_observed);
-        assert!(err.detail.contains("did not close before the observation deadline"));
+        assert!(
+            err.detail
+                .contains("did not close before the observation deadline")
+        );
 
-        let capture = read_bounded(std::io::Cursor::new(vec![b'x'; MAX_CAPTURE_BYTES + 100]))
-            .unwrap();
+        let capture =
+            read_bounded(std::io::Cursor::new(vec![b'x'; MAX_CAPTURE_BYTES + 100])).unwrap();
         assert!(capture.truncated);
         assert_eq!(capture.bytes.len(), MAX_CAPTURE_BYTES);
     }
