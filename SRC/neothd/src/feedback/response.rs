@@ -4,7 +4,9 @@
 //! their explicit terminal session binding, revision, fixed signal, and time.
 
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -118,6 +120,7 @@ struct StoredProjection {
     targets: Vec<StoredTarget>,
 }
 
+#[cfg(test)]
 fn store_path(home: &Path) -> PathBuf {
     home.join(STORE_DIR).join(STORE_FILE)
 }

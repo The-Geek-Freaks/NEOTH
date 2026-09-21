@@ -4425,8 +4425,7 @@ fn recall_chip_batch_frame_line(
             let source_state = match row.source_state {
                 RecallChipSourceState::Available => "available",
                 RecallChipSourceState::Missing => "missing",
-                RecallChipSourceState::Revoked => "revoked",
-                RecallChipSourceState::Untrusted => "untrusted",
+               RecallChipSourceState::Untrusted => "untrusted",
             };
             let score = match row.score {
                 RecallChipScore::WarmHit(score)
@@ -12816,6 +12815,7 @@ async fn maybe_recall_block_at(
 /// Render the same untrusted memory envelope for session-start preparation and
 /// the direct helper fixtures. Deduplication is deterministic and preserves
 /// canonical facts ahead of matching episodes.
+#[cfg(test)]
 pub(crate) fn render_preloaded_recall(
     output: &mut crate::cli::recall::RecallOutput,
 ) -> crate::pipeline::RenderedUntrustedContext {
@@ -12868,6 +12868,7 @@ fn recall_lanes_for_block(
 /// lanes' own `text_hash` fields are deliberately NOT reused: they hash
 /// different inputs per lane (bare statement vs WAL payload envelope), so they
 /// cannot be compared across lanes.
+#[cfg(test)]
 fn dedup_recall_lanes(out: &mut crate::cli::recall::RecallOutput) {
     let mut seen: std::collections::HashSet<u64> = out
         .canonical
@@ -15859,7 +15860,7 @@ mod tests {
             ],
         };
         let frame: serde_json::Value = serde_json::from_str(
-            recall_chip_batch_frame_line("0123456789abcdef0123456789abcdef", &batch).unwrap(),
+            &recall_chip_batch_frame_line("0123456789abcdef0123456789abcdef", &batch).unwrap(),
         )
         .unwrap();
         let rows = frame["rows"].as_array().unwrap();
@@ -15882,7 +15883,7 @@ mod tests {
             (RecallChipBatchStatus::Incognito, "incognito"),
         ] {
             let frame: serde_json::Value = serde_json::from_str(
-                recall_chip_batch_frame_line(token, &RecallChipBatch::unavailable(status)).unwrap(),
+                &recall_chip_batch_frame_line(token, &RecallChipBatch::unavailable(status)).unwrap(),
             )
             .unwrap();
             assert_eq!(frame["status"], wire_status);

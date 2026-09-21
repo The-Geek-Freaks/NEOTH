@@ -8,6 +8,26 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+The six-path c0ac repair is independently source-approved: fixture-only helpers
+are test-gated, the two JSON inputs are borrowed, and the stale recall assertion
+uses the enriched output. The WAL append request is boxed with every producer,
+returned-error/once/quota path and writer consumer updated consistently. The
+public GUI revoked-state vocabulary remains intact. These source repairs need
+fresh Hosted compilation; W166-W168 remain excluded from this repair admission.
+
+**W164/W165 full-CI follow-up and active GUI gaps (2026-09-21):**
+Full CI35646209730 on c0ac066e is confirmed cancelled after eight successful
+component jobs and two substantive failures. The adapter lane exposed three
+libtest compile errors (a stale recall fixture variable and two missing string
+borrows); slim Clippy exposed six unused/test-only items and the large writer
+request enum. Retained source-bound logs and targeted repairs remain required.
+Current source inspection also found that the installed daemon-GUI controller
+bypasses the legacy W163 recall and W162 throughput control paths. W167/W168 are completing
+the transport of those existing typed producer states through the active bridge;
+source integration and hosted/real callback acceptance remain pending.
+W166's 31-row channel inventory is under scoped review; planned adoption and
+current adapter support must remain distinct. No new Road item is closed.
+
 **W164 build/reference and quick gates (2026-09-21):** sourcecc8a6609 passed
 GitHub CLI build/reference35645438626. Its source/SHA-bound generated reference
 is imported byte-for-byte (D4026EA859078483FB3055064A75286ECBB460EC999A3D233AC7B2726768321F).

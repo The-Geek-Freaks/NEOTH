@@ -4,6 +4,7 @@
 //! the exact final Stage-3 score and snapshot-local source identity long enough
 //! for a later authenticated chat producer to derive a content-free batch.
 
+#[cfg(test)]
 use crate::memory::recall_lanes::ScoredHit;
 use crate::memory::views::EpisodeHit;
 
@@ -55,7 +56,6 @@ pub(crate) enum RecallChipTier {
 pub(crate) enum RecallChipSourceState {
     Available,
     Missing,
-    Revoked,
     Untrusted,
 }
 
@@ -129,6 +129,7 @@ impl RecallPresentationHit {
     /// is retained only as an explicit untrusted state; it cannot become a
     /// fabricated event reference or a visible score.
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn from_final_scored(scored: ScoredHit, source: RecallSourceRef) -> Self {
         let (hit, final_score) = scored.into_presentation_parts();
         Self::from_final_parts(hit, final_score, source)

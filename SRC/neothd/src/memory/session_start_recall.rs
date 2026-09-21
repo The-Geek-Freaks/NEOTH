@@ -1330,7 +1330,7 @@ mod tests {
             RECALL_LANE_LIMIT,
         )
         .unwrap();
-        assert!(!output.is_empty());
+        assert!(!recall.output.is_empty());
         let mut expired = WorkerControl::new();
         expired.deadline = std::time::Instant::now() - Duration::from_millis(1);
         install_query_cancellation(&reader.conn, &Arc::new(expired));

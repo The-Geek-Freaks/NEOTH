@@ -490,7 +490,7 @@ pub struct WriteRequest {
 /// not encoded as a synthetic WAL frame: it is only a FIFO durability barrier
 /// for frames that were already admitted to this writer.
 enum WriterRequest {
-    Append(WriteRequest),
+    Append(Box<WriteRequest>),
     Flush {
         ack: oneshot::Sender<Result<(), WalError>>,
     },
@@ -1472,7 +1472,7 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(error) = self.tx.send(WriterRequest::Append(request)).await {
+        if let Err(error) = self.tx.send(WriterRequest::Append(Box::new(request))).await {
             error.0.release_unqueued();
             return Err(WalError::WriterClosed);
         }
@@ -1516,7 +1516,7 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(request)) {
+        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(Box::new(request))) {
             error.0.release_unqueued();
             return Err(WalError::WriterClosed);
         }
@@ -1594,7 +1594,7 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(request)) {
+        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(Box::new(request))) {
             if let WriterRequest::Append(mut request) = error.0 {
                 let once = request
                     .context_evidence_receipt_once
@@ -1762,7 +1762,7 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(request))
+        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(Box::new(request)))
             && let WriterRequest::Append(mut request) = error.0
             && let Some(once) = request.transcript_mining_once.take()
         {
@@ -1823,7 +1823,7 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(request))
+        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(Box::new(request)))
             && let WriterRequest::Append(mut request) = error.0
             && let Some(once) = request.trust_decision_once.take()
         {
@@ -1906,7 +1906,7 @@ impl WalWriterHandle {
             None
         };
         let (ack_tx, _ack_rx_drop) = oneshot::channel();
-        match self.tx.try_send(WriterRequest::Append(WriteRequest {
+        match self.tx.try_send(WriterRequest::Append(Box::new(WriteRequest {
             header,
             payload,
             ack: ack_tx,
@@ -1919,7 +1919,7 @@ impl WalWriterHandle {
             test_ack_gate: self.test_ack_gate.clone(),
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
-        })) {
+        }))) {
             Ok(()) => Ok(()),
             Err(mpsc::error::TrySendError::Full(request)) => {
                 request.release_unqueued();
@@ -1970,7 +1970,7 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(error) = self.tx.send(WriterRequest::Append(request)).await {
+        if let Err(error) = self.tx.send(WriterRequest::Append(Box::new(request))).await {
             error.0.release_unqueued();
             return Err(WalError::WriterClosed);
         }
@@ -4379,7 +4379,7 @@ async fn run_writer(
 
     while let Some(request) = rx.recv().await {
         let mut req = match request {
-            WriterRequest::Append(request) => request,
+            WriterRequest::Append(request) => *request,
             WriterRequest::Flush { ack } => {
                 if let Err(error) = validate_hmac_writer_authority(hmac_authority.as_ref()) {
                     let reason = error.to_string();
@@ -7705,7 +7705,7 @@ mod tests {
         let (ack_tx, ack_rx) = oneshot::channel();
         writer
             .tx
-            .send(WriterRequest::Append(WriteRequest {
+            .send(WriterRequest::Append(Box::new(WriteRequest {
                 header: header_for(payload.len() as u32, 91),
                 payload: payload.clone(),
                 ack: ack_tx,
@@ -7716,7 +7716,7 @@ mod tests {
                 quota_admission: Some(quota_admission),
                 test_ack_gate: None,
                 test_receipt_decision_gate: None,
-            }))
+            })))
             .await
             .expect("enqueue the already-admitted request after reset");
         ack_rx

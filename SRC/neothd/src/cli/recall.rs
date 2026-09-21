@@ -1628,6 +1628,7 @@ pub(crate) fn query_three_lanes(
 /// Error-preserving variant for telemetry-sensitive callers. A "true miss"
 /// is only observable when all three queries succeeded and returned empty;
 /// collapsing a SQLite error into an empty lane would fabricate that signal.
+#[cfg(test)]
 pub(crate) fn query_three_lanes_checked(
     conn: &Connection,
     plan: &crate::memory::region_router::RouterPlan,
