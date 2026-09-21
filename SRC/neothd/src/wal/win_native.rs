@@ -782,6 +782,122 @@ pub(crate) fn create_private_child_file_relative(
     Ok(owned.into_file())
 }
 
+/// Open or atomically create one exact private directory child below an
+/// already-pinned directory capability.
+///
+/// `NtCreateFile` resolves `leaf` from the retained parent handle. On creation
+/// the protected inheritable TokenUser DACL is supplied before the child is
+/// observable. With `FILE_OPEN_IF`, an existing child is opened but its DACL
+/// is never changed; its exact returned handle must already satisfy the same
+/// private-directory contract.
+pub(crate) fn open_or_create_private_child_directory_relative<P: AsRawHandle + ?Sized>(
+    parent: &P,
+    leaf: &OsStr,
+) -> io::Result<cap_std::fs::Dir> {
+    let parent = checked_raw_handle(parent)?;
+    let mut wide: Vec<u16> = leaf.encode_wide().collect();
+    if wide.is_empty()
+        || wide.len() > (u16::MAX as usize / 2)
+        || wide.iter().any(|unit| {
+            *unit == 0 || *unit == b'\\' as u16 || *unit == b'/' as u16 || *unit == b':' as u16
+        })
+        || wide == [b'.' as u16]
+        || wide == [b'.' as u16, b'.' as u16]
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "private directory child must be one non-empty NT leaf",
+        ));
+    }
+
+    let sid = current_process_token_sid()?;
+    let inheritance = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
+    let acl = single_trustee_acl(
+        sid.as_ptr().cast_mut().cast(),
+        TRUSTEE_IS_SID,
+        inheritance,
+    )?;
+    let mut descriptor: SECURITY_DESCRIPTOR = unsafe { std::mem::zeroed() };
+    let descriptor_ptr = std::ptr::addr_of_mut!(descriptor).cast::<c_void>();
+    // SAFETY: `descriptor_ptr` addresses live, correctly sized writable
+    // storage; the revision is the documented SECURITY_DESCRIPTOR value.
+    if unsafe { InitializeSecurityDescriptor(descriptor_ptr, 1) } == 0 {
+        return Err(last_win32_error(
+            "InitializeSecurityDescriptor(private directory child)",
+        ));
+    }
+    if unsafe { SetSecurityDescriptorOwner(descriptor_ptr, sid.as_ptr().cast_mut().cast(), 0) } == 0
+    {
+        return Err(last_win32_error(
+            "SetSecurityDescriptorOwner(private directory child)",
+        ));
+    }
+    // SAFETY: the initialized descriptor and ACL remain live through the
+    // native create/open call. NT reads the descriptor but does not retain it.
+    if unsafe { SetSecurityDescriptorDacl(descriptor_ptr, 1, acl.0, 0) } == 0
+        || unsafe {
+            SetSecurityDescriptorControl(descriptor_ptr, SE_DACL_PROTECTED, SE_DACL_PROTECTED)
+        } == 0
+    {
+        return Err(last_win32_error("set protected private directory child DACL"));
+    }
+
+    let name_bytes = u16::try_from(wide.len() * 2).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "private directory child leaf is too long",
+        )
+    })?;
+    let mut name = crate::windows_nt::NtUnicodeString {
+        length: name_bytes,
+        maximum_length: name_bytes,
+        buffer: wide.as_mut_ptr(),
+    };
+    let attributes = crate::windows_nt::NtObjectAttributes {
+        length: std::mem::size_of::<crate::windows_nt::NtObjectAttributes>() as u32,
+        root_directory: parent,
+        object_name: &mut name,
+        attributes: 0x40,
+        security_descriptor: descriptor_ptr,
+        security_quality_of_service: std::ptr::null_mut(),
+    };
+    let mut status = crate::windows_nt::NtIoStatusBlock::zeroed();
+    let mut raw = std::ptr::null_mut();
+    // SAFETY:
+    // - `parent` is a checked live directory-capability handle, and `leaf` is
+    //   one validated child component rooted at that handle.
+    // - descriptor, ACL, name, attributes, and status remain live for the
+    //   call; `raw` is valid writable output storage.
+    // - FILE_DIRECTORY_FILE and FILE_OPEN_REPARSE_POINT expose a final
+    //   reparse point rather than following it; the identity proof rejects it.
+    // - FILE_OPEN_IF uses the supplied DACL only for a newly-created child and
+    //   never changes an existing child's DACL. Delete sharing is withheld.
+    let nt_status = unsafe {
+        crate::windows_nt::NtCreateFile(
+            &mut raw,
+            FILE_LIST_DIRECTORY | READ_CONTROL | 0x0010_0000,
+            &attributes,
+            &mut status,
+            std::ptr::null(),
+            FILE_ATTRIBUTE_DIRECTORY,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            3,
+            0x0000_0001 | 0x0020_0000 | 0x20,
+            std::ptr::null(),
+            0,
+        )
+    };
+    if nt_status < 0 {
+        return Err(io::Error::other(format!(
+            "NtCreateFile(private directory child) failed with NTSTATUS {nt_status:#010x}"
+        )));
+    }
+    let owned = OwnedHandle(raw);
+    private_directory_identity(raw)?;
+    verify_private_directory_handle_for_sid(raw, &sid)?;
+    Ok(cap_std::fs::Dir::from_std_file(owned.into_file()))
+}
+
 /// Delete one exact child below a pinned parent without resolving a path.
 pub(crate) fn delete_private_child_file_relative(parent: HANDLE, leaf: &OsStr) -> io::Result<()> {
     let file = create_private_child_file_relative(
@@ -962,6 +1078,12 @@ pub fn create_private_directory_new(path: &Path) -> io::Result<()> {
     // SAFETY: `path_w` is a live null-terminated UTF-16 path and every pointer
     // reachable from `security_attributes` stays live for the call.
     if unsafe { CreateDirectoryW(path_w.as_ptr(), &security_attributes) } == 0 {
+        // SAFETY: this reads the calling thread's last-error slot immediately
+        // after the failed CreateDirectoryW call above.
+        let code = unsafe { GetLastError() };
+        if code == ERROR_ALREADY_EXISTS {
+            return Err(io::Error::from_raw_os_error(code as i32));
+        }
         return Err(last_win32_error("CreateDirectoryW"));
     }
 
@@ -1925,6 +2047,18 @@ mod tests {
         )
         .expect_err("deleted child must not be reopened through the capability");
         assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn private_directory_create_preserves_typed_existing_collision() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("private-directory-collision");
+        create_private_directory_new(&path).expect("create the private directory once");
+
+        let error = create_private_directory_new(&path)
+            .expect_err("a second create must report the existing directory");
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(error.raw_os_error(), Some(ERROR_ALREADY_EXISTS as i32));
     }
 
     #[test]

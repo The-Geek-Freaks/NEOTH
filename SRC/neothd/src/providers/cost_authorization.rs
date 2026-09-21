@@ -6343,7 +6343,10 @@ mod tests {
         );
         assert_eq!(
             permit_constructors,
-            ["mod.rs", "mod.rs", "mod.rs", "mod.rs"],
+            // Authorized complete, legacy stream, and typed event stream, plus
+            // their three inline cfg(test) compatibility entries. The scan
+            // retains these inline test blocks but excludes the test module.
+            ["mod.rs", "mod.rs", "mod.rs", "mod.rs", "mod.rs", "mod.rs"],
             "raw transport permits must only be minted inside the mandatory authorization boundary (plus cfg(test) compatibility paths)"
         );
     }
@@ -6427,7 +6430,11 @@ mod tests {
         assert!(central.contains("HeaderBuilder::new(event_type"));
         assert_eq!(
             babel_submitters,
+            // Complete, legacy chunks, and typed events each sample only
+            // visible text after successful terminal accounting. The event
+            // wrapper excludes reasoning and preserves the incognito gate.
             [
+                "providers/cost_authorization.rs",
                 "providers/cost_authorization.rs",
                 "providers/cost_authorization.rs",
             ],

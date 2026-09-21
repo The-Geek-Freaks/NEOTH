@@ -16499,15 +16499,27 @@ mod tests {
             .terminal(LiveThroughputUnavailable::Cancelled, &mut sink, Some(token))
             .unwrap();
 
-        let frames = sink
-            .0
-            .into_iter()
-            .map(|event| match event {
-                ChatTurnEvent::Output(ChatOutput::StreamFrames { frames }) => frames,
-                other => panic!("unexpected throughput presentation event: {other:?}"),
-            })
-            .map(|frames| {
-                serde_json::from_str::<serde_json::Value>(
+        let presentation = sink.0;
+        assert_eq!(
+            presentation.len(),
+            8,
+            "every throughput transition has one typed presentation event followed by one authenticated wire frame"
+        );
+        let frames = presentation
+            .chunks_exact(2)
+            .map(|pair| {
+                let (throughput_sequence, state) = match &pair[0] {
+                    ChatTurnEvent::Output(ChatOutput::LiveThroughputState {
+                        throughput_sequence,
+                        state,
+                    }) => (*throughput_sequence, *state),
+                    other => panic!("expected typed throughput presentation event: {other:?}"),
+                };
+                let frames = match &pair[1] {
+                    ChatTurnEvent::Output(ChatOutput::StreamFrames { frames }) => frames,
+                    other => panic!("expected authenticated throughput wire frame: {other:?}"),
+                };
+                let frame = serde_json::from_str::<serde_json::Value>(
                     frames
                         .lines()
                         .find(|line| !line.is_empty())
@@ -16515,7 +16527,27 @@ mod tests {
                         .strip_prefix(CHAT_STREAM_CONTROL_PREFIX)
                         .unwrap(),
                 )
-                .unwrap()
+                .unwrap();
+                let (wire_state, wire_reason) = match state {
+                    LiveThroughputState::Measuring { .. } => ("measuring", None),
+                    LiveThroughputState::Paused { .. } => ("paused", None),
+                    LiveThroughputState::Unavailable(
+                        LiveThroughputUnavailable::NoVisibleEvents,
+                    ) => ("unavailable", Some("no_visible_events")),
+                    LiveThroughputState::Unavailable(
+                        LiveThroughputUnavailable::NoUsageReported,
+                    ) => ("unavailable", Some("no_usage_reported")),
+                    LiveThroughputState::Unavailable(LiveThroughputUnavailable::Cancelled) => {
+                        ("cancelled", Some("cancelled"))
+                    }
+                    LiveThroughputState::Unavailable(LiveThroughputUnavailable::StreamError) => {
+                        ("error", Some("stream_error"))
+                    }
+                };
+                assert_eq!(frame["sequence"].as_u64(), Some(throughput_sequence));
+                assert_eq!(frame["state"], wire_state);
+                assert_eq!(frame["reason"], serde_json::json!(wire_reason));
+                frame
             })
             .collect::<Vec<_>>();
         assert_eq!(
@@ -19999,10 +20031,37 @@ modes:
         expected_state: &str,
         expected_reason: &str,
     ) -> Vec<ChatTurnEvent> {
-        events
-            .iter()
-            .filter_map(|event| match event {
-                ChatTurnEvent::Output(ChatOutput::StreamFrames { frames }) => {
+        use crate::daemon::live_throughput::{LiveThroughputState, LiveThroughputUnavailable};
+
+        let expected_typed_state = match (expected_state, expected_reason) {
+            ("error", "stream_error") => {
+                LiveThroughputState::Unavailable(LiveThroughputUnavailable::StreamError)
+            }
+            ("cancelled", "cancelled") => {
+                LiveThroughputState::Unavailable(LiveThroughputUnavailable::Cancelled)
+            }
+            unexpected => panic!("unsupported terminal throughput fixture state: {unexpected:?}"),
+        };
+        let mut filtered = Vec::new();
+        let mut index = 0;
+        let mut throughput_pairs = 0;
+        while let Some(event) = events.get(index) {
+            match event {
+                ChatTurnEvent::Output(ChatOutput::LiveThroughputState {
+                    throughput_sequence,
+                    state,
+                }) => {
+                    assert_eq!(
+                        *throughput_sequence, 1,
+                        "the terminal-only fixture owns exactly the first throughput sequence"
+                    );
+                    assert_eq!(*state, expected_typed_state);
+                    let ChatTurnEvent::Output(ChatOutput::StreamFrames { frames }) = events
+                        .get(index + 1)
+                        .expect("typed throughput state must be followed by its wire frame")
+                    else {
+                        panic!("typed throughput state must be followed by its wire frame");
+                    };
                     let controls = frames
                         .lines()
                         .filter_map(|line| line.strip_prefix(CHAT_STREAM_CONTROL_PREFIX))
@@ -20020,13 +20079,26 @@ modes:
                     assert_eq!(control["neoth_stream"], "throughput_state");
                     assert_eq!(control["protocol_version"], CHAT_STREAM_PROTOCOL_VERSION);
                     assert_eq!(control["control_token"], "0123456789abcdef0123456789abcdef");
+                    assert_eq!(control["sequence"].as_u64(), Some(*throughput_sequence));
                     assert_eq!(control["state"], expected_state);
                     assert_eq!(control["reason"], expected_reason);
-                    None
+                    throughput_pairs += 1;
+                    index += 2;
                 }
-                event => Some(event.clone()),
-            })
-            .collect()
+                ChatTurnEvent::Output(ChatOutput::StreamFrames { .. }) => {
+                    panic!("throughput wire frame must have a preceding typed presentation event")
+                }
+                event => {
+                    filtered.push(event.clone());
+                    index += 1;
+                }
+            }
+        }
+        assert_eq!(
+            throughput_pairs, 1,
+            "each terminal reasoning fixture emits exactly one terminal throughput pair"
+        );
+        filtered
     }
 
     /// Drive the real `dispatch_provider` streaming boundary with a recording

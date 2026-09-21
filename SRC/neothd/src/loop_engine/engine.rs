@@ -1181,7 +1181,10 @@ mod tests {
         assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
 
-        let capped_wal = home.path().join("wal").join("loop-cap-forwarding.wal");
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let capped_wal =
+            crate::wal::writer::unique_standalone_segment_path(&wal_dir, "loop-cap-forwarding");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(capped_wal.clone(), home.path().to_path_buf())
                 .unwrap();

@@ -510,6 +510,9 @@ mod tests {
     #[tokio::test]
     async fn contextual_dispatch_copies_one_parent_wal_session_to_every_child() {
         let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        std::fs::write(wal_dir.join("hmac.key"), [7_u8; 32]).unwrap();
         let session =
             WalSessionContext::from_admitted_identity(home.path(), b"trusted\0parent\0turn")
                 .unwrap();

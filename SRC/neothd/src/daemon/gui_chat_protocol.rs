@@ -1776,7 +1776,7 @@ mod tests {
                     reason: GuiChatThroughputUnavailable::NoVisibleEvents,
                 },
             )),
-            Err(GuiChatProtocolError::Invalid("throughput_sequence"))
+            Err(GuiChatProtocolError::Invalid("sequence_zero"))
         ));
         assert!(matches!(
             validate_stream_frame(&frame(

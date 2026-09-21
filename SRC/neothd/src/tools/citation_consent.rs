@@ -267,6 +267,30 @@ fn verify_private_store_dir(dir: &cap_std::fs::Dir, display_path: &Path) -> Resu
     Ok(())
 }
 
+#[cfg(windows)]
+fn open_or_create_private_store_child(
+    parent: &cap_std::fs::Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<cap_std::fs::Dir> {
+    crate::wal::win_native::open_or_create_private_child_directory_relative(parent, name)
+        .with_context(|| {
+            format!(
+                "open or create private citation consent directory {}",
+                display_path.display()
+            )
+        })
+}
+
+#[cfg(not(windows))]
+fn open_or_create_private_store_child(
+    parent: &cap_std::fs::Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<cap_std::fs::Dir> {
+    crate::skills::store::open_or_create_private_child_dir(parent, name, display_path)
+}
+
 /// Build the record/lock namespace from the trusted NEOTH home capability.
 /// Every component below `home` is opened or created no-follow, then both
 /// private descendants are checked through their retained directory handles.
@@ -280,7 +304,7 @@ fn record_slot(home: &Path, kind_domain: &[u8], id: &str) -> Result<CitationReco
     )?
     .ok_or_else(|| anyhow::anyhow!("citation consent parent is unavailable"))?;
     let root_path = store_dir(home);
-    let root = crate::skills::store::open_or_create_private_child_dir(
+    let root = open_or_create_private_store_child(
         &consent.dir,
         OsStr::new(".gui-citation"),
         &root_path,
@@ -293,7 +317,7 @@ fn record_slot(home: &Path, kind_domain: &[u8], id: &str) -> Result<CitationReco
     } else {
         anyhow::bail!("invalid citation consent record domain")
     };
-    let dir = crate::skills::store::open_or_create_private_child_dir(
+    let dir = open_or_create_private_store_child(
         &root,
         OsStr::new(child_name),
         &child_path,
@@ -915,6 +939,29 @@ mod tests {
             now,
         )
         .unwrap()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn existing_public_citation_store_directory_fails_closed_without_dacl_upgrade() {
+        let home = tempfile::tempdir().unwrap();
+        let root = store_dir(home.path());
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(crate::wal::win_native::verify_private_directory_dacl(&root).is_err());
+
+        assert!(
+            create_challenge_at(
+                home.path(),
+                &query(),
+                "the concrete claim",
+                "gui-revision-7",
+                &config_hash(TEST_CONFIG_A),
+                100,
+            )
+            .is_err(),
+            "an existing inherited-DACL store directory must be rejected"
+        );
+        assert!(crate::wal::win_native::verify_private_directory_dacl(&root).is_err());
     }
 
     #[test]

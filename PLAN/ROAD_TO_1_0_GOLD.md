@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W178 Windows integration repairs (2026-09-22):** CI35658155763's completed
+Windows job compiled and ran13,607 tests (13,587 pass/20 fail;3,542 not run).
+Independently reviewed repairs preserve exact reasoning/throughput contracts,
+canonical WAL and installed-agent fixture scope, and reviewed provider lifecycle
+boundaries. Windows citation stores now create protected directories relative
+to retained parent capabilities, reject unsafe existing directories without
+changing their DACLs, and preserve typed cache-collision errors. Two new Windows
+regressions plus the two missing provider-inventory identities are registered.
+A fresh Hosted full CI remains required; no checkbox closes. See
+[W178](../docs/gold-wave178-verification.md). W177 dataset export is mapped and
+has not changed production source.
 **W175 Hippocampus selection (2026-09-22):** independently reviewed source
 adds default-off memory.hippocampus.enabled, fixed inclusive importance >=0.75,
 transactional event-id membership and additive views v40-to-v41 migration.
