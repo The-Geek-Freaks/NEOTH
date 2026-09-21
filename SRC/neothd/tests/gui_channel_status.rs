@@ -228,8 +228,9 @@ fn legacy_telegram_migration_gui_command_parses_with_the_real_cli() {
         "default",
     )
     .expect("build the production GUI legacy migration command");
-    let parsed = Cli::try_parse_from(std::iter::once(command.get_program()).chain(command.get_args()))
-        .expect("the real CLI must accept the GUI legacy migration argv");
+    let parsed =
+        Cli::try_parse_from(std::iter::once(command.get_program()).chain(command.get_args()))
+            .expect("the real CLI must accept the GUI legacy migration argv");
     assert!(matches!(parsed.output, OutputFormat::Json));
     match parsed.command {
         Commands::Channel {
@@ -240,7 +241,11 @@ fn legacy_telegram_migration_gui_command_parses_with_the_real_cli() {
         }
         _ => panic!("GUI command must select the canonical legacy migration action"),
     }
-    for (channel, account) in [("slack", "default"), ("telegram", ""), ("telegram", "DEFAULT")] {
+    for (channel, account) in [
+        ("slack", "default"),
+        ("telegram", ""),
+        ("telegram", "DEFAULT"),
+    ] {
         assert!(
             panel_logic::telegram_migrate_legacy_command(
                 std::path::Path::new("neoth"),

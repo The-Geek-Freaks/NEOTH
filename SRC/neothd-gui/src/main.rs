@@ -37946,8 +37946,8 @@ mod w58_gui_callback_runtime_tests {
         publish_code_map_enrichment_readiness, register_buddy_code_map_impact_callback,
         register_buddy_code_map_status_callback, register_buddy_native_coding_callbacks,
         register_channel_account_dm_pairing_callback, register_channel_account_retirement_callback,
-        register_channel_pairing_approval_callback, register_channel_pairing_request_callbacks,
-        register_channel_legacy_migration_callback,
+        register_channel_legacy_migration_callback, register_channel_pairing_approval_callback,
+        register_channel_pairing_request_callbacks,
         register_code_map_enrichment_readiness_callbacks, start_code_map_lifecycle_config_apply,
         start_code_map_lifecycle_refresh, which_neothd,
     };
@@ -39735,15 +39735,22 @@ exit 72
             },
         );
         let _ = window.hide();
-        slint::run_event_loop_until_quit().expect("pump bounded legacy-migration callback event loop");
+        slint::run_event_loop_until_quit()
+            .expect("pump bounded legacy-migration callback event loop");
         drop(timer);
-        assert!(settled.get(), "timed out waiting for legacy-migration callback settlement");
+        assert!(
+            settled.get(),
+            "timed out waiting for legacy-migration callback settlement"
+        );
     }
 
     #[cfg(not(windows))]
     fn w130_wait_for_migration_start(calls: &Path) {
         for _ in 0..500 {
-            if w116_call_lines(calls).iter().any(|line| line == "migrate:ops_b") {
+            if w116_call_lines(calls)
+                .iter()
+                .any(|line| line == "migrate:ops_b")
+            {
                 return;
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -39793,9 +39800,14 @@ exit 72
             },
         );
         let _ = window.hide();
-        slint::run_event_loop_until_quit().expect("drain queued stale migration inventory callback");
+        slint::run_event_loop_until_quit()
+            .expect("drain queued stale migration inventory callback");
         drop(timer);
-        assert_eq!(applied.get(), Some(false), "stale inventory snapshot must be rejected");
+        assert_eq!(
+            applied.get(),
+            Some(false),
+            "stale inventory snapshot must be rejected"
+        );
     }
 
     #[cfg(not(windows))]
@@ -40315,7 +40327,9 @@ exit 72
     #[cfg(not(windows))]
     #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt() {
-        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("serial GUI fixture environment");
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial GUI fixture environment");
         let fixture = TempDir::new().expect("create legacy-migration fixture directory");
         let bin = w116_stage_fake_neoth(&fixture);
         let mode = fixture.path().join("mode");
@@ -40323,11 +40337,15 @@ exit 72
         let migration_release = fixture.path().join("migration-release");
         std::fs::write(&calls, b"").expect("initialize fixture call log");
         std::fs::write(&mode, b"w130_blocked_malformed").expect("select blocked malformed fixture");
-        std::fs::write(fixture.path().join("inventory.json"), w116_inventory_json(&["ops_b"]))
-            .expect("write named-account refreshed inventory");
+        std::fs::write(
+            fixture.path().join("inventory.json"),
+            w116_inventory_json(&["ops_b"]),
+        )
+        .expect("write named-account refreshed inventory");
         let _path = PathGuard::install(fixture.path());
         assert_eq!(
-            std::fs::canonicalize(which_neothd().expect("resolve staged migration CLI")).expect("canonicalize resolved migration CLI"),
+            std::fs::canonicalize(which_neothd().expect("resolve staged migration CLI"))
+                .expect("canonicalize resolved migration CLI"),
             std::fs::canonicalize(&bin).expect("canonicalize staged migration CLI"),
             "the real resolver must choose this staged CLI fixture"
         );
@@ -40370,16 +40388,39 @@ exit 72
             .enumerate()
         {
             apply_channels(&window, Ok(w130_legacy_channels()));
-            assert!(!window.get_channel_migration_reconcile_required(), "explicit inventory apply must clear reconciliation before {mode_name}");
+            assert!(
+                !window.get_channel_migration_reconcile_required(),
+                "explicit inventory apply must clear reconciliation before {mode_name}"
+            );
             std::fs::write(&mode, mode_name).expect("select controlled migration outcome");
             window.invoke_channel_migrate_legacy("telegram".into(), "ops_b".into());
             assert!(window.get_channel_migration_in_flight());
             w130_pump_until_migration_settles(&window);
-            assert!(window.get_channel_migration_reconcile_required(), "{mode_name} must require reconciliation");
-            assert_eq!(w116_account_ids(&window), Vec::<String>::new(), "{mode_name} must retain legacy projection");
+            assert!(
+                window.get_channel_migration_reconcile_required(),
+                "{mode_name} must require reconciliation"
+            );
+            assert_eq!(
+                w116_account_ids(&window),
+                Vec::<String>::new(),
+                "{mode_name} must retain legacy projection"
+            );
             let call_lines = w116_call_lines(&calls);
-            assert_eq!(call_lines.iter().filter(|line| line.as_str() == "migrate:ops_b").count(), failure_index + 2);
-            assert_eq!(call_lines.iter().filter(|line| line.as_str() == "list").count(), 0, "{mode_name} must not auto-list or retry");
+            assert_eq!(
+                call_lines
+                    .iter()
+                    .filter(|line| line.as_str() == "migrate:ops_b")
+                    .count(),
+                failure_index + 2
+            );
+            assert_eq!(
+                call_lines
+                    .iter()
+                    .filter(|line| line.as_str() == "list")
+                    .count(),
+                0,
+                "{mode_name} must not auto-list or retry"
+            );
         }
 
         apply_channels(&window, Ok(w130_legacy_channels()));
@@ -40390,13 +40431,30 @@ exit 72
         assert!(!window.get_channel_migration_reconcile_required());
         assert_eq!(w116_account_ids(&window), ["ops_b"]);
         let call_lines = w116_call_lines(&calls);
-        assert_eq!(call_lines.iter().filter(|line| line.as_str() == "migrate:ops_b").count(), 5);
-        assert_eq!(call_lines.iter().filter(|line| line.as_str() == "list").count(), 1, "only the exact receipt performs canonical inventory readback");
+        assert_eq!(
+            call_lines
+                .iter()
+                .filter(|line| line.as_str() == "migrate:ops_b")
+                .count(),
+            5
+        );
+        assert_eq!(
+            call_lines
+                .iter()
+                .filter(|line| line.as_str() == "list")
+                .count(),
+            1,
+            "only the exact receipt performs canonical inventory readback"
+        );
         let stale_after_success =
             w130_queue_stale_inventory_apply(&window, stale_generation, w130_legacy_channels());
         w130_drain_queued_inventory_apply(&window, &stale_after_success);
         assert!(!window.get_channel_migration_reconcile_required());
-        assert_eq!(w116_account_ids(&window), ["ops_b"], "stale legacy inventory must not overwrite mapped rows");
+        assert_eq!(
+            w116_account_ids(&window),
+            ["ops_b"],
+            "stale legacy inventory must not overwrite mapped rows"
+        );
     }
 
     #[cfg(target_os = "macos")]

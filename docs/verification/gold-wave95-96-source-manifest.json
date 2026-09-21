@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W130-live-channel-delivery-and-legacy-migration",
   "base": "33f64007a406f91c9f49f97629b25042025e42ae",
-  "capturedUtc": "2026-09-21T07:16:12.1001416Z",
+  "capturedUtc": "2026-09-21T07:23:03.1216537Z",
   "validationStatus": "W128_W130_SOURCE_REVIEW_APPROVED_REMOTE_EXECUTION_REQUIRED",
   "scopeNote": "303 cumulative inputs. Admit only the sixteen frozen and independently reviewed W128/W130 source/workflow paths. Includes connection-owned egress, transactional migration GUI and macOS discovery binding. W131 work is excluded. Execution remains GitHub-only; no Road closure.",
   "files": [
@@ -273,8 +273,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1732374,
-      "sha256": "03D6F51436D524B6E890118A317898A4CC8250A3629AD9808A0FEECDEDF66242"
+      "bytes": 1733216,
+      "sha256": "34C2F310BBCA3F229FCB7D09D5EEBD44B6F0C88A197FAF782BA6A17F04706A56"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
@@ -648,8 +648,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
-      "bytes": 516141,
-      "sha256": "828791422AFF2A225AB98F7221239B6C398E93FDA47DFF84086505127B183528"
+      "bytes": 517367,
+      "sha256": "75E603A3F657214B5D37F667CE07A5D1493E84378A476004401A2BE4B0B1C565"
     },
     {
       "path": "SRC/neothd/src/cli/serve.rs",
@@ -913,8 +913,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/channel_live_registry.rs",
-      "bytes": 17301,
-      "sha256": "1EE5157E116AA2FE2ACB5B9A2D985B2F4536FF433B6D1EFA9ECA9FB54D4E649C"
+      "bytes": 17419,
+      "sha256": "82C26B7151AA4EC2D67A722A4A34A4573345EDBD913C474FE0E5674A6E6795BA"
     },
     {
       "path": "SRC/neothd/src/daemon/channel_runtime_health.rs",
@@ -954,7 +954,7 @@
     {
       "path": "SRC/neothd/src/daemon/mod.rs",
       "bytes": 17930,
-      "sha256": "0A0A8B5C77744FB06074C98AE2CC162089526792BB9A9ADD4E02E651371C9E1D"
+      "sha256": "CD183C05F58AB99AD99AF9003CB384DA05EAF4992D80C73A27605F1BFD02E630"
     },
     {
       "path": "SRC/neothd/src/daemon/omi_native_ingest.rs",
@@ -973,8 +973,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
-      "bytes": 116082,
-      "sha256": "964A4D2F9143398B0D16EDB6D615148718457235C36B9CB996900F08631F84EF"
+      "bytes": 116286,
+      "sha256": "BE99C703BBB71BBCD48C0D3F8D3875430E9F61AA7D5B3E06BF43C377F263C906"
     },
     {
       "path": "SRC/neothd/src/daemon/proactive_egress.rs",
@@ -1468,8 +1468,8 @@
     },
     {
       "path": "SRC/neothd/tests/gui_channel_status.rs",
-      "bytes": 16371,
-      "sha256": "3829446313D9C61983260492D26B058C8DE394D8E2BB89ECBC378848282CCED6"
+      "bytes": 16414,
+      "sha256": "16523D7B19F730CE9C2FF215E32D330D238FA49AF12B021BFE44D74B18E4C304"
     },
     {
       "path": "SRC/neothd/tests/gui_code_map_controller.rs",

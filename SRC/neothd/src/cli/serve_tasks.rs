@@ -16,10 +16,10 @@ use tracing::{debug, info, warn};
 
 use crate::channels::registry::ChannelRef;
 use crate::channels::{Channel, ChannelKind, PipelineHandler};
-use crate::daemon::channel_live_registry::ChannelLiveRegistry;
 use crate::cli::serve_pipeline::{
     AuthenticatedInboundBinding, PipelineHandlerDeps, build_pipeline_handler,
 };
+use crate::daemon::channel_live_registry::ChannelLiveRegistry;
 
 /// Proof owned by the authenticated legacy Telegram startup branch. Private
 /// fields prevent other production modules from inventing admitted senders.
@@ -5046,8 +5046,7 @@ pub(crate) type ChannelFleet = std::collections::HashMap<ChannelRef, Vec<JoinHan
 /// Readiness publishers are deliberately separate from [`ChannelFleet`]: a
 /// successful readiness publish completes normally and must never be mistaken
 /// for an inbound adapter failure by the fleet supervisor.
-pub(crate) type ChannelReadinessPublishers =
-    std::collections::HashMap<ChannelRef, JoinHandle<()>>;
+pub(crate) type ChannelReadinessPublishers = std::collections::HashMap<ChannelRef, JoinHandle<()>>;
 
 pub(crate) async fn abort_channel_readiness_publishers(
     publishers: &Arc<std::sync::Mutex<ChannelReadinessPublishers>>,
@@ -6484,24 +6483,33 @@ pub(crate) async fn spawn_channel_adapters(
             shared_provider.as_ref(),
         ) {
             (Some(server), Some(nick), Some(allowed_account), Some(provider)) => {
-                let channel = Arc::new(crate::channels::irc::IrcChannel::new(
-                    server,
-                    creds.irc_port.unwrap_or(6697),
-                    nick,
-                    creds.irc_password.clone(),
-                    creds.irc_channels.clone().unwrap_or_default(),
-                    creds.irc_tls.unwrap_or(true),
-                )
-                .with_allowlist(creds.irc_allowed_nick.clone(), writer.clone())
-                .with_allowed_account(Some(allowed_account)));
+                let channel = Arc::new(
+                    crate::channels::irc::IrcChannel::new(
+                        server,
+                        creds.irc_port.unwrap_or(6697),
+                        nick,
+                        creds.irc_password.clone(),
+                        creds.irc_channels.clone().unwrap_or_default(),
+                        creds.irc_tls.unwrap_or(true),
+                    )
+                    .with_allowlist(creds.irc_allowed_nick.clone(), writer.clone())
+                    .with_allowed_account(Some(allowed_account)),
+                );
                 let channel_ref = ChannelRef::default_account(ChannelKind::Irc);
-                let lifecycle = if let Some(fingerprint) = channel_fingerprints.get(&channel_ref).copied() {
+                let lifecycle = if let Some(fingerprint) =
+                    channel_fingerprints.get(&channel_ref).copied()
+                {
                     Some((
-                        live_channels.begin_replacement(channel_ref.clone(), fingerprint).await,
+                        live_channels
+                            .begin_replacement(channel_ref.clone(), fingerprint)
+                            .await,
                         channel.live_ready_receiver(),
                     ))
                 } else {
-                    warn!(channel = "irc", "IRC has no current lifecycle fingerprint; proactive publication skipped");
+                    warn!(
+                        channel = "irc",
+                        "IRC has no current lifecycle fingerprint; proactive publication skipped"
+                    );
                     None
                 };
                 let handler: PipelineHandler = build_channel_handler(
@@ -6519,11 +6527,20 @@ pub(crate) async fn spawn_channel_adapters(
                     views_executor.clone(),
                 );
                 spawn_shared_channel_run_for_ref(
-                    channel.clone(), handler, channel_ref.clone(), "IRC", channel_tasks,
+                    channel.clone(),
+                    handler,
+                    channel_ref.clone(),
+                    "IRC",
+                    channel_tasks,
                 );
                 if let Some((lease, ready)) = lifecycle {
                     spawn_live_readiness_publisher(
-                        Arc::clone(live_channels), lease, channel, ready, channel_ref, readiness_publishers,
+                        Arc::clone(live_channels),
+                        lease,
+                        channel,
+                        ready,
+                        channel_ref,
+                        readiness_publishers,
                     );
                 }
                 info!(
@@ -6575,17 +6592,24 @@ pub(crate) async fn spawn_channel_adapters(
             shared_provider.as_ref(),
         ) {
             (Some(username), Some(oauth), Some(channels), Some(provider)) => {
-                let channel = Arc::new(
-                    crate::channels::irc::IrcChannel::for_twitch(username, oauth, channels),
-                );
+                let channel = Arc::new(crate::channels::irc::IrcChannel::for_twitch(
+                    username, oauth, channels,
+                ));
                 let channel_ref = ChannelRef::default_account(ChannelKind::Twitch);
-                let lifecycle = if let Some(fingerprint) = channel_fingerprints.get(&channel_ref).copied() {
+                let lifecycle = if let Some(fingerprint) =
+                    channel_fingerprints.get(&channel_ref).copied()
+                {
                     Some((
-                        live_channels.begin_replacement(channel_ref.clone(), fingerprint).await,
+                        live_channels
+                            .begin_replacement(channel_ref.clone(), fingerprint)
+                            .await,
                         channel.live_ready_receiver(),
                     ))
                 } else {
-                    warn!(channel = "twitch", "Twitch has no current lifecycle fingerprint; proactive publication skipped");
+                    warn!(
+                        channel = "twitch",
+                        "Twitch has no current lifecycle fingerprint; proactive publication skipped"
+                    );
                     None
                 };
                 let handler: PipelineHandler = build_channel_handler(
@@ -6603,11 +6627,20 @@ pub(crate) async fn spawn_channel_adapters(
                     views_executor.clone(),
                 );
                 spawn_shared_channel_run_for_ref(
-                    channel.clone(), handler, channel_ref.clone(), "Twitch", channel_tasks,
+                    channel.clone(),
+                    handler,
+                    channel_ref.clone(),
+                    "Twitch",
+                    channel_tasks,
                 );
                 if let Some((lease, ready)) = lifecycle {
                     spawn_live_readiness_publisher(
-                        Arc::clone(live_channels), lease, channel, ready, channel_ref, readiness_publishers,
+                        Arc::clone(live_channels),
+                        lease,
+                        channel,
+                        ready,
+                        channel_ref,
+                        readiness_publishers,
                     );
                 }
                 info!(
@@ -6656,17 +6689,26 @@ pub(crate) async fn spawn_channel_adapters(
             shared_provider.as_ref(),
         ) {
             (Some(secret_key), Some(relays), Some(allowed_pubkey), Some(provider)) => {
-                let channel = Arc::new(crate::channels::nostr::NostrChannel::new(secret_key, relays)
-                    .with_allowlist(Some(allowed_pubkey), writer.clone())
-                    .with_cursor_path(neoth_home.join("channel-state/nostr-cursor.json")));
+                let channel = Arc::new(
+                    crate::channels::nostr::NostrChannel::new(secret_key, relays)
+                        .with_allowlist(Some(allowed_pubkey), writer.clone())
+                        .with_cursor_path(neoth_home.join("channel-state/nostr-cursor.json")),
+                );
                 let channel_ref = ChannelRef::default_account(ChannelKind::Nostr);
-                let lifecycle = if let Some(fingerprint) = channel_fingerprints.get(&channel_ref).copied() {
+                let lifecycle = if let Some(fingerprint) =
+                    channel_fingerprints.get(&channel_ref).copied()
+                {
                     Some((
-                        live_channels.begin_replacement(channel_ref.clone(), fingerprint).await,
+                        live_channels
+                            .begin_replacement(channel_ref.clone(), fingerprint)
+                            .await,
                         channel.live_ready_receiver(),
                     ))
                 } else {
-                    warn!(channel = "nostr", "Nostr has no current lifecycle fingerprint; proactive publication skipped");
+                    warn!(
+                        channel = "nostr",
+                        "Nostr has no current lifecycle fingerprint; proactive publication skipped"
+                    );
                     None
                 };
                 let handler: PipelineHandler = build_channel_handler(
@@ -6684,11 +6726,20 @@ pub(crate) async fn spawn_channel_adapters(
                     views_executor.clone(),
                 );
                 spawn_shared_channel_run_for_ref(
-                    channel.clone(), handler, channel_ref.clone(), "Nostr", channel_tasks,
+                    channel.clone(),
+                    handler,
+                    channel_ref.clone(),
+                    "Nostr",
+                    channel_tasks,
                 );
                 if let Some((lease, ready)) = lifecycle {
                     spawn_live_readiness_publisher(
-                        Arc::clone(live_channels), lease, channel, ready, channel_ref, readiness_publishers,
+                        Arc::clone(live_channels),
+                        lease,
+                        channel,
+                        ready,
+                        channel_ref,
+                        readiness_publishers,
                     );
                 }
                 info!(
@@ -8801,7 +8852,8 @@ mod tests {
             &self,
             _chat_id: &str,
             _text: &str,
-        ) -> std::result::Result<crate::channels::MessageId, crate::channels::ChannelError> {
+        ) -> std::result::Result<crate::channels::MessageId, crate::channels::ChannelError>
+        {
             Ok(crate::channels::MessageId("probe".to_owned()))
         }
     }
@@ -8825,7 +8877,8 @@ mod tests {
             &self,
             _chat_id: &str,
             _text: &str,
-        ) -> std::result::Result<crate::channels::MessageId, crate::channels::ChannelError> {
+        ) -> std::result::Result<crate::channels::MessageId, crate::channels::ChannelError>
+        {
             self.entered.notify_one();
             self.release.notified().await;
             Ok(crate::channels::MessageId("drained".to_owned()))

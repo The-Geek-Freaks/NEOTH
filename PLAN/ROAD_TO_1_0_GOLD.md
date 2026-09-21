@@ -22,6 +22,14 @@ tests, 19 GUI tests on every platform plus five Unix/macOS callbacks and a
 separate seven-test IRC/Nostr feature lane. Fresh hosted gates remain required. Live transport, rendered GUI and release qualification are open;
 no checkbox or count changes (**1324/1015/307/2**).
 
+W128/W130 source `98e585f3` passed Code Quality `35572544462`. Preflight
+`35572544663` supplied 56 exact Rustfmt hunks across six Rust files; those
+layouts were imported without running a local formatter. Fresh static gates
+remain required. The older `f87e0634` Windows job `106231815079` in CI
+`35567383561` passed all 16800 executed tests (one marked leaky), with 22 skipped.
+That result validates the older source, not W128/W130; macOS and current-source
+native/portable acceptance remain pending.
+
 **W126/W127 selected-request approval (2026-09-21):** the GUI can approve an
 existing Telegram DM pairing request with the sender's private code. A hidden
 stdin-only CLI envelope binds the selected request and account; one immediate

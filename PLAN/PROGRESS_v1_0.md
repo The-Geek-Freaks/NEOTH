@@ -13,6 +13,14 @@ See [W128](../docs/gold-wave128-verification.md) and
 seven optional-adapter tests are admitted. Fresh hosted gates remain required; live-provider, render/accessibility and release evidence remain open.
 All local validation stays suspended; counts remain **1324/1015/307/2**.
 
+W128/W130 source `98e585f3` passed Code Quality `35572544462`. Preflight
+`35572544663` supplied 56 exact Rustfmt hunks across six Rust files; those
+layouts were imported without running a local formatter. Fresh static gates
+remain required. The older `f87e0634` Windows job `106231815079` in CI
+`35567383561` passed all 16800 executed tests (one marked leaky), with 22 skipped.
+That result validates the older source, not W128/W130; macOS and current-source
+native/portable acceptance remain pending.
+
 **W126/W127 (2026-09-21):** selected Telegram DM requests gain private-code
 approval in the GUI. The bounded stdin envelope and atomic request-ID/code match
 prevent approval of another row; exact successful receipts alone trigger the

@@ -151,9 +151,9 @@ fn is_single_connection_target(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAX_CONNECTION_BOUND_TARGET_BYTES
         && value.trim() == value
-        && !value
-            .chars()
-            .any(|character| character.is_whitespace() || character.is_control() || character == ',')
+        && !value.chars().any(|character| {
+            character.is_whitespace() || character.is_control() || character == ','
+        })
 }
 
 fn is_valid_irc_proactive_target(value: &str) -> bool {
@@ -165,9 +165,8 @@ fn is_valid_irc_proactive_target(value: &str) -> bool {
     }
     let mut characters = value.chars();
     matches!(characters.next(), Some(character) if character.is_ascii_alphabetic() || "[]\\`_^{}|".contains(character))
-        && characters.all(|character| {
-            character.is_ascii_alphanumeric() || "-[]\\`_^{}|".contains(character)
-        })
+        && characters
+            .all(|character| character.is_ascii_alphanumeric() || "-[]\\`_^{}|".contains(character))
 }
 
 fn is_valid_twitch_proactive_target(value: &str) -> bool {
@@ -180,9 +179,9 @@ fn is_valid_twitch_proactive_target(value: &str) -> bool {
             .chars()
             .next()
             .is_some_and(|character| character.is_ascii_lowercase())
-        && channel
-            .chars()
-            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_')
+        && channel.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
+        })
 }
 
 #[cfg(feature = "nostr-channel")]
@@ -470,10 +469,7 @@ async fn deliver_live_route(
     credentials: &Credentials,
     config: &FreedomConfig,
     live_channels: &crate::daemon::channel_live_registry::ChannelLiveRegistry,
-    channel_fingerprints: &std::collections::HashMap<
-        crate::channels::registry::ChannelRef,
-        u64,
-    >,
+    channel_fingerprints: &std::collections::HashMap<crate::channels::registry::ChannelRef, u64>,
     item: crate::proactive::ProactiveItem,
     queue_generation: &str,
     target_channel: &str,
@@ -1372,8 +1368,8 @@ pub fn spawn_proactive_drain_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use crate::proactive::{ProactiveItem, ProactiveQueue};
+    use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::TempDir;
 
@@ -1426,7 +1422,8 @@ mod tests {
             &self,
             _chat_id: &str,
             _text: &str,
-        ) -> std::result::Result<crate::channels::MessageId, crate::channels::ChannelError> {
+        ) -> std::result::Result<crate::channels::MessageId, crate::channels::ChannelError>
+        {
             self.sends.fetch_add(1, Ordering::SeqCst);
             if self.fails {
                 return Err(crate::channels::ChannelError::Transport(
@@ -1861,7 +1858,10 @@ mod tests {
         routing.destinations.irc_channel = Some("#shared-operator-destination".to_string());
         routing.destinations.twitch_channel = Some("#shared-operator-destination".to_string());
         routing
-            .save_to(&tmp.path().join(crate::channels::routing::CHANNEL_ROUTING_FILE))
+            .save_to(
+                &tmp.path()
+                    .join(crate::channels::routing::CHANNEL_ROUTING_FILE),
+            )
             .unwrap();
 
         let mut config = FreedomConfig::default();
@@ -1915,7 +1915,11 @@ mod tests {
         join.await.unwrap().unwrap();
 
         assert_eq!(irc.sends(), 1);
-        assert_eq!(twitch.sends(), 0, "same recipient cannot select another ref");
+        assert_eq!(
+            twitch.sends(),
+            0,
+            "same recipient cannot select another ref"
+        );
         let history = crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(
@@ -1937,7 +1941,10 @@ mod tests {
             let mut routing = crate::channels::routing::ChannelRouting::default();
             routing.destinations.irc_channel = Some("#ops".to_string());
             routing
-                .save_to(&tmp.path().join(crate::channels::routing::CHANNEL_ROUTING_FILE))
+                .save_to(
+                    &tmp.path()
+                        .join(crate::channels::routing::CHANNEL_ROUTING_FILE),
+                )
                 .unwrap();
 
             let mut config = FreedomConfig::default();
@@ -1975,11 +1982,9 @@ mod tests {
             }
 
             let segment = tmp.path().join("connection-unavailable.wal");
-            let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
-                segment.clone(),
-                tmp.path().to_path_buf(),
-            )
-            .unwrap();
+            let (writer, join, ready) =
+                crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
+                    .unwrap();
             ready.wait().await.unwrap();
             assert_eq!(
                 run_proactive_delivery_tick(
@@ -2000,7 +2005,8 @@ mod tests {
             join.await.unwrap().unwrap();
 
             assert_eq!(channel.sends(), 0, "{state} handle reached transport");
-            let history = crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
+            let history =
+                crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
             assert_eq!(history.len(), 1);
             assert_eq!(
                 history[0].outcome(),
@@ -2031,19 +2037,21 @@ mod tests {
                 routing.destinations.twitch_channel = Some(target.to_string());
             }
             routing
-                .save_to(&tmp.path().join(crate::channels::routing::CHANNEL_ROUTING_FILE))
+                .save_to(
+                    &tmp.path()
+                        .join(crate::channels::routing::CHANNEL_ROUTING_FILE),
+                )
                 .unwrap();
             let mut config = FreedomConfig::default();
             config.proactive.enabled = true;
             config.autonomy = AutonomyLevel::Full;
             let credentials = Credentials::default();
-            let channel_ref = crate::channels::registry::ChannelRef::default_account(
-                if channel_name == "irc" {
+            let channel_ref =
+                crate::channels::registry::ChannelRef::default_account(if channel_name == "irc" {
                     crate::channels::registry::ChannelId::Irc
                 } else {
                     crate::channels::registry::ChannelId::Twitch
-                },
-            );
+                });
             let fingerprint = *crate::cli::serve_tasks::channel_account_fingerprints(
                 &config,
                 &credentials,
@@ -2054,16 +2062,12 @@ mod tests {
             .unwrap();
             let registry = empty_live_channels();
             let channel = Arc::new(CountingConnectionChannel::new(channel_name));
-            let lease = registry
-                .begin_replacement(channel_ref, fingerprint)
-                .await;
+            let lease = registry.begin_replacement(channel_ref, fingerprint).await;
             assert!(registry.publish(&lease, channel.clone()).await);
             let segment = tmp.path().join("connection-malformed-target.wal");
-            let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
-                segment.clone(),
-                tmp.path().to_path_buf(),
-            )
-            .unwrap();
+            let (writer, join, ready) =
+                crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
+                    .unwrap();
             ready.wait().await.unwrap();
             assert_eq!(
                 run_proactive_delivery_tick(
@@ -2081,8 +2085,13 @@ mod tests {
             );
             drop(writer);
             join.await.unwrap().unwrap();
-            assert_eq!(channel.sends(), 0, "invalid {channel_name} target reached transport");
-            let history = crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
+            assert_eq!(
+                channel.sends(),
+                0,
+                "invalid {channel_name} target reached transport"
+            );
+            let history =
+                crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
             assert_eq!(history.len(), 1);
             assert_eq!(
                 history[0].outcome(),
@@ -2103,7 +2112,10 @@ mod tests {
         let mut routing = crate::channels::routing::ChannelRouting::default();
         routing.destinations.irc_channel = Some("#ops".to_string());
         routing
-            .save_to(&tmp.path().join(crate::channels::routing::CHANNEL_ROUTING_FILE))
+            .save_to(
+                &tmp.path()
+                    .join(crate::channels::routing::CHANNEL_ROUTING_FILE),
+            )
             .unwrap();
         let mut config = FreedomConfig::default();
         config.proactive.enabled = true;
@@ -2125,11 +2137,9 @@ mod tests {
         let lease = registry.begin_replacement(channel_ref, fingerprint).await;
         assert!(registry.publish(&lease, channel.clone()).await);
         let segment = tmp.path().join("connection-failing-adapter.wal");
-        let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
-            segment.clone(),
-            tmp.path().to_path_buf(),
-        )
-        .unwrap();
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
+                .unwrap();
         ready.wait().await.unwrap();
         assert_eq!(
             run_proactive_delivery_tick(
@@ -2500,10 +2510,8 @@ channel_accounts:
         let mut rt = default_rt();
         rt.destinations.irc_channel = Some("#neoth".to_string());
         rt.destinations.twitch_channel = Some("#chan".to_string());
-        rt.destinations.nostr_recipient = Some(
-            "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m"
-                .to_string(),
-        );
+        rt.destinations.nostr_recipient =
+            Some("npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m".to_string());
         assert_eq!(
             plan_delivery("irc", AutonomyLevel::Full, &cfg, &rt, &default_creds()),
             DeliveryRoute::ConnectionBound {

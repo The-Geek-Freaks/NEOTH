@@ -6,8 +6,8 @@
 //! wrapper rechecks the same entry at the actual proactive effect boundary.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
@@ -66,12 +66,17 @@ impl ChannelLiveRegistry {
     }
 
     fn entry_for(&self, channel_ref: &ChannelRef) -> Option<Arc<LiveEntry>> {
-        let mut entries = self.entries.lock().expect("live-channel registry mutex poisoned");
-        (!self.closed.load(Ordering::Acquire)).then(|| Arc::clone(
-            entries
-                .entry(channel_ref.clone())
-                .or_insert_with(|| Arc::new(LiveEntry::default())),
-        ))
+        let mut entries = self
+            .entries
+            .lock()
+            .expect("live-channel registry mutex poisoned");
+        (!self.closed.load(Ordering::Acquire)).then(|| {
+            Arc::clone(
+                entries
+                    .entry(channel_ref.clone())
+                    .or_insert_with(|| Arc::new(LiveEntry::default())),
+            )
+        })
     }
 
     fn existing_entry(&self, channel_ref: &ChannelRef) -> Option<Arc<LiveEntry>> {
@@ -184,7 +189,10 @@ impl ChannelLiveRegistry {
         }
         let entry = self.existing_entry(channel_ref)?;
         let state = entry.state.lock().await;
-        if self.closed.load(Ordering::Acquire) || !state.accepting || state.fingerprint != fingerprint {
+        if self.closed.load(Ordering::Acquire)
+            || !state.accepting
+            || state.fingerprint != fingerprint
+        {
             return None;
         }
         let channel = state.channel.clone()?;
@@ -405,11 +413,7 @@ mod tests {
         let registry = Arc::new(ChannelLiveRegistry::new());
         let lease = registry.begin_replacement(irc_ref(), 41).await;
         let channel = Arc::new(CountingChannel(AtomicUsize::new(0)));
-        assert!(
-            registry
-                .publish(&lease, channel.clone())
-                .await
-        );
+        assert!(registry.publish(&lease, channel.clone()).await);
         let acquired = registry.acquire(&irc_ref(), 41).await.unwrap();
         let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
         let revoking = Arc::clone(&registry);
@@ -437,7 +441,10 @@ mod tests {
             "revocation must retain acquired egress until its lease drops"
         );
         assert!(
-            acquired.send_proactive("#ops", "must not send").await.is_err(),
+            acquired
+                .send_proactive("#ops", "must not send")
+                .await
+                .is_err(),
             "the acquired wrapper must recheck revocation at the effect boundary"
         );
         assert_eq!(
@@ -464,7 +471,8 @@ mod tests {
         assert!(registry.publish(&lease, channel.clone()).await);
         let acquired = registry.acquire(&irc_ref(), 41).await.unwrap();
         let entered = channel.entered.notified();
-        let sending = tokio::spawn(async move { acquired.send_proactive("#ops", "in flight").await });
+        let sending =
+            tokio::spawn(async move { acquired.send_proactive("#ops", "in flight").await });
         entered.await;
 
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
