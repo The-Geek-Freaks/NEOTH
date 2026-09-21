@@ -359,10 +359,8 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
             .map(|status| status.as_wire())
             .unwrap_or("hidden");
         let reasoning_active = reducer.reasoning_active(surface).unwrap_or(false);
-        let reasoning_text: slint::SharedString = reducer
-            .reasoning_text(surface)
-            .unwrap_or("")
-            .into();
+        let reasoning_text: slint::SharedString =
+            reducer.reasoning_text(surface).unwrap_or("").into();
         let incognito = self.incognito;
         let preview = preview_is_publishable(incognito, terminal)
             .then(|| reducer.canonical_preview(surface).map(str::to_owned))
@@ -654,18 +652,16 @@ fn submit(
                 return;
             }
             match result {
-                Ok(GuiChatBridgePreflight::Ready { decision }) => {
-                    start_receipt(
-                        state,
-                        window,
-                        overlay,
-                        operation,
-                        incognito,
-                        reasoning_display,
-                        body,
-                        decision,
-                    )
-                }
+                Ok(GuiChatBridgePreflight::Ready { decision }) => start_receipt(
+                    state,
+                    window,
+                    overlay,
+                    operation,
+                    incognito,
+                    reasoning_display,
+                    body,
+                    decision,
+                ),
                 Ok(GuiChatBridgePreflight::ConfirmationRequired { receipt, prompt }) => {
                     let routes = prompt
                         .routes

@@ -69,3 +69,12 @@ Independent review receipts: CLI F3E9001C4D3641EE39F5BAE8B932EE2F155561A1BB2AE91
 daemon 978D68B5C62DB7B948A838DEC4E6FE3E2A42594B45B087BFB54B04BAEA3C2D23;
 GUI child 73CC74E44531F4DF3E8E4B37AF09BB9B8A06FE5D3A89FCEE28DDF19E5B70705B.
 The complete reports remain in `work/gold-20260906/wave153-next-batch/`.
+
+**W153 hosted repair (2026-09-21):** integration 7a0cd863 passed Code Quality
+35612427039. Preflight 35612427933 supplied 86 exact Rustfmt hunks in seven
+files; all were imported. Core/reference build 35612427120 found one E0308:
+the unobserved-identity WAL append returned its offset rather than unit.
+The repair awaits the same append, discards only that success offset and
+preserves error propagation and audit ordering. The 327-input manifest and
+required-test hashes bind the corrected source. Fresh hosted compilation,
+native/GUI execution and generated reference remain required; no Road box closes.

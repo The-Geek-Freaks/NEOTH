@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
-use async_trait::async_trait;
 use anyhow::Context;
+use async_trait::async_trait;
 use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, Notify};
@@ -342,7 +342,10 @@ impl DaemonGuiChatRuntime {
                 .reasoning_event_count
                 .checked_add(1)
                 .context("reasoning event counter exhausted")?;
-            anyhow::ensure!(event_count <= REASONING_EVENT_LIMIT, "reasoning event limit exceeded");
+            anyhow::ensure!(
+                event_count <= REASONING_EVENT_LIMIT,
+                "reasoning event limit exceeded"
+            );
             let byte_count = turn
                 .reasoning_byte_count
                 .checked_add(delta_len as u64)
@@ -518,7 +521,10 @@ impl DaemonGuiChatRuntime {
         generation: u64,
         leased_live_delivery: &mut bool,
     ) -> GuiChatResult<()> {
-        let requester = LiveReasoningOwner { surface, generation };
+        let requester = LiveReasoningOwner {
+            surface,
+            generation,
+        };
         if turn.live_reasoning_owner == Some(requester) && !*leased_live_delivery {
             return Err(Self::reject(
                 GuiChatErrorCode::Forbidden,
@@ -547,7 +553,10 @@ impl DaemonGuiChatRuntime {
             .get_mut(&surface)
             .ok_or_else(|| Self::reject(GuiChatErrorCode::Forbidden, "subscription"))?;
         if subscription.generation != generation {
-            return Err(Self::reject(GuiChatErrorCode::Forbidden, "subscription_generation"));
+            return Err(Self::reject(
+                GuiChatErrorCode::Forbidden,
+                "subscription_generation",
+            ));
         }
         if !subscription.live_attached {
             subscription.live_attached = true;
@@ -557,16 +566,13 @@ impl DaemonGuiChatRuntime {
     }
     async fn is_current_live_owner(&self, request: &GuiChatAttachRequest) -> bool {
         let state = self.state.lock().await;
-        state
-            .turns
-            .get(&request.turn_id.0)
-            .is_some_and(|turn| {
-                turn.live_reasoning_owner
-                    == Some(LiveReasoningOwner {
-                        surface: request.surface,
-                        generation: request.subscription_generation,
-                    })
-            })
+        state.turns.get(&request.turn_id.0).is_some_and(|turn| {
+            turn.live_reasoning_owner
+                == Some(LiveReasoningOwner {
+                    surface: request.surface,
+                    generation: request.subscription_generation,
+                })
+        })
     }
 
     /// Schedule an admitted turn before releasing the state admission lock.
@@ -574,44 +580,150 @@ impl DaemonGuiChatRuntime {
     /// also finding its producer in the shared JoinSet.
     fn schedule_turn(&self, turn_id: Uuid) {
         let runtime = self.clone();
-        self.tasks.lock().unwrap_or_else(|poison| poison.into_inner()).spawn(async move {
-            let (message, model, skill, incognito, reasoning_display, staged, cancel, effect_admission, ephemeral) = {
+        self.tasks
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .spawn(async move {
+                let (
+                    message,
+                    model,
+                    skill,
+                    incognito,
+                    reasoning_display,
+                    staged,
+                    cancel,
+                    effect_admission,
+                    ephemeral,
+                ) = {
+                    let mut state = runtime.state.lock().await;
+                    let request_id = match state.turns.get(&turn_id) {
+                        Some(turn) => turn.request_id,
+                        None => return turn_id,
+                    };
+                    // The canonical descriptor remains only in the preflight entry until
+                    // this point. It is removed immediately after the engine takes it.
+                    let preflight = match state
+                        .preflights
+                        .values()
+                        .find(|p| p.request.request_id == request_id)
+                    {
+                        Some(p) => p,
+                        None => return turn_id,
+                    };
+                    let (message, model, skill) = (
+                        preflight.request.message.clone(),
+                        preflight.request.model.clone(),
+                        preflight.request.skill_id.clone(),
+                    );
+                    let turn = match state.turns.get_mut(&turn_id) {
+                        Some(turn) => turn,
+                        None => return turn_id,
+                    };
+                    (
+                        message,
+                        model,
+                        skill,
+                        turn.incognito,
+                        turn.reasoning_display,
+                        turn.staged.clone(),
+                        turn.cancellation.clone(),
+                        turn.effect_admission.clone(),
+                        turn.ephemeral.take(),
+                    )
+                };
+                let Some(ephemeral) = ephemeral else {
+                    return turn_id;
+                };
+                let mut sink = RuntimeSink {
+                    runtime: runtime.clone(),
+                    turn_id,
+                    response: Sha256::new(),
+                };
+                let effect_changed = {
+                    let state = runtime.state.lock().await;
+                    let Some(turn) = state.turns.get(&turn_id) else {
+                        return turn_id;
+                    };
+                    turn.effect_changed.clone()
+                };
+                let owner_registry = {
+                    let state = runtime.state.lock().await;
+                    state
+                        .turns
+                        .get(&turn_id)
+                        .expect("turn remains")
+                        .owner_registry
+                        .clone()
+                };
+                let effect: Arc<dyn crate::providers::ChatTurnEffectGate> =
+                    Arc::new(RuntimeEffectGate {
+                        runtime: runtime.clone(),
+                        turn_id,
+                        effect_admission,
+                        effect_changed,
+                        owner_registry,
+                    });
+                let result = runtime
+                    .core
+                    .execute_gui_stream_turn(
+                        message,
+                        model,
+                        skill,
+                        incognito,
+                        reasoning_display,
+                        staged,
+                        ephemeral,
+                        cancel,
+                        &mut sink,
+                        Some(effect),
+                    )
+                    .await;
                 let mut state = runtime.state.lock().await;
-                let request_id = match state.turns.get(&turn_id) { Some(turn) => turn.request_id, None => return turn_id };
-                // The canonical descriptor remains only in the preflight entry until
-                // this point. It is removed immediately after the engine takes it.
-                let preflight = match state.preflights.values().find(|p| p.request.request_id == request_id) { Some(p) => p, None => return turn_id };
-                let (message, model, skill) = (preflight.request.message.clone(), preflight.request.model.clone(), preflight.request.skill_id.clone());
-                let turn = match state.turns.get_mut(&turn_id) { Some(turn) => turn, None => return turn_id };
-                (message, model, skill, turn.incognito, turn.reasoning_display, turn.staged.clone(), turn.cancellation.clone(), turn.effect_admission.clone(), turn.ephemeral.take())
-            };
-            let Some(ephemeral) = ephemeral else { return turn_id };
-            let mut sink = RuntimeSink { runtime: runtime.clone(), turn_id, response: Sha256::new() };
-            let effect_changed = {
-                let state = runtime.state.lock().await;
-                let Some(turn) = state.turns.get(&turn_id) else { return turn_id };
-                turn.effect_changed.clone()
-            };
-            let owner_registry = { let state = runtime.state.lock().await; state.turns.get(&turn_id).expect("turn remains").owner_registry.clone() };
-            let effect: Arc<dyn crate::providers::ChatTurnEffectGate> = Arc::new(RuntimeEffectGate { runtime: runtime.clone(), turn_id, effect_admission, effect_changed, owner_registry });
-            let result = runtime.core.execute_gui_stream_turn(message, model, skill, incognito, reasoning_display, staged, ephemeral, cancel, &mut sink, Some(effect)).await;
-            let mut state = runtime.state.lock().await;
-            let Some(turn) = state.turns.get_mut(&turn_id) else { return turn_id };
-            let reasoning_result = Self::synthesize_reasoning_terminal(turn);
-            if reasoning_result.is_err() {
-                Self::clear_live_reasoning(turn);
-            }
-            let terminal = match (result, reasoning_result) {
-                (Ok(ChatTurnTerminal::Complete { provider, model, .. }), Ok(())) => GuiChatTerminal { state: GuiChatTerminalState::Complete, response_digest: GuiChatDigest(hex::encode(sink.response.finalize())), provider, model, usage: GuiChatUsage { input_tokens: 0, output_tokens: 0, elapsed_ms: 0 }, lifecycle_receipt_id: GuiChatDigest(Self::capability()) },
-                _ => GuiChatTerminal { state: GuiChatTerminalState::Indeterminate, response_digest: GuiChatDigest(hex::encode(sink.response.finalize())), provider: "provider_indeterminate".into(), model: "accepted_model".into(), usage: GuiChatUsage { input_tokens: 0, output_tokens: 0, elapsed_ms: 0 }, lifecycle_receipt_id: GuiChatDigest(Self::capability()) },
-            };
-            turn.phase = GuiChatPhase::Finalizing;
-            Self::emit(turn, GuiChatFramePayload::ProviderDone);
-            turn.terminal = Some(terminal.clone());
-            Self::emit(turn, GuiChatFramePayload::Terminal { terminal });
-            runtime.changed.notify_waiters();
-            turn_id
-        });
+                let Some(turn) = state.turns.get_mut(&turn_id) else {
+                    return turn_id;
+                };
+                let reasoning_result = Self::synthesize_reasoning_terminal(turn);
+                if reasoning_result.is_err() {
+                    Self::clear_live_reasoning(turn);
+                }
+                let terminal = match (result, reasoning_result) {
+                    (
+                        Ok(ChatTurnTerminal::Complete {
+                            provider, model, ..
+                        }),
+                        Ok(()),
+                    ) => GuiChatTerminal {
+                        state: GuiChatTerminalState::Complete,
+                        response_digest: GuiChatDigest(hex::encode(sink.response.finalize())),
+                        provider,
+                        model,
+                        usage: GuiChatUsage {
+                            input_tokens: 0,
+                            output_tokens: 0,
+                            elapsed_ms: 0,
+                        },
+                        lifecycle_receipt_id: GuiChatDigest(Self::capability()),
+                    },
+                    _ => GuiChatTerminal {
+                        state: GuiChatTerminalState::Indeterminate,
+                        response_digest: GuiChatDigest(hex::encode(sink.response.finalize())),
+                        provider: "provider_indeterminate".into(),
+                        model: "accepted_model".into(),
+                        usage: GuiChatUsage {
+                            input_tokens: 0,
+                            output_tokens: 0,
+                            elapsed_ms: 0,
+                        },
+                        lifecycle_receipt_id: GuiChatDigest(Self::capability()),
+                    },
+                };
+                turn.phase = GuiChatPhase::Finalizing;
+                Self::emit(turn, GuiChatFramePayload::ProviderDone);
+                turn.terminal = Some(terminal.clone());
+                Self::emit(turn, GuiChatFramePayload::Terminal { terminal });
+                runtime.changed.notify_waiters();
+                turn_id
+            });
     }
 
     /// Transfer an abandoned reservation/handshake to the daemon-owned task
@@ -2038,15 +2150,17 @@ mod lifecycle_tests {
                 1,
                 &mut first_lease,
             )
-                .expect("first attach owns live delivery");
+            .expect("first attach owns live delivery");
             let mut competing_lease = false;
-            assert!(DaemonGuiChatRuntime::claim_live_delivery(
-                turn,
-                GuiChatSurface::Main,
-                1,
-                &mut competing_lease,
-            )
-            .is_err());
+            assert!(
+                DaemonGuiChatRuntime::claim_live_delivery(
+                    turn,
+                    GuiChatSurface::Main,
+                    1,
+                    &mut competing_lease,
+                )
+                .is_err()
+            );
 
             DaemonGuiChatRuntime::emit_reasoning_delta(
                 turn,
@@ -2059,7 +2173,10 @@ mod lifecycle_tests {
                 .get(&GuiChatSurface::Main)
                 .expect("leased subscription remains");
             assert_eq!(subscription.live_reasoning.len(), 1);
-            assert_eq!(subscription.live_reasoning[0].delta.as_str(), "ephemeral reasoning");
+            assert_eq!(
+                subscription.live_reasoning[0].delta.as_str(),
+                "ephemeral reasoning"
+            );
             assert!(matches!(
                 turn.replay.back().map(|frame| &frame.payload),
                 Some(GuiChatFramePayload::ReasoningCheckpoint {
@@ -2087,17 +2204,20 @@ mod lifecycle_tests {
                 &mut buddy_lease,
             )
             .expect("handoff atomically revokes main owner");
-            assert!(turn
-                .subscriptions
-                .get(&GuiChatSurface::Main)
-                .expect("main subscription")
-                .live_reasoning
-                .is_empty());
-            assert!(!turn
-                .subscriptions
-                .get(&GuiChatSurface::Main)
-                .expect("main subscription")
-                .live_attached);
+            assert!(
+                turn.subscriptions
+                    .get(&GuiChatSurface::Main)
+                    .expect("main subscription")
+                    .live_reasoning
+                    .is_empty()
+            );
+            assert!(
+                !turn
+                    .subscriptions
+                    .get(&GuiChatSurface::Main)
+                    .expect("main subscription")
+                    .live_attached
+            );
             DaemonGuiChatRuntime::emit_reasoning_delta(
                 turn,
                 2,
@@ -2115,12 +2235,13 @@ mod lifecycle_tests {
             // A later attachment cannot reclaim this queue: it observes only
             // the persisted checkpoint after release clears the leased bytes.
             DaemonGuiChatRuntime::clear_live_reasoning(turn);
-            assert!(turn
-                .subscriptions
-                .get(&GuiChatSurface::Main)
-                .expect("subscription")
-                .live_reasoning
-                .is_empty());
+            assert!(
+                turn.subscriptions
+                    .get(&GuiChatSurface::Main)
+                    .expect("subscription")
+                    .live_reasoning
+                    .is_empty()
+            );
             assert!(matches!(
                 turn.replay.back().map(|frame| &frame.payload),
                 Some(GuiChatFramePayload::ReasoningCheckpoint { .. })
@@ -2212,20 +2333,23 @@ mod lifecycle_tests {
                 surface: GuiChatSurface::Main,
                 generation: 1,
             });
-            assert!(DaemonGuiChatRuntime::emit_reasoning_delta(
-                turn,
-                1,
-                crate::providers::ReasoningText::new("new".into()),
-            )
-            .is_err());
+            assert!(
+                DaemonGuiChatRuntime::emit_reasoning_delta(
+                    turn,
+                    1,
+                    crate::providers::ReasoningText::new("new".into()),
+                )
+                .is_err()
+            );
             assert_eq!(turn.reasoning_event_count, REASONING_EVENT_LIMIT);
             assert!(turn.live_reasoning_owner.is_none());
-            assert!(turn
-                .subscriptions
-                .get(&GuiChatSurface::Main)
-                .expect("subscription")
-                .live_reasoning
-                .is_empty());
+            assert!(
+                turn.subscriptions
+                    .get(&GuiChatSurface::Main)
+                    .expect("subscription")
+                    .live_reasoning
+                    .is_empty()
+            );
             assert!(matches!(
                 turn.replay.back().map(|frame| &frame.payload),
                 Some(GuiChatFramePayload::ReasoningState {
@@ -2314,7 +2438,9 @@ mod lifecycle_tests {
         let (main_server, mut main_client) = tokio::io::duplex(128 * 1024);
         let main_runtime = runtime.clone();
         let main_task = tokio::spawn(async move {
-            main_runtime.attach(Box::new(main_server), main_request).await
+            main_runtime
+                .attach(Box::new(main_server), main_request)
+                .await
         });
         read_attach_header(&mut main_client).await;
         wait_for_live_owner(
@@ -2350,7 +2476,9 @@ mod lifecycle_tests {
         let (buddy_server, mut buddy_client) = tokio::io::duplex(128 * 1024);
         let buddy_runtime = runtime.clone();
         let buddy_task = tokio::spawn(async move {
-            buddy_runtime.attach(Box::new(buddy_server), buddy_request).await
+            buddy_runtime
+                .attach(Box::new(buddy_server), buddy_request)
+                .await
         });
         read_attach_header(&mut buddy_client).await;
         wait_for_live_owner(
@@ -2375,12 +2503,13 @@ mod lifecycle_tests {
                     generation: buddy.subscription_generation,
                 })
             );
-            assert!(turn
-                .subscriptions
-                .get(&GuiChatSurface::Main)
-                .expect("main subscription")
-                .live_reasoning
-                .is_empty());
+            assert!(
+                turn.subscriptions
+                    .get(&GuiChatSurface::Main)
+                    .expect("main subscription")
+                    .live_reasoning
+                    .is_empty()
+            );
             DaemonGuiChatRuntime::emit_reasoning_delta(
                 turn,
                 2,
@@ -2454,7 +2583,9 @@ mod lifecycle_tests {
         // release the exact current owner before ending the fixture.
         main_task.abort();
         buddy_task.abort();
-        runtime.release_live_subscription(&attach_request(&buddy)).await;
+        runtime
+            .release_live_subscription(&attach_request(&buddy))
+            .await;
         runtime.close_and_drain().await;
         completion.wait().await.expect("fixture writer drained");
     }

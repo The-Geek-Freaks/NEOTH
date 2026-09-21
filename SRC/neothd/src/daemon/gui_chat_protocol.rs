@@ -383,9 +383,15 @@ pub(crate) struct GuiChatSubscription {
 #[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
 pub(crate) enum GuiChatFramePayload {
     Accepted,
-    PhaseChanged { phase: GuiChatPhase },
-    Notice { code: String },
-    Delta { text: String },
+    PhaseChanged {
+        phase: GuiChatPhase,
+    },
+    Notice {
+        code: String,
+    },
+    Delta {
+        text: String,
+    },
     /// Live-only provider reasoning. The runtime never places this payload in
     /// a reconnectable replay record.
     ReasoningDelta {
@@ -410,7 +416,9 @@ pub(crate) enum GuiChatFramePayload {
     },
     ProviderDone,
     CancelRequested,
-    Terminal { terminal: GuiChatTerminal },
+    Terminal {
+        terminal: GuiChatTerminal,
+    },
 }
 
 impl fmt::Debug for GuiChatFramePayload {
@@ -428,7 +436,10 @@ impl fmt::Debug for GuiChatFramePayload {
                 .debug_struct("PhaseChanged")
                 .field("phase", phase)
                 .finish(),
-            Self::Notice { code } => formatter.debug_struct("Notice").field("code", code).finish(),
+            Self::Notice { code } => formatter
+                .debug_struct("Notice")
+                .field("code", code)
+                .finish(),
             Self::Delta { text } => formatter.debug_struct("Delta").field("text", text).finish(),
             Self::ReasoningState {
                 reasoning_sequence,
@@ -1481,6 +1492,10 @@ mod tests {
             ..state
         };
         validate_stream_frame(&checkpoint).unwrap();
-        assert!(!serde_json::to_string(&checkpoint).unwrap().contains("ephemeral"));
+        assert!(
+            !serde_json::to_string(&checkpoint)
+                .unwrap()
+                .contains("ephemeral")
+        );
     }
 }

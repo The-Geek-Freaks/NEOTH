@@ -2,6 +2,15 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W153 hosted repair (2026-09-21):** integration 7a0cd863 passed Code Quality
+35612427039. Preflight 35612427933 supplied 86 exact Rustfmt hunks in seven
+files; all were imported. Core/reference build 35612427120 found one E0308:
+the unobserved-identity WAL append returned its offset rather than unit.
+The repair awaits the same append, discards only that success offset and
+preserves error propagation and audit ordering. The 327-input manifest and
+required-test hashes bind the corrected source. Fresh hosted compilation,
+native/GUI execution and generated reference remain required; no Road box closes.
+
 **W153 CLI/daemon/Main/Buddy integration (2026-09-21):** independently reviewed
 source now carries a default-off per-turn reasoning grant through both GUI
 routes and the CLI. Reasoning stays separate from visible replies, history,

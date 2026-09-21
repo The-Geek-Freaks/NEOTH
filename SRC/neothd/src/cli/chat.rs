@@ -4254,13 +4254,17 @@ impl ReasoningStreamLifecycle {
                 reason,
             )?;
             let payload = crate::wal::reasoning_audit::encode_reasoning_stream_audit_v1(&audit)?;
-            let header = crate::wal::HeaderBuilder::new(
-                crate::wal::events::EVENT_TYPE_EXTENDED,
-                &payload,
-            )
-            .event_subtype(crate::wal::events::ExtendedSubtype::ReasoningStreamAuditV1 as u8)
-            .build();
-            writer.append(header, payload).await
+            let header =
+                crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
+                    .event_subtype(
+                        crate::wal::events::ExtendedSubtype::ReasoningStreamAuditV1 as u8,
+                    )
+                    .build();
+            writer
+                .append(header, payload)
+                .await
+                .map(|_| ())
+                .map_err(anyhow::Error::from)
         };
 
         // Do not skip the audit when the presentation sink failed.  Its error
@@ -14965,10 +14969,8 @@ mod tests {
         let segment = home.path().join("reasoning-native-terminal-error.wal");
         let (writer, join) = wal_spawn(segment.clone()).unwrap();
         let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
-        let mut lifecycle = ReasoningStreamLifecycle::new(
-            true,
-            Some("0123456789abcdef0123456789abcdef"),
-        );
+        let mut lifecycle =
+            ReasoningStreamLifecycle::new(true, Some("0123456789abcdef0123456789abcdef"));
         lifecycle.observe_identity(&crate::providers::CompletionIdentity {
             provider: "authenticated-test-leaf".to_owned(),
             wire_model: "test-wire-model".to_owned(),
@@ -15054,7 +15056,9 @@ mod tests {
         assert_eq!(audit["terminal_state"], "redacted");
         assert_eq!(audit["reason_code"], "stream_error");
         assert!(
-            !serde_json::to_string(&audit).unwrap().contains("split-safe"),
+            !serde_json::to_string(&audit)
+                .unwrap()
+                .contains("split-safe"),
             "the WAL receipt is metadata-only even when a granted sink saw a delta"
         );
     }
@@ -18704,7 +18708,11 @@ modes:
         assert_eq!(audits[0]["reason_code"], "stream_error");
         assert_eq!(audits[0]["event_count"], 1);
         assert_eq!(audits[0]["byte_count"], 20);
-        assert!(!serde_json::to_string(&audits[0]).unwrap().contains("native-private-delta"));
+        assert!(
+            !serde_json::to_string(&audits[0])
+                .unwrap()
+                .contains("native-private-delta")
+        );
     }
 
     struct PendingOpenReasoningProvider {
@@ -18755,21 +18763,18 @@ modes:
             close.close();
         };
         let mut sink = ReasoningRecordingSink::default();
-        let (result, ()) = tokio::time::timeout(
-            Duration::from_millis(250),
-            async {
-                tokio::join!(
-                    dispatch_reasoning_stream_fixture(
-                        home.path(),
-                        segment.clone(),
-                        &provider,
-                        &cancellation,
-                        &mut sink,
-                    ),
-                    cancel_after_open,
-                )
-            },
-        )
+        let (result, ()) = tokio::time::timeout(Duration::from_millis(250), async {
+            tokio::join!(
+                dispatch_reasoning_stream_fixture(
+                    home.path(),
+                    segment.clone(),
+                    &provider,
+                    &cancellation,
+                    &mut sink,
+                ),
+                cancel_after_open,
+            )
+        })
         .await
         .expect("stream-open cancellation must settle without a detached wait");
         assert!(result.is_err());
@@ -18784,7 +18789,10 @@ modes:
         ));
         let audits = reasoning_audits_at(&segment);
         assert_eq!(audits.len(), 1);
-        assert_eq!(audits[0]["identity"], serde_json::json!({"kind":"unobserved"}));
+        assert_eq!(
+            audits[0]["identity"],
+            serde_json::json!({"kind":"unobserved"})
+        );
         assert_eq!(audits[0]["terminal_state"], "cancelled");
         assert_eq!(audits[0]["reason_code"], "cancelled");
     }
@@ -18849,21 +18857,18 @@ modes:
             close.close();
         };
         let mut sink = ReasoningRecordingSink::default();
-        let (result, ()) = tokio::time::timeout(
-            Duration::from_millis(250),
-            async {
-                tokio::join!(
-                    dispatch_reasoning_stream_fixture(
-                        home.path(),
-                        segment.clone(),
-                        &provider,
-                        &cancellation,
-                        &mut sink,
-                    ),
-                    cancel_after_delta,
-                )
-            },
-        )
+        let (result, ()) = tokio::time::timeout(Duration::from_millis(250), async {
+            tokio::join!(
+                dispatch_reasoning_stream_fixture(
+                    home.path(),
+                    segment.clone(),
+                    &provider,
+                    &cancellation,
+                    &mut sink,
+                ),
+                cancel_after_delta,
+            )
+        })
         .await
         .expect("pending next-item cancellation must settle without a detached wait");
         assert!(result.is_err());
@@ -18891,7 +18896,11 @@ modes:
         assert_eq!(audits[0]["byte_count"], 20);
         assert_eq!(audits[0]["terminal_state"], "cancelled");
         assert_eq!(audits[0]["reason_code"], "cancelled");
-        assert!(!serde_json::to_string(&audits[0]).unwrap().contains("pending-next-private"));
+        assert!(
+            !serde_json::to_string(&audits[0])
+                .unwrap()
+                .contains("pending-next-private")
+        );
     }
 
     #[tokio::test]

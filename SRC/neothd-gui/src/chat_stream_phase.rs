@@ -499,12 +499,19 @@ impl DaemonChatPresentationReducer {
             .map(|preview| preview.as_str())
     }
 
-    pub fn reasoning_status(&self, surface: ChatStreamSurface) -> Option<DaemonChatReasoningStatus> {
-        self.slot(surface).as_ref().map(|state| state.reasoning_status)
+    pub fn reasoning_status(
+        &self,
+        surface: ChatStreamSurface,
+    ) -> Option<DaemonChatReasoningStatus> {
+        self.slot(surface)
+            .as_ref()
+            .map(|state| state.reasoning_status)
     }
 
     pub fn reasoning_active(&self, surface: ChatStreamSurface) -> Option<bool> {
-        self.slot(surface).as_ref().map(|state| state.reasoning_active)
+        self.slot(surface)
+            .as_ref()
+            .map(|state| state.reasoning_active)
     }
 
     /// Kept separate from reply/canonical-preview and exposed only to the
@@ -681,7 +688,10 @@ mod daemon_chat_presentation_tests {
             DaemonChatApply::Applied
         );
         assert_eq!(reducer.visible_reply(ChatStreamSurface::Main), Some(""));
-        assert_eq!(reducer.reasoning_text(ChatStreamSurface::Main), Some("transient"));
+        assert_eq!(
+            reducer.reasoning_text(ChatStreamSurface::Main),
+            Some("transient")
+        );
         assert_eq!(
             reducer.apply(event(
                 2,
@@ -763,7 +773,10 @@ mod daemon_chat_presentation_tests {
         live.surface = ChatStreamSurface::Buddy;
         live.generation = 3;
         assert_eq!(reducer.apply(live), DaemonChatApply::Applied);
-        assert_eq!(reducer.reasoning_text(ChatStreamSurface::Buddy), Some("new-only"));
+        assert_eq!(
+            reducer.reasoning_text(ChatStreamSurface::Buddy),
+            Some("new-only")
+        );
         assert_eq!(reducer.visible_reply(ChatStreamSurface::Buddy), Some(""));
     }
 
