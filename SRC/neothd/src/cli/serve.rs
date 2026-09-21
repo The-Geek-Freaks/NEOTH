@@ -1780,6 +1780,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         // consolidated day up into a `kind='summary'` row (the pass's
         // is_local_provider guard skips cloud providers — no background billing).
         shared_provider.clone(),
+        // GOLD-LF-P2-02: each decay tick reads only the accepted reload
+        // snapshot before deciding whether secondary membership may mutate.
+        std::sync::Arc::clone(&reload_controller),
     ));
     info!(
         interval_secs = crate::memory::decay_task::DEFAULT_INTERVAL.as_secs(),

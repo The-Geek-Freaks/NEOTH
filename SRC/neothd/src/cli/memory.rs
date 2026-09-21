@@ -77,8 +77,14 @@ pub struct MemoryArgs {
     pub size: bool,
 
     /// Filter recall by memory tier (Phase 28a R-22 MT-5).
-    #[arg(long, value_enum, conflicts_with_all = ["show", "paths", "size", "archive", "forget"])]
+    #[arg(long, value_enum, conflicts_with_all = ["show", "paths", "size", "archive", "forget", "hippocampus"])]
     pub tier: Option<TierFilter>,
+
+    /// Inspect the current, durable secondary Hippocampus membership. An
+    /// optional query filters live source text; this opens views.db read-only
+    /// and never re-scores, indexes, or calls a provider.
+    #[arg(long, value_name = "QUERY", num_args = 0..=1, default_missing_value = "", conflicts_with_all = ["show", "paths", "size", "tier", "archive", "forget", "dimension", "rebuild_index", "pin", "unpin", "people", "graph", "embed_backfill", "pipeline_scorecard"])]
+    pub hippocampus: Option<String>,
 
     /// List archived session MD files for the given day (YYYY-MM-DD).
     #[arg(long, value_name = "YYYY-MM-DD", conflicts_with_all = ["show", "paths", "size", "tier", "forget"])]
@@ -215,6 +221,9 @@ pub async fn run_memory(args: MemoryArgs) -> Result<()> {
     //    views.db (tier) or sweep the archive dir (archive).
     if let Some(tier) = args.tier {
         return run_memory_tier(&args, tier).await;
+    }
+    if let Some(query) = args.hippocampus.as_deref() {
+        return run_memory_hippocampus(&args, query);
     }
     if let Some(day) = args.archive.as_deref() {
         return run_memory_archive(&args, day).await;
@@ -592,6 +601,60 @@ async fn run_memory_tier(args: &MemoryArgs, tier: TierFilter) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// `neoth memory --hippocampus [query] [--limit N]` — bounded inspection of
+/// the secondary membership bucket. Membership has no text/score copy; every
+/// result is joined to an existing current tier row by the read-only module.
+fn run_memory_hippocampus(args: &MemoryArgs, query: &str) -> Result<()> {
+    let rows = hippocampus_rows_for_cli(args, query)?;
+    for line in format_hippocampus_rows(&rows, args.output)? {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+/// The production CLI's read path, factored so the scheduler integration test
+/// can verify the same read-only connection and bounded query before rendering.
+pub(crate) fn hippocampus_rows_for_cli(
+    args: &MemoryArgs,
+    query: &str,
+) -> Result<Vec<crate::memory::hippocampus::HippocampusRow>> {
+    use crate::memory::{hippocampus, store};
+
+    let db_path = args.db.clone().unwrap_or_else(store::default_path);
+    let conn = hippocampus::open_read_only(&db_path)?;
+    hippocampus::query_current_rows(&conn, Some(query), args.limit)
+}
+
+/// Format the exact lines emitted by `memory --hippocampus`; the caller owns
+/// the final stdout write so JSONL remains one object per line.
+pub(crate) fn format_hippocampus_rows(
+    rows: &[crate::memory::hippocampus::HippocampusRow],
+    output: OutputFormat,
+) -> Result<Vec<String>> {
+    match output {
+        OutputFormat::Json => Ok(vec![serde_json::to_string_pretty(rows)?]),
+        OutputFormat::Jsonl => rows
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into),
+        OutputFormat::Table => {
+            if rows.is_empty() {
+                return Ok(vec!["no current Hippocampus memberships.".to_string()]);
+            }
+            let mut lines = vec![format!("# {} current Hippocampus membership(s)", rows.len())];
+            for row in &rows {
+                let preview: String = row.text.chars().take(80).collect();
+                lines.push(format!(
+                    "  [{:>10}] {} imp={:.3}  {}",
+                    row.event_id, row.tier, row.importance, preview
+                ));
+            }
+            Ok(lines)
+        }
+    }
 }
 
 const COMMUNICATION_OPERATOR_SUBJECT: &str = "operator";
@@ -1933,6 +1996,7 @@ mod tests {
             paths: false,
             size: false,
             tier: None,
+            hippocampus: None,
             archive: None,
             forget: None,
             graph: false,
@@ -2012,6 +2076,34 @@ mod tests {
             verified_only.iter().all(|row| row.fact.id != synthesis_id),
             "--verified-only retains the recall trust boundary"
         );
+    }
+
+    #[test]
+    fn hippocampus_flag_accepts_an_omitted_or_explicit_query() {
+        use crate::cli::{Cli, Commands};
+        use clap::Parser;
+
+        let Cli { command, .. } = Cli::try_parse_from(["neoth", "memory", "--hippocampus"])
+            .expect("the optional Hippocampus query must accept a bare flag");
+        let Commands::Memory(parsed) = command else {
+            panic!("expected memory command");
+        };
+        assert_eq!(parsed.hippocampus.as_deref(), Some(""));
+
+        let Cli { command, .. } = Cli::try_parse_from([
+            "neoth",
+            "memory",
+            "--hippocampus",
+            "producer",
+            "--limit",
+            "1",
+        ])
+        .expect("the optional Hippocampus query must accept text before a global limit");
+        let Commands::Memory(parsed) = command else {
+            panic!("expected memory command");
+        };
+        assert_eq!(parsed.hippocampus.as_deref(), Some("producer"));
+        assert_eq!(parsed.limit, 1);
     }
 
     #[test]

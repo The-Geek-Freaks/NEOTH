@@ -57,6 +57,12 @@ pub struct PassReport {
     /// at all. Surface it here so the report-shape matches the
     /// other tier-archive fields.
     pub cold_swept: usize,
+    /// New durable Hippocampus memberships selected from the post-decay live
+    /// source tiers during this transaction.
+    pub hippocampus_selected: usize,
+    /// Existing memberships removed because their source was swept, archived,
+    /// or fell below the fixed selection threshold.
+    pub hippocampus_removed: usize,
     /// KF-10 (Session 30): hot rows drafted to the Obsidian `PreDecay/`
     /// vault before being forgotten (only non-zero when the operator
     /// configured `obsidian_vault` AND rows fell below FORGET_FLOOR this
@@ -94,6 +100,18 @@ pub fn run_consolidation_pass(
     conn: &mut Connection,
     now_ns: i64,
     vault_path: Option<&std::path::Path>,
+) -> Result<PassReport> {
+    run_consolidation_pass_with_hippocampus(conn, now_ns, vault_path, false)
+}
+
+/// Run the mandatory consolidation pass and, only when admitted by the daemon
+/// snapshot, reconcile secondary Hippocampus membership in the same SQLite
+/// transaction. Disabled/default callers retain the historical exact behavior.
+pub fn run_consolidation_pass_with_hippocampus(
+    conn: &mut Connection,
+    now_ns: i64,
+    vault_path: Option<&std::path::Path>,
+    hippocampus_enabled: bool,
 ) -> Result<PassReport> {
     let mut report = PassReport::default();
     // JV-MEM-12 circuit-breaker: refuse to consolidate a structurally corrupt
@@ -298,6 +316,13 @@ pub fn run_consolidation_pass(
         );
     }
     report.cold_swept = cold_swept;
+
+    if hippocampus_enabled {
+        let hippocampus = crate::memory::hippocampus::reconcile(&tx, now_ns)
+            .context("reconcile Hippocampus event-id membership")?;
+        report.hippocampus_selected = hippocampus.selected;
+        report.hippocampus_removed = hippocampus.removed;
+    }
 
     tx.commit().context("commit consolidation tx")?;
 
@@ -772,6 +797,41 @@ mod tests {
             .query_row("SELECT count(*) FROM idx_longterm", [], |r| r.get(0))
             .unwrap();
         assert_eq!(remaining, 1, "only the 0.50 row survives the sweep");
+    }
+
+    #[test]
+    fn hippocampus_membership_moves_with_retained_event_and_rolls_back_with_decay() {
+        let (_dir, mut conn) = open();
+        let now: i64 = 400 * DAY_NS;
+        // 0.80 remains selected after one hot decay (0.776) and after its
+        // hot→warm move; membership never becomes a second source of truth.
+        insert_episode(&conn, 75, 10, 0.80, now);
+        let report = run_consolidation_pass_with_hippocampus(&mut conn, now, None, true).unwrap();
+        assert_eq!(report.hippocampus_selected, 1);
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM idx_hippocampus WHERE event_id = 75", [], |row| row.get::<_, i64>(0)).unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM idx_consolidated WHERE event_id = 75", [], |row| row.get::<_, i64>(0)).unwrap(),
+            1,
+            "retention movement keeps the selected event live"
+        );
+
+        conn.execute_batch(
+            "CREATE TRIGGER hippocampus_abort BEFORE INSERT ON idx_hippocampus \
+             WHEN NEW.event_id = 76 BEGIN SELECT RAISE(ABORT, 'injected hippo failure'); END;",
+        )
+        .unwrap();
+        insert_episode(&conn, 76, 0, 0.8, now);
+        let before: f64 = conn
+            .query_row("SELECT importance FROM idx_episode WHERE event_id = 76", [], |row| row.get(0))
+            .unwrap();
+        assert!(run_consolidation_pass_with_hippocampus(&mut conn, now, None, true).is_err());
+        let after: f64 = conn
+            .query_row("SELECT importance FROM idx_episode WHERE event_id = 76", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(after, before, "membership failure must roll back tier decay too");
     }
 
     #[test]

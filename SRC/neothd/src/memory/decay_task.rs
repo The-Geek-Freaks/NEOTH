@@ -42,8 +42,24 @@ pub fn spawn(
     // GOLD-FEAT-12 (b): the daemon's provider, for warm-tier summarization. When
     // `None` (or a non-local provider) the pass writes no summary rows.
     provider: Option<Arc<dyn Provider>>,
+    // Every tick reads this accepted snapshot; rejected reload candidates are
+    // never observable by the membership mutator.
+    reload_controller: Arc<crate::config::reload::ReloadController>,
 ) -> JoinHandle<()> {
-    tokio::spawn(async move { run(home, db_path, interval, vault, wal_writer, provider).await })
+    tokio::spawn(async move {
+        run(
+            home,
+            db_path,
+            interval,
+            vault,
+            wal_writer,
+            provider,
+            reload_controller,
+            #[cfg(test)]
+            None,
+        )
+        .await
+    })
 }
 
 /// M-04 (Session 24): infinite-loop body never returns Ok(()), so
@@ -59,6 +75,8 @@ async fn run(
     vault: Option<PathBuf>,
     wal_writer: Option<WalWriterHandle>,
     provider: Option<Arc<dyn Provider>>,
+    reload_controller: Arc<crate::config::reload::ReloadController>,
+    #[cfg(test)] mut completed_tick: Option<tokio::sync::oneshot::Sender<bool>>,
 ) {
     let mut ticker = tokio::time::interval(interval);
     // Skip missed ticks rather than bursting (the codebase-wide default for
@@ -76,12 +94,15 @@ async fn run(
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        if let Err(e) = run_once(
+        let accepted = reload_controller.latest();
+        let hippocampus_enabled = hippocampus_selection_enabled(accepted.as_ref());
+        if let Err(e) = run_once_with_hippocampus(
             &home.join("freedom.yaml"),
             &db_path,
             vault.clone(),
             wal_writer.as_ref(),
             provider.clone(),
+            hippocampus_enabled,
         )
         .await
         {
@@ -90,6 +111,11 @@ async fn run(
                 error = %e,
                 "Hebbian decay pass failed (will retry next tick)"
             );
+        }
+        #[cfg(test)]
+        if let Some(completed_tick) = completed_tick.take() {
+            let _ = completed_tick.send(hippocampus_enabled);
+            return;
         }
     }
 }
@@ -111,6 +137,8 @@ async fn emit_consolidation_pass(writer: &WalWriterHandle, report: &consolidate:
         "cold_decayed": report.cold_decayed,
         "cold_swept": report.cold_swept,
         "pre_decay_drafted": report.pre_decay_drafted,
+        "hippocampus_selected": report.hippocampus_selected,
+        "hippocampus_removed": report.hippocampus_removed,
     }))
     .unwrap_or_default();
     let header =
@@ -134,7 +162,17 @@ fn pass_did_work(r: &consolidate::PassReport) -> bool {
         + r.cold_decayed
         + r.cold_swept
         + r.pre_decay_drafted
+        + r.hippocampus_selected
+        + r.hippocampus_removed
         > 0
+}
+
+/// Only an explicitly enabled feature under one accepted linear scheduler
+/// policy may mutate the secondary membership projection. `Custom` is
+/// deliberately excluded by the shared scheduler rail.
+pub(crate) fn hippocampus_selection_enabled(config: &crate::config::FreedomConfig) -> bool {
+    config.memory.hippocampus.enabled
+        && crate::cron::scheduler::autonomy_allows_scheduler(config.autonomy)
 }
 
 /// Replace the full Louvain assignment snapshot atomically. Readers either see
@@ -168,6 +206,20 @@ pub async fn run_once(
     vault: Option<PathBuf>,
     wal_writer: Option<&WalWriterHandle>,
     provider: Option<Arc<dyn Provider>>,
+) -> Result<consolidate::PassReport> {
+    run_once_with_hippocampus(config_path, db_path, vault, wal_writer, provider, false).await
+}
+
+/// One pass with an already-admitted secondary-membership policy. The daemon
+/// obtains this bool only from `ReloadController::latest()` at its tick edge;
+/// direct callers retain the default-off [`run_once`] behavior.
+pub async fn run_once_with_hippocampus(
+    config_path: &std::path::Path,
+    db_path: &std::path::Path,
+    vault: Option<PathBuf>,
+    wal_writer: Option<&WalWriterHandle>,
+    provider: Option<Arc<dyn Provider>>,
+    hippocampus_enabled: bool,
 ) -> Result<consolidate::PassReport> {
     let db = db_path.to_path_buf();
     let report = tokio::task::spawn_blocking(move || -> Result<consolidate::PassReport> {
@@ -224,7 +276,12 @@ pub async fn run_once(
                 return Ok(consolidate::PassReport::default());
             }
         };
-        let pass_report = consolidate::run_consolidation_pass(&mut conn, now_ns, vault.as_deref())?;
+        let pass_report = consolidate::run_consolidation_pass_with_hippocampus(
+            &mut conn,
+            now_ns,
+            vault.as_deref(),
+            hippocampus_enabled,
+        )?;
         // refines-JV-MEM-08 — Ebbinghaus exponential edge decay + Cepeda spacing.
         // Per-row: weight *= exp(-days_since / stability); stability=1.0 default
         // → 1-day half-life; Cepeda spacing in reinforce_co_access grows stability
@@ -704,6 +761,10 @@ mod tests {
             None,
             None,
             None,
+            Arc::new(crate::config::reload::ReloadController::new(
+                crate::config::FreedomConfig::default(),
+                dir.path().join("freedom.yaml"),
+            )),
         );
         // Give it a moment to enter the loop.
         tokio::time::sleep(Duration::from_millis(25)).await;
@@ -801,5 +862,234 @@ mod tests {
         drop(writer);
         join.await.ok();
         assert_eq!(count_consolidation_frames(&seg), 0);
+    }
+
+    #[test]
+    fn hippocampus_selection_is_default_off_and_custom_fail_closed() {
+        let mut config = crate::config::FreedomConfig::default();
+        assert!(!hippocampus_selection_enabled(&config));
+        config.memory.hippocampus.enabled = true;
+        for denied in [AutonomyLevel::Strict, AutonomyLevel::Custom] {
+            config.autonomy = denied;
+            assert!(!hippocampus_selection_enabled(&config), "{denied:?} must not mutate");
+        }
+        for allowed in [
+            AutonomyLevel::Standard,
+            AutonomyLevel::Elevated,
+            AutonomyLevel::Full,
+        ] {
+            config.autonomy = allowed;
+            assert!(hippocampus_selection_enabled(&config), "{allowed:?} must permit selection");
+        }
+    }
+
+    #[test]
+    fn rejected_reload_keeps_the_last_accepted_hippocampus_policy() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("freedom.yaml");
+        let mut accepted = crate::config::FreedomConfig::default();
+        accepted.autonomy = AutonomyLevel::Standard;
+        accepted.memory.hippocampus.enabled = true;
+        std::fs::write(&config_path, serde_yaml::to_string(&accepted).unwrap()).unwrap();
+        let controller = crate::config::reload::ReloadController::new(accepted, config_path.clone());
+        std::fs::write(&config_path, "memory: [not a mapping\n").unwrap();
+        assert!(controller.try_reload().is_err());
+        assert!(hippocampus_selection_enabled(controller.latest().as_ref()));
+    }
+
+    fn spawn_one_tick_for_test(
+        home: PathBuf,
+        db: PathBuf,
+        reload_controller: Arc<crate::config::reload::ReloadController>,
+        completed_tick: tokio::sync::oneshot::Sender<bool>,
+    ) -> JoinHandle<()> {
+        tokio::spawn(run(
+            home,
+            db,
+            Duration::from_millis(10),
+            None,
+            None,
+            None,
+            reload_controller,
+            Some(completed_tick),
+        ))
+    }
+
+    #[tokio::test]
+    async fn wal_indexed_importance_flows_through_accepted_tick_to_cli_hippocampus_view() {
+        use crate::wal::events::EVENT_TYPE_RAW_TEXT;
+        use crate::wal::frame::encode_frame;
+        use crate::wal::header::{CRC_LEN, HEADER_BODY_LEN, PREAMBLE_LEN};
+        use crate::wal::segment_header::SegmentHeader;
+        use crate::wal::{EventFlags, EventHeaderV2, EventId, Hlc, Importance, NodeId, SessionId};
+
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let segment = dir.path().join("000001.wal");
+        let producer_ns = u64::try_from(crate::time::now_unix_ns_i64()).unwrap();
+        let mut bytes = Vec::new();
+        let segment_header = SegmentHeader::new(0, 1, 0, producer_ns, [0; 16]);
+        bytes.extend_from_slice(&segment_header.to_le_bytes());
+        for (event_id, importance, payload) in [
+            (175, 0.8, b"W175 selected producer event".as_slice()),
+            (176, 0.75, b"W175 boundary producer event".as_slice()),
+            (177, 0.7, b"W175 below-threshold producer event".as_slice()),
+        ] {
+            let header = EventHeaderV2 {
+                wal_format_version: EventHeaderV2::WAL_FORMAT_VERSION,
+                event_schema_version: EventHeaderV2::EVENT_SCHEMA_VERSION,
+                event_type: EVENT_TYPE_RAW_TEXT,
+                event_subtype: 0,
+                flags: EventFlags::empty(),
+                header_len: HEADER_BODY_LEN as u16,
+                reserved_len: 0,
+                total_len: (PREAMBLE_LEN + HEADER_BODY_LEN + payload.len() + CRC_LEN) as u32,
+                payload_len: payload.len() as u32,
+                generation: 0,
+                event_id: EventId(event_id),
+                hlc: Hlc::new(producer_ns + event_id, 0).unwrap(),
+                importance: Importance::new(importance).unwrap(),
+                scope: crate::wal::types::WalScope::UNSET,
+                category: crate::wal::types::WalCategory::UNSET,
+                session_id: SessionId([0; 16]),
+                node_id: NodeId([0; 16]),
+                payload_hash: xxhash_rust::xxh3::xxh3_64(payload),
+            };
+            bytes.extend_from_slice(&encode_frame(&header, payload));
+        }
+        tokio::fs::write(&segment, bytes).await.unwrap();
+
+        let mut indexed = store::open(&db).unwrap();
+        assert_eq!(crate::memory::indexer::replay_once(&mut indexed, &segment).await.unwrap(), 3);
+        let importance: f64 = indexed
+            .query_row("SELECT importance FROM idx_episode WHERE event_id = 175", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            importance,
+            Importance::new(0.8).unwrap().raw() as f64,
+            "selection consumes the exact f32 WAL importance projection"
+        );
+        // Pin only the exact-boundary fixture so the production tick reaches
+        // reconciliation with 0.75 intact; the separately asserted 0.8 and
+        // 0.7 producer events retain normal decay behavior.
+        indexed
+            .execute("UPDATE idx_episode SET pinned = 1 WHERE event_id = 176", [])
+            .unwrap();
+        drop(indexed);
+
+        let config_path = dir.path().join("freedom.yaml");
+        let mut standard = crate::config::FreedomConfig::default();
+        standard.autonomy = AutonomyLevel::Standard;
+        standard.memory.hippocampus.enabled = true;
+        std::fs::write(&config_path, serde_yaml::to_string(&standard).unwrap()).unwrap();
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            standard.clone(),
+            config_path.clone(),
+        ));
+        let (standard_tick_tx, standard_tick_rx) = tokio::sync::oneshot::channel();
+        let task = spawn_one_tick_for_test(
+            dir.path().to_path_buf(),
+            db.clone(),
+            Arc::clone(&controller),
+            standard_tick_tx,
+        );
+
+        // The completed one-shot scheduler tick has read `latest()` under
+        // Standard and reconciled normal plus exact-boundary memberships.
+        assert!(standard_tick_rx.await.unwrap());
+        task.await.unwrap();
+        let standard_rows = crate::memory::hippocampus::query_current_rows(
+            &crate::memory::hippocampus::open_read_only(&db).unwrap(),
+            None,
+            100,
+        )
+        .unwrap();
+        assert_eq!(
+            standard_rows.iter().map(|row| row.event_id).collect::<Vec<_>>(),
+            vec![175, 176],
+        );
+        let cli_args = crate::cli::memory::MemoryArgs {
+            hippocampus: Some("producer".to_string()),
+            limit: 2,
+            db: Some(db.clone()),
+            output: crate::cli::OutputFormat::Table,
+            ..Default::default()
+        };
+        let cli_rows = crate::cli::memory::hippocampus_rows_for_cli(&cli_args, "producer").unwrap();
+        let cli_lines = crate::cli::memory::format_hippocampus_rows(&cli_rows, cli_args.output).unwrap();
+        assert_eq!(cli_rows.iter().map(|row| row.event_id).collect::<Vec<_>>(), vec![175, 176]);
+        assert_eq!(cli_lines.len(), 3, "the production table renderer remains bounded by --limit");
+        assert!(cli_lines[1].contains("selected producer event"));
+        assert!(cli_lines[2].contains("boundary producer event"));
+
+        // A valid Custom reload leaves ordinary decay active but prohibits any
+        // new membership selection on its completed real task tick.
+        let mut custom = standard.clone();
+        custom.autonomy = AutonomyLevel::Custom;
+        std::fs::write(&config_path, serde_yaml::to_string(&custom).unwrap()).unwrap();
+        controller.try_reload().unwrap();
+        let current_ns = crate::time::now_unix_ns_i64();
+        let conn = store::open(&db).unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id,event_type,ts_ns,text,text_hash,importance,last_access_ts) \
+             VALUES (178,1,?1,'W175 Custom producer event','w175-custom',0.9,?1)",
+            [current_ns],
+        )
+        .unwrap();
+        drop(conn);
+        let (custom_tick_tx, custom_tick_rx) = tokio::sync::oneshot::channel();
+        let custom_task = spawn_one_tick_for_test(
+            dir.path().to_path_buf(),
+            db.clone(),
+            Arc::clone(&controller),
+            custom_tick_tx,
+        );
+        assert!(!custom_tick_rx.await.unwrap());
+        custom_task.await.unwrap();
+        let read_only = crate::memory::hippocampus::open_read_only(&db).unwrap();
+        let custom_importance: f64 = read_only
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 178",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(custom_importance < 0.9, "Custom leaves mandatory decay active");
+        assert!(
+            !crate::memory::hippocampus::query_current_rows(&read_only, None, 100)
+                .unwrap()
+                .iter()
+                .any(|row| row.event_id == 178),
+            "the completed Custom tick must not select a new membership"
+        );
+
+        // Re-admit Standard, make all live sources archive-eligible, and let
+        // a fresh accepted-Standard task tick remove durable members with their
+        // deleted sources.
+        std::fs::write(&config_path, serde_yaml::to_string(&standard).unwrap()).unwrap();
+        controller.try_reload().unwrap();
+        let conn = store::open(&db).unwrap();
+        conn.execute_batch(
+            "UPDATE idx_episode SET pinned = 0, importance = 0.01, ts_ns = 0 \
+             WHERE event_id IN (175, 176, 178);",
+        )
+        .unwrap();
+        drop(conn);
+        let (cleanup_tick_tx, cleanup_tick_rx) = tokio::sync::oneshot::channel();
+        let cleanup_task = spawn_one_tick_for_test(
+            dir.path().to_path_buf(),
+            db.clone(),
+            Arc::clone(&controller),
+            cleanup_tick_tx,
+        );
+        assert!(cleanup_tick_rx.await.unwrap());
+        cleanup_task.await.unwrap();
+        let empty_rows = crate::cli::memory::hippocampus_rows_for_cli(&cli_args, "producer").unwrap();
+        assert!(empty_rows.is_empty(), "archived sources disappear from the CLI read path");
+        assert_eq!(
+            crate::cli::memory::format_hippocampus_rows(&empty_rows, cli_args.output).unwrap(),
+            vec!["no current Hippocampus memberships."],
+        );
+
     }
 }

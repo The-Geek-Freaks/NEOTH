@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W176_HOSTED_FORMAT_IMPORTED_BEHAVIOR_PENDING",
-  "base": "e62fc4963c766a645871ac79ceb228ac9b1df675",
+  "status": "W175_STATIC_APPROVED_HOSTED_PENDING",
+  "base": "543a23eb097473c97072f3efc6280f291fea773f",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 68810,
-    "sha256": "CDDF212D48E505D9412B7F1762554229B6FC10CEE0B29FACB9A19BBB112BBD36"
+    "bytes": 69885,
+    "sha256": "AD31B64173A35216AE8282C8CB998A20402C67C556B26DB90FF492F369471087"
   },
-  "sourceInputs": 398,
+  "sourceInputs": 404,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -1818,7 +1818,7 @@
     {
       "test": "memory::migrations::tests::v39_to_v40_preserves_rows_as_unattributed_and_creates_session_indexes",
       "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
-      "sourceSha256": "7F94C61624296430B562BF0D71BBE3E4F24542902808684A636CAB7B8B71C847",
+      "sourceSha256": "7ED828AF4C64D056544843CFCFB8DFE7F9E25E4B0F92A97ED5167D0663EB5507",
       "junitClass": "neoth"
     },
     {
@@ -2124,7 +2124,7 @@
     {
       "test": "memory::migrations::tests::migrate_full_chain_preserves_data_and_adds_columns",
       "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
-      "sourceSha256": "7F94C61624296430B562BF0D71BBE3E4F24542902808684A636CAB7B8B71C847",
+      "sourceSha256": "7ED828AF4C64D056544843CFCFB8DFE7F9E25E4B0F92A97ED5167D0663EB5507",
       "junitClass": "neoth"
     },
     {
@@ -2641,6 +2641,72 @@
       "test": "cli::chat::tests::prompt_tax_bundle_reaches_terminal_usage_and_clears_on_changed_leaf_bytes",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
       "sourceSha256": "A174C3701D5F674137603B6FC3BF4DDF32B8DB40BE37379273A62D4D2FF4B01D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "config::memory::tests::hippocampus_membership_is_default_off_and_parses_explicit_opt_in",
+      "sourcePath": "SRC/neothd/src/config/memory.rs",
+      "sourceSha256": "7FD0882D6067852BC9BC73B20DA0D6935F3E579DEB5F8465E2E5B2FC9A1843DC",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::hippocampus::tests::selection_boundary_is_inclusive_and_idempotent",
+      "sourcePath": "SRC/neothd/src/memory/hippocampus.rs",
+      "sourceSha256": "901B01194D3D37F942FF59CD1B4750161D08F548F13B77E9839AECDE2CE244FA",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::hippocampus::tests::reconcile_removes_decayed_and_missing_membership_atomically",
+      "sourcePath": "SRC/neothd/src/memory/hippocampus.rs",
+      "sourceSha256": "901B01194D3D37F942FF59CD1B4750161D08F548F13B77E9839AECDE2CE244FA",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::hippocampus::tests::read_only_query_hides_stale_rows_and_uses_stable_order",
+      "sourcePath": "SRC/neothd/src/memory/hippocampus.rs",
+      "sourceSha256": "901B01194D3D37F942FF59CD1B4750161D08F548F13B77E9839AECDE2CE244FA",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::migrations::tests::v40_to_v41_adds_membership_without_rewriting_existing_importance",
+      "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
+      "sourceSha256": "7ED828AF4C64D056544843CFCFB8DFE7F9E25E4B0F92A97ED5167D0663EB5507",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::migrations::tests::v40_to_v41_rolls_back_when_an_incompatible_existing_table_blocks_the_index",
+      "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
+      "sourceSha256": "7ED828AF4C64D056544843CFCFB8DFE7F9E25E4B0F92A97ED5167D0663EB5507",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::consolidate::tests::hippocampus_membership_moves_with_retained_event_and_rolls_back_with_decay",
+      "sourcePath": "SRC/neothd/src/memory/consolidate.rs",
+      "sourceSha256": "24DA1D1480735F577483CA9ED049E37C63767725F87D1DD9325455718F1ED5EB",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::decay_task::tests::hippocampus_selection_is_default_off_and_custom_fail_closed",
+      "sourcePath": "SRC/neothd/src/memory/decay_task.rs",
+      "sourceSha256": "FF6DD6414DCB9D1E9E369291C26FBDEB238DF9A122F452489B7748F7757C9C75",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::decay_task::tests::rejected_reload_keeps_the_last_accepted_hippocampus_policy",
+      "sourcePath": "SRC/neothd/src/memory/decay_task.rs",
+      "sourceSha256": "FF6DD6414DCB9D1E9E369291C26FBDEB238DF9A122F452489B7748F7757C9C75",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::decay_task::tests::wal_indexed_importance_flows_through_accepted_tick_to_cli_hippocampus_view",
+      "sourcePath": "SRC/neothd/src/memory/decay_task.rs",
+      "sourceSha256": "FF6DD6414DCB9D1E9E369291C26FBDEB238DF9A122F452489B7748F7757C9C75",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::memory::tests::hippocampus_flag_accepts_an_omitted_or_explicit_query",
+      "sourcePath": "SRC/neothd/src/cli/memory.rs",
+      "sourceSha256": "42752C896A2E7A317845C74CFAF943AC77EFDACD6B717AD015B5B628A2A5A7A4",
       "junitClass": "neoth"
     }
   ],
@@ -6578,5 +6644,17 @@
       "codeQuality": "success",
       "behavior": "pending"
     }
+  },
+  "wave175": {
+    "sourceFiles": 9,
+    "newTests": 11,
+    "review": "work/gold-20260906/wave175-next-batch/INDEPENDENT-REVIEW-04.md",
+    "reviewSha256": "5F7A6A80F2C8B9B5A30732E5A6DBA8E4DDF5D39BCB9F2F62FD99E71E54159F9D",
+    "sourceFreeze": "work/gold-20260906/wave175-next-batch/SOURCE-FREEZE-04.json",
+    "sourceFreezeSha256": "72B7005430891822C488594ECC0808D44942843D71F8C2C1E89C2E124F3F0994",
+    "sourceTestReceipt": "work/gold-20260906/wave175-next-batch/IMPLEMENTATION-RECEIPT-04.json",
+    "sourceTestReceiptSha256": "407A21D0DEC6E95BFF4D70E66154AA989FC3242B3610AEB209C5DC6CC831D0C7",
+    "boundary": "STATIC-APPROVE only; Hosted compile/migration/scheduler/CLI/format/Clippy still required",
+    "roadClosure": false
   }
 }

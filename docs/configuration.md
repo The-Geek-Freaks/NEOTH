@@ -125,6 +125,30 @@ resource limits and audit-finalization failures are reported as failures.
 The report labels the result `Visual frame analysis:` and uses the existing
 indexing flow; `--no-index` retains its usual effect.
 
+### Hippocampus importance selection
+
+The existing two-hour memory maintenance task can maintain a secondary selection
+of retained events whose current importance is at least 0.75. Enable it with:
+
+```yaml
+memory:
+  hippocampus:
+    enabled: true
+```
+
+Selection is disabled by default. Each tick uses the last accepted configuration
+snapshot and admits selection under Standard, Elevated or Full autonomy. Custom
+keeps this selection inactive. The fixed 0.75 threshold is separate from the
+existing long-term tier-promotion threshold and is not a configurable score.
+
+Inspect current membership with `neoth memory --hippocampus`, optionally adding
+a query and `--limit N` (up to 100 rows). JSON/JSONL output uses the existing
+output option. Inspection opens the current views database read-only and joins
+live retained records; an older database missing the new schema reports an
+error instead of presenting an empty selection. The normal daemon/store upgrade
+provides the additive schema migration. Membership does not change normal
+recall ranking or copy event text into another table.
+
 ### Proactive delivery
 
 Proactive delivery remains opt-in. Its `freedom.yaml::proactive` block controls

@@ -303,7 +303,28 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "GOLD-LF-P2-08: add opaque WAL session projections to episode/provider views",
         run: migration_v39_to_v40,
     },
+    Migration {
+        from: 40,
+        to: 41,
+        description: "GOLD-LF-P2-02: add secondary Hippocampus event-id membership",
+        run: migration_v40_to_v41,
+    },
 ];
+
+/// Add an additive secondary membership view. The table deliberately holds no
+/// text or importance copy, so upgrading cannot rewrite WAL-indexed scores.
+pub(crate) fn migration_v40_to_v41(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS idx_hippocampus (\
+             event_id INTEGER PRIMARY KEY,\
+             selected_at_ns INTEGER NOT NULL\
+         );\
+         CREATE INDEX IF NOT EXISTS idx_hippocampus_selected \
+             ON idx_hippocampus (selected_at_ns DESC, event_id ASC);",
+    )
+    .context("v40→v41: create idx_hippocampus membership")?;
+    Ok(())
+}
 
 /// Add only the fixed-width header projection. Existing rows are permanently
 /// zero/unattributed; migration must never infer a session from payload data.
@@ -5000,5 +5021,40 @@ mod tests {
         for index in ["idx_episode_wal_session_ts", "idx_provider_wal_session_ts"] {
             assert!(sqlite_object_exists(&conn, index), "missing {index}");
         }
+    }
+
+    #[test]
+    fn v40_to_v41_adds_membership_without_rewriting_existing_importance() {
+        let mut conn = open_with_meta(40);
+        conn.execute_batch(
+            "CREATE TABLE idx_episode (event_id INTEGER PRIMARY KEY, importance REAL NOT NULL); \
+             INSERT INTO idx_episode VALUES (7, 0.8125);",
+        )
+        .unwrap();
+        assert_eq!(migrate(&mut conn, 40, 41).unwrap(), 41);
+        assert_eq!(current_version(&conn).unwrap(), 41);
+        assert!(sqlite_object_exists(&conn, "idx_hippocampus"));
+        assert!(sqlite_object_exists(&conn, "idx_hippocampus_selected"));
+        assert_eq!(
+            conn.query_row("SELECT importance FROM idx_episode WHERE event_id = 7", [], |row| row.get::<_, f64>(0)).unwrap(),
+            0.8125
+        );
+    }
+
+    #[test]
+    fn v40_to_v41_rolls_back_when_an_incompatible_existing_table_blocks_the_index() {
+        let mut conn = open_with_meta(40);
+        conn.execute_batch("CREATE TABLE idx_hippocampus (event_id INTEGER PRIMARY KEY);")
+            .unwrap();
+        assert!(migrate(&mut conn, 40, 41).is_err());
+        assert_eq!(current_version(&conn).unwrap(), 40);
+        let columns: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('idx_hippocampus') ORDER BY cid")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(columns, vec!["event_id"]);
     }
 }

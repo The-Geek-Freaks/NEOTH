@@ -8,6 +8,11 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct MemoryConfig {
     pub vector_index: VectorIndexConfig,
+    /// Default-off secondary durable membership for events whose existing WAL
+    /// importance is at least the fixed Hippocampus threshold. The threshold is
+    /// deliberately code-owned so a reload cannot reinterpret historic rows.
+    #[serde(default)]
+    pub hippocampus: HippocampusConfig,
     /// Explicit local-chat opt-in to authenticated transcript provenance.
     /// Omitted/null disables new mining bindings. Incognito always overrides it.
     /// This limits mining eligibility, not the existing transcript retention.
@@ -45,12 +50,21 @@ impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
             vector_index: VectorIndexConfig::default(),
+            hippocampus: HippocampusConfig::default(),
             transcript_mining_retention: None,
             name_sessions: false,
             recall_shortcut: true,
             operator_md_extra_dirs: Vec::new(),
         }
     }
+}
+
+/// Opt-in control for the secondary Hippocampus membership projection.
+/// The projection is reconciled only by the existing two-hour decay task.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct HippocampusConfig {
+    pub enabled: bool,
 }
 
 fn default_recall_shortcut() -> bool {
@@ -157,6 +171,16 @@ mod tests {
             FreedomConfig::default().memory.vector_index.backend,
             VectorBackend::BruteForce
         );
+    }
+
+    #[test]
+    fn hippocampus_membership_is_default_off_and_parses_explicit_opt_in() {
+        assert!(!MemoryConfig::default().hippocampus.enabled);
+        let absent: FreedomConfig = serde_yaml::from_str("{}").unwrap();
+        assert!(!absent.memory.hippocampus.enabled);
+        let enabled: MemoryConfig =
+            serde_yaml::from_str("hippocampus:\n  enabled: true\n").unwrap();
+        assert!(enabled.hippocampus.enabled);
     }
 
     #[test]

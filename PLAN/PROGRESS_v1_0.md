@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W175 Hippocampus selection (2026-09-22):** independently reviewed source
+adds default-off memory.hippocampus.enabled, fixed inclusive importance >=0.75,
+transactional event-id membership and additive views v40-to-v41 migration.
+The existing two-hour task reads its accepted reload snapshot; Custom prevents
+new membership mutation while ordinary decay remains active. The read-only
+`neoth memory --hippocampus [QUERY] --limit N` joins live retained source rows.
+Eleven regression identities include an actual WAL-indexed producer, completed
+scheduler ticks under Standard/Custom/Standard, and the production CLI renderer.
+Review repairs fix the exact f32 projection expectation, migration SQL spacing,
+an accidental CLI replacement, and tick/abort races using a test-only completed
+pass channel. Hosted compilation, CLI reference, formatting, strict Clippy and
+behavior remain required; no P2-02 checkbox closes. W178 Windows repairs are
+separate and excluded from this publication. See [W175](../docs/gold-wave175-verification.md).
+
+**W176 Hosted formatting (2026-09-22):** Preflight 35665279764 and Code Quality
+35665279331 passed on 543a23eb. The 20 W173/W176 behavioral identities still
+require execution; source/format success does not close D3.
 **W176 prompt-tax integration (2026-09-22):** one independently reviewed test
 now connects the real final-budget helper, local provider authorization,
 terminal WAL/usage projection, aggregation and production usage renderer. It

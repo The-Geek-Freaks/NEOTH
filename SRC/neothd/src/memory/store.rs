@@ -128,7 +128,8 @@ impl std::ops::DerefMut for PrivateHistoryConnection {
 /// v37: add post-v37 exact raw-frame plans without promoting any v36 row.
 /// v39: account-qualified aliases and exact legacy operator claims.
 /// v40: exact 16-byte WAL session projections for episode/provider views.
-pub const SCHEMA_VERSION: i64 = 40;
+/// v41: secondary, threshold-selected Hippocampus event-id membership.
+pub const SCHEMA_VERSION: i64 = 41;
 
 /// Current P1-08 metadata schema, split so the v36→v37 migration can rebuild
 /// the altered strict tables before the final trigger set is installed.  The
@@ -2188,6 +2189,15 @@ fn apply_schema(conn: &Connection) -> Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_longterm_importance ON idx_longterm (importance DESC);
         CREATE INDEX IF NOT EXISTS idx_longterm_event_id   ON idx_longterm (event_id);
+
+        -- v41: secondary event-id membership only. Text and importance remain
+        -- in the source tiers; this table is reconciled by consolidation.
+        CREATE TABLE IF NOT EXISTS idx_hippocampus (
+            event_id       INTEGER PRIMARY KEY,
+            selected_at_ns INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_hippocampus_selected
+            ON idx_hippocampus (selected_at_ns DESC, event_id ASC);
 
         -- ── Schema v5: ground-truth view (Phase 28c R-24) ────────────────
         --
