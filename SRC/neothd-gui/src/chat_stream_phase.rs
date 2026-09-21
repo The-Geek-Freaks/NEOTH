@@ -114,6 +114,12 @@ pub enum DaemonChatEventKind {
         event_count: u64,
         byte_count: u64,
     },
+    /// A content-free, daemon-validated W163 projection. Its rows stay in
+    /// the dedicated recall reducer; this only advances the shared cursor.
+    RecallChipBatch,
+    /// W168's content-free state stays in the dedicated throughput reducer;
+    /// the enclosing daemon delivery still owns ordering and terminal fences.
+    ThroughputState,
     ProviderDone,
     CancelRequested,
     Terminal(DaemonChatTerminal),
@@ -436,6 +442,16 @@ impl DaemonChatPresentationReducer {
                 current.reasoning_active = false;
                 current.reasoning.zeroize();
                 true
+            }
+            DaemonChatEventKind::RecallChipBatch => {
+                !current.cancel_requested
+                    && !current.provider_done
+                    && current.phase != ChatStreamPhase::Finalizing
+            }
+            DaemonChatEventKind::ThroughputState => {
+                !current.cancel_requested
+                    && !current.provider_done
+                    && current.phase != ChatStreamPhase::Finalizing
             }
             DaemonChatEventKind::Terminal(terminal) => {
                 let valid = match terminal {
@@ -867,6 +883,59 @@ mod daemon_chat_presentation_tests {
                 }
             )),
             DaemonChatApply::Rejected(DaemonChatReject::ReasoningSequence)
+        );
+    }
+
+    #[test]
+    fn recall_batch_is_cursor_bound_and_rejected_after_provider_done_or_cancel() {
+        let mut reducer = DaemonChatPresentationReducer::default();
+        reducer
+            .attach(ChatStreamSurface::Main, identity(), 1, 0, false, false)
+            .unwrap();
+        assert_eq!(
+            reducer.apply(event(1, DaemonChatEventKind::RecallChipBatch)),
+            DaemonChatApply::Applied
+        );
+        assert_eq!(
+            reducer.apply(event(2, DaemonChatEventKind::ProviderDone)),
+            DaemonChatApply::Applied
+        );
+        assert_eq!(
+            reducer.apply(event(3, DaemonChatEventKind::RecallChipBatch)),
+            DaemonChatApply::Rejected(DaemonChatReject::InvalidTransition)
+        );
+
+        let mut cancelled = DaemonChatPresentationReducer::default();
+        cancelled
+            .attach(ChatStreamSurface::Main, identity(), 1, 0, false, false)
+            .unwrap();
+        assert_eq!(
+            cancelled.apply(event(1, DaemonChatEventKind::CancelRequested)),
+            DaemonChatApply::Applied
+        );
+        assert_eq!(
+            cancelled.apply(event(2, DaemonChatEventKind::RecallChipBatch)),
+            DaemonChatApply::Rejected(DaemonChatReject::InvalidTransition)
+        );
+    }
+
+    #[test]
+    fn throughput_state_is_cursor_bound_and_rejected_after_provider_done_or_cancel() {
+        let mut reducer = DaemonChatPresentationReducer::default();
+        reducer
+            .attach(ChatStreamSurface::Main, identity(), 1, 0, false, false)
+            .unwrap();
+        assert_eq!(
+            reducer.apply(event(1, DaemonChatEventKind::ThroughputState)),
+            DaemonChatApply::Applied
+        );
+        assert_eq!(
+            reducer.apply(event(2, DaemonChatEventKind::ProviderDone)),
+            DaemonChatApply::Applied
+        );
+        assert_eq!(
+            reducer.apply(event(3, DaemonChatEventKind::ThroughputState)),
+            DaemonChatApply::Rejected(DaemonChatReject::InvalidTransition)
         );
     }
 

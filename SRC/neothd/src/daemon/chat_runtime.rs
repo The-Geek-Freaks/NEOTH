@@ -570,6 +570,13 @@ struct PlainChatSink {
 impl PlainChatSink {
     fn accept_output(&mut self, output: ChatOutput) -> Result<()> {
         let (kind, text) = match output {
+            // W167's content-free typed companion is reserved for the daemon
+            // GUI stream. The sealed plain response has no recall-chip field
+            // and must neither serialize nor reconstruct it.
+            ChatOutput::RecallChipBatch { .. } => return Ok(()),
+            // W168's typed live state is likewise private to the daemon GUI
+            // stream and has no sealed plain-RPC representation.
+            ChatOutput::LiveThroughputState { .. } => return Ok(()),
             ChatOutput::HumanStdout { text } => (DaemonPlainChatRecordKind::Stdout, text),
             ChatOutput::HumanStderr { text } => (DaemonPlainChatRecordKind::Stderr, text),
             ChatOutput::Notice {

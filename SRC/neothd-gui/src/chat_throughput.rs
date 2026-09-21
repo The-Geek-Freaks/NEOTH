@@ -71,6 +71,23 @@ pub enum ThroughputReason {
     StreamError,
 }
 
+/// The typed daemon GUI bridge has already authenticated the outer frame.
+/// This preserves the producer's independent W162 sequence without accepting
+/// a raw control record or its token/request binding fields.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum IssuedState {
+    Measuring {
+        basis: ThroughputBasis,
+        per_second: f64,
+    },
+    Paused {
+        basis: ThroughputBasis,
+    },
+    Unavailable {
+        reason: ThroughputReason,
+    },
+}
+
 impl ThroughputReason {
     fn parse(value: &str) -> Option<Self> {
         Some(match value {
@@ -177,6 +194,91 @@ impl Projection {
     /// detach. All three end the current request's transient ownership.
     pub fn final_sentinel_or_detach(&mut self) {
         self.fence_and_clear();
+    }
+
+    /// Typed W168 daemon entry point. The caller supplies the W162 producer
+    /// sequence separately from the enclosing GUI frame sequence.
+    pub fn accept_issued_state(
+        &mut self,
+        sequence: u64,
+        state: IssuedState,
+    ) -> Result<ThroughputSnapshot, &'static str> {
+        let result = (|| {
+            if self.terminal {
+                return Err("throughput after terminal boundary");
+            }
+            if sequence == 0 || sequence != self.next_sequence {
+                return Err("gapped or duplicate throughput control");
+            }
+            self.next_sequence = self
+                .next_sequence
+                .checked_add(1)
+                .ok_or("throughput sequence exhausted")?;
+            let snapshot = match state {
+                IssuedState::Measuring { basis, per_second }
+                    if per_second.is_finite()
+                        && (0.0..=MAX_THROUGHPUT_PER_SECOND).contains(&per_second) =>
+                {
+                    ThroughputSnapshot {
+                        state: ThroughputState::Measuring,
+                        basis: Some(basis),
+                        unit: Some(basis.unit()),
+                        per_second: Some(per_second),
+                        reason: None,
+                        terminal: false,
+                    }
+                }
+                IssuedState::Paused { basis } => ThroughputSnapshot {
+                    state: ThroughputState::Paused,
+                    basis: Some(basis),
+                    unit: Some(basis.unit()),
+                    per_second: None,
+                    reason: None,
+                    terminal: false,
+                },
+                IssuedState::Unavailable {
+                    reason @ (ThroughputReason::NoVisibleEvents
+                    | ThroughputReason::NoUsageReported),
+                } => ThroughputSnapshot {
+                    state: ThroughputState::Unavailable,
+                    basis: None,
+                    unit: None,
+                    per_second: None,
+                    reason: Some(reason),
+                    terminal: false,
+                },
+                IssuedState::Unavailable {
+                    reason: ThroughputReason::Cancelled,
+                } => ThroughputSnapshot {
+                    state: ThroughputState::Cancelled,
+                    basis: None,
+                    unit: None,
+                    per_second: None,
+                    reason: Some(ThroughputReason::Cancelled),
+                    terminal: true,
+                },
+                IssuedState::Unavailable {
+                    reason: ThroughputReason::StreamError,
+                } => ThroughputSnapshot {
+                    state: ThroughputState::Error,
+                    basis: None,
+                    unit: None,
+                    per_second: None,
+                    reason: Some(ThroughputReason::StreamError),
+                    terminal: true,
+                },
+                IssuedState::Measuring { .. } => return Err("invalid measuring throughput rate"),
+            };
+            self.snapshot = Some(snapshot);
+            if snapshot.terminal {
+                self.terminal = true;
+            }
+            Ok(snapshot)
+        })();
+        if result.is_err() {
+            self.fence_and_clear();
+        }
+        result
     }
 
     pub fn apply_json(
@@ -539,5 +641,51 @@ mod tests {
                 )
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn typed_daemon_state_preserves_inner_sequence_and_terminal_fence() {
+        let mut projection = Projection::new("daemon-operation-168".into());
+        let snapshot = projection
+            .accept_issued_state(
+                1,
+                IssuedState::Measuring {
+                    basis: ThroughputBasis::TokenDelta,
+                    per_second: 12.5,
+                },
+            )
+            .expect("accept typed daemon rate");
+        assert_eq!(snapshot.unit, Some(ThroughputUnit::ProviderTokensPerSecond));
+        assert!(projection
+            .accept_issued_state(
+                3,
+                IssuedState::Unavailable {
+                    reason: ThroughputReason::NoUsageReported,
+                },
+            )
+            .is_err());
+        assert!(projection.snapshot().is_none());
+
+        projection.replace_request("daemon-operation-169".into());
+        assert_eq!(
+            projection
+                .accept_issued_state(
+                    1,
+                    IssuedState::Unavailable {
+                        reason: ThroughputReason::Cancelled,
+                    },
+                )
+                .expect("accept typed cancellation")
+                .state,
+            ThroughputState::Cancelled
+        );
+        assert!(projection
+            .accept_issued_state(
+                2,
+                IssuedState::Paused {
+                    basis: ThroughputBasis::VisibleEvent,
+                },
+            )
+            .is_err());
     }
 }

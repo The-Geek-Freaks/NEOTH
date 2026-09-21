@@ -4,6 +4,9 @@
 
 use neothd::daemon::gui_chat_bridge::{
     GuiChatBridge, GuiChatBridgeEvent, GuiChatBridgePreflight, GuiChatBridgePreflightInput,
+    GuiChatBridgeRecallChipBatch, GuiChatBridgeRecallChipRow, GuiChatBridgeRecallChipSourceState,
+    GuiChatBridgeRecallChipStatus, GuiChatBridgeRecallChipTier,
+    GuiChatBridgeThroughputBasis, GuiChatBridgeThroughputState,
     GuiChatBridgeResponseFeedbackTarget, GuiChatConsentDecision, GuiChatConsentPrompt,
     GuiChatConsentRoute, GuiChatPhase, GuiChatSubscriptionMetadata, GuiChatSurface,
     GuiChatTerminalState, GuiChatTurnMetadata, gui_bridge_test_support,
@@ -139,6 +142,68 @@ fn gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types() {
             byte_count: 19,
             ..
         }
+    ));
+    let recall = GuiChatBridgeEvent::RecallChipBatch {
+        subscription: gui_bridge_test_support::subscription(GuiChatSubscriptionMetadata {
+            boot_id: "boot-a".into(),
+            turn_id,
+            surface: GuiChatSurface::Main,
+            generation: 2,
+            latest_sequence: 8,
+        })
+        .metadata,
+        sequence: 9,
+        batch: GuiChatBridgeRecallChipBatch {
+            status: GuiChatBridgeRecallChipStatus::Ready,
+            rows: vec![GuiChatBridgeRecallChipRow {
+                tier: GuiChatBridgeRecallChipTier::Warm,
+                score: Some(0.42),
+                source_state: GuiChatBridgeRecallChipSourceState::Available,
+            }],
+        },
+    };
+    assert!(matches!(
+        recall,
+        GuiChatBridgeEvent::RecallChipBatch {
+            sequence: 9,
+            batch: GuiChatBridgeRecallChipBatch {
+                status: GuiChatBridgeRecallChipStatus::Ready,
+                rows,
+            },
+            ..
+        } if rows == vec![GuiChatBridgeRecallChipRow {
+            tier: GuiChatBridgeRecallChipTier::Warm,
+            score: Some(0.42),
+            source_state: GuiChatBridgeRecallChipSourceState::Available,
+        }]
+    ));
+    let throughput = GuiChatBridgeEvent::ThroughputState {
+        subscription: gui_bridge_test_support::subscription(GuiChatSubscriptionMetadata {
+            boot_id: "boot-a".into(),
+            turn_id,
+            surface: GuiChatSurface::Main,
+            generation: 2,
+            latest_sequence: 9,
+        })
+        .metadata,
+        sequence: 10,
+        throughput_sequence: 7,
+        state: GuiChatBridgeThroughputState::Measuring {
+            basis: GuiChatBridgeThroughputBasis::TokenDelta,
+            per_second: 12.5,
+        },
+    };
+    assert!(matches!(
+        throughput,
+        GuiChatBridgeEvent::ThroughputState {
+            sequence: 10,
+            throughput_sequence: 7,
+            state: GuiChatBridgeThroughputState::Measuring {
+                basis: GuiChatBridgeThroughputBasis::TokenDelta,
+                per_second,
+            },
+            ..
+        } if per_second == 12.5
     ));
     assert!(matches!(
         GuiChatConsentDecision::Deny,

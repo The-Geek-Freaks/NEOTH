@@ -167,6 +167,12 @@ impl ChatTurnEventSink for CliChatOutput {
                     &report_json,
                 )?;
             }
+            // The direct CLI keeps W163's existing authenticated raw control
+            // record below. Its typed companion is for the daemon GUI only.
+            ChatOutput::RecallChipBatch { .. } => {}
+            // The direct CLI keeps W162's existing authenticated raw control
+            // record below. Its typed companion is for the daemon GUI only.
+            ChatOutput::LiveThroughputState { .. } => {}
         }
         Ok(())
     }
@@ -4090,7 +4096,7 @@ const CHAT_STREAM_CONTROL_PREFIX: &str = "\u{1e}NEOTH/1 ";
 
 /// Maximum accepted by the paired GUI reducer. A larger rolling count is not
 /// rounded, relabelled, or projected as a different unit.
-const LIVE_THROUGHPUT_PROTOCOL_MAX_PER_SECOND: f64 = 1_000_000.0;
+pub(crate) const LIVE_THROUGHPUT_PROTOCOL_MAX_PER_SECOND: f64 = 1_000_000.0;
 
 /// One persistent stream-owned clock. `Skip` bounds recovery after a delayed
 /// turn and, unlike a sleep recreated for each provider item, remains due
@@ -4141,7 +4147,7 @@ impl LiveThroughputProducer {
         &mut self,
         now: std::time::Instant,
         output: &mut dyn ChatTurnEventSink,
-        control_token: &str,
+        control_token: Option<&str>,
     ) -> Result<()> {
         let state = self.window.observe_visible_event(now).map_err(|error| {
             anyhow::anyhow!("advance live throughput after visible event: {error:?}")
@@ -4153,7 +4159,7 @@ impl LiveThroughputProducer {
         &mut self,
         now: std::time::Instant,
         output: &mut dyn ChatTurnEventSink,
-        control_token: &str,
+        control_token: Option<&str>,
     ) -> Result<()> {
         let state = self
             .window
@@ -4166,7 +4172,7 @@ impl LiveThroughputProducer {
         &mut self,
         now: std::time::Instant,
         output: &mut dyn ChatTurnEventSink,
-        control_token: &str,
+        control_token: Option<&str>,
     ) -> Result<()> {
         // A short successful stream may end before the first idle tick. Send
         // the honest no-visible-events transition before provider_done; never
@@ -4178,7 +4184,7 @@ impl LiveThroughputProducer {
         &mut self,
         reason: crate::daemon::live_throughput::LiveThroughputUnavailable,
         output: &mut dyn ChatTurnEventSink,
-        control_token: &str,
+        control_token: Option<&str>,
     ) -> Result<()> {
         if self.terminal {
             return Ok(());
@@ -4193,7 +4199,7 @@ impl LiveThroughputProducer {
         state: crate::daemon::live_throughput::LiveThroughputState,
         now: std::time::Instant,
         output: &mut dyn ChatTurnEventSink,
-        control_token: &str,
+        control_token: Option<&str>,
     ) -> Result<()> {
         if self.terminal
             && !matches!(
@@ -4346,10 +4352,20 @@ fn write_live_throughput_state(
 
 fn emit_live_throughput_state(
     output: &mut dyn ChatTurnEventSink,
-    control_token: &str,
+    control_token: Option<&str>,
     sequence: u64,
     state: crate::daemon::live_throughput::LiveThroughputState,
 ) -> Result<()> {
+    emit_chat_output(
+        output,
+        ChatOutput::LiveThroughputState {
+            throughput_sequence: sequence,
+            state,
+        },
+    )?;
+    let Some(control_token) = control_token else {
+        return Ok(());
+    };
     let mut frames = Vec::new();
     write_live_throughput_state(&mut frames, Some(control_token), sequence, state)?;
     emit_chat_output(
@@ -4462,6 +4478,16 @@ fn emit_recall_chip_batch(
     control_token: Option<&str>,
     batch: &crate::memory::recall_presentation::RecallChipBatch,
 ) -> Result<()> {
+    // Preserve the exact already-reduced same-query batch for the daemon GUI
+    // path. This neither parses the child-stream JSON nor recomputes a score,
+    // tier, or source state. The direct CLI ignores this private companion and
+    // still receives the unchanged authenticated raw frame below.
+    emit_chat_output(
+        output,
+        ChatOutput::RecallChipBatch {
+            batch: batch.clone(),
+        },
+    )?;
     let Some(control_token) = control_token else {
         return Ok(());
     };
@@ -5843,6 +5869,7 @@ pub(super) async fn dispatch_provider(
     route: TurnDispatchRoute,
     council_skip: Option<CouncilSkipAudit>,
     stream_control_token: Option<&str>,
+    typed_gui_controls: bool,
     reasoning_display: bool,
     defer_provider_output: bool,
     session_canary: &std::sync::Arc<crate::security::injection_tracker::CanaryToken>,
@@ -6088,7 +6115,8 @@ pub(super) async fn dispatch_provider(
             // W162 is private GUI presentation only. A post-provider-gated
             // stream has no admitted live visible path, so it gets no
             // throughput producer and cannot count buffered provider bytes.
-            let mut live_throughput = (stream_control_token.is_some() && !defer_provider_output)
+            let mut live_throughput = ((stream_control_token.is_some() || typed_gui_controls)
+                && !defer_provider_output)
                 .then(LiveThroughputProducer::new);
             // QM-10 Phase 2.5: streaming path also consults the breaker.
             // Acquire BEFORE provider.stream so an Open breaker rejects
@@ -6097,13 +6125,11 @@ pub(super) async fn dispatch_provider(
             {
                 Ok(p) => Some(p),
                 Err(berr) => {
-                    if let (Some(throughput), Some(token)) =
-                        (live_throughput.as_mut(), stream_control_token)
-                    {
+                    if let Some(throughput) = live_throughput.as_mut() {
                         throughput.terminal(
                             crate::daemon::live_throughput::LiveThroughputUnavailable::StreamError,
                             output,
-                            token,
+                            stream_control_token,
                         )?;
                     }
                     let terminal = if cancellation.is_closed() {
@@ -6144,13 +6170,11 @@ pub(super) async fn dispatch_provider(
                     if let Some(p) = stream_permit {
                         p.record_failure();
                     }
-                    if let (Some(throughput), Some(token)) =
-                        (live_throughput.as_mut(), stream_control_token)
-                    {
+                    if let Some(throughput) = live_throughput.as_mut() {
                         throughput.terminal(
                             crate::daemon::live_throughput::LiveThroughputUnavailable::Cancelled,
                             output,
-                            token,
+                            stream_control_token,
                         )?;
                     }
                     if let Err(error) = reasoning_lifecycle
@@ -6177,9 +6201,7 @@ pub(super) async fn dispatch_provider(
                     if let Some(p) = stream_permit {
                         p.record_failure();
                     }
-                    if let (Some(throughput), Some(token)) =
-                        (live_throughput.as_mut(), stream_control_token)
-                    {
+                    if let Some(throughput) = live_throughput.as_mut() {
                         throughput.terminal(
                             if cancellation.is_closed() {
                                 crate::daemon::live_throughput::LiveThroughputUnavailable::Cancelled
@@ -6187,7 +6209,7 @@ pub(super) async fn dispatch_provider(
                                 crate::daemon::live_throughput::LiveThroughputUnavailable::StreamError
                             },
                             output,
-                            token,
+                            stream_control_token,
                         )?;
                     }
                     let terminal = if cancellation.is_closed() {
@@ -6233,15 +6255,13 @@ pub(super) async fn dispatch_provider(
             macro_rules! return_stream_error {
                 ($phase:expr, $error:expr) => {{
                     let raw_error = $error;
-                    if let (Some(throughput), Some(token)) =
-                        (live_throughput.as_mut(), stream_control_token)
-                    {
+                    if let Some(throughput) = live_throughput.as_mut() {
                         let reason = if cancellation.is_closed() {
                             crate::daemon::live_throughput::LiveThroughputUnavailable::Cancelled
                         } else {
                             crate::daemon::live_throughput::LiveThroughputUnavailable::StreamError
                         };
-                        if let Err(error) = throughput.terminal(reason, output, token) {
+                        if let Err(error) = throughput.terminal(reason, output, stream_control_token) {
                             return_dispatch_error!("throughput_terminal", error);
                         }
                     }
@@ -6299,12 +6319,11 @@ pub(super) async fn dispatch_provider(
                         );
                     }
                     _ = throughput_idle_tick.tick() => {
-                        if let (Some(throughput), Some(token)) =
-                            (live_throughput.as_mut(), stream_control_token)
+                        if let Some(throughput) = live_throughput.as_mut()
                             && let Err(error) = throughput.observe_idle(
                                 std::time::Instant::now(),
                                 output,
-                                token,
+                                stream_control_token,
                             )
                         {
                             return_dispatch_error!("throughput_idle", error);
@@ -6486,12 +6505,11 @@ pub(super) async fn dispatch_provider(
                                 }
                             };
                             if admitted_visible_event
-                                && let (Some(throughput), Some(token)) =
-                                    (live_throughput.as_mut(), stream_control_token)
+                                && let Some(throughput) = live_throughput.as_mut()
                                 && let Err(error) = throughput.observe_visible_event(
                                     std::time::Instant::now(),
                                     output,
-                                    token,
+                                    stream_control_token,
                                 )
                             {
                                 if let Some(p) = stream_permit {
@@ -6538,12 +6556,11 @@ pub(super) async fn dispatch_provider(
                                 }
                             };
                             if admitted_visible_event
-                                && let (Some(throughput), Some(token)) =
-                                    (live_throughput.as_mut(), stream_control_token)
+                                && let Some(throughput) = live_throughput.as_mut()
                                 && let Err(error) = throughput.observe_visible_event(
                                     std::time::Instant::now(),
                                     output,
-                                    token,
+                                    stream_control_token,
                                 )
                             {
                                 if let Some(p) = stream_permit {
@@ -6600,16 +6617,14 @@ pub(super) async fn dispatch_provider(
                     )
                 ),
             };
-            if let (Some(throughput), Some(token)) =
-                (live_throughput.as_mut(), stream_control_token)
-            {
+            if let Some(throughput) = live_throughput.as_mut() {
                 // This remains before the later provider_done formatter. A
                 // successful final-usage total is deliberately not a token
                 // delta and can never alter this visible-event state.
                 if let Err(error) = throughput.finish_before_provider_done(
                     std::time::Instant::now(),
                     output,
-                    token,
+                    stream_control_token,
                 ) {
                     return_dispatch_error!("throughput_finish", error);
                 }
@@ -6647,9 +6662,7 @@ pub(super) async fn dispatch_provider(
                 )
                 .await
             {
-                if let (Some(throughput), Some(token)) =
-                    (live_throughput.as_mut(), stream_control_token)
-                {
+                if let Some(throughput) = live_throughput.as_mut() {
                     throughput.terminal(
                         if cancellation.is_closed() {
                             crate::daemon::live_throughput::LiveThroughputUnavailable::Cancelled
@@ -6657,7 +6670,7 @@ pub(super) async fn dispatch_provider(
                             crate::daemon::live_throughput::LiveThroughputUnavailable::StreamError
                         },
                         output,
-                        token,
+                        stream_control_token,
                     )?;
                 }
                 return_dispatch_error!("reasoning_terminal", error);
@@ -8764,6 +8777,7 @@ async fn run_chat_with_consent(
         provider,
         ephemeral_consent,
         stream_control_token,
+        false,
         cancellation,
         &mut output,
     )
@@ -8983,6 +8997,7 @@ pub(crate) async fn prepare_daemon_plain_chat_turn(
         provider,
         crate::consent::EphemeralConsent::default(),
         None,
+        false,
         cancellation,
         output,
     )
@@ -9047,6 +9062,7 @@ pub(crate) async fn prepare_daemon_gui_chat_turn(
         provider,
         ephemeral_consent,
         None,
+        true,
         cancellation,
         output,
     )
@@ -9060,6 +9076,7 @@ struct ChatTurnPreparationInput {
     config: FreedomConfig,
     ephemeral_consent: crate::consent::EphemeralConsent,
     stream_control_token: Option<Zeroizing<String>>,
+    typed_gui_controls: bool,
     cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
     session_canary: std::sync::Arc<crate::security::injection_tracker::CanaryToken>,
     instance_paths: InstancePaths,
@@ -9091,6 +9108,7 @@ async fn prepare_cli_chat_turn(
         provider,
         ephemeral_consent,
         stream_control_token,
+        false,
         cancellation,
         output,
     )
@@ -9107,6 +9125,7 @@ async fn prepare_chat_turn_input(
     provider: &dyn crate::providers::Provider,
     ephemeral_consent: crate::consent::EphemeralConsent,
     stream_control_token: Option<Zeroizing<String>>,
+    typed_gui_controls: bool,
     cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<ChatTurnPreparationInput> {
@@ -9319,6 +9338,7 @@ async fn prepare_chat_turn_input(
         config,
         ephemeral_consent,
         stream_control_token,
+        typed_gui_controls,
         cancellation,
         session_canary,
         instance_paths,
@@ -9573,6 +9593,7 @@ async fn finish_chat_turn_preparation(
                 config,
                 ephemeral_consent,
                 stream_control_token,
+                typed_gui_controls,
                 reasoning_display: args.show_reasoning,
                 cancellation,
                 session_canary,
@@ -15859,9 +15880,9 @@ mod tests {
                 },
             ],
         };
-        let frame: serde_json::Value = serde_json::from_str(
-            &recall_chip_batch_frame_line("0123456789abcdef0123456789abcdef", &batch).unwrap(),
-        )
+        let line = recall_chip_batch_frame_line("0123456789abcdef0123456789abcdef", &batch)
+            .unwrap();
+        let frame: serde_json::Value = serde_json::from_str(&line)
         .unwrap();
         let rows = frame["rows"].as_array().unwrap();
         assert_eq!(rows[0]["score"], 0.42);
@@ -15882,10 +15903,9 @@ mod tests {
             (RecallChipBatchStatus::Failed, "failed"),
             (RecallChipBatchStatus::Incognito, "incognito"),
         ] {
-            let frame: serde_json::Value = serde_json::from_str(
-                &recall_chip_batch_frame_line(token, &RecallChipBatch::unavailable(status))
-                    .unwrap(),
-            )
+            let line = recall_chip_batch_frame_line(token, &RecallChipBatch::unavailable(status))
+                .unwrap();
+            let frame: serde_json::Value = serde_json::from_str(&line)
             .unwrap();
             assert_eq!(frame["status"], wire_status);
             assert_eq!(frame["rows"], serde_json::json!([]));
@@ -19965,6 +19985,7 @@ modes:
             TurnDispatchRoute::Streaming,
             None,
             Some("0123456789abcdef0123456789abcdef"),
+            false,
             true,
             false,
             &canary,
@@ -23914,6 +23935,7 @@ modes:
             None,
             false,
             false,
+            false,
             &canary,
             &crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
             &[],
@@ -24061,6 +24083,7 @@ modes:
             None,
             false,
             false,
+            false,
             &canary,
             &cancellation,
             &[],
@@ -24204,6 +24227,7 @@ modes:
             TurnDispatchRoute::Direct,
             None,
             None,
+            false,
             false,
             false,
             &canary,

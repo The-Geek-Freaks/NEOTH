@@ -7462,6 +7462,7 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "arboard",
+ "async-trait",
  "getrandom 0.2.17",
  "hex",
  "ksni",

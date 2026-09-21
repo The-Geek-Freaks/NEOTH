@@ -1277,6 +1277,91 @@ impl RuntimeEffectLease {
         result
     }
 }
+
+/// Map the already-reduced W163 batch into the sealed daemon GUI vocabulary.
+/// This preserves producer order and the computed score/source state; it does
+/// not inspect recalled text, source references, or raw child-stream JSON.
+fn map_recall_chip_batch(
+    batch: crate::memory::recall_presentation::RecallChipBatch,
+) -> GuiChatRecallChipBatch {
+    use crate::memory::recall_presentation::{
+        RecallChipBatchStatus, RecallChipScore, RecallChipSourceState, RecallChipTier,
+    };
+
+    let status = match batch.status {
+        RecallChipBatchStatus::Ready => GuiChatRecallChipStatus::Ready,
+        RecallChipBatchStatus::NoRecall => GuiChatRecallChipStatus::NoRecall,
+        RecallChipBatchStatus::Missing => GuiChatRecallChipStatus::Missing,
+        RecallChipBatchStatus::Stale => GuiChatRecallChipStatus::Stale,
+        RecallChipBatchStatus::Failed => GuiChatRecallChipStatus::Failed,
+        RecallChipBatchStatus::Incognito => GuiChatRecallChipStatus::Incognito,
+    };
+    let rows = batch
+        .rows
+        .into_iter()
+        .map(|row| GuiChatRecallChipRow {
+            tier: match row.tier {
+                RecallChipTier::Canonical => GuiChatRecallChipTier::Canonical,
+                RecallChipTier::Hot => GuiChatRecallChipTier::Hot,
+                RecallChipTier::Warm => GuiChatRecallChipTier::Warm,
+                RecallChipTier::Cold => GuiChatRecallChipTier::Cold,
+                RecallChipTier::Unknown => GuiChatRecallChipTier::Unknown,
+            },
+            score: match row.score {
+                RecallChipScore::WarmHit(score) => Some(f64::from(score)),
+                RecallChipScore::Unavailable => None,
+            },
+            source_state: match row.source_state {
+                RecallChipSourceState::Available => GuiChatRecallChipSourceState::Available,
+                RecallChipSourceState::Missing => GuiChatRecallChipSourceState::Missing,
+                RecallChipSourceState::Untrusted => GuiChatRecallChipSourceState::Untrusted,
+            },
+        })
+        .collect();
+    GuiChatRecallChipBatch { status, rows }
+}
+
+/// Map the existing W162 producer state without inspecting StreamFrames or
+/// deriving a rate. The inner producer sequence remains separate from the
+/// runtime's outer replay sequence.
+fn map_live_throughput_state(
+    state: crate::daemon::live_throughput::LiveThroughputState,
+) -> GuiChatThroughputState {
+    use crate::daemon::live_throughput::{
+        LiveThroughputBasis, LiveThroughputState, LiveThroughputUnavailable,
+    };
+
+    match state {
+        LiveThroughputState::Measuring { basis, per_second } => {
+            GuiChatThroughputState::Measuring {
+                basis: match basis {
+                    LiveThroughputBasis::VisibleEvent => GuiChatThroughputBasis::VisibleEvent,
+                    LiveThroughputBasis::TokenDelta => GuiChatThroughputBasis::TokenDelta,
+                },
+                per_second,
+            }
+        }
+        LiveThroughputState::Paused { basis } => GuiChatThroughputState::Paused {
+            basis: match basis {
+                LiveThroughputBasis::VisibleEvent => GuiChatThroughputBasis::VisibleEvent,
+                LiveThroughputBasis::TokenDelta => GuiChatThroughputBasis::TokenDelta,
+            },
+        },
+        LiveThroughputState::Unavailable(reason) => GuiChatThroughputState::Unavailable {
+            reason: match reason {
+                LiveThroughputUnavailable::NoVisibleEvents => {
+                    GuiChatThroughputUnavailable::NoVisibleEvents
+                }
+                LiveThroughputUnavailable::NoUsageReported => {
+                    GuiChatThroughputUnavailable::NoUsageReported
+                }
+                LiveThroughputUnavailable::Cancelled => GuiChatThroughputUnavailable::Cancelled,
+                LiveThroughputUnavailable::StreamError => GuiChatThroughputUnavailable::StreamError,
+            },
+        },
+    }
+}
+
 impl ChatTurnEventSink for RuntimeSink {
     fn emit(&mut self, event: ChatTurnEvent) -> anyhow::Result<()> {
         let mut state = self.runtime.state.blocking_lock();
@@ -1307,6 +1392,38 @@ impl ChatTurnEventSink for RuntimeSink {
                     event_count,
                     byte_count,
                 )?;
+            }
+            ChatTurnEvent::Output(ChatOutput::RecallChipBatch { batch }) => {
+                // Cancellation and terminal settlement fence presentation
+                // records. A late producer-side batch cannot reopen a cleared
+                // GUI recall projection after CancelRequested or terminal.
+                if turn.cancellation.is_closed() || turn.terminal.is_some() {
+                    return Ok(());
+                }
+                let batch = map_recall_chip_batch(batch);
+                validate_recall_chip_batch(&batch)
+                    .map_err(|_| anyhow::anyhow!("invalid recall chip batch"))?;
+                DaemonGuiChatRuntime::emit(turn, GuiChatFramePayload::RecallChipBatch { batch });
+            }
+            ChatTurnEvent::Output(ChatOutput::LiveThroughputState {
+                throughput_sequence,
+                state,
+            }) => {
+                // Do not let a late producer state reopen or replace a
+                // cancelled/terminal projection. StreamFrames remain ignored.
+                if turn.cancellation.is_closed() || turn.terminal.is_some() {
+                    return Ok(());
+                }
+                let state = map_live_throughput_state(state);
+                validate_throughput_state(&state)
+                    .map_err(|_| anyhow::anyhow!("invalid live throughput state"))?;
+                DaemonGuiChatRuntime::emit(
+                    turn,
+                    GuiChatFramePayload::ThroughputState {
+                        throughput_sequence,
+                        state,
+                    },
+                );
             }
             ChatTurnEvent::Output(
                 ChatOutput::Notice { text, .. } | ChatOutput::HumanStderr { text },
@@ -1979,6 +2096,70 @@ mod lifecycle_tests {
     };
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn recall_chip_mapping_preserves_typed_same_query_rows() {
+        use crate::memory::recall_presentation::{
+            RecallChipBatch, RecallChipBatchStatus, RecallChipRow, RecallChipScore,
+            RecallChipSourceState, RecallChipTier,
+        };
+
+        let batch = map_recall_chip_batch(RecallChipBatch {
+            status: RecallChipBatchStatus::Ready,
+            rows: vec![RecallChipRow {
+                tier: RecallChipTier::Warm,
+                score: RecallChipScore::WarmHit(0.42),
+                source_state: RecallChipSourceState::Available,
+            }],
+        });
+        assert_eq!(batch.status, GuiChatRecallChipStatus::Ready);
+        assert_eq!(batch.rows.len(), 1);
+        assert_eq!(batch.rows[0].tier, GuiChatRecallChipTier::Warm);
+        assert_eq!(batch.rows[0].score, Some(f64::from(0.42_f32)));
+        assert_eq!(
+            batch.rows[0].source_state,
+            GuiChatRecallChipSourceState::Available
+        );
+        validate_recall_chip_batch(&batch).expect("mapped W163 batch remains valid");
+
+        let incognito = map_recall_chip_batch(RecallChipBatch::unavailable(
+            RecallChipBatchStatus::Incognito,
+        ));
+        assert_eq!(incognito.status, GuiChatRecallChipStatus::Incognito);
+        assert!(incognito.rows.is_empty());
+        validate_recall_chip_batch(&incognito).expect("incognito batch remains empty");
+    }
+
+    #[test]
+    fn throughput_mapping_preserves_the_producer_state_without_rederivation() {
+        let measuring = map_live_throughput_state(
+            crate::daemon::live_throughput::LiveThroughputState::Measuring {
+                basis: crate::daemon::live_throughput::LiveThroughputBasis::VisibleEvent,
+                per_second: 2.0,
+            },
+        );
+        assert_eq!(
+            measuring,
+            GuiChatThroughputState::Measuring {
+                basis: GuiChatThroughputBasis::VisibleEvent,
+                per_second: 2.0,
+            }
+        );
+        validate_throughput_state(&measuring).expect("mapped W162 state remains valid");
+
+        let cancelled = map_live_throughput_state(
+            crate::daemon::live_throughput::LiveThroughputState::Unavailable(
+                crate::daemon::live_throughput::LiveThroughputUnavailable::Cancelled,
+            ),
+        );
+        assert_eq!(
+            cancelled,
+            GuiChatThroughputState::Unavailable {
+                reason: GuiChatThroughputUnavailable::Cancelled,
+            }
+        );
+        validate_throughput_state(&cancelled).expect("terminal W162 state remains valid");
+    }
 
     struct FixtureProvider;
 

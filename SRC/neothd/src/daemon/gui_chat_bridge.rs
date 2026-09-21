@@ -83,6 +83,79 @@ pub struct GuiChatBridgeResponseFeedbackTarget {
     pub revision: u64,
 }
 
+/// Closed W163 presentation state carried from the daemon to the current GUI
+/// reducer. It contains no recall text, token, request id, session, or source
+/// identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuiChatBridgeRecallChipStatus {
+    Ready,
+    NoRecall,
+    Missing,
+    Stale,
+    Failed,
+    Incognito,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuiChatBridgeRecallChipTier {
+    Canonical,
+    Hot,
+    Warm,
+    Cold,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuiChatBridgeRecallChipSourceState {
+    Available,
+    Missing,
+    Revoked,
+    Untrusted,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GuiChatBridgeRecallChipRow {
+    pub tier: GuiChatBridgeRecallChipTier,
+    pub score: Option<f64>,
+    pub source_state: GuiChatBridgeRecallChipSourceState,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GuiChatBridgeRecallChipBatch {
+    pub status: GuiChatBridgeRecallChipStatus,
+    pub rows: Vec<GuiChatBridgeRecallChipRow>,
+}
+
+/// Closed W162 state from the current daemon GUI subscription. It carries no
+/// control token, provider text, prompt, or provider usage total.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuiChatBridgeThroughputBasis {
+    VisibleEvent,
+    TokenDelta,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuiChatBridgeThroughputUnavailable {
+    NoVisibleEvents,
+    NoUsageReported,
+    Cancelled,
+    StreamError,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GuiChatBridgeThroughputState {
+    Measuring {
+        basis: GuiChatBridgeThroughputBasis,
+        per_second: f64,
+    },
+    Paused {
+        basis: GuiChatBridgeThroughputBasis,
+    },
+    Unavailable {
+        reason: GuiChatBridgeThroughputUnavailable,
+    },
+}
+
 /// Local-only input. Paths reach the daemon only after authenticated bridge
 /// staging. No GUI API accepts selected-home, endpoint, or credential input.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -258,7 +331,7 @@ pub enum GuiChatBridgeDecisionOutcome {
     Approved(GuiChatBridgeDecisionReceipt),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum GuiChatBridgeEvent {
     Accepted {
         subscription: GuiChatSubscriptionMetadata,
@@ -313,6 +386,17 @@ pub enum GuiChatBridgeEvent {
     CancelRequested {
         subscription: GuiChatSubscriptionMetadata,
         sequence: u64,
+    },
+    RecallChipBatch {
+        subscription: GuiChatSubscriptionMetadata,
+        sequence: u64,
+        batch: GuiChatBridgeRecallChipBatch,
+    },
+    ThroughputState {
+        subscription: GuiChatSubscriptionMetadata,
+        sequence: u64,
+        throughput_sequence: u64,
+        state: GuiChatBridgeThroughputState,
     },
     Terminal {
         subscription: GuiChatSubscriptionMetadata,
@@ -951,6 +1035,100 @@ fn map_phase(phase: crate::daemon::gui_chat_protocol::GuiChatPhase) -> GuiChatPh
         crate::daemon::gui_chat_protocol::GuiChatPhase::Finalizing => GuiChatPhase::Finalizing,
     }
 }
+
+fn map_recall_chip_batch(
+    batch: crate::daemon::gui_chat_protocol::GuiChatRecallChipBatch,
+) -> GuiChatBridgeRecallChipBatch {
+    use crate::daemon::gui_chat_protocol::{
+        GuiChatRecallChipSourceState, GuiChatRecallChipStatus, GuiChatRecallChipTier,
+    };
+
+    GuiChatBridgeRecallChipBatch {
+        status: match batch.status {
+            GuiChatRecallChipStatus::Ready => GuiChatBridgeRecallChipStatus::Ready,
+            GuiChatRecallChipStatus::NoRecall => GuiChatBridgeRecallChipStatus::NoRecall,
+            GuiChatRecallChipStatus::Missing => GuiChatBridgeRecallChipStatus::Missing,
+            GuiChatRecallChipStatus::Stale => GuiChatBridgeRecallChipStatus::Stale,
+            GuiChatRecallChipStatus::Failed => GuiChatBridgeRecallChipStatus::Failed,
+            GuiChatRecallChipStatus::Incognito => GuiChatBridgeRecallChipStatus::Incognito,
+        },
+        rows: batch
+            .rows
+            .into_iter()
+            .map(|row| GuiChatBridgeRecallChipRow {
+                tier: match row.tier {
+                    GuiChatRecallChipTier::Canonical => GuiChatBridgeRecallChipTier::Canonical,
+                    GuiChatRecallChipTier::Hot => GuiChatBridgeRecallChipTier::Hot,
+                    GuiChatRecallChipTier::Warm => GuiChatBridgeRecallChipTier::Warm,
+                    GuiChatRecallChipTier::Cold => GuiChatBridgeRecallChipTier::Cold,
+                    GuiChatRecallChipTier::Unknown => GuiChatBridgeRecallChipTier::Unknown,
+                },
+                score: row.score,
+                source_state: match row.source_state {
+                    GuiChatRecallChipSourceState::Available => {
+                        GuiChatBridgeRecallChipSourceState::Available
+                    }
+                    GuiChatRecallChipSourceState::Missing => {
+                        GuiChatBridgeRecallChipSourceState::Missing
+                    }
+                    GuiChatRecallChipSourceState::Revoked => {
+                        GuiChatBridgeRecallChipSourceState::Revoked
+                    }
+                    GuiChatRecallChipSourceState::Untrusted => {
+                        GuiChatBridgeRecallChipSourceState::Untrusted
+                    }
+                },
+            })
+            .collect(),
+    }
+}
+
+fn map_throughput_state(
+    state: crate::daemon::gui_chat_protocol::GuiChatThroughputState,
+) -> GuiChatBridgeThroughputState {
+    use crate::daemon::gui_chat_protocol::{
+        GuiChatThroughputBasis, GuiChatThroughputState, GuiChatThroughputUnavailable,
+    };
+
+    match state {
+        GuiChatThroughputState::Measuring { basis, per_second } => {
+            GuiChatBridgeThroughputState::Measuring {
+                basis: match basis {
+                    GuiChatThroughputBasis::VisibleEvent => {
+                        GuiChatBridgeThroughputBasis::VisibleEvent
+                    }
+                    GuiChatThroughputBasis::TokenDelta => GuiChatBridgeThroughputBasis::TokenDelta,
+                },
+                per_second,
+            }
+        }
+        GuiChatThroughputState::Paused { basis } => GuiChatBridgeThroughputState::Paused {
+            basis: match basis {
+                GuiChatThroughputBasis::VisibleEvent => GuiChatBridgeThroughputBasis::VisibleEvent,
+                GuiChatThroughputBasis::TokenDelta => GuiChatBridgeThroughputBasis::TokenDelta,
+            },
+        },
+        GuiChatThroughputState::Unavailable { reason } => {
+            GuiChatBridgeThroughputState::Unavailable {
+                reason: match reason {
+                    GuiChatThroughputUnavailable::NoVisibleEvents => {
+                        GuiChatBridgeThroughputUnavailable::NoVisibleEvents
+                    }
+                    GuiChatThroughputUnavailable::NoUsageReported => {
+                        GuiChatBridgeThroughputUnavailable::NoUsageReported
+                    }
+                    GuiChatThroughputUnavailable::Cancelled => {
+                        GuiChatBridgeThroughputUnavailable::Cancelled
+                    }
+                    GuiChatThroughputUnavailable::StreamError => {
+                        GuiChatBridgeThroughputUnavailable::StreamError
+                    }
+                },
+            }
+        }
+    }
+}
+
 fn map_frame(
     frame: crate::daemon::gui_chat_protocol::GuiChatStreamFrame,
     subscription: GuiChatSubscriptionMetadata,
@@ -1029,6 +1207,22 @@ fn map_frame(
                 sequence,
             }
         }
+        crate::daemon::gui_chat_protocol::GuiChatFramePayload::RecallChipBatch { batch } => {
+            GuiChatBridgeEvent::RecallChipBatch {
+                subscription,
+                sequence,
+                batch: map_recall_chip_batch(batch),
+            }
+        }
+        crate::daemon::gui_chat_protocol::GuiChatFramePayload::ThroughputState {
+            throughput_sequence,
+            state,
+        } => GuiChatBridgeEvent::ThroughputState {
+            subscription,
+            sequence,
+            throughput_sequence,
+            state: map_throughput_state(state),
+        },
         crate::daemon::gui_chat_protocol::GuiChatFramePayload::Terminal { terminal } => {
             GuiChatBridgeEvent::Terminal {
                 subscription,
@@ -1077,6 +1271,105 @@ mod tests {
     fn public_request_id_requires_v7() {
         assert!(GuiChatRequestId::parse("550e8400-e29b-41d4-a716-446655440000").is_err());
     }
+
+    #[test]
+    fn recall_chip_bridge_event_preserves_the_reduced_daemon_batch() {
+        use crate::daemon::gui_chat_protocol as protocol;
+
+        let turn_id = Uuid::now_v7();
+        let event = map_frame(
+            protocol::GuiChatStreamFrame {
+                schema_version: protocol::GUI_CHAT_V1_SCHEMA_VERSION,
+                boot_id: "boot".into(),
+                turn_id: protocol::GuiChatTurnId(turn_id),
+                subscription: protocol::GuiChatSubscription {
+                    session_id: "subscription".into(),
+                    surface: protocol::GuiChatSurface::Main,
+                    generation: 3,
+                },
+                sequence: 4,
+                payload: protocol::GuiChatFramePayload::RecallChipBatch {
+                    batch: protocol::GuiChatRecallChipBatch {
+                        status: protocol::GuiChatRecallChipStatus::Ready,
+                        rows: vec![protocol::GuiChatRecallChipRow {
+                            tier: protocol::GuiChatRecallChipTier::Warm,
+                            score: Some(f64::from(0.42_f32)),
+                            source_state: protocol::GuiChatRecallChipSourceState::Available,
+                        }],
+                    },
+                },
+            },
+            GuiChatSubscriptionMetadata {
+                boot_id: "boot".into(),
+                turn_id: GuiChatTurnId(turn_id),
+                surface: GuiChatSurface::Main,
+                generation: 3,
+                latest_sequence: 3,
+            },
+        );
+        assert!(matches!(
+            event,
+            GuiChatBridgeEvent::RecallChipBatch {
+                sequence: 4,
+                batch: GuiChatBridgeRecallChipBatch {
+                    status: GuiChatBridgeRecallChipStatus::Ready,
+                    rows,
+                },
+                ..
+            } if rows == vec![GuiChatBridgeRecallChipRow {
+                tier: GuiChatBridgeRecallChipTier::Warm,
+                score: Some(f64::from(0.42_f32)),
+                source_state: GuiChatBridgeRecallChipSourceState::Available,
+            }]
+        ));
+    }
+
+    #[test]
+    fn throughput_bridge_event_preserves_inner_and_outer_sequences() {
+        use crate::daemon::gui_chat_protocol as protocol;
+
+        let turn_id = Uuid::now_v7();
+        let event = map_frame(
+            protocol::GuiChatStreamFrame {
+                schema_version: protocol::GUI_CHAT_V1_SCHEMA_VERSION,
+                boot_id: "boot".into(),
+                turn_id: protocol::GuiChatTurnId(turn_id),
+                subscription: protocol::GuiChatSubscription {
+                    session_id: "subscription".into(),
+                    surface: protocol::GuiChatSurface::Main,
+                    generation: 3,
+                },
+                sequence: 4,
+                payload: protocol::GuiChatFramePayload::ThroughputState {
+                    throughput_sequence: 9,
+                    state: protocol::GuiChatThroughputState::Measuring {
+                        basis: protocol::GuiChatThroughputBasis::VisibleEvent,
+                        per_second: 2.0,
+                    },
+                },
+            },
+            GuiChatSubscriptionMetadata {
+                boot_id: "boot".into(),
+                turn_id: GuiChatTurnId(turn_id),
+                surface: GuiChatSurface::Main,
+                generation: 3,
+                latest_sequence: 3,
+            },
+        );
+        assert!(matches!(
+            event,
+            GuiChatBridgeEvent::ThroughputState {
+                sequence: 4,
+                throughput_sequence: 9,
+                state: GuiChatBridgeThroughputState::Measuring {
+                    basis: GuiChatBridgeThroughputBasis::VisibleEvent,
+                    per_second: 2.0,
+                },
+                ..
+            }
+        ));
+    }
+
     #[cfg(feature = "gui-bridge-test-support")]
     #[tokio::test]
     async fn fixture_decision_is_rejected_before_any_audit_rpc_write() {

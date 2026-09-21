@@ -5,16 +5,17 @@
 //! quarantined public surfaces plus the synthetic QA-only row, so omissions
 //! cannot be mistaken for unsupported or implemented adapters.
 
-use anyhow::{ensure, Context as _, Result};
+use anyhow::{Context as _, Result, ensure};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{sha256_bytes, AUDITED_OPENCLAW_SCHEMA_COMMIT, CHANNEL_ALIASES, KNOWN_CHANNEL_KEYS};
+use crate::{AUDITED_OPENCLAW_SCHEMA_COMMIT, CHANNEL_ALIASES, KNOWN_CHANNEL_KEYS, sha256_bytes};
 
 const FIXTURE: &str = include_str!("fixtures/pinned_channel_inventory_v1.json");
 const FIXTURE_SHA256: &str = "2b8f946815db4dd5910dfe313c5b9629a678bcab6d3cd42d74235feadcc9d2af";
 const UPSTREAM_EVIDENCE: &str = include_str!("fixtures/openclaw_upstream_evidence_v1.json");
-const UPSTREAM_EVIDENCE_SHA256: &str = "a38299e9e80de3fa3dbd31db8093aaa211172cadb50333746855589e25d7800b";
+const UPSTREAM_EVIDENCE_SHA256: &str =
+    "a38299e9e80de3fa3dbd31db8093aaa211172cadb50333746855589e25d7800b";
 const FIXTURE_NAME: &str = "openclaw-pinned-channel-inventory-v1";
 const OPENCLAW_REPOSITORY: &str = "openclaw/openclaw";
 const PRIMARY_LEDGER: &str = "plans/001-openclaw-channel-migration-parity.md";
@@ -114,16 +115,40 @@ pub fn validate_pinned_channel_inventory() -> Result<PinnedChannelInventorySumma
     validate_fixture(FIXTURE, KNOWN_CHANNEL_KEYS)
 }
 
-fn validate_fixture(fixture: &str, known_channel_keys: &[&str]) -> Result<PinnedChannelInventorySummary> {
+fn validate_fixture(
+    fixture: &str,
+    known_channel_keys: &[&str],
+) -> Result<PinnedChannelInventorySummary> {
     let inventory: InventoryFixture = serde_json::from_str(fixture)
         .context("pinned OpenClaw channel inventory fixture is invalid JSON")?;
-    ensure!(inventory.schema_version == 1, "unsupported pinned inventory schema version");
-    ensure!(inventory.fixture_name == FIXTURE_NAME, "unexpected pinned inventory fixture name");
-    ensure!(inventory.source.repository == OPENCLAW_REPOSITORY, "unexpected pinned inventory repository");
-    ensure!(inventory.source.commit == AUDITED_OPENCLAW_SCHEMA_COMMIT, "pinned inventory commit differs from audited custody contract");
-    ensure!(inventory.source.primary_ledger == PRIMARY_LEDGER, "unexpected pinned inventory primary ledger");
-    ensure!(inventory.source.ledger_rows == LEDGER_ROWS, "pinned inventory source ledger count drifted");
-    ensure!(inventory.rows.len() == LEDGER_ROWS, "pinned inventory must contain exactly {LEDGER_ROWS} rows");
+    ensure!(
+        inventory.schema_version == 1,
+        "unsupported pinned inventory schema version"
+    );
+    ensure!(
+        inventory.fixture_name == FIXTURE_NAME,
+        "unexpected pinned inventory fixture name"
+    );
+    ensure!(
+        inventory.source.repository == OPENCLAW_REPOSITORY,
+        "unexpected pinned inventory repository"
+    );
+    ensure!(
+        inventory.source.commit == AUDITED_OPENCLAW_SCHEMA_COMMIT,
+        "pinned inventory commit differs from audited custody contract"
+    );
+    ensure!(
+        inventory.source.primary_ledger == PRIMARY_LEDGER,
+        "unexpected pinned inventory primary ledger"
+    );
+    ensure!(
+        inventory.source.ledger_rows == LEDGER_ROWS,
+        "pinned inventory source ledger count drifted"
+    );
+    ensure!(
+        inventory.rows.len() == LEDGER_ROWS,
+        "pinned inventory must contain exactly {LEDGER_ROWS} rows"
+    );
 
     let mut row_ids = BTreeSet::new();
     let mut canonical_ids = BTreeSet::new();
@@ -132,20 +157,38 @@ fn validate_fixture(fixture: &str, known_channel_keys: &[&str]) -> Result<Pinned
     let mut public_rows = 0;
     let mut clickclack_rows = 0;
     let mut qa_rows = 0;
-    let importer_aliases = CHANNEL_ALIASES
-        .iter()
-        .copied()
-        .collect::<BTreeMap<_, _>>();
+    let importer_aliases = CHANNEL_ALIASES.iter().copied().collect::<BTreeMap<_, _>>();
 
     for (offset, row) in inventory.rows.iter().enumerate() {
-        ensure!(row.row_id == offset + 1, "pinned inventory row IDs must be contiguous and ledger ordered");
-        ensure!(row_ids.insert(row.row_id), "duplicate pinned inventory row ID {}", row.row_id);
-        ensure!(!row.canonical_id.is_empty(), "pinned inventory canonical ID is empty");
-        ensure!(canonical_ids.insert(row.canonical_id.as_str()), "duplicate pinned inventory canonical ID {}", row.canonical_id);
-        ensure!(all_names.insert(row.canonical_id.as_str()), "pinned inventory canonical/alias collision for {}", row.canonical_id);
+        ensure!(
+            row.row_id == offset + 1,
+            "pinned inventory row IDs must be contiguous and ledger ordered"
+        );
+        ensure!(
+            row_ids.insert(row.row_id),
+            "duplicate pinned inventory row ID {}",
+            row.row_id
+        );
+        ensure!(
+            !row.canonical_id.is_empty(),
+            "pinned inventory canonical ID is empty"
+        );
+        ensure!(
+            canonical_ids.insert(row.canonical_id.as_str()),
+            "duplicate pinned inventory canonical ID {}",
+            row.canonical_id
+        );
+        ensure!(
+            all_names.insert(row.canonical_id.as_str()),
+            "pinned inventory canonical/alias collision for {}",
+            row.canonical_id
+        );
         for alias in &row.openclaw_aliases {
             ensure!(!alias.is_empty(), "pinned inventory alias is empty");
-            ensure!(all_names.insert(alias.as_str()), "duplicate or canonical-colliding pinned inventory alias {alias}");
+            ensure!(
+                all_names.insert(alias.as_str()),
+                "duplicate or canonical-colliding pinned inventory alias {alias}"
+            );
         }
         validate_evidence(&row.evidence)?;
         match importer_aliases.get(row.canonical_id.as_str()) {
@@ -180,39 +223,90 @@ fn validate_fixture(fixture: &str, known_channel_keys: &[&str]) -> Result<Pinned
         match row.role {
             InventoryRole::Public => {
                 public_rows += 1;
-                ensure!(row.disposition != InventoryDisposition::EvidenceSkip, "public inventory row {} cannot be evidence-skip", row.canonical_id);
+                ensure!(
+                    row.disposition != InventoryDisposition::EvidenceSkip,
+                    "public inventory row {} cannot be evidence-skip",
+                    row.canonical_id
+                );
             }
             InventoryRole::ClickclackOfficial => {
                 clickclack_rows += 1;
-                ensure!(row.canonical_id == "clickclack", "only clickclack may have the official special role");
-                ensure!(row.manifest_backed, "clickclack must remain manifest-backed");
-                ensure!(row.disposition == InventoryDisposition::Adopt, "clickclack must remain an adoption row");
-                ensure!(!row.planned_neoth_target.is_empty(), "clickclack must remain targetable");
+                ensure!(
+                    row.canonical_id == "clickclack",
+                    "only clickclack may have the official special role"
+                );
+                ensure!(
+                    row.manifest_backed,
+                    "clickclack must remain manifest-backed"
+                );
+                ensure!(
+                    row.disposition == InventoryDisposition::Adopt,
+                    "clickclack must remain an adoption row"
+                );
+                ensure!(
+                    !row.planned_neoth_target.is_empty(),
+                    "clickclack must remain targetable"
+                );
             }
             InventoryRole::QaTestOnly => {
                 qa_rows += 1;
-                ensure!(row.canonical_id == "qa-channel", "only qa-channel may have the test-only role");
-                ensure!(row.manifest_backed, "qa-channel must remain manifest-backed for deterministic importer coverage");
-                ensure!(row.disposition == InventoryDisposition::EvidenceSkip, "qa-channel must remain evidence-skip");
-                ensure!(row.planned_neoth_target.is_empty(), "qa-channel must never be targetable");
+                ensure!(
+                    row.canonical_id == "qa-channel",
+                    "only qa-channel may have the test-only role"
+                );
+                ensure!(
+                    row.manifest_backed,
+                    "qa-channel must remain manifest-backed for deterministic importer coverage"
+                );
+                ensure!(
+                    row.disposition == InventoryDisposition::EvidenceSkip,
+                    "qa-channel must remain evidence-skip"
+                );
+                ensure!(
+                    row.planned_neoth_target.is_empty(),
+                    "qa-channel must never be targetable"
+                );
             }
         }
 
         if row.disposition == InventoryDisposition::QuarantinedExternal {
-            ensure!(!row.manifest_backed, "quarantined external row {} cannot be manifest-backed", row.canonical_id);
-            ensure!(row.planned_neoth_target.is_empty(), "quarantined external row {} cannot be targetable", row.canonical_id);
+            ensure!(
+                !row.manifest_backed,
+                "quarantined external row {} cannot be manifest-backed",
+                row.canonical_id
+            );
+            ensure!(
+                row.planned_neoth_target.is_empty(),
+                "quarantined external row {} cannot be targetable",
+                row.canonical_id
+            );
         }
     }
 
-    ensure!(public_rows == 29, "pinned inventory must retain 29 public rows");
-    ensure!(clickclack_rows == 1, "pinned inventory must retain one official clickclack row");
+    ensure!(
+        public_rows == 29,
+        "pinned inventory must retain 29 public rows"
+    );
+    ensure!(
+        clickclack_rows == 1,
+        "pinned inventory must retain one official clickclack row"
+    );
     ensure!(qa_rows == 1, "pinned inventory must retain one QA-only row");
-    ensure!(manifest_keys.len() == 26, "pinned inventory must retain 26 manifest-backed rows");
+    ensure!(
+        manifest_keys.len() == 26,
+        "pinned inventory must retain 26 manifest-backed rows"
+    );
 
     let fixture_manifest = manifest_keys.into_iter().collect::<BTreeSet<_>>();
     let importer_manifest = known_channel_keys.iter().copied().collect::<BTreeSet<_>>();
-    ensure!(importer_manifest.len() == known_channel_keys.len(), "KNOWN_CHANNEL_KEYS contains duplicate keys");
-    ensure!(fixture_manifest == importer_manifest, "KNOWN_CHANNEL_KEYS must exactly match the fixture manifest-backed key set");
+    ensure!(
+        importer_manifest.len() == known_channel_keys.len(),
+        "KNOWN_CHANNEL_KEYS contains duplicate keys"
+    );
+    ensure!(
+        fixture_manifest == importer_manifest,
+        "KNOWN_CHANNEL_KEYS must exactly match the fixture manifest-backed key set"
+    );
 
     Ok(PinnedChannelInventorySummary {
         ledger_rows: inventory.rows.len(),
@@ -224,9 +318,22 @@ fn validate_fixture(fixture: &str, known_channel_keys: &[&str]) -> Result<Pinned
 }
 
 fn validate_evidence(evidence: &UpstreamEvidence) -> Result<()> {
-    ensure!(!evidence.upstream_path.is_empty(), "pinned inventory evidence path is empty");
-    ensure!(evidence.upstream_bytes > 0, "pinned inventory evidence byte count must be positive");
-    ensure!(evidence.upstream_sha256.len() == 64 && evidence.upstream_sha256.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')), "pinned inventory evidence SHA-256 must be lower-case hexadecimal");
+    ensure!(
+        !evidence.upstream_path.is_empty(),
+        "pinned inventory evidence path is empty"
+    );
+    ensure!(
+        evidence.upstream_bytes > 0,
+        "pinned inventory evidence byte count must be positive"
+    );
+    ensure!(
+        evidence.upstream_sha256.len() == 64
+            && evidence
+                .upstream_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
+        "pinned inventory evidence SHA-256 must be lower-case hexadecimal"
+    );
     Ok(())
 }
 

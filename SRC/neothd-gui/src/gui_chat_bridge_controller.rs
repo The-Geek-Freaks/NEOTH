@@ -64,6 +64,8 @@ pub(crate) struct InstalledGuiChat {
     next_operation_id: u64,
     pending: Option<PendingGuiConsent>,
     attachments: Arc<std::sync::Mutex<Vec<std::path::PathBuf>>>,
+    throughput_projections: crate::ChatThroughputProjections,
+    recall_chip_projections: crate::ChatRecallChipProjections,
     response_feedback_projections: crate::ChatResponseFeedbackProjections,
 }
 
@@ -202,6 +204,8 @@ pub struct BridgeSink {
     pub overlay: slint::Weak<crate::MiniOverlay>,
     operation: Option<GuiChatOperation>,
     pub incognito: bool,
+    throughput_projections: crate::ChatThroughputProjections,
+    recall_chip_projections: crate::ChatRecallChipProjections,
     response_feedback_projections: crate::ChatResponseFeedbackProjections,
 }
 
@@ -213,6 +217,51 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
         use neothd::daemon::gui_chat_bridge::{
             GuiChatBridgeError, GuiChatPhase, GuiChatTerminalState,
         };
+        let recall_batch = match &event {
+            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::RecallChipBatch {
+                batch,
+                ..
+            } => Some(batch.clone()),
+            _ => None,
+        };
+        let throughput_state = match &event {
+            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ThroughputState {
+                throughput_sequence,
+                state,
+                ..
+            } => Some((*throughput_sequence, *state)),
+            _ => None,
+        };
+        let freeze_throughput = matches!(
+            &event,
+            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ProviderDone { .. }
+        );
+        let clear_throughput = matches!(
+            &event,
+            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::CancelRequested { .. }
+                | neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Terminal {
+                    state: GuiChatTerminalState::Cancelled
+                        | GuiChatTerminalState::Failed
+                        | GuiChatTerminalState::CrashUnknown
+                        | GuiChatTerminalState::Indeterminate,
+                    ..
+                }
+        );
+        let freeze_recall = matches!(
+            &event,
+            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ProviderDone { .. }
+        );
+        let clear_recall = matches!(
+            &event,
+            neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::CancelRequested { .. }
+                | neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Terminal {
+                    state: GuiChatTerminalState::Cancelled
+                        | GuiChatTerminalState::Failed
+                        | GuiChatTerminalState::CrashUnknown
+                        | GuiChatTerminalState::Indeterminate,
+                    ..
+                }
+        );
         let (metadata, sequence, kind, terminal, response_feedback, response_feedback_unavailable) =
             match event {
                 neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Accepted {
@@ -342,6 +391,30 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                     None,
                     false,
                 ),
+                neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::RecallChipBatch {
+                    subscription,
+                    sequence,
+                    ..
+                } => (
+                    subscription,
+                    sequence,
+                    DaemonChatEventKind::RecallChipBatch,
+                    false,
+                    None,
+                    false,
+                ),
+                neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::ThroughputState {
+                    subscription,
+                    sequence,
+                    ..
+                } => (
+                    subscription,
+                    sequence,
+                    DaemonChatEventKind::ThroughputState,
+                    false,
+                    None,
+                    false,
+                ),
                 neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Terminal {
                     subscription,
                     sequence,
@@ -417,6 +490,8 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
         let window = self.window.clone();
         let overlay = self.overlay.clone();
         let state = self.state.as_ref().map(Arc::clone);
+        let throughput_projections = self.throughput_projections.clone();
+        let recall_chip_projections = self.recall_chip_projections.clone();
         let response_feedback_projections = self.response_feedback_projections.clone();
         let operation = self.operation;
         let daemon_turn_id = metadata.turn_id.as_uuid().to_string();
@@ -458,6 +533,128 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                 }
                 if let Some(overlay) = overlay.upgrade() {
                     crate::project_companion_chat_stream(&overlay, phase, Some(&text));
+                }
+                if let (Some((throughput_sequence, state)), Some(operation)) =
+                    (throughput_state, operation)
+                {
+                    match crate::accept_daemon_throughput_state(
+                        &throughput_projections,
+                        operation.id,
+                        throughput_sequence,
+                        state,
+                    ) {
+                        Ok(snapshot) => crate::project_chat_throughput_snapshot(
+                            Some(&window),
+                            overlay.upgrade().as_ref(),
+                            match daemon_surface {
+                                GuiChatSurface::Main => ChatStreamSurface::Main,
+                                GuiChatSurface::Buddy => ChatStreamSurface::Buddy,
+                            },
+                            snapshot,
+                        ),
+                        Err(_) => {
+                            crate::clear_daemon_throughput_projection(
+                                &throughput_projections,
+                                operation.id,
+                            );
+                            match daemon_surface {
+                                GuiChatSurface::Main => crate::clear_main_throughput_projection(&window),
+                                GuiChatSurface::Buddy => {
+                                    if let Some(overlay) = overlay.upgrade() {
+                                        crate::clear_buddy_throughput_projection(&overlay);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if freeze_throughput && let Some(operation) = operation {
+                    crate::provider_done_daemon_throughput_projection(
+                        &throughput_projections,
+                        operation.id,
+                    );
+                    match daemon_surface {
+                        GuiChatSurface::Main => crate::clear_main_throughput_projection(&window),
+                        GuiChatSurface::Buddy => {
+                            if let Some(overlay) = overlay.upgrade() {
+                                crate::clear_buddy_throughput_projection(&overlay);
+                            }
+                        }
+                    }
+                }
+                if clear_throughput && let Some(operation) = operation {
+                    crate::clear_daemon_throughput_projection(
+                        &throughput_projections,
+                        operation.id,
+                    );
+                    match daemon_surface {
+                        GuiChatSurface::Main => crate::clear_main_throughput_projection(&window),
+                        GuiChatSurface::Buddy => {
+                            if let Some(overlay) = overlay.upgrade() {
+                                crate::clear_buddy_throughput_projection(&overlay);
+                            }
+                        }
+                    }
+                }
+                if let (Some(batch), Some(operation)) = (recall_batch, operation) {
+                    match crate::accept_daemon_recall_chip_batch(
+                        &recall_chip_projections,
+                        operation.id,
+                        batch,
+                    ) {
+                        Ok(snapshot) => crate::project_chat_recall_chip_snapshot(
+                            Some(&window),
+                            overlay.upgrade().as_ref(),
+                            match daemon_surface {
+                                GuiChatSurface::Main => ChatStreamSurface::Main,
+                                GuiChatSurface::Buddy => ChatStreamSurface::Buddy,
+                            },
+                            &snapshot,
+                        ),
+                        Err(_) => {
+                            crate::clear_daemon_recall_chip_projection(
+                                &recall_chip_projections,
+                                operation.id,
+                            );
+                            match daemon_surface {
+                                GuiChatSurface::Main => crate::clear_main_recall_chip_projection(&window),
+                                GuiChatSurface::Buddy => {
+                                    if let Some(overlay) = overlay.upgrade() {
+                                        crate::clear_buddy_recall_chip_projection(&overlay);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if freeze_recall && let Some(operation) = operation {
+                    crate::provider_done_daemon_recall_chip_projection(
+                        &recall_chip_projections,
+                        operation.id,
+                    );
+                }
+                if terminal
+                    && phase == crate::chat_stream_phase::ChatStreamPhase::Complete
+                    && let Some(operation) = operation
+                {
+                    crate::final_daemon_recall_chip_projection(
+                        &recall_chip_projections,
+                        operation.id,
+                    );
+                }
+                if clear_recall && let Some(operation) = operation {
+                    crate::clear_daemon_recall_chip_projection(
+                        &recall_chip_projections,
+                        operation.id,
+                    );
+                    match daemon_surface {
+                        GuiChatSurface::Main => crate::clear_main_recall_chip_projection(&window),
+                        GuiChatSurface::Buddy => {
+                            if let Some(overlay) = overlay.upgrade() {
+                                crate::clear_buddy_recall_chip_projection(&overlay);
+                            }
+                        }
+                    }
                 }
                 // The terminal target is accepted only after the subscription
                 // has passed both reducer ordering and current-turn checks.
@@ -699,11 +896,24 @@ fn submit(
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .begin_operation(surface);
-    let response_feedback_projections = state
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .response_feedback_projections
-        .clone();
+    let (throughput_projections, recall_chip_projections, response_feedback_projections) = {
+        let locked = state.lock().unwrap_or_else(|p| p.into_inner());
+        (
+            locked.throughput_projections.clone(),
+            locked.recall_chip_projections.clone(),
+            locked.response_feedback_projections.clone(),
+        )
+    };
+    crate::clear_active_daemon_throughput_projection(
+        &throughput_projections,
+        &win,
+        overlay.upgrade().as_ref(),
+    );
+    crate::clear_chat_recall_chip_replacement(
+        &recall_chip_projections,
+        &win,
+        overlay.upgrade().as_ref(),
+    );
     crate::clear_chat_response_feedback_replacement(
         &response_feedback_projections,
         &win,
@@ -957,7 +1167,7 @@ fn start_receipt(
                         return;
                     }
                     let turn = Arc::new(turn);
-                    let (bridge, reducer, response_feedback_projections) = {
+                    let (bridge, reducer, throughput_projections, recall_chip_projections, response_feedback_projections) = {
                         let mut locked = state.lock().unwrap_or_else(|p| p.into_inner());
                         if !locked.operation_is_current(operation) {
                             return;
@@ -977,6 +1187,8 @@ fn start_receipt(
                         (
                             Arc::clone(&locked.controller.bridge),
                             Arc::clone(&locked.controller.reducer),
+                            locked.throughput_projections.clone(),
+                            locked.recall_chip_projections.clone(),
                             locked.response_feedback_projections.clone(),
                         )
                     };
@@ -988,6 +1200,8 @@ fn start_receipt(
                         let result = attach_subscription(
                             bridge,
                             reducer,
+                            throughput_projections,
+                            recall_chip_projections,
                             response_feedback_projections,
                             state_for_attach,
                             operation,
@@ -1112,11 +1326,17 @@ fn fail_current_projection(
         .unwrap_or_else(|p| p.into_inner())
         .fail_current_operation(operation);
     if failed {
-        state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .controller
-            .close(operation.delivery_surface);
+        let locked = state.lock().unwrap_or_else(|p| p.into_inner());
+        crate::clear_daemon_throughput_projection(&locked.throughput_projections, operation.id);
+        crate::clear_daemon_recall_chip_projection(&locked.recall_chip_projections, operation.id);
+        locked.controller.close(operation.delivery_surface);
+        drop(locked);
+        crate::clear_main_throughput_projection(window);
+        crate::clear_main_recall_chip_projection(window);
+        if let Some(overlay) = overlay {
+            crate::clear_buddy_throughput_projection(overlay);
+            crate::clear_buddy_recall_chip_projection(overlay);
+        }
         fail_projection(window, overlay, message);
         true
     } else {
@@ -1128,6 +1348,8 @@ fn fail_current_projection(
 fn attach_subscription(
     bridge: Arc<dyn GuiChatBridge>,
     reducer: Arc<std::sync::Mutex<DaemonChatPresentationReducer>>,
+    throughput_projections: crate::ChatThroughputProjections,
+    recall_chip_projections: crate::ChatRecallChipProjections,
     response_feedback_projections: crate::ChatResponseFeedbackProjections,
     state: Arc<std::sync::Mutex<InstalledGuiChat>>,
     operation: GuiChatOperation,
@@ -1156,6 +1378,8 @@ fn attach_subscription(
         overlay,
         operation: Some(operation),
         incognito,
+        throughput_projections,
+        recall_chip_projections,
         response_feedback_projections,
     };
     let runtime = bridge_runtime().map_err(|_| {
@@ -1175,15 +1399,40 @@ impl GuiChatBridgeController {
         overlay: &crate::MiniOverlay,
         session_id: String,
         attachment_owner: Arc<std::sync::Mutex<Vec<std::path::PathBuf>>>,
+        throughput_projections: crate::ChatThroughputProjections,
+        recall_chip_projections: crate::ChatRecallChipProjections,
         response_feedback_projections: crate::ChatResponseFeedbackProjections,
     ) -> GuiChatBridgeResult<Arc<std::sync::Mutex<InstalledGuiChat>>> {
+        let controller = Arc::new(Self::for_attested_current_instance(session_id)?);
+        Self::install_with_controller(
+            window,
+            overlay,
+            attachment_owner,
+            throughput_projections,
+            recall_chip_projections,
+            response_feedback_projections,
+            controller,
+        )
+    }
+
+    fn install_with_controller(
+        window: &crate::MainWindow,
+        overlay: &crate::MiniOverlay,
+        attachment_owner: Arc<std::sync::Mutex<Vec<std::path::PathBuf>>>,
+        throughput_projections: crate::ChatThroughputProjections,
+        recall_chip_projections: crate::ChatRecallChipProjections,
+        response_feedback_projections: crate::ChatResponseFeedbackProjections,
+        controller: Arc<Self>,
+    ) -> GuiChatBridgeResult<Arc<std::sync::Mutex<InstalledGuiChat>>> {
         let installed = Arc::new(std::sync::Mutex::new(InstalledGuiChat {
-            controller: Arc::new(Self::for_attested_current_instance(session_id)?),
+            controller,
             active: None,
             active_operation: None,
             next_operation_id: 0,
             pending: None,
             attachments: Arc::clone(&attachment_owner),
+            throughput_projections,
+            recall_chip_projections,
             response_feedback_projections,
         }));
 
@@ -1259,6 +1508,29 @@ impl GuiChatBridgeController {
         });
         Ok(installed)
     }
+
+    #[cfg(test)]
+    pub(crate) fn install_with_test_bridge(
+        window: &crate::MainWindow,
+        overlay: &crate::MiniOverlay,
+        session_id: String,
+        attachment_owner: Arc<std::sync::Mutex<Vec<std::path::PathBuf>>>,
+        throughput_projections: crate::ChatThroughputProjections,
+        recall_chip_projections: crate::ChatRecallChipProjections,
+        response_feedback_projections: crate::ChatResponseFeedbackProjections,
+        bridge: Arc<dyn GuiChatBridge>,
+    ) -> GuiChatBridgeResult<Arc<std::sync::Mutex<InstalledGuiChat>>> {
+        Self::install_with_controller(
+            window,
+            overlay,
+            attachment_owner,
+            throughput_projections,
+            recall_chip_projections,
+            response_feedback_projections,
+            Arc::new(Self::new(bridge, session_id)),
+        )
+    }
+
     /// Core-only construction.  A missing or unattested daemon is a truthful
     /// UI error; this function has no GUI-side transport fallback.
     pub fn for_attested_current_instance(session_id: String) -> GuiChatBridgeResult<Self> {
@@ -1395,6 +1667,20 @@ fn handoff_buddy_to_main(
     clear_daemon_reasoning_projection(&window, Some(&overlay));
     let retained_turn_options = {
         let locked = state.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(operation) = locked.active_operation {
+            crate::clear_daemon_throughput_projection(
+                &locked.throughput_projections,
+                operation.id,
+            );
+            crate::clear_daemon_recall_chip_projection(
+                &locked.recall_chip_projections,
+                operation.id,
+            );
+        }
+        crate::clear_main_throughput_projection(&window);
+        crate::clear_buddy_throughput_projection(&overlay);
+        crate::clear_main_recall_chip_projection(&window);
+        crate::clear_buddy_recall_chip_projection(&overlay);
         locked.controller.close(GuiChatSurface::Buddy);
         locked
             .active
@@ -1467,7 +1753,7 @@ fn reopen_surface(
                 }
             };
             let returned_turn_id = turn.metadata.turn_id.as_uuid().to_string();
-            let (bridge, reducer, response_feedback_projections) = {
+            let (bridge, reducer, throughput_projections, recall_chip_projections, response_feedback_projections) = {
                 let mut locked = state.lock().unwrap_or_else(|p| p.into_inner());
                 if !locked.operation_is_current(operation) {
                     return;
@@ -1486,6 +1772,8 @@ fn reopen_surface(
                 (
                     Arc::clone(&locked.controller.bridge),
                     Arc::clone(&locked.controller.reducer),
+                    locked.throughput_projections.clone(),
+                    locked.recall_chip_projections.clone(),
                     locked.response_feedback_projections.clone(),
                 )
             };
@@ -1493,6 +1781,8 @@ fn reopen_surface(
                 let result = attach_subscription(
                     bridge,
                     reducer,
+                    throughput_projections,
+                    recall_chip_projections,
                     response_feedback_projections,
                     Arc::clone(&state),
                     operation,

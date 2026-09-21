@@ -13952,6 +13952,8 @@ fn main() -> Result<()> {
         &overlay,
         "neothd-gui".into(),
         std::sync::Arc::clone(&chat_attachments),
+        chat_throughput_projections.clone(),
+        chat_recall_chip_projections.clone(),
         chat_response_feedback_projections.clone(),
     ) {
         Ok(controller) => Some(controller),
@@ -26199,6 +26201,107 @@ type ChatThroughputProjections = std::sync::Arc<
     std::sync::Mutex<std::collections::HashMap<ChatStreamRequestId, chat_throughput::Projection>>,
 >;
 
+pub(crate) fn daemon_throughput_projection_id(operation_id: u64) -> ChatStreamRequestId {
+    ChatStreamRequestId::parse_wire(&u64::MAX.saturating_sub(operation_id).to_string())
+        .expect("daemon throughput projection id is non-zero")
+}
+
+pub(crate) fn accept_daemon_throughput_state(
+    projections: &ChatThroughputProjections,
+    operation_id: u64,
+    throughput_sequence: u64,
+    state: neothd::daemon::gui_chat_bridge::GuiChatBridgeThroughputState,
+) -> std::result::Result<chat_throughput::ThroughputSnapshot, String> {
+    use neothd::daemon::gui_chat_bridge::{
+        GuiChatBridgeThroughputBasis as Basis,
+        GuiChatBridgeThroughputState as State,
+        GuiChatBridgeThroughputUnavailable as Unavailable,
+    };
+
+    let issued = match state {
+        State::Measuring { basis, per_second } => chat_throughput::IssuedState::Measuring {
+            basis: match basis {
+                Basis::VisibleEvent => chat_throughput::ThroughputBasis::VisibleEvent,
+                Basis::TokenDelta => chat_throughput::ThroughputBasis::TokenDelta,
+            },
+            per_second,
+        },
+        State::Paused { basis } => chat_throughput::IssuedState::Paused {
+            basis: match basis {
+                Basis::VisibleEvent => chat_throughput::ThroughputBasis::VisibleEvent,
+                Basis::TokenDelta => chat_throughput::ThroughputBasis::TokenDelta,
+            },
+        },
+        State::Unavailable { reason } => chat_throughput::IssuedState::Unavailable {
+            reason: match reason {
+                Unavailable::NoVisibleEvents => chat_throughput::ThroughputReason::NoVisibleEvents,
+                Unavailable::NoUsageReported => chat_throughput::ThroughputReason::NoUsageReported,
+                Unavailable::Cancelled => chat_throughput::ThroughputReason::Cancelled,
+                Unavailable::StreamError => chat_throughput::ThroughputReason::StreamError,
+            },
+        },
+    };
+    let key = daemon_throughput_projection_id(operation_id);
+    let mut projections = projections
+        .lock()
+        .map_err(|_| "daemon throughput projection state is unavailable".to_string())?;
+    for (existing, projection) in projections.iter_mut() {
+        if *existing != key {
+            projection.final_sentinel_or_detach();
+        }
+    }
+    projections.retain(|existing, _| *existing == key);
+    let projection = projections.entry(key).or_insert_with(|| {
+        chat_throughput::Projection::new(format!("daemon-operation-{operation_id}"))
+    });
+    let snapshot = projection
+        .accept_issued_state(throughput_sequence, issued)
+        .map_err(str::to_string)?;
+    if snapshot.terminal {
+        projections.remove(&key);
+    }
+    Ok(snapshot)
+}
+
+pub(crate) fn provider_done_daemon_throughput_projection(
+    projections: &ChatThroughputProjections,
+    operation_id: u64,
+) {
+    if let Ok(mut projections) = projections.lock()
+        && let Some(mut projection) = projections.remove(&daemon_throughput_projection_id(operation_id))
+    {
+        projection.provider_done();
+    }
+}
+
+pub(crate) fn clear_daemon_throughput_projection(
+    projections: &ChatThroughputProjections,
+    operation_id: u64,
+) {
+    if let Ok(mut projections) = projections.lock()
+        && let Some(mut projection) = projections.remove(&daemon_throughput_projection_id(operation_id))
+    {
+        projection.final_sentinel_or_detach();
+    }
+}
+
+pub(crate) fn clear_active_daemon_throughput_projection(
+    projections: &ChatThroughputProjections,
+    window: &MainWindow,
+    overlay: Option<&MiniOverlay>,
+) {
+    if let Ok(mut projections) = projections.lock() {
+        for projection in projections.values_mut() {
+            projection.final_sentinel_or_detach();
+        }
+        projections.clear();
+    }
+    clear_main_throughput_projection(window);
+    if let Some(overlay) = overlay {
+        clear_buddy_throughput_projection(overlay);
+    }
+}
+
 fn begin_chat_throughput_projection(
     projections: &ChatThroughputProjections,
     request_id: ChatStreamRequestId,
@@ -26405,6 +26508,102 @@ fn begin_chat_response_feedback_projection(
 pub(crate) fn daemon_response_feedback_projection_id(operation_id: u64) -> ChatStreamRequestId {
     ChatStreamRequestId::parse_wire(&u64::MAX.saturating_sub(operation_id).to_string())
         .expect("daemon response-feedback projection id is non-zero")
+}
+
+/// A daemon operation id is only a GUI presentation fence. Recall and W164
+/// keep separate maps, so sharing this bounded local key cannot join their
+/// data or actions.
+pub(crate) fn daemon_recall_chip_projection_id(operation_id: u64) -> ChatStreamRequestId {
+    ChatStreamRequestId::parse_wire(&u64::MAX.saturating_sub(operation_id).to_string())
+        .expect("daemon recall-chip projection id is non-zero")
+}
+
+pub(crate) fn accept_daemon_recall_chip_batch(
+    projections: &ChatRecallChipProjections,
+    operation_id: u64,
+    batch: neothd::daemon::gui_chat_bridge::GuiChatBridgeRecallChipBatch,
+) -> std::result::Result<chat_recall_chips::RecallChipSnapshot, String> {
+    use neothd::daemon::gui_chat_bridge::{
+        GuiChatBridgeRecallChipSourceState as SourceState,
+        GuiChatBridgeRecallChipStatus as Status,
+        GuiChatBridgeRecallChipTier as Tier,
+    };
+
+    let status = match batch.status {
+        Status::Ready => chat_recall_chips::RecallChipStatus::Ready,
+        Status::NoRecall => chat_recall_chips::RecallChipStatus::NoRecall,
+        Status::Missing => chat_recall_chips::RecallChipStatus::Missing,
+        Status::Stale => chat_recall_chips::RecallChipStatus::Stale,
+        Status::Failed => chat_recall_chips::RecallChipStatus::Failed,
+        Status::Incognito => chat_recall_chips::RecallChipStatus::Incognito,
+    };
+    let rows = batch
+        .rows
+        .into_iter()
+        .map(|row| chat_recall_chips::RecallChip {
+            tier: match row.tier {
+                Tier::Canonical => chat_recall_chips::RecallChipTier::Canonical,
+                Tier::Hot => chat_recall_chips::RecallChipTier::Hot,
+                Tier::Warm => chat_recall_chips::RecallChipTier::Warm,
+                Tier::Cold => chat_recall_chips::RecallChipTier::Cold,
+                Tier::Unknown => chat_recall_chips::RecallChipTier::Unknown,
+            },
+            score: row.score,
+            source_state: match row.source_state {
+                SourceState::Available => chat_recall_chips::RecallChipSourceState::Available,
+                SourceState::Missing => chat_recall_chips::RecallChipSourceState::Missing,
+                SourceState::Revoked => chat_recall_chips::RecallChipSourceState::Revoked,
+                SourceState::Untrusted => chat_recall_chips::RecallChipSourceState::Untrusted,
+            },
+        })
+        .collect();
+    let key = daemon_recall_chip_projection_id(operation_id);
+    let mut projections = projections
+        .lock()
+        .map_err(|_| "daemon recall-chip projection state is unavailable".to_string())?;
+    for (existing, projection) in projections.iter_mut() {
+        if *existing != key {
+            projection.clear_and_fence();
+        }
+    }
+    projections.retain(|existing, _| *existing == key);
+    let projection = projections.entry(key).or_insert_with(|| {
+        chat_recall_chips::Projection::new(format!("daemon-operation-{operation_id}"))
+    });
+    projection.accept_issued_batch(status, rows).map_err(str::to_string)
+}
+
+pub(crate) fn provider_done_daemon_recall_chip_projection(
+    projections: &ChatRecallChipProjections,
+    operation_id: u64,
+) {
+    if let Ok(mut projections) = projections.lock()
+        && let Some(projection) = projections.get_mut(&daemon_recall_chip_projection_id(operation_id))
+    {
+        projection.provider_done();
+    }
+}
+
+pub(crate) fn final_daemon_recall_chip_projection(
+    projections: &ChatRecallChipProjections,
+    operation_id: u64,
+) {
+    if let Ok(mut projections) = projections.lock()
+        && let Some(projection) = projections.get_mut(&daemon_recall_chip_projection_id(operation_id))
+    {
+        projection.final_sentinel();
+    }
+}
+
+pub(crate) fn clear_daemon_recall_chip_projection(
+    projections: &ChatRecallChipProjections,
+    operation_id: u64,
+) {
+    if let Ok(mut projections) = projections.lock()
+        && let Some(mut projection) = projections.remove(&daemon_recall_chip_projection_id(operation_id))
+    {
+        projection.clear_and_fence();
+    }
 }
 
 pub(crate) fn accept_daemon_response_feedback_terminal(
@@ -41413,6 +41612,19 @@ mod w58_gui_callback_runtime_tests {
     #[cfg(not(windows))]
     use neothd::tools::citation_lookup::{CitationLookupResult, CitationQuery, CitationRecord};
 
+    #[cfg(not(windows))]
+    use neothd::daemon::gui_chat_bridge::{
+        GuiChatBridge, GuiChatBridgeDecisionOutcome, GuiChatBridgeDecisionReceipt,
+        GuiChatBridgeEvent, GuiChatBridgeEventSink, GuiChatBridgePreflight,
+        GuiChatBridgePreflightInput, GuiChatBridgePreflightReceipt, GuiChatBridgeRecallChipBatch,
+        GuiChatBridgeRecallChipRow, GuiChatBridgeRecallChipSourceState,
+        GuiChatBridgeRecallChipStatus, GuiChatBridgeRecallChipTier, GuiChatBridgeResult,
+        GuiChatBridgeSubscription, GuiChatBridgeTurn, GuiChatConsentDecision, GuiChatPhase,
+        GuiChatSubscriptionMetadata, GuiChatSurface, GuiChatTurnMetadata,
+        GuiChatBridgeThroughputBasis, GuiChatBridgeThroughputState,
+        GuiChatTerminalState, gui_bridge_test_support,
+    };
+
     use crate::panel_logic;
 
     use super::{
@@ -41452,6 +41664,8 @@ mod w58_gui_callback_runtime_tests {
         clear_buddy_recall_chip_projection, clear_buddy_throughput_projection,
         clear_citation_consent_projection, clear_citation_projection,
         clear_main_recall_chip_projection, clear_main_throughput_projection,
+        daemon_recall_chip_projection_id,
+        daemon_throughput_projection_id,
         discard_chat_recall_chip_projection, discard_chat_throughput_projection,
         final_sentinel_chat_recall_chip_projection, parse_chat_stream_protocol_incremental,
         project_chat_recall_chip_snapshot, project_chat_throughput_snapshot,
@@ -41460,6 +41674,181 @@ mod w58_gui_callback_runtime_tests {
     };
 
     static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[cfg(not(windows))]
+    struct W167ScriptedBridge {
+        turn_id: Mutex<neothd::daemon::gui_chat_bridge::GuiChatTurnId>,
+        surface: Mutex<GuiChatSurface>,
+    }
+
+    #[cfg(not(windows))]
+    impl W167ScriptedBridge {
+        fn new() -> Self {
+            Self {
+                turn_id: Mutex::new(gui_bridge_test_support::new_turn_id()),
+                surface: Mutex::new(GuiChatSurface::Main),
+            }
+        }
+
+        fn turn(&self, surface: GuiChatSurface) -> GuiChatBridgeTurn {
+            gui_bridge_test_support::turn(GuiChatTurnMetadata {
+                boot_id: "w167-boot".into(),
+                turn_id: *self.turn_id.lock().expect("W167 scripted turn id"),
+                origin_surface: surface,
+                phase: GuiChatPhase::Receiving,
+                latest_sequence: 0,
+            })
+        }
+
+        fn subscription(&self, surface: GuiChatSurface) -> GuiChatBridgeSubscription {
+            gui_bridge_test_support::subscription(GuiChatSubscriptionMetadata {
+                boot_id: "w167-boot".into(),
+                turn_id: *self.turn_id.lock().expect("W167 scripted turn id"),
+                surface,
+                generation: 1,
+                latest_sequence: 0,
+            })
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[async_trait::async_trait]
+    impl GuiChatBridge for W167ScriptedBridge {
+        async fn preflight(
+            &self,
+            input: GuiChatBridgePreflightInput,
+        ) -> GuiChatBridgeResult<GuiChatBridgePreflight> {
+            *self.surface.lock().expect("W167 scripted surface") = input.origin_surface;
+            Ok(GuiChatBridgePreflight::Ready {
+                decision: gui_bridge_test_support::decision_receipt(),
+            })
+        }
+
+        async fn decide(
+            &self,
+            _preflight: GuiChatBridgePreflightReceipt,
+            _decision: GuiChatConsentDecision,
+        ) -> GuiChatBridgeResult<GuiChatBridgeDecisionOutcome> {
+            Ok(GuiChatBridgeDecisionOutcome::Approved(
+                gui_bridge_test_support::decision_receipt(),
+            ))
+        }
+
+        async fn start(
+            &self,
+            _decision: GuiChatBridgeDecisionReceipt,
+        ) -> GuiChatBridgeResult<GuiChatBridgeTurn> {
+            *self.turn_id.lock().expect("W167 scripted turn id") =
+                gui_bridge_test_support::new_turn_id();
+            Ok(self.turn(*self.surface.lock().expect("W167 scripted surface")))
+        }
+
+        async fn active(&self) -> GuiChatBridgeResult<Option<GuiChatBridgeTurn>> {
+            Ok(None)
+        }
+
+        async fn exchange_same_session_attach(
+            &self,
+            _turn: &GuiChatBridgeTurn,
+            surface: GuiChatSurface,
+        ) -> GuiChatBridgeResult<GuiChatBridgeSubscription> {
+            Ok(self.subscription(surface))
+        }
+
+        async fn attach(
+            &self,
+            subscription: GuiChatBridgeSubscription,
+            _after_sequence: u64,
+            sink: &mut dyn GuiChatBridgeEventSink,
+        ) -> GuiChatBridgeResult<()> {
+            let metadata = subscription.metadata;
+            let _ = sink.on_event(GuiChatBridgeEvent::Accepted {
+                subscription: metadata.clone(),
+                sequence: 1,
+            });
+            let _ = sink.on_event(GuiChatBridgeEvent::ThroughputState {
+                subscription: metadata.clone(),
+                sequence: 2,
+                throughput_sequence: 1,
+                state: GuiChatBridgeThroughputState::Measuring {
+                    basis: GuiChatBridgeThroughputBasis::VisibleEvent,
+                    per_second: 12.5,
+                },
+            });
+            // Give the native callback fixture a real live-projection turn
+            // before it receives the provider boundary in this attach worker.
+            std::thread::sleep(Duration::from_millis(80));
+            let status = match metadata.surface {
+                GuiChatSurface::Main => GuiChatBridgeRecallChipStatus::Ready,
+                GuiChatSurface::Buddy => GuiChatBridgeRecallChipStatus::Missing,
+            };
+            let rows = matches!(metadata.surface, GuiChatSurface::Main)
+                .then(|| {
+                    vec![GuiChatBridgeRecallChipRow {
+                        tier: GuiChatBridgeRecallChipTier::Warm,
+                        score: Some(0.75),
+                        source_state: GuiChatBridgeRecallChipSourceState::Available,
+                    }]
+                })
+                .unwrap_or_default();
+            let _ = sink.on_event(GuiChatBridgeEvent::RecallChipBatch {
+                subscription: metadata.clone(),
+                sequence: 3,
+                batch: GuiChatBridgeRecallChipBatch { status, rows },
+            });
+            match metadata.surface {
+                GuiChatSurface::Main => {
+                    let _ = sink.on_event(GuiChatBridgeEvent::ProviderDone {
+                        subscription: metadata.clone(),
+                        sequence: 4,
+                    });
+                    let _ = sink.on_event(GuiChatBridgeEvent::Terminal {
+                        subscription: metadata.clone(),
+                        sequence: 5,
+                        state: GuiChatTerminalState::Complete,
+                        provider: "fixture".into(),
+                        model: "fixture".into(),
+                        response_feedback: None,
+                        response_feedback_unavailable: false,
+                    });
+                    // A post-terminal stale batch must not repaint the frozen
+                    // completed response or another operation.
+                    let _ = sink.on_event(GuiChatBridgeEvent::RecallChipBatch {
+                        subscription: metadata,
+                        sequence: 6,
+                        batch: GuiChatBridgeRecallChipBatch {
+                            status: GuiChatBridgeRecallChipStatus::Ready,
+                            rows: Vec::new(),
+                        },
+                    });
+                }
+                GuiChatSurface::Buddy => {
+                    let _ = sink.on_event(GuiChatBridgeEvent::CancelRequested {
+                        subscription: metadata.clone(),
+                        sequence: 4,
+                    });
+                    let _ = sink.on_event(GuiChatBridgeEvent::Terminal {
+                        subscription: metadata,
+                        sequence: 5,
+                        state: GuiChatTerminalState::Cancelled,
+                        provider: "fixture".into(),
+                        model: "fixture".into(),
+                        response_feedback: None,
+                        response_feedback_unavailable: false,
+                    });
+                }
+            }
+            Ok(())
+        }
+
+        async fn cancel(&self, _turn: &GuiChatBridgeTurn) -> GuiChatBridgeResult<()> {
+            Ok(())
+        }
+
+        async fn status(&self, _turn: &GuiChatBridgeTurn) -> GuiChatBridgeResult<GuiChatTurnMetadata> {
+            Ok(self.turn(*self.surface.lock().expect("W167 scripted surface")).metadata)
+        }
+    }
 
     struct NeothHomeGuard(Option<std::ffi::OsString>);
 
@@ -45785,6 +46174,125 @@ exit 0
 
     #[cfg(not(windows))]
     #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w167_daemon_recall_chip_batch_projects_current_surface_and_fences_terminals() {
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial W167 GUI fixture environment");
+        let window = MainWindow::new().expect("construct W167 MainWindow");
+        let overlay = MiniOverlay::new().expect("construct W167 MiniOverlay");
+        let projections: ChatRecallChipProjections =
+            Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let throughput: ChatThroughputProjections =
+            Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let response_feedback: ChatResponseFeedbackProjections =
+            Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let bridge: Arc<dyn GuiChatBridge> = Arc::new(W167ScriptedBridge::new());
+        let _installed = super::gui_chat_bridge_controller::GuiChatBridgeController::install_with_test_bridge(
+            &window,
+            &overlay,
+            "w167-fixture-session".into(),
+            Arc::new(Mutex::new(Vec::new())),
+            throughput,
+            projections.clone(),
+            response_feedback,
+            bridge,
+        )
+        .expect("install W167 typed bridge callbacks");
+
+        window.invoke_chat_send_clicked("main W167".into(), false);
+        w153_pump_until(&window, "W167 Main typed recall batch", |window| {
+            !window.get_chat_send_in_flight() && window.get_chat_recall_chips_active()
+        });
+        assert_eq!(window.get_chat_recall_chip_lines().row_count(), 1);
+        assert!(window.get_chat_recall_chip_lines()[0].contains("score 0.75"));
+        let key = daemon_recall_chip_projection_id(1);
+        assert!(projections
+            .lock()
+            .expect("daemon recall state")
+            .get(&key)
+            .expect("current daemon recall snapshot")
+            .is_frozen());
+
+        // A real Buddy callback replaces the finished Main projection. Its
+        // scripted cancellation then clears/fences the current typed batch.
+        overlay.invoke_send_clicked("buddy W167".into(), false);
+        w153_pump_until(&window, "W167 Buddy cancellation", |window| {
+            !window.get_chat_send_in_flight() && !window.get_chat_recall_chips_active()
+        });
+        assert!(!window.get_chat_recall_chips_active());
+        assert!(window.get_chat_recall_chip_lines().is_empty());
+        assert!(!overlay.get_recall_chips_active());
+        assert!(projections
+            .lock()
+            .expect("cleared daemon recall state")
+            .is_empty());
+    }
+
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w168_daemon_throughput_state_projects_main_and_buddy_then_fences_boundaries() {
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial W168 GUI fixture environment");
+        let window = MainWindow::new().expect("construct W168 MainWindow");
+        let overlay = MiniOverlay::new().expect("construct W168 MiniOverlay");
+        let throughput: ChatThroughputProjections =
+            Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let recall: ChatRecallChipProjections =
+            Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let feedback: ChatResponseFeedbackProjections =
+            Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let bridge: Arc<dyn GuiChatBridge> = Arc::new(W167ScriptedBridge::new());
+        let _installed = super::gui_chat_bridge_controller::GuiChatBridgeController::install_with_test_bridge(
+            &window,
+            &overlay,
+            "w168-fixture-session".into(),
+            Arc::new(Mutex::new(Vec::new())),
+            throughput.clone(),
+            recall,
+            feedback,
+            bridge,
+        )
+        .expect("install W168 typed bridge callbacks");
+
+        window.invoke_chat_send_clicked("main W168".into(), false);
+        w153_pump_until(&window, "W168 Main live throughput", |window| {
+            window.get_chat_throughput_active()
+                && window.get_chat_throughput_status().contains("Stream events: live rate")
+        });
+        assert!(throughput
+            .lock()
+            .expect("W168 Main projection")
+            .contains_key(&daemon_throughput_projection_id(1)));
+        w153_pump_until(&window, "W168 Main provider boundary", |window| {
+            !window.get_chat_send_in_flight() && !window.get_chat_throughput_active()
+        });
+        assert!(throughput
+            .lock()
+            .expect("W168 provider-done fence")
+            .is_empty());
+
+        overlay.invoke_send_clicked("buddy W168".into(), false);
+        let live_overlay = overlay.as_weak();
+        w153_pump_until(&window, "W168 Buddy live throughput", move |_| {
+            live_overlay.upgrade().is_some_and(|overlay| {
+                overlay.get_throughput_active()
+                    && overlay.get_throughput_status().contains("Stream events: live rate")
+            })
+        });
+        let cleared_overlay = overlay.as_weak();
+        w153_pump_until(&window, "W168 Buddy cancellation", move |window| {
+            !window.get_chat_send_in_flight()
+                && cleared_overlay.upgrade().is_some_and(|overlay| !overlay.get_throughput_active())
+        });
+        assert!(throughput
+            .lock()
+            .expect("W168 cancellation fence")
+            .is_empty());
+    }
+
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight() {
         const RECEIPT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let _environment = GUI_CALLBACK_ENV_LOCK
@@ -46420,7 +46928,7 @@ exit 7
     }
 
     #[cfg(target_os = "macos")]
-    const MACOS_NATIVE_HARNESS_TESTS: [&str; 20] = [
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 22] = [
         "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
         "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
@@ -46438,6 +46946,8 @@ exit 7
         "w58_gui_callback_runtime_tests::w153_reasoning_child_controls_are_transient_and_history_excluded",
         "w58_gui_callback_runtime_tests::w162_throughput_controls_are_transient_and_provider_done_fenced",
         "w58_gui_callback_runtime_tests::w163_recall_chip_controls_freeze_current_response_and_clear_on_turn_change",
+        "w58_gui_callback_runtime_tests::w167_daemon_recall_chip_batch_projects_current_surface_and_fences_terminals",
+        "w58_gui_callback_runtime_tests::w168_daemon_throughput_state_projects_main_and_buddy_then_fences_boundaries",
         "w58_gui_callback_runtime_tests::w164_response_feedback_callback_requires_post_done_target_and_verified_readback",
         "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight",
         "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts",
@@ -46547,6 +47057,12 @@ exit 7
                     }
                     "w58_gui_callback_runtime_tests::w163_recall_chip_controls_freeze_current_response_and_clear_on_turn_change" => {
                         w163_recall_chip_controls_freeze_current_response_and_clear_on_turn_change()
+                    }
+                    "w58_gui_callback_runtime_tests::w167_daemon_recall_chip_batch_projects_current_surface_and_fences_terminals" => {
+                        w167_daemon_recall_chip_batch_projects_current_surface_and_fences_terminals()
+                    }
+                    "w58_gui_callback_runtime_tests::w168_daemon_throughput_state_projects_main_and_buddy_then_fences_boundaries" => {
+                        w168_daemon_throughput_state_projects_main_and_buddy_then_fences_boundaries()
                     }
                     "w58_gui_callback_runtime_tests::w164_response_feedback_callback_requires_post_done_target_and_verified_readback" => {
                         w164_response_feedback_callback_requires_post_done_target_and_verified_readback()

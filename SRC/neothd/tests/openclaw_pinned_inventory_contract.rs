@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 
 use neoth_openclaw_custody::{
-    pinned_inventory::{pinned_inventory_fixture_json, pinned_inventory_upstream_evidence_json},
     CHANNEL_ALIASES,
+    pinned_inventory::{pinned_inventory_fixture_json, pinned_inventory_upstream_evidence_json},
 };
 use neothd::channels::registry::CHANNEL_REGISTRY;
 use serde::Deserialize;
@@ -72,7 +72,8 @@ fn pinned_inventory_keeps_plan_current_importer_registry_and_evidence_claims_dis
                 assert_eq!(
                     CHANNEL_ALIASES
                         .iter()
-                        .find_map(|(source, target)| (*source == row.canonical_id.as_str()).then_some(*target)),
+                        .find_map(|(source, target)| (*source == row.canonical_id.as_str())
+                            .then_some(*target)),
                     Some(importer_target.as_str())
                 );
                 assert_eq!(row.planned_neoth_target.as_str(), importer_target.as_str());

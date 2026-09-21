@@ -379,7 +379,7 @@ pub(crate) struct GuiChatSubscription {
     pub(crate) generation: u64,
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
 pub(crate) enum GuiChatFramePayload {
     Accepted,
@@ -413,6 +413,17 @@ pub(crate) enum GuiChatFramePayload {
         state: crate::providers::ReasoningTerminalState,
         event_count: u64,
         byte_count: u64,
+    },
+    /// The already-reduced W163 same-query projection. It has no recall text,
+    /// source identity, request token, session, provider, or storage value.
+    RecallChipBatch {
+        batch: GuiChatRecallChipBatch,
+    },
+    /// W162's producer-owned inner sequence and closed live state. This
+    /// carries neither a CLI control token nor provider text or usage totals.
+    ThroughputState {
+        throughput_sequence: u64,
+        state: GuiChatThroughputState,
     },
     ProviderDone,
     CancelRequested,
@@ -463,6 +474,18 @@ impl fmt::Debug for GuiChatFramePayload {
                 .field("event_count", event_count)
                 .field("byte_count", byte_count)
                 .finish(),
+            Self::RecallChipBatch { batch } => formatter
+                .debug_struct("RecallChipBatch")
+                .field("batch", batch)
+                .finish(),
+            Self::ThroughputState {
+                throughput_sequence,
+                state,
+            } => formatter
+                .debug_struct("ThroughputState")
+                .field("throughput_sequence", throughput_sequence)
+                .field("state", state)
+                .finish(),
             Self::ProviderDone => formatter.write_str("ProviderDone"),
             Self::CancelRequested => formatter.write_str("CancelRequested"),
             Self::Terminal { terminal } => formatter
@@ -473,7 +496,7 @@ impl fmt::Debug for GuiChatFramePayload {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct GuiChatStreamFrame {
     pub(crate) schema_version: u8,
@@ -490,6 +513,94 @@ pub(crate) struct GuiChatUsage {
     pub(crate) input_tokens: u64,
     pub(crate) output_tokens: u64,
     pub(crate) elapsed_ms: u64,
+}
+
+/// W163's closed, content-free presentation status.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GuiChatRecallChipStatus {
+    Ready,
+    NoRecall,
+    Missing,
+    Stale,
+    Failed,
+    Incognito,
+}
+
+/// W163's closed recall tier vocabulary. These values carry no source name or
+/// recalled content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GuiChatRecallChipTier {
+    Canonical,
+    Hot,
+    Warm,
+    Cold,
+    Unknown,
+}
+
+/// W163's closed source-trust projection. It is informational only and never
+/// authorizes source lookup or navigation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GuiChatRecallChipSourceState {
+    Available,
+    Missing,
+    Revoked,
+    Untrusted,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GuiChatRecallChipRow {
+    pub(crate) tier: GuiChatRecallChipTier,
+    /// The already-computed Stage-3 score, present only for valid available
+    /// warm rows. W167 does not recompute or normalize it.
+    pub(crate) score: Option<f64>,
+    pub(crate) source_state: GuiChatRecallChipSourceState,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GuiChatRecallChipBatch {
+    pub(crate) status: GuiChatRecallChipStatus,
+    pub(crate) rows: Vec<GuiChatRecallChipRow>,
+}
+
+/// W162's closed measurement unit. This states the producer basis only; it
+/// never exposes a provider token total.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GuiChatThroughputBasis {
+    VisibleEvent,
+    TokenDelta,
+}
+
+/// Closed lifecycle reasons for an unavailable live rate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GuiChatThroughputUnavailable {
+    NoVisibleEvents,
+    NoUsageReported,
+    Cancelled,
+    StreamError,
+}
+
+/// W162's already-produced current rate state. The daemon transport only maps
+/// this closed value; it never derives a rate from text or usage totals.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub(crate) enum GuiChatThroughputState {
+    Measuring {
+        basis: GuiChatThroughputBasis,
+        per_second: f64,
+    },
+    Paused {
+        basis: GuiChatThroughputBasis,
+    },
+    Unavailable {
+        reason: GuiChatThroughputUnavailable,
+    },
 }
 
 /// An issuer-created response-feedback target. GUI transport carries this
@@ -770,6 +881,16 @@ pub(crate) fn validate_stream_frame(frame: &GuiChatStreamFrame) -> GuiChatResult
                 return Err(GuiChatProtocolError::Invalid("reasoning_counter_bounds"));
             }
         }
+        GuiChatFramePayload::RecallChipBatch { batch } => {
+            validate_recall_chip_batch(batch)?;
+        }
+        GuiChatFramePayload::ThroughputState {
+            throughput_sequence,
+            state,
+        } => {
+            validate_nonzero("throughput_sequence", *throughput_sequence)?;
+            validate_throughput_state(state)?;
+        }
         GuiChatFramePayload::Terminal { terminal } => {
             validate_terminal(terminal)?;
         }
@@ -803,6 +924,50 @@ fn validate_manifest(manifest: &[GuiChatAttachmentManifestEntry]) -> GuiChatResu
         )?;
     }
     Ok(())
+}
+
+pub(crate) fn validate_recall_chip_batch(batch: &GuiChatRecallChipBatch) -> GuiChatResult<()> {
+    if batch.rows.len() > crate::memory::recall_presentation::MAX_RECALL_CHIP_ROWS {
+        return Err(GuiChatProtocolError::Invalid("recall_chip_rows"));
+    }
+    if batch.status != GuiChatRecallChipStatus::Ready && !batch.rows.is_empty() {
+        return Err(GuiChatProtocolError::Invalid("recall_chip_unavailable_rows"));
+    }
+    for row in &batch.rows {
+        if row.tier == GuiChatRecallChipTier::Unknown
+            && row.source_state != GuiChatRecallChipSourceState::Untrusted
+        {
+            return Err(GuiChatProtocolError::Invalid("recall_chip_unknown_trust"));
+        }
+        match row.score {
+            Some(score)
+                if row.tier == GuiChatRecallChipTier::Warm
+                    && row.source_state == GuiChatRecallChipSourceState::Available
+                    && score.is_finite()
+                    && (0.0..=1.0).contains(&score) => {}
+            Some(_) => return Err(GuiChatProtocolError::Invalid("recall_chip_score")),
+            None => {}
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_throughput_state(state: &GuiChatThroughputState) -> GuiChatResult<()> {
+    match state {
+        GuiChatThroughputState::Measuring { per_second, .. }
+            if per_second.is_finite()
+                && (0.0..=crate::cli::chat::LIVE_THROUGHPUT_PROTOCOL_MAX_PER_SECOND)
+                    .contains(per_second) =>
+        {
+            Ok(())
+        }
+        GuiChatThroughputState::Measuring { .. } => {
+            Err(GuiChatProtocolError::Invalid("throughput_rate"))
+        }
+        GuiChatThroughputState::Paused { .. } | GuiChatThroughputState::Unavailable { .. } => {
+            Ok(())
+        }
+    }
 }
 
 fn validate_terminal(terminal: &GuiChatTerminal) -> GuiChatResult<()> {
@@ -1489,6 +1654,136 @@ mod tests {
             ..lifecycle
         };
         validate_stream_frame(&delta).unwrap();
+    }
+
+    #[test]
+    fn recall_chip_batch_is_typed_bounded_and_content_free() {
+        let row = GuiChatRecallChipRow {
+            tier: GuiChatRecallChipTier::Warm,
+            score: Some(0.42),
+            source_state: GuiChatRecallChipSourceState::Available,
+        };
+        let frame = |batch| GuiChatStreamFrame {
+            schema_version: 1,
+            boot_id: "boot".into(),
+            turn_id: GuiChatTurnId(Uuid::now_v7()),
+            subscription: GuiChatSubscription {
+                session_id: "gui-subscription".into(),
+                surface: GuiChatSurface::Main,
+                generation: 1,
+            },
+            sequence: 1,
+            payload: GuiChatFramePayload::RecallChipBatch { batch },
+        };
+        let valid = frame(GuiChatRecallChipBatch {
+            status: GuiChatRecallChipStatus::Ready,
+            rows: vec![row.clone()],
+        });
+        validate_stream_frame(&valid).unwrap();
+        let encoded = serde_json::to_string(&valid).unwrap();
+        for forbidden in ["recall_text", "source_id", "request_id", "control_token"] {
+            assert!(
+                !encoded.contains(forbidden),
+                "recall-chip GUI frame must not expose {forbidden}"
+            );
+        }
+
+        let unavailable_with_row = frame(GuiChatRecallChipBatch {
+            status: GuiChatRecallChipStatus::Incognito,
+            rows: vec![row.clone()],
+        });
+        assert!(matches!(
+            validate_stream_frame(&unavailable_with_row),
+            Err(GuiChatProtocolError::Invalid("recall_chip_unavailable_rows"))
+        ));
+
+        let too_many = frame(GuiChatRecallChipBatch {
+            status: GuiChatRecallChipStatus::Ready,
+            rows: vec![row.clone(); crate::memory::recall_presentation::MAX_RECALL_CHIP_ROWS + 1],
+        });
+        assert!(matches!(
+            validate_stream_frame(&too_many),
+            Err(GuiChatProtocolError::Invalid("recall_chip_rows"))
+        ));
+
+        let untrusted_unknown = frame(GuiChatRecallChipBatch {
+            status: GuiChatRecallChipStatus::Ready,
+            rows: vec![GuiChatRecallChipRow {
+                tier: GuiChatRecallChipTier::Unknown,
+                score: None,
+                source_state: GuiChatRecallChipSourceState::Available,
+            }],
+        });
+        assert!(matches!(
+            validate_stream_frame(&untrusted_unknown),
+            Err(GuiChatProtocolError::Invalid("recall_chip_unknown_trust"))
+        ));
+
+        let invalid_score = frame(GuiChatRecallChipBatch {
+            status: GuiChatRecallChipStatus::Ready,
+            rows: vec![GuiChatRecallChipRow {
+                tier: GuiChatRecallChipTier::Hot,
+                score: Some(0.42),
+                source_state: GuiChatRecallChipSourceState::Available,
+            }],
+        });
+        assert!(matches!(
+            validate_stream_frame(&invalid_score),
+            Err(GuiChatProtocolError::Invalid("recall_chip_score"))
+        ));
+    }
+
+    #[test]
+    fn throughput_state_is_typed_bounded_and_content_free() {
+        let frame = |throughput_sequence, state| GuiChatStreamFrame {
+            schema_version: 1,
+            boot_id: "boot".into(),
+            turn_id: GuiChatTurnId(Uuid::now_v7()),
+            subscription: GuiChatSubscription {
+                session_id: "gui-subscription".into(),
+                surface: GuiChatSurface::Main,
+                generation: 1,
+            },
+            sequence: 1,
+            payload: GuiChatFramePayload::ThroughputState {
+                throughput_sequence,
+                state,
+            },
+        };
+        let valid = frame(
+            7,
+            GuiChatThroughputState::Measuring {
+                basis: GuiChatThroughputBasis::VisibleEvent,
+                per_second: 42.0,
+            },
+        );
+        validate_stream_frame(&valid).unwrap();
+        let encoded = serde_json::to_string(&valid).unwrap();
+        for forbidden in ["control_token", "provider_text", "usage_total", "prompt"] {
+            assert!(
+                !encoded.contains(forbidden),
+                "throughput GUI frame must not expose {forbidden}"
+            );
+        }
+        assert!(matches!(
+            validate_stream_frame(&frame(
+                0,
+                GuiChatThroughputState::Unavailable {
+                    reason: GuiChatThroughputUnavailable::NoVisibleEvents,
+                },
+            )),
+            Err(GuiChatProtocolError::Invalid("throughput_sequence"))
+        ));
+        assert!(matches!(
+            validate_stream_frame(&frame(
+                1,
+                GuiChatThroughputState::Measuring {
+                    basis: GuiChatThroughputBasis::VisibleEvent,
+                    per_second: f64::INFINITY,
+                },
+            )),
+            Err(GuiChatProtocolError::Invalid("throughput_rate"))
+        ));
     }
 
     #[test]

@@ -2,6 +2,22 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W167/W168 active daemon presentation (2026-09-21):** the existing recall
+batch and throughput producer states now cross the actual daemon protocol and
+installed GUI controller to Main/Buddy. Independent integrated source review
+approved the chain, separate outer/inner sequences and lifecycle fences; two
+new tests invoke the real Main/Buddy callbacks. W164 terminal feedback remains
+separate. The GUI async-trait dependency is lock-bound and macOS discovery has
+22 exact callback names. Admission: 375 source inputs / 392 universal native /
+3 Windows-only / 4 Unix-only / 75 universal GUI / 17 Linux/macOS component cases /
+7 optional adapter cases. Hosted build, runtime, render and accessibility remain
+pending. See [W167/W168](../docs/gold-wave167-168-verification.md).
+W166's 14 exact Hosted format hunks are imported; its JSON pins are unchanged.
+The older Windows preview35635024193 on6003175f built all native artifacts and
+passed portable lifecycle, then failed diff-impact on a missing symbol property
+in the acceptance helper. Its repair is separate W170 work. Road counts remain
+1324 / 1015 checked / 307 open / 2 partial; all execution stays on GitHub.
+
 **W166 pinned channel inventory (2026-09-21):** independently source-approved;
 31 rows preserve 29 public surfaces, official ClickClack and test-only QA.
 Package-owned fixture and witness are hash-bound, including explicit LF digest

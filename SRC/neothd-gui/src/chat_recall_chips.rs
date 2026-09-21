@@ -215,6 +215,50 @@ impl Projection {
         self.frozen = true;
     }
 
+    /// Accept the daemon bridge's already-authenticated, content-free W163
+    /// projection. Frame ordering is authenticated by the enclosing daemon
+    /// subscription reducer; this method repeats only the closed row/status
+    /// invariants before allowing the snapshot to reach Slint.
+    pub fn accept_issued_batch(
+        &mut self,
+        status: RecallChipStatus,
+        rows: Vec<RecallChip>,
+    ) -> Result<RecallChipSnapshot, &'static str> {
+        if self.frozen {
+            return Err("recall chip batch after terminal boundary");
+        }
+        let result = (|| {
+            if rows.len() > MAX_RECALL_CHIP_ROWS {
+                return Err("recall chip batch exceeds five rows");
+            }
+            if !status.is_ready() && !rows.is_empty() {
+                return Err("unavailable recall chip batch must be empty");
+            }
+            for row in &rows {
+                if row.tier == RecallChipTier::Unknown
+                    && row.source_state != RecallChipSourceState::Untrusted
+                {
+                    return Err("unknown recall chip tier must be untrusted");
+                }
+                if let Some(score) = row.score
+                    && (row.tier != RecallChipTier::Warm
+                        || row.source_state != RecallChipSourceState::Available
+                        || !score.is_finite()
+                        || !(0.0..=1.0).contains(&score))
+                {
+                    return Err("invalid recall chip score");
+                }
+            }
+            let snapshot = RecallChipSnapshot { status, rows };
+            self.snapshot = Some(snapshot.clone());
+            Ok(snapshot)
+        })();
+        if result.is_err() {
+            self.clear_and_fence();
+        }
+        result
+    }
+
     pub fn apply_json(
         &mut self,
         line: &str,
@@ -497,5 +541,39 @@ mod tests {
             assert!(!snapshot.status.is_ready());
             assert!(snapshot.rows.is_empty());
         }
+    }
+
+    #[test]
+    fn typed_daemon_batch_reuses_closed_validation_and_provider_done_freeze() {
+        let mut projection = Projection::new("daemon-operation-9".into());
+        let accepted = projection
+            .accept_issued_batch(
+                RecallChipStatus::Ready,
+                vec![RecallChip {
+                    tier: RecallChipTier::Warm,
+                    score: Some(0.42),
+                    source_state: RecallChipSourceState::Available,
+                }],
+            )
+            .expect("accept daemon-reduced W163 batch");
+        projection.provider_done();
+        assert_eq!(projection.snapshot(), Some(accepted));
+        assert!(projection
+            .accept_issued_batch(RecallChipStatus::Ready, Vec::new())
+            .is_err());
+
+        projection.replace_request("daemon-operation-10".into());
+        assert!(projection
+            .accept_issued_batch(
+                RecallChipStatus::Ready,
+                vec![RecallChip {
+                    tier: RecallChipTier::Unknown,
+                    score: None,
+                    source_state: RecallChipSourceState::Available,
+                }],
+            )
+            .is_err());
+        assert!(projection.snapshot().is_none());
+        assert!(projection.is_frozen());
     }
 }

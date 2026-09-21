@@ -92,6 +92,7 @@ slint-build = "1.8"
 
 [dev-dependencies]
 tempfile = "3"
+async-trait = "0.1"
 # W41 RPC06's separate-crate GUI facade imports only synthetic bridge fixtures.
 # This test-only edge keeps the core's default/runtime feature set unchanged;
 # the normal dependency above continues to supply the effective `cluster` feature.
