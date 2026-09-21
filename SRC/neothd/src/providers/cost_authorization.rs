@@ -1367,6 +1367,13 @@ impl ProviderCallAuthorizer {
         self
     }
 
+    /// Keep loop tool dispatch on the same admitted route cap as provider calls.
+    pub(crate) fn skill_invocation_policy(
+        &self,
+    ) -> Option<&crate::skills::resolver::SkillInvocationPolicy> {
+        self.skill_invocation_policy.as_ref()
+    }
+
     /// Thread a daemon-owned W41 turn gate through the existing exact-leaf
     /// authorization spine. `None` is the unchanged CLI/default path.
     pub(crate) fn with_turn_effect_gate(
@@ -2163,11 +2170,12 @@ impl ProviderCallAuthorizer {
                     .await
             }
             #[cfg(test)]
-            None => self
-                .gate(leaf_policy.autonomy)
-                .with_skill_invocation_policy(self.skill_invocation_policy.clone())
-                .check(&action, None)
-                .await,
+            None => {
+                self.gate(leaf_policy.autonomy)
+                    .with_skill_invocation_policy(self.skill_invocation_policy.clone())
+                    .check(&action, None)
+                    .await
+            }
             #[cfg(not(test))]
             None => {
                 return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
@@ -3921,7 +3929,10 @@ mod tests {
             None,
             "test.w138.uncapped_baseline",
         );
-        uncapped.complete(request.clone()).await.expect("uncapped Full reaches transport");
+        uncapped
+            .complete(request.clone())
+            .await
+            .expect("uncapped Full reaches transport");
         assert_eq!(inner.calls.load(Ordering::SeqCst), 1);
         let provider = CostAuthorizingProvider::new(
             &inner,

@@ -583,6 +583,10 @@ pub async fn run_loop(
             req.clone(),
             servers,
             &freedom.autonomy_policy(),
+            // The authorizer carries the capability minted from the admitted
+            // route, so every loop round preserves the exact selected-skill
+            // restriction without reconstructing authority from prompt text.
+            authorizer.skill_invocation_policy(),
             writer,
             Some(rollback),
             tool_scope,
@@ -1066,6 +1070,134 @@ mod tests {
         assert!(prompts[1].contains("round output"));
     }
 
+    #[tokio::test]
+    async fn w145_loop_forwards_retained_skill_mcp_deny_before_stdio_transport() {
+        let home = TempDir::new().unwrap();
+        let counter = home.path().join("tools-call-count.txt");
+        let cfg = crate::mcp::client::stdio_fixture_config(&counter);
+        let servers = crate::mcp::McpServers {
+            servers: vec![cfg.clone()],
+            smart_loading: true,
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = FixedLoopProvider {
+            calls: Arc::clone(&calls),
+            text: format!(
+                "```mcp-tool-call\n{{\"server\":\"{}\",\"tool\":\"read\",\"arguments\":{{\"loop\":true}}}}\n```",
+                cfg.id
+            ),
+        };
+        let skill_id = crate::permissions::SkillId::parse("w145-loop-mcp-cap").unwrap();
+        let cap_config = crate::permissions::CustomAutonomyConfig {
+            overrides: std::collections::BTreeMap::new(),
+            skill_overrides: std::collections::BTreeMap::from([(
+                skill_id,
+                crate::permissions::SkillAutonomyOverride {
+                    level: AutonomyLevel::Custom,
+                    overrides: std::collections::BTreeMap::from([
+                        (
+                            crate::permissions::ActionKind::PaidProviderCall,
+                            crate::permissions::CustomDecision::Allow,
+                        ),
+                        (
+                            crate::permissions::ActionKind::McpToolInvocation,
+                            crate::permissions::CustomDecision::Deny,
+                        ),
+                    ]),
+                },
+            )]),
+        };
+        let admitted = crate::permissions::AutonomyPolicySnapshot::new(
+            AutonomyLevel::Full,
+            &cap_config,
+        );
+        let retained = crate::skills::resolver::test_invocation_policy_for_skill_id(
+            "w145-loop-mcp-cap",
+            &admitted,
+        )
+        .unwrap();
+        let freedom = crate::config::FreedomConfig {
+            autonomy: AutonomyLevel::Full,
+            ..Default::default()
+        };
+        let config = LoopConfig {
+            min_rounds: 1,
+            max_rounds: 1,
+            until: vec![],
+            tool_call_budget: Some(1),
+            autonomy: AutonomyLevel::Full,
+            refine_enabled: false,
+            neoth_home: home.path().to_path_buf(),
+        };
+        let baseline_wal = home.path().join("loop-no-cap-baseline.wal");
+        let (baseline_writer, baseline_join) = crate::wal::writer::spawn(baseline_wal).unwrap();
+        let baseline = run_loop(
+            &config,
+            &provider,
+            crate::providers::Request {
+                prompt: "invoke the routed MCP tool".into(),
+                model: Some("test-model".into()),
+                ..Default::default()
+            },
+            &servers,
+            &baseline_writer,
+            &freedom,
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                AutonomyLevel::Full,
+            ),
+            None,
+            &crate::mcp::McpToolScope::default(),
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+            None,
+        )
+        .await
+        .expect("the matching no-cap loop baseline reaches the real stdio transport");
+        drop(baseline_writer);
+        baseline_join.await.unwrap();
+        assert_eq!(baseline.per_round[0].failed_calls, 0);
+        assert_eq!(crate::mcp::client::stdio_fixture_call_count(&counter), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let capped_wal = home.path().join("loop-cap-forwarding.wal");
+        let (writer, join) = crate::wal::writer::spawn(capped_wal).unwrap();
+        let record = run_loop(
+            &config,
+            &provider,
+            crate::providers::Request {
+                prompt: "invoke the routed MCP tool".into(),
+                model: Some("test-model".into()),
+                ..Default::default()
+            },
+            &servers,
+            &writer,
+            &freedom,
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                AutonomyLevel::Full,
+            )
+            .with_skill_invocation_policy(Some(retained)),
+            None,
+            &crate::mcp::McpToolScope::default(),
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+            None,
+        )
+        .await
+        .expect("MCP denial is a loop result, not a provider transport failure");
+        drop(writer);
+        join.await.unwrap();
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "both the uncapped control and capped run emitted the same real tool-call payload"
+        );
+        assert_eq!(record.total_tool_calls, Some(1));
+        assert_eq!(record.per_round[0].failed_calls, 1);
+        assert_eq!(
+            crate::mcp::client::stdio_fixture_call_count(&counter),
+            1,
+            "the retained MCP Deny must add no second stdio tools/call after the proven uncapped baseline"
+        );
+    }
     #[tokio::test]
     async fn outer_loop_propagates_goal_dispatch_unavailable_without_convergence() {
         let home = TempDir::new().unwrap();

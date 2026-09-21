@@ -9489,7 +9489,10 @@ mod tests {
         let root = tempdir().unwrap();
         let absent = root.path().join("absent-skills");
         assert!(!skill_mutation_recovery_pending_read_only(&absent).unwrap());
-        assert!(!absent.exists(), "read-only probe must not create a missing root");
+        assert!(
+            !absent.exists(),
+            "read-only probe must not create a missing root"
+        );
 
         let skills = root.path().join("skills");
         std::fs::create_dir_all(&skills).unwrap();
@@ -9504,7 +9507,11 @@ mod tests {
             skill_mutation_recovery_pending_read_only(&skills).unwrap(),
             "journal-free recovery artifacts must keep installed candidates inert"
         );
-        assert_eq!(root_bytes(&skills), before, "probe must not clean recovery artifacts");
+        assert_eq!(
+            root_bytes(&skills),
+            before,
+            "probe must not clean recovery artifacts"
+        );
         assert!(
             !skills.join(SKILL_MUTATION_LOCK_FILE).exists(),
             "probe must not create a mutation lock"

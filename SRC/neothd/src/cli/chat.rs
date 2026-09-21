@@ -620,8 +620,7 @@ pub(super) struct PromptBundle {
     /// Operator-owned restrictive cap minted from `skill_route_guard`. This
     /// remains route-bound rather than being reconstructed from `used_skill_id`.
     /// Pipeline owners must carry it to every provider/MCP/channel effect leaf.
-    pub(super) skill_invocation_policy:
-        Option<crate::skills::resolver::SkillInvocationPolicy>,
+    pub(super) skill_invocation_policy: Option<crate::skills::resolver::SkillInvocationPolicy>,
     /// Cross-surface, JSON-ready explanation of the exact routing decision.
     pub(super) skill_route_report: crate::skills::resolver::SkillRouteReport,
     /// Exact typed A-E/Conductor representation of `combined_system` plus the

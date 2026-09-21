@@ -478,8 +478,9 @@ impl Gate {
         request_binding_sha256: Option<&str>,
     ) -> Result<(), GateError> {
         let policy_snapshot = self.current_policy_snapshot();
-        let (final_decision, lease_id, confirmation_source, audit_policy_snapshot) =
-            self.resolve_decision_at(action, now_unix, &policy_snapshot).await;
+        let (final_decision, lease_id, confirmation_source, audit_policy_snapshot) = self
+            .resolve_decision_at(action, now_unix, &policy_snapshot)
+            .await;
 
         if !matches!(sink, PermissionAuditSink::None) {
             let subject = self.lease_ctx.as_ref().map(|c| c.subject.as_str());
@@ -531,20 +532,35 @@ impl Gate {
         action: &Action,
         now_unix: i64,
         policy_snapshot: &AutonomyPolicySnapshot,
-    ) -> (Decision, Option<String>, Option<&'static str>, AutonomyPolicySnapshot) {
+    ) -> (
+        Decision,
+        Option<String>,
+        Option<&'static str>,
+        AutonomyPolicySnapshot,
+    ) {
         let decision = self.effective_decision_at(action, policy_snapshot);
         match decision {
             // A request-bound capability can accompany a policy Allow. Keep
             // the source in generic audit evidence even where no upgrade was
             // required.
-            Decision::Allow => (Decision::Allow, None, self.preconfirmed_source, policy_snapshot.clone()),
+            Decision::Allow => (
+                Decision::Allow,
+                None,
+                self.preconfirmed_source,
+                policy_snapshot.clone(),
+            ),
             Decision::Deny(reason) => (Decision::Deny(reason), None, None, policy_snapshot.clone()),
             Decision::Confirm(reason) => match self
                 .lease_ctx
                 .as_ref()
                 .and_then(|context| context.covering_lease_id(action, now_unix))
             {
-                Some(id) => (Decision::Allow, Some(id), Some("capability_lease"), policy_snapshot.clone()),
+                Some(id) => (
+                    Decision::Allow,
+                    Some(id),
+                    Some("capability_lease"),
+                    policy_snapshot.clone(),
+                ),
                 None => match self.preconfirmed_source {
                     Some(source) => (Decision::Allow, None, Some(source), policy_snapshot.clone()),
                     None => {
@@ -561,7 +577,10 @@ impl Gate {
                             None
                         };
                         let audit_policy_snapshot = if resolved.is_allow()
-                            && self.skill_invocation_policy.as_ref().is_some_and(|policy| policy.has_skill_cap())
+                            && self
+                                .skill_invocation_policy
+                                .as_ref()
+                                .is_some_and(|policy| policy.has_skill_cap())
                         {
                             self.current_policy_snapshot()
                         } else {
@@ -1079,7 +1098,9 @@ mod tests {
         let config = crate::permissions::CustomAutonomyConfig {
             overrides: std::collections::BTreeMap::new(),
             skill_overrides: override_policy
-                .map(|override_policy| std::collections::BTreeMap::from([(skill_id, override_policy)]))
+                .map(|override_policy| {
+                    std::collections::BTreeMap::from([(skill_id, override_policy)])
+                })
                 .unwrap_or_default(),
         };
         let admitted = AutonomyPolicySnapshot::new(AutonomyLevel::Full, &config);
@@ -1114,7 +1135,10 @@ mod tests {
             .with_channel_asker(Arc::new(ApproveAsker))
             .check(&Action::ExecArbitrary, None)
             .await;
-        assert!(approved.is_ok(), "the actual channel approval must resolve retained Confirm");
+        assert!(
+            approved.is_ok(),
+            "the actual channel approval must resolve retained Confirm"
+        );
 
         let rejected = Gate::for_level(AutonomyLevel::Full)
             .with_skill_invocation_policy(Some(policy))
@@ -1147,7 +1171,10 @@ mod tests {
             .with_skill_invocation_policy(Some(w138_retained_skill_policy(None)))
             .check(&Action::ExecArbitrary, None)
             .await;
-        assert!(result.is_ok(), "a retained route without a cap must preserve Full global behavior: {result:?}");
+        assert!(
+            result.is_ok(),
+            "a retained route without a cap must preserve Full global behavior: {result:?}"
+        );
     }
 
     struct W138ReloadThenApproveAsker {
@@ -1159,8 +1186,11 @@ mod tests {
     #[async_trait::async_trait]
     impl ChannelAsker for W138ReloadThenApproveAsker {
         async fn ask(&self, _reason: &str) -> Option<bool> {
-            std::fs::write(&self.config_path, serde_yaml::to_string(&self.changed).unwrap())
-                .expect("persist reloaded autonomy fixture");
+            std::fs::write(
+                &self.config_path,
+                serde_yaml::to_string(&self.changed).unwrap(),
+            )
+            .expect("persist reloaded autonomy fixture");
             match self.reload.try_reload().expect("accepted autonomy reload") {
                 crate::config::reload::ReloadResult::Reloaded { .. } => {}
                 other => panic!("expected Reloaded before channel answer, got {other:?}"),

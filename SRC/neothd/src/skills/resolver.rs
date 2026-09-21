@@ -177,7 +177,8 @@ impl SkillInvocationPolicy {
         current_global: &AutonomyPolicySnapshot,
     ) -> crate::permissions::Decision {
         let current_global = self.current_global_snapshot(current_global);
-        self.effective.evaluate_with_current_global(action, &current_global)
+        self.effective
+            .evaluate_with_current_global(action, &current_global)
     }
 
     pub(crate) fn evaluate_at_snapshot(
@@ -185,7 +186,8 @@ impl SkillInvocationPolicy {
         action: &Action,
         current_global: &AutonomyPolicySnapshot,
     ) -> crate::permissions::Decision {
-        self.effective.evaluate_with_current_global(action, current_global)
+        self.effective
+            .evaluate_with_current_global(action, current_global)
     }
 }
 
@@ -1451,7 +1453,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn w138_retained_cap_reload_blocks_stale_snapshot_while_no_cap_preserves_legacy_snapshot() {
+    async fn w138_retained_cap_reload_blocks_stale_snapshot_while_no_cap_preserves_legacy_snapshot()
+    {
         use std::collections::BTreeMap;
 
         let capped_skill = crate::permissions::SkillId::parse("reload-cap").unwrap();
@@ -1495,8 +1498,7 @@ mod tests {
         ]);
         let SkillRouteDecision::Match(capped_route) = resolver
             .resolve(
-                SkillRouteRequest::automatic("cap", 1, &[])
-                    .with_explicit_skill(Some("reload-cap")),
+                SkillRouteRequest::automatic("cap", 1, &[]).with_explicit_skill(Some("reload-cap")),
                 None,
             )
             .await

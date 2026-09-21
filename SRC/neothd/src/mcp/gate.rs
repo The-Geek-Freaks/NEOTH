@@ -673,8 +673,8 @@ pub(crate) async fn preflight_with_skill_policy_and_audit_sink<P: PolicyArgument
     // SmartApprove can only resolve the legacy server/tool confirmation. A
     // selected route that tightened a globally-Allow action to Confirm must
     // continue into the normal lease/interactive/fail-closed Gate path.
-    let skill_cap_requires_confirmation = skill_policy
-        .is_some_and(|route_policy| route_policy.cap_requires_confirmation(&action));
+    let skill_cap_requires_confirmation =
+        skill_policy.is_some_and(|route_policy| route_policy.cap_requires_confirmation(&action));
     if let Decision::Deny(reason) = &decision {
         if sink.is_present() {
             emit_reject(sink, &cfg.id, tool, &format!("deny: {reason}"), now_unix)
@@ -736,7 +736,11 @@ pub(crate) async fn authorize_preflight_with_audit_sink(
     // Resolve a retained cap against one current global snapshot. Keep that
     // exact snapshot for both the decision and its audit; no-cap calls retain
     // their legacy cached preflight decision.
-    if let Some(route_policy) = preflight.skill_invocation_policy.as_ref().filter(|policy| policy.has_skill_cap()) {
+    if let Some(route_policy) = preflight
+        .skill_invocation_policy
+        .as_ref()
+        .filter(|policy| policy.has_skill_cap())
+    {
         let current = route_policy.current_global_snapshot(&preflight.policy_snapshot);
         preflight.decision = route_policy.evaluate_at_snapshot(&preflight.action, &current);
         preflight.skill_cap_requires_confirmation =
@@ -2763,8 +2767,7 @@ mod tests {
     #[tokio::test]
     async fn w138_mcp_no_cap_smart_approve_keeps_baseline_wal_allow() {
         use crate::permissions::{
-            ActionKind, AutonomyLevel, AutonomyPolicySnapshot, CustomAutonomyConfig,
-            CustomDecision,
+            ActionKind, AutonomyLevel, AutonomyPolicySnapshot, CustomAutonomyConfig, CustomDecision,
         };
 
         let policy = AutonomyPolicySnapshot::new(
@@ -2780,15 +2783,18 @@ mod tests {
         let mut cfg = base_cfg(Some(vec!["read_graph"]));
         cfg.smart_approve = true;
         let mut cache = crate::mcp::smart_approve::ReadOnlyCache::new();
-        assert!(cache.seed_from_tools(&cfg, &[McpTool {
-            name: "read_graph".into(),
-            description: None,
-            input_schema: serde_json::json!({}),
-            annotations: Some(crate::mcp::client::ToolAnnotations {
-                read_only_hint: Some(true),
-                destructive_hint: Some(false),
-            }),
-        }]));
+        assert!(cache.seed_from_tools(
+            &cfg,
+            &[McpTool {
+                name: "read_graph".into(),
+                description: None,
+                input_schema: serde_json::json!({}),
+                annotations: Some(crate::mcp::client::ToolAnnotations {
+                    read_only_hint: Some(true),
+                    destructive_hint: Some(false),
+                }),
+            }]
+        ));
         let grant = cache.grant_for(&cfg, "read_graph").unwrap();
         let preflight = preflight_with_audit_sink(
             &cfg,
@@ -2823,9 +2829,12 @@ mod tests {
         let mut trust = None;
         crate::wal::scan::for_each_frame(&bytes, |_, frame| {
             if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
-                && frame.header.event_subtype == crate::wal::events::ExtendedSubtype::TrustDecision as u8
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::TrustDecision as u8
             {
-                trust = Some(crate::permissions::trust_ledger::TrustEvent::decode(frame.payload).unwrap());
+                trust = Some(
+                    crate::permissions::trust_ledger::TrustEvent::decode(frame.payload).unwrap(),
+                );
             }
             Ok(())
         })
@@ -2846,18 +2855,15 @@ mod tests {
             autonomy: AutonomyLevel::Standard,
             ..Default::default()
         };
-        initial.custom_autonomy.overrides.insert(
-            ActionKind::McpToolInvocation,
-            CustomDecision::Confirm,
-        );
+        initial
+            .custom_autonomy
+            .overrides
+            .insert(ActionKind::McpToolInvocation, CustomDecision::Confirm);
         initial.custom_autonomy.skill_overrides.insert(
             skill_id,
             SkillAutonomyOverride {
                 level: AutonomyLevel::Custom,
-                overrides: BTreeMap::from([(
-                    ActionKind::McpToolInvocation,
-                    CustomDecision::Allow,
-                )]),
+                overrides: BTreeMap::from([(ActionKind::McpToolInvocation, CustomDecision::Allow)]),
             },
         );
         let home = tempfile::tempdir().unwrap();
@@ -2878,15 +2884,18 @@ mod tests {
         let mut cfg = base_cfg(Some(vec!["read_graph"]));
         cfg.smart_approve = true;
         let mut cache = crate::mcp::smart_approve::ReadOnlyCache::new();
-        assert!(cache.seed_from_tools(&cfg, &[McpTool {
-            name: "read_graph".into(),
-            description: None,
-            input_schema: serde_json::json!({}),
-            annotations: Some(crate::mcp::client::ToolAnnotations {
-                read_only_hint: Some(true),
-                destructive_hint: Some(false),
-            }),
-        }]));
+        assert!(cache.seed_from_tools(
+            &cfg,
+            &[McpTool {
+                name: "read_graph".into(),
+                description: None,
+                input_schema: serde_json::json!({}),
+                annotations: Some(crate::mcp::client::ToolAnnotations {
+                    read_only_hint: Some(true),
+                    destructive_hint: Some(false),
+                }),
+            }]
+        ));
         let grant = cache.grant_for(&cfg, "read_graph").unwrap();
 
         let preflight = preflight_with_skill_policy_and_audit_sink(
@@ -2904,10 +2913,10 @@ mod tests {
         assert!(preflight.requires_confirmation());
         let mut changed = initial;
         changed.autonomy = AutonomyLevel::Custom;
-        changed.custom_autonomy.overrides.insert(
-            ActionKind::McpToolInvocation,
-            CustomDecision::Deny,
-        );
+        changed
+            .custom_autonomy
+            .overrides
+            .insert(ActionKind::McpToolInvocation, CustomDecision::Deny);
         std::fs::write(&config_path, serde_yaml::to_string(&changed).unwrap()).unwrap();
         match reload.try_reload().unwrap() {
             crate::config::reload::ReloadResult::Reloaded { .. } => {}
@@ -2943,9 +2952,12 @@ mod tests {
                 reject = Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
             }
             if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
-                && frame.header.event_subtype == crate::wal::events::ExtendedSubtype::TrustDecision as u8
+                && frame.header.event_subtype
+                    == crate::wal::events::ExtendedSubtype::TrustDecision as u8
             {
-                trust = Some(crate::permissions::trust_ledger::TrustEvent::decode(frame.payload).unwrap());
+                trust = Some(
+                    crate::permissions::trust_ledger::TrustEvent::decode(frame.payload).unwrap(),
+                );
             }
             Ok(())
         })
@@ -2969,18 +2981,15 @@ mod tests {
             autonomy: AutonomyLevel::Custom,
             ..Default::default()
         };
-        initial.custom_autonomy.overrides.insert(
-            ActionKind::McpToolInvocation,
-            CustomDecision::Confirm,
-        );
+        initial
+            .custom_autonomy
+            .overrides
+            .insert(ActionKind::McpToolInvocation, CustomDecision::Confirm);
         initial.custom_autonomy.skill_overrides.insert(
             skill_id,
             SkillAutonomyOverride {
                 level: AutonomyLevel::Custom,
-                overrides: BTreeMap::from([(
-                    ActionKind::McpToolInvocation,
-                    CustomDecision::Allow,
-                )]),
+                overrides: BTreeMap::from([(ActionKind::McpToolInvocation, CustomDecision::Allow)]),
             },
         );
         let temp = tempfile::tempdir().unwrap();
@@ -3031,10 +3040,10 @@ mod tests {
         );
 
         let mut changed = initial;
-        changed.custom_autonomy.overrides.insert(
-            ActionKind::McpToolInvocation,
-            CustomDecision::Deny,
-        );
+        changed
+            .custom_autonomy
+            .overrides
+            .insert(ActionKind::McpToolInvocation, CustomDecision::Deny);
         std::fs::write(&config_path, serde_yaml::to_string(&changed).unwrap()).unwrap();
         match reload.try_reload().unwrap() {
             crate::config::reload::ReloadResult::Reloaded { .. } => {}
@@ -3067,10 +3076,7 @@ mod tests {
 
         let skill_id = SkillId::parse("mcp-confirm-cap").unwrap();
         let custom = CustomAutonomyConfig {
-            overrides: BTreeMap::from([(
-                ActionKind::McpToolInvocation,
-                CustomDecision::Confirm,
-            )]),
+            overrides: BTreeMap::from([(ActionKind::McpToolInvocation, CustomDecision::Confirm)]),
             skill_overrides: BTreeMap::from([(
                 skill_id,
                 SkillAutonomyOverride {
@@ -3088,10 +3094,12 @@ mod tests {
             &global,
         )
         .unwrap();
-        assert!(retained.cap_requires_confirmation(&Action::McpToolInvocation {
-            server_id: "test".into(),
-            tool: "read_graph".into(),
-        }));
+        assert!(
+            retained.cap_requires_confirmation(&Action::McpToolInvocation {
+                server_id: "test".into(),
+                tool: "read_graph".into(),
+            })
+        );
 
         let mut cfg = base_cfg(Some(vec!["read_graph"]));
         cfg.smart_approve = true;
@@ -3142,8 +3150,7 @@ mod tests {
     #[tokio::test]
     async fn w138_no_cap_smart_approve_retains_baseline() {
         use crate::permissions::{
-            ActionKind, AutonomyLevel, AutonomyPolicySnapshot, CustomAutonomyConfig,
-            CustomDecision,
+            ActionKind, AutonomyLevel, AutonomyPolicySnapshot, CustomAutonomyConfig, CustomDecision,
         };
 
         let global = AutonomyPolicySnapshot::new(

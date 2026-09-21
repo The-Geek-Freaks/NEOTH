@@ -7817,15 +7817,21 @@ pub fn parse_buddy_status(json: &str) -> Result<BuddyStatusSnap, String> {
             return Err("Buddy status contains an invalid Skill autonomy cap".to_string());
         }
         for policy in [&cap.configured, &cap.effective_cap] {
-            if !matches!(policy.level.as_str(), "strict" | "standard" | "elevated" | "full" | "custom")
-                || (policy.level != "custom" && !policy.overrides.is_empty())
+            if !matches!(
+                policy.level.as_str(),
+                "strict" | "standard" | "elevated" | "full" | "custom"
+            ) || (policy.level != "custom" && !policy.overrides.is_empty())
                 || policy.overrides.iter().any(|(action, decision)| {
                     action.is_empty()
-                        || !action.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+                        || !action.bytes().all(|byte| {
+                            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
+                        })
                         || !matches!(decision.as_str(), "allow" | "confirm" | "deny")
                 })
             {
-                return Err("Buddy status contains an invalid Skill autonomy cap policy".to_string());
+                return Err(
+                    "Buddy status contains an invalid Skill autonomy cap policy".to_string()
+                );
             }
         }
     }

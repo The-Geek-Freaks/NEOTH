@@ -3244,16 +3244,16 @@ mod skill_autonomy_config_tests {
             .collect::<String>();
         let source = format!("custom_autonomy:\n  skill_overrides:\n{entries}");
         assert!(
-            super::parse_public_freedom_yaml(Path::new("freedom.yaml"), source.as_bytes())
-                .is_err(),
+            super::parse_public_freedom_yaml(Path::new("freedom.yaml"), source.as_bytes()).is_err(),
             "the public config boundary must enforce the 128 per-skill override limit"
         );
     }
 
     #[test]
     fn public_config_load_preserves_legacy_absence_of_skill_overrides() {
-        let config = super::parse_public_freedom_yaml(Path::new("freedom.yaml"), b"autonomy: full\n")
-            .expect("legacy config without custom_autonomy must remain valid");
+        let config =
+            super::parse_public_freedom_yaml(Path::new("freedom.yaml"), b"autonomy: full\n")
+                .expect("legacy config without custom_autonomy must remain valid");
         assert!(config.custom_autonomy.skill_overrides.is_empty());
     }
 }

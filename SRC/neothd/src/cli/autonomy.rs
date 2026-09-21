@@ -526,9 +526,11 @@ fn parse_skill_override(level: &str, actions: &[String]) -> Result<SkillAutonomy
         let (kind, decision) = action
             .split_once('=')
             .filter(|(kind, decision)| !kind.is_empty() && !decision.is_empty())
-            .ok_or_else(|| anyhow::anyhow!(
-                "invalid --action `{action}` — expected action_kind=allow|confirm|deny"
-            ))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "invalid --action `{action}` — expected action_kind=allow|confirm|deny"
+                )
+            })?;
         anyhow::ensure!(
             !decision.contains('='),
             "invalid --action `{action}` — expected one action_kind=allow|confirm|deny pair"
@@ -590,7 +592,9 @@ async fn run_skill_set(
         inventory.admitted,
         "Skill `{}` is not authority-admitted: {}",
         skill_id,
-        inventory.inert_reason.unwrap_or_else(|| "not_admitted".to_owned())
+        inventory
+            .inert_reason
+            .unwrap_or_else(|| "not_admitted".to_owned())
     );
     let receipt = set_skill_override_at(&home, &path, skill_id, override_policy).await?;
     render_skill_value(&receipt, output)
@@ -699,7 +703,8 @@ async fn set_skill_override_at(
             false,
         )
         .await;
-        return Err(error).context("Skill autonomy cap CAS publication failed; target was not published");
+        return Err(error)
+            .context("Skill autonomy cap CAS publication failed; target was not published");
     }
     emit_autonomy_change(
         previous_level,
@@ -725,11 +730,7 @@ async fn set_skill_override_at(
         "committed Skill autonomy cap readback did not match the requested cap"
     );
     Ok(skill_override_receipt(
-        &skill_id,
-        configured,
-        previous,
-        true,
-        true,
+        &skill_id, configured, previous, true, true,
     ))
 }
 
@@ -755,7 +756,9 @@ async fn reset_skill_override_at(
         .context("prepare Skill autonomy cap reset")?;
     if !changed {
         drop(update);
-        return Ok(skill_override_receipt(&skill_id, None, previous, false, false));
+        return Ok(skill_override_receipt(
+            &skill_id, None, previous, false, false,
+        ));
     }
     let previous_level = previous
         .as_ref()
@@ -788,7 +791,8 @@ async fn reset_skill_override_at(
             false,
         )
         .await;
-        return Err(error).context("Skill autonomy cap reset CAS publication failed; target was not published");
+        return Err(error)
+            .context("Skill autonomy cap reset CAS publication failed; target was not published");
     }
     emit_autonomy_change(
         previous_level,
@@ -814,11 +818,7 @@ async fn reset_skill_override_at(
         "committed Skill autonomy cap reset still has a persisted entry"
     );
     Ok(skill_override_receipt(
-        &skill_id,
-        None,
-        previous,
-        true,
-        true,
+        &skill_id, None, previous, true, true,
     ))
 }
 
@@ -1408,29 +1408,32 @@ mod tests {
 
     #[test]
     fn skill_override_parser_is_strict_and_custom_only() {
-        let custom = parse_skill_override(
-            "custom",
-            &["exec_arbitrary=deny".to_owned()],
-        )
-        .expect("custom action override");
+        let custom = parse_skill_override("custom", &["exec_arbitrary=deny".to_owned()])
+            .expect("custom action override");
         assert_eq!(custom.level, AutonomyLevel::Custom);
         assert_eq!(custom.overrides.len(), 1);
         assert!(parse_skill_override("standard", &["exec_arbitrary=deny".to_owned()]).is_err());
-        assert!(parse_skill_override(
-            "custom",
-            &[
-                "exec_arbitrary=deny".to_owned(),
-                "exec_arbitrary=confirm".to_owned(),
-            ],
-        )
-        .is_err());
+        assert!(
+            parse_skill_override(
+                "custom",
+                &[
+                    "exec_arbitrary=deny".to_owned(),
+                    "exec_arbitrary=confirm".to_owned(),
+                ],
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test]
     async fn skill_override_commit_readback_and_reset_are_exact_and_idempotent() {
         let temp = tempfile::TempDir::new().unwrap();
         let path = temp.path().join("freedom.yaml");
-        std::fs::write(&path, serde_yaml::to_string(&FreedomConfig::default()).unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            serde_yaml::to_string(&FreedomConfig::default()).unwrap(),
+        )
+        .unwrap();
         let skill_id = SkillId::parse("web-research").unwrap();
         let override_policy = parse_skill_override("standard", &[]).unwrap();
 
@@ -1452,14 +1455,10 @@ mod tests {
             Some(&override_policy)
         );
 
-        let unchanged = set_skill_override_at(
-            temp.path(),
-            &path,
-            skill_id.clone(),
-            override_policy,
-        )
-        .await
-        .unwrap();
+        let unchanged =
+            set_skill_override_at(temp.path(), &path, skill_id.clone(), override_policy)
+                .await
+                .unwrap();
         assert_eq!(unchanged["changed"], false);
         assert_eq!(unchanged["reload_requested"], false);
 
@@ -1476,7 +1475,9 @@ mod tests {
                 .get(&skill_id),
             None
         );
-        let absent_reset = reset_skill_override_at(temp.path(), &path, skill_id).await.unwrap();
+        let absent_reset = reset_skill_override_at(temp.path(), &path, skill_id)
+            .await
+            .unwrap();
         assert_eq!(absent_reset["changed"], false);
         assert_eq!(absent_reset["reload_requested"], false);
     }

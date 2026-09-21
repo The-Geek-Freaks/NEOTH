@@ -383,13 +383,9 @@ async fn run_status(output: OutputFormat) -> Result<()> {
     let path = FreedomConfig::default_path();
     let mut skill_autonomy_caps = Vec::new();
     for (skill_id, configured) in &cfg.custom_autonomy.skill_overrides {
-        let inventory = crate::cli::autonomy::skill_inventory_status(
-            &home,
-            &path,
-            cfg.clone(),
-            skill_id,
-        )
-        .await?;
+        let inventory =
+            crate::cli::autonomy::skill_inventory_status(&home, &path, cfg.clone(), skill_id)
+                .await?;
         if inventory.admitted {
             skill_autonomy_caps.push(json!({
                 "id": skill_id.as_str(),

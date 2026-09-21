@@ -260,6 +260,40 @@ function Add-Result {
     })
 }
 
+function New-PortablePrivateDirectory {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    [System.IO.Directory]::CreateDirectory($Path) | Out-Null
+    if (-not $IsWindows) {
+        return
+    }
+
+    $owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    if ($null -eq $owner) {
+        Stop-Acceptance 'cannot resolve the current Windows TokenUser SID for the portable private home'
+    }
+    $security = [System.Security.AccessControl.DirectorySecurity]::new()
+    $security.SetOwner($owner)
+    $security.SetAccessRuleProtection($true, $false)
+    $inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+        [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+        $owner,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        $inheritance,
+        [System.Security.AccessControl.PropagationFlags]::None,
+        [System.Security.AccessControl.AccessControlType]::Allow
+    )
+    $security.SetAccessRule($rule)
+    Set-Acl -LiteralPath $Path -AclObject $security
+
+    $actual = Get-Acl -LiteralPath $Path
+    $actualOwner = $actual.GetOwner([System.Security.Principal.SecurityIdentifier])
+    if ($actualOwner.Value -cne $owner.Value -or -not $actual.AreAccessRulesProtected) {
+        Stop-Acceptance 'portable private home did not retain current TokenUser ownership and a protected DACL'
+    }
+}
+
 if ($ExpectedSourceSha -cnotmatch '^[0-9a-f]{40}$') {
     Stop-Acceptance 'ExpectedSourceSha must be the lowercase 40-character source commit SHA'
 }
@@ -303,7 +337,8 @@ $neothHome = Join-Path $workRootPath 'private NEOTH_HOME'
 $repoA = Join-Path $workRootPath 'repo A with spaces'
 $repoB = Join-Path $workRootPath 'repo B with spaces'
 $database = Join-Path $neothHome 'code_map.db'
-New-Item -ItemType Directory -Path $neothHome, $repoA, $repoB | Out-Null
+New-PortablePrivateDirectory -Path $neothHome
+New-Item -ItemType Directory -Path $repoA, $repoB | Out-Null
 Set-Content -LiteralPath (Join-Path $repoA 'fixture.rs') -Value 'fn stable() {}' -Encoding utf8
 Set-Content -LiteralPath (Join-Path $repoB 'other.rs') -Value 'fn isolated() {}' -Encoding utf8
 

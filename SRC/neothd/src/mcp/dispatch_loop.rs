@@ -279,13 +279,37 @@ where
     P: PolicyArgument + Copy + Send + Sync,
 {
     run_tool_loop_with_budget_and_skill_policy(
-        driver, initial_prompt, servers, policy, None, writer, rollback_policy, tool_scope,
-        max_iterations, security_policy, subject, goal_context, hints_enabled, compaction,
-        compression, judge_provider, elicitation_handler, harness_cfg, compaction_budget,
-        max_tool_calls, turn_effect_gate, instance_home, pre_tool_hook_policy,
-        pre_tool_once_guard, pre_tool_cancellation, outline_enrichment_enabled,
-        enrichment_selectors, impact_policy, requested_context_policy,
-    ).await
+        driver,
+        initial_prompt,
+        servers,
+        policy,
+        None,
+        writer,
+        rollback_policy,
+        tool_scope,
+        max_iterations,
+        security_policy,
+        subject,
+        goal_context,
+        hints_enabled,
+        compaction,
+        compression,
+        judge_provider,
+        elicitation_handler,
+        harness_cfg,
+        compaction_budget,
+        max_tool_calls,
+        turn_effect_gate,
+        instance_home,
+        pre_tool_hook_policy,
+        pre_tool_once_guard,
+        pre_tool_cancellation,
+        outline_enrichment_enabled,
+        enrichment_selectors,
+        impact_policy,
+        requested_context_policy,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]

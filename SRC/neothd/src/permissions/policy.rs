@@ -35,7 +35,9 @@ impl SkillId {
         Ok(Self(value.to_owned()))
     }
 
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 impl std::fmt::Display for SkillId {
@@ -348,7 +350,10 @@ pub struct SkillAutonomyOverride {
 
 impl Default for SkillAutonomyOverride {
     fn default() -> Self {
-        Self { level: AutonomyLevel::Standard, overrides: BTreeMap::new() }
+        Self {
+            level: AutonomyLevel::Standard,
+            overrides: BTreeMap::new(),
+        }
     }
 }
 
@@ -425,13 +430,14 @@ impl AutonomyPolicySnapshot {
     /// already-admitted route. Callers must never supply a free-form manifest
     /// id or use this to revive a stale route.
     pub fn effective_for_selected_skill(&self, skill_id: &SkillId) -> EffectiveAutonomyPolicy {
-        let skill_cap = self.skill_overrides.get(skill_id).map(|override_policy| {
-            AutonomyPolicySnapshot {
-                level: override_policy.level,
-                overrides: override_policy.overrides.clone(),
-                skill_overrides: BTreeMap::new(),
-            }
-        });
+        let skill_cap =
+            self.skill_overrides
+                .get(skill_id)
+                .map(|override_policy| AutonomyPolicySnapshot {
+                    level: override_policy.level,
+                    overrides: override_policy.overrides.clone(),
+                    skill_overrides: BTreeMap::new(),
+                });
         EffectiveAutonomyPolicy { skill_cap }
     }
 
@@ -497,9 +503,9 @@ pub struct EffectiveAutonomyPolicy {
 
 impl EffectiveAutonomyPolicy {
     pub(crate) fn cap_requires_confirmation(&self, action: &Action) -> bool {
-        self.skill_cap
-            .as_ref()
-            .is_some_and(|cap| matches!(super::evaluate_snapshot(action, cap), Decision::Confirm(_)))
+        self.skill_cap.as_ref().is_some_and(|cap| {
+            matches!(super::evaluate_snapshot(action, cap), Decision::Confirm(_))
+        })
     }
     /// Evaluate against the global snapshot read at the effect leaf while
     /// retaining the admitted route's skill cap. A config reload may tighten
@@ -511,7 +517,9 @@ impl EffectiveAutonomyPolicy {
         current_global: &AutonomyPolicySnapshot,
     ) -> Decision {
         let global = super::evaluate_snapshot(action, current_global);
-        let Some(skill_cap) = &self.skill_cap else { return global; };
+        let Some(skill_cap) = &self.skill_cap else {
+            return global;
+        };
         let cap = super::evaluate_snapshot(action, skill_cap);
         match (&global, &cap) {
             (Decision::Deny(_), _) => global,
@@ -522,7 +530,9 @@ impl EffectiveAutonomyPolicy {
         }
     }
 
-    pub fn has_skill_cap(&self) -> bool { self.skill_cap.is_some() }
+    pub fn has_skill_cap(&self) -> bool {
+        self.skill_cap.is_some()
+    }
 }
 
 pub(crate) fn custom_requested_decision(

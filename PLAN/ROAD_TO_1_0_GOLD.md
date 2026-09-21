@@ -8,6 +8,16 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W138 hosted recovery / W144-W145 (2026-09-21):** Code Quality35587706481
+passed on5641da2d. Preflight35587706860 supplied98 raw Rustfmt hunks, reduced
+to80 unique substitutions across15 files because GUI modules are included
+more than once. Complete hosted formatting was imported. CLI-reference
+build35587747694 exposed an owned-path move and a missing loop MCP capability;
+[W145](../docs/gold-wave145-verification.md) repairs both and retains the
+selected-skill cap through the loop authorizer. [W144](../docs/gold-wave144-verification.md)
+corrects the Windows portable fixture's private-home owner without changing
+product ownership guards. Fresh hosted gates remain required; no local
+validation or Road closure. W142 self-improve remains separate working source.
 **W138 skill autonomy source admitted (2026-09-21):** operator-owned per-skill
 caps now flow through admitted routes into provider/MCP authorization and the
 CLI, Settings and Buddy surfaces. Read-only inventory remains mutation-free;

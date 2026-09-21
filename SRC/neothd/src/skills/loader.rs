@@ -167,9 +167,9 @@ async fn load_authorized_with_mode_and_budget_override(
             }
         }
         InstalledStoreMode::ReadOnlyProbe => {
-            let skills_dir = skills_dir.to_path_buf();
+            let probe_skills_dir = skills_dir.to_path_buf();
             match tokio::task::spawn_blocking(move || {
-                super::installer::skill_mutation_recovery_pending_read_only(&skills_dir)
+                super::installer::skill_mutation_recovery_pending_read_only(&probe_skills_dir)
                     .map(|pending| !pending)
             })
             .await
@@ -1281,7 +1281,9 @@ mod tests {
         assert_eq!(std::fs::read(&journal).unwrap(), journal_before);
         assert!(stage.exists() && journal.exists());
         assert!(
-            !skills.join(super::super::installer::SKILL_MUTATION_LOCK_FILE).exists(),
+            !skills
+                .join(super::super::installer::SKILL_MUTATION_LOCK_FILE)
+                .exists(),
             "read-only inventory must not create a mutation lock"
         );
     }

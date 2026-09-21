@@ -23463,7 +23463,6 @@ fn register_skill_autonomy_callbacks(window: &MainWindow) {
             });
         });
     });
-
 }
 
 fn format_skill_autonomy_cap(cap: Option<&gui_action::SkillAutonomyOverrideAck>) -> String {
@@ -23482,7 +23481,9 @@ fn format_skill_autonomy_cap(cap: Option<&gui_action::SkillAutonomyOverrideAck>)
     format!("{} ({actions})", cap.level)
 }
 
-fn fetch_skill_autonomy_show(id: &str) -> std::result::Result<gui_action::SkillAutonomyShow, String> {
+fn fetch_skill_autonomy_show(
+    id: &str,
+) -> std::result::Result<gui_action::SkillAutonomyShow, String> {
     let show = run_neothd_json_action::<gui_action::SkillAutonomyShow>(
         &["autonomy", "skill", "show", id],
         "Skill autonomy inspect",
@@ -23496,7 +23497,9 @@ fn verify_skill_autonomy_readback(
     expected: Option<&gui_action::SkillAutonomyOverrideAck>,
 ) -> std::result::Result<gui_action::SkillAutonomyShow, String> {
     if show.configured.as_ref() != expected {
-        return Err("fresh Skill autonomy readback differs from the requested configuration".into());
+        return Err(
+            "fresh Skill autonomy readback differs from the requested configuration".into(),
+        );
     }
     Ok(show)
 }
@@ -23552,20 +23555,34 @@ fn parse_skill_autonomy_actions(
     level: &str,
     actions: &str,
 ) -> std::result::Result<gui_action::SkillAutonomyOverrideAck, String> {
-    if !matches!(level, "strict" | "standard" | "elevated" | "full" | "custom") {
+    if !matches!(
+        level,
+        "strict" | "standard" | "elevated" | "full" | "custom"
+    ) {
         return Err("Choose a supported autonomy cap.".into());
     }
     let mut overrides = std::collections::BTreeMap::new();
-    for entry in actions.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+    for entry in actions
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
         let Some((action, decision)) = entry.split_once('=') else {
             return Err("Custom actions use action=allow, action=confirm, or action=deny.".into());
         };
         if action.is_empty()
-            || !action.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+            || !action
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
             || !matches!(decision, "allow" | "confirm" | "deny")
-            || overrides.insert(action.to_string(), decision.to_string()).is_some()
+            || overrides
+                .insert(action.to_string(), decision.to_string())
+                .is_some()
         {
-            return Err("Custom actions must be unique lower_snake action=allow|confirm|deny entries.".into());
+            return Err(
+                "Custom actions must be unique lower_snake action=allow|confirm|deny entries."
+                    .into(),
+            );
         }
     }
     let configured = gui_action::SkillAutonomyOverrideAck {
@@ -33097,23 +33114,35 @@ fn launch_cli_terminal(bin: &Path, home: &Path, launch: TerminalLaunch) -> Resul
         let observed = Rc::clone(&settled);
         let weak = window.as_weak();
         let timer = slint::Timer::default();
-        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
-            let Some(window) = weak.upgrade() else { let _ = slint::quit_event_loop(); return; };
-            if !window.get_skill_autonomy_in_flight() {
-                observed.set(true);
-                let _ = slint::quit_event_loop();
-            }
-        });
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                let Some(window) = weak.upgrade() else {
+                    let _ = slint::quit_event_loop();
+                    return;
+                };
+                if !window.get_skill_autonomy_in_flight() {
+                    observed.set(true);
+                    let _ = slint::quit_event_loop();
+                }
+            },
+        );
         let _ = window.hide();
         slint::run_event_loop_until_quit().expect("pump bounded W138 callback event loop");
         drop(timer);
-        assert!(settled.get(), "timed out waiting for W138 callback settlement");
+        assert!(
+            settled.get(),
+            "timed out waiting for W138 callback settlement"
+        );
     }
 
     #[cfg(not(windows))]
     #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback() {
-        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("serial GUI fixture environment");
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial GUI fixture environment");
         let fixture = TempDir::new().expect("create W138 CLI fixture");
         let bin = w116_stage_fake_neoth(&fixture);
         let mode = fixture.path().join("mode");
@@ -33123,49 +33152,118 @@ fn launch_cli_terminal(bin: &Path, home: &Path, launch: TerminalLaunch) -> Resul
         std::fs::write(&mode, b"w138_set_wrong").expect("select wrong receipt mode");
         std::fs::write(&show, br#"{"id":"web-research","configured":null,"effective_cap":null,"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write initial show");
         let _path = PathGuard::install(fixture.path());
-        assert_eq!(std::fs::canonicalize(which_neothd().expect("resolve staged W138 CLI")).expect("canonicalize W138 CLI"), std::fs::canonicalize(&bin).expect("canonicalize staged W138 CLI"));
+        assert_eq!(
+            std::fs::canonicalize(which_neothd().expect("resolve staged W138 CLI"))
+                .expect("canonicalize W138 CLI"),
+            std::fs::canonicalize(&bin).expect("canonicalize staged W138 CLI")
+        );
         let window = MainWindow::new().expect("construct generated MainWindow");
         register_skill_autonomy_callbacks(&window);
 
         window.invoke_skill_autonomy_inspect("web-research".into());
         assert!(window.get_skill_autonomy_in_flight());
         w138_pump_until_skill_autonomy_settles(&window);
-        assert_eq!(window.get_skill_autonomy_configured().to_string(), "Not configured");
+        assert_eq!(
+            window.get_skill_autonomy_configured().to_string(),
+            "Not configured"
+        );
 
-        window.invoke_skill_autonomy_set("web-research".into(), "custom".into(), "exec_arbitrary=deny".into());
+        window.invoke_skill_autonomy_set(
+            "web-research".into(),
+            "custom".into(),
+            "exec_arbitrary=deny".into(),
+        );
         assert!(window.get_skill_autonomy_in_flight());
         w138_pump_until_skill_autonomy_settles(&window);
-        assert_eq!(window.get_skill_autonomy_configured().to_string(), "Not configured", "wrong-ID receipt cannot repaint the prior readback");
+        assert_eq!(
+            window.get_skill_autonomy_configured().to_string(),
+            "Not configured",
+            "wrong-ID receipt cannot repaint the prior readback"
+        );
 
         std::fs::write(&mode, b"w138_set_valid").expect("select exact set receipt");
         std::fs::write(&show, br#"{"id":"web-research","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"effective_cap":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write post-set readback");
-        window.invoke_skill_autonomy_set("web-research".into(), "custom".into(), "exec_arbitrary=deny".into());
+        window.invoke_skill_autonomy_set(
+            "web-research".into(),
+            "custom".into(),
+            "exec_arbitrary=deny".into(),
+        );
         w138_pump_until_skill_autonomy_settles(&window);
-        assert_eq!(window.get_skill_autonomy_configured().to_string(), "custom (exec_arbitrary=deny)");
+        assert_eq!(
+            window.get_skill_autonomy_configured().to_string(),
+            "custom (exec_arbitrary=deny)"
+        );
 
         std::fs::write(&mode, b"w138_set_idempotent").expect("select idempotent set receipt");
-        window.invoke_skill_autonomy_set("web-research".into(), "custom".into(), "exec_arbitrary=deny".into());
+        window.invoke_skill_autonomy_set(
+            "web-research".into(),
+            "custom".into(),
+            "exec_arbitrary=deny".into(),
+        );
         w138_pump_until_skill_autonomy_settles(&window);
-        assert_eq!(window.get_skill_autonomy_configured().to_string(), "custom (exec_arbitrary=deny)", "idempotent set keeps the exact readback");
-        assert!(window.get_skill_autonomy_status().to_string().contains("no daemon reload was requested"));
+        assert_eq!(
+            window.get_skill_autonomy_configured().to_string(),
+            "custom (exec_arbitrary=deny)",
+            "idempotent set keeps the exact readback"
+        );
+        assert!(
+            window
+                .get_skill_autonomy_status()
+                .to_string()
+                .contains("no daemon reload was requested")
+        );
 
         std::fs::write(&show, br#"{"id":"web-research","configured":null,"effective_cap":null,"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write conflicting set readback");
-        window.invoke_skill_autonomy_set("web-research".into(), "custom".into(), "exec_arbitrary=deny".into());
+        window.invoke_skill_autonomy_set(
+            "web-research".into(),
+            "custom".into(),
+            "exec_arbitrary=deny".into(),
+        );
         w138_pump_until_skill_autonomy_settles(&window);
-        assert_eq!(window.get_skill_autonomy_configured().to_string(), "custom (exec_arbitrary=deny)", "conflicting set readback cannot repaint");
+        assert_eq!(
+            window.get_skill_autonomy_configured().to_string(),
+            "custom (exec_arbitrary=deny)",
+            "conflicting set readback cannot repaint"
+        );
 
         std::fs::write(&show, br#"{"id":"web-research","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"effective_cap":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("restore cap before reset readback test");
         // A valid reset acknowledgement is still insufficient when its fresh
         // show readback disagrees; the prior verified cap must remain visible.
         window.invoke_skill_autonomy_reset("web-research".into());
         w138_pump_until_skill_autonomy_settles(&window);
-        assert_eq!(window.get_skill_autonomy_configured().to_string(), "custom (exec_arbitrary=deny)", "conflicting reset readback cannot repaint");
+        assert_eq!(
+            window.get_skill_autonomy_configured().to_string(),
+            "custom (exec_arbitrary=deny)",
+            "conflicting reset readback cannot repaint"
+        );
 
         std::fs::write(&show, br#"{"id":"web-research","configured":null,"effective_cap":null,"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write post-reset readback");
         window.invoke_skill_autonomy_reset("web-research".into());
         w138_pump_until_skill_autonomy_settles(&window);
-        assert_eq!(window.get_skill_autonomy_configured().to_string(), "Not configured");
-        assert_eq!(w116_call_lines(&calls), ["autonomy-show:web-research", "autonomy-set:web-research", "autonomy-set:web-research", "autonomy-show:web-research", "skills-list", "autonomy-set:web-research", "autonomy-show:web-research", "skills-list", "autonomy-set:web-research", "autonomy-show:web-research", "autonomy-reset:web-research", "autonomy-show:web-research", "autonomy-reset:web-research", "autonomy-show:web-research", "skills-list"]);
+        assert_eq!(
+            window.get_skill_autonomy_configured().to_string(),
+            "Not configured"
+        );
+        assert_eq!(
+            w116_call_lines(&calls),
+            [
+                "autonomy-show:web-research",
+                "autonomy-set:web-research",
+                "autonomy-set:web-research",
+                "autonomy-show:web-research",
+                "skills-list",
+                "autonomy-set:web-research",
+                "autonomy-show:web-research",
+                "skills-list",
+                "autonomy-set:web-research",
+                "autonomy-show:web-research",
+                "autonomy-reset:web-research",
+                "autonomy-show:web-research",
+                "autonomy-reset:web-research",
+                "autonomy-show:web-research",
+                "skills-list"
+            ]
+        );
     }
 
     #[cfg(target_os = "macos")]

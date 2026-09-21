@@ -1657,7 +1657,10 @@ pub struct SkillAutonomyOverrideAck {
 
 impl SkillAutonomyOverrideAck {
     pub fn validate(&self) -> Result<(), String> {
-        if !matches!(self.level.as_str(), "strict" | "standard" | "elevated" | "full" | "custom") {
+        if !matches!(
+            self.level.as_str(),
+            "strict" | "standard" | "elevated" | "full" | "custom"
+        ) {
             return Err("skill autonomy receipt has an unknown level".into());
         }
         if self.level != "custom" && !self.overrides.is_empty() {
@@ -1665,7 +1668,9 @@ impl SkillAutonomyOverrideAck {
         }
         for (action, decision) in &self.overrides {
             if action.is_empty()
-                || !action.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+                || !action
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
                 || !matches!(decision.as_str(), "allow" | "confirm" | "deny")
             {
                 return Err("skill autonomy receipt has an invalid custom action".into());
@@ -1706,7 +1711,10 @@ impl SkillAutonomyShow {
         if self.id != expected_id || !valid_skill_autonomy_id(&self.id) {
             return Err("skill autonomy status targets a different or invalid id".into());
         }
-        if !matches!(self.global_autonomy.as_str(), "strict" | "standard" | "elevated" | "full" | "custom") {
+        if !matches!(
+            self.global_autonomy.as_str(),
+            "strict" | "standard" | "elevated" | "full" | "custom"
+        ) {
             return Err("skill autonomy status has an unknown global level".into());
         }
         if !matches!(self.origin.as_deref(), Some("bundled" | "installed") | None) {
@@ -1715,7 +1723,10 @@ impl SkillAutonomyShow {
         if self.config_epoch.is_some() {
             return Err("skill autonomy status must not claim daemon application".into());
         }
-        for cap in [&self.configured, &self.effective_cap].into_iter().flatten() {
+        for cap in [&self.configured, &self.effective_cap]
+            .into_iter()
+            .flatten()
+        {
             cap.validate()?;
         }
         if !self.admitted && self.effective_cap.is_some() {
@@ -1748,10 +1759,14 @@ impl SkillAutonomyAck {
             return Err("skill autonomy receipt differs from the requested configuration".into());
         }
         if self.changed != self.reload_requested {
-            return Err("skill autonomy receipt has inconsistent changed and reload request state".into());
+            return Err(
+                "skill autonomy receipt has inconsistent changed and reload request state".into(),
+            );
         }
         if !self.changed && self.previous != self.configured {
-            return Err("idempotent skill autonomy receipt has inconsistent previous configuration".into());
+            return Err(
+                "idempotent skill autonomy receipt has inconsistent previous configuration".into(),
+            );
         }
         if self.changed && self.previous == self.configured {
             return Err("changed skill autonomy receipt has no configuration transition".into());
@@ -1766,7 +1781,9 @@ impl SkillAutonomyAck {
 fn valid_skill_autonomy_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
-        && value.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_')
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
+        })
 }
 
 /// Exact `neoth autonomy set <level> --output json` acknowledgement.
@@ -5168,11 +5185,13 @@ mod tests {
         .expect("decode exact skill autonomy receipt");
         ack.verify("web-research", Some(&desired), true)
             .expect("bind desired cap and reload request");
-        assert!(serde_json::from_value::<SkillAutonomyAck>(serde_json::json!({
-            "id": "web-research", "configured": null, "previous": null,
-            "changed": false, "reload_requested": false, "unexpected": true,
-        }))
-        .is_err());
+        assert!(
+            serde_json::from_value::<SkillAutonomyAck>(serde_json::json!({
+                "id": "web-research", "configured": null, "previous": null,
+                "changed": false, "reload_requested": false, "unexpected": true,
+            }))
+            .is_err()
+        );
         let show: SkillAutonomyShow = serde_json::from_value(serde_json::json!({
             "id": "web-research",
             "configured": {"level": "custom", "overrides": {"exec_arbitrary": "deny"}},
