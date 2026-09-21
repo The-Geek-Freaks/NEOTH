@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W156_HOSTED_COMPILE_REPAIR_EXECUTION_REQUIRED",
-  "base": "c34bce29d4d514e7306a8f602c9fac3224347cd6",
+  "base": "217856916dca832202702ce3ede7179c1751fa73",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 55244,
-    "sha256": "BBBC5062A85EC75FC6724D2F225B15A2EAFFD997EB8B51E88F288EB87FA18E50"
+    "sha256": "5DAC9F84895EB92F863D8A08524AEFF66E8E6C6A75248F65CCE5EE4369786FF1"
   },
   "sourceInputs": 320,
   "requiredNativeTests": [
@@ -1506,8 +1506,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1794986,
-      "sha256": "296476F61BDFB4D554C64B0EF1F616EAC27CD7B0BD483BC8E233415B3C309D1F"
+      "bytes": 1795054,
+      "sha256": "60084B9D6914FA6A42596823395B322A7335303005DE9D889D5D6D2C74F7FFB3"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
@@ -2461,6 +2461,16 @@
     "localValidationRan": false,
     "releaseClosure": false,
     "w153Excluded": true,
-    "reviewSha256": "CAA5DFF1C6C4DBD9DDD0946733C3A9AC05F5FB2E4FA7B100E40B10AF144231C0"
+    "reviewSha256": "CAA5DFF1C6C4DBD9DDD0946733C3A9AC05F5FB2E4FA7B100E40B10AF144231C0",
+    "hostedFormat": {
+      "run": 35603984840,
+      "source": "217856916dca832202702ce3ede7179c1751fa73",
+      "logSha256": "736529E45403E2930B91934E8D729D786B200A70876AC061F19E739402DF4CFF",
+      "hunks": 2,
+      "sourceSha256": "60084B9D6914FA6A42596823395B322A7335303005DE9D889D5D6D2C74F7FFB3",
+      "qualityRun": 35603984938,
+      "qualityConclusion": "success",
+      "localValidationRan": false
+    }
   }
 }

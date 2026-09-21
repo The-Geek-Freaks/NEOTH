@@ -8,6 +8,10 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+W156 hosted formatting: CodeQuality35603984938 passed on21785691.
+The two exact main.rs Rustfmt postimages from Preflight35603984840 are
+imported. Fresh native/GUI compilation and acceptance remain pending.
+
 **W156 hosted compile repair (2026-09-21):** full CI35602100258 found
 ambiguous Buddy quality parser Result types, headless Ouro re-export warnings,
 three GUI callback borrow errors and a stale Arc/Mutex test accessor. The

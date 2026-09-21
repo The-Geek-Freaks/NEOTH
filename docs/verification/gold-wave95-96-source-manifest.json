@@ -1,8 +1,8 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W149-W154-GUI-and-Windows-private-creation",
-  "base": "c34bce29d4d514e7306a8f602c9fac3224347cd6",
-  "capturedUtc": "2026-09-21T13:07:42.2257988Z",
+  "base": "217856916dca832202702ce3ede7179c1751fa73",
+  "capturedUtc": "2026-09-21T13:12:18.9489042Z",
   "validationStatus": "W156_HOSTED_COMPILE_REPAIR_PENDING",
   "scopeNote": "320 source inputs; W156 three-file GUI compile repair over W149/W151/W152/W154. W153 working source is excluded. All executable gates GitHub-only; no Road closure.",
   "files": [
@@ -278,8 +278,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1794986,
-      "sha256": "296476F61BDFB4D554C64B0EF1F616EAC27CD7B0BD483BC8E233415B3C309D1F"
+      "bytes": 1795054,
+      "sha256": "60084B9D6914FA6A42596823395B322A7335303005DE9D889D5D6D2C74F7FFB3"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
