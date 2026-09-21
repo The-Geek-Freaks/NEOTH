@@ -20,8 +20,8 @@ use crate::daemon::audit_rpc::{
     CHAT_TURN_RESPONSE_TIMEOUT, DAEMON_PLAIN_CHAT_MAX_RECORDS,
     DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES, DaemonPlainChatRecord, DaemonPlainChatRecordKind,
     DaemonPlainChatRequest, DaemonPlainChatResponse, DaemonPlainChatResponseFeedbackTarget,
-    DaemonPlainChatTerminal,
-    validate_daemon_plain_chat_request, validate_daemon_plain_chat_response,
+    DaemonPlainChatTerminal, validate_daemon_plain_chat_request,
+    validate_daemon_plain_chat_response,
 };
 use crate::providers::Provider;
 use crate::wal::writer::WalWriterHandle;

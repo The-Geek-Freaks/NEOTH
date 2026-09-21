@@ -1,8 +1,8 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W164-response-feedback-candidate",
-  "base": "0837eb4b35ae358055d5fbbc367bff5007947596",
-  "capturedUtc": "2026-09-21T19:30:27.5991871Z",
+  "base": "cc8a6609deafdc7b40d2b0557e5119799af29f4a",
+  "capturedUtc": "2026-09-21T19:32:01.7661972Z",
   "validationStatus": "W164_HOSTED_FORMAT_AND_COMPILER_REPAIRS_PENDING_RERUN",
   "scopeNote": "W164 integrated response-bound feedback: private revision CAS, ordered live-writer flush, strict terminal transports, CLI/Chat/Buddy mutation receipt plus status readback. Remaining W165 reasoning/GUI/loop fixture repairs included. Static reviews only; native/GUI/release acceptance pending.",
   "files": [
@@ -1049,7 +1049,7 @@
     {
       "path": "SRC/neothd/src/daemon/chat_runtime.rs",
       "bytes": 44251,
-      "sha256": "369EB1CC5E4317E78842915A9986EE56A1B0F87FE472B94F085744FC4AAB96B0"
+      "sha256": "FF06BB57877F974930A65E43FB61ADF8EC77459BCE871635F36815BD42C5F98B"
     },
     {
       "path": "SRC/neothd/src/daemon/checkin_cron.rs",

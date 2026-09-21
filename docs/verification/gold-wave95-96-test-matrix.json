@@ -5,7 +5,7 @@
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 63438,
-    "sha256": "CECD7B5F9CCB72B1EA36046360CBC367FB8D6535E9867CA905C90A97202154F8"
+    "sha256": "E23B909E98076CEF4FC2BAD58DCE5DFAADDE99CA9802A076DA167E6C0194B995"
   },
   "sourceInputs": 367,
   "requiredNativeTests": [
@@ -1758,13 +1758,13 @@
     {
       "test": "daemon::chat_runtime::tests::admitted_plain_daemon_turn_preserves_one_nonzero_wal_session",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "369EB1CC5E4317E78842915A9986EE56A1B0F87FE472B94F085744FC4AAB96B0",
+      "sourceSha256": "FF06BB57877F974930A65E43FB61ADF8EC77459BCE871635F36815BD42C5F98B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::chat_runtime::tests::generic_gui_lifecycle_remains_unattributed_without_an_admitted_turn",
       "sourcePath": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "sourceSha256": "369EB1CC5E4317E78842915A9986EE56A1B0F87FE472B94F085744FC4AAB96B0",
+      "sourceSha256": "FF06BB57877F974930A65E43FB61ADF8EC77459BCE871635F36815BD42C5F98B",
       "junitClass": "neoth"
     },
     {
@@ -5725,5 +5725,15 @@
     "status": "fresh_hosted_gates_pending",
     "historicalReviewHashes": "preserved",
     "localExecution": false
+  },
+  "wave164FormatFollowup": {
+    "source": "cc8a6609deafdc7b40d2b0557e5119799af29f4a",
+    "run": 35645438567,
+    "hunks": 1,
+    "receipt": "work/gold-20260906/wave164-response-feedback/FORMAT-FOLLOWUP.json",
+    "receiptSha256": "413DF48D06648C036B6E38E5CDFA0C45F8ABD87F4415DCD093FFB0400F612F0F",
+    "after": "FF06BB57877F974930A65E43FB61ADF8EC77459BCE871635F36815BD42C5F98B",
+    "status": "fresh_preflight_pending",
+    "localFormatterRan": false
   }
 }
