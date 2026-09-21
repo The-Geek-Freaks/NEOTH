@@ -320,6 +320,7 @@ impl TranscriptMiningStore {
         self.ingress.validate()
     }
 
+    #[cfg(test)]
     pub(crate) fn prepare_operator_raw_birth(
         &mut self,
         session_id: &str,
@@ -330,9 +331,8 @@ impl TranscriptMiningStore {
     }
 
     /// Build a fresh local operator RAW plan with the already-admitted typed
-    /// context. Recovery and standalone store callers deliberately use the
-    /// zero-session wrapper above; neither SQLite data nor raw text can mint a
-    /// non-zero WAL session attribution.
+    /// context. Test callers use the zero-session wrapper above; neither
+    /// SQLite data nor raw text can mint a non-zero WAL session attribution.
     pub(crate) fn prepare_operator_raw_birth_in(
         &mut self,
         session_id: &str,

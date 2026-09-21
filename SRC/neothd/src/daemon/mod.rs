@@ -109,6 +109,7 @@ pub mod kanban_sse;
 /// [`metering::emit_tps_sample`] writes `0x69 TOKEN_TPS_SAMPLE` to the WAL.
 /// The hot provider stream path is parallel-reserved; wiring the emit there
 /// is a follow-up. Ships standalone with unit + WAL-integration tests.
+pub mod live_throughput;
 pub mod metering;
 pub mod model_download_audit;
 /// HO-07 — neoth-monitor alerting cron. Scans WAL integrity + crash.log +

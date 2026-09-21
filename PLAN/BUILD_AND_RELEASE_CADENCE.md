@@ -211,10 +211,11 @@ provider, apply, delivery or release gates.
 The macOS generated-Slint callback fixtures need the native event loop on the
 process main thread. Its CI compile, discovery and execution commands therefore
 enable `neothd-gui/macos-native-gui-test`. The custom `harness = false` target
-exposes seventeen callback test names to Nextest (W58/W73/W80 plus W116/W121/W122/
-W126/W130/W138/W142/W149/W151, the two W153 fixtures and W155 citation consent) and runs the selected fixture
+exposes eighteen callback test names to Nextest (W58/W73/W80 plus W116/W121/W122/
+W126/W130/W138/W142/W149/W151, the two W153 fixtures, W155 citation consent and
+W162 live throughput) and runs the selected fixture
 directly from `main`; the coding controller fixture remains ordinary libtest.
-Discovery must bind all seventeen names to the custom binary and reject missing or
+Discovery must bind all eighteen names to the custom binary and reject missing or
 duplicate registrations before execution. These remain actual Winit/AppKit
 fixtures. Test helpers are compiled only under `cfg(test)`; the normal application
 entry is unchanged. A custom-target invocation on another platform must never

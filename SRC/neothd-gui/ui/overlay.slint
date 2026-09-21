@@ -95,6 +95,9 @@ export component MiniOverlay inherits Window {
     in property <string> reasoning-status: "";
     in property <string> reasoning-text: "";
     in property <bool> reasoning-active: false;
+    /// W162 transient request-bound live throughput, separate from recents.
+    in property <string> throughput-status: "";
+    in property <bool> throughput-active: false;
 
     // ── Compact mode ─────────────────────────────────────────────────
     /// When true the overlay renders as a 64 px pill.
@@ -709,6 +712,16 @@ export component MiniOverlay inherits Window {
                             accessible-role: AccessibleRole.text;
                             accessible-label: "Live reasoning";
                         }
+                    }
+
+                    if root.throughput-active && root.throughput-status != "": Text {
+                        text: root.throughput-status;
+                        color: Theme.audit;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        wrap: word-wrap;
+                        accessible-role: AccessibleRole.text;
+                        accessible-label: "Live stream throughput";
                     }
 
                     if root.recent-lines.length == 0: Text {

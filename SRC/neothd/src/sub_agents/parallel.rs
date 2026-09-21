@@ -57,17 +57,15 @@ use crate::council::qa_verdict::QaVerdict;
 use crate::wal::WalSessionContext;
 
 /// Trusted, turn-local WAL attribution passed beside serialised task data.
+///
+/// The type is public solely because public dispatcher extension points accept it.
+/// Its session field stays crate-private, so callers cannot mint or inspect attribution.
 /// This type is intentionally not serialisable or persistable.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct SubAgentExecutionContext {
+pub struct SubAgentExecutionContext {
     pub(crate) wal_session: Option<WalSessionContext>,
 }
 
-impl SubAgentExecutionContext {
-    pub(crate) const fn with_wal_session(wal_session: Option<WalSessionContext>) -> Self {
-        Self { wal_session }
-    }
-}
 /// QM-16: trait the caller implements so the dispatcher can run an
 /// arbitrary worker (coding worker, reviewer sub-agent, evidence
 /// collector) against each request. Async + Send + Sync so the
@@ -83,9 +81,8 @@ pub trait SubAgentWorker: Send + Sync {
     async fn run_in(
         &self,
         request: SubAgentRequest,
-        context: SubAgentExecutionContext,
+        _context: SubAgentExecutionContext,
     ) -> Result<SubAgentResult> {
-        let _ = context;
         self.run(request).await
     }
 }
@@ -191,7 +188,6 @@ where
         let worker = Arc::clone(&worker);
         let sem = Arc::clone(&semaphore);
         let timeout = per_task_timeout;
-        let context = context;
         joinset.spawn(async move {
             // Catch worker panics *inside* the indexed task. A JoinError has no
             // request index, so letting the panic escape would make it
@@ -524,7 +520,9 @@ mod tests {
         let report = dispatch_parallel_in(
             Arc::clone(&worker),
             vec![make_request("child"), make_request("qa-retry")],
-            SubAgentExecutionContext::with_wal_session(Some(session)),
+            SubAgentExecutionContext {
+                wal_session: Some(session),
+            },
             Some(1),
             None,
         )

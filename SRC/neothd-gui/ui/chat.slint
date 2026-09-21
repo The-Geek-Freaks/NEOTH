@@ -1110,6 +1110,10 @@ export component ChatView inherits Rectangle {
     in property <string> reasoning-status: "";
     in property <string> reasoning-text: "";
     in property <bool> reasoning-active: false;
+    /// W162 transient request-bound throughput. This is never a message metric
+    /// and Rust clears it before history, settlement, or session hand-off.
+    in property <string> throughput-status: "";
+    in property <bool> throughput-active: false;
     /// Privacy mode frozen for the active request. The next-turn selection
     /// resets immediately after dispatch and must not change this indicator.
     in property <bool> incognito-active: false;
@@ -1883,6 +1887,16 @@ export component ChatView inherits Rectangle {
                     accessible-role: AccessibleRole.text;
                     accessible-label: "Live reasoning";
                 }
+            }
+
+            if root.throughput-active && root.throughput-status != "": Text {
+                text: root.throughput-status;
+                color: Theme.audit;
+                font-family: Theme.font-mono;
+                font-size: Theme.font-size-caption;
+                wrap: word-wrap;
+                accessible-role: AccessibleRole.text;
+                accessible-label: "Live stream throughput";
             }
 
             if !root.history-active: Composer {

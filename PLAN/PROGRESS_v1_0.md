@@ -2,6 +2,30 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W162 live throughput and hosted repair (2026-09-21):** the integrated producer,
+strict request-bound reducer, Chat and Buddy display are source-reviewed.
+Current providers expose real visible stream events/s; final token totals never
+become a live token rate. A persistent one-second interval fixes an independently
+found idle-starvation defect. The transient display clears on request lifecycle
+boundaries and does not enter message/history/preview/clipboard/WAL samples.
+The real GUI callback is registered in the 18-name macOS catalog.
+Current integrated manifest: 353 inputs; 325 universal native + 3 Windows-only
++ 2 Unix-only requirements; 61 universal GUI + 13 Linux/macOS callbacks; seven
+optional adapter cases. W162 adds 15 exact behavior-test sources. W163 is excluded.
+See
+[W162](../docs/gold-wave162-verification.md). Hosted formatting, native/GUI
+execution, rendering and accessibility remain pending; GOLD-LF-P2-29 stays open.
+
+W159 full CI35631819404 on78459d78 passed nine component jobs but stopped at
+13 strict-Clippy diagnostics and six shared-libtest compile errors. That source
+run is confirmed cancelled. Narrow repairs preserve opaque session authority,
+make test-only wrappers explicit, group the STT audit context, and repair the
+actual test callback/result, selector and payload-slot errors. The older b58
+Windows preview35622261449 built CLI/migration/relay but failed 14 GUI compile
+diagnostics, now repaired in current source; portable runtime was not reached.
+New hosted verification remains required. W163 recall presentation is separate
+unpublished work and excluded. Road counts remain 1324/1015/307 open/2 partial.
+
 **W159 hosted follow-up (2026-09-21):** source 482ffd1c passed Code Quality
 35630099785. Preflight35630100747 requested formatting corrections; those exact
 79 hosted hunks across 20 source files are imported. CLI-reference35630100371 stopped at two
@@ -26,8 +50,8 @@ Current manifest: 351 source inputs; 316 universal native + 3 Windows-only +
 2 Unix-only requirements; 56 universal GUI + 12 Linux/macOS callbacks; 7 optional
 adapter cases. W159 contributes 48 session regressions, 44 newly required.
 
-W162 live-throughput core
-is separate unpublished work and excluded from this admission.
+W162 was excluded from the original W159 admission; its later integrated
+admission is recorded above.
 
 W155 repair b73c2be4 passed Code Quality35629241435. Preflight35629245213 requested
 one exact consent-test layout hunk; it is imported with this admission. The

@@ -2131,11 +2131,12 @@ mod tests {
         write_segment(&wal, 2, 2);
         // Direct call (run_wal uses the real home; here we exercise the
         // multi-segment core against an explicit home).
-        show(None, None, 50, 0, home.path(), OutputFormat::Table).unwrap();
+        show(None, None, None, 50, 0, home.path(), OutputFormat::Table).unwrap();
         // Unknown --type must error, not silently show nothing.
         let err = show(
             None,
             Some("not_a_type"),
+            None,
             50,
             0,
             home.path(),

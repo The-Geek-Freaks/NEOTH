@@ -675,9 +675,9 @@ mod tests {
             assert!(!seen[index].2.is_zero());
         }
         // The prompt and the imagery are bound, never carried.
-        let intent_text = seen[intent_at].2.to_string();
+        let intent_text = seen[intent_at].3.to_string();
         assert!(!intent_text.contains("what happens?"));
-        assert!(seen[intent_at].2["frames_sha256"].is_string());
+        assert!(seen[intent_at].3["frames_sha256"].is_string());
     }
 
     #[tokio::test]

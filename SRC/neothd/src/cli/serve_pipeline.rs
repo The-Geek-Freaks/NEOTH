@@ -1039,9 +1039,10 @@ pub(crate) async fn emit_inbound_ingress_in(
     Ok(ingress_event_id)
 }
 
-/// Compatibility seam for direct ingress callers that intentionally have no
+/// Test-only compatibility seam for direct ingress fixtures with no
 /// accepted-turn capability. Production accepted turns use
 /// [`emit_inbound_ingress_in`] with their retained context.
+#[cfg(test)]
 pub(crate) async fn emit_inbound_ingress(
     writer: &WalWriterHandle,
     neoth_home: &std::path::Path,
@@ -1350,9 +1351,10 @@ pub(crate) async fn release_channel_reply_in<P: crate::permissions::PolicyArgume
     }
 }
 
-/// Compatibility seam for reply emitters with no accepted-turn context.
-/// Accepted channel turns call [`release_channel_reply_in`] directly with the
-/// context minted at ingress; maintenance and standalone callers remain zero.
+/// Test-only compatibility seam for reply fixtures with no accepted-turn
+/// context. Accepted channel turns call [`release_channel_reply_in`] directly
+/// with the context minted at ingress.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn release_channel_reply<P: crate::permissions::PolicyArgument + Copy>(
     writer: &WalWriterHandle,
@@ -7980,7 +7982,9 @@ mod tests {
                 );
                 contextual_events.insert(event);
             }
-        });
+            Ok(())
+        })
+        .expect("scan accepted channel WAL");
         assert_eq!(
             contextual_events,
             std::collections::BTreeSet::from(["channel_egress", "hook_fired"]),

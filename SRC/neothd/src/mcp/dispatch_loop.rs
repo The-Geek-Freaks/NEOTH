@@ -1734,6 +1734,7 @@ impl Drop for CompactionWalLifecycle {
     }
 }
 
+#[cfg(test)]
 async fn compact_if_needed<D: CompletionDriver + Send>(
     driver: &mut D,
     prompt: String,

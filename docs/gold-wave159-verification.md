@@ -87,3 +87,15 @@ Core/reference35631164764 (job106437432232). The generated reference is imported
 byte-for-byte with SHA-256 9BE613783FC2C1E8DBD2A203BF75A65F9644889E260F29526B859E498119419C.
 This establishes the core build and generated CLI surface, not native/GUI
 behavior. Full hosted CI remains required on the resulting reference commit.
+
+## Full-CI repair follow-up
+
+CI35631819404 on78459d78 passed nine component jobs, then exposed 13 strict
+Clippy errors and six shared-library test compilation errors. It is confirmed
+cancelled. Repairs retain the opaque context authority, gate compatibility
+wrappers to their real test callers, group the existing STT writer/session pair,
+and preserve the WAL header assertions while fixing callback Results, explicit
+None selectors and the decoded payload tuple slot. The contextual scan now
+requires its successful Result instead of discarding it. Hosted rerun remains
+required. Retained logs are 784-linux-quality.log and 784-adapters.log; review is
+HOSTED-REPAIR-REVIEW.md. This repair is integrated with W162, excluding W163.

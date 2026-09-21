@@ -1364,10 +1364,16 @@ async fn emit_verified_stream_delta(
     stream_control_token: Option<&str>,
     md_buf: &mut crate::cli::streaming_buffer::MarkdownBuffer,
     output: &mut dyn ChatTurnEventSink,
-) -> Result<()> {
+) -> Result<bool> {
     if delta.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
+    // W162 counts only the same already-safe, nonempty, non-deferred GUI
+    // record that this helper has admitted to the visible stream.  Whitespace
+    // alone is transport-visible but not a user-visible throughput event.
+    let admitted_visible_event = !defer_provider_output
+        && stream_control_token.is_some()
+        && !delta.trim().is_empty();
     let next_sequence = chunk_count.saturating_add(1);
     if !defer_provider_output {
         if let Some(token) = stream_control_token {
@@ -1412,7 +1418,7 @@ async fn emit_verified_stream_delta(
     )
     .await?;
     *chunk_count = next_sequence;
-    Ok(())
+    Ok(admitted_visible_event)
 }
 
 fn single_user_item_index(items: &[crate::tokens::budget::BlockItem]) -> anyhow::Result<usize> {
@@ -4048,6 +4054,276 @@ const CHAT_STREAM_PROTOCOL_VERSION: u8 = 3;
 /// provider may legitimately stream JSON without a trailing newline.
 const CHAT_STREAM_CONTROL_PREFIX: &str = "\u{1e}NEOTH/1 ";
 
+/// Maximum accepted by the paired GUI reducer. A larger rolling count is not
+/// rounded, relabelled, or projected as a different unit.
+const LIVE_THROUGHPUT_PROTOCOL_MAX_PER_SECOND: f64 = 1_000_000.0;
+
+/// One persistent stream-owned clock. `Skip` bounds recovery after a delayed
+/// turn and, unlike a sleep recreated for each provider item, remains due
+/// while reasoning or control events keep arriving.
+fn live_throughput_idle_interval() -> tokio::time::Interval {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    interval
+}
+
+/// Request-local producer for the authenticated, transient W162 control
+/// family. It owns a sequence namespace separate from provider and reasoning
+/// deltas and never receives provider text, usage totals, or WAL state.
+struct LiveThroughputProducer {
+    window: crate::daemon::live_throughput::LiveThroughputWindow,
+    started_at: std::time::Instant,
+    next_sequence: u64,
+    last_kind: Option<LiveThroughputWireKind>,
+    last_measurement_at: Option<std::time::Instant>,
+    terminal: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LiveThroughputWireKind {
+    Measuring,
+    Paused,
+    UnavailableNoVisibleEvents,
+    UnavailableNoUsageReported,
+    Cancelled,
+    Error,
+}
+
+impl LiveThroughputProducer {
+    fn new() -> Self {
+        Self {
+            window: crate::daemon::live_throughput::LiveThroughputWindow::start(
+                crate::daemon::live_throughput::LiveThroughputBasis::VisibleEvent,
+            ),
+            started_at: std::time::Instant::now(),
+            next_sequence: 1,
+            last_kind: None,
+            last_measurement_at: None,
+            terminal: false,
+        }
+    }
+
+    fn observe_visible_event(
+        &mut self,
+        now: std::time::Instant,
+        output: &mut dyn ChatTurnEventSink,
+        control_token: &str,
+    ) -> Result<()> {
+        let state = self
+            .window
+            .observe_visible_event(now)
+            .map_err(|error| anyhow::anyhow!("advance live throughput after visible event: {error:?}"))?;
+        self.emit_state(state, now, output, control_token)
+    }
+
+    fn observe_idle(
+        &mut self,
+        now: std::time::Instant,
+        output: &mut dyn ChatTurnEventSink,
+        control_token: &str,
+    ) -> Result<()> {
+        let state = self
+            .window
+            .observe_idle(now)
+            .map_err(|error| anyhow::anyhow!("advance idle live throughput: {error:?}"))?;
+        self.emit_state(state, now, output, control_token)
+    }
+
+    fn finish_before_provider_done(
+        &mut self,
+        now: std::time::Instant,
+        output: &mut dyn ChatTurnEventSink,
+        control_token: &str,
+    ) -> Result<()> {
+        // A short successful stream may end before the first idle tick. Send
+        // the honest no-visible-events transition before provider_done; never
+        // manufacture an aggregate/final-token measurement on success.
+        self.observe_idle(now, output, control_token)
+    }
+
+    fn terminal(
+        &mut self,
+        reason: crate::daemon::live_throughput::LiveThroughputUnavailable,
+        output: &mut dyn ChatTurnEventSink,
+        control_token: &str,
+    ) -> Result<()> {
+        if self.terminal {
+            return Ok(());
+        }
+        self.terminal = true;
+        let state = self.window.terminal(reason);
+        self.emit_state(state, std::time::Instant::now(), output, control_token)
+    }
+
+    fn emit_state(
+        &mut self,
+        state: crate::daemon::live_throughput::LiveThroughputState,
+        now: std::time::Instant,
+        output: &mut dyn ChatTurnEventSink,
+        control_token: &str,
+    ) -> Result<()> {
+        if self.terminal && !matches!(state, crate::daemon::live_throughput::LiveThroughputState::Unavailable(crate::daemon::live_throughput::LiveThroughputUnavailable::Cancelled | crate::daemon::live_throughput::LiveThroughputUnavailable::StreamError)) {
+            return Ok(());
+        }
+        let kind = live_throughput_wire_kind(state);
+        let emit = match state {
+            crate::daemon::live_throughput::LiveThroughputState::Measuring { per_second, .. } => {
+                let completed_second = now.duration_since(self.started_at)
+                    >= std::time::Duration::from_secs(1);
+                per_second.is_finite()
+                    && (0.0..=LIVE_THROUGHPUT_PROTOCOL_MAX_PER_SECOND).contains(&per_second)
+                    && completed_second
+                    && (self.last_kind != Some(LiveThroughputWireKind::Measuring)
+                        || self.last_measurement_at.map_or(true, |last| {
+                            now.duration_since(last) >= std::time::Duration::from_secs(1)
+                        }))
+            }
+            _ => self.last_kind != Some(kind),
+        };
+        if !emit {
+            return Ok(());
+        }
+        // Refuse exhaustion before writing: the GUI requires a contiguous
+        // sequence and cannot accept a frame whose successor would overflow.
+        let next_sequence = self
+            .next_sequence
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("live throughput sequence exhausted"))?;
+        emit_live_throughput_state(output, control_token, self.next_sequence, state)?;
+        self.next_sequence = next_sequence;
+        self.last_kind = Some(kind);
+        if kind == LiveThroughputWireKind::Measuring {
+            self.last_measurement_at = Some(now);
+        }
+        Ok(())
+    }
+}
+
+fn live_throughput_wire_kind(
+    state: crate::daemon::live_throughput::LiveThroughputState,
+) -> LiveThroughputWireKind {
+    use crate::daemon::live_throughput::{LiveThroughputState, LiveThroughputUnavailable};
+
+    match state {
+        LiveThroughputState::Measuring { .. } => LiveThroughputWireKind::Measuring,
+        LiveThroughputState::Paused { .. } => LiveThroughputWireKind::Paused,
+        LiveThroughputState::Unavailable(LiveThroughputUnavailable::NoVisibleEvents) => {
+            LiveThroughputWireKind::UnavailableNoVisibleEvents
+        }
+        LiveThroughputState::Unavailable(LiveThroughputUnavailable::NoUsageReported) => {
+            LiveThroughputWireKind::UnavailableNoUsageReported
+        }
+        LiveThroughputState::Unavailable(LiveThroughputUnavailable::Cancelled) => {
+            LiveThroughputWireKind::Cancelled
+        }
+        LiveThroughputState::Unavailable(LiveThroughputUnavailable::StreamError) => {
+            LiveThroughputWireKind::Error
+        }
+    }
+}
+
+fn live_throughput_state_line(
+    control_token: &str,
+    sequence: u64,
+    state: crate::daemon::live_throughput::LiveThroughputState,
+) -> std::io::Result<String> {
+    use crate::daemon::live_throughput::{LiveThroughputBasis, LiveThroughputState, LiveThroughputUnavailable};
+
+    #[derive(serde::Serialize)]
+    struct ThroughputFrame<'a> {
+        neoth_stream: &'static str,
+        protocol_version: u8,
+        request_id: String,
+        control_token: &'a str,
+        sequence: u64,
+        state: &'static str,
+        basis: Option<&'static str>,
+        unit: Option<&'static str>,
+        per_second: Option<f64>,
+        reason: Option<&'static str>,
+    }
+
+    let (state, basis, unit, per_second, reason) = match state {
+        LiveThroughputState::Measuring { basis, per_second } => {
+            let (basis, unit) = match basis {
+                LiveThroughputBasis::VisibleEvent => {
+                    ("visible_event", "stream_events_per_second")
+                }
+                LiveThroughputBasis::TokenDelta => {
+                    ("token_delta", "provider_tokens_per_second")
+                }
+            };
+            ("measuring", Some(basis), Some(unit), Some(per_second), None)
+        }
+        LiveThroughputState::Paused { basis } => {
+            let (basis, unit) = match basis {
+                LiveThroughputBasis::VisibleEvent => {
+                    ("visible_event", "stream_events_per_second")
+                }
+                LiveThroughputBasis::TokenDelta => {
+                    ("token_delta", "provider_tokens_per_second")
+                }
+            };
+            ("paused", Some(basis), Some(unit), None, None)
+        }
+        LiveThroughputState::Unavailable(LiveThroughputUnavailable::NoVisibleEvents) => {
+            ("unavailable", None, None, None, Some("no_visible_events"))
+        }
+        LiveThroughputState::Unavailable(LiveThroughputUnavailable::NoUsageReported) => {
+            ("unavailable", None, None, None, Some("no_usage_reported"))
+        }
+        LiveThroughputState::Unavailable(LiveThroughputUnavailable::Cancelled) => {
+            ("cancelled", None, None, None, Some("cancelled"))
+        }
+        LiveThroughputState::Unavailable(LiveThroughputUnavailable::StreamError) => {
+            ("error", None, None, None, Some("stream_error"))
+        }
+    };
+    serde_json::to_string(&ThroughputFrame {
+        neoth_stream: "throughput_state",
+        protocol_version: CHAT_STREAM_PROTOCOL_VERSION,
+        request_id: stream_request_id(control_token),
+        control_token,
+        sequence,
+        state,
+        basis,
+        unit,
+        per_second,
+        reason,
+    })
+    .map_err(std::io::Error::other)
+}
+
+fn write_live_throughput_state(
+    output: impl std::io::Write,
+    control_token: Option<&str>,
+    sequence: u64,
+    state: crate::daemon::live_throughput::LiveThroughputState,
+) -> std::io::Result<()> {
+    let Some(control_token) = control_token else {
+        return Ok(());
+    };
+    let line = live_throughput_state_line(control_token, sequence, state)?;
+    write_stream_control_line(output, Some(control_token), &line)
+}
+
+fn emit_live_throughput_state(
+    output: &mut dyn ChatTurnEventSink,
+    control_token: &str,
+    sequence: u64,
+    state: crate::daemon::live_throughput::LiveThroughputState,
+) -> Result<()> {
+    let mut frames = Vec::new();
+    write_live_throughput_state(&mut frames, Some(control_token), sequence, state)?;
+    emit_chat_output(
+        output,
+        ChatOutput::StreamFrames {
+            frames: String::from_utf8(frames)
+                .expect("live-throughput protocol formatter emits UTF-8 frames"),
+        },
+    )
+}
+
 fn stream_request_id(control_token: &str) -> String {
     use sha2::{Digest as _, Sha256};
 
@@ -5596,6 +5872,11 @@ pub(super) async fn dispatch_provider(
                 stream_control_token,
                 wal_session,
             );
+            // W162 is private GUI presentation only. A post-provider-gated
+            // stream has no admitted live visible path, so it gets no
+            // throughput producer and cannot count buffered provider bytes.
+            let mut live_throughput = (stream_control_token.is_some() && !defer_provider_output)
+                .then(LiveThroughputProducer::new);
             // QM-10 Phase 2.5: streaming path also consults the breaker.
             // Acquire BEFORE provider.stream so an Open breaker rejects
             // the call without opening a stream we'd have to drain.
@@ -5603,6 +5884,15 @@ pub(super) async fn dispatch_provider(
             {
                 Ok(p) => Some(p),
                 Err(berr) => {
+                    if let (Some(throughput), Some(token)) =
+                        (live_throughput.as_mut(), stream_control_token)
+                    {
+                        throughput.terminal(
+                            crate::daemon::live_throughput::LiveThroughputUnavailable::StreamError,
+                            output,
+                            token,
+                        )?;
+                    }
                     let terminal = if cancellation.is_closed() {
                         crate::providers::ReasoningTerminalState::Cancelled
                     } else {
@@ -5641,6 +5931,15 @@ pub(super) async fn dispatch_provider(
                     if let Some(p) = stream_permit {
                         p.record_failure();
                     }
+                    if let (Some(throughput), Some(token)) =
+                        (live_throughput.as_mut(), stream_control_token)
+                    {
+                        throughput.terminal(
+                            crate::daemon::live_throughput::LiveThroughputUnavailable::Cancelled,
+                            output,
+                            token,
+                        )?;
+                    }
                     if let Err(error) = reasoning_lifecycle
                         .finalize(
                             &writer,
@@ -5664,6 +5963,19 @@ pub(super) async fn dispatch_provider(
                 Err(e) => {
                     if let Some(p) = stream_permit {
                         p.record_failure();
+                    }
+                    if let (Some(throughput), Some(token)) =
+                        (live_throughput.as_mut(), stream_control_token)
+                    {
+                        throughput.terminal(
+                            if cancellation.is_closed() {
+                                crate::daemon::live_throughput::LiveThroughputUnavailable::Cancelled
+                            } else {
+                                crate::daemon::live_throughput::LiveThroughputUnavailable::StreamError
+                            },
+                            output,
+                            token,
+                        )?;
                     }
                     let terminal = if cancellation.is_closed() {
                         crate::providers::ReasoningTerminalState::Cancelled
@@ -5708,6 +6020,18 @@ pub(super) async fn dispatch_provider(
             macro_rules! return_stream_error {
                 ($phase:expr, $error:expr) => {{
                     let raw_error = $error;
+                    if let (Some(throughput), Some(token)) =
+                        (live_throughput.as_mut(), stream_control_token)
+                    {
+                        let reason = if cancellation.is_closed() {
+                            crate::daemon::live_throughput::LiveThroughputUnavailable::Cancelled
+                        } else {
+                            crate::daemon::live_throughput::LiveThroughputUnavailable::StreamError
+                        };
+                        if let Err(error) = throughput.terminal(reason, output, token) {
+                            return_dispatch_error!("throughput_terminal", error);
+                        }
+                    }
                     reasoning_canary_egress.clear();
                     reasoning_quarantine.zeroize();
                     let terminal = if cancellation.is_closed() {
@@ -5740,9 +6064,18 @@ pub(super) async fn dispatch_provider(
             // window; emitted as a 0x69 TOKEN_TPS_SAMPLE WAL frame after the stream
             // completes (best-effort, never blocks the turn).
             let mut tps_meter = crate::daemon::metering::TpsMeter::start();
+            let mut throughput_idle_tick = live_throughput_idle_interval();
+            // Tokio intervals tick immediately at construction. Consume only
+            // that bootstrap tick so the first idle state is one full second
+            // after stream admission.
+            throughput_idle_tick.tick().await;
             loop {
+                // Cancellation stays first. The persistent interval is next
+                // so a due idle transition wins over a sustained ready stream
+                // of reasoning/control records; no ticker task or live WAL
+                // write is created.
                 let item = tokio::select! {
-                    item = stream.next() => item,
+                    biased;
                     () = cancellation.cancelled() => {
                         if let Some(p) = stream_permit {
                             p.record_failure();
@@ -5752,6 +6085,21 @@ pub(super) async fn dispatch_provider(
                             anyhow::anyhow!("chat turn cancelled while provider stream was active")
                         );
                     }
+                    () = throughput_idle_tick.tick() => {
+                        if let (Some(throughput), Some(token)) =
+                            (live_throughput.as_mut(), stream_control_token)
+                        {
+                            if let Err(error) = throughput.observe_idle(
+                                std::time::Instant::now(),
+                                output,
+                                token,
+                            ) {
+                                return_dispatch_error!("throughput_idle", error);
+                            }
+                        }
+                        continue;
+                    }
+                    item = stream.next() => item,
                 };
                 let Some(item) = item else {
                     break;
@@ -5903,7 +6251,7 @@ pub(super) async fn dispatch_provider(
                             acc.push_str(&chunk.delta);
                             // HERMES-09b — ~4 chars/token estimate per streamed delta.
                             tps_meter.observe((chunk.delta.len() as u64).div_ceil(4));
-                            if let Err(error) = emit_verified_stream_delta(
+                            let admitted_visible_event = match emit_verified_stream_delta(
                                 safe_delta,
                                 &chunk.identity,
                                 &writer,
@@ -5917,10 +6265,27 @@ pub(super) async fn dispatch_provider(
                             )
                             .await
                             {
+                                Ok(admitted) => admitted,
+                                Err(error) => {
+                                    if let Some(p) = stream_permit {
+                                        p.record_failure();
+                                    }
+                                    return_stream_error!("stream_visible_delta", error);
+                                }
+                            };
+                            if admitted_visible_event
+                                && let (Some(throughput), Some(token)) =
+                                    (live_throughput.as_mut(), stream_control_token)
+                                && let Err(error) = throughput.observe_visible_event(
+                                    std::time::Instant::now(),
+                                    output,
+                                    token,
+                                )
+                            {
                                 if let Some(p) = stream_permit {
                                     p.record_failure();
                                 }
-                                return_stream_error!("stream_visible_delta", error);
+                                return_dispatch_error!("throughput_visible_event", error);
                             }
                         }
                         if chunk.done {
@@ -5938,7 +6303,7 @@ pub(super) async fn dispatch_provider(
                                     return_stream_error!("stream_canary", error);
                                 }
                             };
-                            if let Err(error) = emit_verified_stream_delta(
+                            let admitted_visible_event = match emit_verified_stream_delta(
                                 tail,
                                 &chunk.identity,
                                 &writer,
@@ -5952,10 +6317,27 @@ pub(super) async fn dispatch_provider(
                             )
                             .await
                             {
+                                Ok(admitted) => admitted,
+                                Err(error) => {
+                                    if let Some(p) = stream_permit {
+                                        p.record_failure();
+                                    }
+                                    return_stream_error!("stream_visible_delta", error);
+                                }
+                            };
+                            if admitted_visible_event
+                                && let (Some(throughput), Some(token)) =
+                                    (live_throughput.as_mut(), stream_control_token)
+                                && let Err(error) = throughput.observe_visible_event(
+                                    std::time::Instant::now(),
+                                    output,
+                                    token,
+                                )
+                            {
                                 if let Some(p) = stream_permit {
                                     p.record_failure();
                                 }
-                                return_stream_error!("stream_visible_delta", error);
+                                return_dispatch_error!("throughput_visible_event", error);
                             }
                             // Any remaining markdown syntax is now sourced
                             // exclusively from verified-safe bytes.
@@ -6006,6 +6388,20 @@ pub(super) async fn dispatch_provider(
                     )
                 ),
             };
+            if let (Some(throughput), Some(token)) =
+                (live_throughput.as_mut(), stream_control_token)
+            {
+                // This remains before the later provider_done formatter. A
+                // successful final-usage total is deliberately not a token
+                // delta and can never alter this visible-event state.
+                if let Err(error) = throughput.finish_before_provider_done(
+                    std::time::Instant::now(),
+                    output,
+                    token,
+                ) {
+                    return_dispatch_error!("throughput_finish", error);
+                }
+            }
             let reasoning_terminal = reasoning_lifecycle.normal_terminal(cancellation);
             let reasoning_reason = match reasoning_terminal {
                 crate::providers::ReasoningTerminalState::Unsupported => {
@@ -6039,6 +6435,19 @@ pub(super) async fn dispatch_provider(
                 )
                 .await
             {
+                if let (Some(throughput), Some(token)) =
+                    (live_throughput.as_mut(), stream_control_token)
+                {
+                    throughput.terminal(
+                        if cancellation.is_closed() {
+                            crate::daemon::live_throughput::LiveThroughputUnavailable::Cancelled
+                        } else {
+                            crate::daemon::live_throughput::LiveThroughputUnavailable::StreamError
+                        },
+                        output,
+                        token,
+                    )?;
+                }
                 return_dispatch_error!("reasoning_terminal", error);
             }
             if let Some(p) = stream_permit {
@@ -15434,6 +15843,218 @@ mod tests {
     }
 
     #[test]
+    fn live_throughput_wire_is_exact_private_and_content_free() {
+        use crate::daemon::live_throughput::{LiveThroughputBasis, LiveThroughputState, LiveThroughputUnavailable};
+
+        let token = "0123456789abcdef0123456789abcdef";
+        let visible = live_throughput_state_line(
+            token,
+            7,
+            LiveThroughputState::Measuring {
+                basis: LiveThroughputBasis::VisibleEvent,
+                per_second: 12.5,
+            },
+        )
+        .unwrap();
+        let visible: serde_json::Value = serde_json::from_str(&visible).unwrap();
+        let mut keys = visible
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "basis",
+                "control_token",
+                "neoth_stream",
+                "per_second",
+                "protocol_version",
+                "reason",
+                "request_id",
+                "sequence",
+                "state",
+                "unit",
+            ]
+        );
+        assert_eq!(visible["neoth_stream"], "throughput_state");
+        assert_eq!(visible["protocol_version"], CHAT_STREAM_PROTOCOL_VERSION);
+        assert_eq!(visible["request_id"], stream_request_id(token));
+        assert_eq!(visible["control_token"], token);
+        assert_eq!(visible["sequence"], 7);
+        assert_eq!(visible["state"], "measuring");
+        assert_eq!(visible["basis"], "visible_event");
+        assert_eq!(visible["unit"], "stream_events_per_second");
+        assert_eq!(visible["per_second"], 12.5);
+        assert!(visible["reason"].is_null());
+        assert!(
+            !visible.to_string().contains("output_tokens")
+                && !visible.to_string().contains("wal_session")
+                && !visible.to_string().contains("text")
+        );
+
+        let tokens = live_throughput_state_line(
+            token,
+            8,
+            LiveThroughputState::Paused {
+                basis: LiveThroughputBasis::TokenDelta,
+            },
+        )
+        .unwrap();
+        let tokens: serde_json::Value = serde_json::from_str(&tokens).unwrap();
+        assert_eq!(tokens["state"], "paused");
+        assert_eq!(tokens["basis"], "token_delta");
+        assert_eq!(tokens["unit"], "provider_tokens_per_second");
+        assert!(tokens["per_second"].is_null() && tokens["reason"].is_null());
+
+        let cancelled = live_throughput_state_line(
+            token,
+            9,
+            LiveThroughputState::Unavailable(LiveThroughputUnavailable::Cancelled),
+        )
+        .unwrap();
+        let cancelled: serde_json::Value = serde_json::from_str(&cancelled).unwrap();
+        assert_eq!(cancelled["state"], "cancelled");
+        assert_eq!(cancelled["reason"], "cancelled");
+        assert!(
+            cancelled["basis"].is_null()
+                && cancelled["unit"].is_null()
+                && cancelled["per_second"].is_null()
+        );
+
+        let mut public_output = Vec::new();
+        write_live_throughput_state(
+            &mut public_output,
+            None,
+            1,
+            LiveThroughputState::Unavailable(LiveThroughputUnavailable::NoVisibleEvents),
+        )
+        .unwrap();
+        assert!(public_output.is_empty(), "no token means no throughput wire");
+    }
+
+    #[test]
+    fn live_throughput_producer_sequences_transitions_before_provider_done() {
+        use crate::daemon::live_throughput::{LiveThroughputState, LiveThroughputUnavailable};
+
+        #[derive(Default)]
+        struct RecordingSink(Vec<ChatTurnEvent>);
+
+        impl ChatTurnEventSink for RecordingSink {
+            fn emit(&mut self, event: ChatTurnEvent) -> Result<()> {
+                self.0.push(event);
+                Ok(())
+            }
+        }
+
+        let token = "0123456789abcdef0123456789abcdef";
+        let mut producer = LiveThroughputProducer::new();
+        let start = producer.started_at;
+        let mut sink = RecordingSink::default();
+        producer
+            .observe_idle(start + std::time::Duration::from_secs(1), &mut sink, token)
+            .unwrap();
+        producer
+            .observe_visible_event(start + std::time::Duration::from_secs(2), &mut sink, token)
+            .unwrap();
+        producer
+            .observe_idle(start + std::time::Duration::from_secs(3), &mut sink, token)
+            .unwrap();
+        producer
+            .terminal(LiveThroughputUnavailable::Cancelled, &mut sink, token)
+            .unwrap();
+
+        let frames = sink
+            .0
+            .into_iter()
+            .map(|event| match event {
+                ChatTurnEvent::Output(ChatOutput::StreamFrames { frames }) => frames,
+                other => panic!("unexpected throughput presentation event: {other:?}"),
+            })
+            .map(|frames| {
+                serde_json::from_str::<serde_json::Value>(
+                    frames
+                        .lines()
+                        .find(|line| !line.is_empty())
+                        .unwrap()
+                        .strip_prefix(CHAT_STREAM_CONTROL_PREFIX)
+                        .unwrap(),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            frames
+                .iter()
+                .map(|frame| frame["sequence"].as_u64().unwrap())
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3, 4],
+            "throughput owns its own contiguous sequence namespace"
+        );
+        assert_eq!(frames[0]["state"], "unavailable");
+        assert_eq!(frames[1]["state"], "measuring");
+        assert_eq!(frames[2]["state"], "paused");
+        assert_eq!(frames[3]["state"], "cancelled");
+
+        let mut ordered_wire = Vec::new();
+        write_live_throughput_state(
+            &mut ordered_wire,
+            Some(token),
+            1,
+            LiveThroughputState::Unavailable(LiveThroughputUnavailable::StreamError),
+        )
+        .unwrap();
+        let provider_done = stream_provider_done_line(
+            Some(token),
+            false,
+            0,
+            "",
+            &crate::providers::ProviderTermination::default(),
+        )
+        .unwrap();
+        write_stream_control_line(&mut ordered_wire, Some(token), &provider_done).unwrap();
+        let ordered_wire = String::from_utf8(ordered_wire).unwrap();
+        assert!(
+            ordered_wire.find("throughput_state").unwrap()
+                < ordered_wire.find("provider_done").unwrap(),
+            "terminal throughput must precede provider_done"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn live_throughput_idle_interval_is_not_starved_by_ready_nonvisible_events() {
+        use futures_util::stream::{self, StreamExt};
+
+        let mut idle_tick = live_throughput_idle_interval();
+        idle_tick.tick().await; // consume Interval's construction tick
+        let mut nonvisible_events = stream::repeat_with(|| ());
+
+        // This models a provider that continuously yields reasoning/control
+        // events. Each actual select chooses the ready stream before the
+        // one-second deadline exists; the clock is not recreated between them.
+        for _ in 0..64 {
+            tokio::select! {
+                biased;
+                () = idle_tick.tick() => panic!("idle tick fired before its deadline"),
+                Some(()) = nonvisible_events.next() => {}
+            }
+        }
+
+        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+        let selected_idle_tick = tokio::select! {
+            biased;
+            () = idle_tick.tick() => true,
+            Some(()) = nonvisible_events.next() => false,
+        };
+        assert!(
+            selected_idle_tick,
+            "the persistent due tick must beat a continuously ready non-visible event stream"
+        );
+    }
+
+    #[test]
     fn public_local_stream_terminal_remains_raw_jsonl() {
         let mut output = Vec::new();
         write_local_stream_completion_to(&mut output, None, 1).unwrap();
@@ -23438,8 +24059,10 @@ modes:
                     );
                     observed.insert(event);
                 }
+                Ok(())
             },
-        );
+        )
+        .expect("scan contextual audit WAL");
         assert_eq!(
             observed,
             std::collections::BTreeSet::from(["hook_fired", "quota", "stream_chunk"]),

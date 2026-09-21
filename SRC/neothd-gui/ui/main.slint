@@ -1076,6 +1076,8 @@ export component MainWindow inherits Window {
     in property <string> chat-reasoning-status: "";
     in property <string> chat-reasoning-text: "";
     in property <bool> chat-reasoning-active: false;
+    in property <string> chat-throughput-status: "";
+    in property <bool> chat-throughput-active: false;
     /// Immutable privacy mode for the request in flight. It remains visible
     /// after `chat-incognito` resets for the next turn.
     in property <bool> chat-incognito-active: false;
@@ -4252,6 +4254,8 @@ export component MainWindow inherits Window {
                     reasoning-status: root.chat-reasoning-status;
                     reasoning-text: root.chat-reasoning-text;
                     reasoning-active: root.chat-reasoning-active;
+                    throughput-status: root.chat-throughput-status;
+                    throughput-active: root.chat-throughput-active;
                     incognito-active: root.chat-incognito-active;
                     send-enabled: root.chat-send-enabled;
                     send-in-flight: root.chat-send-in-flight;

@@ -269,6 +269,7 @@ struct LegacyChildChatTransportRuntime {
     chat_reasoning_displays:
         std::sync::Arc<std::sync::Mutex<std::collections::HashMap<ChatStreamRequestId, bool>>>,
     chat_reasoning_projections: ChatReasoningProjections,
+    chat_throughput_projections: ChatThroughputProjections,
     chat_auto_nudge_budget: std::sync::Arc<std::sync::atomic::AtomicU8>,
     chat_auto_in_progress: std::sync::Arc<std::sync::atomic::AtomicBool>,
     chat_consent_flow_active: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -1165,6 +1166,7 @@ mod win_private {
 mod buddy_activity;
 mod chat_child_supervisor;
 mod chat_reasoning;
+mod chat_throughput;
 mod chat_stream_phase;
 mod citation_gui;
 mod code_map_controller;
@@ -3067,6 +3069,8 @@ fn main() -> Result<()> {
     > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
     let chat_reasoning_projections: ChatReasoningProjections =
         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let chat_throughput_projections: ChatThroughputProjections =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
     let chat_auto_nudge_budget = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
     let chat_auto_in_progress = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let chat_consent_flow_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -4308,6 +4312,7 @@ fn main() -> Result<()> {
         let revision = chat_session_revision.clone();
         let stream = chat_stream.clone();
         let projections = chat_reasoning_projections.clone();
+        let throughput = chat_throughput_projections.clone();
         let citations = std::sync::Arc::clone(&citation_binding_store);
         let citation_live_flow = std::sync::Arc::clone(&citation_callbacks.live_flow);
         let citation_child_cancellation =
@@ -4316,10 +4321,13 @@ fn main() -> Result<()> {
             revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             if let Some(w) = weak_live.upgrade() {
                 clear_active_chat_reasoning_projection(
-                    projections.as_ref(),
+                    &projections,
                     stream.as_ref(),
                     Some(&w),
                     None,
+                );
+                clear_active_chat_throughput_projection(
+                    &throughput, stream.as_ref(), Some(&w), None,
                 );
                 if let Ok(mut store) = citations.lock() {
                     store.set_historical(false);
@@ -4341,6 +4349,7 @@ fn main() -> Result<()> {
         let revision = chat_session_revision.clone();
         let stream = chat_stream.clone();
         let projections = chat_reasoning_projections.clone();
+        let throughput = chat_throughput_projections.clone();
         let citations = std::sync::Arc::clone(&citation_binding_store);
         let citation_live_flow = std::sync::Arc::clone(&citation_callbacks.live_flow);
         let citation_child_cancellation =
@@ -4352,10 +4361,13 @@ fn main() -> Result<()> {
                 return;
             };
             clear_active_chat_reasoning_projection(
-                projections.as_ref(),
+                &projections,
                 stream.as_ref(),
                 Some(&w),
                 None,
+            );
+            clear_active_chat_throughput_projection(
+                &throughput, stream.as_ref(), Some(&w), None,
             );
             if let Ok(mut store) = citations.lock() {
                 store.set_historical(true);
@@ -13521,6 +13533,7 @@ fn main() -> Result<()> {
         let window_weak_for_restore = window.as_weak();
         let stream_for_restore = chat_stream.clone();
         let reasoning_for_restore = chat_reasoning_projections.clone();
+        let throughput_for_restore = chat_throughput_projections.clone();
         overlay.on_restore_clicked(move || {
             let Some(ov) = overlay_weak_for_restore.upgrade() else {
                 return;
@@ -13530,7 +13543,13 @@ fn main() -> Result<()> {
             };
             save_overlay_pos(&ov);
             clear_active_chat_reasoning_projection(
-                reasoning_for_restore.as_ref(),
+                &reasoning_for_restore,
+                stream_for_restore.as_ref(),
+                Some(&win),
+                Some(&ov),
+            );
+            clear_active_chat_throughput_projection(
+                &throughput_for_restore,
                 stream_for_restore.as_ref(),
                 Some(&win),
                 Some(&ov),
@@ -13544,6 +13563,7 @@ fn main() -> Result<()> {
         let window_weak_for_hide = window.as_weak();
         let stream_for_hide = chat_stream.clone();
         let reasoning_for_hide = chat_reasoning_projections.clone();
+        let throughput_for_hide = chat_throughput_projections.clone();
         overlay.on_hide_clicked(move || {
             let Some(ov) = overlay_weak_for_hide.upgrade() else {
                 return;
@@ -13553,7 +13573,13 @@ fn main() -> Result<()> {
             };
             save_overlay_pos(&ov);
             clear_active_chat_reasoning_projection(
-                reasoning_for_hide.as_ref(),
+                &reasoning_for_hide,
+                stream_for_hide.as_ref(),
+                Some(&win),
+                Some(&ov),
+            );
+            clear_active_chat_throughput_projection(
+                &throughput_for_hide,
                 stream_for_hide.as_ref(),
                 Some(&win),
                 Some(&ov),
@@ -13831,6 +13857,7 @@ fn main() -> Result<()> {
                 chat_attachments: chat_attachments.clone(),
                 chat_reasoning_displays: chat_reasoning_displays.clone(),
                 chat_reasoning_projections: chat_reasoning_projections.clone(),
+                chat_throughput_projections: chat_throughput_projections.clone(),
                 chat_auto_nudge_budget: chat_auto_nudge_budget.clone(),
                 chat_auto_in_progress: chat_auto_in_progress.clone(),
                 chat_consent_flow_active: chat_consent_flow_active.clone(),
@@ -14058,6 +14085,7 @@ fn install_legacy_child_chat_transport_callbacks(
         let watchdog_input = runtime.chat_watchdog_input.clone();
         let watchdog_retry_stop = runtime.chat_watchdog_retry_stop.clone();
         let reasoning_projections = runtime.chat_reasoning_projections.clone();
+        let throughput_projections = runtime.chat_throughput_projections.clone();
         let reasoning_displays = runtime.chat_reasoning_displays.clone();
         let weak_stop_now = window.as_weak();
         let overlay_weak_stop_now = overlay.as_weak();
@@ -14107,13 +14135,16 @@ fn install_legacy_child_chat_transport_callbacks(
             // outcome. Remove this exact request's bytes immediately; the
             // terminal callback repeats only the request/generation-guarded
             // UI clear.
-            discard_chat_reasoning_projection(reasoning_projections.as_ref(), request.request_id);
+            discard_chat_reasoning_projection(&reasoning_projections, request.request_id);
+            discard_chat_throughput_projection(&throughput_projections, request.request_id);
             discard_chat_reasoning_display_grant(reasoning_displays.as_ref(), request.request_id);
             if let Some(window) = weak_stop_now.upgrade() {
                 clear_main_reasoning_projection(&window);
+                clear_main_throughput_projection(&window);
             }
             if let Some(overlay) = overlay_weak_stop_now.upgrade() {
                 clear_buddy_reasoning_projection(&overlay);
+                clear_buddy_throughput_projection(&overlay);
             }
             enum StopOutcome {
                 SettledBeforeLaunch,
@@ -14316,6 +14347,7 @@ fn install_legacy_child_chat_transport_callbacks(
     let chat_presentation_owner_for_send = runtime.chat_presentation_owner.clone();
     let chat_reasoning_displays_for_send = runtime.chat_reasoning_displays.clone();
     let chat_reasoning_projections_for_send = runtime.chat_reasoning_projections.clone();
+    let chat_throughput_projections_for_send = runtime.chat_throughput_projections.clone();
     let chat_send_approved = move |request_id_wire: slint::SharedString,
                                    text: slint::SharedString,
                                    explicit_skill_id_wire: slint::SharedString,
@@ -14585,6 +14617,7 @@ fn install_legacy_child_chat_transport_callbacks(
         let auto_flag = chat_auto_flag_for_send.clone();
         let flow_active = chat_consent_flow_for_send.clone();
         let reasoning_projections = chat_reasoning_projections_for_send.clone();
+        let throughput_projections = chat_throughput_projections_for_send.clone();
         let reasoning_displays = chat_reasoning_displays_for_send.clone();
         let presentation_generation = chat_presentation_generation_for_request(
             chat_presentation_owner_for_send.as_ref(),
@@ -14630,10 +14663,15 @@ fn install_legacy_child_chat_transport_callbacks(
                 let mut cmd = spawn_neothd_plain(&bin);
                 let stream_control_token = new_stream_control_token()?;
                 begin_chat_reasoning_projection(
-                    reasoning_projections.as_ref(),
+                    &reasoning_projections,
                     request_id,
                     stream_control_token.as_str(),
                     reasoning_display,
+                );
+                begin_chat_throughput_projection(
+                    &throughput_projections,
+                    request_id,
+                    stream_control_token.as_str(),
                 );
                 configure_gui_chat_launch_args(&mut cmd, incognito);
                 // H18 — request-bound one-shot model override. A denied or
@@ -14814,7 +14852,7 @@ fn install_legacy_child_chat_transport_callbacks(
                             }
                             if !parsed.reasoning_controls.is_empty() {
                                 let snapshots = match apply_chat_reasoning_controls(
-                                    reasoning_projections.as_ref(),
+                                    &reasoning_projections,
                                     request_id,
                                     stream_control_token.as_str(),
                                     &parsed.reasoning_controls,
@@ -14847,6 +14885,61 @@ fn install_legacy_child_chat_transport_callbacks(
                                         );
                                     });
                                 }
+                            }
+                            if !parsed.throughput_controls.is_empty() {
+                                let snapshots = match apply_chat_throughput_controls(
+                                    &throughput_projections,
+                                    request_id,
+                                    stream_control_token.as_str(),
+                                    &parsed.throughput_controls,
+                                ) {
+                                    Ok(snapshots) => snapshots,
+                                    Err(error) => break Some(std::io::Error::other(error)),
+                                };
+                                for snapshot in snapshots {
+                                    let weak_throughput = weak_worker.clone();
+                                    let overlay_throughput = overlay_weak_worker.clone();
+                                    let stream_throughput = stream.clone();
+                                    let _ = slint::invoke_from_event_loop(move || {
+                                        let is_current = stream_throughput
+                                            .lock()
+                                            .ok()
+                                            .and_then(|controller| controller.current_request())
+                                            .is_some_and(|current| {
+                                                current.request_id == request_id
+                                                    && current.surface == ChatStreamSurface::Main
+                                                    && !current.cancel_requested
+                                            });
+                                        if is_current {
+                                            project_chat_throughput_snapshot(
+                                                weak_throughput.upgrade().as_ref(),
+                                                overlay_throughput.upgrade().as_ref(),
+                                                ChatStreamSurface::Main,
+                                                snapshot,
+                                            );
+                                        }
+                                    });
+                                }
+                            }
+                            if parsed.provider_done {
+                                provider_done_chat_throughput_projection(
+                                    &throughput_projections, request_id,
+                                );
+                                let weak_throughput = weak_worker.clone();
+                                let stream_throughput = stream.clone();
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    let is_current = stream_throughput
+                                        .lock()
+                                        .ok()
+                                        .and_then(|controller| controller.current_request())
+                                        .is_some_and(|current| {
+                                            current.request_id == request_id
+                                                && current.surface == ChatStreamSurface::Main
+                                        });
+                                    if is_current && let Some(window) = weak_throughput.upgrade() {
+                                        clear_main_throughput_projection(&window);
+                                    }
+                                });
                             }
                             if parsed
                                 .notices
@@ -15083,7 +15176,8 @@ fn install_legacy_child_chat_transport_callbacks(
                 ChatStreamSurface::Main,
                 outcome.is_ok(),
             );
-            discard_chat_reasoning_projection(reasoning_projections.as_ref(), request_id);
+            discard_chat_reasoning_projection(&reasoning_projections, request_id);
+            discard_chat_throughput_projection(&throughput_projections, request_id);
             discard_chat_reasoning_display_grant(reasoning_displays.as_ref(), request_id);
             let watchdog_retry_body = terminal.and_then(|terminal| {
                 settle_chat_watchdog_retry_state(
@@ -15130,6 +15224,7 @@ fn install_legacy_child_chat_transport_callbacks(
                         return;
                     }
                     clear_main_reasoning_projection(&w);
+                    clear_main_throughput_projection(&w);
                     // GUI-07: the stream settled (reply or error) — unspin Send.
                     w.set_chat_stall_active(false);
                     // Wave-2 feed A: settle plan row + push metric.
@@ -15373,6 +15468,7 @@ fn install_legacy_child_chat_transport_callbacks(
         let presentation_owner = runtime.chat_presentation_owner.clone();
         let chat_reasoning_displays_for_buddy = runtime.chat_reasoning_displays.clone();
         let chat_reasoning_projections_for_buddy = runtime.chat_reasoning_projections.clone();
+        let chat_throughput_projections_for_buddy = runtime.chat_throughput_projections.clone();
         let buddy_chat_send_approved =
             move |request_id_wire: slint::SharedString,
                   text: slint::SharedString,
@@ -15577,6 +15673,7 @@ fn install_legacy_child_chat_transport_callbacks(
                 let launch_gate = launch_gate.clone();
                 let presentation_owner = presentation_owner.clone();
                 let reasoning_projections = chat_reasoning_projections_for_buddy.clone();
+                let throughput_projections = chat_throughput_projections_for_buddy.clone();
                 let reasoning_displays = chat_reasoning_displays_for_buddy.clone();
                 std::thread::spawn(move || {
                     let _worker_lease = worker_lease;
@@ -15597,10 +15694,15 @@ fn install_legacy_child_chat_transport_callbacks(
                         let mut cmd = spawn_neothd_plain(&bin);
                         let stream_control_token = new_stream_control_token()?;
                         begin_chat_reasoning_projection(
-                            reasoning_projections.as_ref(),
+                            &reasoning_projections,
                             request_id,
                             stream_control_token.as_str(),
                             reasoning_display,
+                        );
+                        begin_chat_throughput_projection(
+                            &throughput_projections,
+                            request_id,
+                            stream_control_token.as_str(),
                         );
                         configure_gui_chat_launch_args(&mut cmd, incognito);
                         let mut launch_envelope = encode_gui_chat_launch_envelope(
@@ -15788,7 +15890,7 @@ fn install_legacy_child_chat_transport_callbacks(
                                     }
                                     if !parsed.reasoning_controls.is_empty() {
                                         let snapshots = match apply_chat_reasoning_controls(
-                                            reasoning_projections.as_ref(),
+                                            &reasoning_projections,
                                             request_id,
                                             stream_control_token.as_str(),
                                             &parsed.reasoning_controls,
@@ -15824,6 +15926,61 @@ fn install_legacy_child_chat_transport_callbacks(
                                                 );
                                             });
                                         }
+                                    }
+                                    if !parsed.throughput_controls.is_empty() {
+                                        let snapshots = match apply_chat_throughput_controls(
+                                            &throughput_projections,
+                                            request_id,
+                                            stream_control_token.as_str(),
+                                            &parsed.throughput_controls,
+                                        ) {
+                                            Ok(snapshots) => snapshots,
+                                            Err(error) => break Some(std::io::Error::other(error)),
+                                        };
+                                        for snapshot in snapshots {
+                                            let ov_throughput = ov_weak.clone();
+                                            let win_throughput = win_weak.clone();
+                                            let stream_throughput = stream.clone();
+                                            let _ = slint::invoke_from_event_loop(move || {
+                                                let is_current = stream_throughput
+                                                    .lock()
+                                                    .ok()
+                                                    .and_then(|controller| controller.current_request())
+                                                    .is_some_and(|current| {
+                                                        current.request_id == request_id
+                                                            && current.surface == ChatStreamSurface::Buddy
+                                                            && !current.cancel_requested
+                                                    });
+                                                if is_current {
+                                                    project_chat_throughput_snapshot(
+                                                        win_throughput.upgrade().as_ref(),
+                                                        ov_throughput.upgrade().as_ref(),
+                                                        ChatStreamSurface::Buddy,
+                                                        snapshot,
+                                                    );
+                                                }
+                                            });
+                                        }
+                                    }
+                                    if parsed.provider_done {
+                                        provider_done_chat_throughput_projection(
+                                            &throughput_projections, request_id,
+                                        );
+                                        let overlay_throughput = ov_weak.clone();
+                                        let stream_throughput = stream.clone();
+                                        let _ = slint::invoke_from_event_loop(move || {
+                                            let is_current = stream_throughput
+                                                .lock()
+                                                .ok()
+                                                .and_then(|controller| controller.current_request())
+                                                .is_some_and(|current| {
+                                                    current.request_id == request_id
+                                                        && current.surface == ChatStreamSurface::Buddy
+                                                });
+                                            if is_current && let Some(overlay) = overlay_throughput.upgrade() {
+                                                clear_buddy_throughput_projection(&overlay);
+                                            }
+                                        });
                                     }
                                     if parsed
                                         .notices
@@ -16066,7 +16223,8 @@ fn install_legacy_child_chat_transport_callbacks(
                         ChatStreamSurface::Buddy,
                         result.is_ok(),
                     );
-                    discard_chat_reasoning_projection(reasoning_projections.as_ref(), request_id);
+                    discard_chat_reasoning_projection(&reasoning_projections, request_id);
+                    discard_chat_throughput_projection(&throughput_projections, request_id);
                     discard_chat_reasoning_display_grant(reasoning_displays.as_ref(), request_id);
                     let watchdog_retry = terminal.and_then(|terminal| {
                         settle_chat_watchdog_retry_state(
@@ -16111,9 +16269,11 @@ fn install_legacy_child_chat_transport_callbacks(
                         }
                         if let Some(win) = win_weak.upgrade() {
                             clear_main_reasoning_projection(&win);
+                            clear_main_throughput_projection(&win);
                         }
                         if let Some(overlay) = ov_weak.upgrade() {
                             clear_buddy_reasoning_projection(&overlay);
+                            clear_buddy_throughput_projection(&overlay);
                         }
                         let win = win_weak.upgrade();
                         if let Some(win) = win.as_ref() {
@@ -25716,6 +25876,176 @@ fn project_chat_reasoning_snapshot(
     }
 }
 
+type ChatThroughputProjections = std::sync::Arc<
+    std::sync::Mutex<std::collections::HashMap<ChatStreamRequestId, chat_throughput::Projection>>,
+>;
+
+fn begin_chat_throughput_projection(
+    projections: &ChatThroughputProjections,
+    request_id: ChatStreamRequestId,
+    control_token: &str,
+) {
+    let mut projections = projections
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    for projection in projections.values_mut() {
+        projection.final_sentinel_or_detach();
+    }
+    projections.clear();
+    projections.insert(
+        request_id,
+        chat_throughput::Projection::new(chat_stream_request_id(control_token)),
+    );
+}
+
+fn apply_chat_throughput_controls(
+    projections: &ChatThroughputProjections,
+    request_id: ChatStreamRequestId,
+    control_token: &str,
+    controls: &[ThroughputControlFrame],
+) -> std::result::Result<Vec<chat_throughput::ThroughputSnapshot>, String> {
+    let mut projections = projections
+        .lock()
+        .map_err(|_| "throughput projection state is unavailable".to_string())?;
+    let projection = projections
+        .get_mut(&request_id)
+        .ok_or_else(|| "throughput control belonged to a stale request".to_string())?;
+    let mut snapshots = Vec::with_capacity(controls.len());
+    let mut terminal = false;
+    for control in controls {
+        let snapshot = projection
+            .apply_json(
+                control.raw.as_str(),
+                control_token,
+                CHAT_STREAM_PROTOCOL_VERSION,
+            )
+            .map_err(str::to_string)?;
+        terminal |= snapshot.terminal;
+        snapshots.push(snapshot);
+    }
+    if terminal {
+        projections.remove(&request_id);
+    }
+    Ok(snapshots)
+}
+
+fn provider_done_chat_throughput_projection(
+    projections: &ChatThroughputProjections,
+    request_id: ChatStreamRequestId,
+) {
+    if let Ok(mut projections) = projections.lock()
+        && let Some(mut projection) = projections.remove(&request_id)
+    {
+        projection.provider_done();
+    }
+}
+
+fn discard_chat_throughput_projection(
+    projections: &ChatThroughputProjections,
+    request_id: ChatStreamRequestId,
+) {
+    if let Ok(mut projections) = projections.lock()
+        && let Some(mut projection) = projections.remove(&request_id)
+    {
+        projection.final_sentinel_or_detach();
+    }
+}
+
+fn clear_active_chat_throughput_projection(
+    projections: &ChatThroughputProjections,
+    stream: &std::sync::Mutex<ChatStreamController>,
+    window: Option<&MainWindow>,
+    overlay: Option<&MiniOverlay>,
+) {
+    if let Ok(controller) = stream.lock()
+        && let Some(current) = controller.current_request()
+    {
+        discard_chat_throughput_projection(projections, current.request_id);
+    }
+    if let Some(window) = window {
+        clear_main_throughput_projection(window);
+    }
+    if let Some(overlay) = overlay {
+        clear_buddy_throughput_projection(overlay);
+    }
+}
+
+fn clear_main_throughput_projection(window: &MainWindow) {
+    window.set_chat_throughput_status("".into());
+    window.set_chat_throughput_active(false);
+}
+
+fn clear_buddy_throughput_projection(overlay: &MiniOverlay) {
+    overlay.set_throughput_status("".into());
+    overlay.set_throughput_active(false);
+}
+
+fn throughput_status(snapshot: chat_throughput::ThroughputSnapshot) -> &'static str {
+    use chat_throughput::{ThroughputBasis, ThroughputReason, ThroughputState};
+
+    match (snapshot.state, snapshot.basis, snapshot.reason) {
+        (ThroughputState::Measuring, Some(ThroughputBasis::VisibleEvent), _) => {
+            "Stream events: live rate"
+        }
+        (ThroughputState::Measuring, Some(ThroughputBasis::TokenDelta), _) => {
+            "Provider tokens: live rate"
+        }
+        (ThroughputState::Paused, Some(ThroughputBasis::VisibleEvent), _) => {
+            "Stream paused — waiting for visible events"
+        }
+        (ThroughputState::Paused, Some(ThroughputBasis::TokenDelta), _) => {
+            "Provider token stream paused"
+        }
+        (ThroughputState::Unavailable, _, Some(ThroughputReason::NoVisibleEvents)) => {
+            "Throughput unavailable — no visible stream events"
+        }
+        (ThroughputState::Unavailable, _, Some(ThroughputReason::NoUsageReported)) => {
+            "Throughput unavailable — no provider token deltas"
+        }
+        (ThroughputState::Cancelled, _, Some(ThroughputReason::Cancelled)) => {
+            "Throughput unavailable — stream cancelled"
+        }
+        (ThroughputState::Error, _, Some(ThroughputReason::StreamError)) => {
+            "Throughput unavailable — stream error"
+        }
+        _ => "Throughput unavailable",
+    }
+}
+
+fn project_chat_throughput_snapshot(
+    window: Option<&MainWindow>,
+    overlay: Option<&MiniOverlay>,
+    surface: ChatStreamSurface,
+    snapshot: chat_throughput::ThroughputSnapshot,
+) {
+    let status = match snapshot.state {
+        chat_throughput::ThroughputState::Measuring => match snapshot.basis {
+            Some(chat_throughput::ThroughputBasis::VisibleEvent) => {
+                format!("Stream events: {:.1}/s", snapshot.per_second.unwrap_or_default())
+            }
+            Some(chat_throughput::ThroughputBasis::TokenDelta) => {
+                format!("Provider tokens: {:.1}/s", snapshot.per_second.unwrap_or_default())
+            }
+            None => throughput_status(snapshot).to_string(),
+        },
+        _ => throughput_status(snapshot).to_string(),
+    };
+    match surface {
+        ChatStreamSurface::Main => {
+            if let Some(window) = window {
+                window.set_chat_throughput_status(status.into());
+                window.set_chat_throughput_active(true);
+            }
+        }
+        ChatStreamSurface::Buddy => {
+            if let Some(overlay) = overlay {
+                overlay.set_throughput_status(status.into());
+                overlay.set_throughput_active(true);
+            }
+        }
+    }
+}
+
 fn detach_operator_recall_for_incognito(
     last_operator_input: &std::sync::Mutex<String>,
     selected: bool,
@@ -28294,6 +28624,10 @@ struct ParsedChatStream {
     /// zeroizing reducer before their ranges are compacted from stdout. They
     /// never join `text`, notices, history, or Buddy recents.
     reasoning_controls: Vec<ReasoningControlFrame>,
+    /// W162 request-bound rate controls stay outside visible text and all
+    /// durable/chat-message projections. The dedicated reducer owns schema,
+    /// sequence, unit and terminal validation.
+    throughput_controls: Vec<ThroughputControlFrame>,
     completed_control_ranges: Vec<std::ops::Range<usize>>,
     provider_done: bool,
     done: bool,
@@ -28370,6 +28704,28 @@ enum ParsedReasoningControlFrame {
     InvalidAuthenticated,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct ThroughputControlFrame {
+    raw: zeroize::Zeroizing<String>,
+    terminal: bool,
+}
+
+impl std::fmt::Debug for ThroughputControlFrame {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ThroughputControlFrame")
+            .field("raw", &"<redacted>")
+            .field("terminal", &self.terminal)
+            .finish()
+    }
+}
+
+enum ParsedThroughputControlFrame {
+    NotThroughput,
+    Valid(ThroughputControlFrame),
+    InvalidAuthenticated,
+}
+
 /// This is deliberately a discriminator-only decode: `IgnoredAny` skips all
 /// potential reasoning payload values without allocating their strings. The
 /// request-owned zeroizing reducer performs the strict complete decode next.
@@ -28379,6 +28735,17 @@ struct ReasoningKindProbe {
     protocol_version: u64,
     request_id: String,
     control_token: String,
+    #[serde(flatten)]
+    _ignored: std::collections::BTreeMap<String, serde::de::IgnoredAny>,
+}
+
+#[derive(Deserialize)]
+struct ThroughputKindProbe {
+    neoth_stream: String,
+    protocol_version: u64,
+    request_id: String,
+    control_token: String,
+    state: String,
     #[serde(flatten)]
     _ignored: std::collections::BTreeMap<String, serde::de::IgnoredAny>,
 }
@@ -28527,6 +28894,7 @@ fn parse_chat_stream_protocol_with_mode(
     let mut route_report_count = u8::from(route_report_delivered);
     let mut notices = Vec::new();
     let mut reasoning_controls = Vec::new();
+    let mut throughput_controls = Vec::new();
     let mut completed_control_ranges = Vec::new();
     let mut notice_ids = std::collections::HashSet::new();
     let mut provider_done: Option<ProviderDoneFrame> = None;
@@ -28538,6 +28906,7 @@ fn parse_chat_stream_protocol_with_mode(
     let mut saw_untyped_reply = false;
     let mut provider_reply_open = true;
     let mut saw_reasoning_terminal = false;
+    let mut saw_throughput_terminal = false;
     let mut protocol_valid = true;
     let mut segment_start = 0usize;
     for segment in raw[..reply_end].split_inclusive('\n') {
@@ -28613,6 +28982,24 @@ fn parse_chat_stream_protocol_with_mode(
                 continue;
             }
             ParsedReasoningControlFrame::NotReasoning => {}
+        }
+        match authenticated_throughput_control(line, expected_control_token) {
+            ParsedThroughputControlFrame::Valid(frame) => {
+                if !provider_reply_open || saw_throughput_terminal {
+                    protocol_valid = false;
+                }
+                saw_throughput_terminal |= frame.terminal;
+                throughput_controls.push(frame);
+                completed_control_ranges.push(segment_start..segment_end);
+                segment_start = segment_end;
+                continue;
+            }
+            ParsedThroughputControlFrame::InvalidAuthenticated => {
+                protocol_valid = false;
+                segment_start = segment_end;
+                continue;
+            }
+            ParsedThroughputControlFrame::NotThroughput => {}
         }
         match authenticated_skill_route(line, expected_control_token) {
             ParsedSkillRouteFrame::Valid(report) => {
@@ -28722,6 +29109,7 @@ fn parse_chat_stream_protocol_with_mode(
         route_report,
         notices,
         reasoning_controls,
+        throughput_controls,
         completed_control_ranges,
         provider_done: provider_done_count == 1,
         done: terminal.is_some(),
@@ -28921,6 +29309,8 @@ fn authenticated_reasoning_control(
     line: &str,
     expected_control_token: Option<&str>,
 ) -> ParsedReasoningControlFrame {
+    use zeroize::Zeroize as _;
+
     let Some(expected_control_token) = expected_control_token else {
         return ParsedReasoningControlFrame::NotReasoning;
     };
@@ -28952,6 +29342,56 @@ fn authenticated_reasoning_control(
     request_id.zeroize();
     control_token.zeroize();
     ParsedReasoningControlFrame::Valid(ReasoningControlFrame {
+        raw: zeroize::Zeroizing::new(line.to_owned()),
+        terminal,
+    })
+}
+
+/// W162 uses the same v3 authentication fields as reasoning controls but
+/// retains no text. The request-owned reducer performs the strict complete
+/// decode, including the closed rate/unit/state schema and its independent
+/// contiguous sequence.
+fn authenticated_throughput_control(
+    line: &str,
+    expected_control_token: Option<&str>,
+) -> ParsedThroughputControlFrame {
+    use zeroize::Zeroize as _;
+
+    let Some(expected_control_token) = expected_control_token else {
+        return ParsedThroughputControlFrame::NotThroughput;
+    };
+    let probe = match serde_json::from_str::<ThroughputKindProbe>(line) {
+        Ok(probe) => probe,
+        Err(_) => {
+            return if line.contains("\"neoth_stream\"")
+                && line.contains("\"throughput_state\"")
+            {
+                ParsedThroughputControlFrame::InvalidAuthenticated
+            } else {
+                ParsedThroughputControlFrame::NotThroughput
+            };
+        }
+    };
+    let mut kind = zeroize::Zeroizing::new(probe.neoth_stream);
+    let mut request_id = zeroize::Zeroizing::new(probe.request_id);
+    let mut control_token = zeroize::Zeroizing::new(probe.control_token);
+    let mut state = zeroize::Zeroizing::new(probe.state);
+    if kind.as_str() != "throughput_state" {
+        return ParsedThroughputControlFrame::NotThroughput;
+    }
+    let expected_request_id = chat_stream_request_id(expected_control_token);
+    if control_token.as_str() != expected_control_token
+        || request_id.as_str() != expected_request_id
+        || probe.protocol_version != CHAT_STREAM_PROTOCOL_VERSION
+    {
+        return ParsedThroughputControlFrame::InvalidAuthenticated;
+    }
+    kind.zeroize();
+    request_id.zeroize();
+    control_token.zeroize();
+    let terminal = matches!(state.as_str(), "cancelled" | "error");
+    state.zeroize();
+    ParsedThroughputControlFrame::Valid(ThroughputControlFrame {
         raw: zeroize::Zeroizing::new(line.to_owned()),
         terminal,
     })
@@ -42963,6 +43403,7 @@ exit 72
             chat_attachments: Arc::new(Mutex::new(Vec::new())),
             chat_reasoning_displays: Arc::new(Mutex::new(std::collections::HashMap::new())),
             chat_reasoning_projections: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            chat_throughput_projections: Arc::new(Mutex::new(std::collections::HashMap::new())),
             chat_auto_nudge_budget: Arc::new(std::sync::atomic::AtomicU8::new(0)),
             chat_auto_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             chat_consent_flow_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -43447,6 +43888,166 @@ exit 0
         assert!(!snapshots[0].active);
     }
 
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w162_throughput_controls_are_transient_and_provider_done_fenced() {
+        let window = MainWindow::new().expect("construct W162 MainWindow");
+        let overlay = MiniOverlay::new().expect("construct W162 MiniOverlay");
+        let token = "w162-control-token";
+        let main_request = ChatStreamRequestId::parse_wire("162").expect("W162 main request id");
+        let projections: ChatThroughputProjections =
+            Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let measuring = serde_json::json!({
+            "neoth_stream": "throughput_state", "protocol_version": 3,
+            "request_id": chat_stream_request_id(token), "control_token": token,
+            "sequence": 1, "state": "measuring", "basis": "visible_event",
+            "unit": "stream_events_per_second", "per_second": 12.5, "reason": null,
+        })
+        .to_string();
+        let parsed = parse_chat_stream_protocol_incremental(
+            &format!("{CHAT_STREAM_CONTROL_PREFIX}{measuring}\n"),
+            Some(token),
+        );
+        assert!(parsed.protocol_valid, "authenticated W162 control must parse cleanly");
+        assert!(parsed.text.is_empty(), "throughput controls cannot become reply text");
+        assert_eq!(parsed.throughput_controls.len(), 1);
+
+        begin_chat_throughput_projection(&projections, main_request, token);
+        let snapshots = apply_chat_throughput_controls(
+            &projections,
+            main_request,
+            token,
+            &parsed.throughput_controls,
+        )
+        .expect("accept authenticated W162 visible-event rate");
+        project_chat_throughput_snapshot(
+            Some(&window),
+            Some(&overlay),
+            ChatStreamSurface::Main,
+            snapshots[0],
+        );
+        assert_eq!(window.get_chat_throughput_status().to_string(), "Stream events: 12.5/s");
+        assert!(window.get_chat_throughput_active());
+        assert!(
+            !window
+                .get_chat_live_messages()
+                .iter()
+                .any(|row| row.text.contains("Stream events: 12.5/s")),
+            "throughput cannot enter the canonical live/history model"
+        );
+        assert!(
+            !overlay
+                .get_recent_lines()
+                .iter()
+                .any(|line| line.contains("Stream events: 12.5/s")),
+            "throughput cannot enter Buddy recents"
+        );
+
+        provider_done_chat_throughput_projection(&projections, main_request);
+        clear_main_throughput_projection(&window);
+        assert!(projections.lock().expect("W162 provider-done projection lock").is_empty());
+        assert!(window.get_chat_throughput_status().is_empty());
+        assert!(!window.get_chat_throughput_active());
+
+        let forged = ThroughputControlFrame {
+            raw: zeroize::Zeroizing::new(
+                serde_json::json!({
+                    "neoth_stream": "throughput_state", "protocol_version": 3,
+                    "request_id": "forged-request", "control_token": token,
+                    "sequence": 1, "state": "measuring", "basis": "visible_event",
+                    "unit": "stream_events_per_second", "per_second": 12.5, "reason": null,
+                })
+                .to_string(),
+            ),
+            terminal: false,
+        };
+        begin_chat_throughput_projection(&projections, main_request, token);
+        assert!(
+            apply_chat_throughput_controls(&projections, main_request, token, &[forged]).is_err(),
+            "forged request binding must fail closed"
+        );
+        assert!(
+            projections
+                .lock()
+                .expect("W162 forged projection lock")
+                .get(&main_request)
+                .expect("forged frame keeps its fenced lease")
+                .snapshot()
+                .is_none(),
+            "a forged rate cannot repaint the prior snapshot"
+        );
+        discard_chat_throughput_projection(&projections, main_request);
+
+        let gapped = ThroughputControlFrame {
+            raw: zeroize::Zeroizing::new(measuring.replacen("\"sequence\":1", "\"sequence\":2", 1)),
+            terminal: false,
+        };
+        begin_chat_throughput_projection(&projections, main_request, token);
+        assert!(
+            apply_chat_throughput_controls(&projections, main_request, token, &[gapped]).is_err(),
+            "a gapped independent throughput sequence must fail closed"
+        );
+        discard_chat_throughput_projection(&projections, main_request);
+
+        let buddy_request = ChatStreamRequestId::parse_wire("163").expect("W162 Buddy request id");
+        let terminal = serde_json::json!({
+            "neoth_stream": "throughput_state", "protocol_version": 3,
+            "request_id": chat_stream_request_id(token), "control_token": token,
+            "sequence": 1, "state": "cancelled", "basis": null,
+            "unit": null, "per_second": null, "reason": "cancelled",
+        })
+        .to_string();
+        let after_terminal = measuring.replacen("\"sequence\":1", "\"sequence\":2", 1);
+        let terminal_then_measuring = parse_chat_stream_protocol_incremental(
+            &format!(
+                "{CHAT_STREAM_CONTROL_PREFIX}{terminal}\n{CHAT_STREAM_CONTROL_PREFIX}{after_terminal}\n"
+            ),
+            Some(token),
+        );
+        assert!(
+            !terminal_then_measuring.protocol_valid,
+            "a throughput frame after its terminal state must invalidate the stream"
+        );
+
+        begin_chat_throughput_projection(&projections, buddy_request, token);
+        let terminal_snapshots = apply_chat_throughput_controls(
+            &projections,
+            buddy_request,
+            token,
+            &[ThroughputControlFrame {
+                raw: zeroize::Zeroizing::new(terminal),
+                terminal: true,
+            }],
+        )
+        .expect("accept W162 terminal cancellation state");
+        project_chat_throughput_snapshot(
+            Some(&window),
+            Some(&overlay),
+            ChatStreamSurface::Buddy,
+            terminal_snapshots[0],
+        );
+        assert_eq!(
+            overlay.get_throughput_status().to_string(),
+            "Throughput unavailable — stream cancelled"
+        );
+        assert!(overlay.get_throughput_active());
+        assert!(
+            apply_chat_throughput_controls(
+                &projections,
+                buddy_request,
+                token,
+                &[ThroughputControlFrame {
+                    raw: zeroize::Zeroizing::new(after_terminal),
+                    terminal: false,
+                }],
+            )
+            .is_err(),
+            "a terminal rate lease cannot be reopened by a later control"
+        );
+        clear_buddy_throughput_projection(&overlay);
+        assert!(overlay.get_throughput_status().is_empty());
+        assert!(!overlay.get_throughput_active());
+    }
     #[cfg(not(windows))]
     #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight() {
@@ -44084,7 +44685,7 @@ exit 7
     }
 
     #[cfg(target_os = "macos")]
-    const MACOS_NATIVE_HARNESS_TESTS: [&str; 17] = [
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 18] = [
         "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
         "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
@@ -44100,6 +44701,7 @@ exit 7
         "w58_gui_callback_runtime_tests::w149_buddy_quality_handoff_selects_the_exact_selfimprove_proposal",
         "w58_gui_callback_runtime_tests::w153_legacy_child_callbacks_project_only_transient_reasoning",
         "w58_gui_callback_runtime_tests::w153_reasoning_child_controls_are_transient_and_history_excluded",
+        "w58_gui_callback_runtime_tests::w162_throughput_controls_are_transient_and_provider_done_fenced",
         "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight",
         "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts",
     ];
@@ -44202,6 +44804,9 @@ exit 7
                     }
                     "w58_gui_callback_runtime_tests::w153_reasoning_child_controls_are_transient_and_history_excluded" => {
                         w153_reasoning_child_controls_are_transient_and_history_excluded()
+                    }
+                    "w58_gui_callback_runtime_tests::w162_throughput_controls_are_transient_and_provider_done_fenced" => {
+                        w162_throughput_controls_are_transient_and_provider_done_fenced()
                     }
                     "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight" => {
                         w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight()
