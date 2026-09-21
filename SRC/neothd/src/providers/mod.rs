@@ -1197,10 +1197,18 @@ pub enum ProviderStreamPayload {
     /// Original non-terminal legacy chunk. This intentionally carries empty
     /// deltas and usage-only metadata so the event plane preserves the same
     /// audit inputs as `ChunkStream`.
-    VisibleText { chunk: CompletionChunk },
-    ReasoningDelta { delta: ReasoningText },
-    ReasoningTerminal { state: ReasoningTerminalState },
-    Done { chunk: CompletionChunk },
+    VisibleText {
+        chunk: CompletionChunk,
+    },
+    ReasoningDelta {
+        delta: ReasoningText,
+    },
+    ReasoningTerminal {
+        state: ReasoningTerminalState,
+    },
+    Done {
+        chunk: CompletionChunk,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -2422,7 +2430,10 @@ pub trait Provider: Send + Sync {
             }),
             effect_start_adapter,
         );
-        match self.stream_events_raw(req, &permit, reasoning_display).await {
+        match self
+            .stream_events_raw(req, &permit, reasoning_display)
+            .await
+        {
             Ok(stream) => Ok(audit.wrap_event_stream(normalize_event_stream(
                 stamp_event_stream_identity(
                     stream,
@@ -2546,7 +2557,9 @@ pub trait Provider: Send + Sync {
         permit: &ProviderDispatchPermit,
         _reasoning_display: ReasoningDisplayGrant,
     ) -> Result<ProviderEventStream> {
-        Ok(event_stream_from_chunks(self.stream_raw(req, permit).await?))
+        Ok(event_stream_from_chunks(
+            self.stream_raw(req, permit).await?,
+        ))
     }
 
     /// Safe streaming entry. Bare leaves fail closed in production.
@@ -2583,7 +2596,9 @@ pub trait Provider: Send + Sync {
             self.validate_request_controls(&req)?;
             let identity = bind_wire_identity(self, &mut req)?;
             let permit = ProviderDispatchPermit::transport_only(None, None, None, false);
-            let stream = self.stream_events_raw(req, &permit, reasoning_display).await?;
+            let stream = self
+                .stream_events_raw(req, &permit, reasoning_display)
+                .await?;
             return Ok(normalize_event_stream(stamp_event_stream_identity(
                 stream, identity, false,
             )));
@@ -3710,7 +3725,10 @@ mod tests {
         }
 
         assert_eq!(
-            observed.iter().map(|event| event.sequence).collect::<Vec<_>>(),
+            observed
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
             vec![1, 2, 3],
             "event sequence starts at one and remains contiguous"
         );
@@ -3750,20 +3768,22 @@ mod tests {
             }
             text
         });
-        assert_eq!(rendered, "final", "terminal visible text projects exactly once");
+        assert_eq!(
+            rendered, "final",
+            "terminal visible text projects exactly once"
+        );
     }
 
     #[tokio::test]
     async fn event_normalizer_requires_reasoning_terminal_before_done() {
-        let raw: ProviderEventStream = Box::pin(futures_util::stream::iter(vec![Ok(
-            ProviderStreamEvent {
+        let raw: ProviderEventStream =
+            Box::pin(futures_util::stream::iter(vec![Ok(ProviderStreamEvent {
                 identity: Default::default(),
                 sequence: 1,
                 payload: ProviderStreamPayload::Done {
                     chunk: event_test_chunk("final", true, None, None, None, None),
                 },
-            },
-        )]));
+            })]));
         let mut normalized = normalize_event_stream(raw);
         let error = normalized
             .next()
@@ -3776,7 +3796,10 @@ mod tests {
     #[test]
     fn reasoning_contract_is_redacted_and_wire_closed() {
         assert_eq!(
-            format!("{:?}", ReasoningText::new("private chain of thought".into())),
+            format!(
+                "{:?}",
+                ReasoningText::new("private chain of thought".into())
+            ),
             "ReasoningText(<redacted>)"
         );
         assert_eq!(

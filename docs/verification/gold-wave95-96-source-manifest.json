@@ -1,8 +1,8 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W153A-provider-reasoning-and-metadata-audit",
-  "base": "02c163206d0e68015c1eaa997fed859ea860d0e9",
-  "capturedUtc": "2026-09-21T13:45:21.6250441Z",
+  "base": "772a60195d80af431e7b1e8c79eed21a16666298",
+  "capturedUtc": "2026-09-21T13:51:03.5697568Z",
   "validationStatus": "W153A_PROVIDER_AUDIT_HOSTED_EXECUTION_PENDING",
   "scopeNote": "325 source inputs; W153A provider event compatibility and metadata-only reasoning audit. Concurrent CLI/daemon/GUI W153 changes are excluded. No Road closure; executable gates GitHub-only.",
   "files": [
@@ -1268,8 +1268,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/claude_cli.rs",
-      "bytes": 159029,
-      "sha256": "FE7F1CB714FA1541E87E7E275CA12354C6FF79B25E4A2D6C87B6ADEF115F21F8"
+      "bytes": 159241,
+      "sha256": "19F0DADD39A887F8EEB17790B277A62DA536E432B256E0069C3C0776EF3C9D29"
     },
     {
       "path": "SRC/neothd/src/providers/claude_tmux.rs",
@@ -1283,8 +1283,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/compactor.rs",
-      "bytes": 78147,
-      "sha256": "62061CD3F091E146F75C5BE79E76498426D2D2BFE9511257286800A9D468EA5F"
+      "bytes": 78181,
+      "sha256": "9B79AD3B1AC0BF390AF75307263EA08C6842CD0037EE97CF68701329716D732E"
     },
     {
       "path": "SRC/neothd/src/providers/copilot.rs",
@@ -1313,8 +1313,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/mod.rs",
-      "bytes": 214685,
-      "sha256": "2779E1B3D3160AFB3EC1EFC917A80E3E3168EA7BB41CB0013F8037D1219FA026"
+      "bytes": 214948,
+      "sha256": "9029D0561C8AEF49CDCCC80ACA178E241636E4C1F36AA8E9A848171F1C9EE7C2"
     },
     {
       "path": "SRC/neothd/src/providers/ollama_api.rs",
@@ -1509,7 +1509,7 @@
     {
       "path": "SRC/neothd/src/wal/mod.rs",
       "bytes": 5824,
-      "sha256": "3B5FADAD5463190F97A95B5DB3F2541FA948AA05FAC789768C3F2C52EC52E2C5"
+      "sha256": "1A51A70ED67FCAB0C4D64B71540625C5F359AC0F442268AE21758F219F50249B"
     },
     {
       "path": "SRC/neothd/src/wal/payloads_u04.rs",
@@ -1518,8 +1518,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/reasoning_audit.rs",
-      "bytes": 18107,
-      "sha256": "69FD3488F006BA4FA438959D56FD7753C38FE02EA8F73F8E0B7E02B3DDC56855"
+      "bytes": 18230,
+      "sha256": "33156D7E6AB9E97243A393998695633939DBCC19D43A637CDA6B784528C92733"
     },
     {
       "path": "SRC/neothd/src/wal/scan.rs",

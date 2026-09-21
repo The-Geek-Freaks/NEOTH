@@ -3011,7 +3011,8 @@ mod tests {
             input,
             output,
             stop_reason,
-        } = parse_stream_event(line) else {
+        } = parse_stream_event(line)
+        else {
             panic!("assistant stream-json envelope must not be ignored");
         };
         assert_eq!(input, Some(42));
@@ -3033,7 +3034,10 @@ mod tests {
         let StreamEvent::Assistant { content, .. } = parse_stream_event(line) else {
             panic!("redacted reasoning block must be classified");
         };
-        assert!(matches!(content.as_slice(), [AssistantContent::RedactedReasoning]));
+        assert!(matches!(
+            content.as_slice(),
+            [AssistantContent::RedactedReasoning]
+        ));
     }
 
     #[test]
@@ -3048,9 +3052,22 @@ mod tests {
             "result": "terminal response"
         });
         zeroize_json_strings(&mut value);
-        assert_eq!(value.pointer("/message/content/0/thinking").and_then(serde_json::Value::as_str), Some(""));
-        assert_eq!(value.pointer("/message/content/1/text").and_then(serde_json::Value::as_str), Some(""));
-        assert_eq!(value.get("result").and_then(serde_json::Value::as_str), Some(""));
+        assert_eq!(
+            value
+                .pointer("/message/content/0/thinking")
+                .and_then(serde_json::Value::as_str),
+            Some("")
+        );
+        assert_eq!(
+            value
+                .pointer("/message/content/1/text")
+                .and_then(serde_json::Value::as_str),
+            Some("")
+        );
+        assert_eq!(
+            value.get("result").and_then(serde_json::Value::as_str),
+            Some("")
+        );
     }
 
     #[test]

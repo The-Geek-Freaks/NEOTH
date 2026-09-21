@@ -779,7 +779,9 @@ pub fn arc_from_config(
             permit: &ProviderDispatchPermit,
             reasoning_display: ReasoningDisplayGrant,
         ) -> Result<ProviderEventStream> {
-            self.0.stream_events_raw(req, permit, reasoning_display).await
+            self.0
+                .stream_events_raw(req, permit, reasoning_display)
+                .await
         }
         async fn complete_authorized(
             &self,

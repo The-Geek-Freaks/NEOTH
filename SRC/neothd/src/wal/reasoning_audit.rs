@@ -264,24 +264,18 @@ impl ReasoningStreamAuditV1 {
 
 /// Serializer entry point for append paths that need a free function instead
 /// of a method. It carries the same validation as [`ReasoningStreamAuditV1`].
-pub fn encode_reasoning_stream_audit_v1(
-    audit: &ReasoningStreamAuditV1,
-) -> anyhow::Result<Vec<u8>> {
+pub fn encode_reasoning_stream_audit_v1(audit: &ReasoningStreamAuditV1) -> anyhow::Result<Vec<u8>> {
     audit.encode()
 }
 
 fn is_lower_sha256_hex(value: &str) -> bool {
     value.len() == REQUEST_ID_DIGEST_HEX_LEN
-        && value.bytes().all(|byte| {
-            byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')
-        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
-fn ensure_authenticated_identity(
-    label: &str,
-    value: &str,
-    max_bytes: usize,
-) -> anyhow::Result<()> {
+fn ensure_authenticated_identity(label: &str, value: &str, max_bytes: usize) -> anyhow::Result<()> {
     anyhow::ensure!(
         !value.trim().is_empty() && value.len() <= max_bytes,
         "reasoning stream audit {label} must contain 1..={max_bytes} bytes"
@@ -316,7 +310,10 @@ mod tests {
         let value = serde_json::to_value(valid_audit()).expect("serialize v1 audit");
         let object = value.as_object().expect("v1 object");
         assert_eq!(
-            object.keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>(),
+            object
+                .keys()
+                .map(String::as_str)
+                .collect::<std::collections::BTreeSet<_>>(),
             std::collections::BTreeSet::from([
                 "schema_version",
                 "request_id_digest",
@@ -340,7 +337,10 @@ mod tests {
         );
         assert!(
             !object.keys().any(|key| {
-                matches!(key.as_str(), "reasoning" | "content_hash" | "prompt" | "session" | "replay")
+                matches!(
+                    key.as_str(),
+                    "reasoning" | "content_hash" | "prompt" | "session" | "replay"
+                )
             }),
             "metadata-only v1 must never grow a raw or replayable reasoning field"
         );
@@ -435,7 +435,10 @@ mod tests {
         )
         .expect("pre-identity stream failure is representable");
         let value = serde_json::to_value(&audit).expect("serialize unobserved audit");
-        assert_eq!(value["identity"], serde_json::json!({ "kind": "unobserved" }));
+        assert_eq!(
+            value["identity"],
+            serde_json::json!({ "kind": "unobserved" })
+        );
         assert_eq!(value["event_count"], 0);
         assert_eq!(value["byte_count"], 0);
         assert!(

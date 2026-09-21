@@ -8,6 +8,12 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+W153A source772a6019 passed CodeQuality35608035463. The19 exact Rustfmt
+postimages from Preflight35608035307 are imported across five frozen files.
+Core build/reference35608152765 is running on772a6019; fresh formatting and
+native test execution remain pending. All CLI/daemon/GUI working changes stay
+outside this provider/audit format follow-up.
+
 **W153A provider/audit subsystem (2026-09-21):** the new provider event plane,
 correct native Claude assistant/result parsing, decorator authorization and
 metadata-only reasoning audit are independently reviewed. Fourteen new native
