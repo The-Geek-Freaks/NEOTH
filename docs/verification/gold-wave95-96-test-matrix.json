@@ -4,8 +4,8 @@
   "base": "819fd80388adb3236eb69710a7b234afee306a36",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 56870,
-    "sha256": "ED2010C5601D4E1D2947567A8E57CB07B31F981B14638CABEBE6E5DDFDCBB192"
+    "bytes": 55261,
+    "sha256": "713BAAE3C78E7475D32F719E9C3AD846B219F29EAE757AF99584C973CA5D3742"
   },
   "sourceInputs": 320,
   "requiredNativeTests": [
