@@ -104,7 +104,7 @@ impl TypeHierarchy {
         endpoints: BTreeSet<TypeEndpoint>,
     ) -> Result<Self> {
         for endpoint in &endpoints {
-            validate_endpoint(&endpoint)?;
+            validate_endpoint(endpoint)?;
         }
         for edge in &edges {
             ensure!(
@@ -185,11 +185,11 @@ impl TypeHierarchy {
                 "type hierarchy source path is duplicated"
             );
             ensure!(
-                source.as_bytes().len() <= DEFAULT_MAX_FILE_BYTES as usize,
+                source.len() <= DEFAULT_MAX_FILE_BYTES as usize,
                 "type hierarchy source exceeds bounded per-file byte cap"
             );
             source_bytes = source_bytes
-                .checked_add(source.as_bytes().len())
+                .checked_add(source.len())
                 .ok_or_else(|| anyhow::anyhow!("type hierarchy source byte counter overflow"))?;
             ensure!(
                 source_bytes <= DEFAULT_MAX_TYPE_SOURCE_BYTES,
@@ -443,7 +443,8 @@ impl<'a> RustTypeCollector<'a> {
         let declared_names: Vec<String> = scope
             .declarations
             .iter()
-            .filter_map(|(name, kind)| kind.is_some().then(|| name.clone()))
+            .filter(|(_, kind)| kind.is_some())
+            .map(|(name, _)| name.clone())
             .collect();
         for name in declared_names {
             let symbol = self.qualified(&name);

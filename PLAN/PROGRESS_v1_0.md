@@ -2,6 +2,11 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W140 strict-lint repair (2026-09-21):** four observed Linux Clippy findings
+from CI 35581691195 are repaired without changing type-hierarchy behavior or
+suppressing diagnostics. See [W140](../docs/gold-wave140-verification.md).
+Fresh hosted lint/runtime remains required; no Road checkbox is closed.
+
 **W137 retained-session source admitted (2026-09-21):** three new acceptance
 fixtures and three strengthened tests cover authorized skill A/B reload,
 retry/local fallback, authenticated account/config isolation and real

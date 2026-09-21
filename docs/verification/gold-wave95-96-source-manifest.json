@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W136-skill-registry-and-type-hierarchy",
-  "base": "12048d6c225c50faa42147632c54be7c5039716d",
-  "capturedUtc": "2026-09-21T09:20:02.0175504Z",
-  "validationStatus": "W137_REVIEWED_SESSION_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "scopeNote": "308 cumulative inputs; W137 frozen reviewed session sources. W138 working source excluded. No local validation or Road closure.",
+  "base": "637c00612cd80ddf0ab66948745b5347c18e1e31",
+  "capturedUtc": "2026-09-21T09:22:11.4510441Z",
+  "validationStatus": "W140_OBSERVED_LINT_REPAIR_REMOTE_EXECUTION_REQUIRED",
+  "scopeNote": "308 cumulative inputs, W137 reviewed frozen session sources plus four observed W140 lint repairs. W138 working source excluded; no local validation or Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -763,8 +763,8 @@
     },
     {
       "path": "SRC/neothd/src/code_map/type_hierarchy.rs",
-      "bytes": 33489,
-      "sha256": "43B5488F7DE6B944ACFA3342FDDD050F55B8DDA3FC4ED9A0156C4C9F774CF1EA"
+      "bytes": 33480,
+      "sha256": "AB6EDA837C6F3C08B1577653F6F1D88DC0E5E463B657B27FE80BAC7C0940EC45"
     },
     {
       "path": "SRC/neothd/src/coding/classifier.rs",
