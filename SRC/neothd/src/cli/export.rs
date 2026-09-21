@@ -9,11 +9,11 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::Args;
+use clap::{Args, Subcommand, ValueEnum};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::daemon::export;
+use crate::daemon::{export, train_export};
 
 #[derive(Args, Debug, Clone)]
 pub struct ExportArgs {
@@ -47,28 +47,48 @@ pub struct ExportArgs {
     #[arg(long, conflicts_with_all = ["subject", "out", "since"])]
     pub list_subjects: bool,
 
+    #[command(subcommand)]
+    pub action: Option<ExportAction>,
+
     /// Output format for the summary line (NOT the export bundle itself).
     #[arg(skip)]
     pub output: OutputFormat,
 }
 
+#[derive(Subcommand, Debug, Clone)]
+pub enum ExportAction {
+    /// Build a local redacted SFT JSONL from exact Accepted terminal receipts.
+    #[command(name = "training-set")]
+    TrainingSet(TrainingSetArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct TrainingSetArgs {
+    /// Explicit JSONL destination. A sibling `.manifest.json` is published with it.
+    #[arg(long, value_name = "FILE")]
+    pub out: PathBuf,
+    #[arg(long, value_enum)]
+    pub format: TrainingSetFormatArg,
+    #[arg(long, value_name = "DIR")]
+    pub home: Option<PathBuf>,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy)]
+pub enum TrainingSetFormatArg { Openai, Sharegpt }
+impl TrainingSetFormatArg { fn as_export_format(self) -> train_export::TrainingSetFormat { match self { Self::Openai => train_export::TrainingSetFormat::Openai, Self::Sharegpt => train_export::TrainingSetFormat::Sharegpt } } }
+
 pub async fn run_export(args: ExportArgs) -> Result<()> {
     ensure_generic_export_authority(&args)?;
+    if let Some(ExportAction::TrainingSet(training)) = args.action {
+        return run_training_set(training, args.output);
+    }
     let home = args.home.unwrap_or_else(FreedomConfig::default_neoth_home);
-
     let out = args.out.unwrap_or_else(export::default_export_dir);
-    let format = export::ExportFormat::from_str(&args.format).ok_or_else(|| {
-        anyhow::anyhow!("invalid --format '{}'. Expected: jsonl | md", args.format)
-    })?;
+    let format = export::ExportFormat::from_str(&args.format).ok_or_else(|| anyhow::anyhow!("invalid --format '{}'. Expected: jsonl | md", args.format))?;
     let since = export::parse_since(args.since.as_deref())?;
-
-    let summary = export::run_export(&home, &out, format, since)
-        .with_context(|| format!("export {} → {}", home.display(), out.display()))?;
-
+    let summary = export::run_export(&home, &out, format, since).with_context(|| format!("export {} → {}", home.display(), out.display()))?;
     match args.output {
-        OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&summary)?);
-        }
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&summary)?),
         OutputFormat::Jsonl => println!("{}", serde_json::to_string(&summary)?),
         OutputFormat::Table => {
             println!("# NEOTH export → {}", summary.output_dir);
@@ -95,12 +115,33 @@ pub async fn run_export(args: ExportArgs) -> Result<()> {
     Ok(())
 }
 
-/// Reject unimplemented private-subject export modes before resolving a home,
-/// creating an output path, reading state, or rendering any output.
-fn ensure_generic_export_authority(args: &ExportArgs) -> Result<()> {
-    if args.subject.is_some() || args.list_subjects {
-        return Err(export::private_dsar_authority_unavailable());
+fn run_training_set(args: TrainingSetArgs, output: OutputFormat) -> Result<()> {
+    let home = args.home.unwrap_or_else(FreedomConfig::default_neoth_home);
+    let summary = train_export::export_training_set(&home, &args.out, args.format.as_export_format())?;
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&summary)?),
+        OutputFormat::Jsonl => println!("{}", serde_json::to_string(&summary)?),
+        OutputFormat::Table => {
+            println!("# NEOTH training-set export");
+            println!("  dataset             : {}", summary.output_path);
+            println!("  manifest            : {}", summary.manifest_path);
+            println!("  format              : {}", summary.format);
+            println!("  exported            : {}", summary.exported);
+            println!("  teacher corrected   : {}", summary.teacher_corrected);
+            println!("  excluded negatives  : {}", summary.excluded_needs_correction + summary.excluded_not_helpful);
+            println!("  excluded unlabelled : {}", summary.excluded_unlabelled);
+            println!("  excluded legacy     : {}", summary.excluded_legacy_unbound);
+            println!("  excluded missing    : {}", summary.excluded_missing_source);
+            println!("  excluded duplicate  : {}", summary.excluded_duplicate_binding);
+            println!("  excluded teacher    : {}", summary.excluded_teacher_ambiguous);
+            println!("  unchanged           : {}", summary.unchanged);
+        }
     }
+    Ok(())
+}
+
+fn ensure_generic_export_authority(args: &ExportArgs) -> Result<()> {
+    if args.subject.is_some() || args.list_subjects { return Err(export::private_dsar_authority_unavailable()); }
     Ok(())
 }
 
@@ -141,6 +182,15 @@ mod tests {
     }
 
     #[test]
+    fn training_set_cli_is_explicit() {
+        use crate::cli::{Cli, Commands}; use clap::Parser;
+        let cli = Cli::try_parse_from(["neoth", "export", "training-set", "--out", "set.jsonl", "--format", "openai"]).unwrap();
+        assert!(matches!(cli.command, Commands::Export(ExportArgs { action: Some(ExportAction::TrainingSet(TrainingSetArgs { format: TrainingSetFormatArg::Openai, .. })), .. })));
+        assert!(Cli::try_parse_from(["neoth", "export", "training-set", "--format", "openai"]).is_err());
+        assert!(Cli::try_parse_from(["neoth", "export", "training-set", "--out", "set.jsonl", "--format", "openai", "--text", "no"]).is_err());
+    }
+
+    #[test]
     fn private_dsar_flags_fail_closed_before_export_io() {
         let root = tempfile::tempdir().unwrap();
         let output = root.path().join("must-not-write");
@@ -152,6 +202,7 @@ mod tests {
             home: Some(home.clone()),
             subject: None,
             list_subjects: false,
+            action: None,
             output: OutputFormat::Table,
         };
 

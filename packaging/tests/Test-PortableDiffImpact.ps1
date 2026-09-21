@@ -295,6 +295,27 @@ $exactSeeds = @($impact.Json.requested_seeds | Where-Object {
     $_.symbol -ceq 'changed_symbol'
 })
 if ($exactSeeds.Count -ne 1) { Stop-Acceptance 'one-hunk diff did not produce the exact changed_symbol seed' }
+$impactDiagnostic = [ordered]@{
+    kind = 'portable_diff_impact_identity_diagnostic'
+    requested_seed_count = @($impact.Json.requested_seeds).Count
+    impacted_node_count = @($impact.Json.impacted_nodes).Count
+    traversed_edge_count = @($impact.Json.traversed_edges).Count
+    unresolved_edge_count = @($impact.Json.unresolved_edges).Count
+    truncated = [bool]$impact.Json.truncated
+    budget_truncated = [bool]$impact.Json.budget_truncated
+    evidence_truncated = [bool]$impact.Json.evidence_truncated
+    impacted_identities = @($impact.Json.impacted_nodes | Select-Object -First 16 | ForEach-Object {
+        [ordered]@{ file = $_.file; symbol = $_.symbol; line = $_.line; kind = $_.kind }
+    })
+    caller_edge_present = @($impact.Json.traversed_edges | Where-Object {
+        $_.caller.file -ceq 'src/lib.rs' -and $_.caller.symbol -ceq 'caller_symbol' -and
+        $_.callee.file -ceq 'src/lib.rs' -and $_.callee.symbol -ceq 'changed_symbol'
+    }).Count -gt 0
+    caller_edge_unresolved = @($impact.Json.unresolved_edges | Where-Object {
+        $_.from_file -ceq 'src/lib.rs' -and $_.from_symbol -ceq 'caller_symbol' -and $_.to_name -ceq 'changed_symbol'
+    }).Count -gt 0
+}
+$impactDiagnostic | ConvertTo-Json -Depth 5 -Compress | Write-Output
 $callerNodes = @($impact.Json.impacted_nodes | Where-Object { $_.file -ceq 'src/lib.rs' -and $_.symbol -ceq 'caller_symbol' })
 if ($callerNodes.Count -lt 1) { Stop-Acceptance 'callers impact did not retain caller_symbol as a concrete affected declaration' }
 Add-Result -Results $results -Name 'diff_impact_exact_symbol_and_caller' -Process $impact

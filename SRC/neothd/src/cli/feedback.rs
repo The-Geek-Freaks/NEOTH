@@ -81,6 +81,7 @@ pub enum ResponseFeedbackAction {
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResponseFeedbackSignal {
+    Accepted,
     NeedsCorrection,
     NotHelpful,
 }
@@ -88,6 +89,7 @@ pub enum ResponseFeedbackSignal {
 impl From<ResponseFeedbackSignal> for ResponseSignal {
     fn from(signal: ResponseFeedbackSignal) -> Self {
         match signal {
+            ResponseFeedbackSignal::Accepted => Self::Accepted,
             ResponseFeedbackSignal::NeedsCorrection => Self::NeedsCorrection,
             ResponseFeedbackSignal::NotHelpful => Self::NotHelpful,
         }
@@ -220,6 +222,7 @@ fn response_status_ready_body(
 
 fn response_signal_name(signal: ResponseSignal) -> &'static str {
     match signal {
+        ResponseSignal::Accepted => "accepted",
         ResponseSignal::NeedsCorrection => "needs_correction",
         ResponseSignal::NotHelpful => "not_helpful",
     }
@@ -466,6 +469,38 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn response_accept_signal_is_closed_and_renders_as_accepted() {
+        let parsed = TestCli::try_parse_from([
+            "neoth",
+            "feedback",
+            "response",
+            "set",
+            "--response",
+            "0123456789abcdef0123456789abcdef",
+            "--session",
+            "terminal",
+            "--revision",
+            "0",
+            "--signal",
+            "accepted",
+        ])
+        .unwrap();
+        assert!(matches!(
+            parsed.command,
+            TestCommand::Feedback(FeedbackArgs {
+                action: FeedbackAction::Response {
+                    action: ResponseFeedbackAction::Set {
+                        signal: ResponseFeedbackSignal::Accepted,
+                        ..
+                    }
+                },
+                ..
+            })
+        ));
+        assert_eq!(response_signal_name(ResponseSignal::Accepted), "accepted");
     }
 
     #[test]

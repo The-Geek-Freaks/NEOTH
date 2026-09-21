@@ -11,12 +11,17 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::memory::transcript_store::{
+    CommittedAgentTurnReceipt, validate_feedback_eligible_agent_receipt,
+};
+
 const MAX_TARGETS: usize = 128;
 const MAX_STORE_BYTES: usize = 128 * 1024;
 const MAX_SESSION_ID_BYTES: usize = 512;
 const STORE_DIR: &str = "feedback";
 const STORE_FILE: &str = "response-feedback.json";
 const LOCK_FILE: &str = "response-feedback.lock";
+const STORE_VERSION: u8 = 2;
 
 static RESPONSE_FEEDBACK_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -49,6 +54,7 @@ impl<'de> Deserialize<'de> for ResponseId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ResponseSignal {
+    Accepted,
     NeedsCorrection,
     NotHelpful,
 }
@@ -103,6 +109,22 @@ pub(crate) struct ActiveResponseFeedbackSummary {
     pub(crate) not_helpful: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TrainingExportLabel {
+    Accepted,
+    NeedsCorrection,
+    NotHelpful,
+    Unlabelled,
+    LegacyUnbound,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TrainingExportCandidate {
+    pub(crate) session_id: String,
+    pub(crate) raw_turn_id: Option<i64>,
+    pub(crate) label: TrainingExportLabel,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredTarget {
@@ -112,12 +134,25 @@ struct StoredTarget {
     updated_at_unix: i64,
     revision: u64,
     active_signal: Option<ResponseSignal>,
+    #[serde(default)]
+    raw_turn_id: Option<i64>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredProjection {
+    #[serde(default)]
+    version: u8,
     targets: Vec<StoredTarget>,
+}
+
+impl Default for StoredProjection {
+    fn default() -> Self {
+        Self {
+            version: STORE_VERSION,
+            targets: Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -127,17 +162,45 @@ fn store_path(home: &Path) -> PathBuf {
 
 /// Register only after the producer's real writer-drain completion. Incognito
 /// short-circuits before path creation or file IO.
+#[cfg(test)]
 pub(crate) fn register_drained_terminal_response(
+    _home: &Path,
+    _session_id: &str,
+    incognito: bool,
+    _completed_at_unix: i64,
+) -> Result<Option<ResponseTargetStatus>, ResponseFeedbackRejection> {
+    // Legacy producers cannot mint a weaker, unbound capability. They retain
+    // normal terminal completion while feedback stays unavailable.
+    if incognito {
+        return Ok(None);
+    }
+    Ok(None)
+}
+
+/// Register only after the producer's real writer-drain completion and with
+/// its private, exact committed agent-row receipt. Incognito short-circuits
+/// before receipt validation or filesystem IO.
+pub(crate) fn register_drained_terminal_response_bound(
     home: &Path,
     session_id: &str,
     incognito: bool,
     completed_at_unix: i64,
+    receipt: &CommittedAgentTurnReceipt,
 ) -> Result<Option<ResponseTargetStatus>, ResponseFeedbackRejection> {
     if incognito {
         return Ok(None);
     }
     validate_session_id(session_id)?;
+    validate_feedback_eligible_agent_receipt(home, session_id, receipt)
+        .map_err(|_| ResponseFeedbackRejection::Unavailable)?;
     with_projection(home, |projection| {
+        if projection
+            .targets
+            .iter()
+            .any(|target| target.raw_turn_id == Some(receipt.raw_turn_id()))
+        {
+            return Err(ResponseFeedbackRejection::Unavailable);
+        }
         if projection.targets.len() >= MAX_TARGETS {
             let Some(index) = projection
                 .targets
@@ -156,6 +219,7 @@ pub(crate) fn register_drained_terminal_response(
             updated_at_unix: completed_at_unix,
             revision: 0,
             active_signal: None,
+            raw_turn_id: Some(receipt.raw_turn_id()),
         });
         Ok((
             Some(ResponseTargetStatus {
@@ -200,6 +264,14 @@ pub(crate) fn apply_response_feedback(
     validate_session_id(expected_session_id)?;
     with_projection(home, |projection| {
         let target = find_target_mut(projection, response_id, expected_session_id)?;
+        if matches!(operation, ResponseFeedbackOperation::Set(ResponseSignal::Accepted))
+            && target.raw_turn_id.is_none()
+        {
+            return Ok((
+                ResponseFeedbackOutcome::Rejected(ResponseFeedbackRejection::Unavailable),
+                false,
+            ));
+        }
         if target.revision != expected_revision {
             return Ok((
                 ResponseFeedbackOutcome::Rejected(ResponseFeedbackRejection::Stale),
@@ -255,6 +327,7 @@ pub(crate) fn active_response_feedback_summary(
         let mut summary = ActiveResponseFeedbackSummary::default();
         for target in &projection.targets {
             match target.active_signal {
+                Some(ResponseSignal::Accepted) => {}
                 Some(ResponseSignal::NeedsCorrection) => summary.needs_correction += 1,
                 Some(ResponseSignal::NotHelpful) => summary.not_helpful += 1,
                 None => {}
@@ -262,6 +335,48 @@ pub(crate) fn active_response_feedback_summary(
         }
         Ok((summary, false))
     })
+}
+
+/// Read the bounded private projection without creating directories, lockfiles,
+/// or a projection. The returned metadata is internal-only and content-free.
+pub(crate) fn read_training_export_candidates(
+    home: &Path,
+) -> Result<Vec<TrainingExportCandidate>, ResponseFeedbackRejection> {
+    let Some(home_directory) = crate::skills::store::open_bound_directory(
+        home,
+        false,
+        "response feedback export home",
+    )
+    .map_err(|_| ResponseFeedbackRejection::Unavailable)? else {
+        return Ok(Vec::new());
+    };
+    let namespace_path = home_directory.physical_display_path.join(STORE_DIR);
+    let Some(namespace) = crate::skills::store::open_bound_directory(
+        &namespace_path,
+        false,
+        "response feedback export directory",
+    )
+    .map_err(|_| ResponseFeedbackRejection::Unavailable)? else {
+        return Ok(Vec::new());
+    };
+    let projection = read_projection(&namespace.dir, &namespace_path.join(STORE_FILE))?;
+    Ok(projection
+        .targets
+        .iter()
+        .map(|target| TrainingExportCandidate {
+            session_id: target.session_id.clone(),
+            raw_turn_id: target.raw_turn_id,
+            label: match (target.raw_turn_id, target.active_signal) {
+                (None, _) => TrainingExportLabel::LegacyUnbound,
+                (Some(_), Some(ResponseSignal::Accepted)) => TrainingExportLabel::Accepted,
+                (Some(_), Some(ResponseSignal::NeedsCorrection)) => {
+                    TrainingExportLabel::NeedsCorrection
+                }
+                (Some(_), Some(ResponseSignal::NotHelpful)) => TrainingExportLabel::NotHelpful,
+                (Some(_), None) => TrainingExportLabel::Unlabelled,
+            },
+        })
+        .collect())
 }
 
 fn validate_session_id(session_id: &str) -> Result<(), ResponseFeedbackRejection> {
@@ -272,16 +387,30 @@ fn validate_session_id(session_id: &str) -> Result<(), ResponseFeedbackRejection
 }
 
 fn validate_projection(projection: &StoredProjection) -> Result<(), ResponseFeedbackRejection> {
+    if projection.version != 0 && projection.version != STORE_VERSION {
+        return Err(ResponseFeedbackRejection::Unavailable);
+    }
     if projection.targets.len() > MAX_TARGETS {
         return Err(ResponseFeedbackRejection::Unavailable);
     }
     for (index, target) in projection.targets.iter().enumerate() {
         validate_session_id(&target.session_id)?;
+        if target.raw_turn_id.is_some_and(|raw_turn_id| raw_turn_id <= 0) {
+            return Err(ResponseFeedbackRejection::Unavailable);
+        }
         if projection.targets[..index]
             .iter()
             .any(|prior| prior.response_id == target.response_id)
         {
             return Err(ResponseFeedbackRejection::Unavailable);
+        }
+        if let Some(raw_turn_id) = target.raw_turn_id {
+            if projection.targets[..index]
+                .iter()
+                .any(|prior| prior.raw_turn_id == Some(raw_turn_id))
+            {
+                return Err(ResponseFeedbackRejection::Unavailable);
+            }
         }
     }
     Ok(())
@@ -357,6 +486,7 @@ fn with_projection<T>(
     let mut projection = read_projection(&namespace, &path)?;
     let (result, changed) = mutate(&mut projection)?;
     if changed {
+        projection.version = STORE_VERSION;
         if !lock_binding
             .matches_regular_file_child_readonly(&namespace, OsStr::new(LOCK_FILE), &lock_display)
             .map_err(|_| ResponseFeedbackRejection::Unavailable)?
@@ -429,11 +559,39 @@ mod tests {
 
     const SESSION: &str = "session-a";
 
+    fn register_test_terminal(
+        home: &Path,
+        session_id: &str,
+        incognito: bool,
+        completed_at_unix: i64,
+    ) -> Result<Option<ResponseTargetStatus>, ResponseFeedbackRejection> {
+        if incognito {
+            return register_drained_terminal_response(home, session_id, true, completed_at_unix);
+        }
+        let conn = crate::memory::store::open(&home.join("views.db"))
+            .map_err(|_| ResponseFeedbackRejection::Unavailable)?;
+        let receipt = crate::memory::transcript_store::insert_feedback_eligible_agent_turn(
+            home,
+            &conn,
+            session_id,
+            completed_at_unix,
+            "test reply",
+        )
+        .map_err(|_| ResponseFeedbackRejection::Unavailable)?;
+        register_drained_terminal_response_bound(
+            home,
+            session_id,
+            false,
+            completed_at_unix,
+            &receipt,
+        )
+    }
+
     #[test]
     fn incognito_registration_is_zero_io() {
         let home = tempfile::tempdir().unwrap();
         assert_eq!(
-            register_drained_terminal_response(home.path(), SESSION, true, 10).unwrap(),
+            register_test_terminal(home.path(), SESSION, true, 10).unwrap(),
             None
         );
         assert!(!home.path().join(STORE_DIR).exists());
@@ -442,9 +600,124 @@ mod tests {
     #[test]
     fn fresh_home_registration_creates_the_private_projection_namespace() {
         let home = tempfile::tempdir().unwrap();
-        let target = register_drained_terminal_response(home.path(), SESSION, false, 10).unwrap();
+        let target = register_test_terminal(home.path(), SESSION, false, 10).unwrap();
         assert!(target.is_some());
         assert!(store_path(home.path()).is_file());
+    }
+
+    #[test]
+    fn bound_registration_requires_exact_receipt_home_row_and_unique_binding() {
+        let home = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&home.path().join("views.db")).unwrap();
+        let receipt = crate::memory::transcript_store::insert_feedback_eligible_agent_turn(
+            home.path(),
+            &conn,
+            SESSION,
+            10,
+            "reply",
+        )
+        .unwrap();
+        assert!(register_drained_terminal_response_bound(
+            home.path(),
+            SESSION,
+            false,
+            10,
+            &receipt,
+        )
+        .unwrap()
+        .is_some());
+        assert_eq!(
+            register_drained_terminal_response_bound(
+                home.path(),
+                SESSION,
+                false,
+                11,
+                &receipt,
+            ),
+            Err(ResponseFeedbackRejection::Unavailable)
+        );
+
+        let foreign = tempfile::tempdir().unwrap();
+        crate::memory::store::open(&foreign.path().join("views.db")).unwrap();
+        assert_eq!(
+            register_drained_terminal_response_bound(
+                foreign.path(),
+                SESSION,
+                false,
+                12,
+                &receipt,
+            ),
+            Err(ResponseFeedbackRejection::Unavailable)
+        );
+        assert!(!foreign.path().join(STORE_DIR).exists());
+    }
+
+    #[test]
+    fn accepted_requires_a_bound_target_and_export_metadata_keeps_legacy_visible() {
+        let home = tempfile::tempdir().unwrap();
+        let target = register_test_terminal(home.path(), SESSION, false, 10)
+            .unwrap()
+            .unwrap();
+        let expected_row_id = read_training_export_candidates(home.path())
+            .unwrap()
+            .first()
+            .and_then(|candidate| candidate.raw_turn_id)
+            .unwrap();
+        assert!(matches!(
+            apply_response_feedback(
+                home.path(),
+                &target.response_id,
+                SESSION,
+                0,
+                ResponseFeedbackOperation::Set(ResponseSignal::Accepted),
+                11,
+            )
+            .unwrap(),
+            ResponseFeedbackOutcome::Set {
+                signal: ResponseSignal::Accepted,
+                revision: 1,
+            }
+        ));
+        assert_eq!(
+            read_training_export_candidates(home.path()).unwrap(),
+            vec![TrainingExportCandidate {
+                session_id: SESSION.to_owned(),
+                raw_turn_id: Some(expected_row_id),
+                label: TrainingExportLabel::Accepted,
+            }]
+        );
+
+        let path = store_path(home.path());
+        let mut projection: StoredProjection = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        projection.targets[0].raw_turn_id = None;
+        std::fs::write(&path, serde_json::to_vec(&projection).unwrap()).unwrap();
+        assert!(matches!(
+            apply_response_feedback(
+                home.path(),
+                &target.response_id,
+                SESSION,
+                1,
+                ResponseFeedbackOperation::Set(ResponseSignal::Accepted),
+                12,
+            )
+            .unwrap(),
+            ResponseFeedbackOutcome::Rejected(ResponseFeedbackRejection::Unavailable)
+        ));
+        assert_eq!(
+            read_training_export_candidates(home.path()).unwrap(),
+            vec![TrainingExportCandidate {
+                session_id: SESSION.to_owned(),
+                raw_turn_id: None,
+                label: TrainingExportLabel::LegacyUnbound,
+            }]
+        );
+    }
+
+    #[test]
+    fn training_export_reader_is_read_only_for_absent_projection() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(read_training_export_candidates(home.path()).unwrap().is_empty());
+        assert!(!home.path().join(STORE_DIR).exists());
     }
 
     #[cfg(unix)]
@@ -456,13 +729,13 @@ mod tests {
         let redirected = tempfile::tempdir().unwrap();
         symlink(redirected.path(), home.path().join(STORE_DIR)).unwrap();
         assert_eq!(
-            register_drained_terminal_response(home.path(), SESSION, false, 10),
+            register_test_terminal(home.path(), SESSION, false, 10),
             Err(ResponseFeedbackRejection::Unavailable)
         );
         assert!(!redirected.path().join(STORE_FILE).exists());
 
         let clean_home = tempfile::tempdir().unwrap();
-        let target = register_drained_terminal_response(clean_home.path(), SESSION, false, 10)
+        let target = register_test_terminal(clean_home.path(), SESSION, false, 10)
             .unwrap()
             .unwrap();
         let outside = tempfile::tempdir().unwrap();
@@ -476,7 +749,7 @@ mod tests {
         assert!(!outside.path().join("redirected.json").exists());
 
         let lock_home = tempfile::tempdir().unwrap();
-        let lock_target = register_drained_terminal_response(lock_home.path(), SESSION, false, 10)
+        let lock_target = register_test_terminal(lock_home.path(), SESSION, false, 10)
             .unwrap()
             .unwrap();
         let lock = lock_home.path().join(STORE_DIR).join(LOCK_FILE);
@@ -499,7 +772,7 @@ mod tests {
         std::fs::create_dir(&feedback).unwrap();
         std::fs::set_permissions(&feedback, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(
-            register_drained_terminal_response(home.path(), SESSION, false, 10),
+            register_test_terminal(home.path(), SESSION, false, 10),
             Err(ResponseFeedbackRejection::Unavailable)
         );
     }
@@ -507,7 +780,7 @@ mod tests {
     #[test]
     fn set_replace_remove_is_revision_cas() {
         let home = tempfile::tempdir().unwrap();
-        let target = register_drained_terminal_response(home.path(), SESSION, false, 10)
+        let target = register_test_terminal(home.path(), SESSION, false, 10)
             .unwrap()
             .unwrap();
         assert_eq!(target.revision, 0);
@@ -588,7 +861,7 @@ mod tests {
     #[test]
     fn foreign_and_missing_pairs_reject_before_write() {
         let home = tempfile::tempdir().unwrap();
-        let target = register_drained_terminal_response(home.path(), SESSION, false, 10)
+        let target = register_test_terminal(home.path(), SESSION, false, 10)
             .unwrap()
             .unwrap();
         let path = store_path(home.path());
@@ -622,13 +895,13 @@ mod tests {
     #[test]
     fn inactive_eviction_never_recreates_evicted_target() {
         let home = tempfile::tempdir().unwrap();
-        let first = register_drained_terminal_response(home.path(), SESSION, false, 1)
+        let first = register_test_terminal(home.path(), SESSION, false, 1)
             .unwrap()
             .unwrap();
         for timestamp in 2..=MAX_TARGETS as i64 {
-            register_drained_terminal_response(home.path(), SESSION, false, timestamp).unwrap();
+            register_test_terminal(home.path(), SESSION, false, timestamp).unwrap();
         }
-        register_drained_terminal_response(home.path(), SESSION, false, 999).unwrap();
+        register_test_terminal(home.path(), SESSION, false, 999).unwrap();
         assert_eq!(
             read_response_feedback_status(home.path(), &first.response_id, SESSION),
             Err(ResponseFeedbackRejection::Missing)
@@ -650,7 +923,7 @@ mod tests {
     fn full_active_projection_refuses_new_issuance() {
         let home = tempfile::tempdir().unwrap();
         for timestamp in 0..MAX_TARGETS as i64 {
-            let target = register_drained_terminal_response(home.path(), SESSION, false, timestamp)
+            let target = register_test_terminal(home.path(), SESSION, false, timestamp)
                 .unwrap()
                 .unwrap();
             apply_response_feedback(
@@ -664,7 +937,7 @@ mod tests {
             .unwrap();
         }
         assert_eq!(
-            register_drained_terminal_response(home.path(), SESSION, false, 999),
+            register_test_terminal(home.path(), SESSION, false, 999),
             Err(ResponseFeedbackRejection::Unavailable)
         );
     }
@@ -672,7 +945,7 @@ mod tests {
     #[test]
     fn projection_is_content_free_and_invalid_loaded_projection_fails_closed() {
         let home = tempfile::tempdir().unwrap();
-        register_drained_terminal_response(home.path(), SESSION, false, 10).unwrap();
+        register_test_terminal(home.path(), SESSION, false, 10).unwrap();
         let path = store_path(home.path());
         let serialized = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
         for forbidden in ["prompt", "reply", "provider", "model", "freeform"] {
@@ -694,7 +967,7 @@ mod tests {
     #[test]
     fn same_revision_concurrent_apply_has_one_winner() {
         let home = Arc::new(tempfile::tempdir().unwrap());
-        let target = register_drained_terminal_response(home.path(), SESSION, false, 10)
+        let target = register_test_terminal(home.path(), SESSION, false, 10)
             .unwrap()
             .unwrap();
         let first_home = Arc::clone(&home);

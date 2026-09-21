@@ -7354,6 +7354,9 @@ pub(super) async fn run_post_reply_pipelines(
     mut stream_plan: PostReplyStreamPlan<'_>,
     retained_code_map_binding: Option<&RetainedCodeMapBinding>,
     correlation: Option<&str>,
+    feedback_eligible_agent_receipt: &mut Option<
+        crate::memory::transcript_store::CommittedAgentTurnReceipt,
+    >,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<Option<String>> {
     let first_tour_home = instance_paths.home.clone();
@@ -8481,13 +8484,19 @@ pub(super) async fn run_post_reply_pipelines(
                         &prompt,
                     );
                 }
-                crate::memory::transcript_store::insert_turn_best_effort(
+                match crate::memory::transcript_store::insert_feedback_eligible_agent_turn(
+                    &first_tour_home,
                     &conn,
                     &current_session_id,
-                    "agent",
                     chat_ts_unix + 1,
                     &response_text,
-                );
+                ) {
+                    Ok(receipt) => *feedback_eligible_agent_receipt = Some(receipt),
+                    Err(error) => tracing::warn!(
+                        ?error,
+                        "feedback-eligible agent transcript receipt unavailable; terminal feedback will remain unavailable"
+                    ),
+                }
             }
             Err(error) => tracing::warn!(
                 path = %db_path.display(),
@@ -8769,6 +8778,7 @@ async fn run_chat_with_consent(
     prepared.preparation.cancellation.close();
     let response_feedback_home = prepared.preparation.first_tour_home.clone();
     let response_feedback_incognito = prepared.input.incognito;
+    let response_feedback_receipt = prepared.take_feedback_eligible_agent_receipt();
     let response_feedback_token = prepared
         .preparation
         .stream_control_token
@@ -8788,6 +8798,7 @@ async fn run_chat_with_consent(
         &response_feedback_home,
         response_feedback_incognito,
         response_feedback_token,
+        response_feedback_receipt.as_ref(),
     )
 }
 
@@ -8803,6 +8814,9 @@ fn finish_cli_chat_turn_with_response_feedback(
     response_feedback_home: &std::path::Path,
     response_feedback_incognito: bool,
     response_feedback_control_token: Option<&str>,
+    response_feedback_receipt: Option<
+        &crate::memory::transcript_store::CommittedAgentTurnReceipt,
+    >,
 ) -> Result<()> {
     match result {
         Ok(deferred) => {
@@ -8815,12 +8829,18 @@ fn finish_cli_chat_turn_with_response_feedback(
                 // response-id registration point and it is immediately before
                 // the actual terminal event, never while the engine merely
                 // constructs its deferred terminal or StreamDone output.
-                if !response_feedback_incognito {
-                    match crate::feedback::response::register_drained_terminal_response(
+                if response_feedback_incognito {
+                    terminal.mark_response_feedback_unavailable();
+                } else if let (Some(session_id), Some(receipt)) = (
+                    terminal_session_id(&terminal),
+                    response_feedback_receipt,
+                ) {
+                    match crate::feedback::response::register_drained_terminal_response_bound(
                         response_feedback_home,
-                        terminal_session_id(&terminal).unwrap_or_default(),
+                        session_id,
                         false,
                         crate::time::now_unix_i64(),
+                        receipt,
                     ) {
                         Ok(Some(status)) => terminal.set_response_feedback_target(
                             chat_turn_pipeline::ResponseFeedbackTarget {
@@ -8829,9 +8849,7 @@ fn finish_cli_chat_turn_with_response_feedback(
                                 revision: status.revision,
                             },
                         ),
-                        Ok(None) => {
-                            terminal.mark_response_feedback_unavailable();
-                        }
+                        Ok(None) => terminal.mark_response_feedback_unavailable(),
                         Err(error) => {
                             tracing::warn!(
                                 ?error,
@@ -8840,6 +8858,10 @@ fn finish_cli_chat_turn_with_response_feedback(
                             terminal.mark_response_feedback_unavailable();
                         }
                     }
+                } else {
+                    terminal.mark_response_feedback_unavailable();
+                }
+                if !response_feedback_incognito {
                     emit_response_feedback_target(
                         output,
                         response_feedback_control_token,
@@ -9577,6 +9599,7 @@ async fn finish_chat_turn_preparation(
             abliterated_loader: None,
             deferred_failure_output: None,
             deferred_terminal: None,
+            feedback_eligible_agent_receipt: None,
         },
     ))
 }
@@ -25115,6 +25138,22 @@ mod wave35_adapter_lifecycle_tests {
         }
     }
 
+    fn feedback_eligible_receipt(
+        home: &std::path::Path,
+        session_id: &str,
+    ) -> crate::memory::transcript_store::CommittedAgentTurnReceipt {
+        let conn = crate::memory::store::open(home.join("views.db"))
+            .expect("open fixture views database");
+        crate::memory::transcript_store::insert_feedback_eligible_agent_turn(
+            home,
+            &conn,
+            session_id,
+            1,
+            "fixture terminal reply",
+        )
+        .expect("persist exact feedback-eligible fixture agent row")
+    }
+
     fn feedback_frame_from(sink: &CollectingSink) -> serde_json::Value {
         let [ChatTurnEvent::Output(ChatOutput::StreamFrames { frames })] = sink.0.as_slice() else {
             panic!("expected exactly one authenticated feedback control frame");
@@ -25181,6 +25220,7 @@ mod wave35_adapter_lifecycle_tests {
             home.path(),
             true,
             Some("0123456789abcdef0123456789abcdef"),
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -25189,7 +25229,7 @@ mod wave35_adapter_lifecycle_tests {
                 ChatTurnEvent::Output(ChatOutput::StreamDone { .. }),
                 ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete {
                     response_feedback: None,
-                    response_feedback_unavailable: false,
+                    response_feedback_unavailable: true,
                     ..
                 })
             ]
@@ -25288,6 +25328,7 @@ mod wave35_adapter_lifecycle_tests {
             response_feedback: None,
             response_feedback_unavailable: false,
         });
+        let ready_receipt = feedback_eligible_receipt(home.path(), "actual-session");
         finish_cli_chat_turn_with_response_feedback(
             Ok(Some(done())),
             Ok(()),
@@ -25297,6 +25338,7 @@ mod wave35_adapter_lifecycle_tests {
             home.path(),
             false,
             None,
+            Some(&ready_receipt),
         )
         .expect("clean drain releases the response target");
         assert!(matches!(
@@ -25330,6 +25372,7 @@ mod wave35_adapter_lifecycle_tests {
             response_feedback: None,
             response_feedback_unavailable: false,
         });
+        let failed_receipt = feedback_eligible_receipt(failed_home.path(), "must-not-emit");
         assert!(
             finish_cli_chat_turn_with_response_feedback(
                 Ok(Some(done())),
@@ -25340,12 +25383,87 @@ mod wave35_adapter_lifecycle_tests {
                 failed_home.path(),
                 false,
                 None,
+                Some(&failed_receipt),
             )
             .is_err()
         );
         assert!(failed_sink.0.is_empty());
         assert!(failed_terminal.is_some());
         assert!(!failed_home.path().join("feedback").exists());
+    }
+
+    #[test]
+    fn w177_finalizer_marks_missing_or_foreign_receipts_unavailable() {
+        let home = tempfile::tempdir().expect("temporary home");
+        let mut missing_sink = CollectingSink::default();
+        let mut missing_failure = None;
+        let mut missing_terminal = Some(chat_turn_pipeline::ChatTurnTerminal::Complete {
+            provider: "actual-provider".into(),
+            model: "actual-model".into(),
+            session_id: Some("actual-session".into()),
+            response_feedback: None,
+            response_feedback_unavailable: false,
+        });
+        finish_cli_chat_turn_with_response_feedback(
+            Ok(Some(done())),
+            Ok(()),
+            &mut missing_failure,
+            &mut missing_terminal,
+            &mut missing_sink,
+            home.path(),
+            false,
+            None,
+            None,
+        )
+        .expect("missing receipt preserves normal terminal completion");
+        assert!(matches!(
+            missing_sink.0.as_slice(),
+            [
+                ChatTurnEvent::Output(ChatOutput::StreamDone { .. }),
+                ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete {
+                    response_feedback: None,
+                    response_feedback_unavailable: true,
+                    ..
+                })
+            ]
+        ));
+        assert!(!home.path().join("feedback").exists());
+
+        let foreign_home = tempfile::tempdir().expect("temporary foreign home");
+        let foreign_receipt = feedback_eligible_receipt(foreign_home.path(), "actual-session");
+        let mut foreign_sink = CollectingSink::default();
+        let mut foreign_failure = None;
+        let mut foreign_terminal = Some(chat_turn_pipeline::ChatTurnTerminal::Complete {
+            provider: "actual-provider".into(),
+            model: "actual-model".into(),
+            session_id: Some("actual-session".into()),
+            response_feedback: None,
+            response_feedback_unavailable: false,
+        });
+        finish_cli_chat_turn_with_response_feedback(
+            Ok(Some(done())),
+            Ok(()),
+            &mut foreign_failure,
+            &mut foreign_terminal,
+            &mut foreign_sink,
+            home.path(),
+            false,
+            None,
+            Some(&foreign_receipt),
+        )
+        .expect("foreign receipt preserves normal terminal completion");
+        assert!(matches!(
+            foreign_sink.0.as_slice(),
+            [
+                ChatTurnEvent::Output(ChatOutput::StreamDone { .. }),
+                ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete {
+                    response_feedback: None,
+                    response_feedback_unavailable: true,
+                    ..
+                })
+            ]
+        ));
+        assert!(!home.path().join("feedback").exists());
     }
 
     #[test]

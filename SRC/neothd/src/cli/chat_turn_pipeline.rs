@@ -315,6 +315,11 @@ pub(crate) struct PreparedChatTurn {
         Option<std::sync::Arc<dyn crate::security::refusal_abliterated::AbliteratedProviderLoader>>,
     pub(crate) deferred_failure_output: Option<ChatOutput>,
     pub(crate) deferred_terminal: Option<ChatTurnTerminal>,
+    /// Private proof of the exact durable agent row selected for a possible
+    /// response-feedback capability. It remains adapter-local through writer
+    /// drain and is never copied into the terminal DTO.
+    pub(crate) feedback_eligible_agent_receipt:
+        Option<crate::memory::transcript_store::CommittedAgentTurnReceipt>,
 }
 
 const LOCAL_CHAT_WAL_SESSION_DOMAIN: &[u8] = b"neoth/wal-session/local-chat-turn/v1\0";
@@ -376,6 +381,12 @@ impl PreparedChatTurn {
         }
         Ok(())
     }
+
+    pub(crate) fn take_feedback_eligible_agent_receipt(
+        &mut self,
+    ) -> Option<crate::memory::transcript_store::CommittedAgentTurnReceipt> {
+        self.feedback_eligible_agent_receipt.take()
+    }
 }
 pub(crate) async fn run_prepared_chat_turn(
     prepared: &mut PreparedChatTurn,
@@ -432,6 +443,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         abliterated_loader,
         deferred_failure_output,
         deferred_terminal,
+        feedback_eligible_agent_receipt: prepared_feedback_eligible_agent_receipt,
     } = prepared;
     let args = ChatArgs {
         message: input.message.clone(),
@@ -1126,6 +1138,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     let terminal_session_id = current_session_id.clone();
     let stream_control_token_ref = stream_control_token.as_ref().map(|token| token.as_str());
     cancellation.check_open("post-provider external starts")?;
+    let mut feedback_eligible_agent_receipt = None;
     let post_reply_result = run_post_reply_pipelines(
         completion,
         writer,
@@ -1175,6 +1188,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         },
         retained_code_map_binding.as_ref(),
         Some(turn_id.as_str()),
+        &mut feedback_eligible_agent_receipt,
         output,
     )
     .await;
@@ -1190,6 +1204,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
             return Err(error);
         }
     };
+    *prepared_feedback_eligible_agent_receipt = feedback_eligible_agent_receipt;
     *deferred_terminal = Some(ChatTurnTerminal::Complete {
         provider: terminal_provider,
         model: terminal_model,
@@ -1836,6 +1851,7 @@ mod tests {
             abliterated_loader: None,
             deferred_failure_output: None,
             deferred_terminal: None,
+            feedback_eligible_agent_receipt: None,
         };
         let segment_path = wal_dir.join("neutral-engine-000001.wal");
         let (writer, writer_completion) =
@@ -2118,6 +2134,7 @@ mod tests {
                 abliterated_loader: None,
                 deferred_failure_output: None,
                 deferred_terminal: None,
+            feedback_eligible_agent_receipt: None,
             };
             let segment_path = wal_dir.join("retained-context-retry-000001.wal");
             let (writer, writer_completion) = crate::wal::writer::spawn_for_home_with_completion(
@@ -2352,6 +2369,7 @@ mod tests {
                 input: ChatTurnInput { message: Some("w137-retained-session".to_owned()), model: Some("w137-caller-model".to_owned()), skill: Some(W137_SELECTED_SKILL_ID.to_owned()), system: None, attach: Vec::new(), repository_root: None, edit: false, resume_from: None, incognito: false, loop_mode: false, iterations: None, until: Vec::new(), stream: false, temperature: None, top_p: None, sampling_seed: None },
                 preparation: ChatTurnPreparation { config: config.clone(), ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, typed_gui_controls: false, reasoning_display: false, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint W137 session canary")), instance_paths: instance_paths.clone(), first_tour_home: home.clone(), selected_config_path: selected_config_path.clone(), prompt: "w137-retained-session".to_owned(), current_session_id: "w137-retained-A".to_owned(), wal_session: None, chat_ts_unix: 1_725_000_137, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: true },
                 abliterated_loader: Some(loader), deferred_failure_output: None, deferred_terminal: None,
+            feedback_eligible_agent_receipt: None,
             };
             let segment_path = wal_dir.join("w137-retained-a-000001.wal");
             let (writer, completion) = crate::wal::writer::spawn_for_home_with_completion(segment_path.clone(), home.clone())
@@ -2402,6 +2420,7 @@ mod tests {
                 input: ChatTurnInput { message: Some("w137-retained-session".to_owned()), model: Some("w137-caller-model".to_owned()), skill: Some(W137_SELECTED_SKILL_ID.to_owned()), system: None, attach: Vec::new(), repository_root: None, edit: false, resume_from: None, incognito: false, loop_mode: false, iterations: None, until: Vec::new(), stream: false, temperature: None, top_p: None, sampling_seed: None },
                 preparation: ChatTurnPreparation { config, ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, typed_gui_controls: false, reasoning_display: false, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint W137 fresh-session canary")), instance_paths, first_tour_home: home.clone(), selected_config_path, prompt: "w137-retained-session".to_owned(), current_session_id: "w137-retained-B".to_owned(), wal_session: None, chat_ts_unix: 1_725_000_138, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: true },
                 abliterated_loader: None, deferred_failure_output: None, deferred_terminal: None,
+            feedback_eligible_agent_receipt: None,
             };
             let fresh_segment = wal_dir.join("w137-retained-b-000001.wal");
             let (fresh_writer, fresh_completion) = crate::wal::writer::spawn_for_home_with_completion(fresh_segment.clone(), home.clone())
@@ -2459,6 +2478,7 @@ mod tests {
                 input: ChatTurnInput { message: Some("find retained_context_marker".to_owned()), model: Some("retained-context-fallback-model".to_owned()), skill: None, system: None, attach: Vec::new(), repository_root: None, edit: false, resume_from: None, incognito: false, loop_mode: false, iterations: None, until: Vec::new(), stream: false, temperature: None, top_p: None, sampling_seed: None },
                 preparation: ChatTurnPreparation { config, ephemeral_consent: crate::consent::EphemeralConsent::default(), stream_control_token: None, typed_gui_controls: false, reasoning_display: false, cancellation: ChatTurnCancellation::default(), session_canary: std::sync::Arc::new(crate::security::injection_tracker::CanaryToken::generate().expect("mint fallback chat canary")), instance_paths, first_tour_home: home.clone(), selected_config_path, prompt: "find retained_context_marker".to_owned(), current_session_id: "retained-context-fallback-regression".to_owned(), wal_session: None, chat_ts_unix: 1_725_000_004, mcp_servers: crate::mcp::McpServers::default(), scoped_mcp_servers: Vec::new(), tweaks: crate::tweaks::Tweaks::default(), profile_extensions: crate::profile::extension_registry::TypedExtensionRegistry::default(), slash_skill_name: None, explicit_route_requested: false },
                 abliterated_loader: Some(loader), deferred_failure_output: None, deferred_terminal: None,
+            feedback_eligible_agent_receipt: None,
             };
             let wal_dir = home.join("wal"); std::fs::create_dir_all(&wal_dir).expect("create fallback chat WAL directory");
             let segment_path = wal_dir.join("fallback-chat-000001.wal");
@@ -2593,6 +2613,7 @@ mod tests {
                     slash_skill_name: None, explicit_route_requested: false,
                 },
                 abliterated_loader: None, deferred_failure_output: None, deferred_terminal: None,
+            feedback_eligible_agent_receipt: None,
             };
             let segment_path = wal_dir.join("final-binding-failure-000001.wal");
             let (writer, writer_completion) = crate::wal::writer::spawn_for_home_with_completion(segment_path.clone(), home.clone())
@@ -2699,6 +2720,7 @@ mod tests {
             abliterated_loader: None,
             deferred_failure_output: None,
             deferred_terminal: None,
+            feedback_eligible_agent_receipt: None,
         };
         let segment_path = wal_dir.join("custom-config-action-000001.wal");
         let (writer, writer_completion) =

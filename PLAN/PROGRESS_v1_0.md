@@ -2,6 +2,23 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W177 accepted training-set export and W180 portable diagnosis (2026-09-22):**
+W177 source and final independent review cover strict committed response receipts,
+post-drain capabilities, explicit Accepted in CLI/Main/Buddy, revision-CAS and
+redacted OpenAI/ShareGPT export with exact adjacent-row pairing. Fourteen new
+native regression identities include the actual daemon-GUI producer through
+flush, acceptance, both formats, negative replacements, Remove and incognito.
+Four existing W164 CLI identities now use their actual wave35 module. Generic
+export behavior and existing GUI fixture names are retained. Hosted compilation,
+CLI reference and behavior remain required; D1 stays open. See
+[W177](../docs/gold-wave177-verification.md).
+W180 retains the old cc0af938 preview's twelve passed lifecycle checks and its
+subsequent concrete-caller failure. The unchanged impact assertion now gets a
+bounded diagnostic; one fresh-snapshot regression reproduces its contract.
+Underlying repair remains unproven. See [W180](../docs/gold-wave180-verification.md).
+W179 Preflight 35668976295 and Code Quality 35668975284 passed on 1bc30c4d;
+its test-compilation repair still requires fresh Hosted execution.
+
 **W179 Hosted Clippy repair (2026-09-22):** a72b4038 passed Preflight
 35667753310 and Code Quality 35667752599. Full CI35667842810's Linux job
 106557462709 found two type-complexity errors in prompt-layer arrays. The

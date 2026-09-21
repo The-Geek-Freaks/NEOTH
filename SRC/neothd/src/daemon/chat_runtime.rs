@@ -276,7 +276,12 @@ impl DaemonChatRuntime {
             .deferred_terminal
             .take()
             .context("daemon GUI chat engine returned without terminal")?;
-        self.attach_response_feedback_after_flush(&mut terminal, incognito)
+        let feedback_eligible_agent_receipt = prepared.take_feedback_eligible_agent_receipt();
+        self.attach_response_feedback_after_flush(
+            &mut terminal,
+            incognito,
+            feedback_eligible_agent_receipt.as_ref(),
+        )
             .await;
         Ok(terminal)
     }
@@ -289,13 +294,23 @@ impl DaemonChatRuntime {
         &self,
         terminal: &mut ChatTurnTerminal,
         incognito: bool,
+        feedback_eligible_agent_receipt: Option<
+            &crate::memory::transcript_store::CommittedAgentTurnReceipt,
+        >,
     ) {
-        if incognito
-            || terminal.response_feedback_target().is_some()
+        if terminal.response_feedback_target().is_some()
             || terminal.response_feedback_unavailable()
         {
             return;
         }
+        if incognito {
+            terminal.mark_response_feedback_unavailable();
+            return;
+        }
+        let Some(feedback_eligible_agent_receipt) = feedback_eligible_agent_receipt else {
+            terminal.mark_response_feedback_unavailable();
+            return;
+        };
         let session_id = match terminal {
             ChatTurnTerminal::Complete { session_id, .. } => session_id.clone(),
         };
@@ -307,11 +322,12 @@ impl DaemonChatRuntime {
             terminal.mark_response_feedback_unavailable();
             return;
         }
-        match crate::feedback::response::register_drained_terminal_response(
+        match crate::feedback::response::register_drained_terminal_response_bound(
             &self.selected_home,
             &session_id,
             false,
             crate::time::now_unix_i64(),
+            feedback_eligible_agent_receipt,
         ) {
             Ok(Some(status)) => {
                 terminal.set_response_feedback_target(chat_turn_pipeline::ResponseFeedbackTarget {
@@ -548,7 +564,12 @@ impl DaemonChatRuntime {
             .deferred_terminal
             .take()
             .context("daemon plain chat engine returned without a success terminal")?;
-        self.attach_response_feedback_after_flush(&mut terminal, false)
+        let feedback_eligible_agent_receipt = prepared.take_feedback_eligible_agent_receipt();
+        self.attach_response_feedback_after_flush(
+            &mut terminal,
+            false,
+            feedback_eligible_agent_receipt.as_ref(),
+        )
             .await;
         let response = DaemonPlainChatResponse {
             records: sink.records,
@@ -865,6 +886,215 @@ mod tests {
             .await;
         runtime.finish_sync(admission.id);
         result
+    }
+
+    struct DiscardingGuiSink;
+
+    impl ChatTurnEventSink for DiscardingGuiSink {
+        fn emit(&mut self, _event: ChatTurnEvent) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    async fn execute_gui_turn(
+        runtime: &DaemonChatRuntime,
+        message: String,
+        incognito: bool,
+    ) -> Result<ChatTurnTerminal> {
+        let mut sink = DiscardingGuiSink;
+        runtime
+            .execute_gui_stream_turn(
+                message,
+                None,
+                None,
+                incognito,
+                false,
+                Vec::new(),
+                crate::consent::EphemeralConsent::default(),
+                chat_turn_pipeline::ChatTurnCancellation::default(),
+                &mut sink,
+                None,
+            )
+            .await
+    }
+
+    #[tokio::test]
+    async fn w177_daemon_gui_feedback_receipt_exports_only_redacted_accepted_pair() {
+        let secret = "token=sk-abcdefghijklmnopqrstuvwxyz1234567890";
+        let (runtime, provider, home, writer, writer_join) = test_runtime_with_reply(
+            true,
+            0,
+            format!("W177 assistant reply {secret}"),
+        )
+        .await;
+
+        let terminal = execute_gui_turn(
+            &runtime,
+            format!("W177 operator prompt {secret}"),
+            false,
+        )
+        .await
+        .expect("execute real daemon GUI producer");
+        let target = terminal
+            .response_feedback_target()
+            .cloned()
+            .expect("flushed strict receipt issues an opaque feedback target");
+        assert!(!terminal.response_feedback_unavailable());
+        assert!(!target.response_id.contains(secret));
+        assert!(!target.session_id.contains(secret));
+
+        let response_id = crate::feedback::response::ResponseId::parse(&target.response_id)
+            .expect("daemon terminal response id is valid");
+        assert!(matches!(
+            crate::feedback::response::apply_response_feedback(
+                home.path(),
+                &response_id,
+                &target.session_id,
+                target.revision,
+                crate::feedback::response::ResponseFeedbackOperation::Set(
+                    crate::feedback::response::ResponseSignal::Accepted,
+                ),
+                1_772_000_001,
+            )
+            .expect("accept daemon terminal feedback"),
+            crate::feedback::response::ResponseFeedbackOutcome::Set { revision: 1, .. }
+        ));
+
+        let openai_path = home.path().join("w177-openai.jsonl");
+        let openai_summary = crate::daemon::train_export::export_training_set(
+            home.path(),
+            &openai_path,
+            crate::daemon::train_export::TrainingSetFormat::Openai,
+        )
+        .expect("export accepted OpenAI training pair");
+        assert_eq!(openai_summary.exported, 1);
+        let openai_text =
+            std::fs::read_to_string(&openai_path).expect("read OpenAI export");
+        let openai_lines: Vec<_> = openai_text.lines().collect();
+        assert_eq!(openai_lines.len(), 1);
+        let openai: serde_json::Value =
+            serde_json::from_str(openai_lines[0]).expect("parse OpenAI export line");
+        let messages = openai["messages"]
+            .as_array()
+            .expect("OpenAI export has messages");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"].as_str(), Some("user"));
+        assert_eq!(messages[1]["role"].as_str(), Some("assistant"));
+        assert!(openai_lines[0].contains("REDACTED"));
+        assert!(!openai_lines[0].contains(secret));
+        assert!(!openai_lines[0].contains("raw_turn"));
+        assert!(!openai_lines[0].contains("session"));
+        assert!(!openai_lines[0].contains(&target.response_id));
+        assert!(!openai_lines[0].contains(&target.session_id));
+
+        let sharegpt_path = home.path().join("w177-sharegpt.jsonl");
+        let sharegpt_summary = crate::daemon::train_export::export_training_set(
+            home.path(),
+            &sharegpt_path,
+            crate::daemon::train_export::TrainingSetFormat::Sharegpt,
+        )
+        .expect("export accepted ShareGPT training pair");
+        assert_eq!(sharegpt_summary.exported, 1);
+        let sharegpt_text =
+            std::fs::read_to_string(&sharegpt_path).expect("read ShareGPT export");
+        let sharegpt_lines: Vec<_> = sharegpt_text.lines().collect();
+        assert_eq!(sharegpt_lines.len(), 1);
+        let sharegpt: serde_json::Value =
+            serde_json::from_str(sharegpt_lines[0]).expect("parse ShareGPT export line");
+        let conversations = sharegpt["conversations"]
+            .as_array()
+            .expect("ShareGPT export has conversations");
+        assert_eq!(conversations.len(), 2);
+        assert_eq!(conversations[0]["from"].as_str(), Some("human"));
+        assert_eq!(conversations[1]["from"].as_str(), Some("gpt"));
+        assert!(sharegpt_lines[0].contains("REDACTED"));
+        assert!(!sharegpt_lines[0].contains(secret));
+        assert!(!sharegpt_lines[0].contains("raw_turn"));
+        assert!(!sharegpt_lines[0].contains("session"));
+        assert!(!sharegpt_lines[0].contains(&target.response_id));
+        assert!(!sharegpt_lines[0].contains(&target.session_id));
+
+        assert!(matches!(
+            crate::feedback::response::apply_response_feedback(
+                home.path(),
+                &response_id,
+                &target.session_id,
+                1,
+                crate::feedback::response::ResponseFeedbackOperation::Set(
+                    crate::feedback::response::ResponseSignal::NeedsCorrection,
+                ),
+                1_772_000_002,
+            )
+            .expect("set needs-correction feedback"),
+            crate::feedback::response::ResponseFeedbackOutcome::Replaced { revision: 2, .. }
+        ));
+        let needs_correction = crate::daemon::train_export::export_training_set(
+            home.path(),
+            &home.path().join("w177-needs-correction.jsonl"),
+            crate::daemon::train_export::TrainingSetFormat::Openai,
+        )
+        .expect("export needs-correction exclusion");
+        assert_eq!(needs_correction.exported, 0);
+        assert_eq!(needs_correction.excluded_needs_correction, 1);
+
+        assert!(matches!(
+            crate::feedback::response::apply_response_feedback(
+                home.path(),
+                &response_id,
+                &target.session_id,
+                2,
+                crate::feedback::response::ResponseFeedbackOperation::Set(
+                    crate::feedback::response::ResponseSignal::NotHelpful,
+                ),
+                1_772_000_003,
+            )
+            .expect("set not-helpful feedback"),
+            crate::feedback::response::ResponseFeedbackOutcome::Replaced { revision: 3, .. }
+        ));
+        let not_helpful = crate::daemon::train_export::export_training_set(
+            home.path(),
+            &home.path().join("w177-not-helpful.jsonl"),
+            crate::daemon::train_export::TrainingSetFormat::Openai,
+        )
+        .expect("export not-helpful exclusion");
+        assert_eq!(not_helpful.exported, 0);
+        assert_eq!(not_helpful.excluded_not_helpful, 1);
+
+        assert!(matches!(
+            crate::feedback::response::apply_response_feedback(
+                home.path(),
+                &response_id,
+                &target.session_id,
+                3,
+                crate::feedback::response::ResponseFeedbackOperation::Remove,
+                1_772_000_004,
+            )
+            .expect("remove feedback"),
+            crate::feedback::response::ResponseFeedbackOutcome::Removed { revision: 4 }
+        ));
+        let removed = crate::daemon::train_export::export_training_set(
+            home.path(),
+            &home.path().join("w177-removed.jsonl"),
+            crate::daemon::train_export::TrainingSetFormat::Openai,
+        )
+        .expect("export removed-feedback exclusion");
+        assert_eq!(removed.exported, 0);
+        assert_eq!(removed.excluded_unlabelled, 1);
+
+        let incognito = execute_gui_turn(&runtime, "W177 incognito producer".into(), true)
+            .await
+            .expect("complete incognito daemon GUI producer");
+        assert!(incognito.response_feedback_target().is_none());
+        assert!(incognito.response_feedback_unavailable());
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+
+        runtime.close_and_drain().await;
+        drop(runtime);
+        drop(writer);
+        writer_join
+            .await
+            .expect("join W177 daemon writer")
+            .expect("W177 daemon writer succeeds");
     }
 
     #[tokio::test]

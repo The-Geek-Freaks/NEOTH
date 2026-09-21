@@ -53,17 +53,25 @@ fn gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types() {
         latest_sequence: 4,
     });
     assert_eq!(turn.metadata.turn_id, subscription.metadata.turn_id);
+    let response_feedback_target = GuiChatBridgeResponseFeedbackTarget {
+        response_id: "aabbccddeeff00112233445566778899".into(),
+        session_id: "session-w164".into(),
+        revision: 0,
+    };
+    let response_feedback_debug = format!("{response_feedback_target:?}");
+    for forbidden in ["raw_turn_id", "home", "receipt"] {
+        assert!(
+            !response_feedback_debug.contains(forbidden),
+            "public response-feedback target Debug must not expose {forbidden}"
+        );
+    }
     let event = GuiChatBridgeEvent::Terminal {
         subscription: subscription.metadata.clone(),
         sequence: 5,
         state: GuiChatTerminalState::Complete,
         provider: "provider".into(),
         model: "model".into(),
-        response_feedback: Some(GuiChatBridgeResponseFeedbackTarget {
-            response_id: "aabbccddeeff00112233445566778899".into(),
-            session_id: "session-w164".into(),
-            revision: 0,
-        }),
+        response_feedback: Some(response_feedback_target),
         response_feedback_unavailable: false,
     };
     assert!(matches!(

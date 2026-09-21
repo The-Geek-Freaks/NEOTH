@@ -759,6 +759,7 @@ export component MiniOverlay inherits Window {
                         }
                         if root.response-feedback-available: HorizontalLayout {
                             spacing: Theme.space-tight;
+                            NeothButton { label: "Accept for local training"; primary: false; size: "sm"; enabled: !root.response-feedback-running; loading: root.response-feedback-running; clicked => { root.response-feedback-action("accepted"); } }
                             NeothButton { label: "Needs correction"; primary: false; size: "sm"; enabled: !root.response-feedback-running; loading: root.response-feedback-running; clicked => { root.response-feedback-action("needs-correction"); } }
                             NeothButton { label: "Not helpful"; primary: false; size: "sm"; enabled: !root.response-feedback-running; loading: root.response-feedback-running; clicked => { root.response-feedback-action("not-helpful"); } }
                             NeothButton { label: "Remove feedback"; primary: false; danger: true; size: "sm"; enabled: !root.response-feedback-running && root.response-feedback-signal != ""; loading: root.response-feedback-running; clicked => { root.response-feedback-action("remove"); } }

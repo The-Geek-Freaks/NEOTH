@@ -329,6 +329,8 @@ fn split_seeds(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code_map::snapshot::{RebuildOptions, rebuild_snapshot};
+    use tempfile::tempdir;
 
     #[test]
     fn exact_and_fallback_seeds_stay_distinct_and_deterministic() {
@@ -361,5 +363,54 @@ mod tests {
                 symbol: None
             }]
         );
+    }
+
+    #[test]
+    fn fresh_snapshot_diff_impact_retains_same_file_caller_declaration() {
+        let repo = tempdir().unwrap();
+        std::fs::create_dir(repo.path().join("src")).unwrap();
+        std::fs::write(
+            repo.path().join("src/lib.rs"),
+            "pub fn changed_symbol() -> &'static str {\n    \"after\"\n}\n\n\
+             pub fn caller_symbol() -> &'static str {\n    changed_symbol()\n}\n",
+        )
+        .unwrap();
+        let root = CanonicalRepoRoot::discover(repo.path()).unwrap();
+        let database_dir = tempdir().unwrap();
+        let database = database_dir.path().join("code_map.db");
+        let refreshed = rebuild_snapshot(&root, &database, RebuildOptions::default()).unwrap();
+        let connection = super::super::persist::open_read_only(&database).unwrap();
+        let request = DiffImpactRequest {
+            repo_root: repo.path().to_path_buf(),
+            input: DiffImpactInput::stdin(concat!(
+                "diff --git a/src/lib.rs b/src/lib.rs\n",
+                "--- a/src/lib.rs\n",
+                "+++ b/src/lib.rs\n",
+                "@@ -2 +2 @@\n",
+                "-    \"before\"\n",
+                "+    \"after\"\n",
+            )
+            .into()),
+            options: ImpactOptions {
+                direction: super::super::impact::ImpactDirection::Callers,
+                max_depth: 1,
+                max_nodes: 16,
+                allow_stale: false,
+            },
+        };
+
+        let receipt = analyze_diff_impact(&connection, &request).unwrap();
+        assert_eq!(receipt.index_generation, refreshed.index_generation);
+        assert_eq!(receipt.graph_generation, refreshed.graph_generation);
+        assert_eq!(
+            receipt.exact_symbol_seeds,
+            vec![DiffImpactSeedReceipt {
+                file: "src/lib.rs".into(),
+                symbol: Some("changed_symbol".into()),
+            }]
+        );
+        assert!(receipt.impact.impacted_nodes.iter().any(|node| {
+            node.node.file == "src/lib.rs" && node.node.symbol == "caller_symbol"
+        }));
     }
 }

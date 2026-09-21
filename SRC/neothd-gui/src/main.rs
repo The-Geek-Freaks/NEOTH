@@ -26758,6 +26758,9 @@ fn response_feedback_status_text(snapshot: &chat_response_feedback::Snapshot) ->
         return "Response feedback unavailable for this completed response.";
     }
     match snapshot.active_signal {
+        Some(chat_response_feedback::FeedbackSignal::Accepted) => {
+            "Response feedback: accepted for local training."
+        }
         Some(chat_response_feedback::FeedbackSignal::NeedsCorrection) => {
             "Response feedback: needs correction."
         }
@@ -26772,6 +26775,7 @@ fn response_feedback_signal_text(
     active_signal: Option<chat_response_feedback::FeedbackSignal>,
 ) -> &'static str {
     match active_signal {
+        Some(chat_response_feedback::FeedbackSignal::Accepted) => "accepted",
         Some(chat_response_feedback::FeedbackSignal::NeedsCorrection) => "needs-correction",
         Some(chat_response_feedback::FeedbackSignal::NotHelpful) => "not-helpful",
         None => "",
@@ -26836,6 +26840,7 @@ fn response_feedback_signal_from_wire(
 ) -> std::result::Result<Option<chat_response_feedback::FeedbackSignal>, String> {
     match value {
         None => Ok(None),
+        Some("accepted") => Ok(Some(chat_response_feedback::FeedbackSignal::Accepted)),
         Some("needs_correction") => Ok(Some(
             chat_response_feedback::FeedbackSignal::NeedsCorrection,
         )),
@@ -26897,6 +26902,9 @@ fn run_response_feedback_action_verified(
         );
     }
     let expected_signal = match target.action() {
+        chat_response_feedback::Action::Set(chat_response_feedback::FeedbackSignal::Accepted) => {
+            Some("accepted")
+        }
         chat_response_feedback::Action::Set(
             chat_response_feedback::FeedbackSignal::NeedsCorrection,
         ) => Some("needs_correction"),
@@ -26987,6 +26995,9 @@ fn begin_current_response_feedback_action(
 
 fn response_feedback_action_from_ui(value: &str) -> Option<chat_response_feedback::Action> {
     match value {
+        "accepted" => Some(chat_response_feedback::Action::Set(
+            chat_response_feedback::FeedbackSignal::Accepted,
+        )),
         "needs-correction" => Some(chat_response_feedback::Action::Set(
             chat_response_feedback::FeedbackSignal::NeedsCorrection,
         )),
@@ -45204,22 +45215,30 @@ exit 72
             r#"#!/bin/sh
 base="${0%/*}"
 if [ "$1" = "--output" ] && [ "$3" = "feedback" ] && [ "$4" = "response" ]; then
+  printf 'feedback-response:%s\n' "$*" >> "$base/calls"
   state=$(/bin/cat "$base/feedback-state" 2>/dev/null || printf needs)
+  feedback_mode=$(/bin/cat "$base/feedback-mode" 2>/dev/null || printf success)
   if [ "$5" = "status" ]; then
     case "$state" in
-      needs) printf '%s\n' '{"status":"ready","response_id":"aabbccddeeff00112233445566778899","session_id":"session-w164","current_revision":1,"active_signal":"needs_correction","rejection":null}' ;;
-      helpful) printf '%s\n' '{"status":"ready","response_id":"aabbccddeeff00112233445566778899","session_id":"session-w164","current_revision":2,"active_signal":"not_helpful","rejection":null}' ;;
-      removed) printf '%s\n' '{"status":"ready","response_id":"aabbccddeeff00112233445566778899","session_id":"session-w164","current_revision":3,"active_signal":null,"rejection":null}' ;;
+      accepted) printf '%s\n' '{"status":"ready","response_id":"aabbccddeeff00112233445566778899","session_id":"session-w164","current_revision":1,"active_signal":"accepted","rejection":null}' ;;
+      needs) printf '%s\n' '{"status":"ready","response_id":"aabbccddeeff00112233445566778899","session_id":"session-w164","current_revision":2,"active_signal":"needs_correction","rejection":null}' ;;
+      helpful) printf '%s\n' '{"status":"ready","response_id":"aabbccddeeff00112233445566778899","session_id":"session-w164","current_revision":3,"active_signal":"not_helpful","rejection":null}' ;;
+      removed) printf '%s\n' '{"status":"ready","response_id":"aabbccddeeff00112233445566778899","session_id":"session-w164","current_revision":4,"active_signal":null,"rejection":null}' ;;
     esac
   elif [ "$5" = "remove" ]; then
     printf removed > "$base/feedback-state"
-    printf '%s\n' '{"status":"removed","response_id":"aabbccddeeff00112233445566778899","session_id":"session-w164","revision":3,"signal":null,"previous_signal":null,"rejection":null}'
+    printf '%s\n' '{"status":"removed","response_id":"aabbccddeeff00112233445566778899","session_id":"session-w164","revision":4,"signal":null,"previous_signal":null,"rejection":null}'
+  elif [ "$feedback_mode" = "wrong-target" ]; then
+    printf '%s\n' '{"status":"set","response_id":"ffeeddccbbaa99887766554433221100","session_id":"session-w164","revision":5,"signal":"accepted","previous_signal":null,"rejection":null}'
+  elif printf '%s' "$*" | /usr/bin/grep -q -- 'accepted'; then
+    printf accepted > "$base/feedback-state"
+    printf '%s\n' '{"status":"set","response_id":"aabbccddeeff00112233445566778899","session_id":"session-w164","revision":1,"signal":"accepted","previous_signal":null,"rejection":null}'
   elif printf '%s' "$*" | /usr/bin/grep -q -- 'not-helpful'; then
     printf helpful > "$base/feedback-state"
-    printf '%s\n' '{"status":"replaced","response_id":"aabbccddeeff00112233445566778899","session_id":"session-w164","revision":2,"signal":"not_helpful","previous_signal":"needs_correction","rejection":null}'
+    printf '%s\n' '{"status":"replaced","response_id":"aabbccddeeff00112233445566778899","session_id":"session-w164","revision":3,"signal":"not_helpful","previous_signal":"needs_correction","rejection":null}'
   else
     printf needs > "$base/feedback-state"
-    printf '%s\n' '{"status":"set","response_id":"aabbccddeeff00112233445566778899","session_id":"session-w164","revision":1,"signal":"needs_correction","previous_signal":null,"rejection":null}'
+    printf '%s\n' '{"status":"replaced","response_id":"aabbccddeeff00112233445566778899","session_id":"session-w164","revision":2,"signal":"needs_correction","previous_signal":"accepted","rejection":null}'
   fi
   exit 0
 fi
@@ -45841,6 +45860,7 @@ exit 0
             std::fs::remove_file(fixture.path().join("started")).ok();
             std::fs::remove_file(fixture.path().join("release")).ok();
             std::fs::remove_file(fixture.path().join("feedback-state")).ok();
+            std::fs::remove_file(fixture.path().join("feedback-mode")).ok();
             let window = MainWindow::new().expect("construct W164 MainWindow");
             let overlay = MiniOverlay::new().expect("construct W164 MiniOverlay");
             let runtime = w153_legacy_child_runtime();
@@ -45884,22 +45904,45 @@ exit 0
             );
             match surface {
                 ChatStreamSurface::Main => {
+                    window.invoke_chat_response_feedback_action("accepted".into())
+                }
+                ChatStreamSurface::Buddy => {
+                    overlay.invoke_response_feedback_action("accepted".into())
+                }
+            }
+            let verified_overlay = overlay.as_weak();
+            w153_pump_until(
+                &window,
+                "W177 accepted feedback readback",
+                move |window| match surface {
+                    ChatStreamSurface::Main => {
+                        !window.get_chat_response_feedback_running()
+                            && window.get_chat_response_feedback_signal() == "accepted"
+                    }
+                    ChatStreamSurface::Buddy => verified_overlay.upgrade().is_some_and(|overlay| {
+                        !overlay.get_response_feedback_running()
+                            && overlay.get_response_feedback_signal() == "accepted"
+                    }),
+                },
+            );
+            match surface {
+                ChatStreamSurface::Main => {
                     window.invoke_chat_response_feedback_action("needs-correction".into())
                 }
                 ChatStreamSurface::Buddy => {
                     overlay.invoke_response_feedback_action("needs-correction".into())
                 }
             }
-            let verified_overlay = overlay.as_weak();
+            let replaced_overlay = overlay.as_weak();
             w153_pump_until(
                 &window,
-                "W164 verified feedback readback",
+                "W177 replacement readback",
                 move |window| match surface {
                     ChatStreamSurface::Main => {
                         !window.get_chat_response_feedback_running()
                             && window.get_chat_response_feedback_signal() == "needs-correction"
                     }
-                    ChatStreamSurface::Buddy => verified_overlay.upgrade().is_some_and(|overlay| {
+                    ChatStreamSurface::Buddy => replaced_overlay.upgrade().is_some_and(|overlay| {
                         !overlay.get_response_feedback_running()
                             && overlay.get_response_feedback_signal() == "needs-correction"
                     }),
@@ -45913,19 +45956,21 @@ exit 0
                     overlay.invoke_response_feedback_action("not-helpful".into())
                 }
             }
-            let replaced_overlay = overlay.as_weak();
+            let not_helpful_overlay = overlay.as_weak();
             w153_pump_until(
                 &window,
-                "W164 replacement readback",
+                "W177 NotHelpful replacement readback",
                 move |window| match surface {
                     ChatStreamSurface::Main => {
                         !window.get_chat_response_feedback_running()
                             && window.get_chat_response_feedback_signal() == "not-helpful"
                     }
-                    ChatStreamSurface::Buddy => replaced_overlay.upgrade().is_some_and(|overlay| {
-                        !overlay.get_response_feedback_running()
-                            && overlay.get_response_feedback_signal() == "not-helpful"
-                    }),
+                    ChatStreamSurface::Buddy => {
+                        not_helpful_overlay.upgrade().is_some_and(|overlay| {
+                            !overlay.get_response_feedback_running()
+                                && overlay.get_response_feedback_signal() == "not-helpful"
+                        })
+                    }
                 },
             );
             match surface {
@@ -45950,6 +45995,47 @@ exit 0
                             && overlay.get_response_feedback_signal().is_empty()
                     }),
                 },
+            );
+            std::fs::write(fixture.path().join("feedback-mode"), "wrong-target")
+                .expect("make W177 response-feedback mutation return a foreign target");
+            match surface {
+                ChatStreamSurface::Main => {
+                    window.invoke_chat_response_feedback_action("accepted".into())
+                }
+                ChatStreamSurface::Buddy => {
+                    overlay.invoke_response_feedback_action("accepted".into())
+                }
+            }
+            let denied_overlay = overlay.as_weak();
+            w153_pump_until(
+                &window,
+                "W177 foreign response-feedback receipt is denied",
+                move |window| match surface {
+                    ChatStreamSurface::Main => {
+                        !window.get_chat_response_feedback_available()
+                            && !window.get_chat_response_feedback_running()
+                    }
+                    ChatStreamSurface::Buddy => denied_overlay.upgrade().is_some_and(|overlay| {
+                        !overlay.get_response_feedback_available()
+                            && !overlay.get_response_feedback_running()
+                    }),
+                },
+            );
+        }
+        let calls = std::fs::read_to_string(fixture.path().join("calls"))
+            .expect("read W177 callback CLI fixture calls");
+        for (expected, count) in [
+            ("feedback-response:--output json feedback response set --response aabbccddeeff00112233445566778899 --session session-w164 --revision 0 --signal accepted", 2_usize),
+            ("feedback-response:--output json feedback response status --response aabbccddeeff00112233445566778899 --session session-w164", 8_usize),
+            ("feedback-response:--output json feedback response set --response aabbccddeeff00112233445566778899 --session session-w164 --revision 1 --signal needs-correction", 2_usize),
+            ("feedback-response:--output json feedback response set --response aabbccddeeff00112233445566778899 --session session-w164 --revision 2 --signal not-helpful", 2_usize),
+            ("feedback-response:--output json feedback response remove --response aabbccddeeff00112233445566778899 --session session-w164 --revision 3", 2_usize),
+            ("feedback-response:--output json feedback response set --response aabbccddeeff00112233445566778899 --session session-w164 --revision 4 --signal accepted", 2_usize),
+        ] {
+            assert_eq!(
+                calls.lines().filter(|line| *line == expected).count(),
+                count,
+                "W177 callback CLI fixture count for {expected:?}",
             );
         }
     }

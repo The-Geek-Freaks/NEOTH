@@ -20,6 +20,7 @@
 //! and the migration is registered in `memory/migrations/mod.rs`.
 
 use std::borrow::Cow;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -95,6 +96,29 @@ pub enum BackgroundNoticeStoreError {
     Database(#[from] rusqlite::Error),
 }
 
+/// Private proof that one feedback-eligible agent row was inserted through the
+/// exact owning home database. It never crosses a terminal or feedback DTO.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct CommittedAgentTurnReceipt {
+    raw_turn_id: i64,
+    session_id: String,
+    home_physical: PathBuf,
+}
+
+impl CommittedAgentTurnReceipt {
+    pub(crate) fn raw_turn_id(&self) -> i64 {
+        self.raw_turn_id
+    }
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum FeedbackEligibleAgentReceiptError {
+    #[error("feedback-eligible transcript receipt is unavailable")]
+    Unavailable,
+    #[error("feedback-eligible transcript write failed")]
+    Database(#[source] rusqlite::Error),
+}
+
 // ── Write path ─────────────────────────────────────────────────────────────
 
 /// Insert one turn into `raw_turns`. The FTS5 trigger fires automatically,
@@ -125,6 +149,112 @@ pub fn insert_turn(
         params![session_id, role, ts_unix, persisted_text.as_ref()],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Strict, autocommit-only agent write used exclusively before a terminal can
+/// issue response feedback. Existing best-effort transcript writes remain
+/// intentionally unrelated and cannot produce a receipt.
+pub(crate) fn insert_feedback_eligible_agent_turn(
+    home: &Path,
+    conn: &Connection,
+    session_id: &str,
+    ts_unix: i64,
+    text: &str,
+) -> Result<CommittedAgentTurnReceipt, FeedbackEligibleAgentReceiptError> {
+    if !valid_feedback_session_id(session_id) || !conn.is_autocommit() {
+        return Err(FeedbackEligibleAgentReceiptError::Unavailable);
+    }
+    let home_directory = crate::skills::store::open_bound_directory(
+        home,
+        false,
+        "feedback-eligible transcript home",
+    )
+    .map_err(|_| FeedbackEligibleAgentReceiptError::Unavailable)?
+    .ok_or(FeedbackEligibleAgentReceiptError::Unavailable)?;
+    let home_physical = home_directory.physical_display_path;
+    if !connection_is_exact_home_views_db(conn, &home_physical)? {
+        return Err(FeedbackEligibleAgentReceiptError::Unavailable);
+    }
+    let raw_turn_id = insert_turn(conn, session_id, "agent", ts_unix, text)
+        .map_err(FeedbackEligibleAgentReceiptError::Database)?;
+    if raw_turn_id <= 0 || !exact_agent_row_exists(conn, raw_turn_id, session_id)? {
+        return Err(FeedbackEligibleAgentReceiptError::Unavailable);
+    }
+    Ok(CommittedAgentTurnReceipt {
+        raw_turn_id,
+        session_id: session_id.to_owned(),
+        home_physical,
+    })
+}
+
+/// Recheck the private receipt immediately before feedback registration.
+/// This guards home aliases, foreign databases, row reuse, role drift, and
+/// session mismatches without reading transcript text.
+pub(crate) fn validate_feedback_eligible_agent_receipt(
+    home: &Path,
+    session_id: &str,
+    receipt: &CommittedAgentTurnReceipt,
+) -> Result<(), FeedbackEligibleAgentReceiptError> {
+    if !valid_feedback_session_id(session_id) || receipt.session_id != session_id {
+        return Err(FeedbackEligibleAgentReceiptError::Unavailable);
+    }
+    let home_directory = crate::skills::store::open_bound_directory(
+        home,
+        false,
+        "response feedback home",
+    )
+    .map_err(|_| FeedbackEligibleAgentReceiptError::Unavailable)?
+    .ok_or(FeedbackEligibleAgentReceiptError::Unavailable)?;
+    if home_directory.physical_display_path != receipt.home_physical {
+        return Err(FeedbackEligibleAgentReceiptError::Unavailable);
+    }
+    let db_path = home_directory.physical_display_path.join("views.db");
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(FeedbackEligibleAgentReceiptError::Database)?;
+    if !exact_agent_row_exists(&conn, receipt.raw_turn_id, session_id)? {
+        return Err(FeedbackEligibleAgentReceiptError::Unavailable);
+    }
+    Ok(())
+}
+
+fn valid_feedback_session_id(session_id: &str) -> bool {
+    !session_id.is_empty() && session_id.len() <= 512
+}
+
+fn connection_is_exact_home_views_db(
+    conn: &Connection,
+    home_physical: &Path,
+) -> Result<bool, FeedbackEligibleAgentReceiptError> {
+    let attached_path: String = conn
+        .query_row("PRAGMA database_list", [], |row| row.get(2))
+        .map_err(FeedbackEligibleAgentReceiptError::Database)?;
+    if attached_path.is_empty() {
+        return Ok(false);
+    }
+    let actual = std::fs::canonicalize(attached_path)
+        .map_err(|_| FeedbackEligibleAgentReceiptError::Unavailable)?;
+    let expected = std::fs::canonicalize(home_physical.join("views.db"))
+        .map_err(|_| FeedbackEligibleAgentReceiptError::Unavailable)?;
+    Ok(actual == expected)
+}
+
+fn exact_agent_row_exists(
+    conn: &Connection,
+    raw_turn_id: i64,
+    session_id: &str,
+) -> Result<bool, FeedbackEligibleAgentReceiptError> {
+    if raw_turn_id <= 0 {
+        return Ok(false);
+    }
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM raw_turns WHERE id = ?1 AND role = 'agent' AND session_id = ?2)",
+        params![raw_turn_id, session_id],
+        |row| row.get(0),
+    )
+    .map_err(FeedbackEligibleAgentReceiptError::Database)
 }
 
 fn valid_background_notice_job_id(job_id: &str) -> bool {
@@ -565,6 +695,51 @@ mod tests {
         let path = dir.path().join("views.db");
         let conn = store::open(&path).unwrap();
         (dir, conn)
+    }
+
+    #[test]
+    fn feedback_eligible_agent_write_returns_only_a_committed_exact_receipt() {
+        let (home, conn) = open_test_db();
+        let receipt = insert_feedback_eligible_agent_turn(
+            home.path(),
+            &conn,
+            "feedback-session",
+            10,
+            "agent reply",
+        )
+        .unwrap();
+        assert!(receipt.raw_turn_id > 0);
+        validate_feedback_eligible_agent_receipt(home.path(), "feedback-session", &receipt)
+            .unwrap();
+    }
+
+    #[test]
+    fn feedback_eligible_agent_write_rejects_foreign_home_and_outer_transaction() {
+        let (home, conn) = open_test_db();
+        let foreign = tempdir().unwrap();
+        let foreign_conn = store::open(&foreign.path().join("views.db")).unwrap();
+        assert!(matches!(
+            insert_feedback_eligible_agent_turn(
+                home.path(),
+                &foreign_conn,
+                "feedback-session",
+                10,
+                "agent reply",
+            ),
+            Err(FeedbackEligibleAgentReceiptError::Unavailable)
+        ));
+        conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert!(matches!(
+            insert_feedback_eligible_agent_turn(
+                home.path(),
+                &conn,
+                "feedback-session",
+                10,
+                "agent reply",
+            ),
+            Err(FeedbackEligibleAgentReceiptError::Unavailable)
+        ));
+        conn.execute_batch("ROLLBACK").unwrap();
     }
 
     // ── GOLD-ADAPT-ODY-26 integration test ───────────────────────────────

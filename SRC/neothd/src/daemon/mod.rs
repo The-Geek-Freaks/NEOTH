@@ -83,6 +83,7 @@ pub mod doctor_cron;
 /// switch `drift_alert.enabled`).
 pub mod drift_alert_cron;
 pub mod export;
+pub mod train_export;
 /// Round-3 v0.4 G-02 cron-wiring — daily tick that scans
 /// `idx_profile` for novel high-confidence claims via
 /// `profile::surfacing::find_novel_high_confidence_claims` +

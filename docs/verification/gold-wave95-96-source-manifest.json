@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W179-Hosted-prompt-layer-Clippy-repair",
-  "base": "3ced944969458d5b92b42028d7a972e889a98ff6",
-  "capturedUtc": "2026-09-21T23:43:05.0170780Z",
-  "validationStatus": "W179_HOSTED_TEST_COMPILE_REPAIR_PENDING",
-  "scopeNote": "W179 exact3library-test compile diagnostics repaired in2files;5explicit source/doc admissions only; W177 dirty sources excluded. Fresh Hosted compilation required.",
+  "item": "GOLD-W95-W177-W180-accepted-training-export-and-portable-diagnosis",
+  "base": "1bc30c4db90f24115c36686a1d5bce283656b561",
+  "capturedUtc": "2026-09-21T23:58:04.0382374Z",
+  "validationStatus": "W177_SOURCE_APPROVED_W180_DIAGNOSTIC_HOSTED_PENDING",
+  "scopeNote": "Exact21path admission:14W177sources+2W180diagnostic/testsources+5docs. W177 final independent review02, W180 root source review.15newnative identities and4existingmodulecorrections. No runtime closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -132,6 +132,11 @@
       "sha256": "27281799E29728ECA8E8469E05D5FD7A980E438A0277F43509383B166A4F7D2E"
     },
     {
+      "path": "docs/gold-wave179-verification.md",
+      "bytes": 2239,
+      "sha256": "826C7CE6F45C659A448DA5131819FB333DF0983544692B07FDBC3915B7770A73"
+    },
+    {
       "path": "docs/install.md",
       "bytes": 13637,
       "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
@@ -183,8 +188,8 @@
     },
     {
       "path": "packaging/tests/Test-PortableDiffImpact.ps1",
-      "bytes": 17899,
-      "sha256": "1B8083F799053E55D92F13CA9C5DE20D0BB4754BBAF18220830406253389B38C"
+      "bytes": 19183,
+      "sha256": "00708A656DA678171010E2F147803BB4EC21F4BA947AA35285699A13A09C1A41"
     },
     {
       "path": "packaging/tests/Test-PortablePreview.ps1",
@@ -208,13 +213,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1015120,
-      "sha256": "0288CEAEA77EDAC7CDEF2FDB1C8680B0E3EB944ADA5A76716BD83209AAFAB985"
+      "bytes": 1016324,
+      "sha256": "3A28F55ECA4F8C6B7719742653B3604F9BF91B80879750C446973E5234C2618C"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1610567,
-      "sha256": "63D77399CB440DA7CE181ABA5000D88A2C85649A75239E264E21D441D75AF95E"
+      "bytes": 1611771,
+      "sha256": "098F922B57294B03ED0DF69746C5B6F6B05EC7913EA625547FF907DE54A5DE62"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -363,8 +368,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_response_feedback.rs",
-      "bytes": 16224,
-      "sha256": "95A8057B97D7E0E2A399EB81D1339B1024ACF80A8E702A783FCD059F95DD56F7"
+      "bytes": 16259,
+      "sha256": "2D282D31C32D0A86D5658D536D865085B796637056CE0681BC5B77E151674E85"
     },
     {
       "path": "SRC/neothd-gui/src/chat_stream_phase.rs",
@@ -418,8 +423,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2023249,
-      "sha256": "4F4AA01C42BF33A8384FA22F0F0F5B86C4DB789E134880E5620DB3DF002F6A08"
+      "bytes": 2028587,
+      "sha256": "1FFDF54CE81EE9BF7FEC338DC9FF9B809F2805CD254EAE88270343144265A7EE"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -448,8 +453,8 @@
     },
     {
       "path": "SRC/neothd-gui/tests/gui_chat_bridge_public_api.rs",
-      "bytes": 7847,
-      "sha256": "98C5CC9B32B841CF880F85CD8A2CD3134B3B241B62FD9B95BF6A2FD4A97C2CF4"
+      "bytes": 8197,
+      "sha256": "B58BF8CB4E61D3853A8694FB2597EF3E326AE049DB61AF9D432C871CBE2CFF4B"
     },
     {
       "path": "SRC/neothd-gui/ui/activity.slint",
@@ -493,8 +498,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/chat.slint",
-      "bytes": 101531,
-      "sha256": "CF560DF0FFC02080A73FBC89539AB00B8635EED5BD31AF9A96AD437D70FAEB02"
+      "bytes": 101968,
+      "sha256": "14A9C49BFEDE452DE281795C1ACE474D811E01944C557D1757C2E48D15785C97"
     },
     {
       "path": "SRC/neothd-gui/ui/citation.slint",
@@ -553,8 +558,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/overlay.slint",
-      "bytes": 49465,
-      "sha256": "D60068920D034195024E485F4F4045177EB35CDC12EFE6B07D21A8A5966079C1"
+      "bytes": 49714,
+      "sha256": "F8BE911726E0EC76F38C74EB3A43889AB1F138A806E727C092345A92C5896DE8"
     },
     {
       "path": "SRC/neothd-gui/ui/overview.slint",
@@ -688,13 +693,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "bytes": 136424,
-      "sha256": "01F37651B453CF91F3C95289FF080810F5E9AB3DDEB37178BA17FE0EC93D50B2"
+      "bytes": 137591,
+      "sha256": "5DFC4E42373E6ACEC5D14EBBBA4ED3C79C0D56E35C8DFF9EF962186B9F04CDDA"
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1062540,
-      "sha256": "B13B29070238BAE7DE2EDB2157F37389A0931E4E6DB2D1DC560BC3CDDEB1F31C"
+      "bytes": 1067382,
+      "sha256": "99CD49934683B224538B921B42CEF98E6AC0CB4F690F294BC0367C6236C787D7"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -768,8 +773,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/feedback.rs",
-      "bytes": 21478,
-      "sha256": "AA4EAF22E5FC6F46CDC8163D3391BE8DED64091D22E730DE2A898AA4147A6774"
+      "bytes": 22542,
+      "sha256": "8DE938EC4D974B6FE491140A5850DA5BCAFDCECC67E8DFD1E6A4681D7DD140B3"
     },
     {
       "path": "SRC/neothd/src/cli/gui_stream.rs",
@@ -923,8 +928,8 @@
     },
     {
       "path": "SRC/neothd/src/code_map/diff_impact.rs",
-      "bytes": 13156,
-      "sha256": "441AC87F5C01257EE5A51958F80E7778D67491F383556863D4607346EE47B29B"
+      "bytes": 15333,
+      "sha256": "EA6D9B17D5E9400402BE4992F9E1A06C2696AA8DB82A46B468F06713492ADC56"
     },
     {
       "path": "SRC/neothd/src/code_map/enrichment_readiness.rs",
@@ -1188,8 +1193,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "bytes": 44746,
-      "sha256": "F51D234A5BBDC053AC315B9E24C08616E59438A7FB5E9185EBD3F58C31ADFB91"
+      "bytes": 54217,
+      "sha256": "DCE91D2CA2DDCE209B27C15F62771EAF6365ECF0D8031DBCA06C0AD99D43CF65"
     },
     {
       "path": "SRC/neothd/src/daemon/checkin_cron.rs",
@@ -1223,8 +1228,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/mod.rs",
-      "bytes": 17955,
-      "sha256": "FDF92BBE3D8E23FC232B10688F2C52950D80995233ADF467386BDBF8652F2710"
+      "bytes": 17977,
+      "sha256": "B14861A9CACE057E963A51B6F7D13D217CD5AF28582881C092BB27041ACD6F46"
     },
     {
       "path": "SRC/neothd/src/daemon/omi_native_ingest.rs",
@@ -1293,8 +1298,8 @@
     },
     {
       "path": "SRC/neothd/src/feedback/response.rs",
-      "bytes": 25573,
-      "sha256": "E2A056E8C6ABA53762603E46D388ADBBBCBDAF2BBC1982AE5D664DF07405AB6E"
+      "bytes": 34890,
+      "sha256": "C6E4E7CC6D26DA8A8C4DFE65CC9115D9EDED8BDF6D930E2CE9635D5441936AC4"
     },
     {
       "path": "SRC/neothd/src/hooks/dispatcher.rs",
@@ -2032,9 +2037,34 @@
       "sha256": "4E77A7CC896F8B5EEDCEFB458199A0939522B9191F22939BE3EFD78C575D9CF7"
     },
     {
-      "path": "docs/gold-wave179-verification.md",
-      "bytes": 2239,
-      "sha256": "826C7CE6F45C659A448DA5131819FB333DF0983544692B07FDBC3915B7770A73"
+      "path": "docs/gold-wave177-verification.md",
+      "bytes": 3510,
+      "sha256": "27B8AEBBA416C6E20D1F8BF447B07B44E58E1F773F7A87157031B5B8170EAF1E"
+    },
+    {
+      "path": "SRC/neothd/src/memory/transcript_store.rs",
+      "bytes": 46922,
+      "sha256": "776EB20045691A58E93EAD7A4EA3B665FA038FD6B910F77AED56EA3DED7F4D84"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/train_export.rs",
+      "bytes": 23281,
+      "sha256": "B13D91CDA4A6733EAF08883289C74D89BF096A0D77DF269166A7EBCDBABDAEC8"
+    },
+    {
+      "path": "SRC/neothd/src/cli/export.rs",
+      "bytes": 9689,
+      "sha256": "A2197C09B2C7D5F04105BE4A1A42D66E31997856CEDEF1A117CA1A84F6548DF4"
+    },
+    {
+      "path": "docs/training-set-export.md",
+      "bytes": 2904,
+      "sha256": "2697D4D7EDF26A0615929372BFB2FA5EBD35BA04245030262506A30BFAA7BFE1"
+    },
+    {
+      "path": "docs/gold-wave180-verification.md",
+      "bytes": 2018,
+      "sha256": "88FA429D61B6EC508E577E6EB61B39817A208A4606F16B83089DB69A373F9B7D"
     }
   ]
 }

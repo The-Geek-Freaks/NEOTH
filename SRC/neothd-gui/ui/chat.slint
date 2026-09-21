@@ -1946,6 +1946,14 @@ export component ChatView inherits Rectangle {
                     if root.response-feedback-available: HorizontalLayout {
                         spacing: Theme.space-tight;
                         NeothButton {
+                            label: "Accept for local training";
+                            primary: false;
+                            size: "sm";
+                            enabled: !root.response-feedback-running;
+                            loading: root.response-feedback-running;
+                            clicked => { root.response-feedback-action("accepted"); }
+                        }
+                        NeothButton {
                             label: "Needs correction";
                             primary: false;
                             size: "sm";

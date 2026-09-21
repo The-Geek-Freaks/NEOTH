@@ -30,6 +30,7 @@ impl TargetStatus {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FeedbackSignal {
+    Accepted,
     NeedsCorrection,
     NotHelpful,
 }
@@ -37,6 +38,7 @@ pub enum FeedbackSignal {
 impl FeedbackSignal {
     pub const fn wire_name(self) -> &'static str {
         match self {
+            Self::Accepted => "accepted",
             Self::NeedsCorrection => "needs-correction",
             Self::NotHelpful => "not-helpful",
         }
@@ -439,16 +441,16 @@ mod tests {
             )
             .expect("target");
         let action = projection
-            .begin_action(Action::Set(FeedbackSignal::NeedsCorrection))
+            .begin_action(Action::Set(FeedbackSignal::Accepted))
             .expect("first action");
         assert!(projection.begin_action(Action::Remove).is_none());
         let snapshot = projection
-            .finish_verified_action(&action, 3, Some(FeedbackSignal::NeedsCorrection))
+            .finish_verified_action(&action, 3, Some(FeedbackSignal::Accepted))
             .expect("fresh readback");
         assert!(!snapshot.running);
         assert_eq!(
             snapshot.active_signal,
-            Some(FeedbackSignal::NeedsCorrection)
+            Some(FeedbackSignal::Accepted)
         );
 
         let stale = projection
