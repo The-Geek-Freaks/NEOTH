@@ -1,8 +1,8 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W145-skill-autonomy-and-hosted-recovery",
-  "base": "c5f483bd386e754e6b801b3b5449a5fa09c0665a",
-  "capturedUtc": "2026-09-21T10:38:27.3057841Z",
+  "base": "7374b258d18e6023128dc4fde8133ef99affeb5c",
+  "capturedUtc": "2026-09-21T10:42:21.5795316Z",
   "validationStatus": "W145_REVIEWED_SOURCE_REMOTE_EXECUTION_REQUIRED",
   "scopeNote": "315 source inputs; W138 exact hosted formatting, W144 portable fixture ownership and W145 retained loop capability/loader compile recovery. W142 working changes excluded; no local execution or Road closure.",
   "files": [
@@ -53,8 +53,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 227841,
-      "sha256": "057842020535AFF4EFDB2C21C3FC460702A4EC8B7A936D54F967F881B240F6FB"
+      "bytes": 228442,
+      "sha256": "525890A3CBD33F9B1000D08A8DA52EEAD1985D2A8064593795BF2608926D86D0"
     },
     {
       "path": "docs/code-map-lifecycle.md",

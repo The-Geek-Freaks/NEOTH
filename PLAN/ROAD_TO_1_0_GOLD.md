@@ -8,6 +8,11 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+W145 hosted CLI build and generation35589743038 succeeded on c5f483bd.
+The source/SHA-bound CLI reference was imported after confirming no committed
+CLI change since that source. Preflight35590007571 and CodeQuality35590007565
+both passed on7374b258. Full native/preview acceptance remains required.
+
 W145 formatting follow-up: Code Quality35589742057 passed on c5f483bd.
 Preflight35589742105 supplied one exact test-only layout hunk in engine.rs;
 it was imported from the complete hosted log. Fresh Preflight remains required.

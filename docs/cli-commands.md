@@ -97,6 +97,30 @@ Set the raw autonomy level in freedom.yaml (advanced / power-user path). Persist
 
 Print the current autonomy level + operating mode (read from freedom.yaml)
 
+### `neoth autonomy skill`
+
+Inspect or update the operator-owned autonomy cap for one admitted Skill
+
+#### `neoth autonomy skill reset`
+
+Remove one canonical cap. This also removes stale caps for non-admitted Skills
+
+- `<SKILL_ID>`
+
+#### `neoth autonomy skill set`
+
+Set one Skill's cap. Action decisions are valid only for `custom`
+
+- `<SKILL_ID>`
+- `<LEVEL>`
+- `--action <KIND=DECISION>` — `action_kind=allow|confirm|deny`; repeat only with `custom`
+
+#### `neoth autonomy skill show`
+
+Show the exact persisted cap and its current local inventory applicability
+
+- `<SKILL_ID>`
+
 ### `neoth autonomy sovereign`
 
 GOLD-ADAPT-JV-MODE-02 — SOVEREIGN-BUDDY operating mode: full-auto PLUS `proactive.enabled = true` (NEOTH sends unsolicited proactive messages)
@@ -241,7 +265,7 @@ Toggle `self_activation.enabled` in freedom.yaml
 
 ### `neoth buddy status`
 
-Print a snapshot of the six GUI Buddy-Config fields
+Print a snapshot of the GUI Buddy-Config fields plus admitted Skill caps
 
 ## `neoth calendar`
 

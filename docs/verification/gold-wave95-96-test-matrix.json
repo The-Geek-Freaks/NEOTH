@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W95_W145_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "c5f483bd386e754e6b801b3b5449a5fa09c0665a",
+  "base": "7374b258d18e6023128dc4fde8133ef99affeb5c",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 54445,
-    "sha256": "9C392E6FAA9A2C4F7AF4646F238909FBDBCD21EF31674DD4EDCA313ED9D7D989"
+    "sha256": "6096CF4F3008AC555EC274CFE8B4C77E3C294FECB1BA5BE17687A9FCBDF81FF9"
   },
   "sourceInputs": 315,
   "requiredNativeTests": [
@@ -2028,6 +2028,15 @@
       "codeQualityConclusion": "success",
       "localFormatterRan": false,
       "execution": "PENDING_FRESH_HOSTED_GATES"
+    },
+    "cliReference": {
+      "run": 35589743038,
+      "source": "c5f483bd386e754e6b801b3b5449a5fa09c0665a",
+      "conclusion": "success",
+      "sha256": "525890A3CBD33F9B1000D08A8DA52EEAD1985D2A8064593795BF2608926D86D0",
+      "publicCliChangedSinceSource": false,
+      "import": "exact_source_and_sha256_verified",
+      "localExecution": false
     }
   }
 }
