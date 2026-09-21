@@ -446,7 +446,55 @@ custom_autonomy:
     exec_arbitrary: deny
     external_http_request: confirm
     channel_send: allow
+  skill_overrides:
+    web-research:
+      level: standard
+    repo-maintenance:
+      level: custom
+      overrides:
+        exec_arbitrary: deny
+        write_outside_home: confirm
 ```
+
+### Per-skill autonomy caps
+
+`custom_autonomy.skill_overrides` is an operator-owned map keyed by canonical
+Skill IDs. Each entry is a cap for actions performed through that selected
+Skill; it is evaluated per action together with the global autonomy policy.
+The restrictive result wins: a skill cap can retain or reduce an `allow` to
+`confirm` or `deny`, but it cannot loosen a global, channel, subject, tool, or
+other existing restriction. A cap does not replace the full safety floor.
+
+This policy is not part of a Skill manifest. An installed package cannot grant
+itself a higher autonomy level or replace the operator's cap. Missing
+`skill_overrides` remains compatible with existing configuration and means no
+per-skill cap is configured.
+
+Use the canonical CLI surface with the global output selector:
+
+```text
+neoth --output json autonomy skill show <skill-id>
+neoth --output json autonomy skill set <skill-id> <strict|standard|elevated|full|custom> [--action <action-kind>=<allow|confirm|deny>]...
+neoth --output json autonomy skill reset <skill-id>
+```
+
+`--action` is accepted only with `custom`. Action names use the stable
+lower-snake-case permission names shown by `neoth permissions show`; every
+argument must have exactly one `action-kind=allow|confirm|deny` pair and an
+action may appear only once. `set` requires the named Skill to be present in
+the locally authority-admitted inventory. `reset` intentionally accepts any
+canonical Skill ID and removes only that map entry, even if the Skill is now
+disabled, revoked, missing, or otherwise not admitted. This prevents an old
+restriction from becoming unremovable while it does not reactivate the Skill.
+
+JSON `show` reports the exact persisted `configured` entry and a nullable
+`effective_cap`. `effective_cap` is populated only when the same local
+authority-admitted inventory includes the Skill. It also reports `admitted`,
+`origin`, and `inert_reason`. Its `config_epoch` is `null`: local config and
+inventory readback do not prove that a running daemon has accepted or applied
+the change. `set` and `reset` return the exact persisted `configured` and
+`previous` entries plus `changed` and `reload_requested`. A reload request is a
+request for later daemon handling, not a runtime-application acknowledgement.
 
 Use `neoth permissions show` to inspect all stable action names and effective
 decisions, `neoth permissions check <action>` to probe the active policy, and

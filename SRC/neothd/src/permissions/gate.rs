@@ -157,6 +157,7 @@ impl LeaseContext {
 /// One per autonomy decision site. Cheap to construct.
 pub struct Gate {
     policy: AutonomyPolicySnapshot,
+    skill_invocation_policy: Option<crate::skills::resolver::SkillInvocationPolicy>,
     confirm: ConfirmStrategy,
     /// R2-P1-2: when `Some`, the `ConfirmStrategy::Channel` path
     /// routes through this asker instead of dead-failing. None
@@ -203,6 +204,7 @@ impl Gate {
     pub fn for_policy(policy: AutonomyPolicySnapshot) -> Self {
         Self {
             policy,
+            skill_invocation_policy: None,
             confirm: ConfirmStrategy::FailClosed,
             channel_asker: None,
             channel_timeout: Duration::from_secs(90),
@@ -210,6 +212,18 @@ impl Gate {
             preconfirmed_source: None,
             audit_presentation: AuditPresentation::Canonical,
         }
+    }
+
+    /// Add a restrictive cap that was minted from a retained admitted skill
+    /// route. This API intentionally accepts the capability itself rather than
+    /// a skill id or a caller-computed decision, so neither manifest input nor
+    /// a stale string can manufacture authority.
+    pub(crate) fn with_skill_invocation_policy(
+        mut self,
+        policy: Option<crate::skills::resolver::SkillInvocationPolicy>,
+    ) -> Self {
+        self.skill_invocation_policy = policy;
+        self
     }
 
     /// Built-in-level constructor retained only for the compact historical
@@ -407,8 +421,9 @@ impl Gate {
         operation_id_sha256: &str,
         request_binding_sha256: &str,
     ) -> Result<super::trust_ledger::TrustAdmissionDescriptor, GateError> {
+        let policy_snapshot = self.current_policy_snapshot();
         let (decision, lease_id, confirmation_source) = self
-            .resolve_durable_decision_at(action, Self::now_unix())
+            .resolve_durable_decision_at(action, Self::now_unix(), &policy_snapshot)
             .await;
         let subject = self
             .lease_ctx
@@ -417,13 +432,13 @@ impl Gate {
         super::trust_ledger::TrustAdmissionDescriptor::from_gate_resolution(
             operation_id_sha256,
             action,
-            self.policy.level(),
+            policy_snapshot.level(),
             &decision,
             subject,
             lease_id.as_deref(),
             confirmation_source,
             request_binding_sha256,
-            self.policy.trust_fingerprint_sha256(),
+            policy_snapshot.trust_fingerprint_sha256(),
         )
         .map_err(|error| {
             GateError::Unavailable(format!("invalid durable admission descriptor: {error}"))
@@ -462,15 +477,16 @@ impl Gate {
         audit_required: bool,
         request_binding_sha256: Option<&str>,
     ) -> Result<(), GateError> {
-        let (final_decision, lease_id, confirmation_source) =
-            self.resolve_decision_at(action, now_unix).await;
+        let policy_snapshot = self.current_policy_snapshot();
+        let (final_decision, lease_id, confirmation_source, audit_policy_snapshot) =
+            self.resolve_decision_at(action, now_unix, &policy_snapshot).await;
 
         if !matches!(sink, PermissionAuditSink::None) {
             let subject = self.lease_ctx.as_ref().map(|c| c.subject.as_str());
             let audit_result = audit(
                 sink,
                 action,
-                self.policy.level(),
+                audit_policy_snapshot.level(),
                 &final_decision,
                 AuditContext {
                     subject,
@@ -514,22 +530,23 @@ impl Gate {
         &self,
         action: &Action,
         now_unix: i64,
-    ) -> (Decision, Option<String>, Option<&'static str>) {
-        let decision = evaluate(action, &self.policy);
+        policy_snapshot: &AutonomyPolicySnapshot,
+    ) -> (Decision, Option<String>, Option<&'static str>, AutonomyPolicySnapshot) {
+        let decision = self.effective_decision_at(action, policy_snapshot);
         match decision {
             // A request-bound capability can accompany a policy Allow. Keep
             // the source in generic audit evidence even where no upgrade was
             // required.
-            Decision::Allow => (Decision::Allow, None, self.preconfirmed_source),
-            Decision::Deny(reason) => (Decision::Deny(reason), None, None),
+            Decision::Allow => (Decision::Allow, None, self.preconfirmed_source, policy_snapshot.clone()),
+            Decision::Deny(reason) => (Decision::Deny(reason), None, None, policy_snapshot.clone()),
             Decision::Confirm(reason) => match self
                 .lease_ctx
                 .as_ref()
                 .and_then(|context| context.covering_lease_id(action, now_unix))
             {
-                Some(id) => (Decision::Allow, Some(id), Some("capability_lease")),
+                Some(id) => (Decision::Allow, Some(id), Some("capability_lease"), policy_snapshot.clone()),
                 None => match self.preconfirmed_source {
-                    Some(source) => (Decision::Allow, None, Some(source)),
+                    Some(source) => (Decision::Allow, None, Some(source), policy_snapshot.clone()),
                     None => {
                         let resolved = self.resolve_confirm(action, &reason).await;
                         let source = if resolved.is_allow() {
@@ -543,7 +560,26 @@ impl Gate {
                         } else {
                             None
                         };
-                        (resolved, None, source)
+                        let audit_policy_snapshot = if resolved.is_allow()
+                            && self.skill_invocation_policy.as_ref().is_some_and(|policy| policy.has_skill_cap())
+                        {
+                            self.current_policy_snapshot()
+                        } else {
+                            policy_snapshot.clone()
+                        };
+                        let final_decision = if resolved.is_allow() {
+                            // The answer already confirmed this exact action. A
+                            // current Deny can revoke it; an unchanged Confirm
+                            // must not discard the operator's positive answer.
+                            match self.effective_decision_at(action, &audit_policy_snapshot) {
+                                Decision::Deny(reason) => Decision::Deny(reason),
+                                Decision::Allow | Decision::Confirm(_) => Decision::Allow,
+                            }
+                        } else {
+                            resolved
+                        };
+                        let source = final_decision.is_allow().then_some(source).flatten();
+                        (final_decision, None, source, audit_policy_snapshot)
                     }
                 },
             },
@@ -554,8 +590,9 @@ impl Gate {
         &self,
         action: &Action,
         now_unix: i64,
+        policy_snapshot: &AutonomyPolicySnapshot,
     ) -> (Decision, Option<String>, Option<&'static str>) {
-        let decision = evaluate(action, &self.policy);
+        let decision = self.effective_decision_at(action, policy_snapshot);
         match decision {
             Decision::Allow => (Decision::Allow, None, None),
             Decision::Deny(reason) => (Decision::Deny(reason), None, None),
@@ -656,6 +693,24 @@ impl Gate {
                 }
             }
         }
+    }
+
+    fn current_policy_snapshot(&self) -> AutonomyPolicySnapshot {
+        self.skill_invocation_policy.as_ref().map_or_else(
+            || self.policy.clone(),
+            |route_policy| route_policy.current_global_snapshot(&self.policy),
+        )
+    }
+
+    fn effective_decision_at(
+        &self,
+        action: &Action,
+        policy_snapshot: &AutonomyPolicySnapshot,
+    ) -> Decision {
+        self.skill_invocation_policy.as_ref().map_or_else(
+            || evaluate(action, policy_snapshot),
+            |route_policy| route_policy.evaluate_at_snapshot(action, policy_snapshot),
+        )
     }
 }
 
@@ -1009,6 +1064,197 @@ mod tests {
         }
     }
 
+    fn w138_retained_skill_policy(
+        decision: Option<crate::permissions::CustomDecision>,
+    ) -> crate::skills::resolver::SkillInvocationPolicy {
+        let skill_id = crate::permissions::SkillId::parse("w138-retained-effect-skill")
+            .expect("W138 fixture Skill id");
+        let override_policy = decision.map(|decision| crate::permissions::SkillAutonomyOverride {
+            level: AutonomyLevel::Custom,
+            overrides: std::collections::BTreeMap::from([(
+                crate::permissions::ActionKind::ExecArbitrary,
+                decision,
+            )]),
+        });
+        let config = crate::permissions::CustomAutonomyConfig {
+            overrides: std::collections::BTreeMap::new(),
+            skill_overrides: override_policy
+                .map(|override_policy| std::collections::BTreeMap::from([(skill_id, override_policy)]))
+                .unwrap_or_default(),
+        };
+        let admitted = AutonomyPolicySnapshot::new(AutonomyLevel::Full, &config);
+        crate::skills::resolver::test_invocation_policy_for_skill_id(
+            "w138-retained-effect-skill",
+            &admitted,
+        )
+        .expect("mint real retained W138 route policy")
+    }
+
+    #[tokio::test]
+    async fn w138_retained_skill_deny_blocks_effect_even_when_global_and_confirm_allow() {
+        let result = Gate::for_level(AutonomyLevel::Full)
+            .with_skill_invocation_policy(Some(w138_retained_skill_policy(Some(
+                crate::permissions::CustomDecision::Deny,
+            ))))
+            .with_confirm(ConfirmStrategy::AlwaysAllow)
+            .check(&Action::ExecArbitrary, None)
+            .await;
+        assert!(
+            matches!(result, Err(GateError::Denied(_))),
+            "a retained selected-skill Deny must stop the effect before confirmation can bypass it: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn w138_retained_skill_confirm_uses_channel_operator_answer() {
+        let policy = w138_retained_skill_policy(Some(crate::permissions::CustomDecision::Confirm));
+        let approved = Gate::for_level(AutonomyLevel::Full)
+            .with_skill_invocation_policy(Some(policy.clone()))
+            .with_confirm(ConfirmStrategy::Channel)
+            .with_channel_asker(Arc::new(ApproveAsker))
+            .check(&Action::ExecArbitrary, None)
+            .await;
+        assert!(approved.is_ok(), "the actual channel approval must resolve retained Confirm");
+
+        let rejected = Gate::for_level(AutonomyLevel::Full)
+            .with_skill_invocation_policy(Some(policy))
+            .with_confirm(ConfirmStrategy::Channel)
+            .with_channel_asker(Arc::new(DenyAsker))
+            .check(&Action::ExecArbitrary, None)
+            .await;
+        assert!(
+            matches!(&rejected, Err(GateError::Denied(reason)) if reason.contains("operator denied via channel")),
+            "a retained Confirm must use the real channel rejection path, not inherit global Allow: {rejected:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn w138_effect_gate_applies_global_tightening_after_route_is_retained() {
+        let retained = w138_retained_skill_policy(None);
+        let result = Gate::for_level(AutonomyLevel::Strict)
+            .with_skill_invocation_policy(Some(retained))
+            .check(&Action::ExecArbitrary, None)
+            .await;
+        assert!(
+            matches!(result, Err(GateError::Denied(_))),
+            "the fresh Strict global policy must tighten a retained Full-route invocation"
+        );
+    }
+
+    #[tokio::test]
+    async fn w138_retained_route_without_skill_cap_preserves_global_effect_behavior() {
+        let result = Gate::for_level(AutonomyLevel::Full)
+            .with_skill_invocation_policy(Some(w138_retained_skill_policy(None)))
+            .check(&Action::ExecArbitrary, None)
+            .await;
+        assert!(result.is_ok(), "a retained route without a cap must preserve Full global behavior: {result:?}");
+    }
+
+    struct W138ReloadThenApproveAsker {
+        reload: Arc<crate::config::reload::ReloadController>,
+        config_path: std::path::PathBuf,
+        changed: crate::config::FreedomConfig,
+    }
+
+    #[async_trait::async_trait]
+    impl ChannelAsker for W138ReloadThenApproveAsker {
+        async fn ask(&self, _reason: &str) -> Option<bool> {
+            std::fs::write(&self.config_path, serde_yaml::to_string(&self.changed).unwrap())
+                .expect("persist reloaded autonomy fixture");
+            match self.reload.try_reload().expect("accepted autonomy reload") {
+                crate::config::reload::ReloadResult::Reloaded { .. } => {}
+                other => panic!("expected Reloaded before channel answer, got {other:?}"),
+            }
+            Some(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn w138_channel_approval_rechecks_reloaded_cap_and_audits_current_deny() {
+        let skill_id = crate::permissions::SkillId::parse("w138-channel-reload-cap").unwrap();
+        let mut initial = crate::config::FreedomConfig {
+            autonomy: AutonomyLevel::Standard,
+            ..Default::default()
+        };
+        initial.custom_autonomy.overrides.insert(
+            crate::permissions::ActionKind::ExecArbitrary,
+            crate::permissions::CustomDecision::Confirm,
+        );
+        initial.custom_autonomy.skill_overrides.insert(
+            skill_id,
+            crate::permissions::SkillAutonomyOverride {
+                level: AutonomyLevel::Custom,
+                overrides: std::collections::BTreeMap::from([(
+                    crate::permissions::ActionKind::ExecArbitrary,
+                    crate::permissions::CustomDecision::Confirm,
+                )]),
+            },
+        );
+        let home = tempdir().unwrap();
+        let config_path = home.path().join("freedom.yaml");
+        std::fs::write(&config_path, serde_yaml::to_string(&initial).unwrap()).unwrap();
+        let reload = Arc::new(crate::config::reload::ReloadController::new(
+            initial.clone(),
+            config_path.clone(),
+        ));
+        let admitted = reload.autonomy_policy();
+        let admitted_fingerprint = admitted.trust_fingerprint_sha256();
+        let retained = crate::skills::resolver::test_invocation_policy_for_skill_id_with_reload(
+            "w138-channel-reload-cap",
+            &admitted,
+            Arc::clone(&reload),
+        )
+        .unwrap();
+        let mut changed = initial;
+        changed.autonomy = AutonomyLevel::Custom;
+        changed.custom_autonomy.overrides.insert(
+            crate::permissions::ActionKind::ExecArbitrary,
+            crate::permissions::CustomDecision::Deny,
+        );
+
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("000001.wal");
+        let (writer, join) = spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
+        let result = Gate::for_policy(admitted)
+            .with_skill_invocation_policy(Some(retained))
+            .with_confirm(ConfirmStrategy::Channel)
+            .with_channel_asker(Arc::new(W138ReloadThenApproveAsker {
+                reload: Arc::clone(&reload),
+                config_path,
+                changed,
+            }))
+            .check_with_audit_sink(
+                &Action::ExecArbitrary,
+                PermissionAuditSink::Writer(&writer),
+                true,
+                None,
+            )
+            .await;
+        assert!(
+            matches!(result, Err(GateError::Denied(_))),
+            "the reloaded Deny must win after a real channel approval: {result:?}"
+        );
+        let current = reload.autonomy_policy();
+        let current_fingerprint = current.trust_fingerprint_sha256();
+        assert_eq!(current.level(), AutonomyLevel::Custom);
+        assert_ne!(current_fingerprint, admitted_fingerprint);
+
+        drop(writer);
+        join.await.unwrap();
+        let bytes = read(&segment).await.unwrap();
+        let legacy = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).unwrap();
+        assert_eq!(legacy.header.event_type, EVENT_TYPE_PERMISSION_DENIED);
+        let legacy_payload: serde_json::Value = serde_json::from_slice(legacy.payload).unwrap();
+        assert_eq!(legacy_payload["level"], "custom");
+        assert_eq!(legacy_payload["decision"], "deny");
+        let trust = decode_frame(&bytes[SEGMENT_HEADER_LEN + legacy.header.total_len as usize..])
+            .expect("final typed TrustDecision follows denied permission audit");
+        let trust = crate::permissions::trust_ledger::TrustEvent::decode(trust.payload).unwrap();
+        assert_eq!(trust.outcome, crate::permissions::TrustOutcome::Denied);
+        assert_eq!(trust.autonomy_level, current.level());
+        assert_ne!(current_fingerprint, admitted_fingerprint);
+    }
     #[tokio::test]
     async fn audit_emits_granted_frame_when_allow() {
         let home = tempdir().unwrap();

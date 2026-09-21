@@ -7517,6 +7517,23 @@ pub struct WikiRowData {
     pub gate: String,
 }
 
+/// One read-only, local-authority-admitted Skill cap from Buddy status.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuddySkillAutonomyOverride {
+    pub level: String,
+    pub overrides: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuddySkillAutonomyCap {
+    pub id: String,
+    pub configured: BuddySkillAutonomyOverride,
+    pub effective_cap: BuddySkillAutonomyOverride,
+    pub origin: String,
+}
+
 /// Snapshot from `neoth buddy status --output json`.
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -7527,6 +7544,7 @@ pub struct BuddyStatusSnap {
     pub smart_approve_any: bool,
     pub autonomy: String,
     pub proactive_enabled: bool,
+    pub skill_autonomy_caps: Vec<BuddySkillAutonomyCap>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -7770,7 +7788,7 @@ pub fn filter_wiki_rows(rows: Vec<WikiRowData>, search: &str, kind: &str) -> Vec
 ///
 /// Expected shape: `{"sovereign_buddy":true,"self_activation_enabled":true,
 ///   "self_activation_skills":["sk1","sk2"],"smart_approve_any":false,
-///   "autonomy":"standard","proactive_enabled":true}`
+///   "autonomy":"standard","proactive_enabled":true,"skill_autonomy_caps":[]}`
 pub fn parse_buddy_status(json: &str) -> Result<BuddyStatusSnap, String> {
     let snapshot: BuddyStatusSnap = serde_json::from_str(json)
         .map_err(|error| format!("invalid Buddy status JSON: {error}"))?;
@@ -7789,6 +7807,27 @@ pub fn parse_buddy_status(json: &str) -> Result<BuddyStatusSnap, String> {
         .any(|skill| skill.trim().is_empty())
     {
         return Err("Buddy status contains an empty self-activation skill id".to_string());
+    }
+    for cap in &snapshot.skill_autonomy_caps {
+        if !valid_skill_operation_id(&cap.id)
+            || !matches!(cap.origin.as_str(), "bundled" | "installed")
+            || cap.configured.level != cap.effective_cap.level
+            || cap.configured.overrides != cap.effective_cap.overrides
+        {
+            return Err("Buddy status contains an invalid Skill autonomy cap".to_string());
+        }
+        for policy in [&cap.configured, &cap.effective_cap] {
+            if !matches!(policy.level.as_str(), "strict" | "standard" | "elevated" | "full" | "custom")
+                || (policy.level != "custom" && !policy.overrides.is_empty())
+                || policy.overrides.iter().any(|(action, decision)| {
+                    action.is_empty()
+                        || !action.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+                        || !matches!(decision.as_str(), "allow" | "confirm" | "deny")
+                })
+            {
+                return Err("Buddy status contains an invalid Skill autonomy cap policy".to_string());
+            }
+        }
     }
     Ok(snapshot)
 }
@@ -12218,7 +12257,7 @@ mod tests {
 
     #[test]
     fn parse_buddy_status_happy_path() {
-        let json = r#"{"sovereign_buddy":true,"self_activation_enabled":true,"self_activation_skills":["code","review"],"smart_approve_any":true,"autonomy":"standard","proactive_enabled":true}"#;
+        let json = r#"{"sovereign_buddy":true,"self_activation_enabled":true,"self_activation_skills":["code","review"],"smart_approve_any":true,"autonomy":"standard","proactive_enabled":true,"skill_autonomy_caps":[{"id":"code","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"effective_cap":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"origin":"bundled"}]}"#;
         let snap = super::parse_buddy_status(json).expect("valid Buddy status");
         assert!(snap.sovereign_buddy);
         assert!(snap.self_activation_enabled);
@@ -12227,6 +12266,7 @@ mod tests {
         assert!(snap.smart_approve_any);
         assert_eq!(snap.autonomy, "standard");
         assert!(snap.proactive_enabled);
+        assert_eq!(snap.skill_autonomy_caps.len(), 1);
     }
 
     #[test]
@@ -12241,14 +12281,14 @@ mod tests {
         );
         assert!(
             super::parse_buddy_status(
-                r#"{"sovereign_buddy":false,"self_activation_enabled":"false","self_activation_skills":[],"smart_approve_any":false,"autonomy":"standard","proactive_enabled":false}"#
+                r#"{"sovereign_buddy":false,"self_activation_enabled":"false","self_activation_skills":[],"smart_approve_any":false,"autonomy":"standard","proactive_enabled":false,"skill_autonomy_caps":[]}"#
             )
             .is_err(),
             "wrong-typed booleans must not render as false"
         );
         assert!(
             super::parse_buddy_status(
-                r#"{"sovereign_buddy":false,"self_activation_enabled":false,"self_activation_skills":[],"smart_approve_any":false,"autonomy":"future","proactive_enabled":false}"#
+                r#"{"sovereign_buddy":false,"self_activation_enabled":false,"self_activation_skills":[],"smart_approve_any":false,"autonomy":"future","proactive_enabled":false,"skill_autonomy_caps":[]}"#
             )
             .is_err(),
             "unknown autonomy must be explicit"

@@ -3811,6 +3811,48 @@ pub(crate) fn open_pending_skill_mutation_reconciliation(
     }))
 }
 
+/// Inspect whether an installed-Skill mutation needs recovery without taking a
+/// mutation lock, creating metadata, cleaning stages, or reconciling anything.
+/// A malformed or unreadable journal/stage is returned as an error so callers
+/// can conservatively treat installed authority as inert.
+pub(crate) fn skill_mutation_recovery_pending_read_only(target_skills_dir: &Path) -> Result<bool> {
+    let Some(root) = open_bound_directory(target_skills_dir, false, "skills root")? else {
+        return Ok(false);
+    };
+    if read_skill_mutation_journal(&root)?.is_some() {
+        return Ok(true);
+    }
+    let entries = root.dir.entries().with_context(|| {
+        format!(
+            "enumerate Skill mutation recovery artifacts under {}",
+            root.display_path.display()
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.with_context(|| {
+            format!(
+                "read Skill mutation recovery artifact under {}",
+                root.display_path.display()
+            )
+        })?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            return Ok(true);
+        };
+        if name.starts_with(SKILL_MUTATION_JOURNAL_STAGE_PREFIX)
+            || name.starts_with(SKILL_RETENTION_REGISTRY_STAGE_PREFIX)
+            || name.starts_with(BACKUP_TRANSACTION_PREFIX)
+            || name.starts_with(DELETE_TRANSACTION_PREFIX)
+            || name.starts_with(CREATOR_DIRECTORY_STAGE_PREFIX)
+            || name.starts_with(CREATOR_MANIFEST_STAGE_PREFIX)
+            || name.starts_with(FILE_REPLACEMENT_STAGE_PREFIX)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 impl PendingSkillMutationReconciliation {
     #[must_use]
     pub(crate) fn audit_binding(&self) -> SkillMutationAuditBinding {
@@ -9421,5 +9463,69 @@ mod tests {
                 "unexpected error for {prefix}: {rendered}"
             );
         }
+    }
+
+    #[test]
+    fn read_only_recovery_probe_never_creates_locks_or_changes_recovery_artifacts() {
+        fn root_bytes(path: &Path) -> Vec<(String, Vec<u8>)> {
+            let mut entries = std::fs::read_dir(path)
+                .unwrap()
+                .map(|entry| entry.unwrap())
+                .map(|entry| {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    let metadata = entry.metadata().unwrap();
+                    let bytes = if metadata.is_file() {
+                        std::fs::read(entry.path()).unwrap()
+                    } else {
+                        Vec::new()
+                    };
+                    (name, bytes)
+                })
+                .collect::<Vec<_>>();
+            entries.sort_by(|left, right| left.0.cmp(&right.0));
+            entries
+        }
+
+        let root = tempdir().unwrap();
+        let absent = root.path().join("absent-skills");
+        assert!(!skill_mutation_recovery_pending_read_only(&absent).unwrap());
+        assert!(!absent.exists(), "read-only probe must not create a missing root");
+
+        let skills = root.path().join("skills");
+        std::fs::create_dir_all(&skills).unwrap();
+        std::fs::write(skills.join(".neoth-backup-operator"), b"backup").unwrap();
+        std::fs::write(
+            skills.join(".neoth-skill-mutation-write-operator"),
+            b"journal stage",
+        )
+        .unwrap();
+        let before = root_bytes(&skills);
+        assert!(
+            skill_mutation_recovery_pending_read_only(&skills).unwrap(),
+            "journal-free recovery artifacts must keep installed candidates inert"
+        );
+        assert_eq!(root_bytes(&skills), before, "probe must not clean recovery artifacts");
+        assert!(
+            !skills.join(SKILL_MUTATION_LOCK_FILE).exists(),
+            "probe must not create a mutation lock"
+        );
+
+        std::fs::remove_file(skills.join(".neoth-backup-operator")).unwrap();
+        std::fs::remove_file(skills.join(".neoth-skill-mutation-write-operator")).unwrap();
+        std::fs::write(skills.join(SKILL_MUTATION_JOURNAL_FILE), b"{").unwrap();
+        let malformed_before = root_bytes(&skills);
+        assert!(
+            skill_mutation_recovery_pending_read_only(&skills).is_err(),
+            "malformed journal must fail closed instead of invoking recovery"
+        );
+        assert_eq!(
+            root_bytes(&skills),
+            malformed_before,
+            "malformed journal must remain byte-for-byte unchanged"
+        );
+        assert!(
+            !skills.join(SKILL_MUTATION_LOCK_FILE).exists(),
+            "malformed journal inspection must not create a mutation lock"
+        );
     }
 }

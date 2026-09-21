@@ -253,6 +253,52 @@ pub(crate) async fn run_tool_loop_with_budget<D, P>(
     rollback_policy: Option<&crate::config::RollbackConfig>,
     tool_scope: &McpToolScope,
     max_iterations: u32,
+    security_policy: &crate::config::SecurityPolicy,
+    subject: Option<String>,
+    goal_context: crate::mcp::goal_tracker::GoalContext,
+    hints_enabled: bool,
+    compaction: crate::context::compaction::CompactionPolicy,
+    compression: Option<crate::context::compress::CompressionRuntime>,
+    judge_provider: Option<&dyn crate::providers::Provider>,
+    elicitation_handler: &crate::cli::elicitation::ElicitationHandler,
+    harness_cfg: &crate::config::tools::McpHarnessConfig,
+    compaction_budget: &mut CompactionBudget,
+    max_tool_calls: Option<u64>,
+    turn_effect_gate: Option<Arc<dyn crate::providers::ChatTurnEffectGate>>,
+    instance_home: &std::path::Path,
+    pre_tool_hook_policy: crate::hooks::PreToolUseHookPolicy<'_>,
+    pre_tool_once_guard: &crate::hooks::SessionOnceGuard,
+    pre_tool_cancellation: crate::hooks::PreToolUseCancellation,
+    outline_enrichment_enabled: bool,
+    enrichment_selectors: Vec<crate::config::ConfiguredMcpPathRead>,
+    impact_policy: crate::config::CodeMapImpactPolicy,
+    requested_context_policy: crate::config::RequestedContextPolicy,
+) -> Result<LoopOutcome>
+where
+    D: CompletionDriver + Send,
+    P: PolicyArgument + Copy + Send + Sync,
+{
+    run_tool_loop_with_budget_and_skill_policy(
+        driver, initial_prompt, servers, policy, None, writer, rollback_policy, tool_scope,
+        max_iterations, security_policy, subject, goal_context, hints_enabled, compaction,
+        compression, judge_provider, elicitation_handler, harness_cfg, compaction_budget,
+        max_tool_calls, turn_effect_gate, instance_home, pre_tool_hook_policy,
+        pre_tool_once_guard, pre_tool_cancellation, outline_enrichment_enabled,
+        enrichment_selectors, impact_policy, requested_context_policy,
+    ).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_tool_loop_with_budget_and_skill_policy<D, P>(
+    driver: &mut D,
+    initial_prompt: String,
+    servers: &McpServers,
+    policy: P,
+    skill_invocation_policy: Option<&crate::skills::resolver::SkillInvocationPolicy>,
+    writer: Option<&WalWriterHandle>,
+    rollback_policy: Option<&crate::config::RollbackConfig>,
+    tool_scope: &McpToolScope,
+    max_iterations: u32,
     // GOLD-ADOPT-23 P0 — egress + dangerous-command policy gate.
     security_policy: &crate::config::SecurityPolicy,
     // GOLD-ADAPT-AWE-CODE-01 — pre-authenticated caller identity for
@@ -1106,6 +1152,7 @@ where
                 call,
                 servers,
                 policy,
+                skill_invocation_policy,
                 writer,
                 rollback_policy,
                 smart_session.as_mut(),
@@ -2010,6 +2057,7 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
     call: &ParsedToolCall,
     servers: &McpServers,
     policy: P,
+    skill_invocation_policy: Option<&crate::skills::resolver::SkillInvocationPolicy>,
     writer: Option<&WalWriterHandle>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     smart_approve: Option<&mut crate::mcp::smart_approve::SmartApproveSession>,
@@ -2055,10 +2103,11 @@ async fn dispatch_one_configured_path_read<P: PolicyArgument + Copy>(
     // Run every static policy layer before starting or querying a process.
     // Only a genuine Confirm can justify SmartApprove's tools/list snapshot;
     // Allow uses the ordinary call path and every rejection returns here.
-    let preflight = crate::mcp::gate::preflight_with_audit_sink(
+    let preflight = crate::mcp::gate::preflight_with_skill_policy_and_audit_sink(
         cfg,
         &call.tool,
         policy,
+        skill_invocation_policy,
         crate::mcp::gate::McpAuditSink::from_writer(writer),
         now_unix,
         subject,
@@ -2258,6 +2307,7 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
         call,
         servers,
         policy,
+        None,
         writer,
         rollback_policy,
         smart_approve,
@@ -4087,6 +4137,7 @@ mod tests {
                 crate::permissions::ActionKind::McpToolInvocation,
                 crate::permissions::CustomDecision::Deny,
             )]),
+            skill_overrides: std::collections::BTreeMap::new(),
         };
         let policy = crate::permissions::AutonomyPolicySnapshot::new(
             crate::permissions::AutonomyLevel::Custom,

@@ -18,6 +18,7 @@ CUSTOM_TESTS = frozenset(
         "w58_gui_callback_runtime_tests::w122_channel_account_dm_pairing_callback_preserves_projection_until_exact_receipt",
         "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt",
         "w58_gui_callback_runtime_tests::w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt",
+        "w58_gui_callback_runtime_tests::w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback",
     }
 )
 CONTROLLER_TEST = (

@@ -519,6 +519,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
             combined_system,
             context_preload_notice,
             skill_route_guard: _skill_route_guard,
+            skill_invocation_policy,
             skill_route_report,
             budget_items,
             mcp_catalogue_slot,
@@ -883,6 +884,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         &hooks,
         &once_guard,
         turn_effect_gate.clone(),
+        skill_invocation_policy,
         output,
     )
     .await

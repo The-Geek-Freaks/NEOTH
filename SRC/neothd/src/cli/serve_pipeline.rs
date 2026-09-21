@@ -2119,7 +2119,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // trigger cost, daily cap and prompt budgeting. Reload is observed
             // at the next handler invocation; reading it again per Council leaf
             // would splice two policy generations into one authorization.
-            let provider_call_authorizer =
+            let mut provider_call_authorizer =
                 if let Some(asker) = channel_asker.as_ref().map(Arc::clone) {
                     crate::providers::cost_authorization::ProviderCallAuthorizer::channel(
                         autonomy_policy.clone(),
@@ -2449,6 +2449,19 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     );
                 }
             };
+            // Mint the cap only from the admitted retained route and then
+            // retain that exact value through all channel provider/MCP leaves.
+            let channel_skill_invocation_policy = selected_skill_route
+                .as_ref()
+                .map(|route| {
+                    route.invocation_policy_with_reload(
+                        &autonomy_policy,
+                        Arc::clone(&reload_controller),
+                    )
+                })
+                .transpose()?;
+            provider_call_authorizer = provider_call_authorizer
+                .with_skill_invocation_policy(channel_skill_invocation_policy.clone());
             // SC-11 (Session 28d) — the channel path now threads the
             // matched skill's `tool_allowlist` into the MCP dispatch loop
             // exactly like `cli/chat.rs`. Previously the channel/daemon
@@ -3935,6 +3948,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         loop_req,
                         &mcp_servers_for_loop,
                         &autonomy_policy,
+                        channel_skill_invocation_policy.as_ref(),
                         &writer,
                         None,
                         &channel_tool_scope,

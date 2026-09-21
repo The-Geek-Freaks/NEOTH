@@ -101,6 +101,7 @@ pub(crate) async fn load_authorized_initial_from_reload_controller(
         reload,
         UserSkillLoadMode::Strict,
         None,
+        InstalledStoreMode::ReconcileForRuntime,
     )
     .await
 }
@@ -116,8 +117,32 @@ pub(crate) async fn load_authorized_reload_from_reload_controller(
         reload,
         UserSkillLoadMode::Quarantine,
         None,
+        InstalledStoreMode::ReconcileForRuntime,
     )
     .await
+}
+
+/// Build an authority-admitted snapshot for a read-only operator inspection.
+/// A pending or unreadable mutation journal is inert here: this probe never
+/// reconciles, acknowledges, rewrites, or otherwise consumes that journal.
+pub(crate) async fn load_authorized_read_only_from_reload_controller(
+    skills_dir: &Path,
+    reload: &crate::config::reload::ReloadController,
+) -> Result<AuthorizedRuntimeSkillSnapshot> {
+    load_authorized_with_mode_and_budget_override(
+        skills_dir,
+        reload,
+        UserSkillLoadMode::Quarantine,
+        None,
+        InstalledStoreMode::ReadOnlyProbe,
+    )
+    .await
+}
+
+#[derive(Clone, Copy)]
+enum InstalledStoreMode {
+    ReconcileForRuntime,
+    ReadOnlyProbe,
 }
 
 async fn load_authorized_with_mode_and_budget_override(
@@ -125,18 +150,49 @@ async fn load_authorized_with_mode_and_budget_override(
     reload: &crate::config::reload::ReloadController,
     user_skill_load_mode: UserSkillLoadMode,
     authority_budget_override: Option<(usize, u64)>,
+    installed_store_mode: InstalledStoreMode,
 ) -> Result<AuthorizedRuntimeSkillSnapshot> {
-    let installed_store_ready = match super::mutation_lifecycle::reconcile_for_runtime(skills_dir)
-        .await
-    {
-        Ok(()) => true,
-        Err(error) => {
-            tracing::warn!(
-                dir = %skills_dir.display(),
-                error = %error,
-                "installed Skill store reconciliation failed; publishing trusted bundled-only runtime snapshot"
-            );
-            false
+    let installed_store_ready = match installed_store_mode {
+        InstalledStoreMode::ReconcileForRuntime => {
+            match super::mutation_lifecycle::reconcile_for_runtime(skills_dir).await {
+                Ok(()) => true,
+                Err(error) => {
+                    tracing::warn!(
+                        dir = %skills_dir.display(),
+                        error = %error,
+                        "installed Skill store reconciliation failed; publishing trusted bundled-only runtime snapshot"
+                    );
+                    false
+                }
+            }
+        }
+        InstalledStoreMode::ReadOnlyProbe => {
+            let skills_dir = skills_dir.to_path_buf();
+            match tokio::task::spawn_blocking(move || {
+                super::installer::skill_mutation_recovery_pending_read_only(&skills_dir)
+                    .map(|pending| !pending)
+            })
+            .await
+            {
+                Ok(Ok(true)) => true,
+                Ok(Ok(false)) => false,
+                Ok(Err(error)) => {
+                    tracing::warn!(
+                        dir = %skills_dir.display(),
+                        error = %error,
+                        "installed Skill mutation journal is not safely inspectable; publishing trusted bundled-only read-only snapshot"
+                    );
+                    false
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        dir = %skills_dir.display(),
+                        error = %error,
+                        "installed Skill mutation journal probe failed; publishing trusted bundled-only read-only snapshot"
+                    );
+                    false
+                }
+            }
         }
     };
 
@@ -1200,6 +1256,36 @@ mod tests {
         crate::config::reload::ReloadController::new(config, config_path)
     }
 
+    #[tokio::test]
+    async fn read_only_inventory_keeps_pending_recovery_artifacts_and_never_creates_a_lock() {
+        let home = tempdir().unwrap();
+        let skills = home.path().join("skills");
+        std::fs::create_dir_all(&skills).unwrap();
+        let stage = skills.join(".neoth-skill-mutation-write-pending");
+        let journal = skills.join(".neoth-skill-mutation.json");
+        std::fs::write(&stage, b"private stage bytes").unwrap();
+        std::fs::write(&journal, b"{").unwrap();
+        let stage_before = std::fs::read(&stage).unwrap();
+        let journal_before = std::fs::read(&journal).unwrap();
+        let reload = test_reload_controller(home.path());
+
+        let snapshot = load_authorized_read_only_from_reload_controller(&skills, &reload)
+            .await
+            .expect("read-only inventory must fail closed to bundled-only");
+
+        assert!(
+            snapshot.skills.iter().all(RuntimeSkill::is_trusted_bundled),
+            "pending or malformed recovery state must not admit installed candidates"
+        );
+        assert_eq!(std::fs::read(&stage).unwrap(), stage_before);
+        assert_eq!(std::fs::read(&journal).unwrap(), journal_before);
+        assert!(stage.exists() && journal.exists());
+        assert!(
+            !skills.join(super::super::installer::SKILL_MUTATION_LOCK_FILE).exists(),
+            "read-only inventory must not create a mutation lock"
+        );
+    }
+
     fn activate_test_skill(
         home: &Path,
         id: &str,
@@ -1515,6 +1601,7 @@ system_prompt: |
             &reload,
             UserSkillLoadMode::Quarantine,
             Some((2, u64::MAX)),
+            InstalledStoreMode::ReconcileForRuntime,
         )
         .await
         .unwrap();

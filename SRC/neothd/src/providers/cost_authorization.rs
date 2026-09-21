@@ -1234,6 +1234,10 @@ impl Drop for ProviderCallAuditGuard {
 #[derive(Clone)]
 pub struct ProviderCallAuthorizer {
     policy_source: ProviderPolicySource,
+    /// Retained selected-skill cap. It is minted by the resolver, never from a
+    /// provider request or manifest id, and intersects the live global policy
+    /// immediately before a concrete provider leaf.
+    skill_invocation_policy: Option<crate::skills::resolver::SkillInvocationPolicy>,
     writer: Option<WalWriterHandle>,
     confirm: CostConfirm,
     audit_context: ProviderCallAuditContext,
@@ -1353,6 +1357,16 @@ fn validate_spent_ephemeral_after_durable_miss(
 }
 
 impl ProviderCallAuthorizer {
+    /// Attach the route-retained cap for one selected skill invocation.
+    /// Non-skill callers deliberately leave this absent.
+    pub(crate) fn with_skill_invocation_policy(
+        mut self,
+        policy: Option<crate::skills::resolver::SkillInvocationPolicy>,
+    ) -> Self {
+        self.skill_invocation_policy = policy;
+        self
+    }
+
     /// Thread a daemon-owned W41 turn gate through the existing exact-leaf
     /// authorization spine. `None` is the unchanged CLI/default path.
     pub(crate) fn with_turn_effect_gate(
@@ -1513,6 +1527,7 @@ impl ProviderCallAuthorizer {
                 autonomy: policy.into_provider_policy(),
                 input_token_cap: configured_input_token_cap,
             }),
+            skill_invocation_policy: None,
             writer,
             confirm: CostConfirm::Interactive,
             audit_context: ProviderCallAuditContext::default(),
@@ -1538,6 +1553,7 @@ impl ProviderCallAuthorizer {
                 autonomy: policy.into_provider_policy(),
                 input_token_cap: configured_input_token_cap,
             }),
+            skill_invocation_policy: None,
             writer,
             confirm: CostConfirm::FailClosed,
             audit_context: ProviderCallAuditContext::default(),
@@ -1567,6 +1583,7 @@ impl ProviderCallAuthorizer {
                 autonomy: policy.into_provider_policy(),
                 input_token_cap: configured_input_token_cap,
             }),
+            skill_invocation_policy: None,
             writer: Some(writer),
             confirm: CostConfirm::ExplicitRequestCapability { expires_unix },
             audit_context: ProviderCallAuditContext::default(),
@@ -1593,6 +1610,7 @@ impl ProviderCallAuthorizer {
                 autonomy: policy.into_provider_policy(),
                 input_token_cap: configured_input_token_cap,
             }),
+            skill_invocation_policy: None,
             writer,
             confirm: CostConfirm::Channel(asker),
             audit_context: ProviderCallAuditContext::default(),
@@ -1624,6 +1642,7 @@ impl ProviderCallAuthorizer {
     ) -> Self {
         Self {
             policy_source: ProviderPolicySource::Reload(reload),
+            skill_invocation_policy: None,
             writer,
             confirm: CostConfirm::FailClosed,
             audit_context: ProviderCallAuditContext::default(),
@@ -1651,6 +1670,7 @@ impl ProviderCallAuthorizer {
     ) -> Self {
         Self {
             policy_source: ProviderPolicySource::Reload(reload),
+            skill_invocation_policy: None,
             writer,
             confirm: CostConfirm::Channel(asker),
             audit_context: ProviderCallAuditContext::default(),
@@ -1677,6 +1697,7 @@ impl ProviderCallAuthorizer {
                 autonomy: AutonomyPolicySnapshot::test_level(autonomy),
                 input_token_cap: crate::config::TokensConfig::default_max_per_request(),
             }),
+            skill_invocation_policy: None,
             writer: None,
             confirm: CostConfirm::FailClosed,
             audit_context: ProviderCallAuditContext::default(),
@@ -1694,6 +1715,7 @@ impl ProviderCallAuthorizer {
     pub(crate) fn test_only_reload(reload: Arc<crate::config::reload::ReloadController>) -> Self {
         Self {
             policy_source: ProviderPolicySource::Reload(reload),
+            skill_invocation_policy: None,
             writer: None,
             confirm: CostConfirm::FailClosed,
             audit_context: ProviderCallAuditContext::default(),
@@ -2136,11 +2158,16 @@ impl ProviderCallAuthorizer {
         let gate_result = match self.writer.as_ref() {
             Some(writer) => {
                 self.gate(leaf_policy.autonomy)
+                    .with_skill_invocation_policy(self.skill_invocation_policy.clone())
                     .check_required_audit(&action, writer)
                     .await
             }
             #[cfg(test)]
-            None => self.gate(leaf_policy.autonomy).check(&action, None).await,
+            None => self
+                .gate(leaf_policy.autonomy)
+                .with_skill_invocation_policy(self.skill_invocation_policy.clone())
+                .check(&action, None)
+                .await,
             #[cfg(not(test))]
             None => {
                 return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
@@ -2519,6 +2546,30 @@ mod tests {
 
     fn test_input_token_cap() -> u32 {
         crate::config::TokensConfig::default_max_per_request()
+    }
+
+    fn w138_retained_paid_provider_deny() -> crate::skills::resolver::SkillInvocationPolicy {
+        let skill_id = crate::permissions::SkillId::parse("w138-provider-deny-skill")
+            .expect("W138 provider fixture Skill id");
+        let config = crate::permissions::CustomAutonomyConfig {
+            overrides: std::collections::BTreeMap::new(),
+            skill_overrides: std::collections::BTreeMap::from([(
+                skill_id,
+                crate::permissions::SkillAutonomyOverride {
+                    level: AutonomyLevel::Custom,
+                    overrides: std::collections::BTreeMap::from([(
+                        crate::permissions::ActionKind::PaidProviderCall,
+                        crate::permissions::CustomDecision::Deny,
+                    )]),
+                },
+            )]),
+        };
+        let admitted = AutonomyPolicySnapshot::new(AutonomyLevel::Full, &config);
+        crate::skills::resolver::test_invocation_policy_for_skill_id(
+            "w138-provider-deny-skill",
+            &admitted,
+        )
+        .expect("mint real retained W138 provider route policy")
     }
 
     #[test]
@@ -3294,7 +3345,7 @@ mod tests {
             dispatch_route: Vec::new(),
         };
 
-        let error = provider
+        let _error = provider
             .complete_pinned(Request::default(), &expected)
             .await
             .unwrap_err();
@@ -3851,6 +3902,46 @@ mod tests {
         );
         assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
         assert!(!home.path().join("budget").join("daily.json").exists());
+    }
+
+    #[tokio::test]
+    async fn w138_retained_skill_deny_blocks_paid_provider_before_transport() {
+        let inner = CountingProvider {
+            name: "openai_api",
+            calls: AtomicUsize::new(0),
+            default_model: Some("gpt-4o".into()),
+        };
+        let request = Request {
+            model: Some("gpt-4o".into()),
+            ..Request::default()
+        };
+        let uncapped = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::test_only(AutonomyLevel::Full),
+            None,
+            "test.w138.uncapped_baseline",
+        );
+        uncapped.complete(request.clone()).await.expect("uncapped Full reaches transport");
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 1);
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+                .with_skill_invocation_policy(Some(w138_retained_paid_provider_deny())),
+            None,
+            "test.w138.retained_skill_deny",
+        );
+
+        let error = provider
+            .complete(request)
+            .await
+            .expect_err("retained selected-skill Deny must block the paid leaf");
+        assert!(error.downcast_ref::<ProviderAuthorizationError>().is_some());
+        assert!(error.to_string().contains("denied"), "{error:#}");
+        assert_eq!(
+            inner.calls.load(Ordering::SeqCst),
+            1,
+            "the retained cap must prevent another raw transport call"
+        );
     }
 
     #[tokio::test]

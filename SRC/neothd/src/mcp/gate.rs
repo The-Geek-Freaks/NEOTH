@@ -445,6 +445,8 @@ pub(crate) struct McpInvocationPreflight {
     action: Action,
     decision: Decision,
     policy_snapshot: crate::permissions::AutonomyPolicySnapshot,
+    skill_invocation_policy: Option<crate::skills::resolver::SkillInvocationPolicy>,
+    skill_cap_requires_confirmation: bool,
     request_binding_sha256: Option<String>,
 }
 
@@ -515,6 +517,10 @@ impl AuthorizedMcpInvocation {
 /// Generalized preflight that keeps MCP compatibility evidence and the typed
 /// decision on one local writer or daemon-owned audit RPC. Static `Deny`
 /// decisions are audited here; `Confirm` stays unresolved for SmartApprove.
+///
+/// This legacy form deliberately has no skill capability. Skill-bound callers
+/// must use [`preflight_with_skill_policy_and_audit_sink`] so a bare ID cannot
+/// silently acquire a cap.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn preflight_with_audit_sink<P: PolicyArgument + Copy>(
     cfg: &McpServerConfig,
@@ -525,7 +531,39 @@ pub(crate) async fn preflight_with_audit_sink<P: PolicyArgument + Copy>(
     subject: Option<&str>,
     request_binding_sha256: Option<&str>,
 ) -> Result<McpInvocationPreflight, GateError> {
-    let policy_snapshot = policy.policy_snapshot();
+    preflight_with_skill_policy_and_audit_sink(
+        cfg,
+        tool,
+        policy,
+        None,
+        sink,
+        now_unix,
+        subject,
+        request_binding_sha256,
+    )
+    .await
+}
+
+/// Skill-aware MCP preflight. The optional capability is a retained
+/// `ResolvedSkillRoute` product, never a deserialized skill name. It is
+/// intersected with the freshly supplied global snapshot at this effect-leaf
+/// boundary; absence preserves legacy non-skill behavior.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn preflight_with_skill_policy_and_audit_sink<P: PolicyArgument + Copy>(
+    cfg: &McpServerConfig,
+    tool: &str,
+    policy: P,
+    skill_policy: Option<&crate::skills::resolver::SkillInvocationPolicy>,
+    sink: McpAuditSink<'_>,
+    now_unix: i64,
+    subject: Option<&str>,
+    request_binding_sha256: Option<&str>,
+) -> Result<McpInvocationPreflight, GateError> {
+    let fallback_policy_snapshot = policy.policy_snapshot();
+    let policy_snapshot = skill_policy.map_or_else(
+        || fallback_policy_snapshot.clone(),
+        |route_policy| route_policy.current_global_snapshot(&fallback_policy_snapshot),
+    );
     let autonomy = policy_snapshot.level();
     let action = Action::McpToolInvocation {
         server_id: cfg.id.clone(),
@@ -627,7 +665,16 @@ pub(crate) async fn preflight_with_audit_sink<P: PolicyArgument + Copy>(
         });
     }
 
-    let decision = evaluate(&action, policy);
+    let global_decision = evaluate(&action, &policy_snapshot);
+    let decision = skill_policy.map_or_else(
+        || global_decision.clone(),
+        |route_policy| route_policy.evaluate_at_snapshot(&action, &policy_snapshot),
+    );
+    // SmartApprove can only resolve the legacy server/tool confirmation. A
+    // selected route that tightened a globally-Allow action to Confirm must
+    // continue into the normal lease/interactive/fail-closed Gate path.
+    let skill_cap_requires_confirmation = skill_policy
+        .is_some_and(|route_policy| route_policy.cap_requires_confirmation(&action));
     if let Decision::Deny(reason) = &decision {
         if sink.is_present() {
             emit_reject(sink, &cfg.id, tool, &format!("deny: {reason}"), now_unix)
@@ -658,6 +705,8 @@ pub(crate) async fn preflight_with_audit_sink<P: PolicyArgument + Copy>(
         action,
         decision,
         policy_snapshot,
+        skill_invocation_policy: skill_policy.cloned(),
+        skill_cap_requires_confirmation,
         request_binding_sha256: request_binding_sha256.map(str::to_owned),
     })
 }
@@ -667,7 +716,7 @@ pub(crate) async fn preflight_with_audit_sink<P: PolicyArgument + Copy>(
 /// accepted decision can reach `spawn` without its matching typed record.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn authorize_preflight_with_audit_sink(
-    preflight: McpInvocationPreflight,
+    mut preflight: McpInvocationPreflight,
     cfg: &McpServerConfig,
     tool: &str,
     sink: McpAuditSink<'_>,
@@ -684,7 +733,43 @@ pub(crate) async fn authorize_preflight_with_audit_sink(
         });
     }
 
-    match preflight.decision {
+    // Resolve a retained cap against one current global snapshot. Keep that
+    // exact snapshot for both the decision and its audit; no-cap calls retain
+    // their legacy cached preflight decision.
+    if let Some(route_policy) = preflight.skill_invocation_policy.as_ref().filter(|policy| policy.has_skill_cap()) {
+        let current = route_policy.current_global_snapshot(&preflight.policy_snapshot);
+        preflight.decision = route_policy.evaluate_at_snapshot(&preflight.action, &current);
+        preflight.skill_cap_requires_confirmation =
+            route_policy.cap_requires_confirmation(&preflight.action);
+        preflight.policy_snapshot = current;
+    }
+
+    let final_decision = preflight.decision.clone();
+    if let Decision::Deny(reason) = &final_decision {
+        if sink.is_present() {
+            emit_reject(sink, &cfg.id, tool, &format!("deny: {reason}"), now_unix)
+                .await
+                .map_err(GateError::Wal)?;
+            record_trust_decision(
+                sink,
+                &preflight.action,
+                preflight.policy_snapshot.level(),
+                &final_decision,
+                subject,
+                None,
+                preflight.request_binding_sha256.as_deref(),
+                now_unix,
+            )
+            .await?;
+        }
+        return Err(GateError::PermissionDenied {
+            server: cfg.id.clone(),
+            tool: tool.to_string(),
+            reason: reason.clone(),
+        });
+    }
+
+    match final_decision {
         Decision::Allow => {
             if sink.is_present() {
                 record_trust_decision(
@@ -711,7 +796,10 @@ pub(crate) async fn authorize_preflight_with_audit_sink(
             });
         }
         Decision::Confirm(reason) => {
-            if cfg.smart_approve && smart_approve_is_readonly(smart_approve, cfg, tool) {
+            if !preflight.skill_cap_requires_confirmation
+                && cfg.smart_approve
+                && smart_approve_is_readonly(smart_approve, cfg, tool)
+            {
                 if sink.is_present() {
                     emit_readonly_allow(sink, &cfg.id, tool, now_unix)
                         .await
@@ -735,6 +823,7 @@ pub(crate) async fn authorize_preflight_with_audit_sink(
             } else if let Some(subject) = subject {
                 if let Some(store) = load_lease_store_for_mcp(instance_home) {
                     let gate = Gate::for_policy(preflight.policy_snapshot)
+                        .with_skill_invocation_policy(preflight.skill_invocation_policy.clone())
                         .with_confirm(ConfirmStrategy::FailClosed)
                         .with_lease_snapshot(&store, subject, now_unix);
                     match gate
@@ -1532,7 +1621,7 @@ mod tests {
     use super::*;
     use crate::mcp::client::{McpContent, McpTool};
     use crate::mcp::sanitizer::SanitizerVerdict;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
 
     fn base_cfg(allow: Option<Vec<&str>>) -> McpServerConfig {
         McpServerConfig {
@@ -2671,6 +2760,444 @@ mod tests {
         assert!(!authorized.matches(&cfg, "other_tool", Some(&binding)));
     }
 
+    #[tokio::test]
+    async fn w138_mcp_no_cap_smart_approve_keeps_baseline_wal_allow() {
+        use crate::permissions::{
+            ActionKind, AutonomyLevel, AutonomyPolicySnapshot, CustomAutonomyConfig,
+            CustomDecision,
+        };
+
+        let policy = AutonomyPolicySnapshot::new(
+            AutonomyLevel::Custom,
+            &CustomAutonomyConfig {
+                overrides: BTreeMap::from([(
+                    ActionKind::McpToolInvocation,
+                    CustomDecision::Confirm,
+                )]),
+                skill_overrides: BTreeMap::new(),
+            },
+        );
+        let mut cfg = base_cfg(Some(vec!["read_graph"]));
+        cfg.smart_approve = true;
+        let mut cache = crate::mcp::smart_approve::ReadOnlyCache::new();
+        assert!(cache.seed_from_tools(&cfg, &[McpTool {
+            name: "read_graph".into(),
+            description: None,
+            input_schema: serde_json::json!({}),
+            annotations: Some(crate::mcp::client::ToolAnnotations {
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+            }),
+        }]));
+        let grant = cache.grant_for(&cfg, "read_graph").unwrap();
+        let preflight = preflight_with_audit_sink(
+            &cfg,
+            "read_graph",
+            &policy,
+            McpAuditSink::None,
+            1,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let segment = home.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let authorized = authorize_preflight_with_audit_sink(
+            preflight,
+            &cfg,
+            "read_graph",
+            McpAuditSink::Writer(&writer),
+            Some(&grant),
+            1,
+            None,
+            home.path(),
+        )
+        .await
+        .expect("ordinary no-cap SmartApprove must retain the baseline allow");
+        assert_eq!(authorized.tool, "read_graph");
+        drop(writer);
+        join.await.unwrap();
+        let bytes = std::fs::read(segment).unwrap();
+        let mut trust = None;
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype == crate::wal::events::ExtendedSubtype::TrustDecision as u8
+            {
+                trust = Some(crate::permissions::trust_ledger::TrustEvent::decode(frame.payload).unwrap());
+            }
+            Ok(())
+        })
+        .unwrap();
+        let trust = trust.expect("baseline SmartApprove writes typed allow evidence");
+        assert_eq!(trust.outcome, crate::permissions::TrustOutcome::Allowed);
+        assert_eq!(trust.autonomy_level, AutonomyLevel::Custom);
+    }
+    #[tokio::test]
+    async fn w138_mcp_reload_final_deny_audits_current_policy_before_smart_approve() {
+        use crate::permissions::{
+            ActionKind, AutonomyLevel, CustomDecision, SkillAutonomyOverride, SkillId,
+        };
+        use std::sync::Arc;
+
+        let skill_id = SkillId::parse("w138-mcp-final-reload-cap").unwrap();
+        let mut initial = crate::config::FreedomConfig {
+            autonomy: AutonomyLevel::Standard,
+            ..Default::default()
+        };
+        initial.custom_autonomy.overrides.insert(
+            ActionKind::McpToolInvocation,
+            CustomDecision::Confirm,
+        );
+        initial.custom_autonomy.skill_overrides.insert(
+            skill_id,
+            SkillAutonomyOverride {
+                level: AutonomyLevel::Custom,
+                overrides: BTreeMap::from([(
+                    ActionKind::McpToolInvocation,
+                    CustomDecision::Allow,
+                )]),
+            },
+        );
+        let home = tempfile::tempdir().unwrap();
+        let config_path = home.path().join("freedom.yaml");
+        std::fs::write(&config_path, serde_yaml::to_string(&initial).unwrap()).unwrap();
+        let reload = Arc::new(crate::config::reload::ReloadController::new(
+            initial.clone(),
+            config_path.clone(),
+        ));
+        let admitted = reload.autonomy_policy();
+        let admitted_fingerprint = admitted.trust_fingerprint_sha256();
+        let retained = crate::skills::resolver::test_invocation_policy_for_skill_id_with_reload(
+            "w138-mcp-final-reload-cap",
+            &admitted,
+            Arc::clone(&reload),
+        )
+        .unwrap();
+        let mut cfg = base_cfg(Some(vec!["read_graph"]));
+        cfg.smart_approve = true;
+        let mut cache = crate::mcp::smart_approve::ReadOnlyCache::new();
+        assert!(cache.seed_from_tools(&cfg, &[McpTool {
+            name: "read_graph".into(),
+            description: None,
+            input_schema: serde_json::json!({}),
+            annotations: Some(crate::mcp::client::ToolAnnotations {
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+            }),
+        }]));
+        let grant = cache.grant_for(&cfg, "read_graph").unwrap();
+
+        let preflight = preflight_with_skill_policy_and_audit_sink(
+            &cfg,
+            "read_graph",
+            &admitted,
+            Some(&retained),
+            McpAuditSink::None,
+            1,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(preflight.requires_confirmation());
+        let mut changed = initial;
+        changed.autonomy = AutonomyLevel::Custom;
+        changed.custom_autonomy.overrides.insert(
+            ActionKind::McpToolInvocation,
+            CustomDecision::Deny,
+        );
+        std::fs::write(&config_path, serde_yaml::to_string(&changed).unwrap()).unwrap();
+        match reload.try_reload().unwrap() {
+            crate::config::reload::ReloadResult::Reloaded { .. } => {}
+            other => panic!("expected Reloaded before final MCP authorization, got {other:?}"),
+        }
+
+        let segment = home.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let result = authorize_preflight_with_audit_sink(
+            preflight,
+            &cfg,
+            "read_graph",
+            McpAuditSink::Writer(&writer),
+            Some(&grant),
+            1,
+            None,
+            home.path(),
+        )
+        .await;
+        assert!(matches!(result, Err(GateError::PermissionDenied { .. })));
+        let current = reload.autonomy_policy();
+        let current_fingerprint = current.trust_fingerprint_sha256();
+        assert_eq!(current.level(), AutonomyLevel::Custom);
+        assert_ne!(current_fingerprint, admitted_fingerprint);
+
+        drop(writer);
+        join.await.unwrap();
+        let bytes = std::fs::read(segment).unwrap();
+        let mut reject = None;
+        let mut trust = None;
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == EVENT_TYPE_MCP_TOOL_REJECTED {
+                reject = Some(serde_json::from_slice::<serde_json::Value>(frame.payload).unwrap());
+            }
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                && frame.header.event_subtype == crate::wal::events::ExtendedSubtype::TrustDecision as u8
+            {
+                trust = Some(crate::permissions::trust_ledger::TrustEvent::decode(frame.payload).unwrap());
+            }
+            Ok(())
+        })
+        .unwrap();
+        let reject = reject.expect("reloaded deny must write MCP rejection evidence");
+        assert!(reject["reason"].as_str().unwrap().starts_with("deny:"));
+        let trust = trust.expect("reloaded deny must write a typed TrustDecision");
+        assert_eq!(trust.outcome, crate::permissions::TrustOutcome::Denied);
+        assert_eq!(trust.autonomy_level, current.level());
+        assert_ne!(current_fingerprint, admitted_fingerprint);
+    }
+    #[tokio::test]
+    async fn w138_reloaded_global_deny_blocks_retained_cap_before_smart_approve() {
+        use crate::permissions::{
+            ActionKind, AutonomyLevel, CustomDecision, SkillAutonomyOverride, SkillId,
+        };
+        use std::sync::Arc;
+
+        let skill_id = SkillId::parse("mcp-reload-cap").unwrap();
+        let mut initial = crate::config::FreedomConfig {
+            autonomy: AutonomyLevel::Custom,
+            ..Default::default()
+        };
+        initial.custom_autonomy.overrides.insert(
+            ActionKind::McpToolInvocation,
+            CustomDecision::Confirm,
+        );
+        initial.custom_autonomy.skill_overrides.insert(
+            skill_id,
+            SkillAutonomyOverride {
+                level: AutonomyLevel::Custom,
+                overrides: BTreeMap::from([(
+                    ActionKind::McpToolInvocation,
+                    CustomDecision::Allow,
+                )]),
+            },
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("freedom.yaml");
+        std::fs::write(&config_path, serde_yaml::to_string(&initial).unwrap()).unwrap();
+        let reload = Arc::new(crate::config::reload::ReloadController::new(
+            initial.clone(),
+            config_path.clone(),
+        ));
+        let admitted = reload.autonomy_policy();
+        let retained = crate::skills::resolver::test_invocation_policy_for_skill_id_with_reload(
+            "mcp-reload-cap",
+            &admitted,
+            Arc::clone(&reload),
+        )
+        .unwrap();
+
+        let mut cfg = base_cfg(Some(vec!["read_graph"]));
+        cfg.smart_approve = true;
+        let tool = McpTool {
+            name: "read_graph".into(),
+            description: None,
+            input_schema: serde_json::json!({}),
+            annotations: Some(crate::mcp::client::ToolAnnotations {
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+            }),
+        };
+        let mut cache = crate::mcp::smart_approve::ReadOnlyCache::new();
+        assert!(cache.seed_from_tools(&cfg, &[tool]));
+        let grant = cache.grant_for(&cfg, "read_graph").unwrap();
+
+        let preflight = preflight_with_skill_policy_and_audit_sink(
+            &cfg,
+            "read_graph",
+            &admitted,
+            Some(&retained),
+            McpAuditSink::None,
+            1,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            preflight.requires_confirmation(),
+            "the initial global Confirm must reach SmartApprove eligibility before reload"
+        );
+
+        let mut changed = initial;
+        changed.custom_autonomy.overrides.insert(
+            ActionKind::McpToolInvocation,
+            CustomDecision::Deny,
+        );
+        std::fs::write(&config_path, serde_yaml::to_string(&changed).unwrap()).unwrap();
+        match reload.try_reload().unwrap() {
+            crate::config::reload::ReloadResult::Reloaded { .. } => {}
+            other => panic!("expected Reloaded, got {other:?}"),
+        }
+
+        let error = authorize_preflight_with_audit_sink(
+            preflight,
+            &cfg,
+            "read_graph",
+            McpAuditSink::None,
+            Some(&grant),
+            1,
+            None,
+            temp.path(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(error, GateError::PermissionDenied { .. }),
+            "a reload-denied retained cap must fail before SmartApprove can authorize transport: {error:?}"
+        );
+    }
+    #[tokio::test]
+    async fn w138_skill_confirm_cannot_be_smart_approved() {
+        use crate::permissions::{
+            ActionKind, AutonomyLevel, AutonomyPolicySnapshot, CustomAutonomyConfig,
+            CustomDecision, SkillAutonomyOverride, SkillId,
+        };
+
+        let skill_id = SkillId::parse("mcp-confirm-cap").unwrap();
+        let custom = CustomAutonomyConfig {
+            overrides: BTreeMap::from([(
+                ActionKind::McpToolInvocation,
+                CustomDecision::Confirm,
+            )]),
+            skill_overrides: BTreeMap::from([(
+                skill_id,
+                SkillAutonomyOverride {
+                    level: AutonomyLevel::Custom,
+                    overrides: BTreeMap::from([(
+                        ActionKind::McpToolInvocation,
+                        CustomDecision::Confirm,
+                    )]),
+                },
+            )]),
+        };
+        let global = AutonomyPolicySnapshot::new(AutonomyLevel::Custom, &custom);
+        let retained = crate::skills::resolver::test_invocation_policy_for_skill_id(
+            "mcp-confirm-cap",
+            &global,
+        )
+        .unwrap();
+        assert!(retained.cap_requires_confirmation(&Action::McpToolInvocation {
+            server_id: "test".into(),
+            tool: "read_graph".into(),
+        }));
+
+        let mut cfg = base_cfg(Some(vec!["read_graph"]));
+        cfg.smart_approve = true;
+        let tool = McpTool {
+            name: "read_graph".into(),
+            description: None,
+            input_schema: serde_json::json!({}),
+            annotations: Some(crate::mcp::client::ToolAnnotations {
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+            }),
+        };
+        let mut cache = crate::mcp::smart_approve::ReadOnlyCache::new();
+        assert!(cache.seed_from_tools(&cfg, &[tool]));
+        let grant = cache.grant_for(&cfg, "read_graph").unwrap();
+
+        let preflight = preflight_with_skill_policy_and_audit_sink(
+            &cfg,
+            "read_graph",
+            &global,
+            Some(&retained),
+            McpAuditSink::None,
+            1,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let error = authorize_preflight_with_audit_sink(
+            preflight,
+            &cfg,
+            "read_graph",
+            McpAuditSink::None,
+            Some(&grant),
+            1,
+            None,
+            home.path(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(error, GateError::ConfirmRequired { .. }),
+            "a selected cap-confirm decision must not be converted to Allow by SmartApprove: {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn w138_no_cap_smart_approve_retains_baseline() {
+        use crate::permissions::{
+            ActionKind, AutonomyLevel, AutonomyPolicySnapshot, CustomAutonomyConfig,
+            CustomDecision,
+        };
+
+        let global = AutonomyPolicySnapshot::new(
+            AutonomyLevel::Custom,
+            &CustomAutonomyConfig {
+                overrides: BTreeMap::from([(
+                    ActionKind::McpToolInvocation,
+                    CustomDecision::Confirm,
+                )]),
+                skill_overrides: BTreeMap::new(),
+            },
+        );
+        let mut cfg = base_cfg(Some(vec!["read_graph"]));
+        cfg.smart_approve = true;
+        let tool = McpTool {
+            name: "read_graph".into(),
+            description: None,
+            input_schema: serde_json::json!({}),
+            annotations: Some(crate::mcp::client::ToolAnnotations {
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+            }),
+        };
+        let mut cache = crate::mcp::smart_approve::ReadOnlyCache::new();
+        assert!(cache.seed_from_tools(&cfg, &[tool]));
+        let grant = cache.grant_for(&cfg, "read_graph").unwrap();
+
+        let preflight = preflight_with_audit_sink(
+            &cfg,
+            "read_graph",
+            &global,
+            McpAuditSink::None,
+            1,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let authorized = authorize_preflight_with_audit_sink(
+            preflight,
+            &cfg,
+            "read_graph",
+            McpAuditSink::None,
+            Some(&grant),
+            1,
+            None,
+            home.path(),
+        )
+        .await
+        .expect("ordinary no-cap SmartApprove must retain its baseline confirmation bypass");
+        assert_eq!(authorized.server_id, "test");
+        assert_eq!(authorized.tool, "read_graph");
+    }
     #[test]
     fn smart_approve_requires_the_bound_config_snapshot() {
         let mut cfg = base_cfg(Some(vec!["read_graph"]));

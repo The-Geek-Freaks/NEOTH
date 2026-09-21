@@ -11136,6 +11136,8 @@ fn main() -> Result<()> {
     // skill from the GUI Skills tab. Shells `neoth skills --enable/--disable <id>`
     // off the UI thread, then re-fetches + applies the list so the new state
     // shows + reports a status line.
+    register_skill_autonomy_callbacks(&window);
+
     let weak_skill_toggle = window.as_weak();
     let overlay_weak_skill_toggle = overlay.as_weak();
     window.on_skill_toggle(move |id, enabled| {
@@ -23280,6 +23282,300 @@ fn diagnostic_skill_display_text(value: &str, max_chars: usize) -> String {
         .collect()
 }
 
+fn register_skill_autonomy_callbacks(window: &MainWindow) {
+    // W138 — inspect and mutate the exact selected Skill's operator-owned
+    // autonomy cap through the canonical CLI. The GUI does not derive an
+    // effective policy and reports reload request separately from runtime use.
+    let weak_skill_autonomy_inspect = window.as_weak();
+    window.on_skill_autonomy_inspect(move |id| {
+        let id = id.to_string();
+        let weak = weak_skill_autonomy_inspect.clone();
+        let generation = if let Some(w) = weak.upgrade() {
+            if w.get_skill_autonomy_in_flight() {
+                return;
+            }
+            let next = w.get_skill_autonomy_generation().saturating_add(1);
+            w.set_skill_autonomy_generation(next);
+            w.set_skill_autonomy_in_flight(true);
+            w.set_skill_autonomy_selected_id(id.clone().into());
+            w.set_skill_autonomy_configured("Loading…".into());
+            w.set_skill_autonomy_effective_cap("Loading…".into());
+            w.set_skill_autonomy_status("Inspecting the selected Skill autonomy cap…".into());
+            next
+        } else {
+            return;
+        };
+        std::thread::spawn(move || {
+            let outcome = fetch_skill_autonomy_show(&id);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    if w.get_skill_autonomy_generation() != generation {
+                        return;
+                    }
+                    w.set_skill_autonomy_in_flight(false);
+                    match outcome {
+                        Ok(show) => apply_skill_autonomy_show(&w, show),
+                        Err(error) => {
+                            w.set_skill_autonomy_status(
+                                format!("Could not inspect {id}: {error}. The prior readback is retained.").into(),
+                            );
+                            buddy(&w, GuiActivity::SettingsError);
+                        }
+                    }
+                }
+            });
+        });
+    });
+
+    let weak_skill_autonomy_set = window.as_weak();
+    window.on_skill_autonomy_set(move |id, level, actions| {
+        let id = id.to_string();
+        let level = level.to_string();
+        let actions = actions.to_string();
+        let weak = weak_skill_autonomy_set.clone();
+        let expected = match parse_skill_autonomy_actions(&level, &actions) {
+            Ok(expected) => expected,
+            Err(error) => {
+                if let Some(w) = weak.upgrade() {
+                    w.set_skill_autonomy_status(error.into());
+                    buddy(&w, GuiActivity::SettingsError);
+                }
+                return;
+            }
+        };
+        let generation = if let Some(w) = weak.upgrade() {
+            if w.get_skill_autonomy_in_flight() {
+                return;
+            }
+            let next = w.get_skill_autonomy_generation().saturating_add(1);
+            w.set_skill_autonomy_generation(next);
+            w.set_skill_autonomy_in_flight(true);
+            w.set_skill_autonomy_status("Saving configured cap and requesting daemon reload…".into());
+            buddy(&w, GuiActivity::SettingsApplied);
+            next
+        } else {
+            return;
+        };
+        std::thread::spawn(move || {
+            let mut args = vec!["autonomy".to_string(), "skill".to_string(), "set".to_string(), id.clone(), expected.level.clone()];
+            for (action, decision) in &expected.overrides {
+                args.push("--action".to_string());
+                args.push(format!("{action}={decision}"));
+            }
+            let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+            let outcome = run_neothd_json_action::<gui_action::SkillAutonomyAck>(
+                &arg_refs,
+                "Skill autonomy set",
+            )
+            .and_then(|ack| {
+                let changed = ack.changed;
+                ack.verify(&id, Some(&expected), changed)?;
+                Ok(changed)
+            });
+            let refreshed = outcome
+                .and_then(|changed| fetch_skill_autonomy_show(&id).map(|show| (show, changed)))
+                .and_then(|(show, changed)| {
+                    verify_skill_autonomy_readback(show, Some(&expected)).map(|show| (show, changed))
+                });
+            let skills = if refreshed.is_ok() { Some(fetch_skills()) } else { None };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    if w.get_skill_autonomy_generation() != generation {
+                        return;
+                    }
+                    w.set_skill_autonomy_in_flight(false);
+                    match refreshed {
+                        Ok((show, changed)) => {
+                            apply_skill_autonomy_show(&w, show);
+                            if let Some(skills) = skills {
+                                let _ = apply_skills(&w, None, skills);
+                            }
+                            w.set_skill_autonomy_status(if changed {
+                                "Configured cap saved; daemon reload was requested. Runtime application remains unconfirmed."
+                            } else {
+                                "Configured cap was already unchanged; no daemon reload was requested. Runtime application remains unconfirmed."
+                            }.into());
+                        }
+                        Err(error) => {
+                            w.set_skill_autonomy_status(
+                                format!("Cap change for {id} was not confirmed: {error}. Re-inspect before retrying.").into(),
+                            );
+                            buddy(&w, GuiActivity::SettingsError);
+                        }
+                    }
+                }
+            });
+        });
+    });
+
+    let weak_skill_autonomy_reset = window.as_weak();
+    window.on_skill_autonomy_reset(move |id| {
+        let id = id.to_string();
+        let weak = weak_skill_autonomy_reset.clone();
+        let generation = if let Some(w) = weak.upgrade() {
+            if w.get_skill_autonomy_in_flight() {
+                return;
+            }
+            let next = w.get_skill_autonomy_generation().saturating_add(1);
+            w.set_skill_autonomy_generation(next);
+            w.set_skill_autonomy_in_flight(true);
+            w.set_skill_autonomy_status("Resetting the selected configured cap…".into());
+            buddy(&w, GuiActivity::SettingsApplied);
+            next
+        } else {
+            return;
+        };
+        std::thread::spawn(move || {
+            let outcome = run_neothd_json_action::<gui_action::SkillAutonomyAck>(
+                &["autonomy", "skill", "reset", &id],
+                "Skill autonomy reset",
+            )
+            .and_then(|ack| ack.verify(&id, None, ack.changed));
+            let refreshed = outcome
+                .and_then(|()| fetch_skill_autonomy_show(&id))
+                .and_then(|show| verify_skill_autonomy_readback(show, None));
+            let skills = if refreshed.is_ok() { Some(fetch_skills()) } else { None };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    if w.get_skill_autonomy_generation() != generation {
+                        return;
+                    }
+                    w.set_skill_autonomy_in_flight(false);
+                    match refreshed {
+                        Ok(show) => {
+                            apply_skill_autonomy_show(&w, show);
+                            if let Some(skills) = skills {
+                                let _ = apply_skills(&w, None, skills);
+                            }
+                            w.set_skill_autonomy_status(
+                                "Configured cap reset. A daemon reload is requested only when a stored cap changed. Runtime application remains unconfirmed."
+                                    .into(),
+                            );
+                        }
+                        Err(error) => {
+                            w.set_skill_autonomy_status(
+                                format!("Cap reset for {id} was not confirmed: {error}. Re-inspect before retrying.").into(),
+                            );
+                            buddy(&w, GuiActivity::SettingsError);
+                        }
+                    }
+                }
+            });
+        });
+    });
+
+}
+
+fn format_skill_autonomy_cap(cap: Option<&gui_action::SkillAutonomyOverrideAck>) -> String {
+    let Some(cap) = cap else {
+        return "Not configured".into();
+    };
+    if cap.overrides.is_empty() {
+        return cap.level.clone();
+    }
+    let actions = cap
+        .overrides
+        .iter()
+        .map(|(action, decision)| format!("{action}={decision}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{} ({actions})", cap.level)
+}
+
+fn fetch_skill_autonomy_show(id: &str) -> std::result::Result<gui_action::SkillAutonomyShow, String> {
+    let show = run_neothd_json_action::<gui_action::SkillAutonomyShow>(
+        &["autonomy", "skill", "show", id],
+        "Skill autonomy inspect",
+    )?;
+    show.verify(id)?;
+    Ok(show)
+}
+
+fn verify_skill_autonomy_readback(
+    show: gui_action::SkillAutonomyShow,
+    expected: Option<&gui_action::SkillAutonomyOverrideAck>,
+) -> std::result::Result<gui_action::SkillAutonomyShow, String> {
+    if show.configured.as_ref() != expected {
+        return Err("fresh Skill autonomy readback differs from the requested configuration".into());
+    }
+    Ok(show)
+}
+
+fn apply_skill_autonomy_show(window: &MainWindow, show: gui_action::SkillAutonomyShow) {
+    let editor_level = show
+        .configured
+        .as_ref()
+        .map(|cap| cap.level.clone())
+        .unwrap_or_else(|| "standard".into());
+    let editor_actions = show
+        .configured
+        .as_ref()
+        .map(|cap| {
+            cap.overrides
+                .iter()
+                .map(|(action, decision)| format!("{action}={decision}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    let configured = format_skill_autonomy_cap(show.configured.as_ref());
+    let effective_cap = show
+        .effective_cap
+        .as_ref()
+        .map(|cap| format_skill_autonomy_cap(Some(cap)))
+        .unwrap_or_else(|| {
+            if show.admitted {
+                "No configured cap".into()
+            } else {
+                "Unavailable (not admitted)".into()
+            }
+        });
+    let admission = if show.admitted {
+        format!("admitted ({})", show.origin.as_deref().unwrap_or("unknown"))
+    } else {
+        show.inert_reason.unwrap_or_else(|| "not admitted".into())
+    };
+    window.set_skill_autonomy_selected_id(show.id.into());
+    window.set_skill_autonomy_configured(configured.into());
+    window.set_skill_autonomy_effective_cap(effective_cap.into());
+    window.set_skill_autonomy_global(show.global_autonomy.into());
+    window.set_skill_autonomy_admission(admission.into());
+    window.set_skill_autonomy_editor_level(editor_level.into());
+    window.set_skill_autonomy_editor_actions(editor_actions.into());
+    window.set_skill_autonomy_status(
+        "Configured and resolved cap shown from the CLI. Runtime daemon application is not confirmed here."
+            .into(),
+    );
+}
+
+fn parse_skill_autonomy_actions(
+    level: &str,
+    actions: &str,
+) -> std::result::Result<gui_action::SkillAutonomyOverrideAck, String> {
+    if !matches!(level, "strict" | "standard" | "elevated" | "full" | "custom") {
+        return Err("Choose a supported autonomy cap.".into());
+    }
+    let mut overrides = std::collections::BTreeMap::new();
+    for entry in actions.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+        let Some((action, decision)) = entry.split_once('=') else {
+            return Err("Custom actions use action=allow, action=confirm, or action=deny.".into());
+        };
+        if action.is_empty()
+            || !action.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+            || !matches!(decision, "allow" | "confirm" | "deny")
+            || overrides.insert(action.to_string(), decision.to_string()).is_some()
+        {
+            return Err("Custom actions must be unique lower_snake action=allow|confirm|deny entries.".into());
+        }
+    }
+    let configured = gui_action::SkillAutonomyOverrideAck {
+        level: level.to_string(),
+        overrides,
+    };
+    configured.validate()?;
+    Ok(configured)
+}
+
 /// Fetch installed skills through the same typed subprocess boundary as GUI
 /// mutations. Missing binaries, non-zero exits, malformed JSON, and corrupt
 /// rows are errors; a valid `[]` is the only state rendered as no skills.
@@ -32795,6 +33091,83 @@ fn launch_cli_terminal(bin: &Path, home: &Path, launch: TerminalLaunch) -> Resul
         }
     }
 
+    #[cfg(not(windows))]
+    fn w138_pump_until_skill_autonomy_settles(window: &MainWindow) {
+        let settled = Rc::new(Cell::new(false));
+        let observed = Rc::clone(&settled);
+        let weak = window.as_weak();
+        let timer = slint::Timer::default();
+        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
+            let Some(window) = weak.upgrade() else { let _ = slint::quit_event_loop(); return; };
+            if !window.get_skill_autonomy_in_flight() {
+                observed.set(true);
+                let _ = slint::quit_event_loop();
+            }
+        });
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("pump bounded W138 callback event loop");
+        drop(timer);
+        assert!(settled.get(), "timed out waiting for W138 callback settlement");
+    }
+
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback() {
+        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("serial GUI fixture environment");
+        let fixture = TempDir::new().expect("create W138 CLI fixture");
+        let bin = w116_stage_fake_neoth(&fixture);
+        let mode = fixture.path().join("mode");
+        let calls = fixture.path().join("calls");
+        let show = fixture.path().join("autonomy-show.json");
+        std::fs::write(&calls, b"").expect("initialize W138 call log");
+        std::fs::write(&mode, b"w138_set_wrong").expect("select wrong receipt mode");
+        std::fs::write(&show, br#"{"id":"web-research","configured":null,"effective_cap":null,"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write initial show");
+        let _path = PathGuard::install(fixture.path());
+        assert_eq!(std::fs::canonicalize(which_neothd().expect("resolve staged W138 CLI")).expect("canonicalize W138 CLI"), std::fs::canonicalize(&bin).expect("canonicalize staged W138 CLI"));
+        let window = MainWindow::new().expect("construct generated MainWindow");
+        register_skill_autonomy_callbacks(&window);
+
+        window.invoke_skill_autonomy_inspect("web-research".into());
+        assert!(window.get_skill_autonomy_in_flight());
+        w138_pump_until_skill_autonomy_settles(&window);
+        assert_eq!(window.get_skill_autonomy_configured().to_string(), "Not configured");
+
+        window.invoke_skill_autonomy_set("web-research".into(), "custom".into(), "exec_arbitrary=deny".into());
+        assert!(window.get_skill_autonomy_in_flight());
+        w138_pump_until_skill_autonomy_settles(&window);
+        assert_eq!(window.get_skill_autonomy_configured().to_string(), "Not configured", "wrong-ID receipt cannot repaint the prior readback");
+
+        std::fs::write(&mode, b"w138_set_valid").expect("select exact set receipt");
+        std::fs::write(&show, br#"{"id":"web-research","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"effective_cap":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write post-set readback");
+        window.invoke_skill_autonomy_set("web-research".into(), "custom".into(), "exec_arbitrary=deny".into());
+        w138_pump_until_skill_autonomy_settles(&window);
+        assert_eq!(window.get_skill_autonomy_configured().to_string(), "custom (exec_arbitrary=deny)");
+
+        std::fs::write(&mode, b"w138_set_idempotent").expect("select idempotent set receipt");
+        window.invoke_skill_autonomy_set("web-research".into(), "custom".into(), "exec_arbitrary=deny".into());
+        w138_pump_until_skill_autonomy_settles(&window);
+        assert_eq!(window.get_skill_autonomy_configured().to_string(), "custom (exec_arbitrary=deny)", "idempotent set keeps the exact readback");
+        assert!(window.get_skill_autonomy_status().to_string().contains("no daemon reload was requested"));
+
+        std::fs::write(&show, br#"{"id":"web-research","configured":null,"effective_cap":null,"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write conflicting set readback");
+        window.invoke_skill_autonomy_set("web-research".into(), "custom".into(), "exec_arbitrary=deny".into());
+        w138_pump_until_skill_autonomy_settles(&window);
+        assert_eq!(window.get_skill_autonomy_configured().to_string(), "custom (exec_arbitrary=deny)", "conflicting set readback cannot repaint");
+
+        std::fs::write(&show, br#"{"id":"web-research","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"effective_cap":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("restore cap before reset readback test");
+        // A valid reset acknowledgement is still insufficient when its fresh
+        // show readback disagrees; the prior verified cap must remain visible.
+        window.invoke_skill_autonomy_reset("web-research".into());
+        w138_pump_until_skill_autonomy_settles(&window);
+        assert_eq!(window.get_skill_autonomy_configured().to_string(), "custom (exec_arbitrary=deny)", "conflicting reset readback cannot repaint");
+
+        std::fs::write(&show, br#"{"id":"web-research","configured":null,"effective_cap":null,"global_autonomy":"full","admitted":true,"origin":"bundled","config_epoch":null,"inert_reason":null}"#).expect("write post-reset readback");
+        window.invoke_skill_autonomy_reset("web-research".into());
+        w138_pump_until_skill_autonomy_settles(&window);
+        assert_eq!(window.get_skill_autonomy_configured().to_string(), "Not configured");
+        assert_eq!(w116_call_lines(&calls), ["autonomy-show:web-research", "autonomy-set:web-research", "autonomy-set:web-research", "autonomy-show:web-research", "skills-list", "autonomy-set:web-research", "autonomy-show:web-research", "skills-list", "autonomy-set:web-research", "autonomy-show:web-research", "autonomy-reset:web-research", "autonomy-show:web-research", "autonomy-reset:web-research", "autonomy-show:web-research", "skills-list"]);
+    }
+
     #[cfg(target_os = "macos")]
     {
         let path = bin
@@ -39473,6 +39846,35 @@ if [ "$1" = channel ] && [ "$2" = list ] && [ "$3" = --output ] && [ "$4" = json
   /bin/cat "$base/inventory.json"
   exit 0
 fi
+if [ "$1" = autonomy ] && [ "$2" = skill ] && [ "$3" = show ] && [ "$4" = web-research ] && [ "$5" = --output ] && [ "$6" = json ] && [ "$#" -eq 6 ]; then
+  printf 'autonomy-show:web-research\n' >> "$base/calls"
+  if [ "$mode" = w138_blocked_show ]; then
+    remaining=500
+    while [ ! -f "$base/w138-release" ] && [ "$remaining" -gt 0 ]; do /bin/sleep 0.01; remaining=$((remaining - 1)); done
+  fi
+  /bin/cat "$base/autonomy-show.json"
+  exit 0
+fi
+if [ "$1" = skills ] && [ "$2" = --list ] && [ "$3" = --output ] && [ "$4" = json ] && [ "$#" -eq 4 ]; then
+  printf 'skills-list\n' >> "$base/calls"
+  printf '[]\n'
+  exit 0
+fi
+if [ "$1" = autonomy ] && [ "$2" = skill ] && [ "$3" = set ] && [ "$4" = web-research ] && [ "$5" = custom ] && [ "$6" = --action ] && [ "$7" = exec_arbitrary=deny ] && [ "$8" = --output ] && [ "$9" = json ] && [ "$#" -eq 9 ]; then
+  printf 'autonomy-set:web-research\n' >> "$base/calls"
+  case "$mode" in
+    w138_set_wrong) printf '{"id":"other","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"previous":null,"changed":true,"reload_requested":true}\n' ;;
+    w138_set_valid) printf '{"id":"web-research","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"previous":null,"changed":true,"reload_requested":true}\n' ;;
+    w138_set_idempotent) printf '{"id":"web-research","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"previous":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"changed":false,"reload_requested":false}\n' ;;
+    *) printf 'unexpected autonomy-set mode: %s\n' "$mode" >&2; exit 81 ;;
+  esac
+  exit 0
+fi
+if [ "$1" = autonomy ] && [ "$2" = skill ] && [ "$3" = reset ] && [ "$4" = web-research ] && [ "$5" = --output ] && [ "$6" = json ] && [ "$#" -eq 6 ]; then
+  printf 'autonomy-reset:web-research\n' >> "$base/calls"
+  printf '{"id":"web-research","configured":null,"previous":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"changed":true,"reload_requested":true}\n'
+  exit 0
+fi
 printf 'unexpected argv: %s %s %s %s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" >&2
 exit 72
 "#,
@@ -40458,7 +40860,7 @@ exit 72
     }
 
     #[cfg(target_os = "macos")]
-    const MACOS_NATIVE_HARNESS_TESTS: [&str; 10] = [
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 11] = [
         "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
         "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
@@ -40469,6 +40871,7 @@ exit 72
         "w58_gui_callback_runtime_tests::w121_channel_pairing_request_callbacks_require_exact_receipts_before_relisting",
         "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt",
         "w58_gui_callback_runtime_tests::w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt",
+        "w58_gui_callback_runtime_tests::w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback",
     ];
 
     /// Native macOS Nextest bridge. Keep its stdout restricted to the libtest
@@ -40554,6 +40957,9 @@ exit 72
                     }
                     "w58_gui_callback_runtime_tests::w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt" => {
                         w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt()
+                    }
+                    "w58_gui_callback_runtime_tests::w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback" => {
+                        w138_skill_autonomy_callbacks_require_exact_receipt_and_fresh_readback()
                     }
                     _ => return Err(format!("unknown macOS native GUI test {test_name:?}")),
                 }

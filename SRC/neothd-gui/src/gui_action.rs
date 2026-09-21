@@ -1646,6 +1646,129 @@ impl PresetPlanAck {
     }
 }
 
+/// Persisted cap for one exact operator-selected skill. This is a transport
+/// shape only; the GUI must never derive an effective policy from it.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillAutonomyOverrideAck {
+    pub level: String,
+    pub overrides: std::collections::BTreeMap<String, String>,
+}
+
+impl SkillAutonomyOverrideAck {
+    pub fn validate(&self) -> Result<(), String> {
+        if !matches!(self.level.as_str(), "strict" | "standard" | "elevated" | "full" | "custom") {
+            return Err("skill autonomy receipt has an unknown level".into());
+        }
+        if self.level != "custom" && !self.overrides.is_empty() {
+            return Err("skill autonomy receipt carries actions outside custom level".into());
+        }
+        for (action, decision) in &self.overrides {
+            if action.is_empty()
+                || !action.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+                || !matches!(decision.as_str(), "allow" | "confirm" | "deny")
+            {
+                return Err("skill autonomy receipt has an invalid custom action".into());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Exact `neoth autonomy skill set/reset <id> --output json` acknowledgement.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillAutonomyAck {
+    pub id: String,
+    pub configured: Option<SkillAutonomyOverrideAck>,
+    pub previous: Option<SkillAutonomyOverrideAck>,
+    pub changed: bool,
+    pub reload_requested: bool,
+}
+
+/// Exact read-only `neoth autonomy skill show <id> --output json` projection.
+/// `effective_cap` remains CLI-owned resolved state, never GUI policy math.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillAutonomyShow {
+    pub id: String,
+    pub configured: Option<SkillAutonomyOverrideAck>,
+    pub effective_cap: Option<SkillAutonomyOverrideAck>,
+    pub global_autonomy: String,
+    pub admitted: bool,
+    pub origin: Option<String>,
+    pub config_epoch: Option<serde_json::Value>,
+    pub inert_reason: Option<String>,
+}
+
+impl SkillAutonomyShow {
+    pub fn verify(&self, expected_id: &str) -> Result<(), String> {
+        if self.id != expected_id || !valid_skill_autonomy_id(&self.id) {
+            return Err("skill autonomy status targets a different or invalid id".into());
+        }
+        if !matches!(self.global_autonomy.as_str(), "strict" | "standard" | "elevated" | "full" | "custom") {
+            return Err("skill autonomy status has an unknown global level".into());
+        }
+        if !matches!(self.origin.as_deref(), Some("bundled" | "installed") | None) {
+            return Err("skill autonomy status has an unknown origin".into());
+        }
+        if self.config_epoch.is_some() {
+            return Err("skill autonomy status must not claim daemon application".into());
+        }
+        for cap in [&self.configured, &self.effective_cap].into_iter().flatten() {
+            cap.validate()?;
+        }
+        if !self.admitted && self.effective_cap.is_some() {
+            return Err("non-admitted skill autonomy status cannot carry a resolved cap".into());
+        }
+        if self.admitted && self.inert_reason.is_some() {
+            return Err("admitted skill autonomy status cannot be inert".into());
+        }
+        Ok(())
+    }
+}
+
+impl SkillAutonomyAck {
+    /// Bind a mutation receipt to the exact selected skill and desired durable
+    /// configuration. Reload request is intentionally separate from daemon
+    /// application, which this acknowledgement cannot prove.
+    pub fn verify(
+        &self,
+        expected_id: &str,
+        expected_configured: Option<&SkillAutonomyOverrideAck>,
+        expected_reload_requested: bool,
+    ) -> Result<(), String> {
+        if self.id != expected_id || !valid_skill_autonomy_id(&self.id) {
+            return Err("skill autonomy receipt targets a different or invalid id".into());
+        }
+        for configured in [&self.configured, &self.previous].into_iter().flatten() {
+            configured.validate()?;
+        }
+        if self.configured.as_ref() != expected_configured {
+            return Err("skill autonomy receipt differs from the requested configuration".into());
+        }
+        if self.changed != self.reload_requested {
+            return Err("skill autonomy receipt has inconsistent changed and reload request state".into());
+        }
+        if !self.changed && self.previous != self.configured {
+            return Err("idempotent skill autonomy receipt has inconsistent previous configuration".into());
+        }
+        if self.changed && self.previous == self.configured {
+            return Err("changed skill autonomy receipt has no configuration transition".into());
+        }
+        if self.reload_requested != expected_reload_requested {
+            return Err("skill autonomy receipt has an unexpected reload request state".into());
+        }
+        Ok(())
+    }
+}
+
+fn valid_skill_autonomy_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_')
+}
+
 /// Exact `neoth autonomy set <level> --output json` acknowledgement.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -5027,6 +5150,42 @@ mod tests {
             stdout: stdout.as_bytes().to_vec(),
             stderr: stderr.as_bytes().to_vec(),
         }
+    }
+
+    #[test]
+    fn skill_autonomy_receipts_are_strict_and_bind_exact_desired_config() {
+        let desired = SkillAutonomyOverrideAck {
+            level: "custom".into(),
+            overrides: std::collections::BTreeMap::from([("exec_arbitrary".into(), "deny".into())]),
+        };
+        let ack: SkillAutonomyAck = serde_json::from_value(serde_json::json!({
+            "id": "web-research",
+            "configured": {"level": "custom", "overrides": {"exec_arbitrary": "deny"}},
+            "previous": null,
+            "changed": true,
+            "reload_requested": true,
+        }))
+        .expect("decode exact skill autonomy receipt");
+        ack.verify("web-research", Some(&desired), true)
+            .expect("bind desired cap and reload request");
+        assert!(serde_json::from_value::<SkillAutonomyAck>(serde_json::json!({
+            "id": "web-research", "configured": null, "previous": null,
+            "changed": false, "reload_requested": false, "unexpected": true,
+        }))
+        .is_err());
+        let show: SkillAutonomyShow = serde_json::from_value(serde_json::json!({
+            "id": "web-research",
+            "configured": {"level": "custom", "overrides": {"exec_arbitrary": "deny"}},
+            "effective_cap": {"level": "custom", "overrides": {"exec_arbitrary": "deny"}},
+            "global_autonomy": "full",
+            "admitted": true,
+            "origin": "bundled",
+            "config_epoch": null,
+            "inert_reason": null,
+        }))
+        .expect("decode exact skill autonomy show");
+        show.verify("web-research")
+            .expect("read-only local admitted cap does not claim runtime application");
     }
 
     fn backup_ack_json(wrote: &str) -> String {

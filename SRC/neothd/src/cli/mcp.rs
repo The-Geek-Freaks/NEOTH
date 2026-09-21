@@ -2822,6 +2822,7 @@ code_map:
                 crate::permissions::ActionKind::McpToolInvocation,
                 crate::permissions::CustomDecision::Deny,
             )]),
+            skill_overrides: std::collections::BTreeMap::new(),
         };
         let policy = crate::permissions::AutonomyPolicySnapshot::new(
             crate::permissions::AutonomyLevel::Custom,

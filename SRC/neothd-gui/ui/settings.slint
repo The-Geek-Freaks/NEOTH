@@ -1209,6 +1209,21 @@ export component SettingsView inherits Rectangle {
     /// Args: (skill-id, enabled). Rust shells `neoth skills --enable/--disable`.
     in property <bool> skill-authority-operation-in-flight: false;
     callback skill-toggle-clicked(string, bool);
+    // W138 — selected operator-owned per-Skill autonomy cap. The GUI presents
+    // CLI readback only; it never computes an effective policy itself.
+    in property <string> skill-autonomy-selected-id: "";
+    in property <string> skill-autonomy-configured: "Not configured";
+    in property <string> skill-autonomy-effective-cap: "Unavailable";
+    in property <string> skill-autonomy-global: "";
+    in property <string> skill-autonomy-admission: "";
+    in property <string> skill-autonomy-status: "Select an admitted skill to inspect its configured cap.";
+    in property <bool> skill-autonomy-in-flight: false;
+    in-out property <int> skill-autonomy-generation: 0;
+    in-out property <string> skill-autonomy-editor-level: "standard";
+    in-out property <string> skill-autonomy-editor-actions: "";
+    callback skill-autonomy-inspect-clicked(string);
+    callback skill-autonomy-set-clicked(string, string, string);
+    callback skill-autonomy-reset-clicked(string);
     /// Permanently revoke the exact current installed generation.
     callback skill-revoke-clicked(string);
     /// Operator clicked "Install skill…" → Rust opens rfd folder picker →
@@ -3124,6 +3139,112 @@ export component SettingsView inherits Rectangle {
                         }
                     }
                 }
+                // W138 — an operator-owned cap for the explicitly selected
+                // admitted Skill. This shows persisted/readback state and does
+                // not claim a daemon has already applied a reload request.
+                property <bool> skill-autonomy-reset-confirming: false;
+                if root.skill-autonomy-selected-id != "": Card {
+                    shimmer: false;
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "Autonomy cap for " + root.skill-autonomy-selected-id;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-primary;
+                        }
+                        Text {
+                            text: root.skill-autonomy-status;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: root.skill-autonomy-in-flight ? Theme.warning : Theme.text-secondary;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: "Global level: " + root.skill-autonomy-global + " · Admission: " + root.skill-autonomy-admission;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.text-tertiary;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: "Configured cap: " + root.skill-autonomy-configured;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.audit;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: "Resolved cap from current inventory: " + root.skill-autonomy-effective-cap;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            color: Theme.text-tertiary;
+                            wrap: word-wrap;
+                        }
+                        NeothComboBox {
+                            model: ["strict", "standard", "elevated", "full", "custom"];
+                            current-index: root.skill-autonomy-editor-level == "strict" ? 0
+                                : root.skill-autonomy-editor-level == "standard" ? 1
+                                : root.skill-autonomy-editor-level == "elevated" ? 2
+                                : root.skill-autonomy-editor-level == "full" ? 3 : 4;
+                            enabled: !root.skill-autonomy-in-flight;
+                            selected(index) => {
+                                root.skill-autonomy-editor-level = index == 0 ? "strict"
+                                    : index == 1 ? "standard"
+                                    : index == 2 ? "elevated"
+                                    : index == 3 ? "full" : "custom";
+                            }
+                        }
+                        if root.skill-autonomy-editor-level == "custom": NeothLineEdit {
+                            text <=> root.skill-autonomy-editor-actions;
+                            placeholder-text: "action=allow, action=confirm, action=deny";
+                            enabled: !root.skill-autonomy-in-flight;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            NeothButton {
+                                label: "Save cap";
+                                primary: true;
+                                size: "sm";
+                                loading: root.skill-autonomy-in-flight;
+                                enabled: !root.skill-autonomy-in-flight;
+                                clicked => {
+                                    root.skill-autonomy-set-clicked(
+                                        root.skill-autonomy-selected-id,
+                                        root.skill-autonomy-editor-level,
+                                        root.skill-autonomy-editor-actions,
+                                    );
+                                }
+                            }
+                            if !skill-autonomy-reset-confirming: NeothButton {
+                                label: "Reset cap";
+                                primary: false;
+                                size: "sm";
+                                enabled: !root.skill-autonomy-in-flight;
+                                clicked => { skill-autonomy-reset-confirming = true; }
+                            }
+                            if skill-autonomy-reset-confirming: NeothButton {
+                                label: "Confirm reset";
+                                primary: false;
+                                danger: true;
+                                size: "sm";
+                                enabled: !root.skill-autonomy-in-flight;
+                                clicked => {
+                                    skill-autonomy-reset-confirming = false;
+                                    root.skill-autonomy-reset-clicked(root.skill-autonomy-selected-id);
+                                }
+                            }
+                            if skill-autonomy-reset-confirming: NeothButton {
+                                label: "Cancel";
+                                primary: false;
+                                size: "sm";
+                                enabled: !root.skill-autonomy-in-flight;
+                                clicked => { skill-autonomy-reset-confirming = false; }
+                            }
+                        }
+                    }
+                }
                 // GOLD-ADAPT-AOS-01 — searchable, domain-grouped index.
                 // Rust rebuilds the grouped model on every keystroke
                 // (`group_skill_rows` over the cached full list).
@@ -3195,6 +3316,13 @@ export component SettingsView inherits Rectangle {
                                     font-size: Theme.font-size-caption;
                                     color: Theme.text-primary;
                                     horizontal-stretch: 1;
+                                }
+                                if !s.broken: NeothButton {
+                                    label: "Autonomy";
+                                    primary: false;
+                                    size: "sm";
+                                    enabled: !root.skill-autonomy-in-flight;
+                                    clicked => { root.skill-autonomy-inspect-clicked(s.operation-id); }
                                 }
                                 if s.broken: Text {
                                     text: "BROKEN";

@@ -8,6 +8,21 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W138 skill autonomy source admitted (2026-09-21):** operator-owned per-skill
+caps now flow through admitted routes into provider/MCP authorization and the
+CLI, Settings and Buddy surfaces. Read-only inventory remains mutation-free;
+GUI success requires exact receipts and fresh readback. Independent source
+review passed after current-policy, confirmation and audit corrections.
+The manifest now binds 315 inputs; the matrix requires 166 native identities,
+22 universal GUI identities and six Linux/macOS callbacks. See
+[W138](../docs/gold-wave138-verification.md). Hosted formatting, compilation,
+behavior and GUI acceptance remain pending. W142 is still unadmitted work.
+Road counts remain 1324/1015/307/2; all local validation remains suspended.
+
+W143 quick hosted gates passed on dd00c2d5: Preflight35584759237 and
+CodeQuality35584758746. Windows preview35575775478 built CLI and GUI on older
+85658d48, then failed portable lifecycle acceptance on fixture directory
+ownership. W144 corrects that fixture; this is not current-source acceptance.
 **W143 hosted test compile repair (2026-09-21):** static gates passed on
 8f130708, then full CI35583943094 found a W137 test-local registry value
 used outside its block. The block now returns the owned value, preserving

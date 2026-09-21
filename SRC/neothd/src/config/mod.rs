@@ -2809,6 +2809,9 @@ impl FreedomConfig {
     }
 
     fn validate_public_sections(&self) -> Result<()> {
+        self.custom_autonomy
+            .validate()
+            .context("invalid custom_autonomy config")?;
         self.context_connectors
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid context_connectors config: {error}"))?;
@@ -3203,5 +3206,54 @@ mod code_map_config_tests {
             ..CodeMapLifecycleConfig::default()
         };
         assert!(invalid.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod skill_autonomy_config_tests {
+    use std::path::Path;
+
+    #[test]
+    fn public_config_load_rejects_invalid_skill_id() {
+        let source = b"custom_autonomy:\n  skill_overrides:\n    BadID:\n      level: standard\n";
+        assert!(
+            super::parse_public_freedom_yaml(Path::new("freedom.yaml"), source).is_err(),
+            "SkillId map keys must be validated at the public config boundary"
+        );
+    }
+
+    #[test]
+    fn public_config_load_rejects_malformed_or_non_custom_skill_action_maps() {
+        for source in [
+            "custom_autonomy:\n  skill_overrides:\n    valid-skill:\n      level: standard\n      overrides:\n        exec_arbitrary: deny\n",
+            "custom_autonomy:\n  skill_overrides:\n    valid-skill:\n      level: custom\n      overrides:\n        action_that_does_not_exist: deny\n",
+            "custom_autonomy:\n  skill_overrides:\n    valid-skill:\n      level: custom\n      unexpected: true\n",
+        ] {
+            assert!(
+                super::parse_public_freedom_yaml(Path::new("freedom.yaml"), source.as_bytes())
+                    .is_err(),
+                "invalid per-skill action map unexpectedly passed the public config boundary: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn public_config_load_rejects_more_than_128_skill_overrides() {
+        let entries = (0..129)
+            .map(|index| format!("    skill-{index:03}:\n      level: standard\n"))
+            .collect::<String>();
+        let source = format!("custom_autonomy:\n  skill_overrides:\n{entries}");
+        assert!(
+            super::parse_public_freedom_yaml(Path::new("freedom.yaml"), source.as_bytes())
+                .is_err(),
+            "the public config boundary must enforce the 128 per-skill override limit"
+        );
+    }
+
+    #[test]
+    fn public_config_load_preserves_legacy_absence_of_skill_overrides() {
+        let config = super::parse_public_freedom_yaml(Path::new("freedom.yaml"), b"autonomy: full\n")
+            .expect("legacy config without custom_autonomy must remain valid");
+        assert!(config.custom_autonomy.skill_overrides.is_empty());
     }
 }

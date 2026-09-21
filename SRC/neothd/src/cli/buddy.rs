@@ -3,7 +3,7 @@
 //! ## Subcommands
 //!
 //! - `neoth buddy status [--output json]`
-//!   Read-only snapshot of the six buddy-config fields the GUI tab is wired
+//!   Read-only snapshot of the buddy-config fields plus admitted Skill caps
 //!   against. No daemon required. All values come from freedom.yaml.
 //!
 //! - `neoth buddy self-activation --enable | --disable [--output json]`
@@ -56,7 +56,7 @@ const PROACTIVE_ACTION: &str = "set_proactive";
 
 /// GOLD-ADAPT-GUI-BUDDY — GUI Buddy-Config tab: read aggregator + safe toggles.
 ///
-/// `status` reads six buddy-config fields from freedom.yaml (no LLM, no daemon
+/// `status` reads buddy-config fields plus local authority-admitted Skill caps
 /// required). `self-activation` and `proactive` toggle the corresponding
 /// `freedom.yaml` fields atomically. `sovereign` and `smart-approve` have their
 /// own gated mutation paths and are intentionally not duplicated here.
@@ -72,12 +72,14 @@ pub struct BuddyArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum BuddyAction {
-    /// Print a snapshot of the six GUI Buddy-Config fields.
+    /// Print a snapshot of the GUI Buddy-Config fields plus admitted Skill caps.
     ///
     /// JSON shape (exact, GUI-contract):
     /// `{"sovereign_buddy": bool, "self_activation_enabled": bool,
     ///   "self_activation_skills": [string], "smart_approve_any": bool,
-    ///   "autonomy": string, "proactive_enabled": bool}`
+    ///   "autonomy": string, "proactive_enabled": bool,
+    ///   "skill_autonomy_caps": [{"id": string, "configured": object,
+    ///   "effective_cap": object, "origin": string}]}`
     Status,
 
     /// Toggle `self_activation.enabled` in freedom.yaml.
@@ -182,7 +184,7 @@ pub enum BuddyClusterAction {
 
 pub async fn run_buddy(args: BuddyArgs) -> Result<()> {
     match args.action {
-        BuddyAction::Status => run_status(args.output),
+        BuddyAction::Status => run_status(args.output).await,
         BuddyAction::SelfActivation { enable, disable } => {
             run_self_activation(enable, disable, args.output)
         }
@@ -363,7 +365,7 @@ async fn run_cluster(action: BuddyClusterAction, output: OutputFormat) -> Result
 
 // ── status ────────────────────────────────────────────────────────────────────
 
-fn run_status(output: OutputFormat) -> Result<()> {
+async fn run_status(output: OutputFormat) -> Result<()> {
     let cfg = FreedomConfig::load_from_default_path()
         .context("load freedom.yaml (run `neoth init` first if this is a fresh install)")?;
 
@@ -377,6 +379,26 @@ fn run_status(output: OutputFormat) -> Result<()> {
     let smart_approve_any = cfg.security.smart_approve;
     let autonomy = cfg.autonomy.as_str().to_owned();
     let proactive_enabled = cfg.proactive.enabled;
+    let home = FreedomConfig::default_neoth_home();
+    let path = FreedomConfig::default_path();
+    let mut skill_autonomy_caps = Vec::new();
+    for (skill_id, configured) in &cfg.custom_autonomy.skill_overrides {
+        let inventory = crate::cli::autonomy::skill_inventory_status(
+            &home,
+            &path,
+            cfg.clone(),
+            skill_id,
+        )
+        .await?;
+        if inventory.admitted {
+            skill_autonomy_caps.push(json!({
+                "id": skill_id.as_str(),
+                "configured": configured,
+                "effective_cap": configured,
+                "origin": inventory.origin,
+            }));
+        }
+    }
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -389,6 +411,7 @@ fn run_status(output: OutputFormat) -> Result<()> {
                     "smart_approve_any": smart_approve_any,
                     "autonomy": autonomy,
                     "proactive_enabled": proactive_enabled,
+                    "skill_autonomy_caps": skill_autonomy_caps,
                 })
             );
         }
@@ -404,6 +427,10 @@ fn run_status(output: OutputFormat) -> Result<()> {
             );
             println!("autonomy               : {autonomy}");
             println!("proactive_enabled      : {proactive_enabled}");
+            println!(
+                "skill_autonomy_caps     : {}",
+                serde_json::to_string(&skill_autonomy_caps)?
+            );
         }
     }
     Ok(())
@@ -525,10 +552,10 @@ mod tests {
 
     // ── status JSON shape ─────────────────────────────────────────────────────
 
-    /// The six keys required by the GUI contract must all be present and have
+    /// The seven keys required by the GUI contract must all be present and have
     /// the correct types when read back from a constructed FreedomConfig.
     #[test]
-    fn status_json_shape_has_all_six_keys() {
+    fn status_json_shape_has_all_seven_keys() {
         let cfg = make_buddy_cfg();
 
         let sovereign_buddy = cfg.sovereign_buddy;
@@ -538,6 +565,7 @@ mod tests {
         let smart_approve_any = cfg.security.smart_approve;
         let autonomy = cfg.autonomy.as_str().to_owned();
         let proactive_enabled = cfg.proactive.enabled;
+        let skill_autonomy_caps = Vec::<Value>::new();
 
         let v = json!({
             "sovereign_buddy": sovereign_buddy,
@@ -546,6 +574,7 @@ mod tests {
             "smart_approve_any": smart_approve_any,
             "autonomy": autonomy,
             "proactive_enabled": proactive_enabled,
+            "skill_autonomy_caps": skill_autonomy_caps,
         });
 
         assert!(
@@ -569,6 +598,10 @@ mod tests {
             v["proactive_enabled"].is_boolean(),
             "proactive_enabled must be bool"
         );
+        assert!(
+            v["skill_autonomy_caps"].is_array(),
+            "skill_autonomy_caps must be array"
+        );
 
         // Values match the constructed config.
         assert_eq!(v["sovereign_buddy"], false);
@@ -581,6 +614,7 @@ mod tests {
         assert_eq!(v["smart_approve_any"], false);
         assert_eq!(v["autonomy"], "standard");
         assert_eq!(v["proactive_enabled"], false);
+        assert!(v["skill_autonomy_caps"].as_array().unwrap().is_empty());
     }
 
     #[test]

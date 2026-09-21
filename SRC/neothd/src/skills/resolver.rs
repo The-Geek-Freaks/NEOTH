@@ -10,6 +10,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::permissions::{Action, AutonomyPolicySnapshot, EffectiveAutonomyPolicy, SkillId};
+
 use super::registry::SkillSnapshot;
 use super::router::{
     EMBEDDING_THRESHOLD, fuzzy_keyword_bonus, keyword_matches, keyword_weight, lowercase_tokens,
@@ -111,6 +113,82 @@ pub struct ResolvedSkillRoute {
     report: SkillRouteReport,
 }
 
+/// Per-invocation autonomy restriction minted only from a retained, admitted
+/// route. The selected route stays owned here so downstream code cannot turn a
+/// bare skill id or manifest field into a policy capability.
+///
+/// The cap is fixed from the operator configuration accepted with this route.
+/// Effect leaves must still supply their freshly read global policy to
+/// [`Self::evaluate_with_current_global`]; a reload can tighten the global
+/// side but cannot replace this invocation's admitted cap.
+#[derive(Clone)]
+pub struct SkillInvocationPolicy {
+    route_guard: ResolvedSkillRoute,
+    skill_id: SkillId,
+    effective: EffectiveAutonomyPolicy,
+    current_autonomy_reload: Option<std::sync::Arc<crate::config::reload::ReloadController>>,
+}
+
+impl std::fmt::Debug for SkillInvocationPolicy {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SkillInvocationPolicy")
+            .field("skill_id", &self.skill_id)
+            .field("has_skill_cap", &self.has_skill_cap())
+            .field("route", self.route_report())
+            .finish()
+    }
+}
+
+impl SkillInvocationPolicy {
+    pub fn skill_id(&self) -> &SkillId {
+        &self.skill_id
+    }
+
+    pub fn route_report(&self) -> &SkillRouteReport {
+        self.route_guard.report()
+    }
+
+    pub fn has_skill_cap(&self) -> bool {
+        self.effective.has_skill_cap()
+    }
+
+    pub(crate) fn cap_requires_confirmation(&self, action: &Action) -> bool {
+        self.effective.cap_requires_confirmation(action)
+    }
+
+    pub(crate) fn current_global_snapshot(
+        &self,
+        fallback: &AutonomyPolicySnapshot,
+    ) -> AutonomyPolicySnapshot {
+        self.has_skill_cap()
+            .then(|| {
+                self.current_autonomy_reload
+                    .as_ref()
+                    .map(|reload| reload.autonomy_policy())
+            })
+            .flatten()
+            .unwrap_or_else(|| fallback.clone())
+    }
+
+    pub fn evaluate_with_current_global(
+        &self,
+        action: &Action,
+        current_global: &AutonomyPolicySnapshot,
+    ) -> crate::permissions::Decision {
+        let current_global = self.current_global_snapshot(current_global);
+        self.effective.evaluate_with_current_global(action, &current_global)
+    }
+
+    pub(crate) fn evaluate_at_snapshot(
+        &self,
+        action: &Action,
+        current_global: &AutonomyPolicySnapshot,
+    ) -> crate::permissions::Decision {
+        self.effective.evaluate_with_current_global(action, current_global)
+    }
+}
+
 impl ResolvedSkillRoute {
     pub fn runtime_skill(&self) -> &RuntimeSkill {
         &self.snapshot.skills()[self.skill_index]
@@ -129,6 +207,32 @@ impl ResolvedSkillRoute {
         &self.report
     }
 
+    /// Bind an operator-owned skill cap to this already-admitted route.
+    /// `SkillId` parsing remains defensive: a malformed runtime identity must
+    /// fail closed instead of selecting a similarly named config entry.
+    pub fn invocation_policy(
+        &self,
+        admitted_global: &AutonomyPolicySnapshot,
+    ) -> anyhow::Result<SkillInvocationPolicy> {
+        let skill_id = SkillId::parse(self.skill().id())?;
+        Ok(SkillInvocationPolicy {
+            route_guard: self.clone(),
+            effective: admitted_global.effective_for_selected_skill(&skill_id),
+            current_autonomy_reload: None,
+            skill_id,
+        })
+    }
+
+    pub fn invocation_policy_with_reload(
+        &self,
+        admitted_global: &AutonomyPolicySnapshot,
+        reload: std::sync::Arc<crate::config::reload::ReloadController>,
+    ) -> anyhow::Result<SkillInvocationPolicy> {
+        let mut policy = self.invocation_policy(admitted_global)?;
+        policy.current_autonomy_reload = Some(reload);
+        Ok(policy)
+    }
+
     /// Thin parent prompt plus only the selected mode delta.
     pub fn system_prompt_layer(&self) -> Option<String> {
         let base = self.skill().system_prompt();
@@ -143,6 +247,72 @@ impl ResolvedSkillRoute {
             _ => None,
         }
     }
+}
+
+/// Test-only factory for an actually retained route capability. Production
+/// code cannot manufacture this value from an id: it must resolve a registry
+/// route first. Cross-module gate/provider tests use this to exercise the
+/// same ownership shape without exposing a production escape hatch.
+#[cfg(test)]
+pub(crate) fn test_invocation_policy_for_skill_id(
+    id: &str,
+    admitted_global: &AutonomyPolicySnapshot,
+) -> anyhow::Result<SkillInvocationPolicy> {
+    use crate::skills::schema::SkillManifest;
+
+    let manifest = SkillManifest {
+        id: id.to_owned(),
+        description: "test retained route".to_owned(),
+        version: "1.0.0".to_owned(),
+        trigger_keywords: vec![id.to_owned()],
+        system_prompt: String::new(),
+        tool_allowlist: Vec::new(),
+        author: None,
+        tags: Vec::new(),
+        homepage: None,
+        source: None,
+        modes: Vec::new(),
+        enabled: true,
+        delegate_to: None,
+        model: None,
+        paths: Vec::new(),
+        effort: None,
+        loop_trigger: false,
+        visibility: crate::config::SkillVisibility::On,
+    };
+    let runtime = RuntimeSkill::from_trusted_bundled(Skill::from_trusted_bundled(
+        manifest,
+        std::path::PathBuf::from("<test>/skill.yaml"),
+        "test-route-hash".to_owned(),
+    ))?;
+    let snapshot = SkillSnapshot::from_test_skills(vec![runtime]);
+    let route = ResolvedSkillRoute {
+        body: snapshot.skills()[0].body(),
+        snapshot,
+        skill_index: 0,
+        mode_index: None,
+        report: SkillRouteReport {
+            outcome: SkillRouteOutcome::Match,
+            stage: Some(SkillRouteStage::Explicit),
+            config_epoch: 0,
+            authority_epoch: 0,
+            snapshot_sha256: "test-retained-route".to_owned(),
+            candidates: Vec::new(),
+            rejection: None,
+            degraded_reason: None,
+        },
+    };
+    route.invocation_policy(admitted_global)
+}
+#[cfg(test)]
+pub(crate) fn test_invocation_policy_for_skill_id_with_reload(
+    id: &str,
+    admitted_global: &AutonomyPolicySnapshot,
+    reload: std::sync::Arc<crate::config::reload::ReloadController>,
+) -> anyhow::Result<SkillInvocationPolicy> {
+    let mut policy = test_invocation_policy_for_skill_id(id, admitted_global)?;
+    policy.current_autonomy_reload = Some(reload);
+    Ok(policy)
 }
 
 #[derive(Debug, Clone)]
@@ -1280,6 +1450,103 @@ mod tests {
         assert!(route.report().candidates[0].execution.trusted_bundled);
     }
 
+    #[tokio::test]
+    async fn w138_retained_cap_reload_blocks_stale_snapshot_while_no_cap_preserves_legacy_snapshot() {
+        use std::collections::BTreeMap;
+
+        let capped_skill = crate::permissions::SkillId::parse("reload-cap").unwrap();
+        let mut initial = crate::config::FreedomConfig {
+            autonomy: crate::permissions::AutonomyLevel::Full,
+            ..Default::default()
+        };
+        initial.custom_autonomy.skill_overrides.insert(
+            capped_skill,
+            crate::permissions::SkillAutonomyOverride {
+                level: crate::permissions::AutonomyLevel::Custom,
+                overrides: BTreeMap::from([(
+                    crate::permissions::ActionKind::ExecArbitrary,
+                    crate::permissions::CustomDecision::Allow,
+                )]),
+            },
+        );
+
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("freedom.yaml");
+        std::fs::write(&config_path, serde_yaml::to_string(&initial).unwrap()).unwrap();
+        let reload = Arc::new(crate::config::reload::ReloadController::new(
+            initial.clone(),
+            config_path.clone(),
+        ));
+        let stale_global = reload.autonomy_policy();
+
+        let resolver = resolver(vec![
+            runtime_skill(
+                "reload-cap",
+                &["cap"],
+                crate::config::SkillVisibility::On,
+                Vec::new(),
+            ),
+            runtime_skill(
+                "reload-no-cap",
+                &["no-cap"],
+                crate::config::SkillVisibility::On,
+                Vec::new(),
+            ),
+        ]);
+        let SkillRouteDecision::Match(capped_route) = resolver
+            .resolve(
+                SkillRouteRequest::automatic("cap", 1, &[])
+                    .with_explicit_skill(Some("reload-cap")),
+                None,
+            )
+            .await
+        else {
+            panic!("capped route must resolve");
+        };
+        let SkillRouteDecision::Match(no_cap_route) = resolver
+            .resolve(
+                SkillRouteRequest::automatic("no-cap", 1, &[])
+                    .with_explicit_skill(Some("reload-no-cap")),
+                None,
+            )
+            .await
+        else {
+            panic!("no-cap route must resolve");
+        };
+        let capped = capped_route
+            .invocation_policy_with_reload(&stale_global, Arc::clone(&reload))
+            .unwrap();
+        let no_cap = no_cap_route
+            .invocation_policy_with_reload(&stale_global, Arc::clone(&reload))
+            .unwrap();
+        assert!(capped.has_skill_cap());
+        assert!(!no_cap.has_skill_cap());
+
+        let mut changed = initial;
+        changed.autonomy = crate::permissions::AutonomyLevel::Custom;
+        changed.custom_autonomy.overrides.insert(
+            crate::permissions::ActionKind::ExecArbitrary,
+            crate::permissions::CustomDecision::Deny,
+        );
+        std::fs::write(&config_path, serde_yaml::to_string(&changed).unwrap()).unwrap();
+        match reload.try_reload().unwrap() {
+            crate::config::reload::ReloadResult::Reloaded { .. } => {}
+            other => panic!("expected Reloaded, got {other:?}"),
+        }
+
+        assert!(
+            capped
+                .evaluate_with_current_global(&Action::ExecArbitrary, &stale_global)
+                .is_deny(),
+            "a retained cap must obtain the reloaded global policy instead of accepting a stale caller snapshot"
+        );
+        assert!(
+            no_cap
+                .evaluate_with_current_global(&Action::ExecArbitrary, &stale_global)
+                .is_allow(),
+            "a route without a cap must preserve the caller-supplied legacy global snapshot"
+        );
+    }
     #[test]
     fn session_registry_context_is_exact_admitted_metadata_only() {
         let hostile_description = concat!(

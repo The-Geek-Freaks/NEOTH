@@ -93,19 +93,7 @@ pub struct CreateExpectation {
 /// Validate the canonical skill id: non-empty, `[a-z0-9_-]`, ≤ 64 chars. Matches
 /// the loader invariant that the on-disk directory name equals the id.
 pub fn validate_skill_id(id: &str) -> Result<()> {
-    if id.is_empty() {
-        anyhow::bail!("skill id must not be empty");
-    }
-    if id.len() > 64 {
-        anyhow::bail!("skill id must be <= 64 chars (got {})", id.len());
-    }
-    if !id
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
-    {
-        anyhow::bail!("skill id may only contain lowercase [a-z0-9_-]: {id}");
-    }
-    Ok(())
+    crate::permissions::SkillId::parse(id).map(|_| ())
 }
 
 /// Build a [`SkillManifest`] from raw params + round-trip it through

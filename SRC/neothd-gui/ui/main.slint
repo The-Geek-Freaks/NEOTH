@@ -1312,6 +1312,16 @@ export component MainWindow inherits Window {
     in property <[SkillRow]> skills: [];
     in-out property <bool> skills-always-embed-route: true;
     in property <bool> skill-authority-operation-in-flight: false;
+    in-out property <string> skill-autonomy-selected-id: "";
+    in-out property <string> skill-autonomy-configured: "Not configured";
+    in-out property <string> skill-autonomy-effective-cap: "Unavailable";
+    in-out property <string> skill-autonomy-global: "";
+    in-out property <string> skill-autonomy-admission: "";
+    in-out property <string> skill-autonomy-status: "Select an admitted skill to inspect its configured cap.";
+    in-out property <bool> skill-autonomy-in-flight: false;
+    in-out property <int> skill-autonomy-generation: 0;
+    in-out property <string> skill-autonomy-editor-level: "standard";
+    in-out property <string> skill-autonomy-editor-actions: "";
     in property <[ChannelRow]> channels: [];
     in property <[string]> channel-types: [];
     in property <string> channel-status-error: "";
@@ -1463,6 +1473,9 @@ export component MainWindow inherits Window {
     callback channel-account-save(string, string, string, int);
     callback channel-account-remove(string, string);
     callback channel-account-dm-pairing(string, string, bool);
+    callback skill-autonomy-inspect(string);
+    callback skill-autonomy-set(string, string, string);
+    callback skill-autonomy-reset(string);
     callback channel-pairing-list(string, string);
     callback channel-pairing-dismiss(string, string, string);
     callback channel-pairing-approve(string, string, string, string);
@@ -3874,8 +3887,21 @@ export component MainWindow inherits Window {
             consent-visible <=> root.consent-visible;
             skills-always-embed-route: root.skills-always-embed-route;
             skill-authority-operation-in-flight: root.skill-authority-operation-in-flight;
+            skill-autonomy-selected-id <=> root.skill-autonomy-selected-id;
+            skill-autonomy-configured <=> root.skill-autonomy-configured;
+            skill-autonomy-effective-cap <=> root.skill-autonomy-effective-cap;
+            skill-autonomy-global <=> root.skill-autonomy-global;
+            skill-autonomy-admission <=> root.skill-autonomy-admission;
+            skill-autonomy-status <=> root.skill-autonomy-status;
+            skill-autonomy-in-flight <=> root.skill-autonomy-in-flight;
+            skill-autonomy-generation <=> root.skill-autonomy-generation;
+            skill-autonomy-editor-level <=> root.skill-autonomy-editor-level;
+            skill-autonomy-editor-actions <=> root.skill-autonomy-editor-actions;
             skills-always-embed-route-changed(v) => { root.skills-always-embed-route-set(v); }
             skill-toggle-clicked(id, en) => { root.skill-toggle(id, en); }
+            skill-autonomy-inspect-clicked(id) => { root.skill-autonomy-inspect(id); }
+            skill-autonomy-set-clicked(id, level, actions) => { root.skill-autonomy-set(id, level, actions); }
+            skill-autonomy-reset-clicked(id) => { root.skill-autonomy-reset(id); }
             skill-revoke-clicked(id) => { root.skill-revoke(id); }
             skill-install-clicked => { root.skill-install(); }
             skill-uninstall-clicked(id) => { root.skill-uninstall(id); }

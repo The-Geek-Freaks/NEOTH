@@ -617,6 +617,11 @@ pub(super) struct PromptBundle {
     /// Owning authority capability retained until this turn's dispatch
     /// finishes. Derived strings alone are not execution authority.
     pub(super) skill_route_guard: Option<crate::skills::resolver::ResolvedSkillRoute>,
+    /// Operator-owned restrictive cap minted from `skill_route_guard`. This
+    /// remains route-bound rather than being reconstructed from `used_skill_id`.
+    /// Pipeline owners must carry it to every provider/MCP/channel effect leaf.
+    pub(super) skill_invocation_policy:
+        Option<crate::skills::resolver::SkillInvocationPolicy>,
     /// Cross-surface, JSON-ready explanation of the exact routing decision.
     pub(super) skill_route_report: crate::skills::resolver::SkillRouteReport,
     /// Exact typed A-E/Conductor representation of `combined_system` plus the
@@ -2220,6 +2225,7 @@ pub(super) async fn build_prompt_bundle(
                 combined_system,
                 context_preload_notice: None,
                 skill_route_guard: None,
+                skill_invocation_policy: None,
                 skill_route_report: crate::skills::resolver::SkillRouteReport {
                     outcome: crate::skills::resolver::SkillRouteOutcome::NoMatch,
                     stage: None,
@@ -2633,6 +2639,18 @@ pub(super) async fn build_prompt_bundle(
     };
     let skill_tool_allowlist =
         routed_skill_tool_allowlist(selected_skill_route.as_ref().map(|route| route.skill()));
+    // This cap can only be minted from the retained route, never from the
+    // prompt/audit string. It is intentionally separate from the current
+    // global policy: effect leaves re-read that policy before acting.
+    let skill_invocation_policy = selected_skill_route
+        .as_ref()
+        .map(|route| {
+            route.invocation_policy_with_reload(
+                &config.autonomy_policy(),
+                std::sync::Arc::clone(&one_shot_reload),
+            )
+        })
+        .transpose()?;
     // Shadow as mutable so GOLD-ADAPT-PWF-01 can append the fenced plan block.
     let mut skill_layer = skill_layer;
 
@@ -2960,6 +2978,7 @@ pub(super) async fn build_prompt_bundle(
             combined_system,
             context_preload_notice: Some(context_preload_notice),
             skill_route_guard: selected_skill_route,
+            skill_invocation_policy,
             skill_route_report,
             budget_items,
             mcp_catalogue_slot,
@@ -4931,6 +4950,7 @@ pub(super) async fn dispatch_provider(
     hooks: &[crate::hooks::schema::HookDef],
     once_guard: &crate::hooks::SessionOnceGuard,
     turn_effect_gate: Option<std::sync::Arc<dyn crate::providers::ChatTurnEffectGate>>,
+    skill_invocation_policy: Option<crate::skills::resolver::SkillInvocationPolicy>,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<DispatchOutput> {
     // Consent is revalidated by ProviderCallAuthorizer immediately before
@@ -5013,6 +5033,7 @@ pub(super) async fn dispatch_provider(
         )
         .with_usage_home(home.to_path_buf())
         .with_turn_effect_gate(turn_effect_gate.clone())
+        .with_skill_invocation_policy(skill_invocation_policy.clone())
         .with_ephemeral_consent(ephemeral_consent.clone())
         .with_audit_context(provider_audit_context);
     let authorized_provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
@@ -5604,6 +5625,7 @@ pub(super) async fn dispatch_provider(
                         req.clone(),
                         route_mcp_servers,
                         &config.autonomy_policy(),
+                        skill_invocation_policy.as_ref(),
                         &writer,
                         Some(&config.rollback),
                         &tool_scope,
@@ -12898,6 +12920,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
     base_req: crate::providers::Request,
     servers: &crate::mcp::McpServers,
     autonomy_policy: &crate::permissions::AutonomyPolicySnapshot,
+    skill_invocation_policy: Option<&crate::skills::resolver::SkillInvocationPolicy>,
     writer: &crate::wal::writer::WalWriterHandle,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     // Complete skill/agent tool scope resolved once for this provider turn.
@@ -13025,11 +13048,12 @@ pub(crate) async fn run_mcp_dispatch_loop(
         provider,
         base: base_req,
     };
-    crate::mcp::dispatch_loop::run_tool_loop_with_budget(
+    crate::mcp::dispatch_loop::run_tool_loop_with_budget_and_skill_policy(
         &mut driver,
         initial_prompt,
         servers,
         autonomy_policy,
+        skill_invocation_policy,
         Some(writer),
         rollback_policy,
         tool_scope,
@@ -21265,6 +21289,7 @@ modes:
             &[],
             &crate::hooks::SessionOnceGuard::new(),
             None,
+            None,
             &mut CliChatOutput,
         )
         .await;
@@ -21409,6 +21434,7 @@ modes:
             &[],
             &pre_tool_once_guard,
             None,
+            None,
             &mut output,
         );
 
@@ -21550,6 +21576,7 @@ modes:
             &crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
             &[],
             &crate::hooks::SessionOnceGuard::new(),
+            None,
             None,
             &mut CliChatOutput,
         )

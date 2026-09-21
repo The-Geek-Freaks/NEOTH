@@ -33,7 +33,8 @@ pub use ifc::{
     InformationFlowDenied, InformationLabel, SourceLabels, SourceLabelsError, may_flow_to_action,
 };
 pub use policy::{
-    ActionKind, AutonomyPolicySnapshot, CustomAutonomyConfig, CustomDecision, PolicyArgument,
+    ActionKind, AutonomyPolicySnapshot, CustomAutonomyConfig, CustomDecision,
+    EffectiveAutonomyPolicy, PolicyArgument, SkillAutonomyOverride, SkillId,
 };
 pub(crate) use trust_ledger::{
     AuthenticatedDecisionLookup, audit_trust_admission_once, find_authenticated_decision_at_home,

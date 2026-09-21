@@ -10,12 +10,18 @@
 //! commit preserves future YAML fields and never leaks split credentials back
 //! into freedom.yaml.
 
+use std::collections::BTreeMap;
+use std::str::FromStr;
+
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
+use serde_json::json;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::permissions::AutonomyLevel;
+use crate::permissions::{
+    ActionKind, AutonomyLevel, CustomDecision, SkillAutonomyOverride, SkillId,
+};
 
 #[derive(Args, Debug, Clone)]
 pub struct AutonomyArgs {
@@ -35,6 +41,9 @@ pub enum AutonomyAction {
         /// One of: `strict` | `standard` | `elevated` | `full` | `custom`.
         level: String,
     },
+    /// Inspect or update the operator-owned autonomy cap for one admitted Skill.
+    #[command(subcommand)]
+    Skill(AutonomySkillAction),
     /// GATED operating mode (the safe default): autonomy `standard` + the
     /// curated skill set. NEOTH asks before shell commands, channel sends,
     /// out-of-home writes, and costly calls. Clears `skills.enable_all_bundled`.
@@ -101,6 +110,22 @@ pub enum AutonomyAction {
         #[arg(long)]
         status: bool,
     },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum AutonomySkillAction {
+    /// Show the exact persisted cap and its current local inventory applicability.
+    Show { skill_id: String },
+    /// Set one Skill's cap. Action decisions are valid only for `custom`.
+    Set {
+        skill_id: String,
+        level: String,
+        /// `action_kind=allow|confirm|deny`; repeat only with `custom`.
+        #[arg(long = "action", value_name = "KIND=DECISION")]
+        actions: Vec<String>,
+    },
+    /// Remove one canonical cap. This also removes stale caps for non-admitted Skills.
+    Reset { skill_id: String },
 }
 
 /// Pure core of `set`: validate `level`, return the config with the new
@@ -417,6 +442,7 @@ pub async fn run_autonomy(args: AutonomyArgs, output: OutputFormat) -> Result<()
     match args.action {
         AutonomyAction::Show => run_show(output),
         AutonomyAction::Set { level } => run_set(&level, output).await,
+        AutonomyAction::Skill(action) => run_skill(action, output).await,
         AutonomyAction::Gated => run_set_mode(false, false, None, output).await,
         AutonomyAction::MintFullautoToken => run_mint_fullauto_token(output).await,
         AutonomyAction::FullAuto {
@@ -429,6 +455,371 @@ pub async fn run_autonomy(args: AutonomyArgs, output: OutputFormat) -> Result<()
             status,
         } => run_sovereign(enable, disable, status, output).await,
     }
+}
+
+async fn run_skill(action: AutonomySkillAction, output: OutputFormat) -> Result<()> {
+    match action {
+        AutonomySkillAction::Show { skill_id } => run_skill_show(&skill_id, output).await,
+        AutonomySkillAction::Set {
+            skill_id,
+            level,
+            actions,
+        } => run_skill_set(&skill_id, &level, &actions, output).await,
+        AutonomySkillAction::Reset { skill_id } => run_skill_reset(&skill_id, output).await,
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SkillInventoryStatus {
+    pub(crate) admitted: bool,
+    pub(crate) origin: Option<&'static str>,
+    pub(crate) inert_reason: Option<String>,
+}
+
+pub(crate) async fn skill_inventory_status(
+    home: &std::path::Path,
+    config_path: &std::path::Path,
+    config: FreedomConfig,
+    skill_id: &SkillId,
+) -> Result<SkillInventoryStatus> {
+    let reload = crate::config::reload::ReloadController::new(config, config_path.to_path_buf());
+    let inventory = crate::skills::loader::load_authorized_read_only_from_reload_controller(
+        &home.join("skills"),
+        &reload,
+    )
+    .await
+    .context("load read-only authority-admitted Skill inventory")?;
+    let Some(row) = inventory
+        .skills
+        .into_iter()
+        .find(|row| row.id().eq_ignore_ascii_case(skill_id.as_str()))
+    else {
+        return Ok(SkillInventoryStatus {
+            admitted: false,
+            origin: None,
+            inert_reason: Some("not_found_in_local_inventory".to_owned()),
+        });
+    };
+    Ok(SkillInventoryStatus {
+        admitted: true,
+        origin: Some(if row.is_trusted_bundled() {
+            "bundled"
+        } else {
+            "installed"
+        }),
+        inert_reason: None,
+    })
+}
+
+fn parse_skill_override(level: &str, actions: &[String]) -> Result<SkillAutonomyOverride> {
+    let level = AutonomyLevel::from_str(&level.trim().to_ascii_lowercase()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "invalid autonomy level `{level}` — expected one of: strict, standard, elevated, full, custom"
+        )
+    })?;
+    anyhow::ensure!(
+        level == AutonomyLevel::Custom || actions.is_empty(),
+        "--action is accepted only when the Skill autonomy level is custom"
+    );
+    let mut overrides = BTreeMap::new();
+    for action in actions {
+        let (kind, decision) = action
+            .split_once('=')
+            .filter(|(kind, decision)| !kind.is_empty() && !decision.is_empty())
+            .ok_or_else(|| anyhow::anyhow!(
+                "invalid --action `{action}` — expected action_kind=allow|confirm|deny"
+            ))?;
+        anyhow::ensure!(
+            !decision.contains('='),
+            "invalid --action `{action}` — expected one action_kind=allow|confirm|deny pair"
+        );
+        let kind = ActionKind::from_str(kind).map_err(|error| anyhow::anyhow!("{error}"))?;
+        let decision =
+            CustomDecision::from_str(decision).map_err(|error| anyhow::anyhow!("{error}"))?;
+        anyhow::ensure!(
+            overrides.insert(kind, decision).is_none(),
+            "duplicate --action kind `{kind}`"
+        );
+    }
+    let override_policy = SkillAutonomyOverride { level, overrides };
+    override_policy.validate()?;
+    Ok(override_policy)
+}
+
+async fn run_skill_show(skill_id: &str, output: OutputFormat) -> Result<()> {
+    let skill_id = SkillId::parse(skill_id).context("validate Skill id")?;
+    let home = FreedomConfig::default_neoth_home();
+    let path = FreedomConfig::default_path();
+    let config = FreedomConfig::load_from_path(&path)
+        .context("load freedom.yaml (run `neoth init` first if this is a fresh install)")?;
+    let configured = config
+        .custom_autonomy
+        .skill_overrides
+        .get(&skill_id)
+        .cloned();
+    let inventory = skill_inventory_status(&home, &path, config.clone(), &skill_id).await?;
+    let effective_cap = inventory.admitted.then(|| configured.clone()).flatten();
+    let value = json!({
+        "id": skill_id.as_str(),
+        "configured": configured,
+        "effective_cap": effective_cap,
+        "global_autonomy": config.autonomy.as_str(),
+        "admitted": inventory.admitted,
+        "origin": inventory.origin,
+        // The local CLI cannot claim that a daemon accepted this config generation.
+        "config_epoch": serde_json::Value::Null,
+        "inert_reason": inventory.inert_reason,
+    });
+    render_skill_value(&value, output)
+}
+
+async fn run_skill_set(
+    skill_id: &str,
+    level: &str,
+    actions: &[String],
+    output: OutputFormat,
+) -> Result<()> {
+    let skill_id = SkillId::parse(skill_id).context("validate Skill id")?;
+    let override_policy = parse_skill_override(level, actions)?;
+    let home = FreedomConfig::default_neoth_home();
+    let path = FreedomConfig::default_path();
+    let config = FreedomConfig::load_from_path(&path)
+        .context("load freedom.yaml (run `neoth init` first if this is a fresh install)")?;
+    let inventory = skill_inventory_status(&home, &path, config, &skill_id).await?;
+    anyhow::ensure!(
+        inventory.admitted,
+        "Skill `{}` is not authority-admitted: {}",
+        skill_id,
+        inventory.inert_reason.unwrap_or_else(|| "not_admitted".to_owned())
+    );
+    let receipt = set_skill_override_at(&home, &path, skill_id, override_policy).await?;
+    render_skill_value(&receipt, output)
+}
+
+async fn run_skill_reset(skill_id: &str, output: OutputFormat) -> Result<()> {
+    let skill_id = SkillId::parse(skill_id).context("validate Skill id")?;
+    let home = FreedomConfig::default_neoth_home();
+    let path = FreedomConfig::default_path();
+    let receipt = reset_skill_override_at(&home, &path, skill_id).await?;
+    render_skill_value(&receipt, output)
+}
+
+fn render_skill_value(value: &serde_json::Value, output: OutputFormat) -> Result<()> {
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(value)?),
+        OutputFormat::Jsonl => println!("{}", serde_json::to_string(value)?),
+        OutputFormat::Table => println!("{}", serde_json::to_string_pretty(value)?),
+    }
+    Ok(())
+}
+
+fn skill_override_receipt(
+    skill_id: &SkillId,
+    configured: Option<SkillAutonomyOverride>,
+    previous: Option<SkillAutonomyOverride>,
+    changed: bool,
+    reload_requested: bool,
+) -> serde_json::Value {
+    json!({
+        "id": skill_id.as_str(),
+        "configured": configured,
+        "previous": previous,
+        "changed": changed,
+        "reload_requested": reload_requested,
+    })
+}
+
+async fn set_skill_override_at(
+    home: &std::path::Path,
+    path: &std::path::Path,
+    skill_id: SkillId,
+    override_policy: SkillAutonomyOverride,
+) -> Result<serde_json::Value> {
+    let (update, (previous, changed, previous_level, required_audit)) =
+        FreedomConfig::prepare_update_at(path, |config| {
+            let previous = config
+                .custom_autonomy
+                .skill_overrides
+                .get(&skill_id)
+                .cloned();
+            let changed = previous.as_ref() != Some(&override_policy);
+            let previous_level = previous
+                .as_ref()
+                .map(|policy| policy.level)
+                .unwrap_or(config.autonomy);
+            if changed {
+                config
+                    .custom_autonomy
+                    .skill_overrides
+                    .insert(skill_id.clone(), override_policy.clone());
+                config.custom_autonomy.validate()?;
+            }
+            Ok((
+                previous,
+                changed,
+                previous_level,
+                config.audit_rpc.required_for_oneshot_permission_events,
+            ))
+        })
+        .context("prepare Skill autonomy cap update")?;
+    if !changed {
+        drop(update);
+        return Ok(skill_override_receipt(
+            &skill_id,
+            Some(override_policy),
+            previous,
+            false,
+            false,
+        ));
+    }
+    let binding = ConfigAuditBinding::new(
+        update.source_existed(),
+        update.source_sha256(),
+        update.target_sha256(),
+    );
+    emit_autonomy_change(
+        previous_level,
+        override_policy.level,
+        Some("skill-autonomy-cap"),
+        home,
+        &binding,
+        MutationAuditPhase::Intent,
+        required_audit,
+    )
+    .await
+    .context("Skill autonomy audit intent was not durable; config was not changed")?;
+    if let Err(error) = update.commit() {
+        let _ = emit_autonomy_change(
+            previous_level,
+            override_policy.level,
+            Some("skill-autonomy-cap"),
+            home,
+            &binding,
+            MutationAuditPhase::Aborted,
+            false,
+        )
+        .await;
+        return Err(error).context("Skill autonomy cap CAS publication failed; target was not published");
+    }
+    emit_autonomy_change(
+        previous_level,
+        override_policy.level,
+        Some("skill-autonomy-cap"),
+        home,
+        &binding,
+        MutationAuditPhase::Committed,
+        required_audit,
+    )
+    .await
+    .context("Skill autonomy cap was published, but its required committed audit failed")?;
+    crate::cli::reload::request_reload_at(home)
+        .context("Skill autonomy cap committed, but requesting the daemon reload failed")?;
+    let configured = FreedomConfig::load_from_path(path)
+        .context("read back committed Skill autonomy cap")?
+        .custom_autonomy
+        .skill_overrides
+        .get(&skill_id)
+        .cloned();
+    anyhow::ensure!(
+        configured.as_ref() == Some(&override_policy),
+        "committed Skill autonomy cap readback did not match the requested cap"
+    );
+    Ok(skill_override_receipt(
+        &skill_id,
+        configured,
+        previous,
+        true,
+        true,
+    ))
+}
+
+async fn reset_skill_override_at(
+    home: &std::path::Path,
+    path: &std::path::Path,
+    skill_id: SkillId,
+) -> Result<serde_json::Value> {
+    let (update, (previous, changed, global_level, required_audit)) =
+        FreedomConfig::prepare_update_at(path, |config| {
+            let previous = config.custom_autonomy.skill_overrides.remove(&skill_id);
+            let changed = previous.is_some();
+            if changed {
+                config.custom_autonomy.validate()?;
+            }
+            Ok((
+                previous,
+                changed,
+                config.autonomy,
+                config.audit_rpc.required_for_oneshot_permission_events,
+            ))
+        })
+        .context("prepare Skill autonomy cap reset")?;
+    if !changed {
+        drop(update);
+        return Ok(skill_override_receipt(&skill_id, None, previous, false, false));
+    }
+    let previous_level = previous
+        .as_ref()
+        .map(|policy| policy.level)
+        .ok_or_else(|| anyhow::anyhow!("changed Skill autonomy reset has no previous cap"))?;
+    let binding = ConfigAuditBinding::new(
+        update.source_existed(),
+        update.source_sha256(),
+        update.target_sha256(),
+    );
+    emit_autonomy_change(
+        previous_level,
+        global_level,
+        Some("skill-autonomy-cap-reset"),
+        home,
+        &binding,
+        MutationAuditPhase::Intent,
+        required_audit,
+    )
+    .await
+    .context("Skill autonomy reset audit intent was not durable; config was not changed")?;
+    if let Err(error) = update.commit() {
+        let _ = emit_autonomy_change(
+            previous_level,
+            global_level,
+            Some("skill-autonomy-cap-reset"),
+            home,
+            &binding,
+            MutationAuditPhase::Aborted,
+            false,
+        )
+        .await;
+        return Err(error).context("Skill autonomy cap reset CAS publication failed; target was not published");
+    }
+    emit_autonomy_change(
+        previous_level,
+        global_level,
+        Some("skill-autonomy-cap-reset"),
+        home,
+        &binding,
+        MutationAuditPhase::Committed,
+        required_audit,
+    )
+    .await
+    .context("Skill autonomy cap reset was published, but its required committed audit failed")?;
+    crate::cli::reload::request_reload_at(home)
+        .context("Skill autonomy cap reset committed, but requesting the daemon reload failed")?;
+    let configured = FreedomConfig::load_from_path(path)
+        .context("read back committed Skill autonomy cap reset")?
+        .custom_autonomy
+        .skill_overrides
+        .get(&skill_id)
+        .cloned();
+    anyhow::ensure!(
+        configured.is_none(),
+        "committed Skill autonomy cap reset still has a persisted entry"
+    );
+    Ok(skill_override_receipt(
+        &skill_id,
+        None,
+        previous,
+        true,
+        true,
+    ))
 }
 
 fn run_show(output: OutputFormat) -> Result<()> {
@@ -1014,6 +1405,81 @@ async fn run_sovereign(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skill_override_parser_is_strict_and_custom_only() {
+        let custom = parse_skill_override(
+            "custom",
+            &["exec_arbitrary=deny".to_owned()],
+        )
+        .expect("custom action override");
+        assert_eq!(custom.level, AutonomyLevel::Custom);
+        assert_eq!(custom.overrides.len(), 1);
+        assert!(parse_skill_override("standard", &["exec_arbitrary=deny".to_owned()]).is_err());
+        assert!(parse_skill_override(
+            "custom",
+            &[
+                "exec_arbitrary=deny".to_owned(),
+                "exec_arbitrary=confirm".to_owned(),
+            ],
+        )
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn skill_override_commit_readback_and_reset_are_exact_and_idempotent() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("freedom.yaml");
+        std::fs::write(&path, serde_yaml::to_string(&FreedomConfig::default()).unwrap()).unwrap();
+        let skill_id = SkillId::parse("web-research").unwrap();
+        let override_policy = parse_skill_override("standard", &[]).unwrap();
+
+        let set = set_skill_override_at(
+            temp.path(),
+            &path,
+            skill_id.clone(),
+            override_policy.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(set["configured"]["level"], "standard");
+        assert_eq!(set["previous"], serde_json::Value::Null);
+        assert_eq!(set["changed"], true);
+        assert_eq!(set["reload_requested"], true);
+        let reloaded = FreedomConfig::load_from_path(&path).unwrap();
+        assert_eq!(
+            reloaded.custom_autonomy.skill_overrides.get(&skill_id),
+            Some(&override_policy)
+        );
+
+        let unchanged = set_skill_override_at(
+            temp.path(),
+            &path,
+            skill_id.clone(),
+            override_policy,
+        )
+        .await
+        .unwrap();
+        assert_eq!(unchanged["changed"], false);
+        assert_eq!(unchanged["reload_requested"], false);
+
+        let reset = reset_skill_override_at(temp.path(), &path, skill_id.clone())
+            .await
+            .unwrap();
+        assert_eq!(reset["configured"], serde_json::Value::Null);
+        assert_eq!(reset["changed"], true);
+        assert_eq!(
+            FreedomConfig::load_from_path(&path)
+                .unwrap()
+                .custom_autonomy
+                .skill_overrides
+                .get(&skill_id),
+            None
+        );
+        let absent_reset = reset_skill_override_at(temp.path(), &path, skill_id).await.unwrap();
+        assert_eq!(absent_reset["changed"], false);
+        assert_eq!(absent_reset["reload_requested"], false);
+    }
 
     /// GOLD-FEAT-01c: applying the full-auto preset writes a dedicated
     /// `0xDD SUDOMODE_PRESET_APPLIED` forensic frame (one-shot path, no daemon).

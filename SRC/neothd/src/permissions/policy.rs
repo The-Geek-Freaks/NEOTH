@@ -4,10 +4,52 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{Action, AutonomyLevel, Decision};
+
+pub const MAX_SKILL_AUTONOMY_OVERRIDES: usize = 128;
+
+/// Canonical operator-facing Skill identity.  This is shared with skill
+/// creation so config keys cannot name a package the runtime would reject.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct SkillId(String);
+
+impl SkillId {
+    pub fn parse(value: impl AsRef<str>) -> anyhow::Result<Self> {
+        let value = value.as_ref();
+        if value.is_empty() {
+            anyhow::bail!("skill id must not be empty");
+        }
+        if value.len() > 64 {
+            anyhow::bail!("skill id must be <= 64 chars (got {})", value.len());
+        }
+        if !value
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+        {
+            anyhow::bail!("skill id may only contain lowercase [a-z0-9_-]: {value}");
+        }
+        Ok(Self(value.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str { &self.0 }
+}
+
+impl std::fmt::Display for SkillId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for SkillId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(value).map_err(serde::de::Error::custom)
+    }
+}
 
 /// Stable, payload-free identifier for every runtime [`Action`] variant.
 ///
@@ -292,6 +334,49 @@ impl FromStr for CustomDecision {
 #[serde(default, deny_unknown_fields)]
 pub struct CustomAutonomyConfig {
     pub overrides: BTreeMap<ActionKind, CustomDecision>,
+    pub skill_overrides: BTreeMap<SkillId, SkillAutonomyOverride>,
+}
+
+/// Operator-owned cap for one admitted selected skill. It never belongs in a
+/// skill package and therefore cannot grant package-supplied authority.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SkillAutonomyOverride {
+    pub level: AutonomyLevel,
+    pub overrides: BTreeMap<ActionKind, CustomDecision>,
+}
+
+impl Default for SkillAutonomyOverride {
+    fn default() -> Self {
+        Self { level: AutonomyLevel::Standard, overrides: BTreeMap::new() }
+    }
+}
+
+impl SkillAutonomyOverride {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.level == AutonomyLevel::Custom || self.overrides.is_empty(),
+            "skill autonomy action overrides require level custom"
+        );
+        anyhow::ensure!(
+            self.overrides.len() <= ActionKind::ALL.len(),
+            "skill autonomy overrides exceed supported action kinds"
+        );
+        Ok(())
+    }
+}
+
+impl CustomAutonomyConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.skill_overrides.len() <= MAX_SKILL_AUTONOMY_OVERRIDES,
+            "skill autonomy overrides exceed the {MAX_SKILL_AUTONOMY_OVERRIDES}-skill limit"
+        );
+        for override_policy in self.skill_overrides.values() {
+            override_policy.validate()?;
+        }
+        Ok(())
+    }
 }
 
 /// Immutable point-in-time policy used for one permission decision.
@@ -303,6 +388,7 @@ pub struct CustomAutonomyConfig {
 pub struct AutonomyPolicySnapshot {
     level: AutonomyLevel,
     overrides: BTreeMap<ActionKind, CustomDecision>,
+    skill_overrides: BTreeMap<SkillId, SkillAutonomyOverride>,
 }
 
 impl AutonomyPolicySnapshot {
@@ -310,6 +396,7 @@ impl AutonomyPolicySnapshot {
         Self {
             level,
             overrides: custom.overrides.clone(),
+            skill_overrides: custom.skill_overrides.clone(),
         }
     }
 
@@ -322,6 +409,7 @@ impl AutonomyPolicySnapshot {
         Some(Self {
             level,
             overrides: BTreeMap::new(),
+            skill_overrides: BTreeMap::new(),
         })
     }
 
@@ -331,6 +419,20 @@ impl AutonomyPolicySnapshot {
 
     pub fn overrides(&self) -> &BTreeMap<ActionKind, CustomDecision> {
         &self.overrides
+    }
+
+    /// Build the restrictive per-action policy intersection for a selected,
+    /// already-admitted route. Callers must never supply a free-form manifest
+    /// id or use this to revive a stale route.
+    pub fn effective_for_selected_skill(&self, skill_id: &SkillId) -> EffectiveAutonomyPolicy {
+        let skill_cap = self.skill_overrides.get(skill_id).map(|override_policy| {
+            AutonomyPolicySnapshot {
+                level: override_policy.level,
+                overrides: override_policy.overrides.clone(),
+                skill_overrides: BTreeMap::new(),
+            }
+        });
+        EffectiveAutonomyPolicy { skill_cap }
     }
 
     /// Stable digest of the exact snapshot used for one durable admission.
@@ -352,6 +454,22 @@ impl AutonomyPolicySnapshot {
             add_part(&mut hasher, action.as_str());
             add_part(&mut hasher, &decision.to_string());
         }
+        // Preserve the v1 fingerprint byte-for-byte for legacy/default
+        // configurations. Only a configured per-skill map carries the
+        // domain-separated extension.
+        if !self.skill_overrides.is_empty() {
+            hasher.update(b"neoth.autonomy-policy.skill-overrides.v1\0");
+            hasher.update((self.skill_overrides.len() as u64).to_be_bytes());
+            for (skill_id, override_policy) in &self.skill_overrides {
+                add_part(&mut hasher, skill_id.as_str());
+                add_part(&mut hasher, override_policy.level.as_str());
+                hasher.update((override_policy.overrides.len() as u64).to_be_bytes());
+                for (action, decision) in &override_policy.overrides {
+                    add_part(&mut hasher, action.as_str());
+                    add_part(&mut hasher, &decision.to_string());
+                }
+            }
+        }
         hex::encode(hasher.finalize())
     }
 
@@ -364,8 +482,47 @@ impl AutonomyPolicySnapshot {
         Self {
             level,
             overrides: BTreeMap::new(),
+            skill_overrides: BTreeMap::new(),
         }
     }
+}
+
+/// Immutable action-by-action intersection of the current global policy and
+/// one selected skill's operator-owned cap. Missing caps preserve legacy
+/// global behavior; a present cap can only restrict it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectiveAutonomyPolicy {
+    skill_cap: Option<AutonomyPolicySnapshot>,
+}
+
+impl EffectiveAutonomyPolicy {
+    pub(crate) fn cap_requires_confirmation(&self, action: &Action) -> bool {
+        self.skill_cap
+            .as_ref()
+            .is_some_and(|cap| matches!(super::evaluate_snapshot(action, cap), Decision::Confirm(_)))
+    }
+    /// Evaluate against the global snapshot read at the effect leaf while
+    /// retaining the admitted route's skill cap. A config reload may tighten
+    /// the global side but must never substitute a later skill cap for this
+    /// route-owned value.
+    pub fn evaluate_with_current_global(
+        &self,
+        action: &Action,
+        current_global: &AutonomyPolicySnapshot,
+    ) -> Decision {
+        let global = super::evaluate_snapshot(action, current_global);
+        let Some(skill_cap) = &self.skill_cap else { return global; };
+        let cap = super::evaluate_snapshot(action, skill_cap);
+        match (&global, &cap) {
+            (Decision::Deny(_), _) => global,
+            (_, Decision::Deny(_)) => cap,
+            (Decision::Confirm(_), _) => global,
+            (_, Decision::Confirm(_)) => cap,
+            (Decision::Allow, Decision::Allow) => Decision::Allow,
+        }
+    }
+
+    pub fn has_skill_cap(&self) -> bool { self.skill_cap.is_some() }
 }
 
 pub(crate) fn custom_requested_decision(
@@ -459,6 +616,8 @@ impl PolicyArgument for AutonomyLevel {
 mod tests {
     use std::collections::BTreeSet;
 
+    use sha2::{Digest, Sha256};
+
     use super::*;
 
     fn custom_snapshot(
@@ -466,6 +625,7 @@ mod tests {
     ) -> AutonomyPolicySnapshot {
         let custom = CustomAutonomyConfig {
             overrides: overrides.into_iter().collect(),
+            skill_overrides: BTreeMap::new(),
         };
         AutonomyPolicySnapshot::new(AutonomyLevel::Custom, &custom)
     }
@@ -519,6 +679,55 @@ mod tests {
             AutonomyPolicySnapshot::builtin(AutonomyLevel::Standard)
                 .unwrap()
                 .trust_fingerprint_sha256()
+        );
+    }
+
+    fn legacy_v1_trust_fingerprint_sha256(policy: &AutonomyPolicySnapshot) -> String {
+        fn add_part(hasher: &mut Sha256, value: &str) {
+            hasher.update((value.len() as u64).to_be_bytes());
+            hasher.update(value.as_bytes());
+        }
+
+        let mut hasher = Sha256::new();
+        hasher.update(b"neoth.autonomy-policy.trust-fingerprint.v1\0");
+        add_part(&mut hasher, policy.level.as_str());
+        hasher.update((policy.overrides.len() as u64).to_be_bytes());
+        for (action, decision) in &policy.overrides {
+            add_part(&mut hasher, action.as_str());
+            add_part(&mut hasher, &decision.to_string());
+        }
+        hex::encode(hasher.finalize())
+    }
+
+    #[test]
+    fn empty_skill_overrides_preserve_legacy_v1_trust_fingerprint() {
+        let legacy_compatible = custom_snapshot([
+            (ActionKind::ChannelSend, CustomDecision::Confirm),
+            (ActionKind::Read, CustomDecision::Deny),
+        ]);
+        assert_eq!(
+            legacy_compatible.trust_fingerprint_sha256(),
+            legacy_v1_trust_fingerprint_sha256(&legacy_compatible),
+            "an empty per-skill map must retain the exact v1 byte algorithm"
+        );
+
+        let with_skill_override = AutonomyPolicySnapshot::new(
+            AutonomyLevel::Custom,
+            &CustomAutonomyConfig {
+                overrides: legacy_compatible.overrides.clone(),
+                skill_overrides: BTreeMap::from([(
+                    SkillId::parse("bounded-skill").unwrap(),
+                    SkillAutonomyOverride {
+                        level: AutonomyLevel::Standard,
+                        overrides: BTreeMap::new(),
+                    },
+                )]),
+            },
+        );
+        assert_ne!(
+            with_skill_override.trust_fingerprint_sha256(),
+            legacy_v1_trust_fingerprint_sha256(&with_skill_override),
+            "configured per-skill caps must extend the legacy fingerprint domain"
         );
     }
 
@@ -614,5 +823,83 @@ mod tests {
             let deny = custom_snapshot([(ActionKind::PaidProviderCall, CustomDecision::Deny)]);
             assert!(super::super::evaluate(&action, &deny).is_deny());
         }
+    }
+
+    #[test]
+    fn selected_skill_cap_intersects_each_action_restrictively() {
+        let skill_id = SkillId::parse("bounded-skill").unwrap();
+        let custom = CustomAutonomyConfig {
+            overrides: BTreeMap::new(),
+            skill_overrides: BTreeMap::from([(
+                skill_id.clone(),
+                SkillAutonomyOverride {
+                    level: AutonomyLevel::Custom,
+                    overrides: BTreeMap::from([
+                        (ActionKind::ExecArbitrary, CustomDecision::Deny),
+                        (ActionKind::WriteOutsideHome, CustomDecision::Confirm),
+                    ]),
+                },
+            )]),
+        };
+        custom.validate().unwrap();
+        let global = AutonomyPolicySnapshot::new(AutonomyLevel::Full, &custom);
+        let effective = global.effective_for_selected_skill(&skill_id);
+        assert!(effective.has_skill_cap());
+        assert!(
+            effective
+                .evaluate_with_current_global(&Action::ExecArbitrary, &global)
+                .is_deny()
+        );
+        assert!(matches!(
+            effective.evaluate_with_current_global(&Action::WriteOutsideHome, &global),
+            Decision::Confirm(_)
+        ));
+        assert!(
+            effective
+                .evaluate_with_current_global(&Action::Read, &global)
+                .is_allow()
+        );
+        assert!(
+            global
+                .effective_for_selected_skill(&SkillId::parse("no-override").unwrap())
+                .evaluate_with_current_global(&Action::ExecArbitrary, &global)
+                .is_allow(),
+            "missing override preserves the established global policy"
+        );
+    }
+
+    #[test]
+    fn skill_override_rejects_actions_without_custom_level() {
+        let override_policy = SkillAutonomyOverride {
+            level: AutonomyLevel::Standard,
+            overrides: BTreeMap::from([(ActionKind::ExecArbitrary, CustomDecision::Deny)]),
+        };
+        assert!(override_policy.validate().is_err());
+        assert!(SkillId::parse("Uppercase").is_err());
+        assert!(SkillId::parse("valid_skill-1").is_ok());
+    }
+
+    #[test]
+    fn retained_skill_cap_uses_current_global_effect_leaf_policy() {
+        let skill_id = SkillId::parse("reload-bound-skill").unwrap();
+        let configured = CustomAutonomyConfig {
+            overrides: BTreeMap::new(),
+            skill_overrides: BTreeMap::from([(
+                skill_id.clone(),
+                SkillAutonomyOverride {
+                    level: AutonomyLevel::Full,
+                    overrides: BTreeMap::new(),
+                },
+            )]),
+        };
+        let admitted_global = AutonomyPolicySnapshot::new(AutonomyLevel::Full, &configured);
+        let retained = admitted_global.effective_for_selected_skill(&skill_id);
+        let tightened_global = AutonomyPolicySnapshot::builtin(AutonomyLevel::Strict).unwrap();
+        assert!(
+            retained
+                .evaluate_with_current_global(&Action::ExecArbitrary, &tightened_global)
+                .is_deny(),
+            "a later global tightening must still win over the retained route cap"
+        );
     }
 }
