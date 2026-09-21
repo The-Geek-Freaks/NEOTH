@@ -964,6 +964,39 @@ shared reload controller accepts the complete config generation. A malformed
 candidate keeps the previous validated routing snapshot; raw file-watcher
 activity alone cannot change effective Skill policy.
 
+## arXiv topic feed
+
+The arXiv feed is disabled by default. To ingest papers for operator-selected
+topics, configure the existing feed in `freedom.yaml`:
+
+```yaml
+arxiv:
+  enabled: true
+  topics:
+    - "cat:cs.CL"
+  max_per_topic: 10
+  source_category: arxiv
+```
+
+The daemon uses its configured feed interval. To request one pass immediately:
+
+```bash
+neoth arxiv ingest --now
+neoth --output jsonl arxiv ingest --now
+```
+
+The command reads the default NEOTH home's configuration, including a selected
+`NEOTH_HOME`, and requires an enabled feed with at least one topic. It does not
+enable or start the periodic worker. Existing outbound-request authorization
+and provider-call audit rules still apply. When a summary provider is
+unavailable, the pass retains the existing raw-abstract fallback.
+
+The result reports topic-fetch and paper-indexing counters. A fetch or indexing
+failure makes the immediate command fail visibly. Papers indexed earlier in
+that pass remain in the context store; failure does not imply rollback. Paper
+IDs remain the stable indexing keys, so a retry follows the existing re-index
+behavior. JSONL emits one counter object without paper abstracts or prompts.
+
 ## Validate config
 
 ```bash

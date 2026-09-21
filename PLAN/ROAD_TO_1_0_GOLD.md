@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W171 immediate arXiv ingest (2026-09-21):** source is independently reviewed
+for `neoth arxiv ingest --now`, using the existing opt-in/configured pass and
+outbound/provider audit paths. Topic fetch failures and skipped index writes
+now make an immediate pass fail after audit finalization; dual pass/WAL errors
+remain visible. Daemon retry semantics are preserved. Seven focused test
+identities are admitted, including the existing real 503 fixture. Hosted build,
+tests and generated CLI reference remain pending. See
+[W171](../docs/gold-wave171-verification.md). W169 custody repair is still under
+separate review. Full CI 35655045794 runs on the earlier 6c69ce79 repair source;
+Windows preview 35653179383 remains on 61eaa58f. No Road checkbox closes.
+
 **W172 Hosted compile/lint repair (2026-09-21):** CI 35653174520 on 61eaa58f
 is confirmed cancelled after the adapter lane exposed four outdated test-token
 arguments and Linux Clippy rejected an obsolete dead-code expectation. Both

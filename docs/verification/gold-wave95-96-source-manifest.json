@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W172-hosted-repair-candidate",
-  "base": "9c2a4215913ff6c82e00e3059d222c8fcf752f9c",
-  "capturedUtc": "2026-09-21T20:58:15.5352876Z",
-  "validationStatus": "W172_REVIEWED_TEST_COMPILE_REPAIR_HOSTED_PENDING",
-  "scopeNote": "Four optional-token fixture arguments and an obsolete unfulfilled lint expectation repaired. W169 custody and W171 arXiv implementation excluded. Native/GUI acceptance pending; preview61e retained.",
+  "base": "6c69ce79b1bec175f6d3cff11dc6fc0a1e83b83b",
+  "capturedUtc": "2026-09-21T21:09:23.6594738Z",
+  "validationStatus": "W171_REVIEWED_IMMEDIATE_ARXIV_HOSTED_PENDING",
+  "scopeNote": "Reviewed immediate configured arXiv ingest with explicit topic/index failure counters and preserved pass/audit errors; W169 custody implementation excluded. Hosted native and generated CLI reference required.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -68,8 +68,8 @@
     },
     {
       "path": "docs/configuration.md",
-      "bytes": 47819,
-      "sha256": "D2D5963A4B6F9C3F33A17A16AAA0E6BCF73E719527EC90C2CD2DE4BB6720F5CE"
+      "bytes": 49004,
+      "sha256": "60F81D0F8299C9BC30D2EB939115ADF2C27E7BC218AC96873DC186C751012006"
     },
     {
       "path": "docs/getting-started.md",
@@ -100,6 +100,11 @@
       "path": "docs/gold-wave170-verification.md",
       "bytes": 1248,
       "sha256": "CD6C11EBE510FEBD57D972698451CAAEDD62D917F4F5CF4B4F0DB70027C1A3FF"
+    },
+    {
+      "path": "docs/gold-wave171-verification.md",
+      "bytes": 1709,
+      "sha256": "FFC408E219E8D5B9DBDAFA13AD053A9E2B8FE584F29FEA0BF944B1859E20C2CB"
     },
     {
       "path": "docs/gold-wave172-verification.md",
@@ -183,13 +188,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1004243,
-      "sha256": "D3D0668EA7115C240B89E1628983FC733B3964023D4712C7FDFF585BAFB8B125"
+      "bytes": 1005051,
+      "sha256": "9D9D51EB640779D6D96AE34AC0AF41379594F9DAAF8C4576A161CDB49D3306DA"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1599741,
-      "sha256": "0A8E43D2426EF1A49E85A4E943AFACCEF75187BFD321DB85C16299AD0D2DC9E5"
+      "bytes": 1600498,
+      "sha256": "6B9DB350398BEA03829645AA084748AB0C774F5C456AC1646FFD9BCC9DB211DA"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -627,6 +632,16 @@
       "sha256": "53503928B5CDB203EAD92FB77F3AD92BF1A19099F6AD52353B9B8EE51BD9DDAF"
     },
     {
+      "path": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
+      "bytes": 27186,
+      "sha256": "6B79BCD7E33162632E1E3946D05BE25A8F7E0F58FDDCA9B66F6FF03CEA9ED5E8"
+    },
+    {
+      "path": "SRC/neothd/src/cli/arxiv.rs",
+      "bytes": 6501,
+      "sha256": "7D7926E983556C77770E3AE13188201941CFA7209E50F5067D467334FD5BB0AA"
+    },
+    {
       "path": "SRC/neothd/src/cli/autonomy.rs",
       "bytes": 72717,
       "sha256": "D01C5491AE636A2709136A90158E77ADDEAC8D2DFD4E82CBCB498A626A66CAFB"
@@ -773,8 +788,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
-      "bytes": 114079,
-      "sha256": "C0608B012F7B2040FB3880273BD7DAE1CF08699DB5E3CE5E7E7E7C9F6B1E5386"
+      "bytes": 114204,
+      "sha256": "380EA02B92393E609FADAD3FEC980FE24DD59B45FCFFA42E0FD11A80DC8EE14D"
     },
     {
       "path": "SRC/neothd/src/cli/ouro.rs",

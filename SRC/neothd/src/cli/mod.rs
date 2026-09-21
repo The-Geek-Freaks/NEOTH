@@ -788,11 +788,12 @@ pub enum Commands {
     /// Other content types return their byte count without conversion.
     Fetch(fetch::FetchArgs),
 
-    /// Search ArXiv for papers (A-24).
+    /// Search arXiv papers or ingest the configured topic feed.
     ///
     /// Public API, no key required. Use `neoth fetch <pdf_url>` on a
     /// result to pipe the paper through the PDF extractor + into
-    /// recall via `neoth ingest`.
+    /// recall via `neoth ingest`. Use `neoth arxiv ingest --now` for
+    /// one immediate pass of an enabled, configured arXiv feed.
     Arxiv(arxiv::ArxivArgs),
 
     /// Babel-Index observer: status, windows, labelling, export (GOLD-DELTA).

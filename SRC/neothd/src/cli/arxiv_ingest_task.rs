@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
@@ -41,10 +41,117 @@ pub const DEFAULT_MAX_PER_TOPIC: usize = 10;
 pub struct PassReport {
     /// Topics queried this pass (the configured list length).
     pub topics_queried: usize,
+    /// Topics whose arXiv fetch failed (logged + skipped for this pass).
+    pub topics_failed: usize,
     /// Papers successfully written to the ctx index.
     pub papers_indexed: usize,
     /// Papers that failed to index (logged + counted, never fatal).
     pub papers_skipped: usize,
+}
+
+/// Run one explicitly requested pass from the same enabled configuration that
+/// permits the daemon cadence. This never enables the scheduler or accepts
+/// caller-supplied topics.
+pub async fn run_configured_one_shot(
+    home: &Path,
+    config: &crate::config::FreedomConfig,
+) -> Result<PassReport> {
+    let (topics, max_per_topic, source_category) = configured_pass_parameters(config)?;
+    let http = crate::tools::external_http::ExternalHttpAuthorizer::interactive(
+        config.autonomy_policy(),
+    )?;
+    let mut provider_audit = None;
+    let provider = match crate::providers::from_config_for_utility_at(config, home).await {
+        Ok(provider) => {
+            let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
+            let audit = crate::providers::cost_authorization::ProviderCallAuthorizer::
+                interactive_one_shot_at_home(
+                    config.autonomy_policy(),
+                    home,
+                    config.tokens.max_per_request,
+                )
+                .await?;
+            let authorizer = audit.authorizer();
+            provider_audit = Some(audit);
+            Some(
+                crate::providers::cost_authorization::AuthorizedProvider::from_box(
+                    provider,
+                    authorizer,
+                    default_model,
+                    "arxiv.ingest.summary",
+                ),
+            )
+        }
+        Err(error) => {
+            warn!(
+                error = %error,
+                "arxiv ingest: summary provider unavailable; indexing raw abstracts"
+            );
+            None
+        }
+    };
+    let pass_result = run_one_pass_against_authorized(
+        ARXIV_API_URL,
+        home,
+        topics,
+        provider.as_ref(),
+        max_per_topic,
+        source_category,
+        &http,
+    )
+    .await;
+    let finish_result = if let Some(audit) = provider_audit {
+        audit.finish(provider).await
+    } else {
+        drop(provider);
+        Ok(())
+    };
+    let pass_result = pass_result.and_then(require_complete_one_shot_pass);
+    combine_one_shot_results(pass_result, finish_result)
+}
+
+fn require_complete_one_shot_pass(report: PassReport) -> Result<PassReport> {
+    anyhow::ensure!(
+        report.topics_failed == 0 && report.papers_skipped == 0,
+        "arxiv ingest incomplete: {} topic(s) failed to fetch, {} paper(s) failed to index",
+        report.topics_failed,
+        report.papers_skipped
+    );
+    Ok(report)
+}
+
+fn combine_one_shot_results(
+    pass_result: Result<PassReport>,
+    finish_result: Result<()>,
+) -> Result<PassReport> {
+    match (pass_result, finish_result) {
+        (Ok(report), Ok(())) => Ok(report),
+        (Err(pass_error), Ok(())) => Err(pass_error),
+        (Ok(_), Err(finish_error)) => {
+            Err(finish_error).context("finalize arxiv ingest summary provider-call audit WAL")
+        }
+        (Err(pass_error), Err(finish_error)) => Err(anyhow::anyhow!(
+            "arxiv ingest pass failed ({pass_error:#}) and summary provider authorization WAL finalization failed ({finish_error:#})"
+        )),
+    }
+}
+
+fn configured_pass_parameters(
+    config: &crate::config::FreedomConfig,
+) -> Result<(&[String], usize, &str)> {
+    anyhow::ensure!(
+        config.arxiv.enabled,
+        "arxiv ingest is disabled; set arxiv.enabled: true before running --now"
+    );
+    anyhow::ensure!(
+        !config.arxiv.topics.is_empty(),
+        "arxiv ingest has no configured topics; set arxiv.topics before running --now"
+    );
+    Ok((
+        &config.arxiv.topics,
+        config.arxiv.max_per_topic.unwrap_or(DEFAULT_MAX_PER_TOPIC),
+        config.arxiv.source_category.as_deref().unwrap_or("arxiv"),
+    ))
 }
 
 /// Spawn the ingest task. Returns the `JoinHandle` so the caller can
@@ -113,11 +220,15 @@ async fn run(
         .await
         {
             Ok(report) => {
-                if report.papers_indexed > 0 || report.papers_skipped > 0 {
+                if report.papers_indexed > 0
+                    || report.papers_skipped > 0
+                    || report.topics_failed > 0
+                {
                     info!(
                         topics = report.topics_queried,
                         indexed = report.papers_indexed,
                         skipped = report.papers_skipped,
+                        failed = report.topics_failed,
                         "arxiv ingest pass landed papers",
                     );
                 }
@@ -148,6 +259,7 @@ pub async fn run_one_pass_against_authorized(
     let mut conn = store::open(&db_path)?;
     let mut indexed = 0usize;
     let mut skipped = 0usize;
+    let mut failed = 0usize;
 
     for topic in topics {
         let papers =
@@ -155,6 +267,7 @@ pub async fn run_one_pass_against_authorized(
                 Ok(p) => p,
                 Err(e) => {
                     warn!(error = %e, topic, "arxiv topic fetch failed; skipping topic");
+                    failed += 1;
                     continue;
                 }
             };
@@ -194,6 +307,7 @@ pub async fn run_one_pass_against_authorized(
 
     Ok(PassReport {
         topics_queried: topics.len(),
+        topics_failed: failed,
         papers_indexed: indexed,
         papers_skipped: skipped,
     })
@@ -443,6 +557,7 @@ mod tests {
                 .await
                 .expect("pass ok");
         assert_eq!(report.topics_queried, 0);
+        assert_eq!(report.topics_failed, 0);
         assert_eq!(report.papers_indexed, 0);
         assert_eq!(report.papers_skipped, 0);
     }
@@ -526,7 +641,57 @@ mod tests {
         .await
         .expect("pass is fail-soft");
         assert_eq!(report.topics_queried, 1);
+        assert_eq!(report.topics_failed, 1);
         assert_eq!(report.papers_indexed, 0);
+        let error = require_complete_one_shot_pass(report).expect_err("one-shot must fail");
+        assert!(error.to_string().contains("1 topic(s) failed"));
+    }
+
+    #[test]
+    fn one_shot_rejects_skipped_index_writes_without_claiming_rollback() {
+        let error = require_complete_one_shot_pass(PassReport {
+            topics_queried: 1,
+            topics_failed: 0,
+            papers_indexed: 1,
+            papers_skipped: 1,
+        })
+        .expect_err("one-shot must fail when indexing is incomplete");
+        assert!(error.to_string().contains("1 paper(s) failed to index"));
+        assert!(!error.to_string().contains("rollback"));
+    }
+
+    #[test]
+    fn combine_one_shot_results_preserves_pass_and_audit_failures() {
+        let report = PassReport {
+            topics_queried: 1,
+            topics_failed: 0,
+            papers_indexed: 1,
+            papers_skipped: 0,
+        };
+        assert_eq!(
+            combine_one_shot_results(Ok(report.clone()), Ok(())).expect("both succeed"),
+            report
+        );
+
+        let pass_only = combine_one_shot_results(Err(anyhow::anyhow!("pass failed")), Ok(()))
+            .expect_err("pass failure remains");
+        assert!(pass_only.to_string().contains("pass failed"));
+
+        let audit_only = combine_one_shot_results(
+            Ok(report),
+            Err(anyhow::anyhow!("audit failed")),
+        )
+        .expect_err("audit failure remains");
+        assert!(audit_only.to_string().contains("finalize arxiv ingest"));
+
+        let both = combine_one_shot_results(
+            Err(anyhow::anyhow!("pass failed")),
+            Err(anyhow::anyhow!("audit failed")),
+        )
+        .expect_err("both failures remain");
+        let both = format!("{both:#}");
+        assert!(both.contains("pass failed"));
+        assert!(both.contains("audit failed"));
     }
 
     #[tokio::test]
@@ -551,6 +716,26 @@ mod tests {
         assert!(c.topics.is_empty());
         assert!(c.interval_secs.is_none());
         assert!(c.max_per_topic.is_none());
+    }
+
+    #[test]
+    fn configured_one_shot_requires_the_existing_opt_in_and_topics() {
+        let mut config = crate::config::FreedomConfig::default();
+        let disabled = configured_pass_parameters(&config).expect_err("disabled config denies");
+        assert!(disabled.to_string().contains("disabled"));
+
+        config.arxiv.enabled = true;
+        let empty = configured_pass_parameters(&config).expect_err("empty topics deny");
+        assert!(empty.to_string().contains("no configured topics"));
+
+        config.arxiv.topics = vec!["cat:cs.CL".into()];
+        config.arxiv.max_per_topic = Some(3);
+        config.arxiv.source_category = Some("research".into());
+        let (topics, max_per_topic, source_category) =
+            configured_pass_parameters(&config).expect("enabled configured pass");
+        assert_eq!(topics, &["cat:cs.CL".to_string()]);
+        assert_eq!(max_per_topic, 3);
+        assert_eq!(source_category, "research");
     }
 
     #[test]

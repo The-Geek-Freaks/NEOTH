@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W171 immediate arXiv ingest (2026-09-21):** source is independently reviewed
+for `neoth arxiv ingest --now`, using the existing opt-in/configured pass and
+outbound/provider audit paths. Topic fetch failures and skipped index writes
+now make an immediate pass fail after audit finalization; dual pass/WAL errors
+remain visible. Daemon retry semantics are preserved. Seven focused test
+identities are admitted, including the existing real 503 fixture. Hosted build,
+tests and generated CLI reference remain pending. See
+[W171](../docs/gold-wave171-verification.md). W169 custody repair is still under
+separate review. Full CI 35655045794 runs on the earlier 6c69ce79 repair source;
+Windows preview 35653179383 remains on 61eaa58f. No Road checkbox closes.
+
 **W172 Hosted compile/lint repair (2026-09-21):** CI 35653174520 on 61eaa58f
 is confirmed cancelled after the adapter lane exposed four outdated test-token
 arguments and Linux Clippy rejected an obsolete dead-code expectation. Both
@@ -3263,7 +3274,7 @@ A1 binding: **PL-04 + PL-05 hard pre-condition before any EM-\* item merges.** A
 
 ### v0.9 — Error + arxiv learning
 
-- [x] **EL-02** arxiv paper ingest skill (operator-curated topic feed) + summary → memory tier. **A1: but DEMOTED priority — researcher-persona feature.** — 3d — ✅ 2026-05-29 Session 28c. Built on the shipped `tools/arxiv.rs` search tool (no new HTTP code). New `config::ArxivIngestConfig { enabled, interval_secs, topics, max_per_topic, source_category }` (off by default, opt-in gate per noob-wizard rule) added to `FreedomConfig.arxiv`. New `cli/arxiv_ingest_task.rs` background tokio-interval task (mirrors `dreaming_task` spawn/run pattern): each tick runs every operator-curated topic query, optionally LLM-summarises each abstract via the shared provider, lands the result in the ctx knowledge store (`memory::ctx::index_document`, keyed `arxiv:<id>`, `source_category` bucket). Summarisation folds to the raw abstract when no provider / provider errors (L-07 safe-default). Topic-fetch failure logs+skips that topic; pass failure logs+retries next tick — never crashes daemon. `tools::arxiv::search_against` lifted to `pub(crate)` as the wiremock test seam. Wired into `cli/serve.rs` (spawn when `arxiv.enabled && !topics.is_empty()` using `shared_provider`; `.abort()` in shutdown block) + module declared in `cli/mod.rs`. 8 tests: empty-topics-no-network / single-paper-no-provider (verifies `sources` row) / provider-summary-used (verifies chunk content) / provider-fail-fallback-to-raw-abstract / non-2xx-skips-topic-no-panic / reindex-once-per-pass / config-default-off / config-yaml-round-trip. 6019 lib tests green, clippy `--lib --tests -- -D warnings` clean, fmt clean. **STILL OPEN:** an operator-facing `neoth arxiv ingest --now` one-shot trigger (the daemon-cadence path ships now; a manual kick is a small follow-up). EL-03 learn-from-arxiv pipeline stays deferred per A1.
+- [x] **EL-02** arxiv paper ingest skill (operator-curated topic feed) + summary → memory tier. **A1: but DEMOTED priority — researcher-persona feature.** — 3d — ✅ 2026-05-29 Session 28c. Built on the shipped `tools/arxiv.rs` search tool (no new HTTP code). New `config::ArxivIngestConfig { enabled, interval_secs, topics, max_per_topic, source_category }` (off by default, opt-in gate per noob-wizard rule) added to `FreedomConfig.arxiv`. New `cli/arxiv_ingest_task.rs` background tokio-interval task (mirrors `dreaming_task` spawn/run pattern): each tick runs every operator-curated topic query, optionally LLM-summarises each abstract via the shared provider, lands the result in the ctx knowledge store (`memory::ctx::index_document`, keyed `arxiv:<id>`, `source_category` bucket). Summarisation folds to the raw abstract when no provider / provider errors (L-07 safe-default). Topic-fetch failure logs+skips that topic; pass failure logs+retries next tick — never crashes daemon. `tools::arxiv::search_against` lifted to `pub(crate)` as the wiremock test seam. Wired into `cli/serve.rs` (spawn when `arxiv.enabled && !topics.is_empty()` using `shared_provider`; `.abort()` in shutdown block) + module declared in `cli/mod.rs`. 8 tests: empty-topics-no-network / single-paper-no-provider (verifies `sources` row) / provider-summary-used (verifies chunk content) / provider-fail-fallback-to-raw-abstract / non-2xx-skips-topic-no-panic / reindex-once-per-pass / config-default-off / config-yaml-round-trip. 6019 lib tests green, clippy `--lib --tests -- -D warnings` clean, fmt clean. **Manual-trigger follow-up:** W171 implements `neoth arxiv ingest --now` with independent source review; Hosted build/test/reference acceptance remains pending (see `docs/gold-wave171-verification.md`). EL-03 learn-from-arxiv pipeline stays deferred per A1.
 - [ ] **EL-03** Learn-from-arxiv pipeline. **A1: DEFERRED post-v1.0 unless time permits.** — _post-v1.0 stretch_
 - [ ] **EL-03a** Obsidian front-matter schema for self-dev proposals (`status`, `source: arxiv:<id>`). **A2 #8 sub-item.** — _ships when EL-03 ships_
 
