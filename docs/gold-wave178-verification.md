@@ -1,12 +1,12 @@
 # W178 — Windows integration failures and precise repairs
 
 The completed Windows job106526765041 in CI35658155763 on cc0af938 compiled
-successfully and then executed 13,607 tests: 13,587 passed and20 failed. The
-remaining3,542 of17,149 were not run after fail-fast. This was an assertion
+successfully and then executed 13,607 tests: 13,587 passed and 20 failed. The
+remaining 3,542 of 17,149 were not run after fail-fast. This was an assertion
 failure run, not a timeout. JUnit artifact SHA-256 matches GitHub's digest:
 6146F639EC672402A2EFD765BA4DF6EC7345B67173A87C36C075C6D2DAEF58B9.
 
-The current repair covers all20 reported identities, retaining their behavioral
+The current repair covers all 20 reported identities, retaining their behavioral
 requirements. Three reasoning fixtures now verify and remove only the exact
 additional terminal throughput typed/wire pair before asserting their original
 reasoning sequence, state, counters, control token and WAL result. The throughput
@@ -51,8 +51,16 @@ Independent source approval:
 
 Reports and exact failed-test metadata are in work/gold-20260906 under
 wave178-hosted-repair and wave177-windows-ci-diagnosis. The canonical matrix
-retains all20 affected identities, adds the two missing provider inventories
+retains all 20 affected identities, adds the two missing provider inventories
 and the two Windows-specific regressions. All current source behavior and
 platform compilation/format/Clippy gates still require GitHub-hosted execution.
 No local compiler, parser, formatter, tests, fixtures or product ran. No Road
 checkbox closes on this source review or on the older partial test result.
+
+W178 Code Quality 35667204404 passed on 4da66bdf. The exact four Hosted
+formatting hunks from Preflight 35667205647 are imported in two Windows citation
+source files. W175 CLI/reference 35666823374 passed on 405c9de6; the generated
+232,129-byte reference includes --hippocampus and is imported byte-for-byte.
+Its Preflight 35666822254 and Code Quality 35666822323 also passed. W175/W178
+behavior remains pending and W177 implementation remains unadmitted.
+Format receipt SHA-256: 8F61ABF79A6D226587127FCCD6181994FE3D3C27AF53DFB7504F96C1055E80F7.

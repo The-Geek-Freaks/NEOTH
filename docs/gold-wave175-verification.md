@@ -56,3 +56,8 @@ the loop now iterates rows directly. Fresh Hosted compilation and formatting
 remain required, as do the eleven behavior tests.
 Format receipt: FD47FB80BCB38EC766D470FE73B409C8E90C55BE36635E3DE56273A0C0F47DF7.
 Compiler log: 55355A24DFBAD75F3B7B28077F2E357F75488754D02763AF198814E2586DBB1D.
+
+Hosted follow-up on 405c9de6 passed CLI/reference 35666823374, Preflight
+35666822254 and Code Quality 35666822323. The generated reference is imported
+byte-for-byte (232129 bytes; SHA-256 14F8DABA4804E5CCA138FF4CDFF65446363ED43D5589C90104B117F65675DA43).
+The native migration, scheduler and CLI behavioral tests remain required.

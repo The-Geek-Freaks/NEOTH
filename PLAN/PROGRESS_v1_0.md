@@ -3,7 +3,7 @@
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
 **W178 Windows integration repairs (2026-09-22):** CI35658155763's completed
-Windows job compiled and ran13,607 tests (13,587 pass/20 fail;3,542 not run).
+Windows job compiled and ran 13,607 tests (13,587 pass/20 fail; 3,542 not run).
 Independently reviewed repairs preserve exact reasoning/throughput contracts,
 canonical WAL and installed-agent fixture scope, and reviewed provider lifecycle
 boundaries. Windows citation stores now create protected directories relative
@@ -12,7 +12,13 @@ changing their DACLs, and preserve typed cache-collision errors. Two new Windows
 regressions plus the two missing provider-inventory identities are registered.
 A fresh Hosted full CI remains required; no checkbox closes. See
 [W178](../docs/gold-wave178-verification.md). W177 dataset export is mapped and
-has not changed production source.
+implementation is active separately and unadmitted.
+W178 Code Quality 35667204404 passed on 4da66bdf. The exact four Hosted
+formatting hunks from Preflight 35667205647 are imported in two Windows citation
+source files. W175 CLI/reference 35666823374 passed on 405c9de6; the generated
+232,129-byte reference includes --hippocampus and is imported byte-for-byte.
+Its Preflight 35666822254 and Code Quality 35666822323 also passed. W175/W178
+behavior remains pending and W177 implementation remains unadmitted.
 **W175 Hippocampus selection (2026-09-22):** independently reviewed source
 adds default-off memory.hippocampus.enabled, fixed inclusive importance >=0.75,
 transactional event-id membership and additive views v40-to-v41 migration.

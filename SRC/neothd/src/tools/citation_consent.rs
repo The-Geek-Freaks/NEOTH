@@ -304,11 +304,8 @@ fn record_slot(home: &Path, kind_domain: &[u8], id: &str) -> Result<CitationReco
     )?
     .ok_or_else(|| anyhow::anyhow!("citation consent parent is unavailable"))?;
     let root_path = store_dir(home);
-    let root = open_or_create_private_store_child(
-        &consent.dir,
-        OsStr::new(".gui-citation"),
-        &root_path,
-    )?;
+    let root =
+        open_or_create_private_store_child(&consent.dir, OsStr::new(".gui-citation"), &root_path)?;
     verify_private_store_dir(&root, &root_path)?;
     let (child_name, child_path) = if kind_domain == CHALLENGE_FILE_DOMAIN {
         ("challenges", challenge_dir(home))
@@ -317,11 +314,7 @@ fn record_slot(home: &Path, kind_domain: &[u8], id: &str) -> Result<CitationReco
     } else {
         anyhow::bail!("invalid citation consent record domain")
     };
-    let dir = open_or_create_private_store_child(
-        &root,
-        OsStr::new(child_name),
-        &child_path,
-    )?;
+    let dir = open_or_create_private_store_child(&root, OsStr::new(child_name), &child_path)?;
     verify_private_store_dir(&dir, &child_path)?;
     let file_name = record_file_name(kind_domain, id)?;
     let display_path = child_path.join(&file_name);

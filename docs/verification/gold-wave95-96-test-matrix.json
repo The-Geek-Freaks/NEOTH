@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W178_STATIC_APPROVED_HOSTED_PENDING",
-  "base": "405c9de6ab610f4137a4a62a5a51095e6b848f73",
+  "status": "W178_HOSTED_FORMAT_IMPORTED_FULLCI_PENDING",
+  "base": "4da66bdfba8e68cef40a2fd3ca6179d313bcbcf9",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 70087,
-    "sha256": "E97274A5EF20615110AF61D00014F8B22372491E3207CBD90FB07FAFA1916514"
+    "bytes": 70013,
+    "sha256": "97D29E88EC05069CBAB22BE549810514F986CF0258D407942CDFEF714094F04D"
   },
   "sourceInputs": 405,
   "requiredNativeTests": [
@@ -1410,25 +1410,25 @@
     {
       "test": "tools::citation_consent::tests::store_create_consume_and_replay_are_one_shot",
       "sourcePath": "SRC/neothd/src/tools/citation_consent.rs",
-      "sourceSha256": "4888507AA91416B74F601BE54B9DC18BB302F324BFED4C8F6FE450DCB32BDE2F",
+      "sourceSha256": "255F455918CB9FF71F7FB2E65C989F9F1680B52E589078C243A0F88A761058A5",
       "junitClass": "neoth"
     },
     {
       "test": "tools::citation_consent::tests::mismatch_and_expiry_fail_before_consumption",
       "sourcePath": "SRC/neothd/src/tools/citation_consent.rs",
-      "sourceSha256": "4888507AA91416B74F601BE54B9DC18BB302F324BFED4C8F6FE450DCB32BDE2F",
+      "sourceSha256": "255F455918CB9FF71F7FB2E65C989F9F1680B52E589078C243A0F88A761058A5",
       "junitClass": "neoth"
     },
     {
       "test": "tools::citation_consent::tests::deny_consumes_exact_challenge_without_proof",
       "sourcePath": "SRC/neothd/src/tools/citation_consent.rs",
-      "sourceSha256": "4888507AA91416B74F601BE54B9DC18BB302F324BFED4C8F6FE450DCB32BDE2F",
+      "sourceSha256": "255F455918CB9FF71F7FB2E65C989F9F1680B52E589078C243A0F88A761058A5",
       "junitClass": "neoth"
     },
     {
       "test": "tools::citation_consent::tests::config_generation_invalidation_fails_closed",
       "sourcePath": "SRC/neothd/src/tools/citation_consent.rs",
-      "sourceSha256": "4888507AA91416B74F601BE54B9DC18BB302F324BFED4C8F6FE450DCB32BDE2F",
+      "sourceSha256": "255F455918CB9FF71F7FB2E65C989F9F1680B52E589078C243A0F88A761058A5",
       "junitClass": "neoth"
     },
     {
@@ -4211,31 +4211,31 @@
       {
         "test": "wal::win_native::tests::fresh_private_file_and_directory_bind_owner_to_token_user",
         "sourcePath": "SRC/neothd/src/wal/win_native.rs",
-        "sourceSha256": "804957291100845121CFCB86FB54CF110591746AE93EC3B3C574FF1655EBF7B1",
+        "sourceSha256": "399A8801CAC03AE2D84679315950A357B69048047C6A99934A3FC6E1C44F1027",
         "junitClass": "neoth"
       },
       {
         "test": "wal::win_native::tests::relative_private_child_delete_uses_the_pinned_parent_capability",
         "sourcePath": "SRC/neothd/src/wal/win_native.rs",
-        "sourceSha256": "804957291100845121CFCB86FB54CF110591746AE93EC3B3C574FF1655EBF7B1",
+        "sourceSha256": "399A8801CAC03AE2D84679315950A357B69048047C6A99934A3FC6E1C44F1027",
         "junitClass": "neoth"
       },
       {
         "test": "wal::win_native::tests::owner_policy_rejects_a_valid_foreign_sid",
         "sourcePath": "SRC/neothd/src/wal/win_native.rs",
-        "sourceSha256": "804957291100845121CFCB86FB54CF110591746AE93EC3B3C574FF1655EBF7B1",
+        "sourceSha256": "399A8801CAC03AE2D84679315950A357B69048047C6A99934A3FC6E1C44F1027",
         "junitClass": "neoth"
       },
       {
         "test": "wal::win_native::tests::private_directory_create_preserves_typed_existing_collision",
         "sourcePath": "SRC/neothd/src/wal/win_native.rs",
-        "sourceSha256": "804957291100845121CFCB86FB54CF110591746AE93EC3B3C574FF1655EBF7B1",
+        "sourceSha256": "399A8801CAC03AE2D84679315950A357B69048047C6A99934A3FC6E1C44F1027",
         "junitClass": "neoth"
       },
       {
         "test": "tools::citation_consent::tests::existing_public_citation_store_directory_fails_closed_without_dacl_upgrade",
         "sourcePath": "SRC/neothd/src/tools/citation_consent.rs",
-        "sourceSha256": "4888507AA91416B74F601BE54B9DC18BB302F324BFED4C8F6FE450DCB32BDE2F",
+        "sourceSha256": "255F455918CB9FF71F7FB2E65C989F9F1680B52E589078C243A0F88A761058A5",
         "junitClass": "neoth"
       }
     ],
@@ -4249,7 +4249,7 @@
       {
         "test": "tools::citation_consent::tests::private_store_rejects_redirected_or_non_private_namespace",
         "sourcePath": "SRC/neothd/src/tools/citation_consent.rs",
-        "sourceSha256": "4888507AA91416B74F601BE54B9DC18BB302F324BFED4C8F6FE450DCB32BDE2F",
+        "sourceSha256": "255F455918CB9FF71F7FB2E65C989F9F1680B52E589078C243A0F88A761058A5",
         "junitClass": "neoth"
       },
       {
@@ -4281,7 +4281,7 @@
       {
         "test": "tools::citation_consent::tests::private_store_rejects_redirected_or_non_private_namespace",
         "sourcePath": "SRC/neothd/src/tools/citation_consent.rs",
-        "sourceSha256": "4888507AA91416B74F601BE54B9DC18BB302F324BFED4C8F6FE450DCB32BDE2F",
+        "sourceSha256": "255F455918CB9FF71F7FB2E65C989F9F1680B52E589078C243A0F88A761058A5",
         "junitClass": "neoth"
       },
       {
@@ -6694,6 +6694,18 @@
       "freshHosted": "pending",
       "review": "work/gold-20260906/wave175-next-batch/COMPILE-REVIEW.md",
       "reviewSha256": "6D6F5808734D9C130FB5529ADDA977ADF67506C63C2D4E0D0EAD2C3003D7CB02"
+    },
+    "hostedCompileReferencePass": {
+      "source": "405c9de6ab610f4137a4a62a5a51095e6b848f73",
+      "run": "35666823374",
+      "preflightRun": "35666822254",
+      "qualityRun": "35666822323",
+      "artifactId": "10668579816",
+      "referenceBytes": 232129,
+      "referenceSha256": "14F8DABA4804E5CCA138FF4CDFF65446363ED43D5589C90104B117F65675DA43",
+      "receipt": "work/gold-20260906/wave175-next-batch/CLI-REFERENCE-IMPORT-405.json",
+      "receiptSha256": "971D80931F08DCEA1B02BF8D9F63EFF9C36170B3F034431344E3EE3226B6A0E5",
+      "behavior": "pending"
     }
   },
   "wave178": {
@@ -6712,6 +6724,16 @@
     "newUniversalIdentities": 2,
     "newWindowsTests": 2,
     "boundary": "STATIC-APPROVE; exact-head Hosted fullCI and22 relevant test outcomes pending",
-    "roadClosure": false
+    "roadClosure": false,
+    "hostedFormat": {
+      "source": "4da66bdfba8e68cef40a2fd3ca6179d313bcbcf9",
+      "run": "35667205647",
+      "hunks": 4,
+      "files": 2,
+      "receiptSha256": "8F61ABF79A6D226587127FCCD6181994FE3D3C27AF53DFB7504F96C1055E80F7",
+      "qualityRun": "35667204404",
+      "quality": "success",
+      "freshFullCi": "pending"
+    }
   }
 }

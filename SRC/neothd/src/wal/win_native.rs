@@ -812,11 +812,7 @@ pub(crate) fn open_or_create_private_child_directory_relative<P: AsRawHandle + ?
 
     let sid = current_process_token_sid()?;
     let inheritance = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
-    let acl = single_trustee_acl(
-        sid.as_ptr().cast_mut().cast(),
-        TRUSTEE_IS_SID,
-        inheritance,
-    )?;
+    let acl = single_trustee_acl(sid.as_ptr().cast_mut().cast(), TRUSTEE_IS_SID, inheritance)?;
     let mut descriptor: SECURITY_DESCRIPTOR = unsafe { std::mem::zeroed() };
     let descriptor_ptr = std::ptr::addr_of_mut!(descriptor).cast::<c_void>();
     // SAFETY: `descriptor_ptr` addresses live, correctly sized writable
@@ -839,7 +835,9 @@ pub(crate) fn open_or_create_private_child_directory_relative<P: AsRawHandle + ?
             SetSecurityDescriptorControl(descriptor_ptr, SE_DACL_PROTECTED, SE_DACL_PROTECTED)
         } == 0
     {
-        return Err(last_win32_error("set protected private directory child DACL"));
+        return Err(last_win32_error(
+            "set protected private directory child DACL",
+        ));
     }
 
     let name_bytes = u16::try_from(wide.len() * 2).map_err(|_| {

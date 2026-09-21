@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W178-Windows-integration-repair",
-  "base": "405c9de6ab610f4137a4a62a5a51095e6b848f73",
-  "capturedUtc": "2026-09-21T23:19:37.5831850Z",
-  "validationStatus": "W178_STATIC_APPROVED_HOSTED_PENDING",
-  "scopeNote": "W178 reviewed8-source Windows20-failure repair: exact stream tests, fixture homes/WAL, provider inventories, capability-relative private directory creation and typed collision. Source-only; new2Win regressions+2existing universal inventory identities admitted. No closure; fresh full CI required.",
+  "base": "4da66bdfba8e68cef40a2fd3ca6179d313bcbcf9",
+  "capturedUtc": "2026-09-21T23:27:08.3255785Z",
+  "validationStatus": "W178_HOSTED_FORMAT_IMPORTED_FULLCI_PENDING",
+  "scopeNote": "W178 exact4Hostedhunks/2files plus exact generated W175 CLI reference from passed405c9de6run35666823374. Only7 explicit source/doc paths rehashed; W177 dirty implementation excluded. W175/W178 full behavior pending.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -58,8 +58,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 231912,
-      "sha256": "F2F312BADF195DE962EA53453445E559D574D515A2D6168EB80F56AF9297DF5C"
+      "bytes": 232129,
+      "sha256": "14F8DABA4804E5CCA138FF4CDFF65446363ED43D5589C90104B117F65675DA43"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -123,13 +123,13 @@
     },
     {
       "path": "docs/gold-wave175-verification.md",
-      "bytes": 3707,
-      "sha256": "7B13505E542FA4AA5A83B974850D058A8F1910D0BECFD559275542A0362A2A2F"
+      "bytes": 4037,
+      "sha256": "437BE11E0CBBBF01B3E8CC8AFB95CDBF20F151E6963482DF4430C8B071A42D3A"
     },
     {
       "path": "docs/gold-wave178-verification.md",
-      "bytes": 3750,
-      "sha256": "35FE520CDC41FB1860FD87B6A464BB5D3D7EB844F5C285467B79ABF801EC3920"
+      "bytes": 4302,
+      "sha256": "27281799E29728ECA8E8469E05D5FD7A980E438A0277F43509383B166A4F7D2E"
     },
     {
       "path": "docs/install.md",
@@ -208,13 +208,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1013688,
-      "sha256": "C7CEB9C4BBC6D732B9EAC5C8AFBA5E9A16FA60DA77741384EA6C18C072E5040F"
+      "bytes": 1014163,
+      "sha256": "1FADA01E7D764E42700A6D39B2D3893BB6331C9BC044A214CE465B4F11E5A9A5"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1609135,
-      "sha256": "0FD4BCE61F1290916FCEF2820E348E9590FD4439B072608A7B51114588F12BEE"
+      "bytes": 1609610,
+      "sha256": "2C0FA8A759469748DF3B2E56D979045F680DA89F20C968C82E516058C518F45B"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1783,8 +1783,8 @@
     },
     {
       "path": "SRC/neothd/src/tools/citation_consent.rs",
-      "bytes": 39638,
-      "sha256": "4888507AA91416B74F601BE54B9DC18BB302F324BFED4C8F6FE450DCB32BDE2F"
+      "bytes": 39584,
+      "sha256": "255F455918CB9FF71F7FB2E65C989F9F1680B52E589078C243A0F88A761058A5"
     },
     {
       "path": "SRC/neothd/src/tools/citation_http.rs",
@@ -1918,8 +1918,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/win_native.rs",
-      "bytes": 120155,
-      "sha256": "804957291100845121CFCB86FB54CF110591746AE93EC3B3C574FF1655EBF7B1"
+      "bytes": 120147,
+      "sha256": "399A8801CAC03AE2D84679315950A357B69048047C6A99934A3FC6E1C44F1027"
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",

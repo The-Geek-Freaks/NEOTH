@@ -2211,6 +2211,7 @@ Inspect the assembled NEOTH.md operator context
 - `--paths` — Print only the source paths, one per line
 - `--size` — Print byte sizes per block and the total
 - `--tier <TIER>` — Filter recall by memory tier (Phase 28a R-22 MT-5)
+- `--hippocampus <QUERY>` — Inspect the current, durable secondary Hippocampus membership. An optional query filters live source text; this opens views.db read-only and never re-scores, indexes, or calls a provider
 - `--archive <YYYY-MM-DD>` — List archived session MD files for the given day (YYYY-MM-DD)
 - `--forget <TOPIC>` — GDPR retroactive wipe — delete every row in hot/warm/long-term plus embeddings plus revoke ground-truth assertions where the text matches the topic (LIKE pattern, case-insensitive). Use `--confirm` to execute; without it the command dry-runs and prints what would be deleted
 - `--confirm` — Required to actually execute `--forget`. Without it the command is a preview only
