@@ -1,0 +1,36 @@
+name: OpenClaw schema inventory
+on: { workflow_dispatch: {} }
+permissions: { contents: read }
+jobs:
+  extract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with: { persist-credentials: false, fetch-depth: 1 }
+      - name: Run extractor source tests
+        run: python3 -m unittest scripts/test_extract_openclaw_channel_schema.py
+      - name: Fetch and extract exact static metadata
+        id: extract
+        shell: bash
+        env: { OPENCLAW_COMMIT: 4c667aac8859114bd8f0a589ac6cd1de8bfe1474 }
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/openclaw" "$RUNNER_TEMP/w169"
+          curl --fail --location --retry 2 --retry-all-errors "https://raw.githubusercontent.com/openclaw/openclaw/${OPENCLAW_COMMIT}/src/config/bundled-channel-config-metadata.generated.ts" --output "$RUNNER_TEMP/openclaw/bundled-channel-config-metadata.generated.ts"
+          fetch_status=$?
+          if [ "$fetch_status" -eq 0 ]; then
+            python3 scripts/extract_openclaw_channel_schema.py --metadata "$RUNNER_TEMP/openclaw/bundled-channel-config-metadata.generated.ts" --channel-inventory SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json --commit "$OPENCLAW_COMMIT" --inventory "$RUNNER_TEMP/w169/openclaw_channel_schema_v1.json" --evidence "$RUNNER_TEMP/w169/openclaw_channel_schema_evidence_v1.json"
+            status=$?
+          else
+            status=$fetch_status
+          fi
+          printf '{"status":%s,"commit":"%s"}\n' "$status" "$OPENCLAW_COMMIT" > "$RUNNER_TEMP/w169/status.json"
+          exit "$status"
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        if: always()
+        with:
+          name: openclaw-schema-inventory-4c667aac
+          path: ${{ runner.temp }}/w169
+          if-no-files-found: warn
+          retention-days: 14

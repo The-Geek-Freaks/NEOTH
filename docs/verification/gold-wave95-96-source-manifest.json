@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W170-hosted-repair-candidate",
-  "base": "319d84f6886a77efd7fa9076879fdc9e826a2d37",
-  "capturedUtc": "2026-09-21T20:28:10.6209856Z",
-  "validationStatus": "W168_W170_REPAIRS_REVIEWED_HOSTED_REQUIRED",
-  "scopeNote": "W168 exact Hosted syntax/flag/format repairs and W170 strict PowerShell optional-seed repair. W169 extractor unpublished.",
+  "item": "GOLD-W95-W170-schema-extraction-candidate",
+  "base": "45c314471d3c06d122456f743ad93c818990dcf4",
+  "capturedUtc": "2026-09-21T20:35:48.3668073Z",
+  "validationStatus": "W169_EXTRACTION_SOURCE_APPROVED_HOSTED_REQUIRED",
+  "scopeNote": "W169 diagnostic extraction tooling; no schema fixture/importer claim. Current W168 final Hosted GUI formatting remains unadmitted WIP.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -20,6 +20,11 @@
       "path": ".github/workflows/cli-reference.yml",
       "bytes": 2166,
       "sha256": "5FC28BEF7823E3CB4B8D27E8354AD8DADB5C89621EB66473AB85FC7B71240561"
+    },
+    {
+      "path": ".github/workflows/openclaw-schema-inventory.yml",
+      "bytes": 1928,
+      "sha256": "B485C9BDFAEF547C2D33374F7B6BC1B22F1B7A48B6F63BB0BA67EB521D46B9B3"
     },
     {
       "path": ".github/workflows/preflight.yml",
@@ -85,6 +90,11 @@
       "path": "docs/gold-wave167-168-verification.md",
       "bytes": 2997,
       "sha256": "627BE5B7056F07A00C5F629E2EB940F7212A78976BB212D1DD805019E937E265"
+    },
+    {
+      "path": "docs/gold-wave169-verification.md",
+      "bytes": 1798,
+      "sha256": "803A80EC15867C2A6786AE5D18F045E7B09D2AF3556C55A3B889776C9FF999F5"
     },
     {
       "path": "docs/gold-wave170-verification.md",
@@ -175,6 +185,16 @@
       "path": "README.md",
       "bytes": 35468,
       "sha256": "0E612B4A62427C2B3F169ADDBACED55F19E26220DB1F6A0AD0183CA5DC24C7E7"
+    },
+    {
+      "path": "scripts/extract_openclaw_channel_schema.py",
+      "bytes": 9913,
+      "sha256": "CAF8C03288CD434C5DD3016FA11A1C6A0B36D2A98B424D686455C9873B799351"
+    },
+    {
+      "path": "scripts/test_extract_openclaw_channel_schema.py",
+      "bytes": 4629,
+      "sha256": "F2EDF7D7F13F02734FF6E3300245CA22CD2F9D09A76055D96A0D00FDB94F075D"
     },
     {
       "path": "SRC/_gui_lint.ps1",

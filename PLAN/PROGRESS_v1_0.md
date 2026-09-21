@@ -2,6 +2,16 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W169 schema extraction preparation (2026-09-21):** the independently reviewed
+GitHub-only extractor binds exact upstream bytes/SHA/Git blob and W166 manifest
+IDs before decoding generated static schema data. Unknown structures produce
+explicit blockers and cannot establish completeness. Actual hosted extraction,
+package fixture and importer/account ledger integration remain pending. See
+[W169](../docs/gold-wave169-verification.md). Admission is now 380 source inputs;
+Rust/GUI test identities and Road checkboxes remain unchanged. Source45c31447
+passed Code Quality35651447112; Preflight35651447634 now reaches the remaining
+GUI formatting corrections after the syntax repair. New CLI build is running.
+
 **W168/W170 Hosted repairs (2026-09-21):** source319d84f6 passed Code Quality
 35650411051; CLI35650436144 reported three typed-GUI-flag plumbing errors, and
 Preflight35650411113 exposed an invalid struct-pattern binding plus six format
