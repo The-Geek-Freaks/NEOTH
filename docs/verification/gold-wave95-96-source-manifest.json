@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W161-hosted-repair-candidate",
-  "base": "ba26d52ae67f89baad8005208ceb4c7602634ddc",
-  "capturedUtc": "2026-09-21T15:53:45.8909257Z",
-  "validationStatus": "W158_FORMAT_W160_COMPILE_W161_PORTABLE_REPAIRS_HOSTED_PENDING",
-  "scopeNote": "327 source inputs; W158 three hosted formatter postimages, W160 reviewed test-compile/strict-lint fixes, W161 reviewed equivalent Windows root normalization. Reviewed W137/W142 diagnostics still require hosted execution. W155 and W159 unpublished work excluded. Required tests225 universal native+3 Windows;46 universal GUI+11 callbacks;7 optional.",
+  "item": "GOLD-W95-W155-core-citation-candidate",
+  "base": "b58ec47f87ed552d13b95310113e320ff3dc6b7e",
+  "capturedUtc": "2026-09-21T16:12:01.7954513Z",
+  "validationStatus": "W155_CORE_CONSENT_HTTP_CLI_REVIEWED_HOSTED_PENDING",
+  "scopeNote": "334 source inputs; reviewed explicit citation Core/Consent/HTTP/CLI plus exact hosted E0507 fixture ownership repair. Required272 universal native+3 Windows+2 Unix;46 universal GUI+11 callbacks;7 optional adapters. Unpublished W155 GUI child supervision and W159 session integration excluded.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -648,8 +648,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
-      "bytes": 113811,
-      "sha256": "D3E2D728E690071747D38FBA5951444693C1BDEC564B06B4342A91E2EB1CE404"
+      "bytes": 114079,
+      "sha256": "32A1402ED386DF5E89F0C81186B449CB495F5157E9690D663474A4C0BCD435F5"
     },
     {
       "path": "SRC/neothd/src/cli/ouro.rs",
@@ -1003,8 +1003,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "bytes": 129082,
-      "sha256": "448C4C6ACEED77230354694FC4B88222E2C701B0C531B89740C39759B96702F7"
+      "bytes": 129090,
+      "sha256": "5A5C0B3901B3617FDFB77256974780EA5E0D1370FDF2C03023C7CC51891AC685"
     },
     {
       "path": "SRC/neothd/src/daemon/mod.rs",
@@ -1640,6 +1640,41 @@
       "path": "THIRD_PARTY_LICENSES",
       "bytes": 2271741,
       "sha256": "4E77A7CC896F8B5EEDCEFB458199A0939522B9191F22939BE3EFD78C575D9CF7"
+    },
+    {
+      "path": "SRC/neothd/src/cli/citation.rs",
+      "bytes": 27643,
+      "sha256": "4CAAAE124B2ACAA307D5EAAEE095B1AA9278E3735D457594409F0FAF0EFFB9E9"
+    },
+    {
+      "path": "SRC/neothd/src/tools/mod.rs",
+      "bytes": 3394,
+      "sha256": "90D6C35BEE8A96AA254F50B7A62FB639FC49DD971BF4DC3957903D39FE3F17FC"
+    },
+    {
+      "path": "SRC/neothd/src/tools/external_http.rs",
+      "bytes": 99949,
+      "sha256": "40F7458FFD2BD06B7B000B791868C5F812F4623926C80CF527222E59E7B986C0"
+    },
+    {
+      "path": "SRC/neothd/src/tools/citation_consent.rs",
+      "bytes": 36082,
+      "sha256": "865FAF1DD51F31EF9FD0AB4F729F6DE806B3F72C7457B75EF8A9725EC047ABD1"
+    },
+    {
+      "path": "SRC/neothd/src/tools/citation_http.rs",
+      "bytes": 46195,
+      "sha256": "021F4BE5807A4ADD81C53B659A37CE1B1AE679A9F16751568765DD4E5F847B51"
+    },
+    {
+      "path": "SRC/neothd/src/tools/citation_lookup.rs",
+      "bytes": 56225,
+      "sha256": "1E46BDD401442730D75D59C3CEFA150AE85D303D2012027FF0B66B5339712274"
+    },
+    {
+      "path": "SRC/neothd/tests/citation_cli_contract.rs",
+      "bytes": 6372,
+      "sha256": "7ECBE37A85131199419082C4B3399055CE8F8A41CC322E80A79B982B3EEC65B2"
     }
   ]
 }

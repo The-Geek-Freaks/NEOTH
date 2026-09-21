@@ -2,6 +2,25 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W155 Citation Core/CLI admission (2026-09-21):** independently reviewed
+fixed Crossref/OpenAlex/Semantic Scholar transport, validated claim-bound records,
+private cache-first behavior, typed CLI receipts and exact GUI consent protocol
+are admitted for hosted verification. The prepared Chat panel stays unpublished
+while the GUI owner repairs its reviewed child-process deadline/output/cancellation
+gap. See [W155](../docs/gold-wave155-verification.md). The manifest binds 334
+inputs; required cases are 272 universal native, 3 Windows-only, 2 Linux/macOS
+filesystem cases, the existing 46 universal GUI plus 11 Linux/macOS callbacks,
+and 7 optional adapter tests. GOLD-LF-P1-12 stays open until full integration and
+executable evidence. Generated CLI reference comes from the next hosted build.
+
+Repair source b58ec47f passed Preflight35622231947 and Quality35622233230.
+Its full CI35622258375 found one additional test-only E0507 in an attach fixture;
+the borrowed TurnId is now cloned and independently reviewed. That failed-source
+CI is confirmed cancelled; preview35622261449 continues on b58ec47f because the
+production build is unaffected. Fresh native/GUI compilation remains required.
+W159 WAL session integration is separate unpublished work and is excluded from
+this Citation admission.
+
 W160/W161 repair source ba26d52a passed Code Quality 35621786176. Preflight
 35621787111 requested one exact W137 diagnostic layout hunk; it is imported
 without local formatter execution. Full hosted CI/preview remains required.

@@ -2428,7 +2428,7 @@ mod lifecycle_tests {
         let attach_request = |response: &GuiChatAttachExchangeResponse| GuiChatAttachRequest {
             schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
             expected_boot_id: "fixture-boot".into(),
-            turn_id: response.turn_id,
+            turn_id: response.turn_id.clone(),
             session_id: response.session_id.clone(),
             surface: response.surface,
             subscription_generation: response.subscription_generation,

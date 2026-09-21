@@ -47,6 +47,17 @@ source; the older successful build does not validate subsequent W153/W155 work.
 
 ## Required next evidence
 
+The formatting follow-up `b58ec47f87ed552d13b95310113e320ff3dc6b7e`
+passed Preflight `35622231947` and Code Quality `35622233230`. Full CI
+`35622258375` then reported `E0507` in the shared lib-test build, adapter job
+`106407927790`: the attach fixture attempted to move `response.turn_id` from a
+borrowed response. The narrow follow-up clones that existing typed ID, as the
+adjacent session and capability fields already do. The adapter log is retained
+with SHA-256 `14E27E89E1BE4778BDA0D1A3FF8FDA2A87AA1C58277429F4BA7151BE8E4C88F0`.
+The failed-source CI is confirmed cancelled after retaining its diagnostics.
+Windows preview `35622261449` continues because this test-only failure does not
+invalidate its production build or W161 acceptance path.
+
 Run the existing Preflight and Code Quality gates, full native/GUI CI, and
 Windows preview on the newly published source. Keep W137 automatic routing
 and W142 terminal refresh unresolved until their actual hosted diagnostics

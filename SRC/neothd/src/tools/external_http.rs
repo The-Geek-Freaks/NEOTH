@@ -9,10 +9,9 @@
 use std::fmt;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::Arc;
-
-#[cfg(not(test))]
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
@@ -22,6 +21,8 @@ use crate::permissions::ifc::{EgressProvenance, ExplicitExternalResearchRelease}
 use crate::permissions::{Action, AutonomyPolicySnapshot, ConfirmStrategy, Gate};
 use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
 use crate::wal::writer::WalWriterHandle;
+use crate::tools::citation_consent::ConsumedGuiCitationLookupApproval;
+use crate::tools::citation_lookup::{validate_claim, CitationProvider, CitationQuery};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExternalHttpSurface {
@@ -32,6 +33,9 @@ pub enum ExternalHttpSurface {
     SearchSearxng,
     Arxiv,
     HackerNews,
+    Crossref,
+    OpenAlex,
+    SemanticScholar,
 }
 
 impl ExternalHttpSurface {
@@ -44,7 +48,18 @@ impl ExternalHttpSurface {
             Self::SearchSearxng => "search_searxng",
             Self::Arxiv => "arxiv",
             Self::HackerNews => "hacker_news",
+            Self::Crossref => "crossref",
+            Self::OpenAlex => "openalex",
+            Self::SemanticScholar => "semantic_scholar",
         }
+    }
+}
+
+const fn citation_surface_for(provider: CitationProvider) -> ExternalHttpSurface {
+    match provider {
+        CitationProvider::Crossref => ExternalHttpSurface::Crossref,
+        CitationProvider::OpenAlex => ExternalHttpSurface::OpenAlex,
+        CitationProvider::SemanticScholar => ExternalHttpSurface::SemanticScholar,
     }
 }
 
@@ -256,6 +271,46 @@ pub struct ExternalHttpAuthorizer {
 enum ExternalHttpPolicySource {
     Fixed(AutonomyPolicySnapshot),
     Reload(Arc<crate::config::reload::ReloadController>),
+    GuiCitationLookupReady(GuiCitationLookupReady),
+    GuiCitationLookup(GuiCitationLookupApproval),
+}
+
+/// Private cache-miss continuation for the GUI policy's proof-free `Allow`
+/// answer.  It remains constrained to the exact fixed citation GET and
+/// re-reads the current coherent policy/config generation at execute time; it
+/// carries no confirmation authority.
+struct GuiCitationLookupReady {
+    home: PathBuf,
+    policy: AutonomyPolicySnapshot,
+    query: CitationQuery,
+    claim: String,
+    gui_request_id: String,
+}
+
+impl GuiCitationLookupReady {
+    fn authorizes_fixed_get(&self, request: &ExternalHttpRequest) -> bool {
+        self.query.validate().is_ok()
+            && validate_claim(&self.claim).is_ok()
+            && !self.gui_request_id.is_empty()
+            && request.method == "GET"
+            && request.url == self.query.fixed_request_url()
+            && request.surface == citation_surface_for(self.query.provider)
+            && request.body_binding_sha256 == hex::encode(Sha256::digest(b""))
+    }
+}
+
+/// Private attachment for one already-consumed GUI citation approval.  The
+/// Exact lookup material retained until the real request reaches the normal
+/// gate.  The opaque approval's sole authority check happens there, against a
+/// fresh paired policy/config generation and the actual HTTP request shape.
+struct GuiCitationLookupApproval {
+    home: PathBuf,
+    policy: AutonomyPolicySnapshot,
+    query: CitationQuery,
+    claim: String,
+    gui_request_id: String,
+    approval: ConsumedGuiCitationLookupApproval,
+    used: AtomicBool,
 }
 
 /// Immutable metadata shared by the matching external-HTTP intent and result.
@@ -323,11 +378,120 @@ impl ExternalHttpPolicySource {
         match self {
             Self::Fixed(policy) => policy.clone(),
             Self::Reload(controller) => controller.autonomy_policy(),
+            Self::GuiCitationLookupReady(ready) => ready.policy.clone(),
+            Self::GuiCitationLookup(approval) => approval.policy.clone(),
+        }
+    }
+
+    /// Resolve the policy used by this exact request. GUI citation Ready
+    /// continuations prove only their fixed request shape and keep normal Gate
+    /// confirmation; consumed approvals additionally prove their opaque
+    /// binding and consume an in-memory one-shot authority.
+    fn policy_for_request(&self, request: &ExternalHttpRequest) -> Result<(AutonomyPolicySnapshot, bool)> {
+        match self {
+            Self::Fixed(_) | Self::Reload(_) => return Ok((self.current(), false)),
+            Self::GuiCitationLookupReady(context) => {
+                let (policy, _) = crate::tools::citation_consent::
+                    current_citation_consent_policy_generation(&context.home)
+                    .context("read current GUI citation ready policy")?;
+                anyhow::ensure!(
+                    context.authorizes_fixed_get(request),
+                    "GUI citation ready continuation does not authorize this request"
+                );
+                return Ok((policy, false));
+            }
+            Self::GuiCitationLookup(context) => {
+                let (policy, current_config_sha256) = crate::tools::citation_consent::
+                    current_citation_consent_policy_generation(&context.home)
+                    .context("read current GUI citation consent policy")?;
+                let empty_body = request.body_binding_sha256 == hex::encode(Sha256::digest(b""));
+                anyhow::ensure!(
+                    context.approval.authorizes_fixed_get(
+                        &context.query,
+                        &context.claim,
+                        &context.gui_request_id,
+                        &current_config_sha256,
+                        request.method,
+                        &request.url,
+                        request.surface,
+                        empty_body,
+                    ),
+                    "consumed GUI citation approval does not authorize this request"
+                );
+                anyhow::ensure!(
+                    context
+                        .used
+                        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                        .is_ok(),
+                    "consumed GUI citation approval was already used"
+                );
+                Ok((policy, true))
+            }
         }
     }
 }
 
 impl ExternalHttpAuthorizer {
+    /// Attach the GUI policy's proof-free `Allow` continuation.  It is
+    /// citation-specific and retains no generic confirmation capability: the
+    /// real execute path re-reads the paired policy/config snapshot and uses
+    /// the normal Gate without preconfirmation. A Ready continuation may
+    /// execute only while that fresh policy is `Allow`, so it forcibly removes
+    /// an inherited interactive TTY/channel confirmer.
+    pub(crate) fn attach_gui_citation_lookup_ready(
+        mut self,
+        home: PathBuf,
+        policy: AutonomyPolicySnapshot,
+        query: CitationQuery,
+        claim: &str,
+        gui_request_id: &str,
+    ) -> Result<Self> {
+        query.validate().context("validate GUI citation ready query")?;
+        let claim = validate_claim(claim).context("validate GUI citation ready claim")?;
+        anyhow::ensure!(
+            !gui_request_id.is_empty(),
+            "GUI citation ready request identifier is required"
+        );
+        self.confirm = ConfirmStrategy::FailClosed;
+        self.policy = ExternalHttpPolicySource::GuiCitationLookupReady(GuiCitationLookupReady {
+            home,
+            policy,
+            query,
+            claim,
+            gui_request_id: gui_request_id.to_owned(),
+        });
+        Ok(self)
+    }
+
+    /// Attach the opaque result of a consumed GUI citation approval to this
+    /// one authorizer. The actual execute path takes one fresh coherent
+    /// policy/config-generation snapshot before it can preconfirm the Gate.
+    ///
+    /// This is crate-private and citation-specific. It accepts neither a
+    /// generic preconfirmation string nor an arbitrary HTTP request shape.
+    pub(crate) fn attach_consumed_gui_citation_lookup_approval(
+        mut self,
+        home: PathBuf,
+        policy: AutonomyPolicySnapshot,
+        query: CitationQuery,
+        claim: &str,
+        gui_request_id: &str,
+        approval: ConsumedGuiCitationLookupApproval,
+    ) -> Result<Self> {
+        query.validate().context("validate GUI citation lookup query")?;
+        let claim = validate_claim(claim).context("validate GUI citation lookup claim")?;
+        self.policy = ExternalHttpPolicySource::GuiCitationLookup(GuiCitationLookupApproval {
+            home,
+            policy,
+            query,
+            claim,
+            gui_request_id: gui_request_id.to_owned(),
+            approval,
+            used: AtomicBool::new(false),
+        });
+        Ok(self)
+    }
+
     /// Interactive one-shot CLI context. A live daemon receives the frames over
     /// authenticated audit RPC; otherwise the process owns a unique standalone
     /// WAL segment. Any transport setup failure blocks the request.
@@ -549,6 +713,7 @@ impl ExternalHttpAuthorizer {
         }
 
         let parsed = validate_request_url(&request.url)?;
+        let (effective_policy, gui_citation_preconfirmed) = self.policy.policy_for_request(&request)?;
         let local = classify_local_searxng(&request, &parsed)?;
         let request_id = uuid::Uuid::now_v7().to_string();
         let egress_provenance_binding = self.egress_provenance.binding_material();
@@ -586,9 +751,15 @@ impl ExternalHttpAuthorizer {
                 request_id: audit.request_id.clone(),
                 request_binding_sha256: audit.request_binding_sha256.clone(),
             };
-            let mut gate = Gate::for_policy(self.policy.current()).with_confirm(self.confirm);
+            let mut gate = Gate::for_policy(effective_policy).with_confirm(self.confirm);
             if let Some(asker) = &self.channel_asker {
                 gate = gate.with_channel_asker(Arc::clone(asker));
+            }
+            if gui_citation_preconfirmed {
+                // `policy_for_request` has just consumed the opaque one-shot
+                // attachment after proving the exact fixed GET. Gate keeps
+                // static `Deny` precedence; this only resolves `Confirm`.
+                gate = gate.with_preconfirmed_confirmation("gui_citation_lookup");
             }
             if audit.is_operator_released_research() {
                 gate = gate.with_released_research_audit();
@@ -931,6 +1102,118 @@ mod tests {
             channel_asker: None,
             sink,
             egress_provenance: EgressProvenance::LegacyUnscoped,
+        }
+    }
+
+    fn write_gui_citation_ready_config(
+        home: &std::path::Path,
+        autonomy: crate::permissions::AutonomyLevel,
+        deny_external_http: bool,
+    ) {
+        let mut config = crate::config::FreedomConfig {
+            autonomy,
+            ..Default::default()
+        };
+        if deny_external_http {
+            config.custom_autonomy.overrides.insert(
+                crate::permissions::ActionKind::ExternalHttpRequest,
+                crate::permissions::CustomDecision::Deny,
+            );
+        }
+        std::fs::write(
+            home.join("freedom.yaml"),
+            serde_yaml::to_string(&config).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn gui_citation_ready_authorizer(
+        home: &std::path::Path,
+        sink: Arc<dyn ExternalHttpAuditSink>,
+        query: CitationQuery,
+    ) -> ExternalHttpAuthorizer {
+        let authorizer = ExternalHttpAuthorizer {
+            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
+                crate::permissions::AutonomyLevel::Elevated,
+            )),
+            // Production `interactive` can retain a TTY confirmer. The Ready
+            // attachment itself must replace it before a fresh Confirm Gate.
+            confirm: ConfirmStrategy::Tty,
+            channel_asker: None,
+            sink,
+            egress_provenance: EgressProvenance::LegacyUnscoped,
+        }
+        .attach_gui_citation_lookup_ready(
+            home.to_path_buf(),
+            AutonomyPolicySnapshot::test_level(crate::permissions::AutonomyLevel::Elevated),
+            query,
+            "the ready-bound claim",
+            "gui-ready-request-1",
+        )
+        .unwrap();
+        assert!(matches!(authorizer.confirm, ConfirmStrategy::FailClosed));
+        authorizer
+    }
+
+    #[tokio::test]
+    async fn gui_ready_rechecks_current_policy_and_keeps_normal_http_lifecycle() {
+        let home = tempfile::tempdir().unwrap();
+        let query = CitationQuery::new(CitationProvider::Crossref, "10.1000/example").unwrap();
+        let request = || {
+            ExternalHttpRequest::get(query.fixed_request_url(), ExternalHttpSurface::Crossref)
+        };
+
+        write_gui_citation_ready_config(
+            home.path(),
+            crate::permissions::AutonomyLevel::Elevated,
+            false,
+        );
+        let allow_sink = Arc::new(RecordingSink::default());
+        let allow = gui_citation_ready_authorizer(home.path(), allow_sink.clone(), query.clone());
+        let allowed_network = Arc::new(AtomicBool::new(false));
+        let allowed_network_call = Arc::clone(&allowed_network);
+        allow
+            .execute(request(), move |_permit| async move {
+                allowed_network_call.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert!(allowed_network.load(Ordering::SeqCst));
+        let events = allow_sink.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, ExtendedSubtype::ExternalHttpIntent);
+        assert_eq!(events[1].0, ExtendedSubtype::ExternalHttpResult);
+        drop(events);
+
+        for (autonomy, deny_external_http) in [
+            (crate::permissions::AutonomyLevel::Standard, false),
+            (crate::permissions::AutonomyLevel::Custom, true),
+        ] {
+            write_gui_citation_ready_config(
+                home.path(),
+                crate::permissions::AutonomyLevel::Elevated,
+                false,
+            );
+            let sink = Arc::new(RecordingSink::default());
+            let authorizer = gui_citation_ready_authorizer(home.path(), sink.clone(), query.clone());
+            // This models a GUI preflight that observed `Allow`, then loses
+            // that state before the side-effect leaf.
+            write_gui_citation_ready_config(home.path(), autonomy, deny_external_http);
+            let network = Arc::new(AtomicBool::new(false));
+            let network_call = Arc::clone(&network);
+            assert!(
+                authorizer
+                    .execute(request(), move |_permit| async move {
+                        network_call.store(true, Ordering::SeqCst);
+                        Ok(())
+                    })
+                    .await
+                    .is_err(),
+                "a changed {autonomy:?} policy must fail without a Ready proof"
+            );
+            assert!(!network.load(Ordering::SeqCst));
+            assert!(sink.events.lock().unwrap().is_empty());
         }
     }
 

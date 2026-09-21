@@ -19,6 +19,7 @@ pub mod backup;
 pub mod bg_session;
 pub mod buddy;
 pub mod catalog;
+pub mod citation;
 pub mod channel;
 pub mod chat;
 pub mod chat_display;
@@ -286,6 +287,8 @@ pub enum Commands {
     /// `neoth fact-check "NEOTH was released in 2026."`
     #[command(name = "fact-check")]
     FactCheck(fact_check::FactCheckArgs),
+    /// Look up a DOI through the bounded citation provider boundary.
+    Citation(citation::CitationArgs),
     /// GOLD-ADAPT-JV-MODE-03 — list NEOTH's own shipped capabilities (bundled
     /// skills, daemon crons, CLI + slash commands) from the self-wiki map.
     /// `--kind skill|cron|cli|slash`, `--search <keyword>`, `--output json`.
@@ -1605,6 +1608,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::FactCheck(mut args) => {
             args.output = global_output;
             fact_check::run_fact_check(args)?;
+        }
+        Commands::Citation(mut args) => {
+            args.output = global_output;
+            citation::run_citation(args).await?;
         }
         Commands::Capabilities(mut args) => {
             args.output = global_output;
