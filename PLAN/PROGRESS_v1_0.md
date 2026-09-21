@@ -2,6 +2,15 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W176 prompt-tax integration (2026-09-22):** one independently reviewed test
+now connects the real final-budget helper, local provider authorization,
+terminal WAL/usage projection, aggregation and production usage renderer. It
+checks exact category totals and one measured call; changing only the leaf
+prompt must produce unavailable accounting. The measured-zero renderer fixture
+now uses one actual measured-call state. The 19 W173 tests are preserved plus
+this one integration; all 20 still require Hosted execution. W175 memory
+selection remains separate and unadmitted. No D3 checkbox closes.
+
 **W174 visual video ingest (2026-09-22):** independently reviewed source adds
 `neoth ingest <video> --analyze-video-frames`, including silent videos. The
 existing cloud/credential/upload/audit gates precede one private snapshot's

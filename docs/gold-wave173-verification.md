@@ -52,3 +52,19 @@ C948D52B50F47917AD9E8510178974FFA9C4AD3D603B18B0CCE33E308FAE0493
 and is byte-identical to the existing published reference. On the corrected
 cceefbf5294cd2986ca9bd202bb0764077d18161 source, Preflight 35661037612 and
 Code Quality 35661037740 passed. Native behavioral acceptance remains required.
+
+W176 adds one bounded integration to the preserved 19 W173 test identities.
+Deterministic typed Skill/Memory/RepoContext/Council fixtures pass through the
+production final-budget helper, ProviderCallAuthorizer, a local fake provider,
+terminal WAL/usage projection, aggregate reader and production usage renderer.
+The resulting four totals must match their exact expected counts; one measured
+call and zero unattributed tokens are required. A prompt-only leaf rewrite is
+then required to yield absent tax and the exact unavailable display.
+
+The older measured-zero renderer fixture now uses observed_call_count=1.
+Zero observed calls cannot establish a measured zero. The renderer is visible
+only within the crate so the integration exercises its actual production code.
+The first independent review rejected weak greater-than-zero checks; review02
+approved their exact replacements. All 20 identities remain unexecuted for this
+freeze. No D3 completion claim is made.
+Review02 SHA-256: A167F8AE54DE407343D7D4A94EF55F98ECB3495E65427DC592F563D81307CBB2.

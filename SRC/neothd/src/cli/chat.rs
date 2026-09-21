@@ -17222,6 +17222,131 @@ modes:
     }
 
     #[tokio::test]
+    async fn prompt_tax_bundle_reaches_terminal_usage_and_clears_on_changed_leaf_bytes() {
+        use crate::tokens::budget::{Block, BlockItem, PromptTaxSource, count_tokens_upper_bound};
+
+        struct LocalFakeProvider;
+        #[async_trait]
+        impl Provider for LocalFakeProvider {
+            fn name(&self) -> &'static str {
+                "local_ollama"
+            }
+
+            fn default_model(&self) -> Option<&str> {
+                Some("fixture-local")
+            }
+
+            async fn complete(&self, _req: Request) -> Result<Completion> {
+                Ok(Completion {
+                    text: "fixture terminal".into(),
+                    model: "fixture-local".into(),
+                    input_tokens: Some(11),
+                    output_tokens: Some(7),
+                    ..Default::default()
+                })
+            }
+        }
+
+        async fn finalized_bundle(
+            home: &std::path::Path,
+            writer: &crate::wal::writer::WalWriterHandle,
+        ) -> BudgetedProviderRequest {
+            let items = vec![
+                BlockItem::new(Block::B, "skill retained")
+                    .with_prompt_tax_source(PromptTaxSource::Skill),
+                BlockItem::new(Block::D, "memory retained")
+                    .with_prompt_tax_source(PromptTaxSource::Memory),
+                BlockItem::new(Block::C, "repo retained")
+                    .with_prompt_tax_source(PromptTaxSource::RepoContext),
+                BlockItem::new(Block::B, "council retained")
+                    .with_prompt_tax_source(PromptTaxSource::Council),
+                BlockItem::new(Block::E, "operator request"),
+            ];
+            let (prompt, system) = crate::tokens::budget::render_request(&items).unwrap();
+            let mut config = FreedomConfig::default();
+            config.tokens.max_per_request = 20_000;
+            finalize_provider_request(
+                items,
+                &prompt,
+                system.as_deref(),
+                ProviderRequestBoundary {
+                    config: &config,
+                    home,
+                    provider_name: "local_ollama",
+                    effective_model: Some("fixture-local"),
+                    route_cap: None,
+                    writer,
+                },
+            )
+            .await
+            .unwrap()
+        }
+
+        let provider = LocalFakeProvider;
+        let expected_skill = count_tokens_upper_bound("skill retained");
+        let expected_memory = count_tokens_upper_bound("memory retained");
+        let expected_repo_context = count_tokens_upper_bound("repo retained");
+        let expected_council = count_tokens_upper_bound("council retained");
+        let measured_home = tempfile::tempdir().unwrap();
+        let (writer, writer_join) = wal_spawn(measured_home.path().join("prompt-tax.wal")).unwrap();
+        let bundle = finalized_bundle(measured_home.path(), &writer).await;
+        assert_eq!(bundle.prompt_tax.skill_tokens, expected_skill);
+        assert_eq!(bundle.prompt_tax.memory_tokens, expected_memory);
+        assert_eq!(bundle.prompt_tax.repo_context_tokens, expected_repo_context);
+        assert_eq!(bundle.prompt_tax.council_tokens, expected_council);
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+            crate::permissions::AutonomyLevel::Full,
+            Some(writer.clone()),
+            20_000,
+        )
+        .with_usage_home(measured_home.path())
+        .with_prompt_tax(bundle.prompt_tax.clone(), &bundle.prompt, bundle.system.as_deref());
+        let authorized = crate::providers::cost_authorization::CostAuthorizingProvider::new(
+            &provider,
+            authorizer,
+            Some("fixture-local".into()),
+            "test.prompt_tax_bundle",
+        );
+        authorized.complete(Request {
+            prompt: bundle.prompt.clone(),
+            system: bundle.system.clone(),
+            model: Some("fixture-local".into()),
+            ..Default::default()
+        }).await.unwrap();
+        drop(authorized);
+        drop(writer);
+        writer_join.await.unwrap();
+        let measured = crate::daemon::usage_log::aggregate(measured_home.path(), 0, i64::MAX);
+        let totals = measured.prompt_tax.as_ref().unwrap();
+        assert_eq!(totals.observed_call_count, 1);
+        assert_eq!(totals.skill_tokens, u64::from(expected_skill));
+        assert_eq!(totals.memory_tokens, u64::from(expected_memory));
+        assert_eq!(totals.repo_context_tokens, u64::from(expected_repo_context));
+        assert_eq!(totals.council_tokens, u64::from(expected_council));
+        assert_eq!(totals.unattributed_tokens, 0);
+        assert!(crate::cli::usage::render_prompt_tax_section(Some(totals)).contains("prompt tax estimate"));
+
+        let changed_home = tempfile::tempdir().unwrap();
+        let (writer, writer_join) = wal_spawn(changed_home.path().join("prompt-tax-changed.wal")).unwrap();
+        let bundle = finalized_bundle(changed_home.path(), &writer).await;
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+            crate::permissions::AutonomyLevel::Full, Some(writer.clone()), 20_000,
+        ).with_usage_home(changed_home.path())
+            .with_prompt_tax(bundle.prompt_tax, &bundle.prompt, bundle.system.as_deref());
+        let authorized = crate::providers::cost_authorization::CostAuthorizingProvider::new(
+            &provider, authorizer, Some("fixture-local".into()), "test.prompt_tax_bundle",
+        );
+        authorized.complete(Request {
+            prompt: format!("{} leaf mutation", bundle.prompt), system: bundle.system,
+            model: Some("fixture-local".into()), ..Default::default()
+        }).await.unwrap();
+        drop(authorized); drop(writer); writer_join.await.unwrap();
+        let changed = crate::daemon::usage_log::aggregate(changed_home.path(), 0, i64::MAX);
+        assert!(changed.prompt_tax.is_none());
+        assert_eq!(crate::cli::usage::render_prompt_tax_section(None), "  prompt tax: unavailable (no measured terminal responses)\n");
+    }
+
+    #[tokio::test]
     async fn final_budget_boundary_keeps_mcp_catalogue_atomic() {
         let home = tempfile::tempdir().unwrap();
         let wal_path = home.path().join("budget-mcp-atomic.wal");

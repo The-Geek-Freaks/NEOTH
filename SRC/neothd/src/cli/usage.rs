@@ -231,7 +231,7 @@ fn print_table(roll: &UsageRollup, currency: Currency) {
 
 /// Render the complete production prompt-tax section. A missing measurement
 /// remains visible as unavailable; an observed zero remains a measurement.
-fn render_prompt_tax_section(totals: Option<&PromptTaxTotals>) -> String {
+pub(crate) fn render_prompt_tax_section(totals: Option<&PromptTaxTotals>) -> String {
     match totals {
         None => "  prompt tax: unavailable (no measured terminal responses)\n".to_owned(),
         Some(totals) => format!(
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn prompt_tax_section_distinguishes_unavailable_from_an_observed_zero() {
         let totals = PromptTaxTotals {
-            observed_call_count: 0,
+            observed_call_count: 1,
             ..Default::default()
         };
         assert_eq!(
@@ -468,7 +468,7 @@ mod tests {
         );
         assert_eq!(
             render_prompt_tax_section(Some(&totals)),
-            "  prompt tax estimate: retained-bundle input overhead across 0 terminal responses\n    skill=0 memory=0 repo_context=0 council=0 unattributed=0\n"
+            "  prompt tax estimate: retained-bundle input overhead across 1 terminal responses\n    skill=0 memory=0 repo_context=0 council=0 unattributed=0\n"
         );
     }
 
