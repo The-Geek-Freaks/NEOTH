@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W95_W148_W147_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "cee40a6c61e9b140aafb836583e0ace663114e53",
+  "base": "3a1da19e91c4d778f950ce5ee11338a1016c1b79",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 54564,
-    "sha256": "5B4DC3966493F96E825C3993ED2BC98815DB5E0BA8B99A1D9F502B4794970030"
+    "bytes": 54584,
+    "sha256": "90824DD791813DD12ED6A9959A9A1297D71C2F166CAE60A201559EEF7899ADCF"
   },
   "sourceInputs": 316,
   "requiredNativeTests": [
@@ -1014,25 +1014,25 @@
     {
       "test": "providers::ouro::adapter::tests::q8_cache_only_verifier_rejects_unpublished_cache_without_promoting_it",
       "sourcePath": "SRC/neothd/src/providers/ouro/adapter.rs",
-      "sourceSha256": "771A0644444C4A01A08D56933E906434F86E0186D365FE4268C0B55CB9FB75C8",
+      "sourceSha256": "844C7D994C572BD9BCBEC7C3496C36A67426583A2F728BB1277D7420600A6CBE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::ouro::adapter::tests::q8_cache_only_verifier_loads_the_published_fixture_through_receipt_and_lease",
       "sourcePath": "SRC/neothd/src/providers/ouro/adapter.rs",
-      "sourceSha256": "771A0644444C4A01A08D56933E906434F86E0186D365FE4268C0B55CB9FB75C8",
+      "sourceSha256": "844C7D994C572BD9BCBEC7C3496C36A67426583A2F728BB1277D7420600A6CBE",
       "junitClass": "neoth"
     },
     {
       "test": "providers::ouro::adapter::tests::q8_cache_only_verifier_never_reports_native_fallback_on_bad_quantized_artifacts",
       "sourcePath": "SRC/neothd/src/providers/ouro/adapter.rs",
-      "sourceSha256": "771A0644444C4A01A08D56933E906434F86E0186D365FE4268C0B55CB9FB75C8",
+      "sourceSha256": "844C7D994C572BD9BCBEC7C3496C36A67426583A2F728BB1277D7420600A6CBE",
       "junitClass": "neoth"
     },
     {
       "test": "cli::ouro::tests::q8_verify_timeout_returns_while_a_held_worker_remains_in_flight",
       "sourcePath": "SRC/neothd/src/cli/ouro.rs",
-      "sourceSha256": "6F9FB54292F102E8B3B3B33F0B44E9FBD3705DFD569D64509AD5822B0F667989",
+      "sourceSha256": "49C4A5955F48CEC0F2827977E3A2B1F1EF30D04B8A29D170D11132D9B28D56EA",
       "junitClass": "neoth"
     }
   ],
@@ -2101,6 +2101,17 @@
     "newRequiredIdentities": 4,
     "execution": "PENDING_GITHUB_ONLY",
     "localValidationRan": false,
-    "remaining": "GUI consumer and broader P1-09 runtime/progress acceptance"
+    "remaining": "GUI consumer and broader P1-09 runtime/progress acceptance",
+    "hostedFollowup": {
+      "referenceRun": 35592976685,
+      "source": "3a1da19e91c4d778f950ce5ee11338a1016c1b79",
+      "referenceSha256": "C62E540D19CA3662E30323231AE24431C8FB802FD7E29FEBA98B5ADA3852CCD6",
+      "formatRun": 35592975695,
+      "formatHunks": 9,
+      "formatLogSha256": "3980BAEF80ECF952682722C512EBF4E9523A2F8781468B7476534317BC66FC98",
+      "qualityRun": 35592975120,
+      "qualityConclusion": "success",
+      "nativeExecution": "pending"
+    }
   }
 }

@@ -329,15 +329,16 @@ async fn run_verify_q8(output: &OutputFormat) -> Result<()> {
     eprintln!(
         "→ verifying existing Ouro cache through the Q8 loader (observation limit: 120s; a timed-out device load may continue in its worker)"
     );
-    let verification = observe_q8_verify_worker(Duration::from_secs(120), timeout_status, move || {
-        crate::providers::ouro::adapter::verify_q8_cache_only(
-            repo,
-            cache_dir,
-            accelerator,
-            crate::providers::local_qwen::SamplingConfig::default(),
-            max_new_tokens,
-        )
-    });
+    let verification =
+        observe_q8_verify_worker(Duration::from_secs(120), timeout_status, move || {
+            crate::providers::ouro::adapter::verify_q8_cache_only(
+                repo,
+                cache_dir,
+                accelerator,
+                crate::providers::local_qwen::SamplingConfig::default(),
+                max_new_tokens,
+            )
+        });
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -367,7 +368,10 @@ async fn run_verify_q8(output: &OutputFormat) -> Result<()> {
                 println!("  loop steps            : {loop_steps}");
             }
             println!("  fixed Q8 forward      : {}", verification.forward_checked);
-            println!("  context-sensitive     : {}", verification.context_sensitive);
+            println!(
+                "  context-sensitive     : {}",
+                verification.context_sensitive
+            );
             if let Some(digest) = &verification.forward_digest {
                 println!("  forward digest        : {digest}");
             }
@@ -383,7 +387,10 @@ async fn run_verify_q8(output: &OutputFormat) -> Result<()> {
     anyhow::ensure!(
         verification.verified,
         "Ouro Q8 cache-only verification failed: {}",
-        verification.detail.as_deref().unwrap_or("no terminal detail")
+        verification
+            .detail
+            .as_deref()
+            .unwrap_or("no terminal detail")
     );
     Ok(())
 }
@@ -465,8 +472,16 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("timeout returned without waiting for worker release");
         assert!(!status.verified);
-        assert!(status.detail.as_deref().unwrap_or_default().contains("timeout"));
-        release_tx.send(()).expect("release worker after timeout assertion");
+        assert!(
+            status
+                .detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("timeout")
+        );
+        release_tx
+            .send(())
+            .expect("release worker after timeout assertion");
         observer.join().expect("observer thread exits");
     }
 

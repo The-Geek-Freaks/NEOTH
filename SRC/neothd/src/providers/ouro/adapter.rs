@@ -697,9 +697,9 @@ pub fn verify_q8_cache_only(
             .loaded
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let loaded = slot.as_mut().ok_or_else(|| {
-            anyhow::anyhow!("Ouro Q8 loader returned without a cached model")
-        })?;
+        let loaded = slot
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Ouro Q8 loader returned without a cached model"))?;
         let device = loaded.model_device();
         let LoadedOuroModel::Quantized(model) = &mut loaded.model else {
             anyhow::bail!("Ouro Q8 verification reached a non-Q8 loaded model");
@@ -735,20 +735,22 @@ pub fn verify_q8_cache_only(
     });
 
     match loaded {
-        Ok((receipt, resolved_device, loop_steps, forward_digest, alternate_forward_digest)) => OuroQ8VerifyStatus {
-            verified: true,
-            quant_mode: OuroQuantMode::Q8.as_str(),
-            repo,
-            cache_dir: cache_dir.display().to_string(),
-            receipt: Some(receipt),
-            resolved_device: Some(resolved_device),
-            loop_steps: Some(loop_steps),
-            forward_checked: true,
-            forward_digest: Some(forward_digest),
-            alternate_forward_digest: Some(alternate_forward_digest),
-            context_sensitive: true,
-            detail: None,
-        },
+        Ok((receipt, resolved_device, loop_steps, forward_digest, alternate_forward_digest)) => {
+            OuroQ8VerifyStatus {
+                verified: true,
+                quant_mode: OuroQuantMode::Q8.as_str(),
+                repo,
+                cache_dir: cache_dir.display().to_string(),
+                receipt: Some(receipt),
+                resolved_device: Some(resolved_device),
+                loop_steps: Some(loop_steps),
+                forward_checked: true,
+                forward_digest: Some(forward_digest),
+                alternate_forward_digest: Some(alternate_forward_digest),
+                context_sensitive: true,
+                detail: None,
+            }
+        }
         Err(error) => OuroQ8VerifyStatus {
             verified: false,
             quant_mode: OuroQuantMode::Q8.as_str(),
@@ -1701,7 +1703,13 @@ mod tests {
         assert!(!status.verified);
         assert_eq!(status.quant_mode, "q8");
         assert!(status.receipt.is_none());
-        assert!(status.detail.as_deref().unwrap_or_default().contains("published"));
+        assert!(
+            status
+                .detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("published")
+        );
         assert!(
             !dir.path().join(".ouro-generations").exists(),
             "cache-only verification must not promote mutable artifacts"
@@ -1725,7 +1733,13 @@ mod tests {
         assert!(status.verified, "{status:?}");
         assert_eq!(status.quant_mode, "q8");
         assert!(status.receipt.is_some());
-        assert!(status.resolved_device.as_deref().unwrap_or_default().contains("Cpu"));
+        assert!(
+            status
+                .resolved_device
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Cpu")
+        );
         assert_eq!(status.loop_steps, Some(2));
         assert!(status.forward_checked);
         assert!(status.context_sensitive);
@@ -1740,7 +1754,10 @@ mod tests {
         );
         assert!(second.verified, "{second:?}");
         assert_eq!(status.forward_digest, second.forward_digest);
-        assert_eq!(status.alternate_forward_digest, second.alternate_forward_digest);
+        assert_eq!(
+            status.alternate_forward_digest,
+            second.alternate_forward_digest
+        );
     }
 
     #[test]

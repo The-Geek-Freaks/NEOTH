@@ -2,6 +2,12 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W147 hosted follow-up (2026-09-21):** GitHub CLI build/reference35592976685
+passed on3a1da19e; its SHA-bound snapshot is imported. Exactly nine observed
+Preflight35592975695 formatter hunks are imported; CodeQuality35592975120
+passed. Full native tests and GUI acceptance remain pending; W142/W150 are
+still separate working source. No checkbox closure or local execution.
+
 **W147 Ouro Q8 source slice (2026-09-21):** the existing quantized model now
 has an explicit cache-only CLI verification path through its real receipt,
 lease and Q8 forwards. Four source fixtures cover repeatable CPU execution,

@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W148-W147-ouro-cache-only-verification",
-  "base": "cee40a6c61e9b140aafb836583e0ace663114e53",
-  "capturedUtc": "2026-09-21T11:11:59.7577251Z",
-  "validationStatus": "W147_REVIEWED_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "base": "3a1da19e91c4d778f950ce5ee11338a1016c1b79",
+  "capturedUtc": "2026-09-21T11:23:19.0292944Z",
+  "validationStatus": "W147_HOSTED_FORMAT_AND_CLI_REFERENCE_IMPORTED_NATIVE_TESTS_PENDING",
   "scopeNote": "316 inputs; W147 typed cache-only Ouro Q8 verification, actual CPU artifact/timeout fixtures. W142/W150 working source excluded; no local execution or Road closure.",
   "files": [
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 228442,
-      "sha256": "525890A3CBD33F9B1000D08A8DA52EEAD1985D2A8064593795BF2608926D86D0"
+      "bytes": 228534,
+      "sha256": "C62E540D19CA3662E30323231AE24431C8FB802FD7E29FEBA98B5ADA3852CCD6"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -1303,8 +1303,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/ouro/adapter.rs",
-      "bytes": 87888,
-      "sha256": "771A0644444C4A01A08D56933E906434F86E0186D365FE4268C0B55CB9FB75C8"
+      "bytes": 88179,
+      "sha256": "844C7D994C572BD9BCBEC7C3496C36A67426583A2F728BB1277D7420600A6CBE"
     },
     {
       "path": "SRC/neothd/src/providers/ouro/artifacts.rs",
@@ -1583,8 +1583,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/ouro.rs",
-      "bytes": 24806,
-      "sha256": "6F9FB54292F102E8B3B3B33F0B44E9FBD3705DFD569D64509AD5822B0F667989"
+      "bytes": 25047,
+      "sha256": "49C4A5955F48CEC0F2827977E3A2B1F1EF30D04B8A29D170D11132D9B28D56EA"
     }
   ]
 }

@@ -2553,6 +2553,10 @@ List every supported ByteDance Ouro checkpoint with size + thinking flag + recom
 
 Show the operator's currently-configured Ouro state (read from `~/.neoth/freedom.yaml`)
 
+### `neoth ouro verify-q8`
+
+Verify the configured cache through the actual Q8 model loader
+
 ## `neoth paperless`
 
 Paperless OCR ingest + consult. Subcommands: `ingest`, `consult`. Operator surface for the SC-16/PL-02/PL-03 vertical slice
