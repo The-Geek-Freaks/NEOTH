@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W164 build/reference and quick gates (2026-09-21):** sourcecc8a6609 passed
+GitHub CLI build/reference35645438626. Its source/SHA-bound generated reference
+is imported byte-for-byte (D4026EA859078483FB3055064A75286ECBB460EC999A3D233AC7B2726768321F).
+The subsequent formatting-only source0b5effc4 passed Preflight35645598181 and
+Code Quality35645596344. The next full CI must confirm the unchanged generated
+reference equality test and actual native/GUI behavior; no release claim follows.
+
 **W164 first Hosted result (2026-09-21):** source0837eb4b passed Code Quality
 35644565456. Preflight35644566079 requested 130 formatting hunks in 14 files;
 all were imported exactly from the retained Hosted log. CLI build35644567767

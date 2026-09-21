@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W164-response-feedback-candidate",
-  "base": "cc8a6609deafdc7b40d2b0557e5119799af29f4a",
-  "capturedUtc": "2026-09-21T19:32:01.7661972Z",
-  "validationStatus": "W164_HOSTED_FORMAT_AND_COMPILER_REPAIRS_PENDING_RERUN",
+  "base": "0b5effc4bec668ae32e71f3fbfa0c5bf35448834",
+  "capturedUtc": "2026-09-21T19:37:48.4612912Z",
+  "validationStatus": "W164_CORE_BUILD_AND_QUICK_GATES_PASS_NATIVE_GUI_PENDING",
   "scopeNote": "W164 integrated response-bound feedback: private revision CAS, ordered live-writer flush, strict terminal transports, CLI/Chat/Buddy mutation receipt plus status readback. Remaining W165 reasoning/GUI/loop fixture repairs included. Static reviews only; native/GUI/release acceptance pending.",
   "files": [
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 230435,
-      "sha256": "9BE613783FC2C1E8DBD2A203BF75A65F9644889E260F29526B859E498119419C"
+      "bytes": 231534,
+      "sha256": "D4026EA859078483FB3055064A75286ECBB460EC999A3D233AC7B2726768321F"
     },
     {
       "path": "docs/code-map-lifecycle.md",

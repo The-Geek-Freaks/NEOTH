@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W164_HOSTED_FORMAT_AND_COMPILER_REPAIRS_PENDING_RERUN",
+  "status": "W164_CORE_BUILD_AND_QUICK_GATES_PASS_NATIVE_GUI_PENDING",
   "base": "c4ce104060b4915924a0ea452d4eee61aeffd9d5",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 63438,
-    "sha256": "E23B909E98076CEF4FC2BAD58DCE5DFAADDE99CA9802A076DA167E6C0194B995"
+    "bytes": 63440,
+    "sha256": "D47B0707AB80448A0F73CEA24A849106230083BE5ABD07AF6302D3D49A945864"
   },
   "sourceInputs": 367,
   "requiredNativeTests": [
@@ -2778,7 +2778,7 @@
     "W58 native GUI callback now includes Disabled/Unavailable/Ready, diagnosticCLI resolution and drained late-result publication; same macOS mainthread identity",
     "Provider-loop selected-route cancellation remains outside the W102 direct-CLI fixture; direct CLI deliberately uses unbound cancellation",
     "Portable, installed, visual and provider-live acceptance for final source; selector editing/Buddy enable-disable-explain remain open; no ROAD checkbox closes",
-    "W164 changes CLI commands; generated reference import and unchanged docgen equality guard required in full CI",
+    "W164 generated reference imported from35645438626; unchanged docgen equality guard remains required in full CI",
     "W142 public CLI reference imported from successful source/SHA-bound hosted generation35595632250; unchanged docgen equality guard remains required in full CI"
   ],
   "guiSourceBindings": [
@@ -5735,5 +5735,33 @@
     "after": "FF06BB57877F974930A65E43FB61ADF8EC77459BCE871635F36815BD42C5F98B",
     "status": "fresh_preflight_pending",
     "localFormatterRan": false
+  },
+  "wave164CorePass": {
+    "reference": {
+      "run": 35645438626,
+      "sourceHead": "cc8a6609deafdc7b40d2b0557e5119799af29f4a",
+      "sourceRelation": "main0b5effc4 differs only by exact hosted daemon import formatting and verification metadata",
+      "artifact": "generated-cli-reference",
+      "before": "9BE613783FC2C1E8DBD2A203BF75A65F9644889E260F29526B859E498119419C",
+      "after": "D4026EA859078483FB3055064A75286ECBB460EC999A3D233AC7B2726768321F",
+      "bytes": 231534,
+      "localBinaryRan": false,
+      "fullCiDocgenEquality": "pending"
+    },
+    "preflight": {
+      "run": 35645598181,
+      "source": "0b5effc4bec668ae32e71f3fbfa0c5bf35448834",
+      "conclusion": "success"
+    },
+    "codeQuality": {
+      "run": 35645596344,
+      "source": "0b5effc4bec668ae32e71f3fbfa0c5bf35448834",
+      "conclusion": "success"
+    },
+    "importReceipt": "work/gold-20260906/wave164-response-feedback/REFERENCE-IMPORT.json",
+    "importReceiptSha256": "A4629430E99E6BF8E44113C3986DD01C6B46B0195FB8704100D7DB3F1BD56358",
+    "fullCI": "pending",
+    "GUI": "pending",
+    "localExecution": false
   }
 }

@@ -1380,9 +1380,37 @@ GOLD-WIRE-11 — fact-check a claim. Decomposes the text into atomic proposition
 
 G-03 — `feedback summary [--window 7d]`: aggregate the operator self-correction (`0xBB`) signals into an actionable report (count, top correction patterns, pressure level). The consumer side of the self-correction loop; the same aggregate drives the profile-adapt cron's sustained-pushback self-dev proposal
 
+### `neoth feedback response`
+
+Apply or remove one fixed signal for a terminal-issued response
+
+#### `neoth feedback response remove`
+
+Remove the currently active signal for an exact terminal receipt
+
+- `--response <RESPONSE>` — Opaque response id emitted with the completed chat terminal
+- `--session <SESSION>` — Exact terminal session printed with that response id
+- `--revision <REVISION>` — Expected response revision for the required compare-and-swap
+
+#### `neoth feedback response set`
+
+Set a fixed feedback signal for an exact terminal receipt
+
+- `--response <RESPONSE>` — Opaque response id emitted with the completed chat terminal
+- `--session <SESSION>` — Exact terminal session printed with that response id
+- `--revision <REVISION>` — Expected response revision for the required compare-and-swap
+- `--signal <SIGNAL>` — Fixed response signal; freeform notes are intentionally unsupported
+
+#### `neoth feedback response status`
+
+Read the current revision and active fixed signal for an exact receipt
+
+- `--response <RESPONSE>` — Opaque response id emitted with the completed chat terminal
+- `--session <SESSION>` — Exact terminal session printed with that response id
+
 ### `neoth feedback summary`
 
-Aggregate recent operator-correction (`0xBB`) signals into a report: count, top correction patterns, pressure level. The consumer side of the G-03 self-correction loop
+Aggregate recent operator-correction (`0xBB`) signals into a report
 
 - `--window <WINDOW>` — Look-back window, e.g. `7d`, `48h`, `3600` (bare seconds). Default 7d
 
