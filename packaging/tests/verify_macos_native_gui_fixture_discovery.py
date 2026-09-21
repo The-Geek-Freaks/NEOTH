@@ -13,6 +13,11 @@ CUSTOM_TESTS = frozenset(
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
         "w58_gui_callback_runtime_tests::w73_buddy_cancel_joins_real_blocked_provider_without_success_repaint",
         "w58_gui_callback_runtime_tests::w73_queued_late_terminal_bridge_callback_executes_and_revision_gate_rejects_it",
+        "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt",
+        "w58_gui_callback_runtime_tests::w121_channel_pairing_request_callbacks_require_exact_receipts_before_relisting",
+        "w58_gui_callback_runtime_tests::w122_channel_account_dm_pairing_callback_preserves_projection_until_exact_receipt",
+        "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt",
+        "w58_gui_callback_runtime_tests::w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt",
     }
 )
 CONTROLLER_TEST = (
@@ -37,7 +42,7 @@ def verify_fixture_discovery(listing: object) -> None:
         or custom_suite.get("binary-id") != CUSTOM_BINARY_ID
         or set(custom_suite.get("testcases", {})) != CUSTOM_TESTS
     ):
-        raise ValueError("custom macOS GUI suite does not contain exactly the five W58 fixtures")
+        raise ValueError("custom macOS GUI suite does not contain exactly the required callback fixtures")
 
     def is_runnable(suite: object, test_name: str) -> bool:
         if not isinstance(suite, dict):

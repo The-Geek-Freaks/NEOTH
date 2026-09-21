@@ -78,16 +78,16 @@ pub struct ChannelDestinations {
     /// feature-off builds retain the route but honestly stay SidecarOnly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matrix_room_id: Option<String>,
-    /// B9 — IRC channel (`#chan`) or nick. Connection-bound (live socket in
-    /// the serve loop) — stored for parity, delivery SidecarOnly for now.
+    /// B9 — IRC channel (`#chan`) or nick. Connection-bound delivery acquires
+    /// only the ready leased live socket published by the serve loop.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub irc_channel: Option<String>,
-    /// B9 — Nostr recipient pubkey (hex/npub). Connection-bound (relay pool)
-    /// — stored for parity, delivery SidecarOnly for now.
+    /// B9 — Nostr recipient pubkey (hex/npub). Connection-bound delivery
+    /// acquires only the ready leased live relay adapter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nostr_recipient: Option<String>,
     /// B9 — Twitch channel (`#chan`). Served by the IRC adapter; connection-
-    /// bound — stored for parity, delivery SidecarOnly for now.
+    /// bound delivery acquires only the ready leased live adapter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub twitch_channel: Option<String>,
     /// B9 — Google Chat space (`spaces/AAAA…`) for the Pub/Sub adapter.

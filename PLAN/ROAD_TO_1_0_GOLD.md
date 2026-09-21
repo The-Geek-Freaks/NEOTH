@@ -8,6 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W128/W130 existing-connection delivery and migration (2026-09-21):**
+IRC/Twitch/Nostr proactive delivery acquires only the daemon's current ready
+adapter under exact account, fingerprint and lifecycle authority. Revocation
+drains owned sends; missing or stale handles stay ledger-only. The GUI now guides
+the existing transactional Telegram singleton migration, with exact receipts,
+explicit reconciliation and generation-gated inventory replies. Saved routing
+settings remain intact; channel-only proactive routes do not select the new
+named account automatically. See [W128](../docs/gold-wave128-verification.md)
+and [W130](../docs/gold-wave130-verification.md). Independent integrated source
+review is approved. The admitted matrix has 303 inputs, 104 required native
+tests, 19 GUI tests on every platform plus five Unix/macOS callbacks and a
+separate seven-test IRC/Nostr feature lane. Fresh hosted gates remain required. Live transport, rendered GUI and release qualification are open;
+no checkbox or count changes (**1324/1015/307/2**).
+
 **W126/W127 selected-request approval (2026-09-21):** the GUI can approve an
 existing Telegram DM pairing request with the sender's private code. A hidden
 stdin-only CLI envelope binds the selected request and account; one immediate

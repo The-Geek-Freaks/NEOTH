@@ -1048,6 +1048,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // message: emit WAL CHANNEL_INGRESS → call provider → emit CHANNEL_EGRESS
     // → return reply for the channel to send.
     let mut channel_tasks: crate::cli::serve_tasks::ChannelFleet = std::collections::HashMap::new();
+    let live_channels = Arc::new(crate::daemon::channel_live_registry::ChannelLiveRegistry::new());
+    let initial_channel_fingerprints = crate::cli::serve_tasks::channel_account_fingerprints(
+        &config,
+        &creds,
+        &telegram_accounts,
+        &neoth_home,
+    );
+    let mut readiness_publishers: crate::cli::serve_tasks::ChannelReadinessPublishers =
+        std::collections::HashMap::new();
     // COR-34: shared JoinSet tracking the detached, DISPATCH_GATE-bounded Meta
     // webhook fan-out tasks. The WhatsApp listener spawns each dispatch into it
     // (via WebhookListenerConfig::dispatch_join); the shutdown sequence drains it
@@ -1158,10 +1167,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         &dispatch_join,
         &creds,
         &mut channel_tasks,
+        &live_channels,
+        &initial_channel_fingerprints,
+        &mut readiness_publishers,
         None,
         &confirm_bus,
         &views_executor, // GOLD-ADAPT-TRAIL-04: multi-reader executor
-    );
+    )
+    .await;
 
     // The audit endpoint nonce is already committed to the held PID lock above.
     // Construct the projection only after initial adapter ownership is known.
@@ -1210,16 +1223,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // and restart only adapters whose inputs changed. Stop-before-start avoids
     // duplicate pollers and webhook port collisions. A corrupt credential store
     // is fail-closed: the old fleet is stopped instead of retaining stale keys.
-    let initial_channel_fingerprints = crate::cli::serve_tasks::channel_account_fingerprints(
-        &config,
-        &creds,
-        &telegram_accounts,
-        &neoth_home,
-    );
     let channel_tasks = std::sync::Arc::new(std::sync::Mutex::new(channel_tasks));
+    let readiness_publishers = std::sync::Arc::new(std::sync::Mutex::new(readiness_publishers));
     let channel_supervisor_task: tokio::task::JoinHandle<()> = {
         let mut gen_rx = reload_controller.subscribe_generation();
         let tasks = std::sync::Arc::clone(&channel_tasks);
+        let readiness_publishers = std::sync::Arc::clone(&readiness_publishers);
+        let live_channels = Arc::clone(&live_channels);
         let shared_provider = shared_provider.clone();
         let writer = writer.clone();
         let provider_meter = provider_meter.clone();
@@ -1289,6 +1299,17 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         .collect()
                 };
                 for channel_ref in finished {
+                    live_channels.revoke_and_drain(&channel_ref).await;
+                    let publisher = {
+                        readiness_publishers
+                            .lock()
+                            .expect("channel readiness publisher mutex poisoned")
+                            .remove(&channel_ref)
+                    };
+                    if let Some(publisher) = publisher {
+                        publisher.abort();
+                        let _ = publisher.await;
+                    }
                     let handles = tasks
                         .lock()
                         .expect("channel_tasks mutex poisoned")
@@ -1314,6 +1335,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     Ok(runtime) => runtime,
                     Err(load_error) => {
                         pending = None;
+                        for channel_ref in known_fingerprints.keys() {
+                            live_channels.revoke_and_drain(channel_ref).await;
+                        }
+                        crate::cli::serve_tasks::abort_channel_readiness_publishers(
+                            &readiness_publishers,
+                        )
+                        .await;
                         if credentials_valid {
                             let old: Vec<tokio::task::JoinHandle<()>> = {
                                 let mut guard = tasks.lock().expect("channel_tasks mutex poisoned");
@@ -1352,6 +1380,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     }
                     Err(load_error) => {
                         pending = None;
+                        for channel_ref in known_fingerprints.keys() {
+                            live_channels.revoke_and_drain(channel_ref).await;
+                        }
+                        crate::cli::serve_tasks::abort_channel_readiness_publishers(
+                            &readiness_publishers,
+                        )
+                        .await;
                         if credentials_valid {
                             let old: Vec<tokio::task::JoinHandle<()>> = {
                                 let mut guard = tasks.lock().expect("channel_tasks mutex poisoned");
@@ -1386,6 +1421,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         Ok(accounts) => accounts,
                         Err(load_error) => {
                             pending = None;
+                            for channel_ref in known_fingerprints.keys() {
+                                live_channels.revoke_and_drain(channel_ref).await;
+                            }
+                            crate::cli::serve_tasks::abort_channel_readiness_publishers(
+                                &readiness_publishers,
+                            )
+                            .await;
                             if credentials_valid {
                                 let old: Vec<tokio::task::JoinHandle<()>> = {
                                     let mut guard =
@@ -1518,6 +1560,17 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 }
 
                 for channel_ref in changed {
+                    live_channels.revoke_and_drain(&channel_ref).await;
+                    let publisher = {
+                        readiness_publishers
+                            .lock()
+                            .expect("channel readiness publisher mutex poisoned")
+                            .remove(&channel_ref)
+                    };
+                    if let Some(publisher) = publisher {
+                        publisher.abort();
+                        let _ = publisher.await;
+                    }
                     let old = tasks
                         .lock()
                         .expect("channel_tasks mutex poisoned")
@@ -1531,6 +1584,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     }
 
                     let mut replacement = crate::cli::serve_tasks::ChannelFleet::new();
+                    let mut replacement_publishers =
+                        crate::cli::serve_tasks::ChannelReadinessPublishers::new();
                     crate::cli::serve_tasks::spawn_channel_adapters(
                         &fresh_config,
                         &fresh_telegram_accounts,
@@ -1545,11 +1600,21 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         &dispatch_join,
                         &fresh_creds,
                         &mut replacement,
+                        &live_channels,
+                        &new_fingerprints,
+                        &mut replacement_publishers,
                         Some(&channel_ref),
                         &confirm_bus,
                         &views_executor,
-                    );
+                    )
+                    .await;
                     let replacement = replacement.remove(&channel_ref).unwrap_or_default();
+                    if let Some(publisher) = replacement_publishers.remove(&channel_ref) {
+                        readiness_publishers
+                            .lock()
+                            .expect("channel readiness publisher mutex poisoned")
+                            .insert(channel_ref.clone(), publisher);
+                    }
                     let task_count = replacement.len();
                     if replacement.is_empty() {
                         if shared_provider.is_some()
@@ -2105,6 +2170,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         &segment_chain_base_path,
         &writer,
         &reload_controller,
+        Arc::clone(&live_channels),
     );
 
     // ── 5d-quartus. G-02 surfacing cron — "Knows things about you you
@@ -2744,6 +2810,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         companion_state,
         worker_watch_handle,
         channel_tasks,
+        readiness_publishers,
+        live_channels,
         channel_supervisor_task,
         channel_runtime_health,
         dispatch_join,

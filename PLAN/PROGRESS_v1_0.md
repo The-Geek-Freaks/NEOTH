@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W128/W130 (2026-09-21):** existing IRC/Twitch/Nostr adapters gain proactive
+delivery through exact live-generation leases and the established durable egress
+path. The Telegram singleton migration becomes accessible in Settings through
+the existing atomic CLI, exact receipt validation and an explicit reconciliation
+state. Old asynchronous inventory replies cannot overwrite the migrated account.
+See [W128](../docs/gold-wave128-verification.md) and
+[W130](../docs/gold-wave130-verification.md). Independent source review is approved;
+303 inputs, 104 native tests, 19 GUI tests plus five Unix/macOS callbacks and
+seven optional-adapter tests are admitted. Fresh hosted gates remain required; live-provider, render/accessibility and release evidence remain open.
+All local validation stays suspended; counts remain **1324/1015/307/2**.
+
 **W126/W127 (2026-09-21):** selected Telegram DM requests gain private-code
 approval in the GUI. The bounded stdin envelope and atomic request-ID/code match
 prevent approval of another row; exact successful receipts alone trigger the

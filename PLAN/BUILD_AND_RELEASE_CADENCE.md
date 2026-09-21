@@ -37,6 +37,15 @@ After the reviewed Matrix configuration and four compile repairs are published,
 new exact-source Preflight/Code Quality precede a fresh full CI and preview.
 Successful earlier-source component jobs remain historical evidence.
 
+W128 adds one hosted optional-adapter lane to the existing feature matrix because
+ordinary default-feature CI does not compile the IRC/Nostr adapter modules.
+The lane enables `irc-channel nostr-channel` with Rust 1.91 and one Cargo worker,
+compiles the library through its focused hermetic tests, and verifies each exact
+test identity has one match before execution. Its job/test bounds are 45/40
+minutes; live provider and release acceptance remain separate. The workflow and
+its existing cadence contract must pass hosted validation before this is counted
+as evidence. No local toolchain execution is authorized by the new lane.
+
 ## Unreleased Windows preview
 
 `.github/workflows/preview-windows.yml` is a manual GitHub-hosted x64 build for
@@ -202,9 +211,10 @@ provider, apply, delivery or release gates.
 The macOS generated-Slint callback fixtures need the native event loop on the
 process main thread. Its CI compile, discovery and execution commands therefore
 enable `neothd-gui/macos-native-gui-test`. The custom `harness = false` target
-exposes the same five W58 test names to Nextest and runs the selected fixture
-directly from `main`; the sixth controller fixture remains ordinary libtest.
-Discovery must bind all five names to the custom binary and reject missing or
+exposes ten callback test names to Nextest (W58/W73/W80 plus W116/W121/W122/
+W126/W130) and runs the selected fixture
+directly from `main`; the coding controller fixture remains ordinary libtest.
+Discovery must bind all ten names to the custom binary and reject missing or
 duplicate registrations before execution. These remain actual Winit/AppKit
 fixtures. Test helpers are compiled only under `cfg(test)`; the normal application
 entry is unchanged. A custom-target invocation on another platform must never

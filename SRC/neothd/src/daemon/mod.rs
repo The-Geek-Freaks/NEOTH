@@ -39,6 +39,9 @@ pub mod backup_retention;
 /// `0x0F CAPABILITY_EVOLVER_RAN`. Companion CLI surface: `neoth self-dev scan`.
 pub mod capability_evolver;
 pub mod channel_runtime_health;
+/// Generation-bound registry for connection-owned proactive channel adapters.
+/// It hands durable egress a revocable lease, never a raw live transport.
+pub mod channel_live_registry;
 /// Read-only account-bound adapter attempt/result evidence from the
 /// authenticated complete home WAL.
 pub(crate) mod channel_transport_evidence;

@@ -41,6 +41,7 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use irc::client::Sender;
 use irc::client::prelude::{Client, Command, Config};
+use irc::proto::Response;
 use tracing::{info, warn};
 
 use crate::secret::SecretString;
@@ -56,6 +57,11 @@ pub struct IrcChannel {
     config: Config,
     nick: String,
     sender: tokio::sync::OnceCell<Sender>,
+    /// Becomes true only after the server accepted registration (`001`) and
+    /// the connection-owned sender has been published.  A daemon registry may
+    /// use this to expose the adapter for proactive delivery without creating
+    /// a second IRC connection.
+    live_ready: tokio::sync::watch::Sender<bool>,
     kind: ChannelKind,
     /// D2 — operator sender allowlist (a nick). `None` ⇒ open.
     allowed_nick: Option<String>,
@@ -96,10 +102,12 @@ impl IrcChannel {
             channels,
             ..Config::default()
         };
+        let (live_ready, _) = tokio::sync::watch::channel(false);
         Self {
             config,
             nick,
             sender: tokio::sync::OnceCell::new(),
+            live_ready,
             kind: ChannelKind::Irc,
             allowed_nick: None,
             allowed_account: None,
@@ -152,6 +160,13 @@ impl IrcChannel {
         ch.kind = ChannelKind::Twitch;
         ch
     }
+
+    /// Subscribe to the receive loop's authenticated-live transition.  This
+    /// stays adapter-local: callers still need their own lifecycle authority
+    /// before publishing an `Arc<IrcChannel>` for proactive delivery.
+    pub(crate) fn live_ready_receiver(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.live_ready.subscribe()
+    }
 }
 
 /// Connect + identify a client. Owned (the caller's receive loop needs `&mut`
@@ -191,6 +206,25 @@ fn account_tag_value(message: &irc::proto::Message) -> Option<String> {
         .find_map(|tag| (tag.0 == "account").then(|| tag.1.clone().unwrap_or_default()))
 }
 
+/// The server's `001` response is the protocol-level acknowledgement that the
+/// registration commands submitted by `identify()` were accepted.
+fn registration_accepted(message: &irc::proto::Message) -> bool {
+    matches!(
+        &message.command,
+        Command::Response(Response::RPL_WELCOME, _)
+    )
+}
+
+/// Reset the observable readiness state on every return path, including a
+/// `?` error or cancellation while the receive future is being dropped.
+struct LiveReadyReset(tokio::sync::watch::Sender<bool>);
+
+impl Drop for LiveReadyReset {
+    fn drop(&mut self) {
+        let _ = self.0.send(false);
+    }
+}
+
 #[async_trait]
 impl Channel for IrcChannel {
     fn name(&self) -> &'static str {
@@ -203,6 +237,7 @@ impl Channel for IrcChannel {
     /// restart-spin on a broken config); the irc crate retries transient
     /// line-level errors internally.
     async fn run(&self, handler: PipelineHandler) -> Result<()> {
+        let _live_ready_reset = LiveReadyReset(self.live_ready.clone());
         // B9 — hardened mode needs the server to attach `account=` tags to
         // inbound messages. The cap is requested inside the registration
         // window (before `CAP END`); a network that doesn't support it simply
@@ -216,13 +251,26 @@ impl Channel for IrcChannel {
         let mut client = connect(&self.config, caps)
             .await
             .context("irc client init")?;
-        // Publish the clonable send handle so `send_text` (a `&self` method that
-        // can't reach this owned client) can send while the loop runs.
+        // Publish the clonable send handle, but do not announce readiness yet:
+        // `identify` writes registration commands and does not establish that
+        // the server accepted them.  `001 RPL_WELCOME` is that acknowledgement.
         let sender = client.sender();
         let _ = self.sender.set(sender.clone());
         let mut stream = client.stream().context("irc stream")?;
-        info!(nick = %self.nick, "irc adapter live");
+        let mut registered = false;
         while let Some(message) = stream.next().await.transpose().context("irc stream recv")? {
+            if registration_accepted(&message) {
+                registered = true;
+                let _ = self.live_ready.send(true);
+                info!(nick = %self.nick, "irc adapter live");
+                continue;
+            }
+            // A server may send capability/MOTD traffic before its acceptance
+            // response.  Do not expose a proactive sender or process inbound
+            // application messages until registration is confirmed.
+            if !registered {
+                continue;
+            }
             let Command::PRIVMSG(target, text) = &message.command else {
                 continue;
             };
@@ -332,6 +380,18 @@ mod tests {
             prefix: None,
             command: Command::PRIVMSG("#a".to_string(), "hi".to_string()),
         }
+    }
+
+    #[test]
+    fn only_server_welcome_marks_registration_accepted() {
+        let welcome = irc::proto::Message {
+            tags: None,
+            prefix: None,
+            command: Command::Response(Response::RPL_WELCOME, vec!["neoth".to_string()]),
+        };
+        let not_welcome = msg_with_tags(None);
+        assert!(registration_accepted(&welcome));
+        assert!(!registration_accepted(&not_welcome));
     }
 
     #[test]

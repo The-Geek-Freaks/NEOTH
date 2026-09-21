@@ -43,6 +43,7 @@ pub const PROACTIVE_DELIVERED_SIDECAR: &str = "proactive_delivered.jsonl";
 pub use crate::daemon::proactive_egress::PROACTIVE_INFLIGHT_DIR;
 
 const LOCAL_INBOX_CHANNEL: &str = "local_inbox";
+const MAX_CONNECTION_BOUND_TARGET_BYTES: usize = MAX_PROACTIVE_CHANNEL_BYTES;
 
 /// G-01 channel-delivery (Session 28d, 4-lens gremium) — the outcome of
 /// attempting to deliver ONE drained proactive item.
@@ -137,6 +138,56 @@ pub(crate) enum DeliveryRoute {
     /// instance is deliberately not reused as delivery authority.
     #[cfg(feature = "gchat-channel")]
     GoogleChat { space: String },
+    /// A connection-owned adapter. The dispatcher may acquire only the
+    /// exact ready live handle published by the daemon under this reference;
+    /// it must never construct a replacement transport for these lanes.
+    ConnectionBound {
+        channel_ref: crate::channels::registry::ChannelRef,
+        recipient: String,
+    },
+}
+
+fn is_single_connection_target(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_CONNECTION_BOUND_TARGET_BYTES
+        && value.trim() == value
+        && !value
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control() || character == ',')
+}
+
+fn is_valid_irc_proactive_target(value: &str) -> bool {
+    if !is_single_connection_target(value) {
+        return false;
+    }
+    if let Some(channel) = value.strip_prefix('#') {
+        return !channel.is_empty();
+    }
+    let mut characters = value.chars();
+    matches!(characters.next(), Some(character) if character.is_ascii_alphabetic() || "[]\\`_^{}|".contains(character))
+        && characters.all(|character| {
+            character.is_ascii_alphanumeric() || "-[]\\`_^{}|".contains(character)
+        })
+}
+
+fn is_valid_twitch_proactive_target(value: &str) -> bool {
+    let Some(channel) = value.strip_prefix('#') else {
+        return false;
+    };
+    is_single_connection_target(value)
+        && (4..=25).contains(&channel.len())
+        && channel
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_lowercase())
+        && channel
+            .chars()
+            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_')
+}
+
+#[cfg(feature = "nostr-channel")]
+fn is_valid_nostr_proactive_target(value: &str) -> bool {
+    is_single_connection_target(value) && nostr_sdk::prelude::PublicKey::parse(value).is_ok()
 }
 
 /// G-01 / GOLD-FEAT-13 — decide how (and whether) to deliver an item whose
@@ -154,8 +205,9 @@ pub(crate) enum DeliveryRoute {
 /// Telegram/Slack/Discord/WhatsApp + B9 Signal/LINE/Mattermost/iMessage and,
 /// when compiled, Matrix and Google Chat. Matrix restores its persistent SDK
 /// session lazily; Google Chat constructs a fresh short-lived adapter from its
-/// complete operator configuration. IRC/Twitch/Nostr remain `SidecarOnly`.
-/// Keet is constructible on demand through its authenticated local companion.
+/// complete operator configuration. IRC/Twitch/Nostr acquire only a ready,
+/// generation-bound daemon-owned adapter. Keet is constructible on demand
+/// through its authenticated local companion.
 pub(crate) fn plan_delivery(
     channel: &str,
     policy: impl crate::permissions::PolicyArgument,
@@ -351,9 +403,40 @@ pub(crate) fn plan_delivery(
                 DeliveryRoute::SidecarOnly
             }
         }
-        // B9 — remaining connection-bound adapters (live socket / relay pool):
-        // their routing destinations are stored but delivery stays ledger-only.
-        "irc" | "twitch" | "nostr" => DeliveryRoute::SidecarOnly,
+        // Connection-owned adapters are never reconstructed for proactive
+        // delivery. The later registry lookup binds the exact default account,
+        // current credential fingerprint, and live generation before it can
+        // cross the durable egress seam.
+        "irc" => match dest.filter(|recipient| is_valid_irc_proactive_target(recipient)) {
+            Some(recipient) => DeliveryRoute::ConnectionBound {
+                channel_ref: crate::channels::registry::ChannelRef::default_account(
+                    crate::channels::registry::ChannelId::Irc,
+                ),
+                recipient: recipient.to_string(),
+            },
+            None => DeliveryRoute::SidecarOnly,
+        },
+        "twitch" => match dest.filter(|recipient| is_valid_twitch_proactive_target(recipient)) {
+            Some(recipient) => DeliveryRoute::ConnectionBound {
+                channel_ref: crate::channels::registry::ChannelRef::default_account(
+                    crate::channels::registry::ChannelId::Twitch,
+                ),
+                recipient: recipient.to_string(),
+            },
+            None => DeliveryRoute::SidecarOnly,
+        },
+        #[cfg(feature = "nostr-channel")]
+        "nostr" => match dest.filter(|recipient| is_valid_nostr_proactive_target(recipient)) {
+            Some(recipient) => DeliveryRoute::ConnectionBound {
+                channel_ref: crate::channels::registry::ChannelRef::default_account(
+                    crate::channels::registry::ChannelId::Nostr,
+                ),
+                recipient: recipient.to_string(),
+            },
+            None => DeliveryRoute::SidecarOnly,
+        },
+        #[cfg(not(feature = "nostr-channel"))]
+        "nostr" => DeliveryRoute::SidecarOnly,
         _ => DeliveryRoute::SidecarOnly,
     }
 }
@@ -386,6 +469,11 @@ async fn deliver_live_route(
     egress: &crate::daemon::proactive_egress::ProactiveEgressContext<'_>,
     credentials: &Credentials,
     config: &FreedomConfig,
+    live_channels: &crate::daemon::channel_live_registry::ChannelLiveRegistry,
+    channel_fingerprints: &std::collections::HashMap<
+        crate::channels::registry::ChannelRef,
+        u64,
+    >,
     item: crate::proactive::ProactiveItem,
     queue_generation: &str,
     target_channel: &str,
@@ -425,6 +513,32 @@ async fn deliver_live_route(
         )
         .await
         .map_err(LiveRouteError::Durability),
+        DeliveryRoute::ConnectionBound {
+            channel_ref,
+            recipient,
+        } => {
+            let Some(fingerprint) = channel_fingerprints.get(&channel_ref).copied() else {
+                return crate::daemon::proactive_egress::record_sidecar_only_once(
+                    egress,
+                    item,
+                    queue_generation,
+                    target_channel,
+                )
+                .await
+                .map_err(LiveRouteError::Durability);
+            };
+            match live_channels.acquire(&channel_ref, fingerprint).await {
+                Some(channel) => execute!(&recipient, channel),
+                None => crate::daemon::proactive_egress::record_sidecar_only_once(
+                    egress,
+                    item,
+                    queue_generation,
+                    target_channel,
+                )
+                .await
+                .map_err(LiveRouteError::Durability),
+            }
+        }
         DeliveryRoute::Telegram { chat_id } => {
             let token = config.telegram_token.clone().ok_or_else(|| {
                 LiveRouteError::AdapterConfiguration(
@@ -826,6 +940,7 @@ pub async fn run_proactive_delivery_tick(
     credentials: &Credentials,
     writer: &WalWriterHandle,
     now_unix: i64,
+    live_channels: Arc<crate::daemon::channel_live_registry::ChannelLiveRegistry>,
 ) -> Result<usize, String> {
     let test_controller =
         crate::config::reload::ReloadController::new(config.clone(), home.join("freedom.yaml"));
@@ -843,6 +958,7 @@ pub async fn run_proactive_delivery_tick(
         &runtime,
         writer,
         now_unix,
+        live_channels,
     )
     .await
 }
@@ -856,6 +972,7 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
     runtime: &crate::config::RuntimeConfigPair,
     writer: &WalWriterHandle,
     now_unix: i64,
+    live_channels: Arc<crate::daemon::channel_live_registry::ChannelLiveRegistry>,
 ) -> Result<usize, String> {
     use crate::proactive::ProactiveQueue;
 
@@ -954,6 +1071,16 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
         Arc::clone(&accepted_config),
         now_unix,
         Duration::from_secs(config.proactive.delivery_attempt_timeout_secs),
+    );
+    // Connection-owned adapters are selected only by a current exact
+    // default-account fingerprint. This map is derived from the same coherent
+    // config/credential pair used for ordinary route planning; stale or
+    // missing handles therefore settle as SidecarOnly before a Prepared claim.
+    let channel_fingerprints = crate::cli::serve_tasks::channel_account_fingerprints(
+        config,
+        &runtime.credentials,
+        &[],
+        home,
     );
     let mut delivered = 0usize;
     for (item, queue_generation) in drained {
@@ -1083,6 +1210,8 @@ pub(crate) async fn run_proactive_delivery_tick_with_accepted(
             &egress,
             &runtime.credentials,
             config,
+            live_channels.as_ref(),
+            &channel_fingerprints,
             item,
             &queue_generation,
             &target_channel,
@@ -1130,6 +1259,7 @@ pub fn spawn_proactive_drain_loop(
     interval_secs: u64,
     writer: WalWriterHandle,
     reload_controller: Arc<crate::config::reload::ReloadController>,
+    live_channels: Arc<crate::daemon::channel_live_registry::ChannelLiveRegistry>,
 ) -> JoinHandle<()> {
     let interval = Duration::from_secs(interval_secs.max(30));
     tokio::spawn(async move {
@@ -1204,6 +1334,7 @@ pub fn spawn_proactive_drain_loop(
                     &runtime,
                     &writer,
                     now_unix,
+                    Arc::clone(&live_channels),
                 )
                 .await
                 {
@@ -1241,11 +1372,70 @@ pub fn spawn_proactive_drain_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use crate::proactive::{ProactiveItem, ProactiveQueue};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::TempDir;
 
     const TEST_KEET_TOPIC: &str = "nk1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     const TEST_KEET_SENDER: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    fn empty_live_channels() -> Arc<crate::daemon::channel_live_registry::ChannelLiveRegistry> {
+        Arc::new(crate::daemon::channel_live_registry::ChannelLiveRegistry::new())
+    }
+
+    struct CountingConnectionChannel {
+        name: &'static str,
+        sends: AtomicUsize,
+        fails: bool,
+    }
+
+    impl CountingConnectionChannel {
+        fn new(name: &'static str) -> Self {
+            Self {
+                name,
+                sends: AtomicUsize::new(0),
+                fails: false,
+            }
+        }
+
+        fn failing(name: &'static str) -> Self {
+            Self {
+                name,
+                sends: AtomicUsize::new(0),
+                fails: true,
+            }
+        }
+
+        fn sends(&self) -> usize {
+            self.sends.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl crate::channels::Channel for CountingConnectionChannel {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        async fn run(&self, _handler: crate::channels::PipelineHandler) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn send_proactive(
+            &self,
+            _chat_id: &str,
+            _text: &str,
+        ) -> std::result::Result<crate::channels::MessageId, crate::channels::ChannelError> {
+            self.sends.fetch_add(1, Ordering::SeqCst);
+            if self.fails {
+                return Err(crate::channels::ChannelError::Transport(
+                    "test connection adapter failure".to_string(),
+                ));
+            }
+            Ok(crate::channels::MessageId("connection-send".to_string()))
+        }
+    }
 
     fn item(key: &str, priority: i32, ts: i64) -> ProactiveItem {
         ProactiveItem {
@@ -1291,6 +1481,7 @@ mod tests {
                 &Credentials::default(),
                 &writer,
                 1_700_000_000,
+                empty_live_channels(),
             )
             .await
             .unwrap_err();
@@ -1331,6 +1522,7 @@ mod tests {
             &Credentials::default(),
             &writer,
             1_700_000_000,
+            empty_live_channels(),
         )
         .await
         .unwrap();
@@ -1388,6 +1580,7 @@ mod tests {
                 &credentials,
                 &writer,
                 1_700_000_000,
+                empty_live_channels(),
             )
             .await
             .unwrap(),
@@ -1459,6 +1652,7 @@ mod tests {
                 &Credentials::default(),
                 &writer,
                 1_700_000_000,
+                empty_live_channels(),
             )
             .await
             .unwrap(),
@@ -1530,6 +1724,7 @@ mod tests {
                 &Credentials::default(),
                 &writer,
                 1_700_000_000,
+                empty_live_channels(),
             )
             .await
             .unwrap(),
@@ -1576,6 +1771,7 @@ mod tests {
             &Credentials::default(),
             &writer,
             1_700_000_000,
+            empty_live_channels(),
         )
         .await
         .unwrap();
@@ -1607,6 +1803,7 @@ mod tests {
             &Credentials::default(),
             &writer,
             1_700_000_000,
+            empty_live_channels(),
         )
         .await
         .unwrap();
@@ -1641,12 +1838,326 @@ mod tests {
             &Credentials::default(),
             &writer,
             1_700_000_000,
+            empty_live_channels(),
         )
         .await
         .unwrap();
         drop(writer);
         join.await.unwrap();
         assert_eq!(delivered, 0);
+    }
+
+    #[tokio::test]
+    async fn connection_bound_delivery_uses_only_the_exact_live_channel_ref() {
+        let tmp = TempDir::new().unwrap();
+        let queue_path = tmp.path().join("proactive_queue.json");
+        let mut queued = item("bound-irc", 50, 0);
+        queued.channel = "irc".to_string();
+        let mut queue = ProactiveQueue::new();
+        assert!(queue.enqueue(queued).unwrap());
+        queue.save_to(&queue_path).unwrap();
+
+        let mut routing = crate::channels::routing::ChannelRouting::default();
+        routing.destinations.irc_channel = Some("#shared-operator-destination".to_string());
+        routing.destinations.twitch_channel = Some("#shared-operator-destination".to_string());
+        routing
+            .save_to(&tmp.path().join(crate::channels::routing::CHANNEL_ROUTING_FILE))
+            .unwrap();
+
+        let mut config = FreedomConfig::default();
+        config.proactive.enabled = true;
+        config.autonomy = AutonomyLevel::Full;
+        let credentials = Credentials::default();
+        let fingerprints = crate::cli::serve_tasks::channel_account_fingerprints(
+            &config,
+            &credentials,
+            &[],
+            tmp.path(),
+        );
+        let irc_ref = crate::channels::registry::ChannelRef::default_account(
+            crate::channels::registry::ChannelId::Irc,
+        );
+        let twitch_ref = crate::channels::registry::ChannelRef::default_account(
+            crate::channels::registry::ChannelId::Twitch,
+        );
+        let registry = empty_live_channels();
+        let irc = Arc::new(CountingConnectionChannel::new("irc"));
+        let twitch = Arc::new(CountingConnectionChannel::new("twitch"));
+        let irc_lease = registry
+            .begin_replacement(irc_ref.clone(), *fingerprints.get(&irc_ref).unwrap())
+            .await;
+        let twitch_lease = registry
+            .begin_replacement(twitch_ref.clone(), *fingerprints.get(&twitch_ref).unwrap())
+            .await;
+        assert!(registry.publish(&irc_lease, irc.clone()).await);
+        assert!(registry.publish(&twitch_lease, twitch.clone()).await);
+
+        let segment = tmp.path().join("connection-bound.wal");
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), tmp.path().to_path_buf())
+                .unwrap();
+        ready.wait().await.unwrap();
+        assert_eq!(
+            run_proactive_delivery_tick(
+                tmp.path(),
+                &segment,
+                &config,
+                &credentials,
+                &writer,
+                1_700_000_000,
+                Arc::clone(&registry),
+            )
+            .await
+            .unwrap(),
+            1
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+
+        assert_eq!(irc.sends(), 1);
+        assert_eq!(twitch.sends(), 0, "same recipient cannot select another ref");
+        let history = crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(
+            history[0].outcome(),
+            crate::daemon::proactive_egress::ProactiveEgressOutcome::Delivered
+        );
+    }
+
+    #[tokio::test]
+    async fn unavailable_connection_bound_handles_settle_sidecar_before_transport() {
+        for state in ["unready", "stale", "revoked"] {
+            let tmp = TempDir::new().unwrap();
+            let queue_path = tmp.path().join("proactive_queue.json");
+            let mut queued = item(&format!("bound-{state}"), 50, 0);
+            queued.channel = "irc".to_string();
+            let mut queue = ProactiveQueue::new();
+            assert!(queue.enqueue(queued).unwrap());
+            queue.save_to(&queue_path).unwrap();
+            let mut routing = crate::channels::routing::ChannelRouting::default();
+            routing.destinations.irc_channel = Some("#ops".to_string());
+            routing
+                .save_to(&tmp.path().join(crate::channels::routing::CHANNEL_ROUTING_FILE))
+                .unwrap();
+
+            let mut config = FreedomConfig::default();
+            config.proactive.enabled = true;
+            config.autonomy = AutonomyLevel::Full;
+            let credentials = Credentials::default();
+            let irc_ref = crate::channels::registry::ChannelRef::default_account(
+                crate::channels::registry::ChannelId::Irc,
+            );
+            let fingerprint = *crate::cli::serve_tasks::channel_account_fingerprints(
+                &config,
+                &credentials,
+                &[],
+                tmp.path(),
+            )
+            .get(&irc_ref)
+            .unwrap();
+            let registry = empty_live_channels();
+            let channel = Arc::new(CountingConnectionChannel::new("irc"));
+            let lease = registry
+                .begin_replacement(
+                    irc_ref.clone(),
+                    if state == "stale" {
+                        fingerprint.wrapping_add(1)
+                    } else {
+                        fingerprint
+                    },
+                )
+                .await;
+            if state != "unready" {
+                assert!(registry.publish(&lease, channel.clone()).await);
+            }
+            if state == "revoked" {
+                registry.revoke_and_drain(&irc_ref).await;
+            }
+
+            let segment = tmp.path().join("connection-unavailable.wal");
+            let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
+                segment.clone(),
+                tmp.path().to_path_buf(),
+            )
+            .unwrap();
+            ready.wait().await.unwrap();
+            assert_eq!(
+                run_proactive_delivery_tick(
+                    tmp.path(),
+                    &segment,
+                    &config,
+                    &credentials,
+                    &writer,
+                    1_700_000_000,
+                    Arc::clone(&registry),
+                )
+                .await
+                .unwrap(),
+                0,
+                "{state} live handle must not send"
+            );
+            drop(writer);
+            join.await.unwrap().unwrap();
+
+            assert_eq!(channel.sends(), 0, "{state} handle reached transport");
+            let history = crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(
+                history[0].outcome(),
+                crate::daemon::proactive_egress::ProactiveEgressOutcome::SidecarOnly,
+                "{state} handle must settle without an Armed transport"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_connection_bound_targets_never_acquire_or_arm_live_transport() {
+        for (channel_name, target) in [
+            ("irc", "#ops,#second"),
+            ("irc", " #ops"),
+            ("twitch", "#Uppercase"),
+        ] {
+            let tmp = TempDir::new().unwrap();
+            let queue_path = tmp.path().join("proactive_queue.json");
+            let mut queued = item(&format!("bad-target-{channel_name}-{target}"), 50, 0);
+            queued.channel = channel_name.to_string();
+            let mut queue = ProactiveQueue::new();
+            assert!(queue.enqueue(queued).unwrap());
+            queue.save_to(&queue_path).unwrap();
+            let mut routing = crate::channels::routing::ChannelRouting::default();
+            if channel_name == "irc" {
+                routing.destinations.irc_channel = Some(target.to_string());
+            } else {
+                routing.destinations.twitch_channel = Some(target.to_string());
+            }
+            routing
+                .save_to(&tmp.path().join(crate::channels::routing::CHANNEL_ROUTING_FILE))
+                .unwrap();
+            let mut config = FreedomConfig::default();
+            config.proactive.enabled = true;
+            config.autonomy = AutonomyLevel::Full;
+            let credentials = Credentials::default();
+            let channel_ref = crate::channels::registry::ChannelRef::default_account(
+                if channel_name == "irc" {
+                    crate::channels::registry::ChannelId::Irc
+                } else {
+                    crate::channels::registry::ChannelId::Twitch
+                },
+            );
+            let fingerprint = *crate::cli::serve_tasks::channel_account_fingerprints(
+                &config,
+                &credentials,
+                &[],
+                tmp.path(),
+            )
+            .get(&channel_ref)
+            .unwrap();
+            let registry = empty_live_channels();
+            let channel = Arc::new(CountingConnectionChannel::new(channel_name));
+            let lease = registry
+                .begin_replacement(channel_ref, fingerprint)
+                .await;
+            assert!(registry.publish(&lease, channel.clone()).await);
+            let segment = tmp.path().join("connection-malformed-target.wal");
+            let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
+                segment.clone(),
+                tmp.path().to_path_buf(),
+            )
+            .unwrap();
+            ready.wait().await.unwrap();
+            assert_eq!(
+                run_proactive_delivery_tick(
+                    tmp.path(),
+                    &segment,
+                    &config,
+                    &credentials,
+                    &writer,
+                    1_700_000_000,
+                    Arc::clone(&registry),
+                )
+                .await
+                .unwrap(),
+                0,
+            );
+            drop(writer);
+            join.await.unwrap().unwrap();
+            assert_eq!(channel.sends(), 0, "invalid {channel_name} target reached transport");
+            let history = crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(
+                history[0].outcome(),
+                crate::daemon::proactive_egress::ProactiveEgressOutcome::SidecarOnly
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_connection_bound_adapter_never_records_delivered() {
+        let tmp = TempDir::new().unwrap();
+        let queue_path = tmp.path().join("proactive_queue.json");
+        let mut queued = item("failing-bound-irc", 50, 0);
+        queued.channel = "irc".to_string();
+        let mut queue = ProactiveQueue::new();
+        assert!(queue.enqueue(queued).unwrap());
+        queue.save_to(&queue_path).unwrap();
+        let mut routing = crate::channels::routing::ChannelRouting::default();
+        routing.destinations.irc_channel = Some("#ops".to_string());
+        routing
+            .save_to(&tmp.path().join(crate::channels::routing::CHANNEL_ROUTING_FILE))
+            .unwrap();
+        let mut config = FreedomConfig::default();
+        config.proactive.enabled = true;
+        config.autonomy = AutonomyLevel::Full;
+        let credentials = Credentials::default();
+        let channel_ref = crate::channels::registry::ChannelRef::default_account(
+            crate::channels::registry::ChannelId::Irc,
+        );
+        let fingerprint = *crate::cli::serve_tasks::channel_account_fingerprints(
+            &config,
+            &credentials,
+            &[],
+            tmp.path(),
+        )
+        .get(&channel_ref)
+        .unwrap();
+        let registry = empty_live_channels();
+        let channel = Arc::new(CountingConnectionChannel::failing("irc"));
+        let lease = registry.begin_replacement(channel_ref, fingerprint).await;
+        assert!(registry.publish(&lease, channel.clone()).await);
+        let segment = tmp.path().join("connection-failing-adapter.wal");
+        let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
+            segment.clone(),
+            tmp.path().to_path_buf(),
+        )
+        .unwrap();
+        ready.wait().await.unwrap();
+        assert_eq!(
+            run_proactive_delivery_tick(
+                tmp.path(),
+                &segment,
+                &config,
+                &credentials,
+                &writer,
+                1_700_000_000,
+                Arc::clone(&registry),
+            )
+            .await
+            .unwrap(),
+            0,
+        );
+        drop(writer);
+        join.await.unwrap().unwrap();
+        assert_eq!(channel.sends(), 1);
+        let history = crate::daemon::proactive_egress::read_delivery_history(tmp.path()).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(
+            history[0].outcome(),
+            crate::daemon::proactive_egress::ProactiveEgressOutcome::TransportError
+        );
+        assert_ne!(
+            history[0].outcome(),
+            crate::daemon::proactive_egress::ProactiveEgressOutcome::Delivered
+        );
     }
 
     #[test]
@@ -1980,21 +2491,53 @@ channel_accounts:
     }
 
     #[test]
-    fn plan_delivery_b9_connection_bound_channels_are_sidecar_only() {
-        // IRC/Twitch/Nostr retain their live socket/relay ownership and are
-        // therefore ledger-only even when destinations are configured.
+    fn plan_delivery_connection_bound_channels_require_the_live_registry() {
+        // IRC/Twitch/Nostr retain their live socket/relay ownership. Planning
+        // carries the configured recipient and exact default ref, while the
+        // later registry acquisition remains the authority that may permit a
+        // live effect.
         let cfg = cfg_with_telegram(AutonomyLevel::Full);
         let mut rt = default_rt();
         rt.destinations.irc_channel = Some("#neoth".to_string());
         rt.destinations.twitch_channel = Some("#chan".to_string());
-        rt.destinations.nostr_recipient = Some("npub1x".to_string());
-        for ch in ["irc", "twitch", "nostr"] {
-            assert_eq!(
-                plan_delivery(ch, AutonomyLevel::Full, &cfg, &rt, &default_creds()),
-                DeliveryRoute::SidecarOnly,
-                "{ch} is connection-bound → sidecar-only"
-            );
-        }
+        rt.destinations.nostr_recipient = Some(
+            "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m"
+                .to_string(),
+        );
+        assert_eq!(
+            plan_delivery("irc", AutonomyLevel::Full, &cfg, &rt, &default_creds()),
+            DeliveryRoute::ConnectionBound {
+                channel_ref: crate::channels::registry::ChannelRef::default_account(
+                    crate::channels::registry::ChannelId::Irc,
+                ),
+                recipient: "#neoth".to_string(),
+            }
+        );
+        assert_eq!(
+            plan_delivery("twitch", AutonomyLevel::Full, &cfg, &rt, &default_creds()),
+            DeliveryRoute::ConnectionBound {
+                channel_ref: crate::channels::registry::ChannelRef::default_account(
+                    crate::channels::registry::ChannelId::Twitch,
+                ),
+                recipient: "#chan".to_string(),
+            }
+        );
+        #[cfg(feature = "nostr-channel")]
+        assert_eq!(
+            plan_delivery("nostr", AutonomyLevel::Full, &cfg, &rt, &default_creds()),
+            DeliveryRoute::ConnectionBound {
+                channel_ref: crate::channels::registry::ChannelRef::default_account(
+                    crate::channels::registry::ChannelId::Nostr,
+                ),
+                recipient: "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m"
+                    .to_string(),
+            }
+        );
+        #[cfg(not(feature = "nostr-channel"))]
+        assert_eq!(
+            plan_delivery("nostr", AutonomyLevel::Full, &cfg, &rt, &default_creds()),
+            DeliveryRoute::SidecarOnly
+        );
     }
 
     #[cfg(not(feature = "gchat-channel"))]

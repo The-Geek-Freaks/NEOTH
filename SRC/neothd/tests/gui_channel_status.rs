@@ -218,6 +218,73 @@ fn private_pairing_approval_body_and_receipt_bind_the_exact_request() {
 }
 
 #[test]
+fn legacy_telegram_migration_gui_command_parses_with_the_real_cli() {
+    use clap::Parser as _;
+    use neothd::cli::{ChannelAction, Cli, Commands, OutputFormat};
+
+    let command = panel_logic::telegram_migrate_legacy_command(
+        std::path::Path::new("neoth"),
+        "telegram",
+        "default",
+    )
+    .expect("build the production GUI legacy migration command");
+    let parsed = Cli::try_parse_from(std::iter::once(command.get_program()).chain(command.get_args()))
+        .expect("the real CLI must accept the GUI legacy migration argv");
+    assert!(matches!(parsed.output, OutputFormat::Json));
+    match parsed.command {
+        Commands::Channel {
+            action: ChannelAction::MigrateLegacy { channel, account },
+        } => {
+            assert_eq!(channel, "telegram");
+            assert_eq!(account.as_str(), "default");
+        }
+        _ => panic!("GUI command must select the canonical legacy migration action"),
+    }
+    for (channel, account) in [("slack", "default"), ("telegram", ""), ("telegram", "DEFAULT")] {
+        assert!(
+            panel_logic::telegram_migrate_legacy_command(
+                std::path::Path::new("neoth"),
+                channel,
+                account,
+            )
+            .is_err(),
+            "only canonical Telegram and a canonical destination account can migrate"
+        );
+    }
+}
+
+#[test]
+fn legacy_telegram_migration_receipt_binds_all_terminal_fields() {
+    let accepted = br#"{"channel":"telegram","account":"default","inbound":"configured_account","account_probe":"available","migrated_legacy_singleton":true}"#;
+    assert_eq!(
+        panel_logic::parse_telegram_legacy_migrated(accepted, "default"),
+        Some(true)
+    );
+    for receipt in [
+        br#"{"channel":"slack","account":"default","inbound":"configured_account","account_probe":"available","migrated_legacy_singleton":true}"#.as_slice(),
+        br#"{"channel":"telegram","account":"ops_b","inbound":"configured_account","account_probe":"available","migrated_legacy_singleton":true}"#.as_slice(),
+        br#"{"channel":"telegram","account":"default","inbound":"legacy","account_probe":"available","migrated_legacy_singleton":true}"#.as_slice(),
+        br#"{"channel":"telegram","account":"default","inbound":"configured_account","account_probe":"unknown","migrated_legacy_singleton":true}"#.as_slice(),
+        br#"{"channel":"telegram","account":"default","inbound":"configured_account","account_probe":"available","migrated_legacy_singleton":false}"#.as_slice(),
+        br#"{"channel":"telegram","account":"default","inbound":"configured_account","account_probe":"available","migrated_legacy_singleton":true,"extra":true}"#.as_slice(),
+        br#"{"channel":"telegram","account":"default","inbound":"configured_account","account_probe":"available"}"#.as_slice(),
+        br#"not-json"#.as_slice(),
+    ] {
+        assert_eq!(
+            panel_logic::parse_telegram_legacy_migrated(receipt, "default"),
+            None,
+            "only the complete exact legacy migration receipt triggers an inventory refresh"
+        );
+    }
+    let oversized = vec![b' '; 16 * 1024 + 1];
+    assert_eq!(
+        panel_logic::parse_telegram_legacy_migrated(&oversized, "default"),
+        None,
+        "migration receipts beyond the bounded GUI response budget are rejected"
+    );
+}
+
+#[test]
 fn pending_pairing_parser_and_dismissal_receipt_reject_foreign_or_malformed_data() {
     let request_id = "0123456789abcdef0123456789abcdef";
     let accepted = panel_logic::parse_telegram_pairing_list(

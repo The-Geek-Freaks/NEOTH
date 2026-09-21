@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W129_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "f87e063432e73b6d86f12bcb87d8435ebd0c28bc",
+  "status": "W95_W130_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "base": "33f64007a406f91c9f49f97629b25042025e42ae",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 51961,
-    "sha256": "D87EABFA897DACF9DE2A8FA9E33EED48D6DE9C1051958737522DF07516F0F279"
+    "bytes": 52504,
+    "sha256": "3E3B2809B8FAE844B6E0B9132C00DA89543EBAC91C86FD1E68061E957827C8A0"
   },
-  "sourceInputs": 300,
+  "sourceInputs": 303,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -498,19 +498,19 @@
     {
       "test": "mapped_pairing_gui_command_parses_with_the_real_cli_for_both_states",
       "sourcePath": "SRC/neothd/tests/gui_channel_status.rs",
-      "sourceSha256": "863EBC96932A60358E402EB2ABA59BE9A75CDA13838F903ECC191EFD6929CEB8",
+      "sourceSha256": "3829446313D9C61983260492D26B058C8DE394D8E2BB89ECBC378848282CCED6",
       "junitClass": "neoth::gui_channel_status"
     },
     {
       "test": "pending_pairing_gui_commands_parse_with_the_real_cli",
       "sourcePath": "SRC/neothd/tests/gui_channel_status.rs",
-      "sourceSha256": "863EBC96932A60358E402EB2ABA59BE9A75CDA13838F903ECC191EFD6929CEB8",
+      "sourceSha256": "3829446313D9C61983260492D26B058C8DE394D8E2BB89ECBC378848282CCED6",
       "junitClass": "neoth::gui_channel_status"
     },
     {
       "test": "pending_pairing_parser_and_dismissal_receipt_reject_foreign_or_malformed_data",
       "sourcePath": "SRC/neothd/tests/gui_channel_status.rs",
-      "sourceSha256": "863EBC96932A60358E402EB2ABA59BE9A75CDA13838F903ECC191EFD6929CEB8",
+      "sourceSha256": "3829446313D9C61983260492D26B058C8DE394D8E2BB89ECBC378848282CCED6",
       "junitClass": "neoth::gui_channel_status"
     },
     {
@@ -534,13 +534,13 @@
     {
       "test": "private_pairing_approval_gui_command_parses_without_secrets_in_argv",
       "sourcePath": "SRC/neothd/tests/gui_channel_status.rs",
-      "sourceSha256": "863EBC96932A60358E402EB2ABA59BE9A75CDA13838F903ECC191EFD6929CEB8",
+      "sourceSha256": "3829446313D9C61983260492D26B058C8DE394D8E2BB89ECBC378848282CCED6",
       "junitClass": "neoth::gui_channel_status"
     },
     {
       "test": "private_pairing_approval_body_and_receipt_bind_the_exact_request",
       "sourcePath": "SRC/neothd/tests/gui_channel_status.rs",
-      "sourceSha256": "863EBC96932A60358E402EB2ABA59BE9A75CDA13838F903ECC191EFD6929CEB8",
+      "sourceSha256": "3829446313D9C61983260492D26B058C8DE394D8E2BB89ECBC378848282CCED6",
       "junitClass": "neoth::gui_channel_status"
     },
     {
@@ -552,8 +552,86 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::paired_reply_binding_releases_a_retired_telegram_adapter",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "D6C29F22F85AAD211BD96184595BB049A912FFBCFCF0FD8149B212214C01048B",
+      "sourceSha256": "828791422AFF2A225AB98F7221239B6C398E93FDA47DFF84086505127B183528",
       "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::channel_live_registry::tests::acquire_returns_only_matching_published_generation",
+      "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
+      "sourceSha256": "1EE5157E116AA2FE2ACB5B9A2D985B2F4536FF433B6D1EFA9ECA9FB54D4E649C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::channel_live_registry::tests::stale_publication_cannot_reanimate_replaced_adapter",
+      "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
+      "sourceSha256": "1EE5157E116AA2FE2ACB5B9A2D985B2F4536FF433B6D1EFA9ECA9FB54D4E649C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::channel_live_registry::tests::shutdown_rejects_even_a_previously_uncreated_channel_reference",
+      "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
+      "sourceSha256": "1EE5157E116AA2FE2ACB5B9A2D985B2F4536FF433B6D1EFA9ECA9FB54D4E649C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::channel_live_registry::tests::revocation_waits_for_an_acquired_lease_then_refuses_new_egress",
+      "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
+      "sourceSha256": "1EE5157E116AA2FE2ACB5B9A2D985B2F4536FF433B6D1EFA9ECA9FB54D4E649C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::channel_live_registry::tests::shutdown_waits_for_an_effect_already_inside_the_real_send_boundary",
+      "sourcePath": "SRC/neothd/src/daemon/channel_live_registry.rs",
+      "sourceSha256": "1EE5157E116AA2FE2ACB5B9A2D985B2F4536FF433B6D1EFA9ECA9FB54D4E649C",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::connection_bound_delivery_uses_only_the_exact_live_channel_ref",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "sourceSha256": "964A4D2F9143398B0D16EDB6D615148718457235C36B9CB996900F08631F84EF",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::unavailable_connection_bound_handles_settle_sidecar_before_transport",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "sourceSha256": "964A4D2F9143398B0D16EDB6D615148718457235C36B9CB996900F08631F84EF",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::malformed_connection_bound_targets_never_acquire_or_arm_live_transport",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "sourceSha256": "964A4D2F9143398B0D16EDB6D615148718457235C36B9CB996900F08631F84EF",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "sourceSha256": "964A4D2F9143398B0D16EDB6D615148718457235C36B9CB996900F08631F84EF",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::proactive_dispatcher::tests::plan_delivery_connection_bound_channels_require_the_live_registry",
+      "sourcePath": "SRC/neothd/src/daemon/proactive_dispatcher.rs",
+      "sourceSha256": "964A4D2F9143398B0D16EDB6D615148718457235C36B9CB996900F08631F84EF",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::serve_tasks::tests::readiness_publisher_revokes_on_false_and_cannot_republish_a_replaced_lease",
+      "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
+      "sourceSha256": "828791422AFF2A225AB98F7221239B6C398E93FDA47DFF84086505127B183528",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "legacy_telegram_migration_gui_command_parses_with_the_real_cli",
+      "sourcePath": "SRC/neothd/tests/gui_channel_status.rs",
+      "sourceSha256": "3829446313D9C61983260492D26B058C8DE394D8E2BB89ECBC378848282CCED6",
+      "junitClass": "neoth::gui_channel_status"
+    },
+    {
+      "test": "legacy_telegram_migration_receipt_binds_all_terminal_fields",
+      "sourcePath": "SRC/neothd/tests/gui_channel_status.rs",
+      "sourceSha256": "3829446313D9C61983260492D26B058C8DE394D8E2BB89ECBC378848282CCED6",
+      "junitClass": "neoth::gui_channel_status"
     }
   ],
   "requiredGuiTests": [
@@ -591,7 +669,8 @@
       "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt": "neothd-gui::neothd-gui-macos-native",
       "w58_gui_callback_runtime_tests::w121_channel_pairing_request_callbacks_require_exact_receipts_before_relisting": "neothd-gui::neothd-gui-macos-native",
       "w58_gui_callback_runtime_tests::w122_channel_account_dm_pairing_callback_preserves_projection_until_exact_receipt": "neothd-gui::neothd-gui-macos-native",
-      "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt": "neothd-gui::neothd-gui-macos-native"
+      "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt": "neothd-gui::neothd-gui-macos-native",
+      "w58_gui_callback_runtime_tests::w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt": "neothd-gui::neothd-gui-macos-native"
     }
   },
   "reviews": [
@@ -774,6 +853,12 @@
       "sha256": "737F6BC1221E164A86AF8CF394A885A4302217A3C681F101B63C046768E47244",
       "verdict": "APPROVE_STATIC_ONLY",
       "executionClaim": false
+    },
+    {
+      "record": "work/gold-20260906/wave128-130-review/REVIEW.md",
+      "sha256": "2729454F055C2E6BA6597CFE4225B71EBD5A43A06C687144B79FC02B941CC1F3",
+      "verdict": "APPROVE_STATIC_ONLY",
+      "executionClaim": false
     }
   ],
   "priorCi": {
@@ -845,13 +930,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1699613,
-      "sha256": "3A2AB380B885FC710047C66F8204AE0202D698C860445D16A76BF1F9400E54EF"
+      "bytes": 1732374,
+      "sha256": "03D6F51436D524B6E890118A317898A4CC8250A3629AD9808A0FEECDEDF66242"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 524428,
-      "sha256": "D3BCB6F12FE1D3B18C91B358F2DEC31DD59ADC1A0BDD772054EE3DE805ABAD5B"
+      "bytes": 530156,
+      "sha256": "39C57503E29E30CFB24467BF63F29E096B0A3B2CC3ECEBDF0DC1437CEEFF1FFA"
     }
   ],
   "remoteFormatCorrection": {
@@ -1155,13 +1240,15 @@
       "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt",
       "w58_gui_callback_runtime_tests::w121_channel_pairing_request_callbacks_require_exact_receipts_before_relisting",
       "w58_gui_callback_runtime_tests::w122_channel_account_dm_pairing_callback_preserves_projection_until_exact_receipt",
-      "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt"
+      "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt",
+      "w58_gui_callback_runtime_tests::w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt"
     ],
     "macOS": [
       "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt",
       "w58_gui_callback_runtime_tests::w121_channel_pairing_request_callbacks_require_exact_receipts_before_relisting",
       "w58_gui_callback_runtime_tests::w122_channel_account_dm_pairing_callback_preserves_projection_until_exact_receipt",
-      "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt"
+      "w58_gui_callback_runtime_tests::w126_channel_pairing_approval_callback_keeps_private_input_and_relists_only_after_exact_receipt",
+      "w58_gui_callback_runtime_tests::w130_channel_legacy_migration_callback_preserves_legacy_projection_until_exact_receipt"
     ]
   },
   "wave116": {
@@ -1310,6 +1397,37 @@
     "failedSource": "f87e063432e73b6d86f12bcb87d8435ebd0c28bc",
     "failedJob": 106231814849,
     "finding": "Clippy obfuscated_if_else in w122_inventory_json",
+    "execution": "PENDING_GITHUB_ONLY",
+    "localValidationRan": false
+  },
+  "wave128To130": {
+    "reports": [
+      "docs/gold-wave128-verification.md",
+      "docs/gold-wave130-verification.md"
+    ],
+    "sourceReview": "APPROVED_STATIC_ONLY",
+    "sourceInputs": 303,
+    "nativeRequired": 104,
+    "guiRequiredEveryPlatform": 19,
+    "additionalUnixGuiRequired": 5,
+    "optionalFeatureGate": {
+      "workflow": ".github/workflows/ci.yml",
+      "lane": "channel-adapters",
+      "features": [
+        "irc-channel",
+        "nostr-channel"
+      ],
+      "requiredTests": [
+        "channels::irc::tests::only_server_welcome_marks_registration_accepted",
+        "channels::nostr::tests::matching_eose_acknowledges_only_the_exact_subscription",
+        "daemon::channel_live_registry::tests::revocation_waits_for_an_acquired_lease_then_refuses_new_egress",
+        "cli::serve_tasks::tests::readiness_publisher_revokes_on_false_and_cannot_republish_a_replaced_lease",
+        "daemon::proactive_dispatcher::tests::plan_delivery_connection_bound_channels_require_the_live_registry",
+        "daemon::proactive_dispatcher::tests::connection_bound_delivery_uses_only_the_exact_live_channel_ref",
+        "daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered"
+      ],
+      "exactNonzeroDiscoveryRequired": true
+    },
     "execution": "PENDING_GITHUB_ONLY",
     "localValidationRan": false
   }

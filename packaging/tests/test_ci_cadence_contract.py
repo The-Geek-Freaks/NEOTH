@@ -23,6 +23,9 @@ PREFLIGHT_TEXT = (WORKFLOWS / "preflight.yml").read_text(encoding="utf-8")
 RELEASE_TEXT = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
 SECURITY_TEXT = (WORKFLOWS / "security.yml").read_text(encoding="utf-8")
 PREVIEW_WINDOWS_TEXT = (WORKFLOWS / "preview-windows.yml").read_text(encoding="utf-8")
+GUI_MAIN_TEXT = (ROOT / "SRC" / "neothd-gui" / "src" / "main.rs").read_text(
+    encoding="utf-8"
+)
 
 
 def trigger_block(workflow: str) -> str:
@@ -106,6 +109,18 @@ def workflow_steps(job: str) -> dict[str, str]:
             steps_match.group("steps"),
         )
     )
+
+
+def macos_native_harness_tests(source: str) -> tuple[int, list[str]]:
+    match = re.search(
+        r"(?ms)^\s*const MACOS_NATIVE_HARNESS_TESTS: \[&str; (?P<count>\d+)\] = \[\n"
+        r"(?P<entries>.*?)^\s*\];",
+        source,
+    )
+    if match is None:
+        raise AssertionError("main.rs has no bounded MACOS_NATIVE_HARNESS_TESTS declaration")
+    entries = re.findall(r'(?m)^\s*"([^"]+)",$', match.group("entries"))
+    return int(match.group("count")), entries
 
 
 def direct_mapping_keys(mapping: str, indent: int) -> list[str]:
@@ -731,6 +746,41 @@ class CiCadenceContractTests(unittest.TestCase):
             "cargo build --release --locked -p neothd-gui --features release-desktop --target x86_64-pc-windows-msvc",
             gui_build,
         )
+
+    def test_macos_native_fixture_verifier_tracks_the_declared_harness_list(self) -> None:
+        declared_count, declared = macos_native_harness_tests(GUI_MAIN_TEXT)
+        self.assertEqual(declared_count, len(declared))
+        self.assertEqual(len(declared), len(set(declared)))
+        self.assertSetEqual(CUSTOM_TESTS, set(declared))
+
+    def test_feature_matrix_runs_hermetic_irc_and_nostr_adapter_contracts(self) -> None:
+        feature_matrix = workflow_jobs(CI_TEXT)["feature-matrix"]
+        self.assertIn("timeout-minutes: 45", feature_matrix)
+        self.assertIn("CARGO_BUILD_JOBS: 1", feature_matrix)
+        self.assertIn(
+            "- { os: ubuntu-24.04, feature: channel-adapters }", feature_matrix
+        )
+        self.assertIn("matrix.feature != 'channel-adapters'", feature_matrix)
+
+        adapter_test = workflow_steps(feature_matrix)[
+            "cargo test IRC and Nostr adapter contracts"
+        ]
+        self.assertIn("if: matrix.feature == 'channel-adapters'", adapter_test)
+        self.assertIn("timeout-minutes: 40", adapter_test)
+        self.assertIn("cargo test -p neoth --lib --locked", adapter_test)
+        self.assertNotIn("cargo test -p neothd", adapter_test)
+        self.assertIn("--features \"irc-channel nostr-channel\"", adapter_test)
+        self.assertIn('grep -Fxc "$test_name: test"', adapter_test)
+        for identity in (
+            "channels::irc::tests::only_server_welcome_marks_registration_accepted",
+            "channels::nostr::tests::matching_eose_acknowledges_only_the_exact_subscription",
+            "daemon::channel_live_registry::tests::revocation_waits_for_an_acquired_lease_then_refuses_new_egress",
+            "cli::serve_tasks::tests::readiness_publisher_revokes_on_false_and_cannot_republish_a_replaced_lease",
+            "daemon::proactive_dispatcher::tests::plan_delivery_connection_bound_channels_require_the_live_registry",
+            "daemon::proactive_dispatcher::tests::connection_bound_delivery_uses_only_the_exact_live_channel_ref",
+            "daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered",
+        ):
+            self.assertIn(f"run_exact {identity}", adapter_test)
 
     def test_macos_native_gui_discovery_requires_exact_suite_ownership(self) -> None:
         suites = {

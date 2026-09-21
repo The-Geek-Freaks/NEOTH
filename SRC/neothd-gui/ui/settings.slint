@@ -1188,9 +1188,12 @@ export component SettingsView inherits Rectangle {
     in property <string> channel-pairing-error: "";
     in property <bool> channel-pairing-loaded: false;
     in property <bool> channel-pairing-in-flight: false;
+    in property <bool> channel-migration-in-flight: false;
+    in property <bool> channel-migration-reconcile-required: false;
     callback channel-pairing-list(string, string);
     callback channel-pairing-dismiss(string, string, string);
     callback channel-pairing-approve(string, string, string, string);
+    callback channel-migrate-legacy(string, string);
     callback channel-remove-clicked(string);
     /// GAP-19 — Add a new channel credential from the GUI.
     /// Args: channel_type + six typed credential fields + Matrix's optional
@@ -2259,6 +2262,10 @@ export component SettingsView inherits Rectangle {
                                 && (c.accounts.length > 0 || c.status == "error")): NeothButton {
                                 label: c.configured ? "Reconfigure" : "Configure";
                                 primary: false;
+                                enabled: !root.channel-account-retirement-in-flight
+                                    && !root.channel-account-dm-pairing-in-flight
+                                    && !root.channel-pairing-in-flight
+                                    && !root.channel-migration-in-flight;
                                 clicked => {
                                     add-channel-open = false;
                                     account-form-open = false;
@@ -2288,6 +2295,10 @@ export component SettingsView inherits Rectangle {
                                 && !(c.name == "telegram" && c.status == "error"): NeothButton {
                                 label: "Test";
                                 primary: false;
+                                enabled: !root.channel-account-retirement-in-flight
+                                    && !root.channel-account-dm-pairing-in-flight
+                                    && !root.channel-pairing-in-flight
+                                    && !root.channel-migration-in-flight;
                                 clicked => { root.channel-test-clicked(c.name); }
                             }
                             if c.name == "telegram" && !confirming
@@ -2296,6 +2307,10 @@ export component SettingsView inherits Rectangle {
                                         && c.accounts.length == 0)): NeothButton {
                                 label: "Add account";
                                 primary: false;
+                                enabled: !root.channel-account-retirement-in-flight
+                                    && !root.channel-account-dm-pairing-in-flight
+                                    && !root.channel-pairing-in-flight
+                                    && !root.channel-migration-in-flight;
                                 clicked => {
                                     add-channel-open = false;
                                     form-editing = false;
@@ -2311,6 +2326,10 @@ export component SettingsView inherits Rectangle {
                                 && (c.accounts.length > 0 || c.status == "error")): NeothButton {
                                 label: "Remove";
                                 primary: false;
+                                enabled: !root.channel-account-retirement-in-flight
+                                    && !root.channel-account-dm-pairing-in-flight
+                                    && !root.channel-pairing-in-flight
+                                    && !root.channel-migration-in-flight;
                                 clicked => { confirming = true; }
                             }
                             if confirming: Text {
@@ -2324,6 +2343,10 @@ export component SettingsView inherits Rectangle {
                             if confirming: NeothButton {
                                 label: "Confirm";
                                 primary: false;
+                                enabled: !root.channel-account-retirement-in-flight
+                                    && !root.channel-account-dm-pairing-in-flight
+                                    && !root.channel-pairing-in-flight
+                                    && !root.channel-migration-in-flight;
                                 clicked => {
                                     confirming = false;
                                     root.channel-remove-clicked(c.name);
@@ -2332,6 +2355,10 @@ export component SettingsView inherits Rectangle {
                             if confirming: NeothButton {
                                 label: "Cancel";
                                 primary: false;
+                                enabled: !root.channel-account-retirement-in-flight
+                                    && !root.channel-account-dm-pairing-in-flight
+                                    && !root.channel-pairing-in-flight
+                                    && !root.channel-migration-in-flight;
                                 clicked => { confirming = false; }
                             }
                             }
@@ -2343,6 +2370,88 @@ export component SettingsView inherits Rectangle {
                                 wrap: word-wrap;
                                 accessible-role: text;
                                 accessible-label: self.text;
+                            }
+                            if c.name == "telegram" && c.configured && c.status == "ok" && c.accounts.length == 0: Card {
+                                property <string> legacy-target: "default";
+                                property <bool> legacy-confirming: false;
+                                shimmer: false;
+                                VerticalBox {
+                                    padding: Theme.space-base;
+                                    spacing: Theme.space-tight;
+                                    Text {
+                                        text: "Move legacy Telegram into a named account";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-caption;
+                                        font-weight: Theme.weight-medium;
+                                        color: Theme.text-primary;
+                                    }
+                                    Text {
+                                        text: "This keeps the existing inbound credentials and sender policy in a named account. Channel-only proactive sends will not select this account automatically. Test connectivity after migration.";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-tertiary;
+                                        wrap: word-wrap;
+                                    }
+                                    if root.channel-migration-reconcile-required: Text {
+                                        text: "Refresh channel status before retrying this migration; its prior outcome was not confirmed.";
+                                        font-family: Theme.font-display;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.accent-amber;
+                                        wrap: word-wrap;
+                                    }
+                                    NeothLineEdit {
+                                        placeholder-text: "Named account ID";
+                                        text <=> legacy-target;
+                                        enabled: !root.channel-account-retirement-in-flight
+                                            && !root.channel-account-dm-pairing-in-flight
+                                            && !root.channel-pairing-in-flight
+                                            && !root.channel-migration-in-flight
+                                            && !root.channel-migration-reconcile-required;
+                                    }
+                                    if !legacy-confirming: NeothButton {
+                                        label: "Migrate legacy Telegram";
+                                        primary: false;
+                                        enabled: !root.channel-account-retirement-in-flight
+                                            && !root.channel-account-dm-pairing-in-flight
+                                            && !root.channel-pairing-in-flight
+                                            && !root.channel-migration-in-flight
+                                            && !root.channel-migration-reconcile-required;
+                                        clicked => { legacy-confirming = true; }
+                                    }
+                                    if legacy-confirming: HorizontalLayout {
+                                        spacing: Theme.space-tight;
+                                        Text {
+                                            text: "Move the existing inbound credentials and sender policy into telegram/" + legacy-target + "? Saved routing settings are retained; proactive delivery needs an explicit account selection.";
+                                            font-family: Theme.font-display;
+                                            font-size: Theme.font-size-caption;
+                                            color: Theme.accent-pink;
+                                            horizontal-stretch: 1;
+                                            wrap: word-wrap;
+                                        }
+                                        NeothButton {
+                                            label: "Confirm migration";
+                                            primary: false;
+                                            loading: root.channel-migration-in-flight;
+                                            enabled: !root.channel-account-retirement-in-flight
+                                                && !root.channel-account-dm-pairing-in-flight
+                                                && !root.channel-pairing-in-flight
+                                                && !root.channel-migration-in-flight
+                                                && !root.channel-migration-reconcile-required;
+                                            clicked => {
+                                                root.channel-migrate-legacy("telegram", legacy-target);
+                                            }
+                                        }
+                                        NeothButton {
+                                            label: "Cancel";
+                                            primary: false;
+                                            enabled: !root.channel-migration-in-flight;
+                                            clicked => {
+                                                legacy-target = "default";
+                                                legacy-confirming = false;
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             if c.accounts.length > 0: VerticalBox {
                                 padding-left: Theme.space-8;
@@ -2394,7 +2503,8 @@ export component SettingsView inherits Rectangle {
                                         primary: false;
                                         enabled: !root.channel-account-retirement-in-flight
                                             && !root.channel-account-dm-pairing-in-flight
-                                            && !root.channel-pairing-in-flight;
+                                            && !root.channel-pairing-in-flight
+                                            && !root.channel-migration-in-flight;
                                         clicked => {
                                             root.channel-account-test-clicked(c.name, account.account-id);
                                         }
@@ -2404,7 +2514,8 @@ export component SettingsView inherits Rectangle {
                                         primary: false;
                                         enabled: !root.channel-account-retirement-in-flight
                                             && !root.channel-account-dm-pairing-in-flight
-                                            && !root.channel-pairing-in-flight;
+                                            && !root.channel-pairing-in-flight
+                                            && !root.channel-migration-in-flight;
                                         clicked => {
                                             add-channel-open = false;
                                             form-editing = false;
@@ -2421,7 +2532,8 @@ export component SettingsView inherits Rectangle {
                                         primary: false;
                                         enabled: !root.channel-account-retirement-in-flight
                                             && !root.channel-account-dm-pairing-in-flight
-                                            && !root.channel-pairing-in-flight;
+                                            && !root.channel-pairing-in-flight
+                                            && !root.channel-migration-in-flight;
                                         clicked => { retirement-confirming = true; }
                                     }
                                     if c.configured && !confirming && retirement-confirming: HorizontalLayout {
@@ -2440,7 +2552,8 @@ export component SettingsView inherits Rectangle {
                                             loading: root.channel-account-retirement-in-flight;
                                             enabled: !root.channel-account-retirement-in-flight
                                                 && !root.channel-account-dm-pairing-in-flight
-                                                && !root.channel-pairing-in-flight;
+                                                && !root.channel-pairing-in-flight
+                                                && !root.channel-migration-in-flight;
                                             clicked => {
                                                 root.channel-account-remove-clicked(c.name, account.account-id);
                                             }
@@ -2450,7 +2563,8 @@ export component SettingsView inherits Rectangle {
                                             primary: false;
                                             enabled: !root.channel-account-retirement-in-flight
                                                 && !root.channel-account-dm-pairing-in-flight
-                                                && !root.channel-pairing-in-flight;
+                                                && !root.channel-pairing-in-flight
+                                                && !root.channel-migration-in-flight;
                                             clicked => { retirement-confirming = false; }
                                         }
                                     }
@@ -2459,7 +2573,8 @@ export component SettingsView inherits Rectangle {
                                         primary: false;
                                         enabled: !root.channel-account-retirement-in-flight
                                             && !root.channel-account-dm-pairing-in-flight
-                                            && !root.channel-pairing-in-flight;
+                                            && !root.channel-pairing-in-flight
+                                            && !root.channel-migration-in-flight;
                                         clicked => { pairing-confirming = true; }
                                     }
                                     if c.configured && !confirming && pairing-confirming: HorizontalLayout {
@@ -2481,7 +2596,8 @@ export component SettingsView inherits Rectangle {
                                             loading: root.channel-account-dm-pairing-in-flight;
                                             enabled: !root.channel-account-retirement-in-flight
                                                 && !root.channel-account-dm-pairing-in-flight
-                                                && !root.channel-pairing-in-flight;
+                                                && !root.channel-pairing-in-flight
+                                                && !root.channel-migration-in-flight;
                                             clicked => {
                                                 root.channel-account-dm-pairing-clicked(
                                                     c.name,
@@ -2495,7 +2611,8 @@ export component SettingsView inherits Rectangle {
                                             primary: false;
                                             enabled: !root.channel-account-retirement-in-flight
                                                 && !root.channel-account-dm-pairing-in-flight
-                                                && !root.channel-pairing-in-flight;
+                                                && !root.channel-pairing-in-flight
+                                                && !root.channel-migration-in-flight;
                                             clicked => { pairing-confirming = false; }
                                         }
                                     }
@@ -2504,7 +2621,8 @@ export component SettingsView inherits Rectangle {
                                         primary: false;
                                         enabled: !root.channel-account-retirement-in-flight
                                             && !root.channel-account-dm-pairing-in-flight
-                                            && !root.channel-pairing-in-flight;
+                                            && !root.channel-pairing-in-flight
+                                            && !root.channel-migration-in-flight;
                                         clicked => {
                                             root.channel-pairing-list(c.name, account.account-id);
                                         }
@@ -2576,7 +2694,8 @@ export component SettingsView inherits Rectangle {
                                                     && root.channel-pairing-error == ""
                                                     && !root.channel-account-retirement-in-flight
                                                     && !root.channel-account-dm-pairing-in-flight
-                                                    && !root.channel-pairing-in-flight;
+                                                    && !root.channel-pairing-in-flight
+                                                    && !root.channel-migration-in-flight;
                                                 clicked => { approve-confirming = true; }
                                             }
                                             NeothButton {
@@ -2586,7 +2705,8 @@ export component SettingsView inherits Rectangle {
                                                     && root.channel-pairing-error == ""
                                                     && !root.channel-account-retirement-in-flight
                                                     && !root.channel-account-dm-pairing-in-flight
-                                                    && !root.channel-pairing-in-flight;
+                                                    && !root.channel-pairing-in-flight
+                                                    && !root.channel-migration-in-flight;
                                                 clicked => { dismiss-confirming = true; }
                                             }
                                         }
@@ -2608,7 +2728,8 @@ export component SettingsView inherits Rectangle {
                                                     && root.channel-pairing-error == ""
                                                     && !root.channel-account-retirement-in-flight
                                                     && !root.channel-account-dm-pairing-in-flight
-                                                    && !root.channel-pairing-in-flight;
+                                                    && !root.channel-pairing-in-flight
+                                                    && !root.channel-migration-in-flight;
                                                 clicked => {
                                                     root.channel-pairing-dismiss(
                                                         "telegram",
@@ -2622,7 +2743,8 @@ export component SettingsView inherits Rectangle {
                                                 primary: false;
                                                 enabled: !root.channel-account-retirement-in-flight
                                                     && !root.channel-account-dm-pairing-in-flight
-                                                    && !root.channel-pairing-in-flight;
+                                                    && !root.channel-pairing-in-flight
+                                                    && !root.channel-migration-in-flight;
                                                 clicked => { dismiss-confirming = false; }
                                             }
                                         }
@@ -2641,7 +2763,8 @@ export component SettingsView inherits Rectangle {
                                                 text <=> approve-code;
                                                 enabled: !root.channel-account-retirement-in-flight
                                                     && !root.channel-account-dm-pairing-in-flight
-                                                    && !root.channel-pairing-in-flight;
+                                                    && !root.channel-pairing-in-flight
+                                                    && !root.channel-migration-in-flight;
                                             }
                                             HorizontalLayout {
                                                 spacing: Theme.space-tight;
@@ -2654,7 +2777,8 @@ export component SettingsView inherits Rectangle {
                                                         && root.channel-pairing-error == ""
                                                         && !root.channel-account-retirement-in-flight
                                                         && !root.channel-account-dm-pairing-in-flight
-                                                        && !root.channel-pairing-in-flight;
+                                                        && !root.channel-pairing-in-flight
+                                                        && !root.channel-migration-in-flight;
                                                     clicked => {
                                                         root.channel-pairing-approve(
                                                             "telegram",
@@ -2670,7 +2794,8 @@ export component SettingsView inherits Rectangle {
                                                     primary: false;
                                                     enabled: !root.channel-account-retirement-in-flight
                                                         && !root.channel-account-dm-pairing-in-flight
-                                                        && !root.channel-pairing-in-flight;
+                                                        && !root.channel-pairing-in-flight
+                                                        && !root.channel-migration-in-flight;
                                                     clicked => {
                                                         approve-code = "";
                                                         approve-confirming = false;
@@ -2685,7 +2810,8 @@ export component SettingsView inherits Rectangle {
                                         loading: root.channel-pairing-in-flight;
                                         enabled: !root.channel-account-retirement-in-flight
                                             && !root.channel-account-dm-pairing-in-flight
-                                            && !root.channel-pairing-in-flight;
+                                            && !root.channel-pairing-in-flight
+                                            && !root.channel-migration-in-flight;
                                         clicked => {
                                             root.channel-pairing-list("telegram", root.channel-pairing-account);
                                         }

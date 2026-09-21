@@ -85,6 +85,16 @@ fn normalize_relay_urls(relays_csv: &str) -> Result<Vec<String>> {
     Ok(relays.into_iter().collect())
 }
 
+/// A relay is ready for this adapter only after it acknowledges the exact
+/// subscription that the adapter created.  An EOSE for another subscription
+/// must never publish the shared relay client for proactive delivery.
+fn matching_eose(subscription_id: &SubscriptionId, message: &RelayMessage<'_>) -> bool {
+    matches!(
+        message,
+        RelayMessage::EndOfStoredEvents(id) if id.as_ref() == subscription_id
+    )
+}
+
 /// Validate exactly the key and relay contract consumed by the live adapter.
 /// The returned CSV is canonical and safe to persist; key parse failures are
 /// intentionally static so operator-visible errors can never echo the secret.
@@ -253,6 +263,9 @@ pub struct NostrChannel {
     secret_key: SecretString,
     relays: Vec<String>,
     client: tokio::sync::OnceCell<Client>,
+    /// Becomes true only after an authenticated relay client has a successful
+    /// NIP-17 subscription.  The existing client remains the sole send path.
+    live_ready: tokio::sync::watch::Sender<bool>,
     /// D2 — operator sender allowlist (a 64-char hex pubkey). `None` exists for
     /// construction/tests; production serve never starts an open adapter.
     allowed_pubkey: Option<String>,
@@ -261,6 +274,16 @@ pub struct NostrChannel {
     /// Durable restart cursor. Required for a live adapter; injected from the
     /// daemon's actual (possibly non-default) NEOTH home.
     cursor_path: Option<PathBuf>,
+}
+
+/// Reset the observable readiness state on every return path, including a
+/// relay/parse error or task cancellation while the receive future is dropped.
+struct LiveReadyReset(tokio::sync::watch::Sender<bool>);
+
+impl Drop for LiveReadyReset {
+    fn drop(&mut self) {
+        let _ = self.0.send(false);
+    }
 }
 
 impl NostrChannel {
@@ -275,10 +298,12 @@ impl NostrChannel {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
             .collect();
+        let (live_ready, _) = tokio::sync::watch::channel(false);
         Self {
             secret_key,
             relays,
             client: tokio::sync::OnceCell::new(),
+            live_ready,
             allowed_pubkey: None,
             gate_writer: None,
             cursor_path: None,
@@ -303,6 +328,12 @@ impl NostrChannel {
         self
     }
 
+    /// Subscribe to the authenticated relay/subscription readiness transition.
+    /// This does not export the SDK client or create a second relay pool.
+    pub(crate) fn live_ready_receiver(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.live_ready.subscribe()
+    }
+
     /// Parse the operator's secret key (accepts `nsec1…` bech32 or 64-char hex).
     fn keys(&self) -> Result<Keys> {
         parse_keys(&self.secret_key)
@@ -321,6 +352,7 @@ impl Channel for NostrChannel {
     /// returns `Err` (the spawn loop logs it, no restart-spin on a broken
     /// config); transient relay drops are handled by the SDK's relay pool.
     async fn run(&self, handler: PipelineHandler) -> Result<()> {
+        let _live_ready_reset = LiveReadyReset(self.live_ready.clone());
         let keys = self.keys()?;
         let relays = normalize_relay_urls(&self.relays.join(","))?;
         let my_pubkey = keys.public_key();
@@ -382,6 +414,7 @@ impl Channel for NostrChannel {
         }
         let subscription_id = subscription.value;
         let mut awaiting_eose: HashSet<RelayUrl> = subscription.success.into_keys().collect();
+        let mut live_acknowledged = false;
         info!(
             relays = awaiting_eose.len(),
             catch_up = !first_boot,
@@ -391,9 +424,15 @@ impl Channel for NostrChannel {
         while let Some(notification) = notifications.next().await {
             let event = match notification {
                 ClientNotification::Message { relay_url, message } => {
-                    if let RelayMessage::EndOfStoredEvents(id) = message.as_ref()
-                        && id.as_ref() == &subscription_id
-                    {
+                    if matching_eose(&subscription_id, message.as_ref()) {
+                        // The SDK's `subscribe` return only proves that the
+                        // request was accepted locally/queued.  This matching
+                        // EOSE is the first relay acknowledgement that the
+                        // exact subscription reached a live remote endpoint.
+                        if !live_acknowledged {
+                            live_acknowledged = true;
+                            let _ = self.live_ready.send(true);
+                        }
                         awaiting_eose.remove(&relay_url);
                         if awaiting_eose.is_empty() && cursor.completed_scan_unix < scan_started_at
                         {
@@ -543,6 +582,19 @@ mod tests {
     #[test]
     fn adapter_reports_nostr_name() {
         assert_eq!(ch().name(), "nostr");
+    }
+
+    #[test]
+    fn matching_eose_acknowledges_only_the_exact_subscription() {
+        let expected = SubscriptionId::new("neoth-live");
+        assert!(matching_eose(
+            &expected,
+            &RelayMessage::eose(expected.clone()),
+        ));
+        assert!(!matching_eose(
+            &expected,
+            &RelayMessage::eose(SubscriptionId::new("other-subscription")),
+        ));
     }
 
     #[test]

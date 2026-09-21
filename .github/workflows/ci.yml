@@ -629,6 +629,11 @@ jobs:
     name: feature-flag compile / ${{ matrix.feature }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    env:
+      # Optional frontends can add large dependency trees on a cold cache.
+      # One Cargo worker keeps this matrix within the hosted runner's memory
+      # envelope without weakening the feature or test surface.
+      CARGO_BUILD_JOBS: 1
     # 2026-05-26: cudarc 0.13.9's build.rs unconditionally execs `nvcc`
     # and panics when it's missing — the old comment claiming "nvcc not
     # actually invoked" was outdated. Free GitHub-hosted runners don't
@@ -662,6 +667,10 @@ jobs:
           # optional client dependency cannot silently rot behind the default
           # feature set.
           - { os: ubuntu-24.04, feature: ssh-tunnel }
+          # IRC and Nostr are both default-OFF connection adapters. Their
+          # pure APIs compile in ordinary CI, but their live adapter modules
+          # and dependency trees need one hermetic feature-enabled lane.
+          - { os: ubuntu-24.04, feature: channel-adapters }
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -692,7 +701,7 @@ jobs:
           fi
 
       - name: cargo check --features ${{ matrix.feature }}
-        if: matrix.feature != 'qwen-cuda' || steps.cuda-preflight.outputs.available == 'true'
+        if: (matrix.feature != 'qwen-cuda' || steps.cuda-preflight.outputs.available == 'true') && matrix.feature != 'channel-adapters'
         working-directory: SRC
         run: cargo check -p neoth --locked --features ${{ matrix.feature }}
 
@@ -700,6 +709,32 @@ jobs:
         if: matrix.feature == 'ssh-tunnel'
         working-directory: SRC
         run: cargo test -p neoth --locked --features ssh-tunnel transport::ssh_ -- --test-threads=1
+
+      # Each exact hermetic test is listed before execution. cargo test exits
+      # zero on an empty filter, so the exact `: test` count is the proof that
+      # every requested adapter identity was actually selected. These tests do
+      # not dial IRC/Nostr relays or start live providers.
+      - name: cargo test IRC and Nostr adapter contracts
+        if: matrix.feature == 'channel-adapters'
+        timeout-minutes: 40
+        shell: bash
+        working-directory: SRC
+        run: |
+          run_exact() {
+            local test_name="$1"
+            local listed
+            listed="$(cargo test -p neoth --lib --locked --features "irc-channel nostr-channel" "$test_name" -- --exact --list)"
+            printf '%s\n' "$listed"
+            test "$(printf '%s\n' "$listed" | grep -Fxc "$test_name: test")" -eq 1
+            cargo test -p neoth --lib --locked --features "irc-channel nostr-channel" "$test_name" -- --exact --test-threads=1
+          }
+          run_exact channels::irc::tests::only_server_welcome_marks_registration_accepted
+          run_exact channels::nostr::tests::matching_eose_acknowledges_only_the_exact_subscription
+          run_exact daemon::channel_live_registry::tests::revocation_waits_for_an_acquired_lease_then_refuses_new_egress
+          run_exact cli::serve_tasks::tests::readiness_publisher_revokes_on_false_and_cannot_republish_a_replaced_lease
+          run_exact daemon::proactive_dispatcher::tests::plan_delivery_connection_bound_channels_require_the_live_registry
+          run_exact daemon::proactive_dispatcher::tests::connection_bound_delivery_uses_only_the_exact_live_channel_ref
+          run_exact daemon::proactive_dispatcher::tests::failed_connection_bound_adapter_never_records_delivered
 
   # ──────────────────────────────────────────────────────────────────
   # HARNESS-05 — committed gold-smoke eval suite. Builds both public binaries and runs

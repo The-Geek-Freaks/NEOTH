@@ -3019,6 +3019,56 @@ pub fn telegram_pairing_list_command(
     Ok(command)
 }
 
+/// Build the exact legacy Telegram migration command. The named destination is
+/// explicit and canonical; migration never selects a default by inference.
+pub fn telegram_migrate_legacy_command(
+    bin: &std::path::Path,
+    channel: &str,
+    account: &str,
+) -> Result<std::process::Command, String> {
+    if channel != "telegram" {
+        return Err("only canonical Telegram supports legacy migration".to_string());
+    }
+    let account_id = canonical_telegram_account_id(account)?;
+    let mut command = std::process::Command::new(bin);
+    command
+        .arg("channel")
+        .arg("migrate-legacy")
+        .arg("telegram")
+        .arg("--account")
+        .arg(account_id.as_str())
+        .arg("--output")
+        .arg("json");
+    Ok(command)
+}
+
+/// Parse the complete atomic legacy-migration receipt. The GUI uses this only
+/// to trigger a fresh inventory projection; it is not connection proof.
+pub fn parse_telegram_legacy_migrated(stdout: &[u8], expected_account: &str) -> Option<bool> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LegacyMigrationWire {
+        channel: String,
+        account: String,
+        inbound: String,
+        account_probe: String,
+        migrated_legacy_singleton: bool,
+    }
+
+    if stdout.len() > MAX_TELEGRAM_PAIRING_JSON_BYTES {
+        return None;
+    }
+    let expected_account = canonical_telegram_account_id(expected_account).ok()?;
+    let receipt: LegacyMigrationWire = serde_json::from_slice(stdout).ok()?;
+    let returned_account = canonical_telegram_account_id(&receipt.account).ok()?;
+    (receipt.channel == "telegram"
+        && returned_account == expected_account
+        && receipt.inbound == "configured_account"
+        && receipt.account_probe == "available"
+        && receipt.migrated_legacy_singleton)
+        .then_some(true)
+}
+
 /// Build the exact-request dismissal command.  The request id is validated
 /// before it reaches argv, so a UI row cannot widen the mutation target.
 pub fn telegram_pairing_dismiss_command(

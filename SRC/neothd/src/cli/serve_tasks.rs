@@ -16,6 +16,7 @@ use tracing::{debug, info, warn};
 
 use crate::channels::registry::ChannelRef;
 use crate::channels::{Channel, ChannelKind, PipelineHandler};
+use crate::daemon::channel_live_registry::ChannelLiveRegistry;
 use crate::cli::serve_pipeline::{
     AuthenticatedInboundBinding, PipelineHandlerDeps, build_pipeline_handler,
 };
@@ -4449,6 +4450,7 @@ pub(crate) fn spawn_proactive_dispatcher(
     wal_segment_path: &std::path::Path,
     writer: &WalWriterHandle,
     reload_controller: &Arc<ReloadController>,
+    live_channels: Arc<ChannelLiveRegistry>,
 ) -> JoinHandle<()> {
     let handle = crate::daemon::proactive_dispatcher::spawn_proactive_drain_loop(
         home.to_path_buf(),
@@ -4456,6 +4458,7 @@ pub(crate) fn spawn_proactive_dispatcher(
         crate::daemon::proactive_dispatcher::PROACTIVE_DRAIN_INTERVAL_SECS,
         writer.clone(),
         Arc::clone(reload_controller),
+        live_channels,
     );
     info!(
         interval_secs = crate::daemon::proactive_dispatcher::PROACTIVE_DRAIN_INTERVAL_SECS,
@@ -5039,6 +5042,64 @@ pub(crate) fn spawn_foreign_indexer(
 /// Singleton adapters use `ChannelRef::default_account`; Telegram account-map
 /// entries never share a lifecycle bucket with another account.
 pub(crate) type ChannelFleet = std::collections::HashMap<ChannelRef, Vec<JoinHandle<()>>>;
+
+/// Readiness publishers are deliberately separate from [`ChannelFleet`]: a
+/// successful readiness publish completes normally and must never be mistaken
+/// for an inbound adapter failure by the fleet supervisor.
+pub(crate) type ChannelReadinessPublishers =
+    std::collections::HashMap<ChannelRef, JoinHandle<()>>;
+
+pub(crate) async fn abort_channel_readiness_publishers(
+    publishers: &Arc<std::sync::Mutex<ChannelReadinessPublishers>>,
+) {
+    let publishers: Vec<JoinHandle<()>> = {
+        let mut guard = publishers
+            .lock()
+            .expect("channel readiness publisher mutex poisoned");
+        std::mem::take(&mut *guard).into_values().collect()
+    };
+    for publisher in &publishers {
+        publisher.abort();
+    }
+    for publisher in publishers {
+        let _ = publisher.await;
+    }
+}
+
+#[cfg(any(test, feature = "irc-channel", feature = "nostr-channel"))]
+fn spawn_live_readiness_publisher<C: Channel + 'static>(
+    registry: Arc<ChannelLiveRegistry>,
+    lease: crate::daemon::channel_live_registry::LiveChannelPublicationLease,
+    channel: Arc<C>,
+    mut ready: tokio::sync::watch::Receiver<bool>,
+    channel_ref: ChannelRef,
+    publishers: &mut ChannelReadinessPublishers,
+) {
+    let publisher_ref = channel_ref.clone();
+    let task = tokio::spawn(async move {
+        while !*ready.borrow() {
+            if ready.changed().await.is_err() {
+                return;
+            }
+        }
+        let live_channel: Arc<dyn Channel> = channel;
+        if !registry.publish(&lease, live_channel).await {
+            return;
+        }
+        info!(
+            channel = %channel_ref.channel_id.as_str(),
+            account = %channel_ref.account_id,
+            "connection-owned proactive channel published after authenticated readiness"
+        );
+        loop {
+            if ready.changed().await.is_err() || !*ready.borrow() {
+                registry.revoke_and_drain(&channel_ref).await;
+                return;
+            }
+        }
+    });
+    publishers.insert(publisher_ref, task);
+}
 
 /// Runtime-only projection of the validated configuration pair. This keeps the
 /// effective token, admission policy, and legacy provenance inseparable until
@@ -5740,7 +5801,7 @@ pub(crate) fn channel_runtime_expected(
 /// `dispatch_join` for the COR-34 shutdown drain. Pure relocation of the inline
 /// channel-bootstrap region.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_channel_adapters(
+pub(crate) async fn spawn_channel_adapters(
     config: &FreedomConfig,
     telegram_accounts: &[TelegramAccountBundle],
     shared_provider: &Option<Arc<dyn Provider>>,
@@ -5754,6 +5815,9 @@ pub(crate) fn spawn_channel_adapters(
     dispatch_join: &Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
     creds: &crate::config::credentials::Credentials,
     channel_tasks: &mut ChannelFleet,
+    live_channels: &Arc<ChannelLiveRegistry>,
+    channel_fingerprints: &std::collections::HashMap<ChannelRef, u64>,
+    readiness_publishers: &mut ChannelReadinessPublishers,
     only: Option<&ChannelRef>,
     // GOLD-ADAPT-GOOSE-03: shared approval bus passed into every channel handler.
     // When `Some`, channel permission gates switch to Channel confirm strategy
@@ -6420,7 +6484,7 @@ pub(crate) fn spawn_channel_adapters(
             shared_provider.as_ref(),
         ) {
             (Some(server), Some(nick), Some(allowed_account), Some(provider)) => {
-                let channel = crate::channels::irc::IrcChannel::new(
+                let channel = Arc::new(crate::channels::irc::IrcChannel::new(
                     server,
                     creds.irc_port.unwrap_or(6697),
                     nick,
@@ -6429,11 +6493,19 @@ pub(crate) fn spawn_channel_adapters(
                     creds.irc_tls.unwrap_or(true),
                 )
                 .with_allowlist(creds.irc_allowed_nick.clone(), writer.clone())
-                .with_allowed_account(Some(allowed_account));
+                .with_allowed_account(Some(allowed_account)));
+                let channel_ref = ChannelRef::default_account(ChannelKind::Irc);
+                let lifecycle = if let Some(fingerprint) = channel_fingerprints.get(&channel_ref).copied() {
+                    Some((
+                        live_channels.begin_replacement(channel_ref.clone(), fingerprint).await,
+                        channel.live_ready_receiver(),
+                    ))
+                } else {
+                    warn!(channel = "irc", "IRC has no current lifecycle fingerprint; proactive publication skipped");
+                    None
+                };
                 let handler: PipelineHandler = build_channel_handler(
-                    AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
-                        ChannelKind::Irc,
-                    )),
+                    AuthenticatedInboundBinding::for_account(channel_ref.clone()),
                     provider.clone(),
                     config,
                     writer,
@@ -6446,7 +6518,14 @@ pub(crate) fn spawn_channel_adapters(
                     confirm_bus.clone(),
                     views_executor.clone(),
                 );
-                spawn_channel_run(channel, handler, ChannelKind::Irc, "IRC", channel_tasks);
+                spawn_shared_channel_run_for_ref(
+                    channel.clone(), handler, channel_ref.clone(), "IRC", channel_tasks,
+                );
+                if let Some((lease, ready)) = lifecycle {
+                    spawn_live_readiness_publisher(
+                        Arc::clone(live_channels), lease, channel, ready, channel_ref, readiness_publishers,
+                    );
+                }
                 info!(
                     channel = "irc",
                     status = "LIVE",
@@ -6496,12 +6575,21 @@ pub(crate) fn spawn_channel_adapters(
             shared_provider.as_ref(),
         ) {
             (Some(username), Some(oauth), Some(channels), Some(provider)) => {
-                let channel =
-                    crate::channels::irc::IrcChannel::for_twitch(username, oauth, channels);
+                let channel = Arc::new(
+                    crate::channels::irc::IrcChannel::for_twitch(username, oauth, channels),
+                );
+                let channel_ref = ChannelRef::default_account(ChannelKind::Twitch);
+                let lifecycle = if let Some(fingerprint) = channel_fingerprints.get(&channel_ref).copied() {
+                    Some((
+                        live_channels.begin_replacement(channel_ref.clone(), fingerprint).await,
+                        channel.live_ready_receiver(),
+                    ))
+                } else {
+                    warn!(channel = "twitch", "Twitch has no current lifecycle fingerprint; proactive publication skipped");
+                    None
+                };
                 let handler: PipelineHandler = build_channel_handler(
-                    AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
-                        ChannelKind::Twitch,
-                    )),
+                    AuthenticatedInboundBinding::for_account(channel_ref.clone()),
                     provider.clone(),
                     config,
                     writer,
@@ -6514,13 +6602,14 @@ pub(crate) fn spawn_channel_adapters(
                     confirm_bus.clone(),
                     views_executor.clone(),
                 );
-                spawn_channel_run(
-                    channel,
-                    handler,
-                    ChannelKind::Twitch,
-                    "Twitch",
-                    channel_tasks,
+                spawn_shared_channel_run_for_ref(
+                    channel.clone(), handler, channel_ref.clone(), "Twitch", channel_tasks,
                 );
+                if let Some((lease, ready)) = lifecycle {
+                    spawn_live_readiness_publisher(
+                        Arc::clone(live_channels), lease, channel, ready, channel_ref, readiness_publishers,
+                    );
+                }
                 info!(
                     channel = "twitch",
                     status = "LIVE",
@@ -6567,13 +6656,21 @@ pub(crate) fn spawn_channel_adapters(
             shared_provider.as_ref(),
         ) {
             (Some(secret_key), Some(relays), Some(allowed_pubkey), Some(provider)) => {
-                let channel = crate::channels::nostr::NostrChannel::new(secret_key, relays)
+                let channel = Arc::new(crate::channels::nostr::NostrChannel::new(secret_key, relays)
                     .with_allowlist(Some(allowed_pubkey), writer.clone())
-                    .with_cursor_path(neoth_home.join("channel-state/nostr-cursor.json"));
+                    .with_cursor_path(neoth_home.join("channel-state/nostr-cursor.json")));
+                let channel_ref = ChannelRef::default_account(ChannelKind::Nostr);
+                let lifecycle = if let Some(fingerprint) = channel_fingerprints.get(&channel_ref).copied() {
+                    Some((
+                        live_channels.begin_replacement(channel_ref.clone(), fingerprint).await,
+                        channel.live_ready_receiver(),
+                    ))
+                } else {
+                    warn!(channel = "nostr", "Nostr has no current lifecycle fingerprint; proactive publication skipped");
+                    None
+                };
                 let handler: PipelineHandler = build_channel_handler(
-                    AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
-                        ChannelKind::Nostr,
-                    )),
+                    AuthenticatedInboundBinding::for_account(channel_ref.clone()),
                     provider.clone(),
                     config,
                     writer,
@@ -6586,7 +6683,14 @@ pub(crate) fn spawn_channel_adapters(
                     confirm_bus.clone(),
                     views_executor.clone(),
                 );
-                spawn_channel_run(channel, handler, ChannelKind::Nostr, "Nostr", channel_tasks);
+                spawn_shared_channel_run_for_ref(
+                    channel.clone(), handler, channel_ref.clone(), "Nostr", channel_tasks,
+                );
+                if let Some((lease, ready)) = lifecycle {
+                    spawn_live_readiness_publisher(
+                        Arc::clone(live_channels), lease, channel, ready, channel_ref, readiness_publishers,
+                    );
+                }
                 info!(
                     channel = "nostr",
                     status = "LIVE",
@@ -7719,6 +7823,11 @@ pub(crate) struct BackgroundHandles {
     /// Shared with the credential reconciler. Handles are keyed by channel so
     /// one rotated credential never interrupts unrelated adapters.
     pub channel_tasks: Arc<std::sync::Mutex<ChannelFleet>>,
+    /// Readiness waits are lifecycle-owned, separate from inbound adapter
+    /// handles because normal publication completion is not adapter failure.
+    pub readiness_publishers: Arc<std::sync::Mutex<ChannelReadinessPublishers>>,
+    /// The only daemon-owned source of connection-bound proactive adapters.
+    pub live_channels: Arc<ChannelLiveRegistry>,
     /// The fleet supervisor itself — aborted BEFORE the channel tasks
     /// so a reload racing shutdown can't respawn into a dying daemon.
     pub channel_supervisor_task: JoinHandle<()>,
@@ -7859,6 +7968,8 @@ pub(crate) async fn shutdown_background_tasks(
         companion_state,
         worker_watch_handle,
         channel_tasks,
+        readiness_publishers,
+        live_channels,
         channel_supervisor_task,
         channel_runtime_health,
         dispatch_join,
@@ -7945,6 +8056,11 @@ pub(crate) async fn shutdown_background_tasks(
         warn!(error = %error, "channel runtime-health stopping projection publish failed");
     }
     crate::cli::serve_tasks::abort_join(channel_supervisor_task).await;
+
+    // Close new proactive acquisition first, then retain already leased sends
+    // through their registry drain before any receive adapter is aborted.
+    live_channels.revoke_all_and_drain().await;
+    abort_channel_readiness_publishers(&readiness_publishers).await;
 
     // Abort channel tasks first so they stop generating new WAL frames.
     let channel_tasks: Vec<JoinHandle<()>> = {
@@ -8668,6 +8784,153 @@ pub(crate) fn bootstrap_plugin_invoker(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ReadinessProbeChannel;
+
+    #[async_trait::async_trait]
+    impl Channel for ReadinessProbeChannel {
+        fn name(&self) -> &'static str {
+            "readiness-probe"
+        }
+
+        async fn run(&self, _handler: PipelineHandler) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn send_proactive(
+            &self,
+            _chat_id: &str,
+            _text: &str,
+        ) -> std::result::Result<crate::channels::MessageId, crate::channels::ChannelError> {
+            Ok(crate::channels::MessageId("probe".to_owned()))
+        }
+    }
+
+    struct DrainProbeChannel {
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl Channel for DrainProbeChannel {
+        fn name(&self) -> &'static str {
+            "drain-probe"
+        }
+
+        async fn run(&self, _handler: PipelineHandler) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn send_proactive(
+            &self,
+            _chat_id: &str,
+            _text: &str,
+        ) -> std::result::Result<crate::channels::MessageId, crate::channels::ChannelError> {
+            self.entered.notify_one();
+            self.release.notified().await;
+            Ok(crate::channels::MessageId("drained".to_owned()))
+        }
+    }
+
+    async fn wait_for_live_channel(
+        registry: &ChannelLiveRegistry,
+        channel_ref: &ChannelRef,
+        fingerprint: u64,
+    ) {
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if registry.acquire(channel_ref, fingerprint).await.is_some() {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("readiness publisher must publish its exact live generation");
+    }
+
+    #[tokio::test]
+    async fn readiness_publisher_revokes_on_false_and_cannot_republish_a_replaced_lease() {
+        let registry = Arc::new(ChannelLiveRegistry::new());
+        let channel_ref = ChannelRef::default_account(ChannelKind::Irc);
+        let mut publishers = ChannelReadinessPublishers::new();
+        let channel = Arc::new(DrainProbeChannel {
+            entered: Arc::new(tokio::sync::Notify::new()),
+            release: Arc::new(tokio::sync::Notify::new()),
+        });
+        let (ready_tx, ready_rx) = tokio::sync::watch::channel(false);
+        let lease = registry.begin_replacement(channel_ref.clone(), 41).await;
+        spawn_live_readiness_publisher(
+            Arc::clone(&registry),
+            lease,
+            Arc::clone(&channel),
+            ready_rx,
+            channel_ref.clone(),
+            &mut publishers,
+        );
+        ready_tx.send(true).unwrap();
+        wait_for_live_channel(&registry, &channel_ref, 41).await;
+
+        let acquired = registry.acquire(&channel_ref, 41).await.unwrap();
+        let entered = Arc::clone(&channel.entered);
+        let release = Arc::clone(&channel.release);
+        let send = tokio::spawn(async move {
+            acquired.send_proactive("#ops", "drain").await.unwrap();
+        });
+        entered.notified().await;
+        ready_tx.send(false).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if registry.acquire(&channel_ref, 41).await.is_none() {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("false readiness must close new acquisition before waiting for drain");
+        assert!(
+            !publishers.get(&channel_ref).unwrap().is_finished(),
+            "false readiness must drain an already acquired send before publisher exit"
+        );
+        release.notify_one();
+        send.await.unwrap();
+        publishers
+            .remove(&channel_ref)
+            .expect("publisher remains lifecycle-owned until reaped")
+            .await
+            .unwrap();
+        assert!(
+            registry.acquire(&channel_ref, 41).await.is_none(),
+            "false readiness must revoke the published channel before return"
+        );
+
+        let (stale_tx, stale_rx) = tokio::sync::watch::channel(false);
+        let stale_lease = registry.begin_replacement(channel_ref.clone(), 42).await;
+        spawn_live_readiness_publisher(
+            Arc::clone(&registry),
+            stale_lease,
+            Arc::new(ReadinessProbeChannel),
+            stale_rx,
+            channel_ref.clone(),
+            &mut publishers,
+        );
+        let replacement = registry.begin_replacement(channel_ref.clone(), 43).await;
+        stale_tx.send(true).unwrap();
+        publishers
+            .remove(&channel_ref)
+            .expect("stale publisher remains lifecycle-owned until it loses publication")
+            .await
+            .unwrap();
+        assert!(registry.acquire(&channel_ref, 42).await.is_none());
+        assert!(registry.acquire(&channel_ref, 43).await.is_none());
+        assert!(
+            registry
+                .publish(&replacement, Arc::new(ReadinessProbeChannel))
+                .await,
+            "only the exact current replacement lease may publish after stale readiness wakes"
+        );
+    }
 
     #[test]
     fn admitted_legacy_live_factories_seal_distinct_default_capabilities() {
