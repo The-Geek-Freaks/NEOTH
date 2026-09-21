@@ -40094,11 +40094,10 @@ mod w58_gui_callback_runtime_tests {
     #[cfg(not(windows))]
     use super::{
         CHAT_STREAM_CONTROL_PREFIX, ChatThroughputProjections, ThroughputControlFrame,
-        apply_chat_throughput_controls, begin_chat_throughput_projection,
-        chat_stream_request_id, clear_buddy_throughput_projection,
-        clear_main_throughput_projection, discard_chat_throughput_projection,
-        parse_chat_stream_protocol_incremental, project_chat_throughput_snapshot,
-        provider_done_chat_throughput_projection,
+        apply_chat_throughput_controls, begin_chat_throughput_projection, chat_stream_request_id,
+        clear_buddy_throughput_projection, clear_main_throughput_projection,
+        discard_chat_throughput_projection, parse_chat_stream_protocol_incremental,
+        project_chat_throughput_snapshot, provider_done_chat_throughput_projection,
     };
 
     use crate::panel_logic;

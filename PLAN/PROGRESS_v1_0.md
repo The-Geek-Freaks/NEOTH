@@ -20,6 +20,8 @@ twelve unused startup clones and one unused citation Read import are removed.
 The independent frozen-patch review found no code defect; its documentation
 scope warning is corrected in the receipt. Native/GUI execution remains
 pending. W163 is excluded from this repair admission.
+Preflight35637301912 on e9577222 requested one exact import-wrapping hunk;
+that Hosted formatter result is imported without a local formatter.
 
 **W162 live throughput and hosted repair (2026-09-21):** the integrated producer,
 strict request-bound reducer, Chat and Buddy display are source-reviewed.

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W162_HOSTED_GUI_TEST_SCOPE_REPAIR_PENDING",
-  "base": "65e27f0cebe16c82c62db428940269a16a2c92d3",
+  "status": "W162_HOSTED_GUI_TEST_SCOPE_AND_ONE_FORMAT_HUNK_PENDING",
+  "base": "e957722222c159d90b8bdaf673ef71feb0f823a1",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 61004,
-    "sha256": "61A0D58D6692802671A385D1CFAA8CC526ADBF53EAD8E9489E62485909189F9E"
+    "bytes": 61017,
+    "sha256": "71AFBD1F4C0DB4F45E619F784DAA7A6A28168855F006C585D3A07CA058A6FD35"
   },
   "sourceInputs": 353,
   "requiredNativeTests": [
@@ -4396,6 +4396,14 @@
     "correctedReceipt": "work/gold-20260906/wave162-live-tps/GUI-TEST-COMPILE-REPAIR.md",
     "correctedReceiptSha256": "764FC76374A78159AC85F58270DED4C1B4B99632A3D18C627BC3BEDC93C8C755",
     "w163Excluded": true,
-    "nativeExecution": "fresh_hosted_required"
+    "nativeExecution": "fresh_hosted_required",
+    "formatFollowup": {
+      "source": "e957722222c159d90b8bdaf673ef71feb0f823a1",
+      "preflight": 35637301912,
+      "result": "one_exact_import_format_hunk_imported",
+      "receipt": "work/gold-20260906/wave162-live-tps/GUI-IMPORT-FORMAT.json",
+      "receiptSha256": "05C7F7359E9443DBA0112317F0D2DE4F8AA5B467D722003BC48AC239110E423B",
+      "freshHosted": "pending"
+    }
   }
 }
