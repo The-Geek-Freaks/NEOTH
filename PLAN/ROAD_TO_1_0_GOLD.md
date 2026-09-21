@@ -24,6 +24,12 @@ review; hosted compilation/runtime remain required. See [W131](../docs/gold-wave
 W132 TypeHierarchy is being repaired after review before persistence/MCP
 integration. P2-11, Graphify/self-knowledge and Road counts stay open/unchanged.
 
+
+Hosted format follow-up: W131 source f3b6a0ae received 76 exact Rustfmt hunks
+across six files from Preflight 35575158268 (including W133 dispatcher layout).
+They were imported without local formatter execution. Fresh hosted gates remain
+required; no semantic change or Road checkbox closure is attributed to formatting.
+
 **W128/W130 existing-connection delivery and migration (2026-09-21):**
 IRC/Twitch/Nostr proactive delivery acquires only the daemon's current ready
 adapter under exact account, fingerprint and lifecycle authority. Revocation

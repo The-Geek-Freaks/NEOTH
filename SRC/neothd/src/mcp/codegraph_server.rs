@@ -1595,10 +1595,15 @@ fn stored_import_snapshot(conn: &rusqlite::Connection, root: &str) -> Result<Sto
                 oversize_skipped = 0 AND truncated_at IS NULL \
          FROM code_map_roots WHERE root = ?1",
         rusqlite::params![root],
-        |row| Ok(StoredImportSnapshot {
-            root_identity: row.get(0)?, index_generation: row.get(1)?,
-            graph_generation: row.get(2)?, import_generation: row.get(3)?, complete: row.get(4)?,
-        }),
+        |row| {
+            Ok(StoredImportSnapshot {
+                root_identity: row.get(0)?,
+                index_generation: row.get(1)?,
+                graph_generation: row.get(2)?,
+                import_generation: row.get(3)?,
+                complete: row.get(4)?,
+            })
+        },
     )
     .with_context(|| format!("read import-graph snapshot metadata for {root:?}"))
 }
@@ -1631,36 +1636,68 @@ fn import_graph_from_db_with_snapshot(
     cwd: &Path,
     requested_file: &str,
 ) -> Result<(crate::code_map::imports::ImportGraph, ContextBindingWitness)> {
-    if !db_path.try_exists().with_context(|| format!("inspect code-map DB path {}", db_path.display()))? {
-        anyhow::bail!("code-map DB does not exist at {}; run `neoth code-map persist` first", db_path.display());
+    if !db_path
+        .try_exists()
+        .with_context(|| format!("inspect code-map DB path {}", db_path.display()))?
+    {
+        anyhow::bail!(
+            "code-map DB does not exist at {}; run `neoth code-map persist` first",
+            db_path.display()
+        );
     }
     let conn = open_code_map_read_only(db_path)?;
     let Some(expected) = crate::code_map::recall::resolve_active_root_snapshot(&conn, cwd)? else {
-        anyhow::bail!("working directory {} is not inside a persisted code-map root", cwd.display());
+        anyhow::bail!(
+            "working directory {} is not inside a persisted code-map root",
+            cwd.display()
+        );
     };
-    let tx = conn.unchecked_transaction().context("begin atomic import-graph read transaction")?;
+    let tx = conn
+        .unchecked_transaction()
+        .context("begin atomic import-graph read transaction")?;
     let initial = stored_import_snapshot(&tx, expected.root.display())?;
     validate_stored_import_snapshot(&expected, &initial)?;
-    let initial_freshness = crate::code_map::persist::index_freshness_receipt(&tx, expected.root.display())?;
-    anyhow::ensure!(!initial_freshness.stale, "code-map import graph is stale; rebuild the code map before querying it");
+    let initial_freshness =
+        crate::code_map::persist::index_freshness_receipt(&tx, expected.root.display())?;
+    anyhow::ensure!(
+        !initial_freshness.stale,
+        "code-map import graph is stale; rebuild the code map before querying it"
+    );
     crate::code_map::persist::ensure_current_import_file(
-        &tx, expected.root.display(), requested_file,
+        &tx,
+        expected.root.display(),
+        requested_file,
     )?;
     let (edges, truncated) = crate::code_map::persist::load_import_edges_for_root_bounded(
-        &tx, expected.root.display(), IMPORT_GRAPH_EDGE_LIMIT, IMPORT_GRAPH_EDGE_TEXT_BYTE_LIMIT,
+        &tx,
+        expected.root.display(),
+        IMPORT_GRAPH_EDGE_LIMIT,
+        IMPORT_GRAPH_EDGE_TEXT_BYTE_LIMIT,
     )?;
-    anyhow::ensure!(!truncated, "code-map import graph exceeds the per-root edge ceiling of {IMPORT_GRAPH_EDGE_LIMIT}; narrow or rebuild the index");
-    let final_freshness = crate::code_map::persist::index_freshness_receipt(&tx, expected.root.display())?;
     anyhow::ensure!(
-        !final_freshness.stale && initial_freshness.filesystem_fingerprint == final_freshness.filesystem_fingerprint,
+        !truncated,
+        "code-map import graph exceeds the per-root edge ceiling of {IMPORT_GRAPH_EDGE_LIMIT}; narrow or rebuild the index"
+    );
+    let final_freshness =
+        crate::code_map::persist::index_freshness_receipt(&tx, expected.root.display())?;
+    anyhow::ensure!(
+        !final_freshness.stale
+            && initial_freshness.filesystem_fingerprint == final_freshness.filesystem_fingerprint,
         "code-map root changed during import-graph materialization; rebuild and retry"
     );
     let final_stored = stored_import_snapshot(&tx, expected.root.display())?;
     validate_stored_import_snapshot(&expected, &final_stored)?;
-    anyhow::ensure!(final_stored == initial, "code-map import snapshot changed during materialization; retry");
-    tx.commit().context("commit atomic import-graph read transaction")?;
+    anyhow::ensure!(
+        final_stored == initial,
+        "code-map import snapshot changed during materialization; retry"
+    );
+    tx.commit()
+        .context("commit atomic import-graph read transaction")?;
     let final_active = crate::code_map::recall::resolve_active_root_snapshot(&conn, cwd)?;
-    anyhow::ensure!(final_active.as_ref() == Some(&expected), "active code-map root or generation changed during import-graph materialization; retry");
+    anyhow::ensure!(
+        final_active.as_ref() == Some(&expected),
+        "active code-map root or generation changed during import-graph materialization; retry"
+    );
     Ok((
         crate::code_map::imports::ImportGraph::from_edges(edges),
         ContextBindingWitness {
@@ -1679,33 +1716,66 @@ fn tool_imports_with_binding(
 ) -> CodegraphToolResponse {
     let parsed: ImportsArgs = match serde_json::from_value(args.clone()) {
         Ok(parsed) => parsed,
-        Err(error) => return CodegraphToolResponse::plain(error_result(format!("bad args: {error}"))),
+        Err(error) => {
+            return CodegraphToolResponse::plain(error_result(format!("bad args: {error}")));
+        }
     };
     let depth = match runtime.bfs_depth(parsed.depth) {
         Ok(depth) => depth,
-        Err(error) => return CodegraphToolResponse::plain(error_result(format!("codegraph imports rejected before DB access: {error:#}"))),
+        Err(error) => {
+            return CodegraphToolResponse::plain(error_result(format!(
+                "codegraph imports rejected before DB access: {error:#}"
+            )));
+        }
     };
     let (graph, witness) = match import_graph_from_db_with_snapshot(db_path, cwd, &parsed.file) {
         Ok(graph) => graph,
-        Err(error) => return CodegraphToolResponse::plain(error_result(format!("codegraph_imports failed: {error:#}"))),
+        Err(error) => {
+            return CodegraphToolResponse::plain(error_result(format!(
+                "codegraph_imports failed: {error:#}"
+            )));
+        }
     };
     let node_limit = runtime.0.map_or(
         crate::code_map::imports::DEFAULT_MAX_IMPORT_QUERY_NODES,
-        |policy| policy.max_rendered_bytes().min(crate::code_map::imports::DEFAULT_MAX_IMPORT_QUERY_NODES),
+        |policy| {
+            policy
+                .max_rendered_bytes()
+                .min(crate::code_map::imports::DEFAULT_MAX_IMPORT_QUERY_NODES)
+        },
     );
     let text_limit = runtime.0.map_or(
         crate::code_map::imports::DEFAULT_MAX_IMPORT_QUERY_TEXT_BYTES,
-        |policy| policy.max_rendered_bytes().min(crate::code_map::imports::DEFAULT_MAX_IMPORT_QUERY_TEXT_BYTES),
+        |policy| {
+            policy
+                .max_rendered_bytes()
+                .min(crate::code_map::imports::DEFAULT_MAX_IMPORT_QUERY_TEXT_BYTES)
+        },
     );
-    match graph.query_bounded(&parsed.file, parsed.direction, depth, node_limit, text_limit) {
+    match graph.query_bounded(
+        &parsed.file,
+        parsed.direction,
+        depth,
+        node_limit,
+        text_limit,
+    ) {
         Ok(entries) => match bounded_json_array(
-            entries.into_iter().map(|entry| serde_json::json!({"file": entry.file, "depth": entry.depth})),
+            entries
+                .into_iter()
+                .map(|entry| serde_json::json!({"file": entry.file, "depth": entry.depth})),
             runtime.0.map(|policy| policy.max_rendered_bytes()),
         ) {
-            Ok(payload) => CodegraphToolResponse { result: text_result(payload), witness: Some(witness) },
-            Err(error) => CodegraphToolResponse::plain(error_result(format!("codegraph imports bounded result: {error:#}"))),
+            Ok(payload) => CodegraphToolResponse {
+                result: text_result(payload),
+                witness: Some(witness),
+            },
+            Err(error) => CodegraphToolResponse::plain(error_result(format!(
+                "codegraph imports bounded result: {error:#}"
+            ))),
         },
-        Err(error) => CodegraphToolResponse::plain(error_result(format!("codegraph imports bounded result: {error:#}"))),
+        Err(error) => CodegraphToolResponse::plain(error_result(format!(
+            "codegraph imports bounded result: {error:#}"
+        ))),
     }
 }
 
@@ -3764,17 +3834,27 @@ fn root() { alpha(); beta(); }
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(root.join("src/lib.rs"), "mod api;\n").unwrap();
         std::fs::write(root.join("src/api.rs"), "pub struct Api;\n").unwrap();
-        let map = crate::code_map::walker::RepoMapBuilder::new(root).with_symbols(true).scan().unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(root)
+            .with_symbols(true)
+            .scan()
+            .unwrap();
         let canonical = crate::code_map::root_identity::CanonicalRepoRoot::discover(root).unwrap();
         let imports = crate::code_map::imports::ImportGraph::from_edges(vec![
             crate::code_map::imports::ImportEdge {
-                from_file: "src/lib.rs".into(), to_file: "src/api.rs".into(), language: "rust".into(),
+                from_file: "src/lib.rs".into(),
+                to_file: "src/api.rs".into(),
+                language: "rust".into(),
             },
         ]);
         let mut conn = crate::code_map::persist::open(db).unwrap();
         crate::code_map::persist::persist_map_and_edges_bound(
-            &mut conn, &map, &[], imports.edges(), &canonical,
-        ).unwrap();
+            &mut conn,
+            &map,
+            &[],
+            imports.edges(),
+            &canonical,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -3784,18 +3864,33 @@ fn root() { alpha(); beta(); }
         let repo = dir.path().join("repo");
         seed_import_graph_db(&db, &repo);
         let result = dispatch_codegraph_tool_at(
-            &db, "codegraph_imports", &serde_json::json!({"file":"src/lib.rs"}), &repo,
+            &db,
+            "codegraph_imports",
+            &serde_json::json!({"file":"src/lib.rs"}),
+            &repo,
         );
         assert!(!result.is_error, "got: {}", text_content(&result));
         let rows: Vec<serde_json::Value> = serde_json::from_str(&text_content(&result)).unwrap();
-        assert_eq!(rows, vec![serde_json::json!({"file":"src/api.rs", "depth":1})]);
-        let empty = dispatch_codegraph_tool_at(
-            &db, "codegraph_imports", &serde_json::json!({"file":"src/api.rs"}), &repo,
+        assert_eq!(
+            rows,
+            vec![serde_json::json!({"file":"src/api.rs", "depth":1})]
         );
-        assert!(!empty.is_error, "known leaf must return a certified empty result");
+        let empty = dispatch_codegraph_tool_at(
+            &db,
+            "codegraph_imports",
+            &serde_json::json!({"file":"src/api.rs"}),
+            &repo,
+        );
+        assert!(
+            !empty.is_error,
+            "known leaf must return a certified empty result"
+        );
         assert_eq!(text_content(&empty), "[]");
         let unknown = dispatch_codegraph_tool_at(
-            &db, "codegraph_imports", &serde_json::json!({"file":"../../outside.rs"}), &repo,
+            &db,
+            "codegraph_imports",
+            &serde_json::json!({"file":"../../outside.rs"}),
+            &repo,
         );
         assert!(unknown.is_error);
         assert!(text_content(&unknown).contains("normalized repository-relative"));
@@ -3810,7 +3905,9 @@ fn root() { alpha(); beta(); }
         let prior_cwd = std::env::current_dir().unwrap();
         struct RestoreCwd(std::path::PathBuf);
         impl Drop for RestoreCwd {
-            fn drop(&mut self) { std::env::set_current_dir(&self.0).expect("restore import stdio CWD"); }
+            fn drop(&mut self) {
+                std::env::set_current_dir(&self.0).expect("restore import stdio CWD");
+            }
         }
         std::env::set_current_dir(&repo).unwrap();
         let _restore = RestoreCwd(prior_cwd);
@@ -3818,22 +3915,43 @@ fn root() { alpha(); beta(); }
             "jsonrpc":"2.0", "id":"imports-1", "method":"tools/call",
             "params":{"name":"codegraph_imports", "arguments":{"file":"src/lib.rs"}}
         });
-        let mut session = StdioSession { initialize_seen: true, ready: true, ..Default::default() };
+        let mut session = StdioSession {
+            initialize_seen: true,
+            ready: true,
+            ..Default::default()
+        };
         let runtime = RequestedContextRuntime::from_policy(w59_requested_policy());
         let response = handle_stdio_message_with_runtimes(
-            &db, &serde_json::to_vec(&request).unwrap(), &mut session,
-            CodegraphImpactRuntime::static_defaults(), runtime,
-        ).unwrap();
+            &db,
+            &serde_json::to_vec(&request).unwrap(),
+            &mut session,
+            CodegraphImpactRuntime::static_defaults(),
+            runtime,
+        )
+        .unwrap();
         assert_eq!(response["result"]["isError"], false);
-        assert_eq!(response["result"]["_meta"][CODEGRAPH_CONTEXT_BINDING_META_KEY]["tool"], "codegraph_imports");
+        assert_eq!(
+            response["result"]["_meta"][CODEGRAPH_CONTEXT_BINDING_META_KEY]["tool"],
+            "codegraph_imports"
+        );
         let conn = crate::code_map::persist::open(&db).unwrap();
-        conn.execute("UPDATE code_map_roots SET import_generation = 0", []).unwrap();
+        conn.execute("UPDATE code_map_roots SET import_generation = 0", [])
+            .unwrap();
         let stale = handle_stdio_message_with_runtimes(
-            &db, &serde_json::to_vec(&request).unwrap(), &mut session,
-            CodegraphImpactRuntime::static_defaults(), runtime,
-        ).unwrap();
+            &db,
+            &serde_json::to_vec(&request).unwrap(),
+            &mut session,
+            CodegraphImpactRuntime::static_defaults(),
+            runtime,
+        )
+        .unwrap();
         assert_eq!(stale["result"]["isError"], true);
-        assert!(stale["result"]["content"][0]["text"].as_str().unwrap().contains("no current generation"));
+        assert!(
+            stale["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("no current generation")
+        );
     }
 
     #[test]
@@ -4449,9 +4567,13 @@ fn root() { alpha(); beta(); }
             listed["result"]["tools"].as_array().unwrap().len(),
             TOOL_NAMES.len()
         );
-        assert!(listed["result"]["tools"].as_array().unwrap().iter().any(|tool| {
-            tool["name"] == "codegraph_imports"
-        }));
+        assert!(
+            listed["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| { tool["name"] == "codegraph_imports" })
+        );
     }
 
     #[test]

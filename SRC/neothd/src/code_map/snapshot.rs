@@ -806,7 +806,8 @@ where
     ensure_root_unchanged(root, &map)?;
 
     let graph = build_graph_from_scan_snapshot_controlled(&map, &mut read_file, cancellation)?;
-    let imports = build_import_graph_from_scan_snapshot_controlled(&map, &mut read_file, cancellation)?;
+    let imports =
+        build_import_graph_from_scan_snapshot_controlled(&map, &mut read_file, cancellation)?;
     // A file validated early during graph construction can still change while
     // later files are read. Revalidate the complete corpus immediately before
     // entering the publication transaction.
@@ -844,11 +845,14 @@ where
     cancellation.checkpoint()?;
     let mut conn = super::persist::open(db_path)
         .with_context(|| format!("open code-map database at {}", db_path.display()))?;
-    let publication =
-        super::persist::persist_map_and_edges_bound(
-            &mut conn, &map, graph.edges(), imports.edges(), root,
-        )
-        .context("atomically persist identity-bound code-map index, call graph, and import graph")?;
+    let publication = super::persist::persist_map_and_edges_bound(
+        &mut conn,
+        &map,
+        graph.edges(),
+        imports.edges(),
+        root,
+    )
+    .context("atomically persist identity-bound code-map index, call graph, and import graph")?;
 
     Ok(RebuildSnapshot {
         root: root.clone(),
@@ -908,7 +912,9 @@ where
     let mut retained_source_bytes = 0usize;
     for file in &map.files {
         cancellation.checkpoint()?;
-        if !matches!(file.language, Language::Rust | Language::Python) { continue; }
+        if !matches!(file.language, Language::Rust | Language::Python) {
+            continue;
+        }
         let absolute = root_dir.join(&file.path);
         let raw = read_file(&absolute)
             .with_context(|| format!("re-read scanned import source {}", absolute.display()))?;
@@ -926,7 +932,9 @@ where
             MAX_GRAPH_SOURCE_BYTES
         );
         sources.push((
-            file.path.clone(), file.language, String::from_utf8_lossy(&raw).into_owned(),
+            file.path.clone(),
+            file.language,
+            String::from_utf8_lossy(&raw).into_owned(),
         ));
     }
     ImportGraph::build_bounded(&sources, DEFAULT_MAX_IMPORT_EDGES)

@@ -548,12 +548,11 @@ async fn deliver_live_route(
                     "Telegram proactive route lost its token".to_string(),
                 )
             })?;
-            let channel: Arc<dyn crate::channels::Channel> = Arc::new(
-                crate::channels::telegram::TelegramChannel::new(
+            let channel: Arc<dyn crate::channels::Channel> =
+                Arc::new(crate::channels::telegram::TelegramChannel::new(
                     token,
                     live.config.telegram_user_id,
-                ),
-            );
+                ));
             execute!(&chat_id, channel)
         }
         DeliveryRoute::Slack { channel_id } => {
@@ -597,28 +596,41 @@ async fn deliver_live_route(
                     "WhatsApp proactive route lost its phone id".to_string(),
                 )
             })?;
-            let verify = live.credentials.whatsapp_verify_token.clone().ok_or_else(|| {
-                LiveRouteError::AdapterConfiguration(
-                    "WhatsApp proactive route lost its verify token".to_string(),
-                )
-            })?;
+            let verify = live
+                .credentials
+                .whatsapp_verify_token
+                .clone()
+                .ok_or_else(|| {
+                    LiveRouteError::AdapterConfiguration(
+                        "WhatsApp proactive route lost its verify token".to_string(),
+                    )
+                })?;
             let channel: Arc<dyn crate::channels::Channel> = Arc::new(
                 crate::channels::whatsapp::WhatsAppChannel::new(access, phone_id, verify),
             );
             execute!(&recipient, channel)
         }
         DeliveryRoute::WhatsAppBaileys { recipient } => {
-            let url = live.credentials.whatsapp_baileys_url.clone().ok_or_else(|| {
-                LiveRouteError::AdapterConfiguration(
-                    "Baileys proactive route lost its URL".to_string(),
-                )
-            })?;
-            let token = live.credentials.whatsapp_baileys_token.clone().ok_or_else(|| {
-                LiveRouteError::AdapterConfiguration(
-                    "Baileys proactive route lost its token".to_string(),
-                )
-            })?;
-            let senders = live.credentials
+            let url = live
+                .credentials
+                .whatsapp_baileys_url
+                .clone()
+                .ok_or_else(|| {
+                    LiveRouteError::AdapterConfiguration(
+                        "Baileys proactive route lost its URL".to_string(),
+                    )
+                })?;
+            let token = live
+                .credentials
+                .whatsapp_baileys_token
+                .clone()
+                .ok_or_else(|| {
+                    LiveRouteError::AdapterConfiguration(
+                        "Baileys proactive route lost its token".to_string(),
+                    )
+                })?;
+            let senders = live
+                .credentials
                 .whatsapp_baileys_allowed_senders
                 .clone()
                 .ok_or_else(|| {
@@ -650,7 +662,8 @@ async fn deliver_live_route(
                     "Keet proactive route lost its bridge URL".to_string(),
                 )
             })?;
-            let token = live.credentials
+            let token = live
+                .credentials
                 .keet_bridge_bearer_token
                 .clone()
                 .ok_or_else(|| {
@@ -664,11 +677,15 @@ async fn deliver_live_route(
                 )
             })?;
             let topic_capability = topic.expose();
-            let allowed_senders = live.credentials.keet_allowed_senders.as_deref().ok_or_else(|| {
-                LiveRouteError::AdapterConfiguration(
-                    "Keet proactive route lost its sender policy".to_string(),
-                )
-            })?;
+            let allowed_senders = live
+                .credentials
+                .keet_allowed_senders
+                .as_deref()
+                .ok_or_else(|| {
+                    LiveRouteError::AdapterConfiguration(
+                        "Keet proactive route lost its sender policy".to_string(),
+                    )
+                })?;
             let channel: Arc<dyn crate::channels::Channel> = Arc::new(
                 crate::channels::keet::KeetChannel::new(
                     url,
@@ -693,11 +710,15 @@ async fn deliver_live_route(
                     "Signal proactive route lost its CLI URL".to_string(),
                 )
             })?;
-            let number = live.credentials.signal_phone_number.clone().ok_or_else(|| {
-                LiveRouteError::AdapterConfiguration(
-                    "Signal proactive route lost its phone number".to_string(),
-                )
-            })?;
+            let number = live
+                .credentials
+                .signal_phone_number
+                .clone()
+                .ok_or_else(|| {
+                    LiveRouteError::AdapterConfiguration(
+                        "Signal proactive route lost its phone number".to_string(),
+                    )
+                })?;
             let channel: Arc<dyn crate::channels::Channel> = Arc::new(
                 crate::channels::signal::SignalChannel::new(url, number).map_err(|_| {
                     LiveRouteError::AdapterConfiguration(
@@ -708,7 +729,8 @@ async fn deliver_live_route(
             execute!(&recipient, channel)
         }
         DeliveryRoute::Line { recipient } => {
-            let token = live.credentials
+            let token = live
+                .credentials
                 .line_channel_access_token
                 .clone()
                 .ok_or_else(|| {
@@ -746,11 +768,15 @@ async fn deliver_live_route(
                     "BlueBubbles proactive route lost its URL".to_string(),
                 )
             })?;
-            let password = live.credentials.bluebubbles_password.clone().ok_or_else(|| {
-                LiveRouteError::AdapterConfiguration(
-                    "BlueBubbles proactive route lost its password".to_string(),
-                )
-            })?;
+            let password = live
+                .credentials
+                .bluebubbles_password
+                .clone()
+                .ok_or_else(|| {
+                    LiveRouteError::AdapterConfiguration(
+                        "BlueBubbles proactive route lost its password".to_string(),
+                    )
+                })?;
             let channel: Arc<dyn crate::channels::Channel> = Arc::new(
                 crate::channels::imessage_bluebubbles::BlueBubblesChannel::new(
                     url, password, None, None,
@@ -798,7 +824,8 @@ async fn deliver_live_route(
         }
         #[cfg(feature = "gchat-channel")]
         DeliveryRoute::GoogleChat { space } => {
-            let service_account = live.credentials
+            let service_account = live
+                .credentials
                 .gchat_service_account_json
                 .as_deref()
                 .filter(|value| !value.trim().is_empty())
@@ -807,7 +834,8 @@ async fn deliver_live_route(
                         "Google Chat proactive route lost its service-account key path".to_string(),
                     )
                 })?;
-            let subscription = live.credentials
+            let subscription = live
+                .credentials
                 .gchat_subscription
                 .as_deref()
                 .ok_or_else(|| {
@@ -822,7 +850,8 @@ async fn deliver_live_route(
                         )
                     })
                 })?;
-            let allowed_sender = live.credentials
+            let allowed_sender = live
+                .credentials
                 .gchat_allowed_sender
                 .as_deref()
                 .ok_or_else(|| {

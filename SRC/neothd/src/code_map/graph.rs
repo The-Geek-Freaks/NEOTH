@@ -1139,13 +1139,12 @@ pub fn strip_comments_and_strings_hash_family(src: &str) -> String {
             i += width;
             while i < bytes.len() {
                 if bytes[i] == b'\\' {
-                    let escaped_width = if bytes.get(i + 1) == Some(&b'\r')
-                        && bytes.get(i + 2) == Some(&b'\n')
-                    {
-                        3
-                    } else {
-                        2
-                    };
+                    let escaped_width =
+                        if bytes.get(i + 1) == Some(&b'\r') && bytes.get(i + 2) == Some(&b'\n') {
+                            3
+                        } else {
+                            2
+                        };
                     let end = (i + escaped_width).min(bytes.len());
                     mask(&mut out[i..end]);
                     i = end;
@@ -1623,7 +1622,10 @@ fn caller() {
         assert!(!stripped.contains("import hidden"));
         assert_eq!(stripped.len(), src.len());
         for (before, after) in src.bytes().zip(stripped.bytes()) {
-            assert_eq!(matches!(before, b'\n' | b'\r'), matches!(after, b'\n' | b'\r'));
+            assert_eq!(
+                matches!(before, b'\n' | b'\r'),
+                matches!(after, b'\n' | b'\r')
+            );
         }
     }
 
@@ -1636,7 +1638,10 @@ fn caller() {
         assert!(stripped.contains("import visible"));
         assert_eq!(stripped.len(), src.len());
         for (before, after) in src.bytes().zip(stripped.bytes()) {
-            assert_eq!(matches!(before, b'\n' | b'\r'), matches!(after, b'\n' | b'\r'));
+            assert_eq!(
+                matches!(before, b'\n' | b'\r'),
+                matches!(after, b'\n' | b'\r')
+            );
         }
     }
 

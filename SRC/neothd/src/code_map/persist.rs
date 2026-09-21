@@ -213,9 +213,16 @@ mod v10_migration_tests {
             .unwrap();
         assert_eq!(version, "11");
         let import_generation: i64 = conn
-            .query_row("SELECT import_generation FROM code_map_roots WHERE root = '/r'", [], |row| row.get(0))
+            .query_row(
+                "SELECT import_generation FROM code_map_roots WHERE root = '/r'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
-        assert_eq!(import_generation, -1, "legacy imports are invalid until rebuilt");
+        assert_eq!(
+            import_generation, -1,
+            "legacy imports are invalid until rebuilt"
+        );
         let rows: Vec<(String, Option<String>)> = conn
             .prepare("SELECT kind, target_file FROM code_map_edges ORDER BY id")
             .unwrap()
@@ -1877,7 +1884,12 @@ fn replace_import_edges_in_transaction(
          VALUES (?1, ?2, ?3, ?4)",
     )?;
     for edge in edges {
-        statement.execute(rusqlite::params![root, &edge.from_file, &edge.to_file, &edge.language])?;
+        statement.execute(rusqlite::params![
+            root,
+            &edge.from_file,
+            &edge.to_file,
+            &edge.language
+        ])?;
         inserted += 1;
     }
     let index_generation: i64 = tx.query_row(
@@ -1897,19 +1909,15 @@ fn valid_repo_relative_import_path(path: &str) -> bool {
     !path.is_empty()
         && !path.contains('\\')
         && !std::path::Path::new(path).is_absolute()
-        && std::path::Path::new(path).components().all(|component| {
-            matches!(component, std::path::Component::Normal(_))
-        })
+        && std::path::Path::new(path)
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
 /// Reject an unknown, absolute or traversal-shaped import query before an
 /// empty adjacency result can be mistaken for a current known file with zero
 /// imports. The lookup is against the active transaction's same-root file set.
-pub(crate) fn ensure_current_import_file(
-    conn: &Connection,
-    root: &str,
-    path: &str,
-) -> Result<()> {
+pub(crate) fn ensure_current_import_file(conn: &Connection, root: &str, path: &str) -> Result<()> {
     ensure!(
         valid_repo_relative_import_path(path),
         "codegraph import file must be a normalized repository-relative indexed path"
@@ -1919,7 +1927,10 @@ pub(crate) fn ensure_current_import_file(
         rusqlite::params![root, path],
         |row| row.get(0),
     )?;
-    ensure!(exists, "codegraph import file is not present in the active code-map snapshot");
+    ensure!(
+        exists,
+        "codegraph import file is not present in the active code-map snapshot"
+    );
     Ok(())
 }
 
@@ -1940,9 +1951,13 @@ pub(crate) fn load_import_edges_for_root_bounded(
     let mut edges = Vec::new();
     let mut text_bytes = 0usize;
     while let Some(row) = rows.next()? {
-        if edges.len() >= limit { return Ok((edges, true)); }
+        if edges.len() >= limit {
+            return Ok((edges, true));
+        }
         let edge = crate::code_map::imports::ImportEdge {
-            from_file: row.get(0)?, to_file: row.get(1)?, language: row.get(2)?,
+            from_file: row.get(0)?,
+            to_file: row.get(1)?,
+            language: row.get(2)?,
         };
         text_bytes = text_bytes
             .checked_add(edge.from_file.len())
@@ -4822,24 +4837,40 @@ mod tests {
             &tx,
             &map.root,
             &[crate::code_map::imports::ImportEdge {
-                from_file: "a.rs".into(), to_file: "b.rs".into(), language: "rust".into(),
+                from_file: "a.rs".into(),
+                to_file: "b.rs".into(),
+                language: "rust".into(),
             }],
-        ).unwrap();
+        )
+        .unwrap();
         tx.commit().unwrap();
-        let generation: i64 = conn.query_row(
-            "SELECT import_generation FROM code_map_roots WHERE root = ?1",
-            rusqlite::params![&map.root], |row| row.get(0),
-        ).unwrap();
-        assert_eq!(generation, root_index_generation(&conn, &map.root).unwrap().unwrap());
-        let (edges, truncated) = load_import_edges_for_root_bounded(&conn, &map.root, 10, 1024).unwrap();
+        let generation: i64 = conn
+            .query_row(
+                "SELECT import_generation FROM code_map_roots WHERE root = ?1",
+                rusqlite::params![&map.root],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            generation,
+            root_index_generation(&conn, &map.root).unwrap().unwrap()
+        );
+        let (edges, truncated) =
+            load_import_edges_for_root_bounded(&conn, &map.root, 10, 1024).unwrap();
         assert!(!truncated);
         assert_eq!(edges.len(), 1);
         persist_map(&mut conn, &map).unwrap();
-        let invalidated: i64 = conn.query_row(
-            "SELECT import_generation FROM code_map_roots WHERE root = ?1",
-            rusqlite::params![&map.root], |row| row.get(0),
-        ).unwrap();
-        assert_eq!(invalidated, 0, "map-only publication cannot leave imports current");
+        let invalidated: i64 = conn
+            .query_row(
+                "SELECT import_generation FROM code_map_roots WHERE root = ?1",
+                rusqlite::params![&map.root],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            invalidated, 0,
+            "map-only publication cannot leave imports current"
+        );
     }
 
     #[test]
@@ -4848,29 +4879,53 @@ mod tests {
         let root = super::root_identity::CanonicalRepoRoot::discover(dir.path()).unwrap();
         std::fs::write(dir.path().join("a.rs"), "mod b;\n").unwrap();
         std::fs::write(dir.path().join("b.rs"), "").unwrap();
-        let first = RepoMapBuilder::new(root.path()).with_symbols(true).scan().unwrap();
+        let first = RepoMapBuilder::new(root.path())
+            .with_symbols(true)
+            .scan()
+            .unwrap();
         let db = dir.path().join("code_map.db");
         let mut conn = open(&db).unwrap();
         let imports = [crate::code_map::imports::ImportEdge {
-            from_file: "a.rs".into(), to_file: "b.rs".into(), language: "rust".into(),
+            from_file: "a.rs".into(),
+            to_file: "b.rs".into(),
+            language: "rust".into(),
         }];
         persist_map_and_edges_bound(&mut conn, &first, &[], &imports, &root).unwrap();
         std::fs::remove_file(dir.path().join("b.rs")).unwrap();
-        let second = RepoMapBuilder::new(root.path()).with_symbols(true).scan().unwrap();
+        let second = RepoMapBuilder::new(root.path())
+            .with_symbols(true)
+            .scan()
+            .unwrap();
         persist_delta_map_and_edges_bound(
-            &mut conn, &second, &[], &[], &[],
+            &mut conn,
+            &second,
+            &[],
+            &[],
+            &[],
             &std::collections::BTreeSet::from(["a.rs".to_owned()]),
             &std::collections::BTreeSet::from(["b.rs".to_owned()]),
-            &root, || Ok(()),
-        ).unwrap();
-        let (stored, truncated) = load_import_edges_for_root_bounded(&conn, &second.root, 10, 1024).unwrap();
+            &root,
+            || Ok(()),
+        )
+        .unwrap();
+        let (stored, truncated) =
+            load_import_edges_for_root_bounded(&conn, &second.root, 10, 1024).unwrap();
         assert!(!truncated);
-        assert!(stored.is_empty(), "removed module must not retain import edges");
-        let generation: i64 = conn.query_row(
-            "SELECT import_generation FROM code_map_roots WHERE root = ?1",
-            rusqlite::params![&second.root], |row| row.get(0),
-        ).unwrap();
-        assert_eq!(generation, root_index_generation(&conn, &second.root).unwrap().unwrap());
+        assert!(
+            stored.is_empty(),
+            "removed module must not retain import edges"
+        );
+        let generation: i64 = conn
+            .query_row(
+                "SELECT import_generation FROM code_map_roots WHERE root = ?1",
+                rusqlite::params![&second.root],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            generation,
+            root_index_generation(&conn, &second.root).unwrap().unwrap()
+        );
     }
 
     #[test]

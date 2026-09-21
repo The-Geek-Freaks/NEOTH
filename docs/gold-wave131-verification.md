@@ -34,3 +34,8 @@ All execution remains GitHub-hosted. No local compiler, formatter, parser,
 tests, fixture or product ran. P2-11 stays open for TypeHierarchy integration,
 Graphify/self-knowledge consumers and fresh native evidence. Road counts are
 unchanged at 1324 total / 1015 checked / 307 open / 2 partial.
+
+Hosted format follow-up: W131 source f3b6a0ae received 76 exact Rustfmt hunks
+across six files from Preflight 35575158268 (including W133 dispatcher layout).
+They were imported without local formatter execution. Fresh hosted gates remain
+required; no semantic change or Road checkbox closure is attributed to formatting.
