@@ -1,0 +1,523 @@
+{
+  "schema_version": 1,
+  "fixture_name": "openclaw-pinned-channel-inventory-v1",
+  "source": {
+    "repository": "openclaw/openclaw",
+    "commit": "4c667aac8859114bd8f0a589ac6cd1de8bfe1474",
+    "primary_ledger": "plans/001-openclaw-channel-migration-parity.md",
+    "ledger_rows": 31
+  },
+  "rows": [
+    {
+      "row_id": 1,
+      "canonical_id": "discord",
+      "current_importer_target": "discord",
+      "current_registry_channel": "discord",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "upgrade",
+      "planned_neoth_target": "discord",
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/discord/src/shared.ts",
+        "upstream_sha256": "3382888c28dc498232d97a3be3d9bb5f7b935d3c8bc7a8891aef87f9cb5e886a",
+        "upstream_bytes": 6576
+      }
+    },
+    {
+      "row_id": 2,
+      "canonical_id": "feishu",
+      "openclaw_aliases": [
+        "lark"
+      ],
+      "role": "public",
+      "disposition": "adopt",
+      "planned_neoth_target": "feishu",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/feishu/src/channel.ts",
+        "upstream_sha256": "50c8edbfc45cd124c608474746ab70a3d5ea46a535b0b8b24c0cee31439ee684",
+        "upstream_bytes": 65680
+      }
+    },
+    {
+      "row_id": 3,
+      "canonical_id": "googlechat",
+      "current_importer_target": "gchat",
+      "current_registry_channel": "google_chat",
+      "openclaw_aliases": [
+        "gchat",
+        "google-chat"
+      ],
+      "role": "public",
+      "disposition": "upgrade",
+      "planned_neoth_target": "gchat",
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/googlechat/src/channel-base.ts",
+        "upstream_sha256": "6bdc33c0ed87bf4208c61da79a07cb8f8a465992b5a026a065021b6e3da403d4",
+        "upstream_bytes": 3905
+      }
+    },
+    {
+      "row_id": 4,
+      "canonical_id": "imessage",
+      "current_importer_target": "imessage_bluebubbles",
+      "current_registry_channel": "imessage_bluebubbles",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "upgrade",
+      "planned_neoth_target": "imessage_bluebubbles",
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/imessage/src/channel.ts",
+        "upstream_sha256": "9210b6f47261d7c35cd7c6e3cda89c15b9f24e22ca2895a03cdf1d0690d3bb4f",
+        "upstream_bytes": 15864
+      }
+    },
+    {
+      "row_id": 5,
+      "canonical_id": "irc",
+      "current_importer_target": "irc",
+      "current_registry_channel": "irc",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "upgrade",
+      "planned_neoth_target": "irc",
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/irc/src/channel.ts",
+        "upstream_sha256": "ff49e528eb156c2ded4701015534f2c4b402b894938ab60be309de08a4db01ed",
+        "upstream_bytes": 12207
+      }
+    },
+    {
+      "row_id": 6,
+      "canonical_id": "line",
+      "current_importer_target": "line",
+      "current_registry_channel": "line",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "upgrade",
+      "planned_neoth_target": "line",
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/line/src/channel-shared.ts",
+        "upstream_sha256": "3aa1cf006bf05cf734be371cab25c0e9a3c329ff9d842e6bdbe71be56b92d630",
+        "upstream_bytes": 1565
+      }
+    },
+    {
+      "row_id": 7,
+      "canonical_id": "matrix",
+      "current_importer_target": "matrix",
+      "current_registry_channel": "matrix",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "upgrade",
+      "planned_neoth_target": "matrix",
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/matrix/src/channel.ts",
+        "upstream_sha256": "e021adf852344984c3f9904475ebbc10b0947e2d7502d6640a62b5c5151a81c8",
+        "upstream_bytes": 24468
+      }
+    },
+    {
+      "row_id": 8,
+      "canonical_id": "mattermost",
+      "current_importer_target": "mattermost",
+      "current_registry_channel": "mattermost",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "upgrade",
+      "planned_neoth_target": "mattermost",
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/mattermost/src/channel.ts",
+        "upstream_sha256": "7e7a9f1e6ea30d9dcb03e06eb3b4a7761d28d70393672c761fd2a90977f69b8a",
+        "upstream_bytes": 34063
+      }
+    },
+    {
+      "row_id": 9,
+      "canonical_id": "msteams",
+      "openclaw_aliases": [
+        "teams"
+      ],
+      "role": "public",
+      "disposition": "adopt",
+      "planned_neoth_target": "msteams",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/msteams/src/channel.ts",
+        "upstream_sha256": "dea4970386ee4b496f2122d4cfe61ed552a82bbebd288b6d7d34d309f5573948",
+        "upstream_bytes": 50353
+      }
+    },
+    {
+      "row_id": 10,
+      "canonical_id": "nextcloud-talk",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "adopt",
+      "planned_neoth_target": "nextcloud_talk",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/nextcloud-talk/src/channel.ts",
+        "upstream_sha256": "2e89e83098d455489bd0edc737648022b1ce99d4373356325487d424b5d8e622",
+        "upstream_bytes": 8256
+      }
+    },
+    {
+      "row_id": 11,
+      "canonical_id": "nostr",
+      "current_importer_target": "nostr",
+      "current_registry_channel": "nostr",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "upgrade",
+      "planned_neoth_target": "nostr",
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/nostr/src/channel.ts",
+        "upstream_sha256": "a9ce61c8c50ded322799af1b56fe390646bc45e505c9c65278200f9c98de1212",
+        "upstream_bytes": 6903
+      }
+    },
+    {
+      "row_id": 12,
+      "canonical_id": "qqbot",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "adopt",
+      "planned_neoth_target": "qqbot",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/qqbot/src/channel.ts",
+        "upstream_sha256": "3b4603edfbdf59bdd4a07cfc04ebbc6c42e4dc8172a6c69f3e01dcb16ac1e0c7",
+        "upstream_bytes": 16831
+      }
+    },
+    {
+      "row_id": 13,
+      "canonical_id": "reef",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "adopt",
+      "planned_neoth_target": "reef",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/reef/src/channel.ts",
+        "upstream_sha256": "e8811ffb7ca4cacc2022ebfbd5d6b1f689eced3f5bb6105e79413c32021db559",
+        "upstream_bytes": 11204
+      }
+    },
+    {
+      "row_id": 14,
+      "canonical_id": "raft",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "adopt",
+      "planned_neoth_target": "raft",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/raft/src/channel.ts",
+        "upstream_sha256": "91f10f9b29cbc307f6810993cde784572bf6a93e600a6cc39f0934f7c2e33293",
+        "upstream_bytes": 3508
+      }
+    },
+    {
+      "row_id": 15,
+      "canonical_id": "signal",
+      "current_importer_target": "signal",
+      "current_registry_channel": "signal",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "upgrade",
+      "planned_neoth_target": "signal",
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/signal/src/channel.ts",
+        "upstream_sha256": "172f0bfe8ce3329cfc252acc1c4f19da3842ce2fbc05d560a1f6610c1deeca9a",
+        "upstream_bytes": 25354
+      }
+    },
+    {
+      "row_id": 16,
+      "canonical_id": "slack",
+      "current_importer_target": "slack",
+      "current_registry_channel": "slack",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "upgrade",
+      "planned_neoth_target": "slack",
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/slack/src/shared.ts",
+        "upstream_sha256": "847e94222193859ae7c6c9bc8c2627f045eaa52f94b5933f7ee78483d41f8b57",
+        "upstream_bytes": 6482
+      }
+    },
+    {
+      "row_id": 17,
+      "canonical_id": "sms",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "adopt",
+      "planned_neoth_target": "sms",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/sms/src/channel.ts",
+        "upstream_sha256": "c3037e6d172e7e6bcc0d67badc31b31d4b520ca3df917f82891d48a521766c4e",
+        "upstream_bytes": 11441
+      }
+    },
+    {
+      "row_id": 18,
+      "canonical_id": "synology-chat",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "adopt",
+      "planned_neoth_target": "synology_chat",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/synology-chat/src/channel.ts",
+        "upstream_sha256": "2d0a1476347472264ec8f77eceec21c592cf9360b39b08aece99f1a6f4dfc2ee",
+        "upstream_bytes": 16908
+      }
+    },
+    {
+      "row_id": 19,
+      "canonical_id": "telegram",
+      "current_importer_target": "telegram",
+      "current_registry_channel": "telegram",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "upgrade",
+      "planned_neoth_target": "telegram",
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/telegram/src/shared.ts",
+        "upstream_sha256": "1b6266a529a0993e1e2ea65c38496116b8cfe51798c22e0654b111d2def38492",
+        "upstream_bytes": 10261
+      }
+    },
+    {
+      "row_id": 20,
+      "canonical_id": "tlon",
+      "openclaw_aliases": [
+        "urbit"
+      ],
+      "role": "public",
+      "disposition": "adopt",
+      "planned_neoth_target": "tlon",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/tlon/src/channel.ts",
+        "upstream_sha256": "f24846330539e35ff016abcee0ed879a8b18e4f50e30224f406007fb829c037f",
+        "upstream_bytes": 6665
+      }
+    },
+    {
+      "row_id": 21,
+      "canonical_id": "twitch",
+      "current_importer_target": "twitch",
+      "current_registry_channel": "twitch",
+      "openclaw_aliases": [
+        "twitch-chat"
+      ],
+      "role": "public",
+      "disposition": "upgrade",
+      "planned_neoth_target": "twitch",
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/twitch/src/plugin.ts",
+        "upstream_sha256": "9587e8f410167ad6b3b8f9afd1e4ccaa70049de8f2e4c3de320ce17955099283",
+        "upstream_bytes": 9405
+      }
+    },
+    {
+      "row_id": 22,
+      "canonical_id": "voice-call",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "special",
+      "planned_neoth_target": "voice_call",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": false,
+      "evidence": {
+        "upstream_path": "docs/plugins/voice-call.md",
+        "upstream_sha256": "d5cc3700f6d63f2bb1db2b3d0a5f9128c89719d06b48721c32db3d85353e423f",
+        "upstream_bytes": 39804
+      }
+    },
+    {
+      "row_id": 23,
+      "canonical_id": "webchat",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "special",
+      "planned_neoth_target": "webchat",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": false,
+      "evidence": {
+        "upstream_path": "docs/web/webchat.md",
+        "upstream_sha256": "e31558b3f82fc75b660455ad7835e0b43ea07de28fbbc98d4efd82f5d30425fc",
+        "upstream_bytes": 7904
+      }
+    },
+    {
+      "row_id": 24,
+      "canonical_id": "wechat",
+      "openclaw_aliases": [
+        "openclaw-weixin"
+      ],
+      "role": "public",
+      "disposition": "quarantined_external",
+      "planned_neoth_target": "",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": false,
+      "evidence": {
+        "upstream_path": "docs/channels/wechat.md",
+        "upstream_sha256": "98faf95f9fb76deedb7df9adf3092083722a77bdd793de98c41a6f715cc0d14a",
+        "upstream_bytes": 5764
+      }
+    },
+    {
+      "row_id": 25,
+      "canonical_id": "whatsapp",
+      "current_importer_target": "whatsapp_baileys",
+      "current_registry_channel": "whatsapp_baileys",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "upgrade",
+      "planned_neoth_target": "whatsapp_baileys",
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/whatsapp/src/channel.ts",
+        "upstream_sha256": "ca3fb23b114dc5713f186aea44c0d88bb1de36cca9eb50142c40094950f6c4aa",
+        "upstream_bytes": 15177
+      }
+    },
+    {
+      "row_id": 26,
+      "canonical_id": "yuanbao",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "quarantined_external",
+      "planned_neoth_target": "",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": false,
+      "evidence": {
+        "upstream_path": "docs/channels/yuanbao.md",
+        "upstream_sha256": "43488834f588530206b290cb0fb185fd1fe2e1f214ab4a4ccccc49b9b549b6ac",
+        "upstream_bytes": 11764
+      }
+    },
+    {
+      "row_id": 27,
+      "canonical_id": "zalo",
+      "openclaw_aliases": [
+        "zl"
+      ],
+      "role": "public",
+      "disposition": "adopt",
+      "planned_neoth_target": "zalo",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/zalo/src/channel.ts",
+        "upstream_sha256": "31a9a9f608c977590b45714e5200a088a0303d11121414bd89a4cfe04a6f0f86",
+        "upstream_bytes": 11026
+      }
+    },
+    {
+      "row_id": 28,
+      "canonical_id": "zaloclawbot",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "quarantined_external",
+      "planned_neoth_target": "",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": false,
+      "evidence": {
+        "upstream_path": "docs/channels/zaloclawbot.md",
+        "upstream_sha256": "76c9f79d114856b86026a5e4b98a43f451b0d3f16dd41a67e9226da4f8b37b33",
+        "upstream_bytes": 3908
+      }
+    },
+    {
+      "row_id": 29,
+      "canonical_id": "zalouser",
+      "openclaw_aliases": [],
+      "role": "public",
+      "disposition": "adopt",
+      "planned_neoth_target": "zalo_personal",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "extensions/zalouser/src/channel.ts",
+        "upstream_sha256": "081efc5f979c22c4dbd151e0d8b831f86a67792bea846be4dfde21654ac90e0d",
+        "upstream_bytes": 8291
+      }
+    },
+    {
+      "row_id": 30,
+      "canonical_id": "clickclack",
+      "openclaw_aliases": [],
+      "role": "clickclack_official",
+      "disposition": "adopt",
+      "planned_neoth_target": "clickclack",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "docs/channels/clickclack.md",
+        "upstream_sha256": "f298115a7b13070065266c78951a8f8d4a5cf5bf012b305c475c12fda3d0b6da",
+        "upstream_bytes": 14074
+      }
+    },
+    {
+      "row_id": 31,
+      "canonical_id": "qa-channel",
+      "openclaw_aliases": [],
+      "role": "qa_test_only",
+      "disposition": "evidence_skip",
+      "planned_neoth_target": "",
+      "current_importer_target": null,
+      "current_registry_channel": null,
+      "manifest_backed": true,
+      "evidence": {
+        "upstream_path": "docs/channels/qa-channel.md",
+        "upstream_sha256": "a43c35e197116a6bd44b238010eb508aed23dea99ab872d10e6fc853b5f4d4a7",
+        "upstream_bytes": 3939
+      }
+    }
+  ]
+}

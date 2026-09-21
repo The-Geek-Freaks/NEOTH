@@ -4425,7 +4425,7 @@ fn recall_chip_batch_frame_line(
             let source_state = match row.source_state {
                 RecallChipSourceState::Available => "available",
                 RecallChipSourceState::Missing => "missing",
-               RecallChipSourceState::Untrusted => "untrusted",
+                RecallChipSourceState::Untrusted => "untrusted",
             };
             let score = match row.score {
                 RecallChipScore::WarmHit(score)
@@ -15883,7 +15883,8 @@ mod tests {
             (RecallChipBatchStatus::Incognito, "incognito"),
         ] {
             let frame: serde_json::Value = serde_json::from_str(
-                &recall_chip_batch_frame_line(token, &RecallChipBatch::unavailable(status)).unwrap(),
+                &recall_chip_batch_frame_line(token, &RecallChipBatch::unavailable(status))
+                    .unwrap(),
             )
             .unwrap();
             assert_eq!(frame["status"], wire_status);

@@ -1,0 +1,219 @@
+[
+  {
+    "row": "01-discord",
+    "path": "extensions/discord/src/shared.ts",
+    "sha256": "3382888c28dc498232d97a3be3d9bb5f7b935d3c8bc7a8891aef87f9cb5e886a",
+    "bytes": 6576,
+    "status": 200
+  },
+  {
+    "row": "02-feishu",
+    "path": "extensions/feishu/src/channel.ts",
+    "sha256": "50c8edbfc45cd124c608474746ab70a3d5ea46a535b0b8b24c0cee31439ee684",
+    "bytes": 65680,
+    "status": 200
+  },
+  {
+    "row": "03-googlechat",
+    "path": "extensions/googlechat/src/channel-base.ts",
+    "sha256": "6bdc33c0ed87bf4208c61da79a07cb8f8a465992b5a026a065021b6e3da403d4",
+    "bytes": 3905,
+    "status": 200
+  },
+  {
+    "row": "04-imessage",
+    "path": "extensions/imessage/src/channel.ts",
+    "sha256": "9210b6f47261d7c35cd7c6e3cda89c15b9f24e22ca2895a03cdf1d0690d3bb4f",
+    "bytes": 15864,
+    "status": 200
+  },
+  {
+    "row": "05-irc",
+    "path": "extensions/irc/src/channel.ts",
+    "sha256": "ff49e528eb156c2ded4701015534f2c4b402b894938ab60be309de08a4db01ed",
+    "bytes": 12207,
+    "status": 200
+  },
+  {
+    "row": "06-line",
+    "path": "extensions/line/src/channel-shared.ts",
+    "sha256": "3aa1cf006bf05cf734be371cab25c0e9a3c329ff9d842e6bdbe71be56b92d630",
+    "bytes": 1565,
+    "status": 200
+  },
+  {
+    "row": "07-matrix",
+    "path": "extensions/matrix/src/channel.ts",
+    "sha256": "e021adf852344984c3f9904475ebbc10b0947e2d7502d6640a62b5c5151a81c8",
+    "bytes": 24468,
+    "status": 200
+  },
+  {
+    "row": "08-mattermost",
+    "path": "extensions/mattermost/src/channel.ts",
+    "sha256": "7e7a9f1e6ea30d9dcb03e06eb3b4a7761d28d70393672c761fd2a90977f69b8a",
+    "bytes": 34063,
+    "status": 200
+  },
+  {
+    "row": "09-msteams",
+    "path": "extensions/msteams/src/channel.ts",
+    "sha256": "dea4970386ee4b496f2122d4cfe61ed552a82bbebd288b6d7d34d309f5573948",
+    "bytes": 50353,
+    "status": 200
+  },
+  {
+    "row": "10-nextcloud-talk",
+    "path": "extensions/nextcloud-talk/src/channel.ts",
+    "sha256": "2e89e83098d455489bd0edc737648022b1ce99d4373356325487d424b5d8e622",
+    "bytes": 8256,
+    "status": 200
+  },
+  {
+    "row": "11-nostr",
+    "path": "extensions/nostr/src/channel.ts",
+    "sha256": "a9ce61c8c50ded322799af1b56fe390646bc45e505c9c65278200f9c98de1212",
+    "bytes": 6903,
+    "status": 200
+  },
+  {
+    "row": "12-qqbot",
+    "path": "extensions/qqbot/src/channel.ts",
+    "sha256": "3b4603edfbdf59bdd4a07cfc04ebbc6c42e4dc8172a6c69f3e01dcb16ac1e0c7",
+    "bytes": 16831,
+    "status": 200
+  },
+  {
+    "row": "13-reef",
+    "path": "extensions/reef/src/channel.ts",
+    "sha256": "e8811ffb7ca4cacc2022ebfbd5d6b1f689eced3f5bb6105e79413c32021db559",
+    "bytes": 11204,
+    "status": 200
+  },
+  {
+    "row": "14-raft",
+    "path": "extensions/raft/src/channel.ts",
+    "sha256": "91f10f9b29cbc307f6810993cde784572bf6a93e600a6cc39f0934f7c2e33293",
+    "bytes": 3508,
+    "status": 200
+  },
+  {
+    "row": "15-signal",
+    "path": "extensions/signal/src/channel.ts",
+    "sha256": "172f0bfe8ce3329cfc252acc1c4f19da3842ce2fbc05d560a1f6610c1deeca9a",
+    "bytes": 25354,
+    "status": 200
+  },
+  {
+    "row": "16-slack",
+    "path": "extensions/slack/src/shared.ts",
+    "sha256": "847e94222193859ae7c6c9bc8c2627f045eaa52f94b5933f7ee78483d41f8b57",
+    "bytes": 6482,
+    "status": 200
+  },
+  {
+    "row": "17-sms",
+    "path": "extensions/sms/src/channel.ts",
+    "sha256": "c3037e6d172e7e6bcc0d67badc31b31d4b520ca3df917f82891d48a521766c4e",
+    "bytes": 11441,
+    "status": 200
+  },
+  {
+    "row": "18-synology-chat",
+    "path": "extensions/synology-chat/src/channel.ts",
+    "sha256": "2d0a1476347472264ec8f77eceec21c592cf9360b39b08aece99f1a6f4dfc2ee",
+    "bytes": 16908,
+    "status": 200
+  },
+  {
+    "row": "19-telegram",
+    "path": "extensions/telegram/src/shared.ts",
+    "sha256": "1b6266a529a0993e1e2ea65c38496116b8cfe51798c22e0654b111d2def38492",
+    "bytes": 10261,
+    "status": 200
+  },
+  {
+    "row": "20-tlon",
+    "path": "extensions/tlon/src/channel.ts",
+    "sha256": "f24846330539e35ff016abcee0ed879a8b18e4f50e30224f406007fb829c037f",
+    "bytes": 6665,
+    "status": 200
+  },
+  {
+    "row": "21-twitch",
+    "path": "extensions/twitch/src/plugin.ts",
+    "sha256": "9587e8f410167ad6b3b8f9afd1e4ccaa70049de8f2e4c3de320ce17955099283",
+    "bytes": 9405,
+    "status": 200
+  },
+  {
+    "row": "22-voice-call",
+    "path": "docs/plugins/voice-call.md",
+    "sha256": "d5cc3700f6d63f2bb1db2b3d0a5f9128c89719d06b48721c32db3d85353e423f",
+    "bytes": 39804,
+    "status": 200
+  },
+  {
+    "row": "23-webchat",
+    "path": "docs/web/webchat.md",
+    "sha256": "e31558b3f82fc75b660455ad7835e0b43ea07de28fbbc98d4efd82f5d30425fc",
+    "bytes": 7904,
+    "status": 200
+  },
+  {
+    "row": "24-wechat",
+    "path": "docs/channels/wechat.md",
+    "sha256": "98faf95f9fb76deedb7df9adf3092083722a77bdd793de98c41a6f715cc0d14a",
+    "bytes": 5764,
+    "status": 200
+  },
+  {
+    "row": "25-whatsapp",
+    "path": "extensions/whatsapp/src/channel.ts",
+    "sha256": "ca3fb23b114dc5713f186aea44c0d88bb1de36cca9eb50142c40094950f6c4aa",
+    "bytes": 15177,
+    "status": 200
+  },
+  {
+    "row": "26-yuanbao",
+    "path": "docs/channels/yuanbao.md",
+    "sha256": "43488834f588530206b290cb0fb185fd1fe2e1f214ab4a4ccccc49b9b549b6ac",
+    "bytes": 11764,
+    "status": 200
+  },
+  {
+    "row": "27-zalo",
+    "path": "extensions/zalo/src/channel.ts",
+    "sha256": "31a9a9f608c977590b45714e5200a088a0303d11121414bd89a4cfe04a6f0f86",
+    "bytes": 11026,
+    "status": 200
+  },
+  {
+    "row": "28-zaloclawbot",
+    "path": "docs/channels/zaloclawbot.md",
+    "sha256": "76c9f79d114856b86026a5e4b98a43f451b0d3f16dd41a67e9226da4f8b37b33",
+    "bytes": 3908,
+    "status": 200
+  },
+  {
+    "row": "29-zalouser",
+    "path": "extensions/zalouser/src/channel.ts",
+    "sha256": "081efc5f979c22c4dbd151e0d8b831f86a67792bea846be4dfde21654ac90e0d",
+    "bytes": 8291,
+    "status": 200
+  },
+  {
+    "row": "30-clickclack",
+    "path": "docs/channels/clickclack.md",
+    "sha256": "f298115a7b13070065266c78951a8f8d4a5cf5bf012b305c475c12fda3d0b6da",
+    "bytes": 14074,
+    "status": 200
+  },
+  {
+    "row": "31-qa-channel",
+    "path": "docs/channels/qa-channel.md",
+    "sha256": "a43c35e197116a6bd44b238010eb508aed23dea99ab872d10e6fc853b5f4d4a7",
+    "bytes": 3939,
+    "status": 200
+  }
+]

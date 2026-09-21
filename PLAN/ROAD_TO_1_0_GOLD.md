@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W166 pinned channel inventory (2026-09-21):** independently source-approved;
+31 rows preserve 29 public surfaces, official ClickClack and test-only QA.
+Package-owned fixture and witness are hash-bound, including explicit LF digest
+rebinding. Planned adoption stays distinct from current importer and registry
+support. Seven custody regressions and one integration contract are admitted;
+GitHub execution is pending. Admission: 374 source inputs / 386 universal native
+cases; other platform and GUI counts remain unchanged. See
+[W166](../docs/gold-wave166-verification.md). W167/W168 remain separate live WIP.
+a72e7442 passed Code Quality35648334967; Preflight35648335292 requested exact
+formatting corrections. No Road checkbox closes: 1324 / 1015 checked / 307 open /
+2 partial. All executable validation remains GitHub-hosted.
+
 The six-path c0ac repair is independently source-approved: fixture-only helpers
 are test-gated, the two JSON inputs are borrowed, and the stale recall assertion
 uses the enriched output. The WAL append request is boxed with every producer,
@@ -25,7 +37,7 @@ Current source inspection also found that the installed daemon-GUI controller
 bypasses the legacy W163 recall and W162 throughput control paths. W167/W168 are completing
 the transport of those existing typed producer states through the active bridge;
 source integration and hosted/real callback acceptance remain pending.
-W166's 31-row channel inventory is under scoped review; planned adoption and
+W166's 31-row channel inventory has passed scoped source review; planned adoption and
 current adapter support must remain distinct. No new Road item is closed.
 
 **W164 build/reference and quick gates (2026-09-21):** sourcecc8a6609 passed

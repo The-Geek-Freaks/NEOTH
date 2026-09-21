@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W164-response-feedback-candidate",
-  "base": "c0ac066ee3eb505dd3be95bb4f32fca1e751a6e9",
-  "capturedUtc": "2026-09-21T19:58:23.8224588Z",
-  "validationStatus": "W164_FULL_CI_REPAIRS_PENDING_HOSTED_RERUN",
-  "scopeNote": "Published W164/W165 plus scoped c0ac test/slim-Clippy repair. Mixed CLI is admitted from exact HEAD+reviewed repair blob; active W166-W168 source remains excluded.",
+  "item": "GOLD-W95-W166-pinned-channel-inventory-candidate",
+  "base": "a72e744237653a958cc8ead5a06e89d332f715b7",
+  "capturedUtc": "2026-09-21T20:06:49.479734Z",
+  "validationStatus": "W166_STATIC_APPROVED_PENDING_HOSTED",
+  "scopeNote": "W166 integrated with LF-normalized package-owned inventory and witness. W167/W168 live WIP excluded; prior published CLI binding preserved.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -75,6 +75,11 @@
       "path": "docs/gold-wave164-verification.md",
       "bytes": 5067,
       "sha256": "04C2085DA10C52A3E3A6A0AD8D802128D1C22AA951B36E364D2679437B86BACE"
+    },
+    {
+      "path": "docs/gold-wave166-verification.md",
+      "bytes": 3080,
+      "sha256": "CA8FCB2C4F10B1006963294B2B71CAD13504EFDA729DBBD9386A3AA2D8327ECD"
     },
     {
       "path": "docs/install.md",
@@ -152,6 +157,11 @@
       "sha256": "26D9B014829ED0BC5EA1D255412629B74F7317B34186DDABA771988C72022298"
     },
     {
+      "path": "plans/001-openclaw-channel-migration-parity.md",
+      "bytes": 54829,
+      "sha256": "B26A58769D2DEE562F58396DCF41A4D17729CAEF70F6F5E456B11129F4282EEC"
+    },
+    {
       "path": "README.md",
       "bytes": 35468,
       "sha256": "0E612B4A62427C2B3F169ADDBACED55F19E26220DB1F6A0AD0183CA5DC24C7E7"
@@ -175,6 +185,11 @@
       "path": "SRC/neoth-migrate/Cargo.toml",
       "bytes": 2807,
       "sha256": "CE4B56B93947515276B931FA4B76885A4AB1D0F8AF08E8E247082AB2AF5552C3"
+    },
+    {
+      "path": "SRC/neoth-migrate/fixtures/openclaw/4c667aac8859114bd8f0a589ac6cd1de8bfe1474/RELOCATION.md",
+      "bytes": 448,
+      "sha256": "072AD4E3ADB30249BF0A27A15216D24D81D9A83933D71CD91677193840C45BE4"
     },
     {
       "path": "SRC/neoth-migrate/src/detect.rs",
@@ -217,9 +232,24 @@
       "sha256": "8925B0D248CB58F233A227F22946B395789F88FFF808622FB9A5D571EB115817"
     },
     {
+      "path": "SRC/neoth-openclaw-custody/src/fixtures/openclaw_upstream_evidence_v1.json",
+      "bytes": 6225,
+      "sha256": "A38299E9E80DE3FA3DBD31DB8093AAA211172CADB50333746855589E25D7800B"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/fixtures/pinned_channel_inventory_v1.json",
+      "bytes": 16735,
+      "sha256": "2B8F946815DB4DD5910DFE313C5B9629A678BCAB6D3CD42D74235FEADCC9D2AF"
+    },
+    {
       "path": "SRC/neoth-openclaw-custody/src/lib.rs",
-      "bytes": 69321,
-      "sha256": "9BE3D639E5B4611460A07566805A216F132655B726C12B5CA3BAA050992AD7F6"
+      "bytes": 69468,
+      "sha256": "3C21A11107154D5212D5399204CB089B8C5DD5A693CF25E9F762C161DBAE8379"
+    },
+    {
+      "path": "SRC/neoth-openclaw-custody/src/pinned_inventory.rs",
+      "bytes": 13574,
+      "sha256": "D3B4C1CFCB24410698BB3DBBC3C27601BEEB678C72F5528B2AEF672937611EB1"
     },
     {
       "path": "SRC/neothd-gui/build.rs",
@@ -573,8 +603,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1052664,
-      "sha256": "6610EF6D2E6AF3CBD787B13921100171B97883AAAE7F1AE22621D609A6377843"
+      "bytes": 1052686,
+      "sha256": "AA7C92FED02DA0AAC5105BD1D6E4A4BF129F0043F5E8179F0E428BB94BB28A84"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -1738,8 +1768,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",
-      "bytes": 390344,
-      "sha256": "70D86245CBCB6293B08B37699F795BE2E2B34EC290D2F4C4C17E576FCF127170"
+      "bytes": 390542,
+      "sha256": "2A4F5A9AF1DBA8856FE55A32737E98B1D104B1A9DD41C30E8A9186EB5367660B"
     },
     {
       "path": "SRC/neothd/tests/attachment_wiring_source_gate.rs",
@@ -1820,6 +1850,11 @@
       "path": "SRC/neothd/tests/no_outbound_network.rs",
       "bytes": 188514,
       "sha256": "78E234954EE8A946B4C715ED615FA20095483B17351440AF44B1FB95C05AE19A"
+    },
+    {
+      "path": "SRC/neothd/tests/openclaw_pinned_inventory_contract.rs",
+      "bytes": 3814,
+      "sha256": "4B5E28B6E227DFFB691521C7DA3CA7B4411BA656884B10836949D5FFAB01FEF7"
     },
     {
       "path": "SRC/neothd/tests/proactive_egress_contract_source_gate.rs",

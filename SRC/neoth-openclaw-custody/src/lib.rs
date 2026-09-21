@@ -6,6 +6,8 @@
 //! transport-specific and runtime-specific fields remain explicit blockers so
 //! a future apply path cannot silently weaken an OpenClaw setup.
 
+pub mod pinned_inventory;
+
 use anyhow::{Context as _, Result};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -668,6 +670,7 @@ struct IncludeLoader {
 
 /// Parse and inspect an OpenClaw `openclaw.json` without writing target state.
 pub fn inspect_openclaw_config(path: &Path) -> Result<OpenClawImportReport> {
+    pinned_inventory::validate_pinned_channel_inventory()?;
     let loaded = load_config(path)?;
     let mut ledger = Vec::new();
     walk_leaves(&loaded.value, &mut Vec::new(), &mut ledger);
@@ -718,6 +721,7 @@ pub fn load_openclaw_document(
     config: &Path,
     inventory_sha256: &str,
 ) -> Result<LoadedOpenClawDocument> {
+    pinned_inventory::validate_pinned_channel_inventory()?;
     anyhow::ensure!(
         inventory_sha256 == canonical_known_channel_inventory_sha256(),
         "OpenClaw known-channel inventory binding does not match the audited custody contract"

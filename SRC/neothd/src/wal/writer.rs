@@ -1516,7 +1516,10 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(Box::new(request))) {
+        if let Err(error) = self
+            .tx
+            .blocking_send(WriterRequest::Append(Box::new(request)))
+        {
             error.0.release_unqueued();
             return Err(WalError::WriterClosed);
         }
@@ -1594,7 +1597,10 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(Box::new(request))) {
+        if let Err(error) = self
+            .tx
+            .blocking_send(WriterRequest::Append(Box::new(request)))
+        {
             if let WriterRequest::Append(mut request) = error.0 {
                 let once = request
                     .context_evidence_receipt_once
@@ -1762,7 +1768,9 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(Box::new(request)))
+        if let Err(error) = self
+            .tx
+            .blocking_send(WriterRequest::Append(Box::new(request)))
             && let WriterRequest::Append(mut request) = error.0
             && let Some(once) = request.transcript_mining_once.take()
         {
@@ -1823,7 +1831,9 @@ impl WalWriterHandle {
             #[cfg(test)]
             test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
         };
-        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(Box::new(request)))
+        if let Err(error) = self
+            .tx
+            .blocking_send(WriterRequest::Append(Box::new(request)))
             && let WriterRequest::Append(mut request) = error.0
             && let Some(once) = request.trust_decision_once.take()
         {
@@ -1906,20 +1916,22 @@ impl WalWriterHandle {
             None
         };
         let (ack_tx, _ack_rx_drop) = oneshot::channel();
-        match self.tx.try_send(WriterRequest::Append(Box::new(WriteRequest {
-            header,
-            payload,
-            ack: ack_tx,
-            force_authentication_marker: false,
-            context_evidence_receipt_once: None,
-            trust_decision_once: None,
-            transcript_mining_once: None,
-            quota_admission,
-            #[cfg(test)]
-            test_ack_gate: self.test_ack_gate.clone(),
-            #[cfg(test)]
-            test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
-        }))) {
+        match self
+            .tx
+            .try_send(WriterRequest::Append(Box::new(WriteRequest {
+                header,
+                payload,
+                ack: ack_tx,
+                force_authentication_marker: false,
+                context_evidence_receipt_once: None,
+                trust_decision_once: None,
+                transcript_mining_once: None,
+                quota_admission,
+                #[cfg(test)]
+                test_ack_gate: self.test_ack_gate.clone(),
+                #[cfg(test)]
+                test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
+            }))) {
             Ok(()) => Ok(()),
             Err(mpsc::error::TrySendError::Full(request)) => {
                 request.release_unqueued();
