@@ -33,11 +33,90 @@
 //! consumer from that swap.
 
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{Connection, params};
 use std::collections::HashMap;
 
-use crate::memory::regions::{MemoryRegion, recall_from_region};
+use crate::memory::recall_presentation::{RecallSourceRef, RecallWarmKind};
+use crate::memory::regions::{AMYGDALA_THRESHOLD, MemoryRegion, recall_from_region};
 use crate::memory::views::EpisodeHit;
+
+/// A local-only routed recall row whose provenance stays attached until the
+/// enriched W163 result has passed Stage-3. It is deliberately separate from
+/// serialized `EpisodeHit` and the historical routed API.
+pub(crate) struct RoutedRecallSourceRow {
+    pub(crate) hit: EpisodeHit,
+    pub(crate) source: RecallSourceRef,
+}
+
+/// Typed warm mapper. The source comes from this exact `idx_consolidated` row;
+/// a negative compatibility id is never parsed back into a source reference.
+pub(crate) fn recall_warm_like_with_source(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+    min_importance: Option<f64>,
+) -> Result<Vec<RoutedRecallSourceRow>> {
+    let pattern = format!("%{}%", crate::memory::escape_like(query));
+    let sql = if min_importance.is_some() {
+        "SELECT id, kind, event_id, consolidated_ts, text, text_hash, importance, access_count \
+         FROM idx_consolidated WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\' AND importance >= ?2 \
+         ORDER BY importance DESC, consolidated_ts DESC LIMIT ?3"
+    } else {
+        "SELECT id, kind, event_id, consolidated_ts, text, text_hash, importance, access_count \
+         FROM idx_consolidated WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+         ORDER BY importance DESC, consolidated_ts DESC LIMIT ?2"
+    };
+    let mut stmt = conn.prepare(sql)?;
+    let map_row = |r: &rusqlite::Row<'_>| {
+        let consolidated_id: i64 = r.get(0)?;
+        let kind: String = r.get(1)?;
+        let event_id: Option<i64> = r.get(2)?;
+        let source = match (event_id, kind.as_str()) {
+            (Some(event_id), "retained") if event_id > 0 => RecallSourceRef::WarmSnapshot {
+                consolidated_id,
+                kind: RecallWarmKind::Retained,
+                original_event_id: Some(event_id),
+            },
+            (None, "retained") => RecallSourceRef::WarmSnapshot {
+                consolidated_id,
+                kind: RecallWarmKind::Retained,
+                original_event_id: None,
+            },
+            (None, "summary") => RecallSourceRef::WarmSnapshot {
+                consolidated_id,
+                kind: RecallWarmKind::Summary,
+                original_event_id: None,
+            },
+            _ => RecallSourceRef::Unavailable,
+        };
+        Ok(RoutedRecallSourceRow {
+            hit: EpisodeHit {
+                event_id: event_id.unwrap_or(-consolidated_id),
+                event_type: 0,
+                ts_ns: r.get(3)?,
+                text: r.get(4)?,
+                text_hash: r.get(5)?,
+                channel: None,
+                sender_id: None,
+                operator_id: None,
+                tier: "warm".to_owned(),
+                importance: Some(r.get(6)?),
+                access_count: r.get::<_, i64>(7)? as u32,
+                trust: 1,
+            },
+            source,
+        })
+    };
+    let rows = match min_importance {
+        Some(minimum) => stmt
+            .query_map(params![pattern, minimum, limit as i64], map_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?,
+        None => stmt
+            .query_map(params![pattern, limit as i64], map_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?,
+    };
+    Ok(rows)
+}
 
 /// What [`route_query`] decides for one prompt. `salience_boost =
 /// true` means "ALSO consult Amygdala alongside the primary region"
@@ -300,6 +379,71 @@ pub fn run_routed_recall(
     Ok(out)
 }
 
+/// W163's typed routed result. The legacy router remains hot-only; this helper
+/// admits warm rows only where their lack of an event-type binding is honest:
+/// the Hippocampus default query, or the Amygdala salience overlay with the
+/// same importance threshold. Other primary regions receive no warm row until
+/// retained events have a genuine region binding.
+pub(crate) fn run_routed_recall_with_source(
+    conn: &Connection,
+    plan: &RouterPlan,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<RoutedRecallSourceRow>> {
+    let mut rows = Vec::new();
+    for region in plan.regions() {
+        for hit in recall_from_region(conn, region, query, limit)? {
+            let source = if hit.event_id > 0 {
+                RecallSourceRef::Event {
+                    event_id: hit.event_id,
+                    event_type: hit.event_type,
+                }
+            } else {
+                RecallSourceRef::Unavailable
+            };
+            rows.push(RoutedRecallSourceRow { hit, source });
+        }
+    }
+
+    let warm_minimum = if plan.primary == MemoryRegion::Hippocampus {
+        None
+    } else if plan.salience_boost {
+        Some(AMYGDALA_THRESHOLD)
+    } else {
+        return Ok(merge_routed_source_rows(rows, limit));
+    };
+    rows.extend(recall_warm_like_with_source(conn, query, limit, warm_minimum)?);
+    Ok(merge_routed_source_rows(rows, limit))
+}
+
+fn merge_routed_source_rows(
+    rows: impl IntoIterator<Item = RoutedRecallSourceRow>,
+    limit: usize,
+) -> Vec<RoutedRecallSourceRow> {
+    let mut merged: HashMap<i64, RoutedRecallSourceRow> = HashMap::new();
+    for row in rows {
+        let event_id = row.hit.event_id;
+        let keep = match merged.get(&event_id) {
+            Some(existing) => row.hit.importance.unwrap_or(0.0) > existing.hit.importance.unwrap_or(0.0),
+            None => true,
+        };
+        if keep {
+            merged.insert(event_id, row);
+        }
+    }
+    let mut out: Vec<_> = merged.into_values().collect();
+    out.sort_by(|a, b| {
+        b.hit
+            .importance
+            .unwrap_or(0.0)
+            .partial_cmp(&a.hit.importance.unwrap_or(0.0))
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.hit.ts_ns.cmp(&a.hit.ts_ns))
+    });
+    out.truncate(limit);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,6 +580,91 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let conn = store::open(&dir.path().join("v.db")).unwrap();
         (dir, conn)
+    }
+
+    #[test]
+    fn typed_warm_mapper_keeps_the_exact_summary_snapshot_and_escapes_wildcards() {
+        let (_dir, conn) = open();
+        conn.execute(
+            "INSERT INTO idx_consolidated \
+             (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts) \
+             VALUES ('summary', '2026-09-21', NULL, 'literal 100% retained', 'warm-literal', 0.8, 20, 0)",
+            [],
+        )
+        .unwrap();
+        let consolidated_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO idx_consolidated \
+             (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts) \
+             VALUES ('summary', '2026-09-22', NULL, 'unrelated plain row', 'warm-other', 0.9, 21, 0)",
+            [],
+        )
+        .unwrap();
+
+        let rows = recall_warm_like_with_source(&conn, "%", 10, None).unwrap();
+        assert_eq!(rows.len(), 1, "a wildcard query must be literal");
+        assert_eq!(rows[0].hit.event_id, -consolidated_id);
+        assert!(matches!(
+            &rows[0].source,
+            RecallSourceRef::WarmSnapshot {
+                consolidated_id: id,
+                kind: RecallWarmKind::Summary,
+                ..
+            } if *id == consolidated_id
+        ));
+    }
+
+    #[test]
+    fn enriched_router_admits_a_warm_summary_only_for_hippocampus_or_salience() {
+        let (_dir, conn) = open();
+        conn.execute(
+            "INSERT INTO idx_consolidated \
+             (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts) \
+             VALUES ('summary', '2026-09-21', NULL, 'shared recall phrase', 'warm-summary', 0.90, 20, 0)",
+            [],
+        )
+        .unwrap();
+        let summary_id = conn.last_insert_rowid();
+        let hippocampus = RouterPlan {
+            primary: MemoryRegion::Hippocampus,
+            salience_boost: false,
+        };
+        let rows = run_routed_recall_with_source(&conn, &hippocampus, "shared", 1).unwrap();
+        assert_eq!(rows.len(), 1, "selection still honours the routed limit");
+        assert!(matches!(
+            &rows[0].source,
+            RecallSourceRef::WarmSnapshot {
+                consolidated_id: id,
+                kind: RecallWarmKind::Summary,
+                ..
+            } if *id == summary_id
+        ));
+
+        let insula = RouterPlan {
+            primary: MemoryRegion::Insula,
+            salience_boost: false,
+        };
+        assert!(
+            run_routed_recall_with_source(&conn, &insula, "shared", 10)
+                .unwrap()
+                .is_empty(),
+            "unbound warm summaries must not leak into a structural region"
+        );
+    }
+
+    #[test]
+    fn typed_warm_mapper_fails_closed_for_an_unknown_snapshot_shape() {
+        let (_dir, conn) = open();
+        conn.execute(
+            "INSERT INTO idx_consolidated \
+             (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts) \
+             VALUES ('summary', '2026-09-21', 0, 'unknown warm shape', 'warm-unknown', 0.8, 20, 0)",
+            [],
+        )
+        .unwrap();
+        let rows = recall_warm_like_with_source(&conn, "unknown", 10, None).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(&rows[0].source, RecallSourceRef::Unavailable));
     }
 
     #[test]

@@ -98,6 +98,9 @@ export component MiniOverlay inherits Window {
     /// W162 transient request-bound live throughput, separate from recents.
     in property <string> throughput-status: "";
     in property <bool> throughput-active: false;
+    /// W163 request-bound recall metadata, separate from recent snippets.
+    in property <[string]> recall-chip-lines: [];
+    in property <bool> recall-chips-active: false;
 
     // ── Compact mode ─────────────────────────────────────────────────
     /// When true the overlay renders as a 64 px pill.
@@ -722,6 +725,19 @@ export component MiniOverlay inherits Window {
                         wrap: word-wrap;
                         accessible-role: AccessibleRole.text;
                         accessible-label: "Live stream throughput";
+                    }
+
+                    if root.recall-chips-active: VerticalLayout {
+                        spacing: Theme.space-tight;
+                        for line in root.recall-chip-lines: Text {
+                            text: line;
+                            color: Theme.audit;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            wrap: word-wrap;
+                            accessible-role: AccessibleRole.text;
+                            accessible-label: "Current response recall summary";
+                        }
                     }
 
                     if root.recent-lines.length == 0: Text {

@@ -2210,6 +2210,9 @@ pub(super) struct PromptBuildContext<'a> {
     pub(super) current_path: &'a std::path::Path,
     pub(super) attachment_contexts: Option<&'a crate::pipeline::AttachmentContextBatch>,
     pub(super) output: &'a mut dyn ChatTurnEventSink,
+    /// Present only for the private authenticated GUI/Buddy control plane.
+    /// Recall chips deliberately have no public-CLI rendering path.
+    pub(super) stream_control_token: Option<&'a str>,
     pub(super) session_recall: Option<(
         crate::memory::session_start_recall::SessionStartRecallPreload,
         &'a str,
@@ -2236,6 +2239,7 @@ pub(super) async fn build_prompt_bundle(
         current_path,
         attachment_contexts,
         output,
+        stream_control_token,
         session_recall,
     } = context;
     let PromptBuildOptions {
@@ -2260,6 +2264,13 @@ pub(super) async fn build_prompt_bundle(
             "--skill and /skill routing are unavailable in Incognito because they load \
              instance extensions"
         );
+        emit_recall_chip_batch(
+            output,
+            stream_control_token,
+            &crate::memory::recall_presentation::RecallChipBatch::unavailable(
+                crate::memory::recall_presentation::RecallChipBatchStatus::Incognito,
+            ),
+        )?;
         let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
             prompt: &prompt,
             operator_sovereignty: Some(
@@ -2881,8 +2892,9 @@ pub(super) async fn build_prompt_bundle(
     // so recall stays off the ARCH-02 replay-determinism surface. Best-effort.
     // ODY-09: incognito turns skip Block::D recall injection — no memory surfaces
     // on this turn, so the operator's intent stays ephemeral end-to-end.
-    let (recall_block, context_preload_notice) =
+    let (recall_block, context_preload_notice, recall_chip_batch) =
         consume_session_recall(session_recall, &prompt, &home).await;
+    emit_recall_chip_batch(output, stream_control_token, &recall_chip_batch)?;
 
     // ── GOLD-ADAPT-MEM-12 — session-guidance block (recent hindsight sessions
     // + open fact-contradictions), folded above the recall block as session-
@@ -4333,6 +4345,116 @@ fn stream_request_id(control_token: &str) -> String {
     digest.update(b"neoth-chat-stream-request-v3\0");
     digest.update(control_token.as_bytes());
     hex::encode(digest.finalize())
+}
+
+/// Serialize the content-free W163 projection. This private-control record
+/// deliberately has exactly seven top-level fields and no fallback public CLI
+/// representation: a terminal stream has no authenticated consumer for it.
+fn recall_chip_batch_frame_line(
+    control_token: &str,
+    batch: &crate::memory::recall_presentation::RecallChipBatch,
+) -> std::io::Result<String> {
+    use crate::memory::recall_presentation::{
+        RecallChipBatchStatus, RecallChipScore, RecallChipSourceState, RecallChipTier,
+        MAX_RECALL_CHIP_ROWS,
+    };
+
+    #[derive(serde::Serialize)]
+    struct RecallChipRowFrame {
+        tier: &'static str,
+        score: Option<f32>,
+        source_state: &'static str,
+    }
+
+    #[derive(serde::Serialize)]
+    struct RecallChipBatchFrame<'a> {
+        neoth_stream: &'static str,
+        protocol_version: u8,
+        request_id: String,
+        control_token: &'a str,
+        sequence: u8,
+        status: &'static str,
+        rows: Vec<RecallChipRowFrame>,
+    }
+
+    let status = match batch.status {
+        RecallChipBatchStatus::Ready => "ready",
+        RecallChipBatchStatus::NoRecall => "no_recall",
+        RecallChipBatchStatus::Missing => "missing",
+        RecallChipBatchStatus::Stale => "stale",
+        RecallChipBatchStatus::Failed => "failed",
+        RecallChipBatchStatus::Incognito => "incognito",
+    };
+    // Projection normally caps rows before transport. Keep this defensive
+    // boundary here too: malformed future callers cannot enlarge the wire.
+    let rows = batch
+        .rows
+        .iter()
+        .take(MAX_RECALL_CHIP_ROWS)
+        .map(|row| {
+            let tier = match row.tier {
+                RecallChipTier::Canonical => "canonical",
+                RecallChipTier::Hot => "hot",
+                RecallChipTier::Warm => "warm",
+                RecallChipTier::Cold => "cold",
+                RecallChipTier::Unknown => "unknown",
+            };
+            let source_state = match row.source_state {
+                RecallChipSourceState::Available => "available",
+                RecallChipSourceState::Missing => "missing",
+                RecallChipSourceState::Revoked => "revoked",
+                RecallChipSourceState::Untrusted => "untrusted",
+            };
+            let score = match row.score {
+                RecallChipScore::WarmHit(score)
+                    if row.tier == RecallChipTier::Warm
+                        && row.source_state == RecallChipSourceState::Available
+                        && score.is_finite()
+                        && (0.0..=1.0).contains(&score) =>
+                {
+                    Some(score)
+                }
+                RecallChipScore::WarmHit(_) | RecallChipScore::Unavailable => None,
+            };
+            RecallChipRowFrame {
+                tier,
+                score,
+                source_state,
+            }
+        })
+        .collect();
+    serde_json::to_string(&RecallChipBatchFrame {
+        neoth_stream: "recall_chip_batch",
+        protocol_version: CHAT_STREAM_PROTOCOL_VERSION,
+        request_id: stream_request_id(control_token),
+        control_token,
+        sequence: 1,
+        status,
+        rows,
+    })
+    .map_err(std::io::Error::other)
+}
+
+fn emit_recall_chip_batch(
+    output: &mut dyn ChatTurnEventSink,
+    control_token: Option<&str>,
+    batch: &crate::memory::recall_presentation::RecallChipBatch,
+) -> Result<()> {
+    let Some(control_token) = control_token else {
+        return Ok(());
+    };
+    let line = recall_chip_batch_frame_line(control_token, batch)
+        .context("serialize authenticated recall-chip batch")?;
+    let mut frames = Vec::new();
+    write_stream_control_line(&mut frames, Some(control_token), &line)
+        .context("format authenticated recall-chip batch")?;
+    emit_chat_output(
+        output,
+        ChatOutput::StreamFrames {
+            frames: String::from_utf8(frames)
+                .expect("recall-chip protocol formatter emits UTF-8 frames"),
+        },
+    )
 }
 
 fn reasoning_audit_request_digest(turn_id: &str) -> String {
@@ -12353,10 +12475,18 @@ async fn consume_session_recall(
 ) -> (
     Option<crate::pipeline::RenderedUntrustedContext>,
     ContextPreloadNotice,
+    crate::memory::recall_presentation::RecallChipBatch,
 ) {
-    use crate::memory::session_start_recall::{RecallPreloadEmpty, SessionStartRecallOutcome};
+    use crate::memory::{
+        recall_presentation::{RecallChipBatch, RecallChipBatchStatus},
+        session_start_recall::{RecallPreloadEmpty, SessionStartRecallOutcome},
+    };
     let Some((mut preload, binding)) = prepared else {
-        return (None, ContextPreloadNotice::NoData);
+        return (
+            None,
+            ContextPreloadNotice::NoData,
+            RecallChipBatch::unavailable(RecallChipBatchStatus::NoRecall),
+        );
     };
     match preload
         .consume(
@@ -12367,15 +12497,28 @@ async fn consume_session_recall(
         )
         .await
     {
-        SessionStartRecallOutcome::Ready { mut output } => {
-            let rendered = render_preloaded_recall(&mut output);
+        SessionStartRecallOutcome::Ready { mut recall } => {
+            dedup_preloaded_recall_with_evidence(&mut recall);
+            let crate::cli::recall::RecallEnrichedOutput {
+                output,
+                canonical_evidence,
+                episode_evidence,
+            } = recall;
+            let chip_batch = RecallChipBatch::from_final_hits(
+                canonical_evidence.into_iter().chain(episode_evidence),
+            );
+            let rendered = render_preloaded_recall_after_dedup(&output);
             // Count the complete canonical envelope, including its policy and
             // metadata. UTF-8 byte count is the project's conservative token
             // upper bound, so this also proves the 16 KiB wire ceiling.
             if crate::tokens::budget::count_tokens_upper_bound(rendered.as_str()) > 8192 {
-                (None, ContextPreloadNotice::Failed)
+                (
+                    None,
+                    ContextPreloadNotice::Failed,
+                    RecallChipBatch::unavailable(RecallChipBatchStatus::Failed),
+                )
             } else {
-                (Some(rendered), ContextPreloadNotice::Ready)
+                (Some(rendered), ContextPreloadNotice::Ready, chip_batch)
             }
         }
         SessionStartRecallOutcome::NoData(reason) => {
@@ -12387,11 +12530,75 @@ async fn consume_session_recall(
                     crate::analytics::babel::signals::SignalKind::MemoryRecallMiss,
                 );
             }
-            (None, ContextPreloadNotice::NoData)
+            let status = if reason == RecallPreloadEmpty::Missing {
+                RecallChipBatchStatus::Missing
+            } else {
+                RecallChipBatchStatus::NoRecall
+            };
+            (
+                None,
+                ContextPreloadNotice::NoData,
+                RecallChipBatch::unavailable(status),
+            )
         }
-        SessionStartRecallOutcome::Stale(_reason) => (None, ContextPreloadNotice::Stale),
-        SessionStartRecallOutcome::Failed(_reason) => (None, ContextPreloadNotice::Failed),
+        SessionStartRecallOutcome::Stale(_reason) => (
+            None,
+            ContextPreloadNotice::Stale,
+            RecallChipBatch::unavailable(RecallChipBatchStatus::Stale),
+        ),
+        SessionStartRecallOutcome::Failed(_reason) => (
+            None,
+            ContextPreloadNotice::Failed,
+            RecallChipBatch::unavailable(RecallChipBatchStatus::Failed),
+        ),
     }
+}
+
+/// Preserve the exact enriched-output pairing while applying the final
+/// Block-D text deduplication. The selected evidence is consumed immediately
+/// afterward for the content-free chip projection; it is never reconstructed
+/// from rendered text or a second recall query.
+fn dedup_preloaded_recall_with_evidence(recall: &mut crate::cli::recall::RecallEnrichedOutput) {
+    debug_assert_eq!(
+        recall.output.canonical.len(),
+        recall.canonical_evidence.len(),
+        "canonical recall evidence must remain ordered with its output"
+    );
+    debug_assert_eq!(
+        recall.output.episodes.len(),
+        recall.episode_evidence.len(),
+        "episode recall evidence must remain ordered with its output"
+    );
+    let mut seen: std::collections::HashSet<u64> = recall
+        .output
+        .canonical
+        .iter()
+        .map(|hit| recall_dedup_key(&hit.text))
+        .collect();
+    let episodes = std::mem::take(&mut recall.output.episodes);
+    let evidence = std::mem::take(&mut recall.episode_evidence);
+    for (episode, evidence_hit) in episodes.into_iter().zip(evidence) {
+        if seen.insert(recall_dedup_key(&episode.text)) {
+            recall.output.episodes.push(episode);
+            recall.episode_evidence.push(evidence_hit);
+        }
+    }
+    debug_assert_eq!(
+        recall.output.episodes.len(),
+        recall.episode_evidence.len(),
+        "final dedup must discard an episode and its evidence together"
+    );
+}
+
+fn render_preloaded_recall_after_dedup(
+    output: &crate::cli::recall::RecallOutput,
+) -> crate::pipeline::RenderedUntrustedContext {
+    crate::pipeline::UntrustedContext::new(
+        crate::pipeline::UntrustedContextClass::Memory,
+        "memory:cli-auto-recall",
+        render_recall_block_layered(output),
+    )
+    .render()
 }
 
 /// Test-friendly inner: resolve the episode store at an explicit path instead
@@ -12433,12 +12640,7 @@ pub(crate) fn render_preloaded_recall(
     output: &mut crate::cli::recall::RecallOutput,
 ) -> crate::pipeline::RenderedUntrustedContext {
     dedup_recall_lanes(output);
-    crate::pipeline::UntrustedContext::new(
-        crate::pipeline::UntrustedContextClass::Memory,
-        "memory:cli-auto-recall",
-        render_recall_block_layered(output),
-    )
-    .render()
+    render_preloaded_recall_after_dedup(output)
 }
 
 /// GOLD-ADAPT-JV-MEM-10 — three-lane recall for the auto-recall block: canonical
@@ -15385,6 +15587,199 @@ mod tests {
         let decoded: crate::skills::resolver::SkillRouteReport =
             serde_json::from_value(frame["report"].clone()).unwrap();
         assert_eq!(decoded, report);
+    }
+
+    #[test]
+    fn w163_recall_chip_wire_is_private_bounded_and_has_exact_schema() {
+        use crate::memory::recall_presentation::{
+            RecallChipBatch, RecallChipBatchStatus, RecallChipRow, RecallChipScore,
+            RecallChipSourceState, RecallChipTier,
+        };
+
+        let token = "0123456789abcdef0123456789abcdef";
+        let batch = RecallChipBatch {
+            status: RecallChipBatchStatus::Ready,
+            rows: (0..6)
+                .map(|_| RecallChipRow {
+                    tier: RecallChipTier::Warm,
+                    score: RecallChipScore::WarmHit(0.42),
+                    source_state: RecallChipSourceState::Available,
+                })
+                .collect(),
+        };
+        let line = recall_chip_batch_frame_line(token, &batch).unwrap();
+        let frame: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let object = frame.as_object().expect("recall chip frame object");
+        assert_eq!(object.len(), 7);
+        for key in [
+            "neoth_stream",
+            "protocol_version",
+            "request_id",
+            "control_token",
+            "sequence",
+            "status",
+            "rows",
+        ] {
+            assert!(object.contains_key(key), "missing required wire key: {key}");
+        }
+        assert_eq!(frame["neoth_stream"], "recall_chip_batch");
+        assert_eq!(frame["protocol_version"], CHAT_STREAM_PROTOCOL_VERSION);
+        assert_eq!(frame["request_id"], stream_request_id(token));
+        assert_eq!(frame["control_token"], token);
+        assert_eq!(frame["sequence"], 1);
+        assert_eq!(frame["status"], "ready");
+        let rows = frame["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 5);
+        assert!(rows.iter().all(|row| {
+            row.as_object().is_some_and(|row| {
+                row.len() == 3
+                    && row.contains_key("tier")
+                    && row.contains_key("score")
+                    && row.contains_key("source_state")
+            })
+        }));
+        assert!(!line.contains("prompt") && !line.contains("session") && !line.contains("wal"));
+    }
+
+    #[test]
+    fn w163_recall_chip_score_is_null_except_available_valid_warm_hit() {
+        use crate::memory::recall_presentation::{
+            RecallChipBatch, RecallChipBatchStatus, RecallChipRow, RecallChipScore,
+            RecallChipSourceState, RecallChipTier,
+        };
+
+        let batch = RecallChipBatch {
+            status: RecallChipBatchStatus::Ready,
+            rows: vec![
+                RecallChipRow {
+                    tier: RecallChipTier::Warm,
+                    score: RecallChipScore::WarmHit(0.42),
+                    source_state: RecallChipSourceState::Available,
+                },
+                RecallChipRow {
+                    tier: RecallChipTier::Warm,
+                    score: RecallChipScore::WarmHit(f32::NAN),
+                    source_state: RecallChipSourceState::Available,
+                },
+                RecallChipRow {
+                    tier: RecallChipTier::Warm,
+                    score: RecallChipScore::WarmHit(1.1),
+                    source_state: RecallChipSourceState::Available,
+                },
+                RecallChipRow {
+                    tier: RecallChipTier::Warm,
+                    score: RecallChipScore::WarmHit(0.2),
+                    source_state: RecallChipSourceState::Missing,
+                },
+                RecallChipRow {
+                    tier: RecallChipTier::Hot,
+                    score: RecallChipScore::WarmHit(0.2),
+                    source_state: RecallChipSourceState::Available,
+                },
+            ],
+        };
+        let frame: serde_json::Value = serde_json::from_str(
+            recall_chip_batch_frame_line("0123456789abcdef0123456789abcdef", &batch).unwrap(),
+        )
+        .unwrap();
+        let rows = frame["rows"].as_array().unwrap();
+        assert_eq!(rows[0]["score"], 0.42);
+        for row in &rows[1..] {
+            assert!(row["score"].is_null());
+        }
+    }
+
+    #[test]
+    fn w163_recall_chip_empty_statuses_are_explicit_and_token_bound() {
+        use crate::memory::recall_presentation::{RecallChipBatch, RecallChipBatchStatus};
+
+        let token = "0123456789abcdef0123456789abcdef";
+        for (status, wire_status) in [
+            (RecallChipBatchStatus::NoRecall, "no_recall"),
+            (RecallChipBatchStatus::Missing, "missing"),
+            (RecallChipBatchStatus::Stale, "stale"),
+            (RecallChipBatchStatus::Failed, "failed"),
+            (RecallChipBatchStatus::Incognito, "incognito"),
+        ] {
+            let frame: serde_json::Value = serde_json::from_str(
+                recall_chip_batch_frame_line(token, &RecallChipBatch::unavailable(status)).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(frame["status"], wire_status);
+            assert_eq!(frame["rows"], serde_json::json!([]));
+            assert_eq!(frame["request_id"], stream_request_id(token));
+            assert_eq!(frame["control_token"], token);
+        }
+    }
+
+    #[test]
+    fn w163_final_dedup_discards_the_matching_episode_evidence() {
+        use crate::{
+            cli::recall::RecallEnrichedOutput,
+            memory::{
+                recall_presentation::{RecallPresentationHit, RecallSourceRef},
+                views::EpisodeHit,
+            },
+        };
+
+        let canonical = EpisodeHit {
+            event_id: 11,
+            event_type: 3,
+            ts_ns: 0,
+            text: "same retained memory".to_owned(),
+            text_hash: "canonical-private-hash".to_owned(),
+            channel: None,
+            sender_id: None,
+            operator_id: None,
+            tier: "groundtruth".to_owned(),
+            importance: None,
+            access_count: 0,
+            trust: 1,
+        };
+        let episode = EpisodeHit {
+            event_id: 12,
+            event_type: 4,
+            ts_ns: 0,
+            text: " SAME   retained memory ".to_owned(),
+            text_hash: "episode-private-hash".to_owned(),
+            channel: None,
+            sender_id: None,
+            operator_id: None,
+            tier: "warm".to_owned(),
+            importance: None,
+            access_count: 0,
+            trust: 1,
+        };
+        let mut recall = RecallEnrichedOutput {
+            output: crate::cli::recall::RecallOutput {
+                canonical: vec![canonical.clone()],
+                episodes: vec![episode.clone()],
+                contradictions: Vec::new(),
+            },
+            canonical_evidence: vec![RecallPresentationHit::from_final_parts(
+                canonical,
+                f64::NAN,
+                RecallSourceRef::GroundTruth { fact_id: 11 },
+            )],
+            episode_evidence: vec![RecallPresentationHit::from_final_parts(
+                episode,
+                0.42,
+                RecallSourceRef::Event {
+                    event_id: 12,
+                    event_type: 4,
+                },
+            )],
+        };
+        dedup_preloaded_recall_with_evidence(&mut recall);
+        assert!(recall.output.episodes.is_empty());
+        assert!(recall.episode_evidence.is_empty());
+        let batch = crate::memory::recall_presentation::RecallChipBatch::from_final_hits(
+            recall
+                .canonical_evidence
+                .into_iter()
+                .chain(recall.episode_evidence),
+        );
+        assert_eq!(batch.rows.len(), 1, "discarded episode must have no chip");
     }
 
     #[test]
@@ -21766,6 +22161,7 @@ modes:
                 current_path: &repo,
                 attachment_contexts: None,
                 output: &mut CliChatOutput,
+                stream_control_token: None,
                 session_recall: None,
             },
             PromptBuildOptions {
@@ -21850,9 +22246,10 @@ modes:
                     prompt_bundle_hash: &prompt_hash,
                     writer: &route_writer,
                     current_path: &repo,
-                    attachment_contexts: None,
-                    output: &mut output,
-                    session_recall: None,
+                attachment_contexts: None,
+                output: &mut output,
+                stream_control_token: None,
+                session_recall: None,
                 },
                 PromptBuildOptions {
                     slash_skill_name: None,
@@ -21929,6 +22326,7 @@ modes:
                 current_path: dir.path(),
                 attachment_contexts: None,
                 output: &mut CliChatOutput,
+                stream_control_token: None,
                 session_recall: None,
             },
             PromptBuildOptions {
@@ -22568,6 +22966,7 @@ modes:
                 current_path: dir.path(),
                 attachment_contexts: None,
                 output: &mut CliChatOutput,
+                stream_control_token: None,
                 session_recall: Some((prepared_recall, &recall_binding)),
             },
             PromptBuildOptions {

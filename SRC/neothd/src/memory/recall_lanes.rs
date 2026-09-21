@@ -105,10 +105,19 @@ pub struct LaneResult {
 /// One fused recall row together with the score that produced its rank.
 /// Kept crate-private so Stage-3 can add its documented community score
 /// without exposing an unstable scoring representation as public API.
+#[derive(Clone)]
 pub(crate) struct ScoredHit {
     pub(crate) hit: EpisodeHit,
     pub(crate) score: f64,
     original_rank: usize,
+}
+
+impl ScoredHit {
+    /// Transfer the final Stage-3 ranking value into a crate-private
+    /// presentation projection without recomputing it from importance or rank.
+    pub(crate) fn into_presentation_parts(self) -> (EpisodeHit, f64) {
+        (self.hit, self.score)
+    }
 }
 
 /// Reciprocal-rank-fuse the lanes into a single ranked, deduped list.
@@ -224,20 +233,32 @@ pub(crate) fn plurality_community_id(
 /// signal. Event-id/text-hash dedup and total ordering make the result stable
 /// across processes and SQLite row orders.
 pub(crate) fn expand_and_boost_by_community(
+    hits: Vec<ScoredHit>,
+    community_candidates: Vec<EpisodeHit>,
+    community_map: &HashMap<i64, i64>,
+    limit: usize,
+) -> Vec<EpisodeHit> {
+    expand_and_boost_by_community_scored(hits, community_candidates, community_map, limit)
+        .into_iter()
+        .map(|scored| scored.hit)
+        .collect()
+}
+
+/// Scored Stage-3 result for presentation consumers that must retain the exact
+/// ranking value used after community expansion. The historical wrapper above
+/// intentionally continues to expose only [`EpisodeHit`] values.
+pub(crate) fn expand_and_boost_by_community_scored(
     mut hits: Vec<ScoredHit>,
     mut community_candidates: Vec<EpisodeHit>,
     community_map: &HashMap<i64, i64>,
     limit: usize,
-) -> Vec<EpisodeHit> {
+) -> Vec<ScoredHit> {
     if limit == 0 {
         return Vec::new();
     }
     let Some(plurality_cid) = plurality_community_id(&hits, community_map) else {
-        return hits
-            .into_iter()
-            .take(limit)
-            .map(|scored| scored.hit)
-            .collect();
+        hits.truncate(limit);
+        return hits;
     };
 
     let mut seen_ids: std::collections::HashSet<i64> =
@@ -283,7 +304,7 @@ pub(crate) fn expand_and_boost_by_community(
             .then(a.hit.text_hash.cmp(&b.hit.text_hash))
     });
     hits.truncate(limit);
-    hits.into_iter().map(|scored| scored.hit).collect()
+    hits
 }
 
 #[cfg(test)]
@@ -305,6 +326,25 @@ mod tests {
             access_count: 0,
             trust: 1,
         }
+    }
+
+    #[test]
+    fn scored_stage_three_retains_the_community_adjusted_value() {
+        let mut first = hit("first", "warm", 0.9);
+        first.event_id = 10;
+        let mut second = hit("second", "warm", 0.8);
+        second.event_id = 20;
+        let rows = expand_and_boost_by_community_scored(
+            score_ranked_hits(vec![first, second]),
+            Vec::new(),
+            &HashMap::from([(10, 7), (20, 7)]),
+            2,
+        );
+        let first = rows
+            .iter()
+            .find(|row| row.hit.event_id == 10)
+            .expect("first retained");
+        assert_eq!(first.score, 1.0 / 61.0 + COMMUNITY_SCORE_BOOST);
     }
 
     #[test]

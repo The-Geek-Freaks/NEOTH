@@ -87,6 +87,9 @@ pub mod pre_decay_export;
 pub mod recall_gate;
 /// GOLD-ADAPT-MEM-03 — parallel recall lanes + RRF late fusion.
 pub mod recall_lanes;
+/// GOLD-LF-P2-27 — bounded typed recall-chip projection. No transport or UI
+/// consumer is wired here; those remain a later request-bound integration.
+pub(crate) mod recall_presentation;
 pub mod region_router;
 pub mod regions;
 pub mod routing_weights;

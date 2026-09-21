@@ -677,6 +677,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
             current_path: &prompt_current_path,
             attachment_contexts: attachment_contexts.as_ref(),
             output,
+            stream_control_token: stream_control_token.as_ref().map(|token| token.as_str()),
             session_recall,
         },
         PromptBuildOptions {

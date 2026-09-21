@@ -2,6 +2,25 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W163 recall-chip integration (2026-09-21):** same-query typed output and
+provenance remain paired through source capping and final context deduplication.
+The enriched router retains real warm snapshot identity and final Stage-3 scores;
+retained rows never fabricate an original event type. Authenticated bounded
+v3 controls feed transient Chat/Buddy provenance labels, freeze after successful
+response, and clear immediately on admitted replacement and lifecycle changes.
+Independent reviews resolved warm-authority and replacement-display defects;
+the wire cap regression retains six inputs and requires five output rows.
+See [W163](../docs/gold-wave163-verification.md).
+Current admission: 358 source inputs; 350 universal native + 3 Windows-only +
+2 Unix-only tests; 67 universal GUI + 14 Linux/macOS component fixtures; seven
+optional adapter tests and 19 macOS custom fixture names. W163 adds 32 source
+regression entries. Direct activation-callback dispatch, native execution,
+rendering and accessibility remain separate pending evidence. No Road checkbox
+closes; counts remain 1324 total / 1015 checked / 307 open / 2 partial.
+
+Published repair40dac1ad passed Preflight35637598123 and Code Quality35637597705.
+The earlier source600 native/preview results remain source-specific and cannot
+establish W163 acceptance.
 **Current hosted evidence (2026-09-21):** source6003175f passed Core/reference
 35634495862, Preflight35634494324 and Code Quality35634493973. Full CI35634988336
 continues native compilation, but Linux job106450108773 found two strict-Clippy

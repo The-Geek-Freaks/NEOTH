@@ -3,6 +3,7 @@
 //! Runs the indexer once before querying so freshly-written WAL frames are
 //! included. Output format follows the global `--output` flag.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -1281,34 +1282,10 @@ fn recall_like(conn: &Connection, query: &str, limit: usize) -> Result<Vec<Episo
 /// gives them a stable negative id that cannot collide with any
 /// `idx_episode.event_id` (which is always positive).
 fn recall_warm_like(conn: &Connection, query: &str, limit: usize) -> Result<Vec<EpisodeHit>> {
-    let pattern = format!("%{query}%");
-    let mut stmt = conn.prepare(
-        "SELECT COALESCE(event_id, -id) AS event_id, \
-                consolidated_ts AS ts_ns, text, text_hash, importance, access_count \
-         FROM idx_consolidated \
-         WHERE text LIKE ?1 COLLATE NOCASE \
-         ORDER BY importance DESC, consolidated_ts DESC \
-         LIMIT ?2",
-    )?;
-    let rows = stmt
-        .query_map(params![pattern, limit as i64], |r| {
-            Ok(EpisodeHit {
-                event_id: r.get(0)?,
-                event_type: 0,
-                ts_ns: r.get(1)?,
-                text: r.get(2)?,
-                text_hash: r.get(3)?,
-                channel: None,
-                sender_id: None,
-                operator_id: None,
-                tier: "warm".to_string(),
-                importance: Some(r.get::<_, f64>(4)?),
-                access_count: r.get::<_, i64>(5)? as u32,
-                trust: 1,
-            })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+    Ok(crate::memory::region_router::recall_warm_like_with_source(conn, query, limit, None)?
+        .into_iter()
+        .map(|row| row.hit)
+        .collect())
 }
 
 /// LIKE search over `idx_longterm` (cold tier, >90d Hebbian survivors).
@@ -1351,6 +1328,20 @@ fn apply_community_stage(
     scored: Vec<crate::memory::recall_lanes::ScoredHit>,
     limit: usize,
 ) -> Vec<EpisodeHit> {
+    apply_community_stage_scored(conn, scored, limit)
+        .into_iter()
+        .map(|scored| scored.hit)
+        .collect()
+}
+
+/// Retain the exact final Stage-3 score for the later request-bound recall
+/// presentation producer. Existing recall rendering continues through the
+/// source-compatible unscored wrapper above.
+pub(crate) fn apply_community_stage_scored(
+    conn: &Connection,
+    scored: Vec<crate::memory::recall_lanes::ScoredHit>,
+    limit: usize,
+) -> Vec<crate::memory::recall_lanes::ScoredHit> {
     if scored.is_empty() || limit == 0 {
         return Vec::new();
     }
@@ -1362,13 +1353,13 @@ fn apply_community_stage(
                 error = %error,
                 "recall: scoped community assignment load failed (non-fatal)"
             );
-            return scored.into_iter().map(|scored| scored.hit).collect();
+            return scored;
         }
     };
     let Some(community_id) =
         crate::memory::recall_lanes::plurality_community_id(&scored, &community_map)
     else {
-        return scored.into_iter().map(|scored| scored.hit).collect();
+        return scored;
     };
 
     // The first `limit` rows may include the already-ranked representatives.
@@ -1390,7 +1381,7 @@ fn apply_community_stage(
         community_map.insert(candidate.event_id, community_id);
     }
 
-    crate::memory::recall_lanes::expand_and_boost_by_community(
+    crate::memory::recall_lanes::expand_and_boost_by_community_scored(
         scored,
         community_candidates,
         &community_map,
@@ -1641,20 +1632,101 @@ pub(crate) fn query_three_lanes_checked(
     prompt: &str,
     limit: usize,
 ) -> Result<RecallOutput> {
+    Ok(query_three_lanes_checked_enriched(conn, plan, prompt, limit)?.output)
+}
+
+/// One bounded recall read with the historical output and matching local-only
+/// evidence. Later preload/chat integration must consume this result instead of
+/// issuing a second query for chips; both values represent the same selected
+/// and sanitized rows in the same order.
+pub(crate) struct RecallEnrichedOutput {
+    pub(crate) output: RecallOutput,
+    pub(crate) canonical_evidence: Vec<crate::memory::recall_presentation::RecallPresentationHit>,
+    pub(crate) episode_evidence: Vec<crate::memory::recall_presentation::RecallPresentationHit>,
+}
+
+pub(crate) fn query_three_lanes_checked_enriched(
+    conn: &Connection,
+    plan: &crate::memory::region_router::RouterPlan,
+    prompt: &str,
+    limit: usize,
+) -> Result<RecallEnrichedOutput> {
     let canonical = recall_groundtruth_like(conn, prompt, limit)?;
-    let episode_hits = crate::memory::region_router::run_routed_recall(conn, plan, prompt, limit)?;
-    let episodes = apply_community_stage(
+    let routed_rows = crate::memory::region_router::run_routed_recall_with_source(
+        conn, plan, prompt, limit,
+    )?;
+    let source_by_identity: HashMap<_, _> = routed_rows
+        .iter()
+        .map(|row| (episode_source_identity(&row.hit), row.source.clone()))
+        .collect();
+    let episode_hits = routed_rows.into_iter().map(|row| row.hit).collect();
+    let final_scored = apply_community_stage_scored(
         conn,
         crate::memory::recall_lanes::score_ranked_hits(episode_hits),
         limit,
     );
     let contradictions = recall_pending_contradictions(conn, prompt, CONTRADICTION_LANE_LIMIT)?;
-    Ok(RecallOutput {
+    let output = RecallOutput {
         canonical,
-        episodes,
+        episodes: final_scored.iter().map(|scored| scored.hit.clone()).collect(),
         contradictions,
     }
-    .sanitize_for_egress())
+    .sanitize_for_egress();
+    let canonical_evidence = output
+        .canonical
+        .iter()
+        .cloned()
+        .map(|hit| {
+            let source = if hit.event_id > 0 {
+                crate::memory::recall_presentation::RecallSourceRef::GroundTruth {
+                    fact_id: hit.event_id,
+                }
+            } else {
+                crate::memory::recall_presentation::RecallSourceRef::Unavailable
+            };
+            crate::memory::recall_presentation::RecallPresentationHit::from_final_parts(
+                hit,
+                f64::NAN,
+                source,
+            )
+        })
+        .collect();
+    let episode_evidence = final_scored
+        .into_iter()
+        .zip(output.episodes.iter().cloned())
+        .map(|(scored, hit)| {
+            let source = source_by_identity
+                .get(&episode_source_identity(&scored.hit))
+                .cloned()
+                .unwrap_or_else(|| source_for_stage_three_candidate(&scored.hit));
+            let (_, final_score) = scored.into_presentation_parts();
+            crate::memory::recall_presentation::RecallPresentationHit::from_final_parts(
+                hit, final_score, source,
+            )
+        })
+        .collect();
+    Ok(RecallEnrichedOutput {
+        output,
+        canonical_evidence,
+        episode_evidence,
+    })
+}
+
+fn episode_source_identity(hit: &EpisodeHit) -> (i64, u8, String, String) {
+    (hit.event_id, hit.event_type, hit.tier.clone(), hit.text_hash.clone())
+}
+
+fn source_for_stage_three_candidate(
+    hit: &EpisodeHit,
+) -> crate::memory::recall_presentation::RecallSourceRef {
+    if hit.event_id > 0 && hit.tier != "warm" {
+        crate::memory::recall_presentation::RecallSourceRef::Event {
+            event_id: hit.event_id,
+            event_type: hit.event_type,
+        }
+    } else {
+        crate::memory::recall_presentation::RecallSourceRef::Unavailable
+    }
 }
 
 /// Prompt-relevant PENDING contradictions, joined to both facts' statement text.
@@ -2360,8 +2432,61 @@ mod tests {
             ids.iter().any(|&i| i < 0),
             "summary row has negative sentinel id"
         );
+        let sourced = crate::memory::region_router::recall_warm_like_with_source(
+            &conn, "berlin", 10, None,
+        )
+        .expect("warm source");
+        assert!(sourced.iter().any(|row| {
+            row.hit.event_id == 100
+                && matches!(
+                    &row.source,
+                    crate::memory::recall_presentation::RecallSourceRef::WarmSnapshot {
+                        kind: crate::memory::recall_presentation::RecallWarmKind::Retained,
+                        original_event_id: Some(100),
+                        ..
+                    }
+                )
+        }));
+        assert!(sourced.iter().any(|row| {
+            row.hit.event_id < 0
+                && matches!(
+                    &row.source,
+                    crate::memory::recall_presentation::RecallSourceRef::WarmSnapshot {
+                        kind: crate::memory::recall_presentation::RecallWarmKind::Summary,
+                        ..
+                    }
+                )
+        }));
         // Importance comes through verbatim.
         assert!(hits.iter().any(|h| h.importance == Some(0.8)));
+    }
+
+    #[test]
+    fn enriched_hippocampal_summary_keeps_the_exact_stage_three_score() {
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        conn.execute(
+            "INSERT INTO idx_consolidated \
+             (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts) \
+             VALUES ('summary', '2026-09-21', NULL, 'w163 exact warm score', 'w163-summary', 0.8, 20, 0)",
+            [],
+        )
+        .unwrap();
+        let plan = crate::memory::region_router::RouterPlan {
+            primary: crate::memory::regions::MemoryRegion::Hippocampus,
+            salience_boost: false,
+        };
+        let enriched = query_three_lanes_checked_enriched(&conn, &plan, "exact warm", 1)
+            .expect("enriched routed recall");
+        assert_eq!(enriched.output.episodes.len(), 1);
+        let batch = crate::memory::recall_presentation::RecallChipBatch::from_final_hits(
+            enriched.episode_evidence,
+        );
+        assert!(matches!(
+            batch.rows[0].score,
+            crate::memory::recall_presentation::RecallChipScore::WarmHit(score)
+                if score == (1.0 / 61.0) as f32
+        ));
     }
 
     #[test]

@@ -61,12 +61,13 @@ pub(crate) enum RecallPreloadFailure {
     AlreadyConsumed,
 }
 
-/// Only `Ready` carries recall data.  The caller must immediately hand that
-/// output to its normal `render_preloaded_recall` helper and enforce the final
+/// Only `Ready` carries the one-query recall output and its aligned local
+/// presentation evidence. The caller must retain that pairing through final
+/// deduplication, render the normal Block-D context, and enforce its final
 /// 16 KiB `RenderedUntrustedContext` wire cap before provider dispatch.
 pub(crate) enum SessionStartRecallOutcome {
     Ready {
-        output: crate::cli::recall::RecallOutput,
+        recall: crate::cli::recall::RecallEnrichedOutput,
     },
     NoData(RecallPreloadEmpty),
     Stale(RecallPreloadStale),
@@ -150,7 +151,7 @@ enum WorkerCompletion {
     Queried {
         reader: Box<ExistingViewsReader>,
         observed_data_version: i64,
-        output: crate::cli::recall::RecallOutput,
+        recall: crate::cli::recall::RecallEnrichedOutput,
     },
     NoData(RecallPreloadEmpty),
     Stale(RecallPreloadStale),
@@ -326,11 +327,11 @@ impl SessionStartRecallPreload {
                 Ok(WorkerCompletion::Queried {
                     reader,
                     observed_data_version,
-                    output,
-                }) => match start_revalidation(reader, observed_data_version, output) {
+                    recall,
+                }) => match start_revalidation(reader, observed_data_version, recall) {
                     Ok(worker) => match await_worker(worker).await {
-                        Ok(WorkerCompletion::Queried { output, .. }) => {
-                            SessionStartRecallOutcome::Ready { output }
+                        Ok(WorkerCompletion::Queried { recall, .. }) => {
+                            SessionStartRecallOutcome::Ready { recall }
                         }
                         Ok(WorkerCompletion::NoData(reason)) => {
                             SessionStartRecallOutcome::NoData(reason)
@@ -455,7 +456,7 @@ impl Drop for WorkerGuard {
 fn start_revalidation(
     reader: Box<ExistingViewsReader>,
     observed_data_version: i64,
-    output: crate::cli::recall::RecallOutput,
+    recall: crate::cli::recall::RecallEnrichedOutput,
 ) -> std::result::Result<RecallWorker, RecallPreloadFailure> {
     let permit = Arc::clone(permits())
         .try_acquire_owned()
@@ -470,7 +471,7 @@ fn start_revalidation(
     });
     let task = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        revalidate_for_consumption(reader, observed_data_version, output, worker_control)
+        revalidate_for_consumption(reader, observed_data_version, recall, worker_control)
     });
     Ok(RecallWorker {
         control,
@@ -517,7 +518,7 @@ fn query_existing_views(
         return WorkerCompletion::Failed(RecallPreloadFailure::Cancelled);
     }
     let plan = crate::memory::region_router::route_query(&prompt);
-    let mut output = match crate::cli::recall::query_three_lanes_checked(
+    let mut recall = match crate::cli::recall::query_three_lanes_checked_enriched(
         &reader.conn,
         &plan,
         &prompt,
@@ -539,18 +540,18 @@ fn query_existing_views(
     if before != after {
         return WorkerCompletion::Stale(RecallPreloadStale::DataVersionChanged);
     }
-    cap_recall_source_before_handoff(&mut output);
+    cap_recall_source_before_handoff(&mut recall);
     WorkerCompletion::Queried {
         reader,
         observed_data_version: after,
-        output,
+        recall,
     }
 }
 
 fn revalidate_for_consumption(
     reader: Box<ExistingViewsReader>,
     observed_data_version: i64,
-    output: crate::cli::recall::RecallOutput,
+    recall: crate::cli::recall::RecallEnrichedOutput,
     control: Arc<WorkerControl>,
 ) -> WorkerCompletion {
     // The retained reader must use this stage's fresh deadline, not the
@@ -565,13 +566,13 @@ fn revalidate_for_consumption(
     }
     match current {
         Ok(current) if current == observed_data_version => {
-            if output.is_empty() {
+            if recall.output.is_empty() {
                 WorkerCompletion::NoData(RecallPreloadEmpty::Empty)
             } else {
                 WorkerCompletion::Queried {
                     reader,
                     observed_data_version,
-                    output,
+                    recall,
                 }
             }
         }
@@ -721,27 +722,48 @@ fn fingerprint(domain: &[u8], value: &str) -> [u8; 32] {
     digest.finalize().into()
 }
 
-/// Bound source data before it leaves the worker.  This operates on the actual
-/// three-lane `RecallOutput`; it never manufactures labels, providers, or
-/// operator claims.  The chat renderer remains responsible for deduplication,
-/// canonical untrusted-context rendering, and its 16 KiB full-wire cap.
-fn cap_recall_source_before_handoff(output: &mut crate::cli::recall::RecallOutput) {
+/// Bound source data before it leaves the worker while preserving the exact
+/// output/evidence pairing from the one checked recall query. Rows which no
+/// longer carry any source text are removed from both sides together, so a
+/// presentation chip cannot outlive the corresponding Block-D row.
+fn cap_recall_source_before_handoff(recall: &mut crate::cli::recall::RecallEnrichedOutput) {
     let mut remaining = usize::try_from(MAX_PRELOADED_SOURCE_TOKENS).unwrap_or(usize::MAX);
-    for hit in output
-        .canonical
-        .iter_mut()
-        .chain(output.episodes.iter_mut())
-    {
-        trim_utf8_to_budget(&mut hit.text, &mut remaining);
-    }
-    for line in &mut output.contradictions {
+    cap_recall_lane_with_evidence(
+        &mut recall.output.canonical,
+        &mut recall.canonical_evidence,
+        &mut remaining,
+    );
+    cap_recall_lane_with_evidence(
+        &mut recall.output.episodes,
+        &mut recall.episode_evidence,
+        &mut remaining,
+    );
+    for line in &mut recall.output.contradictions {
         trim_utf8_to_budget(&mut line.statement_a, &mut remaining);
         trim_utf8_to_budget(&mut line.statement_b, &mut remaining);
     }
     debug_assert!(
-        recall_source_bytes(output)
+        recall_source_bytes(&recall.output)
             <= usize::try_from(MAX_PRELOADED_SOURCE_TOKENS).unwrap_or(usize::MAX)
     );
+}
+
+fn cap_recall_lane_with_evidence(
+    hits: &mut Vec<crate::memory::views::EpisodeHit>,
+    evidence: &mut Vec<crate::memory::recall_presentation::RecallPresentationHit>,
+    remaining: &mut usize,
+) {
+    debug_assert_eq!(hits.len(), evidence.len());
+    let prior_hits = std::mem::take(hits);
+    let prior_evidence = std::mem::take(evidence);
+    for (mut hit, evidence_hit) in prior_hits.into_iter().zip(prior_evidence) {
+        trim_utf8_to_budget(&mut hit.text, remaining);
+        if !hit.text.is_empty() {
+            hits.push(hit);
+            evidence.push(evidence_hit);
+        }
+    }
+    debug_assert_eq!(hits.len(), evidence.len());
 }
 
 fn trim_utf8_to_budget(value: &mut String, remaining: &mut usize) {
@@ -837,9 +859,9 @@ mod tests {
             .consume(&local, home.path(), "operator\0session-1", "rust")
             .await;
         match outcome {
-            SessionStartRecallOutcome::Ready { output } => {
+            SessionStartRecallOutcome::Ready { recall } => {
                 assert!(
-                    !output.is_empty(),
+                    !recall.output.is_empty(),
                     "seeded checked recall must carry actual output"
                 );
             }
@@ -1133,14 +1155,92 @@ mod tests {
             }],
             ..Default::default()
         };
-        cap_recall_source_before_handoff(&mut output);
+        let capped_away_episode = crate::memory::views::EpisodeHit {
+            event_id: 2,
+            event_type: 2,
+            ts_ns: 2,
+            text: "must be removed with its evidence".into(),
+            text_hash: "episode-hash".into(),
+            channel: None,
+            sender_id: None,
+            operator_id: None,
+            tier: "warm".into(),
+            importance: None,
+            access_count: 0,
+            trust: 1,
+        };
+        let episode_evidence = vec![
+            crate::memory::recall_presentation::RecallPresentationHit::from_final_parts(
+                capped_away_episode.clone(),
+                0.42,
+                crate::memory::recall_presentation::RecallSourceRef::Event {
+                    event_id: 2,
+                    event_type: 2,
+                },
+            ),
+        ];
+        output.episodes.push(capped_away_episode);
+        let canonical_evidence = output
+            .canonical
+            .iter()
+            .cloned()
+            .map(|hit| {
+                crate::memory::recall_presentation::RecallPresentationHit::from_final_parts(
+                    hit,
+                    f64::NAN,
+                    crate::memory::recall_presentation::RecallSourceRef::Unavailable,
+                )
+            })
+            .collect();
+        let mut recall = crate::cli::recall::RecallEnrichedOutput {
+            output,
+            canonical_evidence,
+            episode_evidence,
+        };
+        cap_recall_source_before_handoff(&mut recall);
         assert!(
-            output.canonical[0]
+            recall.output.canonical[0]
                 .text
-                .is_char_boundary(output.canonical[0].text.len())
+                .is_char_boundary(recall.output.canonical[0].text.len())
         );
         assert!(
-            recall_source_bytes(&output) <= usize::try_from(MAX_PRELOADED_SOURCE_TOKENS).unwrap()
+            recall_source_bytes(&recall.output)
+                <= usize::try_from(MAX_PRELOADED_SOURCE_TOKENS).unwrap()
+        );
+        assert_eq!(
+            recall.output.canonical.len(),
+            recall.canonical_evidence.len(),
+            "source-cap rows and evidence must remain aligned"
+        );
+        assert!(recall.output.episodes.is_empty());
+        assert!(
+            recall.episode_evidence.is_empty(),
+            "source-cap-removed rows must not retain chip evidence"
+        );
+    }
+
+    #[test]
+    fn w163_preload_uses_one_enriched_query_and_retains_its_pair() {
+        let production = include_str!("session_start_recall.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production session-start recall source");
+        assert_eq!(
+            production
+                .match_indices("query_three_lanes_checked_enriched(")
+                .count(),
+            1,
+            "the preload worker must issue one enriched read for Block-D and chips"
+        );
+        assert!(
+            !production.contains("query_three_lanes_checked("),
+            "the preload must not perform a second legacy recall query"
+        );
+        assert!(
+            production.contains("RecallEnrichedOutput")
+                && production.contains("cap_recall_lane_with_evidence")
+                && production.contains("revalidate_for_consumption"),
+            "the enriched pair must survive cap and consumption revalidation"
         );
     }
 
@@ -1223,7 +1323,7 @@ mod tests {
             .unwrap()
             .unwrap();
         let version = reader.checked_data_version().unwrap();
-        let output = crate::cli::recall::query_three_lanes_checked(
+        let recall = crate::cli::recall::query_three_lanes_checked_enriched(
             &reader.conn,
             &crate::memory::region_router::route_query("rust"),
             "rust",
@@ -1237,7 +1337,7 @@ mod tests {
         let completion = revalidate_for_consumption(
             Box::new(reader),
             version,
-            output,
+            recall,
             Arc::new(WorkerControl::new()),
         );
         let WorkerCompletion::Queried { reader, .. } = completion else {
@@ -1285,7 +1385,7 @@ mod tests {
             Arc::new(WorkerControl::new()),
         );
         match await_worker(completed_worker(completion).await).await {
-            Ok(WorkerCompletion::Queried { output, .. }) => assert!(!output.is_empty()),
+            Ok(WorkerCompletion::Queried { recall, .. }) => assert!(!recall.output.is_empty()),
             _ => panic!("a completed recall must survive a later watchdog notification"),
         }
     }
