@@ -49,6 +49,12 @@ def walk(root, node, path, leaves, blockers, stack, depth=0):
     if marker in stack: blockers.append({"path":path,"reason":"recursive_schema_cycle"}); return
     stack.add(marker)
     try:
+        if not node:
+            # JSON Schema {} explicitly admits arbitrary JSON. Preserve that
+            # open subtree instead of inventing nested fields or adapter support.
+            leaves.append({"path_template": path, "json_type": "any", "scope": "opaque_subtree", "disposition": "blocked_requires_explicit_leaf_mapping"})
+            return
+
         def keys_allowed(allowed):
             unknown = sorted(set(node) - ANNOTATIONS - allowed)
             blockers.extend({"path": path, "reason": f"unsupported_schema_keyword:{key}"} for key in unknown)

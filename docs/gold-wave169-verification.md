@@ -17,6 +17,13 @@ local references. Cycles, unbounded or unknown structural forms and semantic
 siblings it cannot account for produce named blockers. An incomplete schema
 cannot silently become a complete inventory.
 
+Run 35652616234 verified both pinned inputs and observed all 26 expected IDs,
+with 3230 typed paths and 22 explicit empty-schema blockers. JSON Schema `{}`
+admits arbitrary JSON; the next extractor revision records these as opaque
+subtrees requiring explicit leaf mapping. It does not infer any inner fields,
+credential handling or adapter support from an unconstrained schema. Its
+regression tests also run in the ordinary push preflight.
+
 The workflow runs focused regression tests first and retains extraction status,
 partial inventory and source evidence on extraction failure. A test failure
 before extraction is visible in workflow logs and may have no artifact. Output

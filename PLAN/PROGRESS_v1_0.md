@@ -2,6 +2,16 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W169 actual source extraction (2026-09-21):** run35652616234 validates all
+26 expected channel IDs, both input pins, and 3230 typed paths. Its 22 remaining
+cases are upstream empty JSON Schemas; they are now explicit opaque subtrees
+with blocked_requires_explicit_leaf_mapping, not invented inner mappings.
+Independent focused review approved this diagnostic representation. The new
+workflow trigger uses the existing multiline convention after Hosted cadence
+identified its unsupported inline form. Rustfmt on00a646c9 passed; fresh
+preflight, schema extraction and full native/GUI acceptance remain required.
+The successful45c CLI reference is byte-identical to the committed snapshot.
+
 **Latest Hosted boundary (2026-09-21):** CLI build/reference35652041976 on
 45c31447 passed. All 29 remaining GUI format hunks are imported exactly from
 GitHub. W169 run35652260374 passed nine tests, then correctly rejected a

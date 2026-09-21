@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "HOSTED_GUI_FORMAT_IMPORTED_AND_EXTRACTION_PIN_REPAIRED",
+  "status": "W169_OPAQUE_SCHEMA_RECORDED_HOSTED_REQUIRED",
   "base": "319d84f6886a77efd7fa9076879fdc9e826a2d37",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 65728,
-    "sha256": "C4297C763C0DB1DEBD532BA9DDE8E755B16BE967910F241B9BD13D41108B1E61"
+    "bytes": 65777,
+    "sha256": "FCA8C200C05BE1EDD032C8A2F7E37D6E1212BDC4FB0AC15920892F49EFCF8A25"
   },
   "sourceInputs": 380,
   "requiredNativeTests": [
@@ -6028,5 +6028,27 @@
     "repair": "correct literal to real64hex hash; add real-fixture pin regression",
     "freshRun": "required",
     "localExecution": false
+  },
+  "wave169OpaqueSchema": {
+    "run": 35652616234,
+    "source": "00a646c9ba69de795f0bda2180ba4598eb756a39",
+    "typedPaths": 3230,
+    "channelIds": 26,
+    "opaquePaths": 22,
+    "oldExit": 2,
+    "review": "work/gold-20260906/wave169-channel-schema/OPEN-SCHEMA-REVIEW.md",
+    "reviewSha256": "8AEA790595A0179CBE1AB20F16C9F52D3DF72B4AB8BE76E01F9983CCBFA43824",
+    "newScope": "opaque_subtree",
+    "newDisposition": "blocked_requires_explicit_leaf_mapping",
+    "freshHosted": "required",
+    "localExecution": false
+  },
+  "wave168ReferenceReadback": {
+    "run": 35652041976,
+    "source": "45c314471d3c06d122456f743ad93c818990dcf4",
+    "sha256": "D4026EA859078483FB3055064A75286ECBB460EC999A3D233AC7B2726768321F",
+    "bytes": 231534,
+    "committedSnapshotMatches": true,
+    "localBinaryRan": false
   }
 }

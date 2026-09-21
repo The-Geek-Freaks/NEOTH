@@ -86,6 +86,15 @@ class SchemaWalkerTests(unittest.TestCase):
         module.walk(root, root, "", leaves, blockers, set())
         self.assertEqual(blockers[0]["reason"], "open_additional_items")
 
+    def test_empty_schema_preserves_opaque_account_subtree_without_mapping_claim(self):
+        root = {"type": "object", "additionalProperties": False, "properties": {
+            "accounts": {"type": "object", "propertyNames": {"type": "string"}, "additionalProperties": {}},
+        }}
+        leaves, blockers = [], []
+        module.walk(root, root, "", leaves, blockers, set())
+        self.assertEqual(blockers, [])
+        self.assertEqual(leaves, [{"path_template": "accounts.{key}", "json_type": "any", "scope": "opaque_subtree", "disposition": "blocked_requires_explicit_leaf_mapping"}])
+
 
 if __name__ == "__main__":
     unittest.main()

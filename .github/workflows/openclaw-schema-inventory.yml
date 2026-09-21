@@ -1,6 +1,9 @@
 name: OpenClaw schema inventory
-on: { workflow_dispatch: {} }
-permissions: { contents: read }
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 jobs:
   extract:
     runs-on: ubuntu-24.04

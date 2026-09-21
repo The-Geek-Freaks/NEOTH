@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W170-schema-extraction-candidate",
-  "base": "769105adbe78f94489a9af5170543b99f2a1b6d8",
-  "capturedUtc": "2026-09-21T20:39:16.5701077Z",
-  "validationStatus": "HOSTED_GUI_FORMAT_IMPORTED_AND_EXTRACTION_PIN_REPAIRED",
-  "scopeNote": "All W167/W168 Hosted formatting admitted; W169 diagnostic fixture pin typo repaired with real package fixture regression. Native/GUI/schema extraction still pending.",
+  "base": "00a646c9ba69de795f0bda2180ba4598eb756a39",
+  "capturedUtc": "2026-09-21T20:44:40.6286102Z",
+  "validationStatus": "W169_OPAQUE_SCHEMA_RECORDED_HOSTED_REQUIRED",
+  "scopeNote": "W169 preserves upstream unconstrained schemas as blocked opaque subtrees, never migration support. Workflow syntax follows current cadence contract; unit regressions included in push preflight. Native/GUI acceptance pending.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -23,13 +23,13 @@
     },
     {
       "path": ".github/workflows/openclaw-schema-inventory.yml",
-      "bytes": 1928,
-      "sha256": "B485C9BDFAEF547C2D33374F7B6BC1B22F1B7A48B6F63BB0BA67EB521D46B9B3"
+      "bytes": 1922,
+      "sha256": "4E67CE195CF222BFD6D5746C9321D6C6547D824DFCECB6CC48FE528A2CCA9B59"
     },
     {
       "path": ".github/workflows/preflight.yml",
-      "bytes": 3959,
-      "sha256": "DB7E5CEE850005972BE9F262BA2EF60FED3867601056335057CCCC1222E189C7"
+      "bytes": 4037,
+      "sha256": "E82EF8CA697130B2A1F353B5214A5C2AB39B3B9D24EF04C99D5F8977734B7700"
     },
     {
       "path": ".github/workflows/preview-windows.yml",
@@ -93,8 +93,8 @@
     },
     {
       "path": "docs/gold-wave169-verification.md",
-      "bytes": 1798,
-      "sha256": "803A80EC15867C2A6786AE5D18F045E7B09D2AF3556C55A3B889776C9FF999F5"
+      "bytes": 2239,
+      "sha256": "4CA8E8D687DA0C39E40069717BD9252BEDCD79338F098D340A9BA76D56A9B695"
     },
     {
       "path": "docs/gold-wave170-verification.md",
@@ -188,13 +188,13 @@
     },
     {
       "path": "scripts/extract_openclaw_channel_schema.py",
-      "bytes": 9912,
-      "sha256": "47DB787F3F732B38ADE10C0F3C888308984989DA347F920949FBEB862632A1E1"
+      "bytes": 10267,
+      "sha256": "555D5C30383A3C7900980D375E934676E68D979B5D40924B4F51F672850C6867"
     },
     {
       "path": "scripts/test_extract_openclaw_channel_schema.py",
-      "bytes": 4899,
-      "sha256": "392A7012CD46B29901F067B29A533E77D037263D53023BC573E5A4A686D07EC4"
+      "bytes": 5499,
+      "sha256": "927F40E13E0ECFE193526C3CAAC5146CC027FA1DBF89241BB23882BF414A44E5"
     },
     {
       "path": "SRC/_gui_lint.ps1",
