@@ -7244,7 +7244,7 @@ fn project_selfimprove_proposal_wires(
                 .evaluator_source_short_id
                 .map(|value| {
                     selfimprove_short_sha256(&value, "evaluator identifier")?;
-                    Ok(value)
+                    Ok::<String, String>(value)
                 })
                 .transpose()?;
             let corpus = row
@@ -7252,7 +7252,7 @@ fn project_selfimprove_proposal_wires(
                 .corpus_manifest_sha256
                 .map(|value| {
                     selfimprove_sha256(&value, "corpus digest")?;
-                    Ok(value)
+                    Ok::<String, String>(value)
                 })
                 .transpose()?;
             let evidence = row
@@ -7260,7 +7260,7 @@ fn project_selfimprove_proposal_wires(
                 .evidence_sha256
                 .map(|value| {
                     selfimprove_sha256(&value, "evidence digest")?;
-                    Ok(value)
+                    Ok::<String, String>(value)
                 })
                 .transpose()?;
             let scores_present = row.quality.score_before.is_some()

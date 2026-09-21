@@ -13,6 +13,10 @@ use serde::{Deserialize, Serialize};
 
 #[path = "gui_action/ouro_q8.rs"]
 mod ouro_q8;
+#[allow(
+    unused_imports,
+    reason = "headless #[path] harnesses omit ouro_gui, which consumes these product re-exports"
+)]
 pub(crate) use ouro_q8::{OuroQ8VerifyError, OuroQ8VerifyOutcome, run_ouro_q8_verify};
 
 const MAX_DIAGNOSTIC_CHARS: usize = 400;

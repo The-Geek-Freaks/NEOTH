@@ -8432,8 +8432,8 @@ fn main() -> Result<()> {
             });
         });
 
-        register_selfimprove_accept_callback(window);
-        ouro_gui::register(window);
+        register_selfimprove_accept_callback(&window);
+        ouro_gui::register(&window);
 
         let weak_si_rb = window.as_weak();
         window.on_si_rollback_clicked(move |id| {
@@ -8977,7 +8977,7 @@ fn main() -> Result<()> {
 
     // ── Wave 4b — Buddy Config panel callbacks ───────────────────────────────
     {
-        register_buddy_quality_handoff_callback(window);
+        register_buddy_quality_handoff_callback(&window);
         let weak_bc = window.as_weak();
         window.on_bc_refresh_clicked(move || {
             if let Some(window) = weak_bc.upgrade()
@@ -38380,7 +38380,7 @@ mod w58_gui_callback_runtime_tests {
         register_channel_legacy_migration_callback, register_channel_pairing_approval_callback,
         register_channel_pairing_request_callbacks,
         register_code_map_enrichment_readiness_callbacks, register_selfimprove_accept_callback,
-        register_skill_autonomy_callbacks, selfimprove_accept_readback_matches,
+        register_skill_autonomy_callbacks,
         start_code_map_lifecycle_config_apply, start_code_map_lifecycle_refresh, which_neothd,
     };
 
@@ -41054,7 +41054,7 @@ exit 72
         assert_eq!(w116_call_lines(&calls), ["migrate:ops_b"]);
         release_guard.release();
         w130_pump_until_migration_settles(&window);
-        assert_eq!(stale_during_migration.get(), Some(false));
+        assert_eq!(*stale_during_migration.lock().expect("read stale migration state"), Some(false));
         assert!(window.get_channel_migration_reconcile_required());
         assert_eq!(w116_account_ids(&window), Vec::<String>::new());
         assert!(!w116_call_lines(&calls).iter().any(|line| line == "list"));

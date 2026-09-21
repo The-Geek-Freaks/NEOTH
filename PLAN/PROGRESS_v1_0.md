@@ -2,6 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W156 hosted compile repair (2026-09-21):** full CI35602100258 found
+ambiguous Buddy quality parser Result types, headless Ouro re-export warnings,
+three GUI callback borrow errors and a stale Arc/Mutex test accessor. The
+three-file repair preserves validators and test assertions. See
+[W156](../docs/gold-wave156-verification.md). CI and preview35602103625 were
+confirmed cancelled after the source compile failures; neither produced a
+current native-test or portable-lifecycle acceptance. New hosted gates are
+required. W153 remains separate uncommitted source; Road counts stay
+1324 total / 1015 checked / 307 open / 2 partial.
+**W154 hosted validation checkpoint (2026-09-21):** c34bce29 passed
+Preflight35601931380 and CodeQuality35601931179. Full CI35602100258 and
+Windows preview35602103625 are dispatched for that exact source. Their
+compilation, native-test and lifecycle results remain pending. W153 starts the
+separate operator-controlled transient reasoning stream; no Road item closes.
+
 W154 formatter follow-up: CodeQuality35601106886 passed on819fd803.
 Preflight35601107876 reported exactly four formatting hunks in win_native.rs;
 the exact hosted postimages are imported. No additional module-resolution

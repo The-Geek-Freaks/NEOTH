@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W149-W154-GUI-and-Windows-private-creation",
-  "base": "819fd80388adb3236eb69710a7b234afee306a36",
-  "capturedUtc": "2026-09-21T12:48:26.8408756Z",
-  "validationStatus": "W154_EXACT_HOSTED_FORMAT_IMPORTED_RUNTIME_PENDING",
-  "scopeNote": "320 inputs; W149/W151/W152 plus W151 explicit nested-module path and W154 TokenUser owner at private Windows creation. Executable gates GitHub-only; no Road closure.",
+  "base": "c34bce29d4d514e7306a8f602c9fac3224347cd6",
+  "capturedUtc": "2026-09-21T13:07:42.2257988Z",
+  "validationStatus": "W156_HOSTED_COMPILE_REPAIR_PENDING",
+  "scopeNote": "320 source inputs; W156 three-file GUI compile repair over W149/W151/W152/W154. W153 working source is excluded. All executable gates GitHub-only; no Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -258,8 +258,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/gui_action.rs",
-      "bytes": 336047,
-      "sha256": "E71614F9E40DAE318DAD6F92584F6C821B6E7691DD7C686D2A6122CC773E6E66"
+      "bytes": 336176,
+      "sha256": "604E868C299ADB26B8FE6E30207076E36021F9C2BB1895C1D6E8A8C0CD02F1C2"
     },
     {
       "path": "SRC/neothd-gui/src/gui_action/ouro_q8.rs",
@@ -278,8 +278,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1794981,
-      "sha256": "E1C17850DB9771D1FEDF10F0446D10B6BDD7DB7660889B211193F2171394E1E5"
+      "bytes": 1794986,
+      "sha256": "296476F61BDFB4D554C64B0EF1F616EAC27CD7B0BD483BC8E233415B3C309D1F"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -288,8 +288,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 554601,
-      "sha256": "8347AC1FFE5C259DEC6C44C2E364AC36417EC70D2DD6DA4D3A5A8C89CD143B1A"
+      "bytes": 554655,
+      "sha256": "725F5C2372DAD4ED00E90389883E399F356ACD0AB4A76EBA61B4D6D5367E1033"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W149_W151_W152_SOURCE_HOSTED_EXECUTION_REQUIRED",
-  "base": "819fd80388adb3236eb69710a7b234afee306a36",
+  "status": "W156_HOSTED_COMPILE_REPAIR_EXECUTION_REQUIRED",
+  "base": "c34bce29d4d514e7306a8f602c9fac3224347cd6",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 55261,
-    "sha256": "713BAAE3C78E7475D32F719E9C3AD846B219F29EAE757AF99584C973CA5D3742"
+    "bytes": 55244,
+    "sha256": "BBBC5062A85EC75FC6724D2F225B15A2EAFFD997EB8B51E88F288EB87FA18E50"
   },
   "sourceInputs": 320,
   "requiredNativeTests": [
@@ -1506,13 +1506,13 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1794981,
-      "sha256": "E1C17850DB9771D1FEDF10F0446D10B6BDD7DB7660889B211193F2171394E1E5"
+      "bytes": 1794986,
+      "sha256": "296476F61BDFB4D554C64B0EF1F616EAC27CD7B0BD483BC8E233415B3C309D1F"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 554601,
-      "sha256": "8347AC1FFE5C259DEC6C44C2E364AC36417EC70D2DD6DA4D3A5A8C89CD143B1A"
+      "bytes": 554655,
+      "sha256": "725F5C2372DAD4ED00E90389883E399F356ACD0AB4A76EBA61B4D6D5367E1033"
     },
     {
       "path": "SRC/neothd-gui/src/gui_action/ouro_q8.rs",
@@ -2446,5 +2446,21 @@
       "qualityConclusion": "success",
       "localValidationRan": false
     }
+  },
+  "wave156": {
+    "report": "docs/gold-wave156-verification.md",
+    "observedCiRun": 35602100258,
+    "observedSource": "c34bce29d4d514e7306a8f602c9fac3224347cd6",
+    "linuxJob": 106340395933,
+    "betaJob": 106340396175,
+    "linuxLogSha256": "DA1C05543AEB982B7DCBBBFFEA051003F6991EA029E2FDA50CE4D9DCC3D603A2",
+    "betaLogSha256": "51A3F0AC36283BA5DA2F3F3350C476A7218CA33BDE32AB08960B658F97153EA1",
+    "priorCi": "confirmed_cancelled_after_compile_errors",
+    "priorPreview": "35602103625 confirmed cancelled",
+    "execution": "PENDING_FRESH_HOSTED_COMPILE_NATIVE_PREVIEW",
+    "localValidationRan": false,
+    "releaseClosure": false,
+    "w153Excluded": true,
+    "reviewSha256": "CAA5DFF1C6C4DBD9DDD0946733C3A9AC05F5FB2E4FA7B100E40B10AF144231C0"
   }
 }
