@@ -1166,8 +1166,8 @@ mod win_private {
 mod buddy_activity;
 mod chat_child_supervisor;
 mod chat_reasoning;
-mod chat_throughput;
 mod chat_stream_phase;
+mod chat_throughput;
 mod citation_gui;
 mod code_map_controller;
 mod code_map_impact_controller;
@@ -4327,7 +4327,10 @@ fn main() -> Result<()> {
                     None,
                 );
                 clear_active_chat_throughput_projection(
-                    &throughput, stream.as_ref(), Some(&w), None,
+                    &throughput,
+                    stream.as_ref(),
+                    Some(&w),
+                    None,
                 );
                 if let Ok(mut store) = citations.lock() {
                     store.set_historical(false);
@@ -4360,15 +4363,8 @@ fn main() -> Result<()> {
             let Some(w) = weak_session.upgrade() else {
                 return;
             };
-            clear_active_chat_reasoning_projection(
-                &projections,
-                stream.as_ref(),
-                Some(&w),
-                None,
-            );
-            clear_active_chat_throughput_projection(
-                &throughput, stream.as_ref(), Some(&w), None,
-            );
+            clear_active_chat_reasoning_projection(&projections, stream.as_ref(), Some(&w), None);
+            clear_active_chat_throughput_projection(&throughput, stream.as_ref(), Some(&w), None);
             if let Ok(mut store) = citations.lock() {
                 store.set_historical(true);
             }
@@ -14923,7 +14919,8 @@ fn install_legacy_child_chat_transport_callbacks(
                             }
                             if parsed.provider_done {
                                 provider_done_chat_throughput_projection(
-                                    &throughput_projections, request_id,
+                                    &throughput_projections,
+                                    request_id,
                                 );
                                 let weak_throughput = weak_worker.clone();
                                 let stream_throughput = stream.clone();
@@ -15945,10 +15942,13 @@ fn install_legacy_child_chat_transport_callbacks(
                                                 let is_current = stream_throughput
                                                     .lock()
                                                     .ok()
-                                                    .and_then(|controller| controller.current_request())
+                                                    .and_then(|controller| {
+                                                        controller.current_request()
+                                                    })
                                                     .is_some_and(|current| {
                                                         current.request_id == request_id
-                                                            && current.surface == ChatStreamSurface::Buddy
+                                                            && current.surface
+                                                                == ChatStreamSurface::Buddy
                                                             && !current.cancel_requested
                                                     });
                                                 if is_current {
@@ -15964,7 +15964,8 @@ fn install_legacy_child_chat_transport_callbacks(
                                     }
                                     if parsed.provider_done {
                                         provider_done_chat_throughput_projection(
-                                            &throughput_projections, request_id,
+                                            &throughput_projections,
+                                            request_id,
                                         );
                                         let overlay_throughput = ov_weak.clone();
                                         let stream_throughput = stream.clone();
@@ -15975,9 +15976,12 @@ fn install_legacy_child_chat_transport_callbacks(
                                                 .and_then(|controller| controller.current_request())
                                                 .is_some_and(|current| {
                                                     current.request_id == request_id
-                                                        && current.surface == ChatStreamSurface::Buddy
+                                                        && current.surface
+                                                            == ChatStreamSurface::Buddy
                                                 });
-                                            if is_current && let Some(overlay) = overlay_throughput.upgrade() {
+                                            if is_current
+                                                && let Some(overlay) = overlay_throughput.upgrade()
+                                            {
                                                 clear_buddy_throughput_projection(&overlay);
                                             }
                                         });
@@ -26021,10 +26025,16 @@ fn project_chat_throughput_snapshot(
     let status = match snapshot.state {
         chat_throughput::ThroughputState::Measuring => match snapshot.basis {
             Some(chat_throughput::ThroughputBasis::VisibleEvent) => {
-                format!("Stream events: {:.1}/s", snapshot.per_second.unwrap_or_default())
+                format!(
+                    "Stream events: {:.1}/s",
+                    snapshot.per_second.unwrap_or_default()
+                )
             }
             Some(chat_throughput::ThroughputBasis::TokenDelta) => {
-                format!("Provider tokens: {:.1}/s", snapshot.per_second.unwrap_or_default())
+                format!(
+                    "Provider tokens: {:.1}/s",
+                    snapshot.per_second.unwrap_or_default()
+                )
             }
             None => throughput_status(snapshot).to_string(),
         },
@@ -29363,9 +29373,7 @@ fn authenticated_throughput_control(
     let probe = match serde_json::from_str::<ThroughputKindProbe>(line) {
         Ok(probe) => probe,
         Err(_) => {
-            return if line.contains("\"neoth_stream\"")
-                && line.contains("\"throughput_state\"")
-            {
+            return if line.contains("\"neoth_stream\"") && line.contains("\"throughput_state\"") {
                 ParsedThroughputControlFrame::InvalidAuthenticated
             } else {
                 ParsedThroughputControlFrame::NotThroughput
@@ -43908,8 +43916,14 @@ exit 0
             &format!("{CHAT_STREAM_CONTROL_PREFIX}{measuring}\n"),
             Some(token),
         );
-        assert!(parsed.protocol_valid, "authenticated W162 control must parse cleanly");
-        assert!(parsed.text.is_empty(), "throughput controls cannot become reply text");
+        assert!(
+            parsed.protocol_valid,
+            "authenticated W162 control must parse cleanly"
+        );
+        assert!(
+            parsed.text.is_empty(),
+            "throughput controls cannot become reply text"
+        );
         assert_eq!(parsed.throughput_controls.len(), 1);
 
         begin_chat_throughput_projection(&projections, main_request, token);
@@ -43926,7 +43940,10 @@ exit 0
             ChatStreamSurface::Main,
             snapshots[0],
         );
-        assert_eq!(window.get_chat_throughput_status().to_string(), "Stream events: 12.5/s");
+        assert_eq!(
+            window.get_chat_throughput_status().to_string(),
+            "Stream events: 12.5/s"
+        );
         assert!(window.get_chat_throughput_active());
         assert!(
             !window
@@ -43945,7 +43962,12 @@ exit 0
 
         provider_done_chat_throughput_projection(&projections, main_request);
         clear_main_throughput_projection(&window);
-        assert!(projections.lock().expect("W162 provider-done projection lock").is_empty());
+        assert!(
+            projections
+                .lock()
+                .expect("W162 provider-done projection lock")
+                .is_empty()
+        );
         assert!(window.get_chat_throughput_status().is_empty());
         assert!(!window.get_chat_throughput_active());
 

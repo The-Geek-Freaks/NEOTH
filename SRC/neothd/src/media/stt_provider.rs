@@ -4844,13 +4844,7 @@ pub(crate) async fn dispatch_transcription_with_audio_permit_in(
         runtime: SttRuntimeEnvironment::for_home(neoth_home),
     };
     dispatch_transcription_with_factory(
-        stt_cfg,
-        media_cfg,
-        neoth_home,
-        audio,
-        audit,
-        permit,
-        &factory,
+        stt_cfg, media_cfg, neoth_home, audio, audit, permit, &factory,
     )
     .await
 }
@@ -4932,14 +4926,7 @@ async fn dispatch_transcription_with_factory(
     }
 
     run_stt_attempt(
-        factory,
-        fb_kind,
-        permit,
-        audio,
-        &request,
-        media_cfg,
-        neoth_home,
-        audit,
+        factory, fb_kind, permit, audio, &request, media_cfg, neoth_home, audit,
     )
     .await
     .map_err(|fallback_error| {

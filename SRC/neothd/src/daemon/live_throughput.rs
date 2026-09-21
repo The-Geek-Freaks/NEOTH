@@ -52,9 +52,7 @@ pub enum LiveThroughputState {
         per_second: f64,
     },
     /// The request is active but its once-populated rolling window is empty.
-    Paused {
-        basis: LiveThroughputBasis,
-    },
+    Paused { basis: LiveThroughputBasis },
     /// No numerical rate is honest for the current lifecycle state.
     Unavailable(LiveThroughputUnavailable),
 }
@@ -271,7 +269,10 @@ mod tests {
 
         assert!(matches!(
             window.observe_idle(at(start, 999)).unwrap(),
-            LiveThroughputState::Measuring { per_second: 1.0, .. }
+            LiveThroughputState::Measuring {
+                per_second: 1.0,
+                ..
+            }
         ));
         assert_eq!(
             window.observe_idle(at(start, 1_000)).unwrap(),
@@ -329,7 +330,10 @@ mod tests {
         );
         assert!(matches!(
             window.observe_idle(at(start, 10)).unwrap(),
-            LiveThroughputState::Measuring { per_second: 1.0, .. }
+            LiveThroughputState::Measuring {
+                per_second: 1.0,
+                ..
+            }
         ));
     }
 

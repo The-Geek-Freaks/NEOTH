@@ -222,7 +222,10 @@ impl Projection {
                 }
                 let basis = required_basis(frame.basis.0.as_deref())?;
                 let unit = required_unit(frame.unit.0.as_deref())?;
-                let per_second = frame.per_second.0.ok_or("missing measuring throughput rate")?;
+                let per_second = frame
+                    .per_second
+                    .0
+                    .ok_or("missing measuring throughput rate")?;
                 if basis.unit() != unit
                     || !per_second.is_finite()
                     || !(0.0..=MAX_THROUGHPUT_PER_SECOND).contains(&per_second)
@@ -257,11 +260,15 @@ impl Projection {
                 }))
             }
             "unavailable" => {
-                if frame.basis.0.is_some() || frame.unit.0.is_some() || frame.per_second.0.is_some() {
+                if frame.basis.0.is_some() || frame.unit.0.is_some() || frame.per_second.0.is_some()
+                {
                     return Err("invalid unavailable throughput state");
                 }
                 let reason = required_reason(frame.reason.0.as_deref())?;
-                if !matches!(reason, ThroughputReason::NoVisibleEvents | ThroughputReason::NoUsageReported) {
+                if !matches!(
+                    reason,
+                    ThroughputReason::NoVisibleEvents | ThroughputReason::NoUsageReported
+                ) {
                     return Err("invalid unavailable throughput reason");
                 }
                 Ok(self.publish(ThroughputSnapshot {
@@ -274,7 +281,8 @@ impl Projection {
                 }))
             }
             "cancelled" | "error" => {
-                if frame.basis.0.is_some() || frame.unit.0.is_some() || frame.per_second.0.is_some() {
+                if frame.basis.0.is_some() || frame.unit.0.is_some() || frame.per_second.0.is_some()
+                {
                     return Err("invalid terminal throughput state");
                 }
                 let reason = required_reason(frame.reason.0.as_deref())?;
@@ -430,20 +438,22 @@ mod tests {
     #[test]
     fn invalid_unit_and_final_usage_field_fail_closed() {
         let mut projection = Projection::new("request-a".into());
-        assert!(projection
-            .apply_json(
-                &frame(
-                    1,
-                    "measuring",
-                    serde_json::json!("visible_event"),
-                    serde_json::json!("provider_tokens_per_second"),
-                    serde_json::json!(1.0),
-                    serde_json::Value::Null,
-                ),
-                "token-a",
-                3,
-            )
-            .is_err());
+        assert!(
+            projection
+                .apply_json(
+                    &frame(
+                        1,
+                        "measuring",
+                        serde_json::json!("visible_event"),
+                        serde_json::json!("provider_tokens_per_second"),
+                        serde_json::json!(1.0),
+                        serde_json::Value::Null,
+                    ),
+                    "token-a",
+                    3,
+                )
+                .is_err()
+        );
         assert!(projection.snapshot().is_none());
 
         projection.replace_request("request-a".into());
@@ -455,36 +465,40 @@ mod tests {
     #[test]
     fn stale_gap_and_provider_done_cannot_repaint_a_request() {
         let mut projection = Projection::new("request-a".into());
-        assert!(projection
-            .apply_json(
-                &frame(
-                    2,
-                    "unavailable",
-                    serde_json::Value::Null,
-                    serde_json::Value::Null,
-                    serde_json::Value::Null,
-                    serde_json::json!("no_visible_events"),
-                ),
-                "token-a",
-                3,
-            )
-            .is_err());
+        assert!(
+            projection
+                .apply_json(
+                    &frame(
+                        2,
+                        "unavailable",
+                        serde_json::Value::Null,
+                        serde_json::Value::Null,
+                        serde_json::Value::Null,
+                        serde_json::json!("no_visible_events"),
+                    ),
+                    "token-a",
+                    3,
+                )
+                .is_err()
+        );
         projection.replace_request("request-a".into());
         projection.provider_done();
-        assert!(projection
-            .apply_json(
-                &frame(
-                    1,
-                    "unavailable",
-                    serde_json::Value::Null,
-                    serde_json::Value::Null,
-                    serde_json::Value::Null,
-                    serde_json::json!("no_visible_events"),
-                ),
-                "token-a",
-                3,
-            )
-            .is_err());
+        assert!(
+            projection
+                .apply_json(
+                    &frame(
+                        1,
+                        "unavailable",
+                        serde_json::Value::Null,
+                        serde_json::Value::Null,
+                        serde_json::Value::Null,
+                        serde_json::json!("no_visible_events"),
+                    ),
+                    "token-a",
+                    3,
+                )
+                .is_err()
+        );
         assert!(projection.snapshot().is_none());
     }
 
@@ -500,27 +514,30 @@ mod tests {
             serde_json::json!("cancelled"),
         );
         assert_eq!(
-            projection.apply_json(&cancelled, "token-a", 3).unwrap().state,
+            projection
+                .apply_json(&cancelled, "token-a", 3)
+                .unwrap()
+                .state,
             ThroughputState::Cancelled
         );
-        assert!(projection
-            .apply_json(&cancelled, "token-a", 3)
-            .is_err());
+        assert!(projection.apply_json(&cancelled, "token-a", 3).is_err());
         projection.replace_request("request-b".into());
-        assert!(projection
-            .apply_json(
-                &frame(
-                    1,
-                    "unavailable",
-                    serde_json::Value::Null,
-                    serde_json::Value::Null,
-                    serde_json::Value::Null,
-                    serde_json::json!("no_visible_events"),
+        assert!(
+            projection
+                .apply_json(
+                    &frame(
+                        1,
+                        "unavailable",
+                        serde_json::Value::Null,
+                        serde_json::Value::Null,
+                        serde_json::Value::Null,
+                        serde_json::json!("no_visible_events"),
+                    )
+                    .replace("request-a", "request-b"),
+                    "token-a",
+                    3,
                 )
-                .replace("request-a", "request-b"),
-                "token-a",
-                3,
-            )
-            .is_ok());
+                .is_ok()
+        );
     }
 }

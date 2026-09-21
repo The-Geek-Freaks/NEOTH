@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W162-live-throughput-and-hosted-repair-candidate",
-  "base": "78459d78fafa420d5e759d6d694ebb594f67bb51",
-  "capturedUtc": "2026-09-21T17:39:30.2487499Z",
-  "validationStatus": "W162_REVIEWED_LIVE_THROUGHPUT_AND_W159_HOSTED_REPAIR_PENDING",
+  "base": "642525f3345510ce9601fca6f6d43aaf8788121f",
+  "capturedUtc": "2026-09-21T17:47:33.8852388Z",
+  "validationStatus": "W162_HOSTED_FORMAT_AND_INTERVAL_TICK_TYPE_REPAIR_PENDING",
   "scopeNote": "353 inputs; W162 admitted visible-event throughput producer/core/request-bound GUI/Buddy with persistent idle timer and 15 regression sources. W159 actual13Clippy+6testcompile repairs and older14GUI compile repairs included. Required325universalnative+3Windows+2Unix;61GUI+13Linux/macOScallbacks;7optional. All hosted execution pending. W163 excluded.",
   "files": [
     {
@@ -288,8 +288,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1923317,
-      "sha256": "992057FE2F677A61934C52DD35EC5CE01B7122F72262977A329138AB9B41A5C8"
+      "bytes": 1923938,
+      "sha256": "4C56DD2DC160BA98CE224DC8CBA9AF20D102603DD076F265649F7832791BAB9E"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -553,8 +553,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "sha256": "C7369D867678F79F64D29B713DFADDFEAEAECA2CD12A1C6E0E09D4F2BEFE2281",
-      "bytes": 1017230
+      "sha256": "CC128A12E4B108C961710BB4037A44A752550F9956772F99C472A61DB0493B0B",
+      "bytes": 1017276
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -1198,8 +1198,8 @@
     },
     {
       "path": "SRC/neothd/src/media/stt_provider.rs",
-      "sha256": "8DF37137005AE01466F84F3995067DE60B517B00F5C7DF2139EC2879C4EB433C",
-      "bytes": 263240
+      "sha256": "949EE39463A2ADBFB4207D76E7837363EB36593DB8BD098DE3B382B8DE661C43",
+      "bytes": 263136
     },
     {
       "path": "SRC/neothd/src/media/video_dispatch.rs",
@@ -1763,13 +1763,13 @@
     },
     {
       "path": "SRC/neothd/src/daemon/live_throughput.rs",
-      "sha256": "5E0C406AECF7C228FEE1DC25EC1ECE376B0100A705DB896A09FF0B27071B04A5",
-      "bytes": 12763
+      "sha256": "B1D9EDD4B7436DCAAD860396A3ABBD19C3914382586FA704D6FACB70A3D25FDC",
+      "bytes": 12838
     },
     {
       "path": "SRC/neothd-gui/src/chat_throughput.rs",
-      "sha256": "BC437D73111A9916F882A268179881D319957213ABA8EF19D28BCD6641232D48",
-      "bytes": 17659
+      "sha256": "F06934D3BDCCA191B040065ADA2230477CD39CF27EF52A3CC2B4E6BFD1EB72E1",
+      "bytes": 18137
     }
   ]
 }

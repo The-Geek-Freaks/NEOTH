@@ -57,3 +57,12 @@ source hashes and native/GUI test identities in the canonical Gold matrix.
 Current integrated manifest: 353 inputs; 325 universal native + 3 Windows-only
 + 2 Unix-only requirements; 61 universal GUI + 13 Linux/macOS callbacks; seven
 optional adapter cases. W162 adds 15 exact behavior-test sources. W163 is excluded.
+
+## Hosted compile follow-up
+
+W162 source642525f3 passed Code Quality35633810126. Preflight35633811067
+requested 33 exact formatting hunks in five files; these are imported.
+Core35633811647 reported two E0308 expansions at one interval select: tick()
+returns Instant rather than (). The producer and both matching regression
+patterns now accept that return value without changing timer ordering. Fresh
+hosted compilation and native/GUI behavior remain pending; W163 stays excluded.

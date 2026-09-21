@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+W162 source642525f3 passed Code Quality35633810126. Preflight35633811067
+requested 33 exact formatting hunks in five files; these are imported.
+Core35633811647 reported two E0308 expansions at one interval select: tick()
+returns Instant rather than (). The producer and both matching regression
+patterns now accept that return value without changing timer ordering. Fresh
+hosted compilation and native/GUI behavior remain pending; W163 stays excluded.
+
 **W162 live throughput and hosted repair (2026-09-21):** the integrated producer,
 strict request-bound reducer, Chat and Buddy display are source-reviewed.
 Current providers expose real visible stream events/s; final token totals never
