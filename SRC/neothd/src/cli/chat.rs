@@ -3843,11 +3843,7 @@ pub(super) async fn enforce_preflight(
             "ts_unix": crate::time::now_unix_i64(),
         }))
         .unwrap_or_default();
-        let hdr = crate::wal::make_header_in(
-            EVENT_TYPE_TZ_CONTEXT_INJECTED,
-            &payload,
-            wal_session,
-        );
+        let hdr = crate::wal::make_header_in(EVENT_TYPE_TZ_CONTEXT_INJECTED, &payload, wal_session);
         let _ = writer.append(hdr, payload).await;
     }
 
@@ -5422,11 +5418,8 @@ pub(super) async fn dispatch_provider(
             "ts_unix": ts,
         }))
         .unwrap_or_default();
-        let header = crate::wal::make_header_in(
-            EVENT_TYPE_SKILL_EFFORT_APPLIED,
-            &payload,
-            wal_session,
-        );
+        let header =
+            crate::wal::make_header_in(EVENT_TYPE_SKILL_EFFORT_APPLIED, &payload, wal_session);
         let _ = writer.append(header, payload).await;
     }
     let req = Request {
@@ -9301,7 +9294,8 @@ async fn emit_stream_chunk(
         "delta_bytes": chunk.delta.len(),
         "delta_hash_xxh3": xxhash_rust::xxh3::xxh3_64(chunk.delta.as_bytes()),
     }))?;
-    let header = crate::wal::make_header_in(EVENT_TYPE_PROVIDER_STREAM_CHUNK, &payload, wal_session);
+    let header =
+        crate::wal::make_header_in(EVENT_TYPE_PROVIDER_STREAM_CHUNK, &payload, wal_session);
     writer
         .append_no_ack(header, payload)
         .await
@@ -12951,7 +12945,11 @@ async fn dispatch_council_with_recovery_for_turn(
     // regardless of ingress channel.
     let prompt_hash_pre = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
     let _ = emit_council_diversity_warning_if_needed(
-        writer, prompt_hash_pre, config, output, wal_session,
+        writer,
+        prompt_hash_pre,
+        config,
+        output,
+        wal_session,
     )
     .await;
     // GOLD-ADAPT-LOWKEY-04 — MIF motive pre-step (opt-in). Classify operator
@@ -13054,7 +13052,8 @@ async fn dispatch_council_with_recovery_for_turn(
     // or Callosum absorbed them silently.
     let prompt_hash_outer = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
     if outcome.is_partial_refusal() {
-        let _ = emit_council_partial_refusal(writer, prompt_hash_outer, &outcome, wal_session).await;
+        let _ =
+            emit_council_partial_refusal(writer, prompt_hash_outer, &outcome, wal_session).await;
     }
 
     // Pick #8 SP-2 (Session 14) — role-agnostic winner selection.
@@ -23161,15 +23160,8 @@ modes:
         let (writer, join) = wal_spawn(segment.clone()).unwrap();
         let outcome = mk_outcome_consensus("private body", Vec::new());
 
-        emit_council_dispatch_audits(
-            &writer,
-            1,
-            &outcome,
-            &FreedomConfig::default(),
-            true,
-            None,
-        )
-        .await;
+        emit_council_dispatch_audits(&writer, 1, &outcome, &FreedomConfig::default(), true, None)
+            .await;
         drop(writer);
         join.await.unwrap();
 
@@ -23424,7 +23416,9 @@ modes:
         .await;
 
         drop(writer);
-        writer_join.await.expect("drain contextual audit WAL writer");
+        writer_join
+            .await
+            .expect("drain contextual audit WAL writer");
 
         let expected = wal_session.header_id();
         let mut observed = std::collections::BTreeSet::new();
@@ -23914,9 +23908,10 @@ mod attach_tests {
         config.media.stt.primary = crate::media::stt_dispatch::SttProvider::OpenAiWhisperApi;
         let (writer, join) = wal_spawn(dir.path().join("cloud-stt.wal")).unwrap();
 
-        let error = extract_attachment_contexts(&[audio], &config, dir.path(), writer.clone(), None)
-            .await
-            .unwrap_err();
+        let error =
+            extract_attachment_contexts(&[audio], &config, dir.path(), writer.clone(), None)
+                .await
+                .unwrap_err();
         drop(writer);
         join.await.unwrap();
         assert!(error.to_string().contains("request-bound cost/consent"));

@@ -408,11 +408,8 @@ mod tests {
     async fn admitted_goal_judged_header_retains_wal_session() {
         let home = tempfile::tempdir().unwrap();
         let path = home.path().join("goal-judge-session-000001.wal");
-        let (writer, join) = crate::wal::writer::spawn_for_home(
-            path.clone(),
-            home.path().to_path_buf(),
-        )
-        .unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(path.clone(), home.path().to_path_buf()).unwrap();
         let wal_session = crate::wal::WalSessionContext::from_admitted_identity(
             home.path(),
             b"test\0goal-judge\0admitted-turn",

@@ -322,8 +322,8 @@ pub(crate) async fn run_tool_loop_with_budget_and_skill_policy<D, P>(
     policy: P,
     skill_invocation_policy: Option<&crate::skills::resolver::SkillInvocationPolicy>,
     writer: Option<&WalWriterHandle>,
-    /// Capability copied from an admitted chat/channel turn. It is never
-    /// derived from MCP request, result, or server data.
+    // Capability copied from an admitted chat/channel turn. It is never
+    // derived from MCP request, result, or server data.
     wal_session: Option<WalSessionContext>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     tool_scope: &McpToolScope,
@@ -432,7 +432,7 @@ where
             goal_hash,
             "input_budget_exceeded",
         )
-            .await;
+        .await;
         return Err(
             crate::mcp::goal_tracker::GoalIntegrityError::PromptIncomplete {
                 max_bytes: crate::mcp::goal_tracker::MAX_NUDGE_TEXT_LEN,
@@ -1357,7 +1357,7 @@ where
                     goal_hash,
                     "unavailable",
                 )
-                    .await;
+                .await;
                 return Err(
                     crate::mcp::goal_tracker::GoalIntegrityError::DispatchUnavailable.into(),
                 );
@@ -1400,7 +1400,14 @@ where
         // is safe to run on the freshly-produced blocks; a passthrough leaves
         // them untouched. Off (None) = no change.
         if let Some(runtime) = compression.as_ref() {
-            compress_tool_results(&mut tool_result_blocks, runtime, iterations, writer, wal_session).await;
+            compress_tool_results(
+                &mut tool_result_blocks,
+                runtime,
+                iterations,
+                writer,
+                wal_session,
+            )
+            .await;
         }
         // GOLD-ADAPT-HARNESS-02 — capture the current-turn prompt fingerprint
         // BEFORE build_next_prompt overwrites `prompt` with the next turn's content.
@@ -1752,7 +1759,8 @@ async fn compact_if_needed_in<D: CompletionDriver + Send>(
     }
     let before_tokens = crate::tokens::budget::count_tokens_upper_bound(&prompt);
     let pass_start_calls = budget.summary_calls_used;
-    let mut wal_lifecycle = CompactionWalLifecycle::new(writer, wal_session, iteration, before_tokens);
+    let mut wal_lifecycle =
+        CompactionWalLifecycle::new(writer, wal_session, iteration, before_tokens);
     let mut reduction_rounds = 0usize;
     let mut failure_reason = None;
     let result = compact_if_needed_inner(

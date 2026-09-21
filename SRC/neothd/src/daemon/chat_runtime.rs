@@ -869,7 +869,9 @@ mod tests {
             crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE,
         ] {
             assert!(
-                scoped_headers.iter().any(|(event_type, _)| *event_type == expected_type),
+                scoped_headers
+                    .iter()
+                    .any(|(event_type, _)| *event_type == expected_type),
                 "admitted daemon turn persists its required scoped event {expected_type:#04x}"
             );
         }

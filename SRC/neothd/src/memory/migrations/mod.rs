@@ -4970,7 +4970,11 @@ mod tests {
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .unwrap();
-            assert_eq!(projection, ("blob".to_string(), 16, vec![0u8; 16]), "{table}");
+            assert_eq!(
+                projection,
+                ("blob".to_string(), 16, vec![0u8; 16]),
+                "{table}"
+            );
         }
         for index in ["idx_episode_wal_session_ts", "idx_provider_wal_session_ts"] {
             assert!(sqlite_object_exists(&conn, index), "missing {index}");

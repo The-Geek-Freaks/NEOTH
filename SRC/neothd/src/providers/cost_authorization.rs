@@ -28,8 +28,8 @@ use crate::permissions::{
     Action, AutonomyPolicySnapshot, ConfirmStrategy, Gate, PermissionAuditSink,
 };
 use crate::security::provider_subject::ProviderSubjectIdentifier;
-use crate::wal::writer::WalWriterHandle;
 use crate::wal::WalSessionContext;
+use crate::wal::writer::WalWriterHandle;
 
 static AUTHORIZATION_ID_NONCE: AtomicU64 = AtomicU64::new(0);
 
@@ -5554,11 +5554,8 @@ mod tests {
     async fn admitted_provider_leaf_permission_and_trust_headers_retain_session() {
         let home = tempfile::tempdir().unwrap();
         let segment = home.path().join("provider-session-000001.wal");
-        let (writer, join) = crate::wal::writer::spawn_for_home(
-            segment.clone(),
-            home.path().to_path_buf(),
-        )
-        .unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         let wal_session = WalSessionContext::from_admitted_identity(
             home.path(),
             b"test\0provider-leaf\0admitted-turn",
@@ -5569,9 +5566,9 @@ mod tests {
             Some(writer.clone()),
             test_input_token_cap(),
         )
-        .with_audit_context(ProviderCallAuditContext::default().with_wal_session(Some(
-            wal_session,
-        )));
+        .with_audit_context(
+            ProviderCallAuditContext::default().with_wal_session(Some(wal_session)),
+        );
         let request = Request {
             model: Some("gpt-5".into()),
             prompt: "admitted provider leaf".into(),

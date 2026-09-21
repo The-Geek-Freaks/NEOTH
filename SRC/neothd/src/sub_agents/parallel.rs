@@ -80,7 +80,11 @@ pub trait SubAgentWorker: Send + Sync {
     /// one bad worker doesn't abort the whole fan-out.
     async fn run(&self, request: SubAgentRequest) -> Result<SubAgentResult>;
 
-    async fn run_in(&self, request: SubAgentRequest, context: SubAgentExecutionContext) -> Result<SubAgentResult> {
+    async fn run_in(
+        &self,
+        request: SubAgentRequest,
+        context: SubAgentExecutionContext,
+    ) -> Result<SubAgentResult> {
         let _ = context;
         self.run(request).await
     }
@@ -332,7 +336,13 @@ pub async fn dispatch_one<W>(
 where
     W: SubAgentWorker + 'static,
 {
-    dispatch_one_in(worker, request, SubAgentExecutionContext::default(), timeout).await
+    dispatch_one_in(
+        worker,
+        request,
+        SubAgentExecutionContext::default(),
+        timeout,
+    )
+    .await
 }
 /// QM-16 convenience: drive a single request through the dispatcher
 /// for callers that want the timeout + retry envelope without doing
@@ -360,8 +370,8 @@ where
 mod tests {
     use super::*;
     use crate::sub_agents::schema::HandoffPriority;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn make_request(task_id: &str) -> SubAgentRequest {
         SubAgentRequest {
@@ -504,11 +514,9 @@ mod tests {
     #[tokio::test]
     async fn contextual_dispatch_copies_one_parent_wal_session_to_every_child() {
         let home = tempfile::tempdir().unwrap();
-        let session = WalSessionContext::from_admitted_identity(
-            home.path(),
-            b"trusted\0parent\0turn",
-        )
-        .unwrap();
+        let session =
+            WalSessionContext::from_admitted_identity(home.path(), b"trusted\0parent\0turn")
+                .unwrap();
         let worker = Arc::new(ContextWorker {
             seen: Mutex::new(Vec::new()),
         });

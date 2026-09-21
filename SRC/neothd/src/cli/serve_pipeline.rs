@@ -296,13 +296,13 @@ fn canonical_admitted_channel_wal_identity(
         inbound.thread_id.as_deref().map_or(&[][..], str::as_bytes),
         inbound.sender_id.as_bytes(),
     ];
-    let capacity = fields.iter().try_fold(
-        b"neoth/channel-conversation/v1\0".len(),
-        |size, field| {
-            size.checked_add(encoded_field_len(field)?)
-                .ok_or_else(|| anyhow::anyhow!("channel WAL identity length overflow"))
-        },
-    )?;
+    let capacity =
+        fields
+            .iter()
+            .try_fold(b"neoth/channel-conversation/v1\0".len(), |size, field| {
+                size.checked_add(encoded_field_len(field)?)
+                    .ok_or_else(|| anyhow::anyhow!("channel WAL identity length overflow"))
+            })?;
     anyhow::ensure!(
         capacity <= crate::wal::MAX_ADMITTED_IDENTITY_BYTES,
         "channel WAL identity exceeds {} bytes",
@@ -1001,11 +1001,8 @@ pub(crate) async fn emit_inbound_ingress_in(
     // zero-byte frames are not valid recall records. CHANNEL_INGRESS below still
     // records the accepted turn and the media extractor emits its own audit.
     if !report.text.is_empty() {
-        let raw_header = crate::wal::make_header_in(
-            EVENT_TYPE_RAW_TEXT,
-            report.text.as_bytes(),
-            wal_session,
-        );
+        let raw_header =
+            crate::wal::make_header_in(EVENT_TYPE_RAW_TEXT, report.text.as_bytes(), wal_session);
         writer
             .append(raw_header, report.text.as_bytes().to_vec())
             .await
@@ -1031,11 +1028,8 @@ pub(crate) async fn emit_inbound_ingress_in(
         "sanitizer_input_hash": report.input_hash,
         "sanitizer_findings": report.findings,
     }))?;
-    let ingress_header = crate::wal::make_header_in(
-        EVENT_TYPE_CHANNEL_INGRESS,
-        &ingress_payload,
-        wal_session,
-    );
+    let ingress_header =
+        crate::wal::make_header_in(EVENT_TYPE_CHANNEL_INGRESS, &ingress_payload, wal_session);
     // Capture the event_id BEFORE the header moves into append.
     let ingress_event_id = ingress_header.event_id.0 as i64;
     writer
@@ -1342,11 +1336,8 @@ pub(crate) async fn release_channel_reply_in<P: crate::permissions::PolicyArgume
         "input_tokens": provenance.input_tokens,
         "output_tokens": provenance.output_tokens,
     }))?;
-    let egress_header = crate::wal::make_header_in(
-        EVENT_TYPE_CHANNEL_EGRESS,
-        &egress_payload,
-        wal_session,
-    );
+    let egress_header =
+        crate::wal::make_header_in(EVENT_TYPE_CHANNEL_EGRESS, &egress_payload, wal_session);
     writer
         .append(egress_header, egress_payload)
         .await
@@ -1615,13 +1606,7 @@ async fn resolve_channel_turn_route(
         } else {
             council_decision.reason()
         };
-        let _ = crate::cli::chat::emit_council_skip(
-            writer,
-            prompt_hash,
-            reason,
-            wal_session,
-        )
-        .await;
+        let _ = crate::cli::chat::emit_council_skip(writer, prompt_hash, reason, wal_session).await;
     }
 
     let council_route = if let Some(message) = council_mif_message {
@@ -2169,7 +2154,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     "attachment-command-rejection",
                     channel_asker.as_ref().map(Arc::clone),
                     &session_fired_once,
-                channel_wal_session,
+                    channel_wal_session,
                 )
                 .await;
             }
@@ -2454,7 +2439,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                     "task-queued",
                                     channel_asker.as_ref().map(Arc::clone),
                                     &session_fired_once,
-                                channel_wal_session,
+                                    channel_wal_session,
                                 )
                                 .await;
                             }
@@ -2980,7 +2965,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 "attachment-processing-error",
                                 channel_asker.as_ref().map(Arc::clone),
                                 &session_fired_once,
-                            channel_wal_session,
+                                channel_wal_session,
                             )
                             .await;
                         }
@@ -3109,7 +3094,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             "slash-provider-consent-error",
                             channel_asker.as_ref().map(Arc::clone),
                             &session_fired_once,
-                        channel_wal_session,
+                            channel_wal_session,
                         )
                         .await;
                     }
@@ -3218,7 +3203,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             "slash-background-result",
                             channel_asker.as_ref().map(Arc::clone),
                             &session_fired_once,
-                        channel_wal_session,
+                            channel_wal_session,
                         )
                         .await;
                     }
@@ -3249,7 +3234,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 "slash-registry-error",
                                 channel_asker.as_ref().map(Arc::clone),
                                 &session_fired_once,
-                            channel_wal_session,
+                                channel_wal_session,
                             )
                             .await;
                         }
@@ -3323,7 +3308,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 "slash-action-result",
                                 channel_asker.as_ref().map(Arc::clone),
                                 &session_fired_once,
-                            channel_wal_session,
+                                channel_wal_session,
                             )
                             .await;
                         }
@@ -3648,7 +3633,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         "provider-model-resolution-error",
                         channel_asker.as_ref().map(Arc::clone),
                         &session_fired_once,
-                    channel_wal_session,
+                        channel_wal_session,
                     )
                     .await;
                 }
@@ -3740,7 +3725,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     "provider-consent-error",
                     channel_asker.as_ref().map(Arc::clone),
                     &session_fired_once,
-                channel_wal_session,
+                    channel_wal_session,
                 )
                 .await;
             }
@@ -3873,7 +3858,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         "provider-request-budget-error",
                         channel_asker.as_ref().map(Arc::clone),
                         &session_fired_once,
-                    channel_wal_session,
+                        channel_wal_session,
                     )
                     .await;
                 }
@@ -3918,7 +3903,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         "code-map-audit-error",
                         channel_asker.as_ref().map(Arc::clone),
                         &session_fired_once,
-                    channel_wal_session,
+                        channel_wal_session,
                     )
                     .await;
                 }
@@ -5272,7 +5257,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     "code-map-final-binding-error",
                     channel_asker.as_ref().map(Arc::clone),
                     &session_fired_once,
-                channel_wal_session,
+                    channel_wal_session,
                 )
                 .await;
             }

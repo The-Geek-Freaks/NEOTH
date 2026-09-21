@@ -1123,7 +1123,9 @@ async fn invoke_authorized_with_audit_sink_effect_gate(
     if let Some(policy) = rollback_policy {
         let snapshot_writer = match sink {
             McpAuditSink::Writer(writer) => Some((writer, None)),
-            McpAuditSink::WriterWithSession(writer, wal_session) => Some((writer, Some(wal_session))),
+            McpAuditSink::WriterWithSession(writer, wal_session) => {
+                Some((writer, Some(wal_session)))
+            }
             _ => None,
         };
         if let Some((writer, wal_session)) = snapshot_writer
@@ -2477,8 +2479,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let segment = home.path().join("scope-session-000001.wal");
         let (writer, join) =
-            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf())
-                .unwrap();
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         let wal_session = WalSessionContext::from_admitted_identity(
             home.path(),
             b"test\0mcp-scope\0admitted-turn",
@@ -3502,8 +3503,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let segment = home.path().join("mcp-session-000001.wal");
         let (writer, join) =
-            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf())
-                .unwrap();
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         let wal_session = WalSessionContext::from_admitted_identity(
             home.path(),
             b"test\0mcp-gate\0admitted-turn",

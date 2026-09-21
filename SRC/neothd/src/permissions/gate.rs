@@ -26,8 +26,8 @@ use std::time::Duration;
 use anyhow::Result;
 use thiserror::Error;
 
-use crate::wal::events::{EVENT_TYPE_PERMISSION_DENIED, EVENT_TYPE_PERMISSION_GRANTED};
 use crate::wal::WalSessionContext;
+use crate::wal::events::{EVENT_TYPE_PERMISSION_DENIED, EVENT_TYPE_PERMISSION_GRANTED};
 use crate::wal::writer::WalWriterHandle;
 
 use super::lease::{CapabilityLease, LeaseStore};

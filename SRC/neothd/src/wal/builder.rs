@@ -282,8 +282,9 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let key_path = home.path().join("wal").join("hmac.key");
         crate::wal::compaction::load_or_init_key(&key_path).unwrap();
-        let context = WalSessionContext::from_admitted_identity(home.path(), b"daemon\0same-user\0turn-3")
-            .unwrap();
+        let context =
+            WalSessionContext::from_admitted_identity(home.path(), b"daemon\0same-user\0turn-3")
+                .unwrap();
 
         let contextual = make_header_in(EVENT_TYPE_RAW_TEXT, b"turn", Some(context));
         let unscoped = make_header_in(EVENT_TYPE_RAW_TEXT, b"turn", None);

@@ -4781,7 +4781,14 @@ pub(crate) async fn dispatch_transcription_with_audio_permit(
     permit: &crate::media::audio::AudioWorkPermit,
 ) -> Result<TranscriptionResult, String> {
     dispatch_transcription_with_audio_permit_in(
-        stt_cfg, media_cfg, updater_cfg, neoth_home, audio, wal_writer, None, permit,
+        stt_cfg,
+        media_cfg,
+        updater_cfg,
+        neoth_home,
+        audio,
+        wal_writer,
+        None,
+        permit,
     )
     .await
 }
@@ -4810,7 +4817,14 @@ pub(crate) async fn dispatch_transcription_with_audio_permit_in(
         runtime: SttRuntimeEnvironment::for_home(neoth_home),
     };
     dispatch_transcription_with_factory(
-        stt_cfg, media_cfg, neoth_home, audio, wal_writer, wal_session, permit, &factory,
+        stt_cfg,
+        media_cfg,
+        neoth_home,
+        audio,
+        wal_writer,
+        wal_session,
+        permit,
+        &factory,
     )
     .await
 }
@@ -4895,7 +4909,15 @@ async fn dispatch_transcription_with_factory(
     }
 
     run_stt_attempt(
-        factory, fb_kind, permit, audio, &request, media_cfg, neoth_home, wal_writer, wal_session,
+        factory,
+        fb_kind,
+        permit,
+        audio,
+        &request,
+        media_cfg,
+        neoth_home,
+        wal_writer,
+        wal_session,
     )
     .await
     .map_err(|fallback_error| {

@@ -103,13 +103,7 @@ pub fn fetch_episodes(
     to_ns: i64,
     window_size_ns: i64,
 ) -> Result<Vec<EpisodeSummary>, EpisodeViewError> {
-    fetch_episodes_in(
-        conn,
-        from_ns,
-        to_ns,
-        window_size_ns,
-        SessionPartition::ANY,
-    )
+    fetch_episodes_in(conn, from_ns, to_ns, window_size_ns, SessionPartition::ANY)
 }
 
 /// Like [`fetch_episodes`], but with an explicit WAL-session partition.
@@ -157,7 +151,9 @@ pub fn fetch_episodes_in(
     let mut stmt = if partition.is_any() {
         conn.prepare(&format!("{sql} ORDER BY ts_ns ASC, event_id ASC"))
     } else {
-        conn.prepare(&format!("{sql} AND wal_session_id = ?3 ORDER BY ts_ns ASC, event_id ASC"))
+        conn.prepare(&format!(
+            "{sql} AND wal_session_id = ?3 ORDER BY ts_ns ASC, event_id ASC"
+        ))
     }
     .map_err(|e| EpisodeViewError::Sqlite(e.to_string()))?;
     let rows = if partition.is_any() {
@@ -200,7 +196,8 @@ pub fn group_episodes(rows: &[EpisodeRow], window_size_ns: i64) -> Vec<EpisodeSu
             .last()
             .expect("current is non-empty by construction")
             .ts_ns;
-        if row.wal_session_id == current[0].wal_session_id && row.ts_ns - prev_ts <= window_size_ns {
+        if row.wal_session_id == current[0].wal_session_id && row.ts_ns - prev_ts <= window_size_ns
+        {
             current.push(*row);
         } else {
             out.push(summarise(&current));
@@ -319,7 +316,11 @@ mod tests {
         let mut second = r(2, 0x01, ONE_MIN_NS, 0.5);
         second.wal_session_id = SessionId([2u8; 16]);
         let out = group_episodes(&[first, second], ONE_HOUR_NS);
-        assert_eq!(out.len(), 2, "a session boundary must outrank temporal adjacency");
+        assert_eq!(
+            out.len(),
+            2,
+            "a session boundary must outrank temporal adjacency"
+        );
     }
 
     #[test]

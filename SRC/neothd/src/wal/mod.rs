@@ -68,8 +68,8 @@ pub mod writer;
 // Why not blanket re-export everything: dead_code warnings on items that no
 // upstream consumer uses yet make the build output noisy and hide real
 // regressions. Re-exports get added here as wired-up Day-by-Day.
-pub use builder::{HeaderBuilder, make_header};
 pub(crate) use builder::make_header_in;
+pub use builder::{HeaderBuilder, make_header};
 #[allow(unused_imports)]
 pub(crate) use transcript_mining_once::{
     ExpiredMiningFrameReceipt, PlannedMiningOutboxDescriptor, PlannedRawTextDescriptor,
@@ -121,10 +121,13 @@ pub(crate) static GLOBAL_HLC: std::sync::Mutex<hlc::Hlc> = std::sync::Mutex::new
 pub use header::EventHeaderV2;
 #[allow(unused_imports)]
 pub use hlc::Hlc;
-#[allow(unused_imports)]
-pub use types::{EventId, Importance, NodeId, SessionId, SessionIdTextError, SessionPartition, SessionPartitionError};
-pub use types::WalSessionContext;
 pub(crate) use types::MAX_ADMITTED_IDENTITY_BYTES;
+pub use types::WalSessionContext;
+#[allow(unused_imports)]
+pub use types::{
+    EventId, Importance, NodeId, SessionId, SessionIdTextError, SessionPartition,
+    SessionPartitionError,
+};
 #[allow(unused_imports)]
 pub use types::{WalCategory, WalScope};
 // WalError gets re-exported once an external caller consumes it directly;

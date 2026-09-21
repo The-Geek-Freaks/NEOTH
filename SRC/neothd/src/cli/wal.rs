@@ -21,6 +21,7 @@ use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
+use crate::wal::SessionPartition;
 use crate::wal::compaction::{self, MarkerPayload};
 use crate::wal::compress::decompress_frames;
 use crate::wal::events::{
@@ -34,7 +35,6 @@ use crate::wal::proof_bundle::{
     PROOF_SCHEMA_VERSION, ProofBundle, ProofEnvelope, ProofFrame, ProofMarker,
 };
 use crate::wal::segment_header::{SEGMENT_HEADER_LEN, parse_segment_header};
-use crate::wal::SessionPartition;
 
 #[derive(Args, Debug, Clone)]
 pub struct WalArgs {
@@ -869,9 +869,9 @@ fn show(
         None => None,
     };
     let session_partition = match session_filter {
-        Some(value) => Some(SessionPartition::from_filter(value).with_context(|| {
-            "invalid --session; use exactly 32 opaque lower-hex characters or `unattributed`"
-        })?),
+        Some(value) => Some(SessionPartition::from_filter(value).with_context(
+            || "invalid --session; use exactly 32 opaque lower-hex characters or `unattributed`",
+        )?),
         None => None,
     };
 
@@ -1991,8 +1991,15 @@ mod tests {
             &mut exact_walked,
         )
         .unwrap();
-        assert_eq!(exact_walked, 3, "partitioning preserves the complete replay walk");
-        assert_eq!(exact.len(), 1, "exact session excludes every other header ID");
+        assert_eq!(
+            exact_walked, 3,
+            "partitioning preserves the complete replay walk"
+        );
+        assert_eq!(
+            exact.len(),
+            1,
+            "exact session excludes every other header ID"
+        );
         assert_eq!(shown_session_id(&exact[0]), selected.opaque_hex());
 
         let mut unattributed = Vec::new();

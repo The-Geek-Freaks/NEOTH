@@ -1183,8 +1183,14 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
         let capped_wal = home.path().join("wal").join("loop-cap-forwarding.wal");
-        let (writer, join) = crate::wal::writer::spawn_for_home(capped_wal.clone(), home.path().to_path_buf()).unwrap();
-        let wal_session = crate::wal::WalSessionContext::from_admitted_identity(home.path(), b"test\0loop-engine\0admitted-turn").unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(capped_wal.clone(), home.path().to_path_buf())
+                .unwrap();
+        let wal_session = crate::wal::WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"test\0loop-engine\0admitted-turn",
+        )
+        .unwrap();
         let record = run_loop(
             &config,
             &provider,
@@ -1199,7 +1205,10 @@ mod tests {
             crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
                 AutonomyLevel::Full,
             )
-            .with_audit_context(crate::providers::cost_authorization::ProviderCallAuditContext::default().with_wal_session(Some(wal_session)))
+            .with_audit_context(
+                crate::providers::cost_authorization::ProviderCallAuditContext::default()
+                    .with_wal_session(Some(wal_session)),
+            )
             .with_skill_invocation_policy(Some(retained)),
             None,
             &crate::mcp::McpToolScope::default(),
@@ -1221,9 +1230,18 @@ mod tests {
         let capped_bytes = std::fs::read(&capped_wal).unwrap();
         let mut headers = Vec::new();
         crate::wal::scan::for_each_frame(&capped_bytes, |_, frame| {
-            if matches!(frame.header.event_type, EVENT_TYPE_LOOP_STARTED | EVENT_TYPE_LOOP_ROUND | EVENT_TYPE_LOOP_COMPLETED | crate::wal::events::EVENT_TYPE_MCP_TOOL_REJECTED) { headers.push(frame.header.session_id); }
+            if matches!(
+                frame.header.event_type,
+                EVENT_TYPE_LOOP_STARTED
+                    | EVENT_TYPE_LOOP_ROUND
+                    | EVENT_TYPE_LOOP_COMPLETED
+                    | crate::wal::events::EVENT_TYPE_MCP_TOOL_REJECTED
+            ) {
+                headers.push(frame.header.session_id);
+            }
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(headers.len(), 4);
         assert!(headers.iter().all(|id| *id == wal_session.header_id()));
         assert_eq!(
@@ -1809,15 +1827,41 @@ mod tests {
     async fn w159_loop_refined_emitter_stamps_context_and_none_as_zero() {
         let home = TempDir::new().unwrap();
         let segment = home.path().join("wal").join("loop-refined-000001.wal");
-        let (writer, join) = crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
-        let wal_session = crate::wal::WalSessionContext::from_admitted_identity(home.path(), b"test\0loop-engine\0refined-turn").unwrap();
-        emit_wal(&writer, Some(wal_session), EVENT_TYPE_LOOP_REFINED, serde_json::json!({ "loop_id": "admitted" })).await;
-        emit_wal(&writer, None, EVENT_TYPE_LOOP_REFINED, serde_json::json!({ "loop_id": "unattributed" })).await;
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
+        let wal_session = crate::wal::WalSessionContext::from_admitted_identity(
+            home.path(),
+            b"test\0loop-engine\0refined-turn",
+        )
+        .unwrap();
+        emit_wal(
+            &writer,
+            Some(wal_session),
+            EVENT_TYPE_LOOP_REFINED,
+            serde_json::json!({ "loop_id": "admitted" }),
+        )
+        .await;
+        emit_wal(
+            &writer,
+            None,
+            EVENT_TYPE_LOOP_REFINED,
+            serde_json::json!({ "loop_id": "unattributed" }),
+        )
+        .await;
         drop(writer);
         join.await.unwrap();
         let bytes = std::fs::read(segment).unwrap();
         let mut headers = Vec::new();
-        crate::wal::scan::for_each_frame(&bytes, |_, frame| { if frame.header.event_type == EVENT_TYPE_LOOP_REFINED { headers.push(frame.header.session_id); } Ok(()) }).unwrap();
-        assert_eq!(headers, vec![wal_session.header_id(), crate::wal::SessionId::ZERO]);
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == EVENT_TYPE_LOOP_REFINED {
+                headers.push(frame.header.session_id);
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            headers,
+            vec![wal_session.header_id(), crate::wal::SessionId::ZERO]
+        );
     }
 }

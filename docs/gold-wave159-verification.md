@@ -72,3 +72,12 @@ live-throughput module/export is excluded. No current-source hosted pass is clai
 Current manifest: 351 source inputs; 316 universal native + 3 Windows-only +
 2 Unix-only requirements; 56 universal GUI + 12 Linux/macOS callbacks; 7 optional
 adapter cases. W159 contributes 48 session regressions, 44 newly required.
+
+## First hosted follow-up
+
+Source 482ffd1c passed Code Quality35630099785. Preflight35630100747 produced
+79 formatting hunks across 20 files, imported with exact before/after receipts.
+Reference35630100371 failed at two parameter documentation comments; both are
+now ordinary comments. FORMAT-HOSTED.json and COMPILE-COMMENT-REPAIR.json retain
+the source/log hashes. New hosted compilation/reference and native/GUI tests
+remain pending. This patch does not admit W162 or close GOLD-LF-P2-08.

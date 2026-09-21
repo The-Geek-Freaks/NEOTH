@@ -96,10 +96,9 @@ impl SessionId {
         if value.len() != 32 {
             return Err(SessionIdTextError::WrongLength);
         }
-        if !value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (byte.is_ascii_lowercase() && byte.is_ascii_hexdigit()))
-        {
+        if !value.bytes().all(|byte| {
+            byte.is_ascii_digit() || (byte.is_ascii_lowercase() && byte.is_ascii_hexdigit())
+        }) {
             return Err(SessionIdTextError::InvalidLowerHex);
         }
         let mut bytes = [0u8; 16];
@@ -118,7 +117,9 @@ pub enum SessionIdTextError {
 impl fmt::Display for SessionIdTextError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::WrongLength => f.write_str("WAL session ID must be exactly 32 lower-hex characters"),
+            Self::WrongLength => {
+                f.write_str("WAL session ID must be exactly 32 lower-hex characters")
+            }
             Self::InvalidLowerHex => f.write_str("WAL session ID must use canonical lower-hex"),
         }
     }
@@ -439,10 +440,12 @@ mod tests {
         assert!(SessionPartition::UNATTRIBUTED.matches(SessionId::ZERO));
         assert!(!SessionPartition::UNATTRIBUTED.matches(SessionId([1u8; 16])));
         assert!(SessionPartition::UNATTRIBUTED.exact_id().is_none());
-        assert!(SessionPartition::exact(SessionId([1u8; 16]))
-            .unwrap()
-            .exact_id()
-            .is_some());
+        assert!(
+            SessionPartition::exact(SessionId([1u8; 16]))
+                .unwrap()
+                .exact_id()
+                .is_some()
+        );
     }
 
     #[test]
@@ -454,10 +457,12 @@ mod tests {
         crate::wal::compaction::load_or_init_key(&first_key).unwrap();
         crate::wal::compaction::load_or_init_key(&second_key).unwrap();
 
-        let first = WalSessionContext::from_admitted_identity(first_home.path(), b"cli\0operator\0turn-7")
-            .unwrap();
-        let same = WalSessionContext::from_admitted_identity(first_home.path(), b"cli\0operator\0turn-7")
-            .unwrap();
+        let first =
+            WalSessionContext::from_admitted_identity(first_home.path(), b"cli\0operator\0turn-7")
+                .unwrap();
+        let same =
+            WalSessionContext::from_admitted_identity(first_home.path(), b"cli\0operator\0turn-7")
+                .unwrap();
         let other_identity =
             WalSessionContext::from_admitted_identity(first_home.path(), b"cli\0operator\0turn-8")
                 .unwrap();

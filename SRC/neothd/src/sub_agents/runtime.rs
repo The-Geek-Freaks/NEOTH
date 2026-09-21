@@ -164,7 +164,8 @@ impl ProviderSubAgentWorker {
 #[async_trait::async_trait]
 impl SubAgentWorker for ProviderSubAgentWorker {
     async fn run(&self, request: SubAgentRequest) -> Result<SubAgentResult> {
-        self.run_in(request, SubAgentExecutionContext::default()).await
+        self.run_in(request, SubAgentExecutionContext::default())
+            .await
     }
 
     async fn run_in(
@@ -217,7 +218,8 @@ impl SubAgentWorker for ProviderSubAgentWorker {
                     output.len()
                 ));
                 emit_qa_verdict_in(
-                    &self.writer, execution_context.wal_session,
+                    &self.writer,
+                    execution_context.wal_session,
                     &request.task_id,
                     &agent.name,
                     attempt,
@@ -254,7 +256,8 @@ impl SubAgentWorker for ProviderSubAgentWorker {
                 Err(error) => {
                     let verdict = QaVerdict::blocked(format!("QA provider call failed: {error:#}"));
                     emit_qa_verdict_in(
-                        &self.writer, execution_context.wal_session,
+                        &self.writer,
+                        execution_context.wal_session,
                         &request.task_id,
                         &agent.name,
                         attempt,
@@ -280,7 +283,8 @@ impl SubAgentWorker for ProviderSubAgentWorker {
                 Err(error) => QaVerdict::blocked(format!("malformed QA verdict: {error}")),
             };
             emit_qa_verdict_in(
-                &self.writer, execution_context.wal_session,
+                &self.writer,
+                execution_context.wal_session,
                 &request.task_id,
                 &agent.name,
                 attempt,
@@ -580,7 +584,10 @@ pub async fn emit_qa_verdict(
     candidate: &str,
     qa_call: Option<&SubAgentProviderCall>,
 ) -> Result<()> {
-    emit_qa_verdict_in(writer, None, task_id, agent_name, attempt, verdict, candidate, qa_call).await
+    emit_qa_verdict_in(
+        writer, None, task_id, agent_name, attempt, verdict, candidate, qa_call,
+    )
+    .await
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubAgentRunRecord {

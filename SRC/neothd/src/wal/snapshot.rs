@@ -25,9 +25,9 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use super::{HeaderBuilder, WalSessionContext};
 use super::events::EVENT_TYPE_PRE_MUTATION_SNAPSHOT;
 use super::writer::WalWriterHandle;
+use super::{HeaderBuilder, WalSessionContext};
 
 /// Stable string ids — wire-encoded into the snapshot payload, used by
 /// the rollback CLI to dispatch restoration logic. Adding a variant
@@ -781,8 +781,7 @@ mod tests {
 
         let home = tempdir().unwrap();
         let segment = home.path().join("snapshot-session-000001.wal");
-        let (writer, join) =
-            spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
+        let (writer, join) = spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
         let wal_session = WalSessionContext::from_admitted_identity(
             home.path(),
             b"test\0rollback-snapshot\0admitted-turn",

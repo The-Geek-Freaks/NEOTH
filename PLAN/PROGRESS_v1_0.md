@@ -2,6 +2,14 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+**W159 hosted follow-up (2026-09-21):** source 482ffd1c passed Code Quality
+35630099785. Preflight35630100747 requested formatting corrections; those exact
+79 hosted hunks across 20 source files are imported. CLI-reference35630100371 stopped at two
+parameter documentation comments in mcp/dispatch_loop.rs; both are now ordinary comments. These were compile
+errors, not runtime evidence. The generated session-selector reference and
+fresh native/GUI execution remain pending. W162 GUI/producer integration is
+separate unpublished work; no Road checkbox closes.
+
 **W159 admitted WAL-session integration (2026-09-21):** the 34-file implementation
 is source-reviewed across core identity, projection/query, provider/subagent
 execution and the finite accepted-turn emitter inventory. Local/daemon/channel

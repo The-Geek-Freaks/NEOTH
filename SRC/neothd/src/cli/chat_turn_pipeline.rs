@@ -428,11 +428,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         };
         cp.stamp_hash();
         let payload = serde_json::to_vec(&cp).context("serialize session-start checkpoint")?;
-        let hdr = crate::wal::make_header_in(
-            EVENT_TYPE_MODE_CHECKPOINT,
-            &payload,
-            *wal_session,
-        );
+        let hdr = crate::wal::make_header_in(EVENT_TYPE_MODE_CHECKPOINT, &payload, *wal_session);
         writer
             .append(hdr, payload)
             .await
@@ -449,22 +445,21 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     // STT. Start it only after the turn WAL exists so every side effect uses the
     // same durable writer as the eventual provider request. Extraction failures
     // drain the writer before returning.
-    let attachment_contexts =
-        match extract_attachment_contexts(
-            &args.attach,
-            config,
-            first_tour_home,
-            writer.clone(),
-            *wal_session,
-        )
-        .await
-        {
-            Ok(contexts) => contexts,
-            Err(error) => {
-                drop(writer);
-                return Err(error);
-            }
-        };
+    let attachment_contexts = match extract_attachment_contexts(
+        &args.attach,
+        config,
+        first_tour_home,
+        writer.clone(),
+        *wal_session,
+    )
+    .await
+    {
+        Ok(contexts) => contexts,
+        Err(error) => {
+            drop(writer);
+            return Err(error);
+        }
+    };
 
     // G-03 self-correction signal. Record behavioral evidence only after every
     // requested attachment passed admission and extraction. A rejected turn
@@ -524,11 +519,8 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
             }
         }
     } else {
-        let raw_header = crate::wal::make_header_in(
-            EVENT_TYPE_RAW_TEXT,
-            prompt.as_bytes(),
-            *wal_session,
-        );
+        let raw_header =
+            crate::wal::make_header_in(EVENT_TYPE_RAW_TEXT, prompt.as_bytes(), *wal_session);
         // Capture the event_id before the header moves into `append` — the
         // post-reply profile-learning pipeline (B-Konsens 2026-05-17 below)
         // uses this as the trigger anchor for `extract_window`.
@@ -1759,7 +1751,8 @@ mod tests {
                 first_tour_home: home_path.clone(),
                 selected_config_path,
                 prompt: "neutral engine prompt".to_owned(),
-                current_session_id: "neutral-engine-regression".to_owned(), wal_session: None,
+                current_session_id: "neutral-engine-regression".to_owned(),
+                wal_session: None,
                 chat_ts_unix: 1_725_000_000,
                 mcp_servers: crate::mcp::McpServers::default(),
                 scoped_mcp_servers: Vec::new(),
@@ -1865,7 +1858,9 @@ mod tests {
             crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE,
         ] {
             assert!(
-                scoped_headers.iter().any(|(event_type, _)| *event_type == expected_type),
+                scoped_headers
+                    .iter()
+                    .any(|(event_type, _)| *event_type == expected_type),
                 "admitted local turn persists its required scoped event {expected_type:#04x}"
             );
         }
@@ -2610,7 +2605,8 @@ mod tests {
                 first_tour_home: home_path.clone(),
                 selected_config_path: selected_config_path.clone(),
                 prompt: "/skill disable academic_research".to_owned(),
-                current_session_id: "custom-config-action-regression".to_owned(), wal_session: None,
+                current_session_id: "custom-config-action-regression".to_owned(),
+                wal_session: None,
                 chat_ts_unix: 1_725_000_001,
                 mcp_servers: crate::mcp::McpServers::default(),
                 scoped_mcp_servers: Vec::new(),
