@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W95_W149_W151_W152_SOURCE_HOSTED_EXECUTION_REQUIRED",
-  "base": "340252fc74b31bc9a13b899b7a90be21b47699cf",
+  "base": "819fd80388adb3236eb69710a7b234afee306a36",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 55270,
-    "sha256": "CD1AD9C1AD27C139377F3B31E8C480F014632C03F58BE1E01278258745AF2C75"
+    "bytes": 56870,
+    "sha256": "ED2010C5601D4E1D2947567A8E57CB07B31F981B14638CABEBE6E5DDFDCBB192"
   },
   "sourceInputs": 320,
   "requiredNativeTests": [
@@ -2408,19 +2408,19 @@
       {
         "test": "wal::win_native::tests::fresh_private_file_and_directory_bind_owner_to_token_user",
         "sourcePath": "SRC/neothd/src/wal/win_native.rs",
-        "sourceSha256": "FB1E4A73608E0CB377895ACB618D94E69CC56A5362C68D5A8557177C19DADE4C",
+        "sourceSha256": "803E9454EABF2F502B1E8CE0CC474973AE750AC2B8A35097A1A5173870DB3DE2",
         "junitClass": "neoth"
       },
       {
         "test": "wal::win_native::tests::relative_private_child_delete_uses_the_pinned_parent_capability",
         "sourcePath": "SRC/neothd/src/wal/win_native.rs",
-        "sourceSha256": "FB1E4A73608E0CB377895ACB618D94E69CC56A5362C68D5A8557177C19DADE4C",
+        "sourceSha256": "803E9454EABF2F502B1E8CE0CC474973AE750AC2B8A35097A1A5173870DB3DE2",
         "junitClass": "neoth"
       },
       {
         "test": "wal::win_native::tests::owner_policy_rejects_a_valid_foreign_sid",
         "sourcePath": "SRC/neothd/src/wal/win_native.rs",
-        "sourceSha256": "FB1E4A73608E0CB377895ACB618D94E69CC56A5362C68D5A8557177C19DADE4C",
+        "sourceSha256": "803E9454EABF2F502B1E8CE0CC474973AE750AC2B8A35097A1A5173870DB3DE2",
         "junitClass": "neoth"
       }
     ]
@@ -2434,6 +2434,17 @@
     "execution": "PENDING_CURRENT_WINDOWS_NATIVE_AND_PREVIEW",
     "localValidationRan": false,
     "releaseClosure": false,
-    "reviewSha256": "597BC7FD0D38670E652A5034EC4408FFCBF20C845DB1B74C785A3C011A54C418"
+    "reviewSha256": "597BC7FD0D38670E652A5034EC4408FFCBF20C845DB1B74C785A3C011A54C418",
+    "hostedFormat": {
+      "run": 35601107876,
+      "source": "819fd80388adb3236eb69710a7b234afee306a36",
+      "logSha256": "1A03A6C8EB9A39A116A89F382C14D5D380E51F330A81CC4887A9EA584C36BAA2",
+      "rawHunks": 4,
+      "files": 1,
+      "sourceSha256": "803E9454EABF2F502B1E8CE0CC474973AE750AC2B8A35097A1A5173870DB3DE2",
+      "qualityRun": 35601106886,
+      "qualityConclusion": "success",
+      "localValidationRan": false
+    }
   }
 }

@@ -44,8 +44,8 @@ use windows_sys::Win32::Security::{
     GetLengthSid, GetSecurityDescriptorControl, GetTokenInformation, INHERITED_ACE,
     InitializeSecurityDescriptor, IsValidAcl, IsValidSid, NO_INHERITANCE, OBJECT_INHERIT_ACE,
     OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
-    SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
-    SetSecurityDescriptorOwner, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SetSecurityDescriptorControl,
+    SetSecurityDescriptorDacl, SetSecurityDescriptorOwner, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -712,8 +712,11 @@ pub(crate) fn create_private_child_file_relative(
             "InitializeSecurityDescriptor(context child)",
         ));
     }
-    if unsafe { SetSecurityDescriptorOwner(descriptor_ptr, sid.as_ptr().cast_mut().cast(), 0) } == 0 {
-        return Err(last_win32_error("SetSecurityDescriptorOwner(context child)"));
+    if unsafe { SetSecurityDescriptorOwner(descriptor_ptr, sid.as_ptr().cast_mut().cast(), 0) } == 0
+    {
+        return Err(last_win32_error(
+            "SetSecurityDescriptorOwner(context child)",
+        ));
     }
     if unsafe { SetSecurityDescriptorDacl(descriptor_ptr, 1, acl.0, 0) } == 0
         || unsafe {
@@ -829,7 +832,8 @@ fn create_private_file_new_with_share(path: &Path, share_mode: u32) -> io::Resul
     if unsafe { InitializeSecurityDescriptor(descriptor_ptr, SECURITY_DESCRIPTOR_REVISION) } == 0 {
         return Err(last_win32_error("InitializeSecurityDescriptor"));
     }
-    if unsafe { SetSecurityDescriptorOwner(descriptor_ptr, sid.as_ptr().cast_mut().cast(), 0) } == 0 {
+    if unsafe { SetSecurityDescriptorOwner(descriptor_ptr, sid.as_ptr().cast_mut().cast(), 0) } == 0
+    {
         return Err(last_win32_error("SetSecurityDescriptorOwner"));
     }
     // SAFETY:
@@ -934,7 +938,8 @@ pub fn create_private_directory_new(path: &Path) -> io::Result<()> {
     if unsafe { InitializeSecurityDescriptor(descriptor_ptr, SECURITY_DESCRIPTOR_REVISION) } == 0 {
         return Err(last_win32_error("InitializeSecurityDescriptor"));
     }
-    if unsafe { SetSecurityDescriptorOwner(descriptor_ptr, sid.as_ptr().cast_mut().cast(), 0) } == 0 {
+    if unsafe { SetSecurityDescriptorOwner(descriptor_ptr, sid.as_ptr().cast_mut().cast(), 0) } == 0
+    {
         return Err(last_win32_error("SetSecurityDescriptorOwner"));
     }
     // SAFETY: the descriptor and LocalAlloc-owned ACL remain live through

@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W149-W154-GUI-and-Windows-private-creation",
-  "base": "340252fc74b31bc9a13b899b7a90be21b47699cf",
-  "capturedUtc": "2026-09-21T12:38:52.4182370Z",
-  "validationStatus": "W151_MODULE_PATH_W154_WINDOWS_OWNER_SOURCE_RUNTIME_PENDING",
+  "base": "819fd80388adb3236eb69710a7b234afee306a36",
+  "capturedUtc": "2026-09-21T12:48:26.8408756Z",
+  "validationStatus": "W154_EXACT_HOSTED_FORMAT_IMPORTED_RUNTIME_PENDING",
   "scopeNote": "320 inputs; W149/W151/W152 plus W151 explicit nested-module path and W154 TokenUser owner at private Windows creation. Executable gates GitHub-only; no Road closure.",
   "files": [
     {
@@ -1503,8 +1503,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/win_native.rs",
-      "bytes": 114415,
-      "sha256": "FB1E4A73608E0CB377895ACB618D94E69CC56A5362C68D5A8557177C19DADE4C"
+      "bytes": 114450,
+      "sha256": "803E9454EABF2F502B1E8CE0CC474973AE750AC2B8A35097A1A5173870DB3DE2"
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",

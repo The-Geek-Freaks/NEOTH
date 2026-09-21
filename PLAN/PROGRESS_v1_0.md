@@ -2,6 +2,11 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-21
 
+W154 formatter follow-up: CodeQuality35601106886 passed on819fd803.
+Preflight35601107876 reported exactly four formatting hunks in win_native.rs;
+the exact hosted postimages are imported. No additional module-resolution
+error was reported. Fresh quick gates and full CI/preview remain required.
+
 **W154 / W151 hosted repair (2026-09-21):** prior preview35590348875 built
 CLI and desktop GUI, then rejected the newly created corrupt-repair manifest's
 Windows owner. [W154](../docs/gold-wave154-verification.md) binds TokenUser
