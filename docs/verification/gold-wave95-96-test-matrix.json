@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W155_INTEGRATED_CITATION_REVIEWED_HOSTED_PENDING",
-  "base": "2f3ceab510ce6ea05948e6538468905b41891caa",
+  "status": "W155_CORE_COMPILED_GUI_HOSTED_FORMAT_IMPORTED_NATIVE_PENDING",
+  "base": "c34603c01397586fc9c3f2988fd0b6677a6965b7",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 58053,
-    "sha256": "4EAF894882F21DE50E9FE4CB5F996995C4682C4614B61D35DA8CA2903134ED51"
+    "bytes": 58065,
+    "sha256": "2CF2393E106C787875F777112B97CCEB7566638E242399DEB43926F8AB751D8A"
   },
   "sourceInputs": 336,
   "requiredNativeTests": [
@@ -2102,8 +2102,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1895026,
-      "sha256": "4F5FE7753EB80A94E5A4FD967884ACE9AB87885B8EF2EC65AB0577B06CC87851"
+      "bytes": 1895609,
+      "sha256": "0239E59AA6F52E0446681A9624ECC3AC4F433F53B4A6D049AA96CCBCCD137A58"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
@@ -2157,8 +2157,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/citation_gui.rs",
-      "bytes": 54609,
-      "sha256": "F2122D9C03955B79410E2EAB3468E3D15C849505A89749D6C395D9B8F24E7BD3"
+      "bytes": 55606,
+      "sha256": "F47493AB9A179EBBBE83A616E215DDE904D14E7643E584D4F67A660660F8267B"
     },
     {
       "path": "SRC/neothd-gui/ui/citation.slint",
@@ -3469,8 +3469,8 @@
     "inventorySha256": "1840B4D37003097A5A34F1FD89780F15739D95C14BA123B945C8788C01581082",
     "requiredCoreCases": 49,
     "guiStatus": "Integrated source admitted; native/GUI runtime/rendering pending",
-    "hostedExecution": "pending",
-    "generatedCliReference": "pending admitted hosted binary",
+    "hostedExecution": "core public binary built successfully in35626050057 on2f3ceab5; native/GUI tests pending",
+    "generatedCliReference": "Imported exact2f3ceab5 artifact3E3ADE1EC9283383A49582AAA91B31E6138ED0482E83367758FF3632226874D7",
     "releaseReady": false,
     "sharedCompileRepair": {
       "run": 35622258375,
@@ -3516,12 +3516,19 @@
   "wave155Gui": {
     "report": "docs/gold-wave155-verification.md",
     "inventory": "work/gold-20260906/wave155-citation-map/GUI-TEST-INVENTORY.json",
-    "inventorySha256": "6FCD39869A3E4EF298E10DBAE6E3A2B82A786CADD880173FB1F0142DF48521CA",
+    "inventorySha256": "D079F65FA68074351EB7B8594F895E75F3724C22FFBC57E4BBA85865F1E88A15",
     "pureCases": 10,
     "nativeCallbacks": 1,
     "macosCatalogCount": 17,
     "hostedExecution": "pending",
     "releaseReady": false,
-    "formatFollowup": "E7F5801A1CB55DD7D2C7F41F4FE13728FB37F71A6C11505370D6DDE5B71658C2"
+    "formatFollowup": "E7F5801A1CB55DD7D2C7F41F4FE13728FB37F71A6C11505370D6DDE5B71658C2",
+    "hostedFormat": {
+      "run": 35626613666,
+      "hunks": 59,
+      "files": 2,
+      "receiptSha256": "011587838BEDAD5CD09B4C6658809B46DED4F3F04F4841745274175C1D7CDF17",
+      "status": "Imported exact hosted hunks; rerun pending"
+    }
   }
 }

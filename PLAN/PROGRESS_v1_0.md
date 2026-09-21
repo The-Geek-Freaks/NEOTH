@@ -18,13 +18,14 @@ cases, 56 universal GUI cases + 12 Linux/macOS callbacks, and 7 optional adapter
 cases. The macOS catalog now has 17 exact callback names. GOLD-LF-P1-12 stays
 open until executable and visual acceptance. W159 remains unpublished/excluded.
 
-Core repair 2f3ceab5 follows the six actual compiler errors from reference run
-35624482185 and the 119 hosted formatting hunks from Preflight35624481124.
-Its Preflight35626050807 requested two final layout/newline changes, imported
-exactly. Core/reference35626050057 is still building that repaired source;
-its output must be bound to that exact SHA before generated documentation import.
-New integrated-source native/GUI and static gates remain required. All executable
-validation runs only on GitHub; no Road checkbox closes.
+Core repair 2f3ceab5 passed hosted compilation/reference35626050057 and Code
+Quality35626049967. Its generated CLI reference was imported with exact source
+SHA and SHA-256 3E3ADE1EC9283383A49582AAA91B31E6138ED0482E83367758FF3632226874D7.
+The six earlier compiler errors are therefore resolved for the core binary.
+GUI integration c34603c0 passed Code Quality35626612606; its Preflight35626613666
+requested 59 exact Rustfmt hunks in two GUI files, now imported. Full native/GUI
+execution and fresh static gates remain required. All executable validation runs
+only on GitHub; no Road checkbox closes.
 
 Repair source b58ec47f passed Preflight35622231947 and Quality35622233230.
 Its full CI35622258375 found one additional test-only E0507 in an attach fixture;

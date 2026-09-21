@@ -12,8 +12,8 @@
 
 use neothd::tools::citation_lookup::{
     CitationDisplay, CitationLookupResult, CitationLookupState, CitationProvider, CitationQuery,
-    CitationRecord, ClaimCitationBinding, LookupSource, RecordProvenance, RecordSource,
-    MAX_CLAIM_BYTES,
+    CitationRecord, ClaimCitationBinding, LookupSource, MAX_CLAIM_BYTES, RecordProvenance,
+    RecordSource,
 };
 use serde::Deserialize;
 use std::{
@@ -156,7 +156,10 @@ impl CitationGuiRequest {
 
     /// Exact hidden preflight command. The opaque id is bound by Core to this
     /// normalized request; no secret material is included in argv.
-    pub fn preflight_command_args<'a>(&'a self, request_id: &'a str) -> Result<Vec<&'a str>, String> {
+    pub fn preflight_command_args<'a>(
+        &'a self,
+        request_id: &'a str,
+    ) -> Result<Vec<&'a str>, String> {
         validate_gui_request_id(request_id)?;
         let mut args = vec![
             "citation",
@@ -244,7 +247,9 @@ pub enum CitationGuiPreflight {
 }
 
 pub enum CitationGuiDecision {
-    Approved { proof_token: zeroize::Zeroizing<String> },
+    Approved {
+        proof_token: zeroize::Zeroizing<String>,
+    },
     Denied,
 }
 
@@ -318,10 +323,9 @@ pub fn parse_gui_preflight(
             }
         }
         "confirmation_required" => {
-            let mut token = wire
-                .challenge_token
-                .take()
-                .ok_or_else(|| "citation preflight omitted a bounded private challenge".to_string())?;
+            let mut token = wire.challenge_token.take().ok_or_else(|| {
+                "citation preflight omitted a bounded private challenge".to_string()
+            })?;
             if !valid_private_token(&token) {
                 token.zeroize();
                 return Err("citation preflight omitted a bounded private challenge".into());
@@ -359,10 +363,9 @@ pub fn parse_gui_decision(json: &str) -> Result<CitationGuiDecision, String> {
     }
     match wire.status.as_str() {
         "approved" => {
-            let mut proof_token = wire
-                .proof_token
-                .take()
-                .ok_or_else(|| "citation approval did not return a bounded private proof".to_string())?;
+            let mut proof_token = wire.proof_token.take().ok_or_else(|| {
+                "citation approval did not return a bounded private proof".to_string()
+            })?;
             if !valid_private_token(&proof_token) {
                 proof_token.zeroize();
                 return Err("citation approval did not return a bounded private proof".into());
@@ -576,8 +579,14 @@ impl CitationGuiBindingStore {
             return Err("citation detail binding does not match the active claim".into());
         }
         let query = core_query(&active.request)?;
-        if !active.result.validate_for_claim(&query, &active.request.claim)
-            || active.result.display_for_claim(&query, &active.request.claim).as_ref() != Some(&active.display)
+        if !active
+            .result
+            .validate_for_claim(&query, &active.request.claim)
+            || active
+                .result
+                .display_for_claim(&query, &active.request.claim)
+                .as_ref()
+                != Some(&active.display)
         {
             return Err("citation detail binding no longer validates".into());
         }
@@ -672,7 +681,11 @@ fn execute_citation_child_bounded(
         return Err("citation lookup was cancelled".into());
     }
     command
-        .stdin(if private_token.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdin(if private_token.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let started = Instant::now();
@@ -727,8 +740,7 @@ fn execute_citation_child_bounded(
                 1,
                 stdout_exceeded,
             ));
-        })
-    {
+        }) {
         Ok(reader) => reader,
         Err(_) => {
             terminate_and_reap_citation_child(&mut child);
@@ -746,8 +758,7 @@ fn execute_citation_child_bounded(
                 2,
                 stderr_exceeded,
             ));
-        })
-    {
+        }) {
         Ok(reader) => reader,
         Err(_) => {
             terminate_and_reap_citation_child(&mut child);
@@ -812,7 +823,11 @@ fn execute_citation_child_bounded(
         stderr.bytes.zeroize();
         return Err("citation lookup output exceeded its bounded limit".into());
     }
-    citation_child_output(status, std::mem::take(&mut stdout.bytes), std::mem::take(&mut stderr.bytes))
+    citation_child_output(
+        status,
+        std::mem::take(&mut stdout.bytes),
+        std::mem::take(&mut stderr.bytes),
+    )
 }
 
 fn drain_capped_citation_stream<R: std::io::Read>(
@@ -835,13 +850,17 @@ fn drain_capped_citation_stream<R: std::io::Read>(
         };
         if read == 0 {
             buffer.zeroize();
-            return Ok(CitationChildCapture { bytes, exceeded: was_exceeded });
+            return Ok(CitationChildCapture {
+                bytes,
+                exceeded: was_exceeded,
+            });
         }
         let retained = cap.saturating_sub(bytes.len()).min(read);
         bytes.extend_from_slice(&buffer[..retained]);
         if retained != read {
             was_exceeded = true;
-            let _ = exceeded.compare_exchange(0, exceeded_stream, Ordering::AcqRel, Ordering::Acquire);
+            let _ =
+                exceeded.compare_exchange(0, exceeded_stream, Ordering::AcqRel, Ordering::Acquire);
         }
     }
 }
@@ -885,10 +904,7 @@ fn citation_child_output(
     };
     stdout.zeroize();
     stderr.zeroize();
-    Ok(CitationGuiChildOutput {
-        success,
-        json,
-    })
+    Ok(CitationGuiChildOutput { success, json })
 }
 
 fn validate_explicit_claim(claim: &str) -> Result<(), String> {
@@ -915,9 +931,7 @@ fn validate_gui_request_id(value: &str) -> Result<(), String> {
 }
 
 fn valid_private_token(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= MAX_GUI_TOKEN_BYTES
-        && !value.chars().any(char::is_control)
+    !value.is_empty() && value.len() <= MAX_GUI_TOKEN_BYTES && !value.chars().any(char::is_control)
 }
 
 fn zeroize_optional_token(token: &mut Option<String>) {
@@ -932,7 +946,10 @@ fn core_query(request: &CitationGuiRequest) -> Result<CitationQuery, String> {
 }
 
 fn is_lower_sha256(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn bounded_state(value: &str) -> String {
@@ -1006,7 +1023,9 @@ impl CitationLookupReceipt {
             return Err("citation child selected providers outside the frozen request".into());
         }
         if self.attempts.len() != 1 {
-            return Err("citation GUI request must have exactly one bounded provider attempt".into());
+            return Err(
+                "citation GUI request must have exactly one bounded provider attempt".into(),
+            );
         }
         let attempt = &self.attempts[0];
         if attempt.provider != request.provider.as_core()
@@ -1113,7 +1132,11 @@ enum CitationResultWire {
 impl CitationResultWire {
     fn to_core(&self) -> Result<CitationLookupResult, String> {
         match self {
-            Self::Found { record, binding, source } => Ok(CitationLookupResult::Found {
+            Self::Found {
+                record,
+                binding,
+                source,
+            } => Ok(CitationLookupResult::Found {
                 record: record.to_core(),
                 binding: binding.to_core(),
                 source: *source,
@@ -1157,10 +1180,14 @@ impl CitationLookupStateWire {
         match self {
             Self::OfflineCacheMiss => "offline_cache_miss".into(),
             Self::Timeout => "timeout".into(),
-            Self::RateLimited { retry_after_secs: Some(seconds) } => {
+            Self::RateLimited {
+                retry_after_secs: Some(seconds),
+            } => {
                 format!("rate_limited ({seconds}s)")
             }
-            Self::RateLimited { retry_after_secs: None } => "rate_limited".into(),
+            Self::RateLimited {
+                retry_after_secs: None,
+            } => "rate_limited".into(),
             Self::ProviderUnavailable => "provider_unavailable".into(),
             Self::NotFound => "not_found".into(),
             Self::PermissionDenied => "permission_denied".into(),
@@ -1332,15 +1359,28 @@ mod tests {
 
     #[test]
     fn explicit_request_rejects_model_style_or_untrimmed_claims() {
-        assert!(CitationGuiRequest::new(" a claim ".into(), "10.1000/example".into(), 0, true).is_err());
-        assert!(CitationGuiRequest::new("a\nclaim".into(), "10.1000/example".into(), 0, true).is_err());
-        assert!(CitationGuiRequest::new("a claim".into(), "https://example.test/doi".into(), 0, true).is_err());
+        assert!(
+            CitationGuiRequest::new(" a claim ".into(), "10.1000/example".into(), 0, true).is_err()
+        );
+        assert!(
+            CitationGuiRequest::new("a\nclaim".into(), "10.1000/example".into(), 0, true).is_err()
+        );
+        assert!(
+            CitationGuiRequest::new("a claim".into(), "https://example.test/doi".into(), 0, true)
+                .is_err()
+        );
     }
 
     #[test]
     fn provider_indices_are_closed() {
-        assert_eq!(CitationGuiProvider::from_index(0).unwrap().wire_name(), "crossref");
-        assert_eq!(CitationGuiProvider::from_index(2).unwrap().wire_name(), "semantic-scholar");
+        assert_eq!(
+            CitationGuiProvider::from_index(0).unwrap().wire_name(),
+            "crossref"
+        );
+        assert_eq!(
+            CitationGuiProvider::from_index(2).unwrap().wire_name(),
+            "semantic-scholar"
+        );
         assert!(CitationGuiProvider::from_index(3).is_err());
     }
 
@@ -1375,24 +1415,31 @@ mod tests {
 
         let rebound = confirmation.replace(&request_key, &"0".repeat(64));
         assert!(parse_gui_preflight(&rebound, &request, request_id).is_err());
-        let contradictory_hit = confirmation.replace("\"cache_read\":\"miss\"", "\"cache_read\":\"hit\"");
+        let contradictory_hit =
+            confirmation.replace("\"cache_read\":\"miss\"", "\"cache_read\":\"hit\"");
         assert!(parse_gui_preflight(&contradictory_hit, &request, request_id).is_err());
     }
 
     #[test]
     fn gui_decision_receipts_reject_unknown_or_inconsistent_proofs() {
         assert!(matches!(
-            parse_gui_decision(r#"{"kind":"citation_gui_decision","status":"approved","proof_token":"proof-token"}"#),
+            parse_gui_decision(
+                r#"{"kind":"citation_gui_decision","status":"approved","proof_token":"proof-token"}"#
+            ),
             Ok(CitationGuiDecision::Approved { .. })
         ));
-        assert!(parse_gui_decision(
-            r#"{"kind":"citation_gui_decision","status":"denied","proof_token":"proof-token"}"#
-        )
-        .is_err());
-        assert!(parse_gui_decision(
-            r#"{"kind":"citation_gui_decision","status":"approved","proof_token":null}"#
-        )
-        .is_err());
+        assert!(
+            parse_gui_decision(
+                r#"{"kind":"citation_gui_decision","status":"denied","proof_token":"proof-token"}"#
+            )
+            .is_err()
+        );
+        assert!(
+            parse_gui_decision(
+                r#"{"kind":"citation_gui_decision","status":"approved","proof_token":null}"#
+            )
+            .is_err()
+        );
         assert!(parse_gui_decision(
             r#"{"kind":"citation_gui_decision","status":"denied","proof_token":null,"extra":true}"#
         )
@@ -1421,14 +1468,23 @@ mod tests {
         assert!(!ready.iter().any(|arg| *arg == "proof-token"));
         assert!(!ready.iter().any(|arg| *arg == "--gui-approval-stdin"));
         assert!(confirmed.iter().any(|arg| *arg == "--gui-approval-stdin"));
-        assert!(request.preflight_command_args("request id with spaces").is_err());
-        assert!(request.decision_command_args(&"x".repeat(129), true).is_err());
+        assert!(
+            request
+                .preflight_command_args("request id with spaces")
+                .is_err()
+        );
+        assert!(
+            request
+                .decision_command_args(&"x".repeat(129), true)
+                .is_err()
+        );
     }
 
     #[test]
     fn stale_or_historical_detail_never_survives() {
         let mut store = CitationGuiBindingStore::default();
-        let request = CitationGuiRequest::new("A claim".into(), "10.1000/example".into(), 0, true).unwrap();
+        let request =
+            CitationGuiRequest::new("A claim".into(), "10.1000/example".into(), 0, true).unwrap();
         let revision = store.begin_lookup(request);
         assert!(store.detail_for_click(revision, &"a".repeat(64)).is_err());
         store.set_historical(true);
@@ -1437,15 +1493,20 @@ mod tests {
 
     #[test]
     fn typed_unavailable_cannot_carry_a_chip() {
-        let request = CitationGuiRequest::new("A claim".into(), "10.1000/example".into(), 0, true).unwrap();
+        let request =
+            CitationGuiRequest::new("A claim".into(), "10.1000/example".into(), 0, true).unwrap();
         let receipt = r#"{"claim":"A claim","providers":["crossref"],"result":{"status":"unavailable","provider":"crossref","state":{"kind":"offline_cache_miss"}},"cache_read":"miss","cache_write":"not_attempted","attempts":[{"provider":"crossref","doi":"10.1000/example","result":{"status":"unavailable","provider":"crossref","state":{"kind":"offline_cache_miss"}},"cache_read":"miss","cache_write":"not_attempted"}],"display":null}"#;
         let parsed: CitationLookupReceipt = serde_json::from_str(receipt).unwrap();
-        assert!(matches!(parsed.verify_for(&request), Ok(CitationGuiOutcome::Unavailable { .. })));
+        assert!(matches!(
+            parsed.verify_for(&request),
+            Ok(CitationGuiOutcome::Unavailable { .. })
+        ));
     }
 
     #[test]
     fn current_core_bound_result_opens_only_its_own_in_app_detail() {
-        let request = CitationGuiRequest::new("A claim".into(), "10.1000/example".into(), 0, false).unwrap();
+        let request =
+            CitationGuiRequest::new("A claim".into(), "10.1000/example".into(), 0, false).unwrap();
         let mut store = CitationGuiBindingStore::default();
         let revision = store.begin_lookup(request.clone());
         let json = found_receipt(&request);
@@ -1454,20 +1515,34 @@ mod tests {
             panic!("expected a validated citation chip");
         };
         assert_eq!(detail.binding_sha256, chip.binding_sha256);
-        assert_eq!(store.detail_for_click(revision, &chip.binding_sha256).unwrap(), detail);
+        assert_eq!(
+            store
+                .detail_for_click(revision, &chip.binding_sha256)
+                .unwrap(),
+            detail
+        );
     }
 
     #[test]
     fn forged_display_binding_and_replayed_child_result_are_rejected() {
-        let request = CitationGuiRequest::new("A claim".into(), "10.1000/example".into(), 0, false).unwrap();
+        let request =
+            CitationGuiRequest::new("A claim".into(), "10.1000/example".into(), 0, false).unwrap();
         let mut forged: serde_json::Value = serde_json::from_str(&found_receipt(&request)).unwrap();
         forged["display"]["binding_sha256"] = serde_json::Value::String("0".repeat(64));
         let mut store = CitationGuiBindingStore::default();
         let revision = store.begin_lookup(request.clone());
-        assert!(store.apply_child_json(revision, request.clone(), &forged.to_string()).is_err());
+        assert!(
+            store
+                .apply_child_json(revision, request.clone(), &forged.to_string())
+                .is_err()
+        );
 
         let fresh = found_receipt(&request);
-        assert!(store.apply_child_json(revision, request.clone(), &fresh).is_ok());
+        assert!(
+            store
+                .apply_child_json(revision, request.clone(), &fresh)
+                .is_ok()
+        );
         assert!(store.apply_child_json(revision, request, &fresh).is_err());
     }
 }

@@ -20582,7 +20582,12 @@ struct CitationGuiLiveFlow {
 }
 
 impl CitationGuiLiveFlow {
-    fn is_current(&self, revision: u64, request: &citation_gui::CitationGuiRequest, request_id: &str) -> bool {
+    fn is_current(
+        &self,
+        revision: u64,
+        request: &citation_gui::CitationGuiRequest,
+        request_id: &str,
+    ) -> bool {
         self.revision == revision && self.request == *request && self.request_id == request_id
     }
 }
@@ -20774,8 +20779,10 @@ fn register_citation_gui_callbacks(
         let worker_store = std::sync::Arc::clone(&lookup_store);
         let worker_window = weak_lookup.clone();
         std::thread::spawn(move || {
-            let child = neothd_json_command(&worker_request.command_args())
-                .and_then(|mut command| citation_gui::execute_citation_child(&mut command, &cancellation));
+            let child =
+                neothd_json_command(&worker_request.command_args()).and_then(|mut command| {
+                    citation_gui::execute_citation_child(&mut command, &cancellation)
+                });
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(window) = worker_window.upgrade() else {
                     return;
@@ -20790,11 +20797,9 @@ fn register_citation_gui_callbacks(
                     return;
                 }
                 let outcome = match child {
-                    Ok(mut output) => store.apply_child_output(
-                        revision,
-                        worker_request,
-                        &mut output,
-                    ),
+                    Ok(mut output) => {
+                        store.apply_child_output(revision, worker_request, &mut output)
+                    }
                     Err(_) => Err("citation child could not be verified".to_string()),
                 };
                 if store.revision() != revision {
@@ -20816,8 +20821,7 @@ fn register_citation_gui_callbacks(
                         ])));
                         window.set_chat_citation_active_claim(request.claim.into());
                         window.set_chat_citation_lookup_status(
-                            "Citation binding verified. Select the chip for in-app details."
-                                .into(),
+                            "Citation binding verified. Select the chip for in-app details.".into(),
                         );
                     }
                     Ok(citation_gui::CitationGuiOutcome::Unavailable { provider, state }) => {
@@ -20829,8 +20833,7 @@ fn register_citation_gui_callbacks(
                     Err(_) => {
                         clear_citation_projection(&window);
                         window.set_chat_citation_lookup_status(
-                            "Citation lookup could not be verified; no citation was shown."
-                                .into(),
+                            "Citation lookup could not be verified; no citation was shown.".into(),
                         );
                     }
                 }
@@ -20847,9 +20850,7 @@ fn register_citation_gui_callbacks(
         let detail = detail_store
             .lock()
             .map_err(|_| "citation binding store is unavailable".to_string())
-            .and_then(|store| {
-                store.detail_for_click(store.revision(), binding_sha256.as_str())
-            });
+            .and_then(|store| store.detail_for_click(store.revision(), binding_sha256.as_str()));
         match detail {
             Ok(detail) => {
                 window.set_chat_citation_detail_title(detail.title.into());
@@ -20935,14 +20936,20 @@ fn start_citation_preflight(
         let child = request
             .preflight_command_args(&request_id)
             .and_then(|args| neothd_json_command(&args))
-            .and_then(|mut command| citation_gui::execute_citation_child(&mut command, &cancellation));
+            .and_then(|mut command| {
+                citation_gui::execute_citation_child(&mut command, &cancellation)
+            });
         let _ = slint::invoke_from_event_loop(move || {
-            let Some(window) = weak_window.upgrade() else { return; };
+            let Some(window) = weak_window.upgrade() else {
+                return;
+            };
             let mut live = match flow.lock() {
                 Ok(live) => live,
                 Err(_) => return,
             };
-            let Some(current) = live.as_mut() else { return; };
+            let Some(current) = live.as_mut() else {
+                return;
+            };
             if !current.is_current(revision, &request, &request_id)
                 || !matches!(&current.stage, CitationGuiLiveStage::Preflight)
             {
@@ -20965,9 +20972,7 @@ fn start_citation_preflight(
                         challenge: challenge_token,
                     };
                     window.set_chat_citation_lookup_running(false);
-                    window.set_chat_citation_consent_body(
-                        citation_consent_body(&request).into(),
-                    );
+                    window.set_chat_citation_consent_body(citation_consent_body(&request).into());
                     window.set_chat_citation_consent_submitting(false);
                     window.set_chat_citation_consent_visible(true);
                     window.set_chat_citation_lookup_status(
@@ -21027,7 +21032,9 @@ fn respond_to_citation_consent(
     child_cancellation: CitationGuiChildCancellationSlot,
     approve: bool,
 ) {
-    let Some(window) = weak_window.upgrade() else { return; };
+    let Some(window) = weak_window.upgrade() else {
+        return;
+    };
     if window.get_chat_history_active() {
         cancel_citation_live_flow(&flow);
         cancel_citation_child(&child_cancellation);
@@ -21041,12 +21048,12 @@ fn respond_to_citation_consent(
             Ok(live) => live,
             Err(_) => return,
         };
-        let Some(current) = live.as_mut() else { return; };
+        let Some(current) = live.as_mut() else {
+            return;
+        };
         let stage = std::mem::replace(&mut current.stage, CitationGuiLiveStage::DecisionInFlight);
         let challenge = match stage {
-            CitationGuiLiveStage::AwaitingDecision {
-                challenge,
-            } => challenge,
+            CitationGuiLiveStage::AwaitingDecision { challenge } => challenge,
             other => {
                 current.stage = other;
                 return;
@@ -21062,7 +21069,12 @@ fn respond_to_citation_consent(
     };
     window.set_chat_citation_consent_submitting(true);
     window.set_chat_citation_lookup_status(
-        if approve { "Recording citation approval…" } else { "Recording citation denial…" }.into(),
+        if approve {
+            "Recording citation approval…"
+        } else {
+            "Recording citation denial…"
+        }
+        .into(),
     );
     std::thread::spawn(move || {
         let child = request
@@ -21076,12 +21088,16 @@ fn respond_to_citation_consent(
                 )
             });
         let _ = slint::invoke_from_event_loop(move || {
-            let Some(window) = weak_window.upgrade() else { return; };
+            let Some(window) = weak_window.upgrade() else {
+                return;
+            };
             let mut live = match flow.lock() {
                 Ok(live) => live,
                 Err(_) => return,
             };
-            let Some(current) = live.as_mut() else { return; };
+            let Some(current) = live.as_mut() else {
+                return;
+            };
             if !current.is_current(revision, &request, &request_id)
                 || !matches!(&current.stage, CitationGuiLiveStage::DecisionInFlight)
             {
@@ -21157,12 +21173,16 @@ fn start_citation_final_lookup(
                 None => citation_gui::execute_citation_child(&mut command, &cancellation),
             });
         let _ = slint::invoke_from_event_loop(move || {
-            let Some(window) = weak_window.upgrade() else { return; };
+            let Some(window) = weak_window.upgrade() else {
+                return;
+            };
             let mut live = match flow.lock() {
                 Ok(live) => live,
                 Err(_) => return,
             };
-            let Some(current) = live.as_ref() else { return; };
+            let Some(current) = live.as_ref() else {
+                return;
+            };
             if !current.is_current(revision, &request, &request_id)
                 || !matches!(&current.stage, CitationGuiLiveStage::FinalInFlight)
             {
@@ -21181,19 +21201,23 @@ fn start_citation_final_lookup(
                 Ok(mut output) => store.apply_child_output(revision, request.clone(), &mut output),
                 Err(_) => Err("citation final lookup did not complete".to_string()),
             };
-            if store.revision() != revision { return; }
+            if store.revision() != revision {
+                return;
+            }
             window.set_chat_citation_lookup_running(false);
             match outcome {
                 Ok(citation_gui::CitationGuiOutcome::Found { chip, .. }) => {
                     use slint::{ModelRc, VecModel};
-                    window.set_chat_citation_chips(ModelRc::new(VecModel::from(vec![CitationChip {
-                        claim: chip.claim.into(),
-                        provider: chip.provider.into(),
-                        source: chip.source.into(),
-                        provider_record_id: chip.provider_record_id.into(),
-                        binding_sha256: chip.binding_sha256.into(),
-                        available: chip.available,
-                    }])));
+                    window.set_chat_citation_chips(ModelRc::new(VecModel::from(vec![
+                        CitationChip {
+                            claim: chip.claim.into(),
+                            provider: chip.provider.into(),
+                            source: chip.source.into(),
+                            provider_record_id: chip.provider_record_id.into(),
+                            binding_sha256: chip.binding_sha256.into(),
+                            available: chip.available,
+                        },
+                    ])));
                     window.set_chat_citation_active_claim(request.claim.into());
                     window.set_chat_citation_lookup_status(
                         "Citation binding verified. Select the chip for in-app details.".into(),
@@ -39656,16 +39680,16 @@ mod w58_gui_callback_runtime_tests {
         register_channel_account_retirement_callback, register_channel_legacy_migration_callback,
         register_channel_pairing_approval_callback, register_channel_pairing_request_callbacks,
         register_code_map_enrichment_readiness_callbacks, register_selfimprove_accept_callback,
-        register_skill_autonomy_callbacks,
-        start_code_map_lifecycle_config_apply,
+        register_skill_autonomy_callbacks, start_code_map_lifecycle_config_apply,
         start_code_map_lifecycle_refresh, which_neothd,
     };
 
     #[cfg(not(windows))]
     use super::{
+        cancel_citation_child, cancel_citation_live_flow,
         citation_gui::{CitationGuiBindingStore, CitationGuiRequest},
-        cancel_citation_child, cancel_citation_live_flow, clear_citation_consent_projection,
-        clear_citation_projection, register_citation_gui_callbacks,
+        clear_citation_consent_projection, clear_citation_projection,
+        register_citation_gui_callbacks,
     };
 
     static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -43629,9 +43653,7 @@ exit 0
 
     #[cfg(not(windows))]
     fn w155_found_offline_receipt(request: &CitationGuiRequest) -> String {
-        use neothd::tools::citation_lookup::{
-            ClaimCitationBinding, LookupSource, RecordSource,
-        };
+        use neothd::tools::citation_lookup::{ClaimCitationBinding, LookupSource, RecordSource};
 
         let query = CitationQuery::new(request.provider.as_core(), &request.doi)
             .expect("W155 fixture query");
@@ -43819,7 +43841,8 @@ exit 7
         window.invoke_chat_citation_lookup_clicked(claim.into(), doi.into(), 0, true);
         w153_pump_until(&window, "typed offline unavailable", |w| {
             !w.get_chat_citation_lookup_running()
-                && w.get_chat_citation_lookup_status().contains("offline_cache_miss")
+                && w.get_chat_citation_lookup_status()
+                    .contains("offline_cache_miss")
         });
         assert_eq!(window.get_chat_citation_chips().row_count(), 0);
 
@@ -43851,7 +43874,8 @@ exit 7
         window.invoke_chat_citation_lookup_clicked(claim.into(), doi.into(), 0, true);
         w153_pump_until(&window, "replacement after hung-child cancellation", |w| {
             !w.get_chat_citation_lookup_running()
-                && w.get_chat_citation_lookup_status().contains("offline_cache_miss")
+                && w.get_chat_citation_lookup_status()
+                    .contains("offline_cache_miss")
         });
         assert_eq!(window.get_chat_citation_chips().row_count(), 0);
         assert!(
@@ -43893,16 +43917,22 @@ exit 7
         window.invoke_chat_citation_lookup_clicked(claim.into(), doi.into(), 0, true);
         w153_pump_until(&window, "citation output flood is bounded", |w| {
             !w.get_chat_citation_lookup_running()
-                && w.get_chat_citation_lookup_status().contains("could not be verified")
+                && w.get_chat_citation_lookup_status()
+                    .contains("could not be verified")
         });
         assert_eq!(window.get_chat_citation_chips().row_count(), 0);
         std::fs::write(fixture.path().join("mode"), "offline-unavailable")
             .expect("select W155 post-flood recovery mode");
         window.invoke_chat_citation_lookup_clicked(claim.into(), doi.into(), 0, true);
-        w153_pump_until(&window, "citation lookup recovers after output flood", |w| {
-            !w.get_chat_citation_lookup_running()
-                && w.get_chat_citation_lookup_status().contains("offline_cache_miss")
-        });
+        w153_pump_until(
+            &window,
+            "citation lookup recovers after output flood",
+            |w| {
+                !w.get_chat_citation_lookup_running()
+                    && w.get_chat_citation_lookup_status()
+                        .contains("offline_cache_miss")
+            },
+        );
 
         window.set_chat_history_active(false);
         store
@@ -43911,7 +43941,12 @@ exit 7
             .set_historical(false);
         std::fs::write(fixture.path().join("mode"), "preflight-confirm")
             .expect("select W155 history-discard preflight");
-        window.invoke_chat_citation_lookup_clicked("history discard claim".into(), doi.into(), 0, false);
+        window.invoke_chat_citation_lookup_clicked(
+            "history discard claim".into(),
+            doi.into(),
+            0,
+            false,
+        );
         w153_pump_until(&window, "citation history-discard modal", |w| {
             w.get_chat_citation_consent_visible() && !w.get_chat_citation_consent_submitting()
         });
@@ -43952,7 +43987,8 @@ exit 7
         w153_pump_until(&window, "citation approval modal", |w| {
             w.get_chat_citation_consent_visible()
                 && !w.get_chat_citation_consent_submitting()
-                && w.get_chat_citation_lookup_status().contains("explicit approval")
+                && w.get_chat_citation_lookup_status()
+                    .contains("explicit approval")
         });
         // The callback is intentionally invoked twice: the second response
         // cannot replay the same challenge while the first is in flight.
@@ -43991,7 +44027,12 @@ exit 7
             .iter()
             .filter(|line| line.contains("citation lookup"))
             .count();
-        window.invoke_chat_citation_lookup_clicked("denied live claim".into(), doi.into(), 0, false);
+        window.invoke_chat_citation_lookup_clicked(
+            "denied live claim".into(),
+            doi.into(),
+            0,
+            false,
+        );
         w153_pump_until(&window, "citation denial modal", |w| {
             w.get_chat_citation_consent_visible() && !w.get_chat_citation_consent_submitting()
         });
@@ -44014,11 +44055,17 @@ exit 7
 
         std::fs::write(fixture.path().join("mode"), "preflight-mismatch")
             .expect("select W155 mismatch preflight");
-        window.invoke_chat_citation_lookup_clicked("mismatched live claim".into(), doi.into(), 0, false);
+        window.invoke_chat_citation_lookup_clicked(
+            "mismatched live claim".into(),
+            doi.into(),
+            0,
+            false,
+        );
         w153_pump_until(&window, "mismatched citation preflight", |w| {
             !w.get_chat_citation_lookup_running()
                 && !w.get_chat_citation_consent_visible()
-                && w.get_chat_citation_lookup_status().contains("could not be verified")
+                && w.get_chat_citation_lookup_status()
+                    .contains("could not be verified")
         });
 
         std::fs::write(fixture.path().join("mode"), "preflight-ready")

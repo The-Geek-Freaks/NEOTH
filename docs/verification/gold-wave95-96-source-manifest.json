@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W155-integrated-citation-candidate",
-  "base": "2f3ceab510ce6ea05948e6538468905b41891caa",
-  "capturedUtc": "2026-09-21T16:33:22.9824776Z",
-  "validationStatus": "W155_INTEGRATED_CITATION_REVIEWED_HOSTED_PENDING",
+  "base": "c34603c01397586fc9c3f2988fd0b6677a6965b7",
+  "capturedUtc": "2026-09-21T16:38:39.6610177Z",
+  "validationStatus": "W155_CORE_COMPILED_GUI_HOSTED_FORMAT_IMPORTED_NATIVE_PENDING",
   "scopeNote": "336 inputs; integrated reviewed Citation Core/Consent/HTTP/CLI/GUI, bounded direct child runner and 17-name macOS callback catalog. Required272 native+3 Windows+2 Unix;56GUI+12callbacks;7optional. W159 unpublished and excluded.",
   "files": [
     {
@@ -53,8 +53,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 228961,
-      "sha256": "877E85B849AD945DF2D92A859945F0F2A3AFD3991437376F3214C407FCC0C3AE"
+      "bytes": 229908,
+      "sha256": "3E3ADE1EC9283383A49582AAA91B31E6138ED0482E83367758FF3632226874D7"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -1658,8 +1658,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1895026,
-      "sha256": "4F5FE7753EB80A94E5A4FD967884ACE9AB87885B8EF2EC65AB0577B06CC87851"
+      "bytes": 1895609,
+      "sha256": "0239E59AA6F52E0446681A9624ECC3AC4F433F53B4A6D049AA96CCBCCD137A58"
     },
     {
       "path": "SRC/neothd-gui/ui/main.slint",
@@ -1668,8 +1668,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/citation_gui.rs",
-      "bytes": 54609,
-      "sha256": "F2122D9C03955B79410E2EAB3468E3D15C849505A89749D6C395D9B8F24E7BD3"
+      "bytes": 55606,
+      "sha256": "F47493AB9A179EBBBE83A616E215DDE904D14E7643E584D4F67A660660F8267B"
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",

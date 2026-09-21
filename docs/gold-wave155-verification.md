@@ -61,7 +61,7 @@ test matrix bind the admitted files and their required JUnit identities. The
 core/consent/HTTP/CLI inventory contains 49 cases, including two Unix-only
 filesystem cases; GUI requirements are recorded separately.
 
-Required next evidence: hosted format/static gates, core/CLI-reference build,
+Required next evidence: integrated hosted format/static gates,
 full native and GUI tests including macOS callback discovery, and applicable
 portable acceptance. Generated CLI documentation must come from the admitted
 binary. Earlier CI/preview runs do not validate this Citation implementation.
@@ -73,7 +73,7 @@ reported 119 exact Rustfmt hunks in eight Citation files; those hosted layouts
 are now imported. Reference build35624482185 found six Rust compiler errors:
 missing Context imports, TryLockError variants, a policy-reference argument,
 an Option mapping signature and the required geteuid unsafe block. The narrow
-repairs are reviewed separately and await a fresh hosted build. The 334-input
+repairs passed hosted core/reference35626050057 on 2f3ceab5. The initial 334-input
 manifest and all required test hashes bind the repaired source. No executable
 validation ran locally and no Road checkbox closes.
 
@@ -82,5 +82,11 @@ validation ran locally and no Road checkbox closes.
 10 pure GUI cases and one Linux/macOS callback join the canonical test matrix.
 The exact native macOS harness catalog/discovery contract now lists 17 names.
 Final GUI review: GUI-REREVIEW.md (451649CF417DAC401D95361558C643F592EE66B7E826F285124D2EFF049F5BB2).
-Core repair 2f3ceab5 has reference run35626050057 in progress; its Preflight35626050807
+Core repair 2f3ceab5 passed reference run35626050057; its Preflight35626050807
 requested two final hosted layout/newline corrections, imported without local execution.
+
+The generated CLI reference was imported from that successful run after source-head
+and SHA-256 checks: 3E3ADE1EC9283383A49582AAA91B31E6138ED0482E83367758FF3632226874D7.
+GUI source c34603c0 passed Code Quality35626612606. Its Preflight35626613666
+supplied 59 exact Rustfmt hunks in citation_gui.rs/main.rs; all are imported.
+These format and core-build results do not establish native GUI test success.

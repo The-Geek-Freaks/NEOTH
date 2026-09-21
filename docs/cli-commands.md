@@ -504,6 +504,39 @@ Tag the most recent pre-mutation snapshot with a name. The snapshot must already
 - `--description <DESCRIPTION>` — Optional human description
 - `--force` — Overwrite an existing checkpoint with the same label
 
+## `neoth citation`
+
+Look up a DOI through the bounded citation provider boundary
+
+### `neoth citation gui-decide` _(hidden)_
+
+Private desktop-GUI challenge decision; its challenge token is stdin-only
+
+- `--claim <CLAIM>`
+- `--doi <DOI>`
+- `--provider <PROVIDER>`
+- `--request-id <REQUEST_ID>`
+- `--decision <DECISION>`
+
+### `neoth citation gui-preflight` _(hidden)_
+
+Private desktop-GUI policy preflight for one explicit citation provider
+
+- `--claim <CLAIM>`
+- `--doi <DOI>`
+- `--provider <PROVIDER>`
+- `--request-id <REQUEST_ID>`
+- `--offline` — Return a typed cache-only result and never mint GUI consent
+
+### `neoth citation lookup`
+
+Look up one DOI and bind the selected canonical record to an explicit claim
+
+- `--claim <CLAIM>`
+- `--doi <DOI>`
+- `--provider <PROVIDER>` — One provider. Omitted: Crossref, OpenAlex, then Semantic Scholar
+- `--offline` — Read only private cache entries; never construct an authorizer or HTTP request
+
 ## `neoth cloud`
 
 Mirror the session archive into the operator's cloud-client local folder (R-8). NEOTH writes into `<dest>/<subdir>/`; the cloud vendor's desktop client (Dropbox / GDrive / OneDrive / iCloud) handles the actual upload. `status` shows the wired destination + last sync state, `sync` runs a pass right now
