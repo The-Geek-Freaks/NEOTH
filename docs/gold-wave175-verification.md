@@ -48,3 +48,11 @@ Receipt04: 407A21D0DEC6E95BFF4D70E66154AA989FC3242B3610AEB209C5DC6CC831D0C7.
 Older rejected reviews are retained. The fixed threshold is applied to current
 post-decay importance; the exact-boundary integration event is pinned so normal
 decay cannot move it below 0.75 before selection.
+
+W175 Code Quality 35666212306 passed on da78c6a8. Preflight 35666214987's
+22 exact formatting hunks across six files are imported. CLI build 35666228194
+found one E0277 in the new renderer: rows already has slice-reference type, so
+the loop now iterates rows directly. Fresh Hosted compilation and formatting
+remain required, as do the eleven behavior tests.
+Format receipt: FD47FB80BCB38EC766D470FE73B409C8E90C55BE36635E3DE56273A0C0F47DF7.
+Compiler log: 55355A24DFBAD75F3B7B28077F2E357F75488754D02763AF198814E2586DBB1D.

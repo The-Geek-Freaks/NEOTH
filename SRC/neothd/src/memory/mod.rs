@@ -58,11 +58,11 @@ pub mod gc;
 pub mod gc_task;
 pub mod groundtruth;
 pub mod hindsight;
+/// GOLD-LF-P2-02 — secondary, importance-selected event-id membership.
+pub mod hippocampus;
 /// GOLD History Onboarding v1: private review journal for historical exports.
 /// It is intentionally disconnected from recall and profile learning.
 pub mod history_onboarding;
-/// GOLD-LF-P2-02 — secondary, importance-selected event-id membership.
-pub mod hippocampus;
 pub mod indexer;
 pub mod infra_scan;
 pub mod ingress;

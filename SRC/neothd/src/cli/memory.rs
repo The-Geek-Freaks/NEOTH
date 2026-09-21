@@ -644,8 +644,11 @@ pub(crate) fn format_hippocampus_rows(
             if rows.is_empty() {
                 return Ok(vec!["no current Hippocampus memberships.".to_string()]);
             }
-            let mut lines = vec![format!("# {} current Hippocampus membership(s)", rows.len())];
-            for row in &rows {
+            let mut lines = vec![format!(
+                "# {} current Hippocampus membership(s)",
+                rows.len()
+            )];
+            for row in rows {
                 let preview: String = row.text.chars().take(80).collect();
                 lines.push(format!(
                     "  [{:>10}] {} imp={:.3}  {}",

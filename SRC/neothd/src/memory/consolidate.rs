@@ -809,11 +809,21 @@ mod tests {
         let report = run_consolidation_pass_with_hippocampus(&mut conn, now, None, true).unwrap();
         assert_eq!(report.hippocampus_selected, 1);
         assert_eq!(
-            conn.query_row("SELECT count(*) FROM idx_hippocampus WHERE event_id = 75", [], |row| row.get::<_, i64>(0)).unwrap(),
+            conn.query_row(
+                "SELECT count(*) FROM idx_hippocampus WHERE event_id = 75",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
             1
         );
         assert_eq!(
-            conn.query_row("SELECT count(*) FROM idx_consolidated WHERE event_id = 75", [], |row| row.get::<_, i64>(0)).unwrap(),
+            conn.query_row(
+                "SELECT count(*) FROM idx_consolidated WHERE event_id = 75",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
             1,
             "retention movement keeps the selected event live"
         );
@@ -825,13 +835,24 @@ mod tests {
         .unwrap();
         insert_episode(&conn, 76, 0, 0.8, now);
         let before: f64 = conn
-            .query_row("SELECT importance FROM idx_episode WHERE event_id = 76", [], |row| row.get(0))
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 76",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert!(run_consolidation_pass_with_hippocampus(&mut conn, now, None, true).is_err());
         let after: f64 = conn
-            .query_row("SELECT importance FROM idx_episode WHERE event_id = 76", [], |row| row.get(0))
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 76",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
-        assert_eq!(after, before, "membership failure must roll back tier decay too");
+        assert_eq!(
+            after, before,
+            "membership failure must roll back tier decay too"
+        );
     }
 
     #[test]

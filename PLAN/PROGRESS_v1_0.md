@@ -15,6 +15,11 @@ an accidental CLI replacement, and tick/abort races using a test-only completed
 pass channel. Hosted compilation, CLI reference, formatting, strict Clippy and
 behavior remain required; no P2-02 checkbox closes. W178 Windows repairs are
 separate and excluded from this publication. See [W175](../docs/gold-wave175-verification.md).
+W175 Code Quality 35666212306 passed on da78c6a8. Preflight 35666214987's
+22 exact formatting hunks across six files are imported. CLI build 35666228194
+found one E0277 in the new renderer: rows already has slice-reference type, so
+the loop now iterates rows directly. Fresh Hosted compilation and formatting
+remain required, as do the eleven behavior tests.
 
 **W176 Hosted formatting (2026-09-22):** Preflight 35665279764 and Code Quality
 35665279331 passed on 543a23eb. The 20 W173/W176 behavioral identities still

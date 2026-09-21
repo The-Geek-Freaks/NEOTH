@@ -871,7 +871,10 @@ mod tests {
         config.memory.hippocampus.enabled = true;
         for denied in [AutonomyLevel::Strict, AutonomyLevel::Custom] {
             config.autonomy = denied;
-            assert!(!hippocampus_selection_enabled(&config), "{denied:?} must not mutate");
+            assert!(
+                !hippocampus_selection_enabled(&config),
+                "{denied:?} must not mutate"
+            );
         }
         for allowed in [
             AutonomyLevel::Standard,
@@ -879,7 +882,10 @@ mod tests {
             AutonomyLevel::Full,
         ] {
             config.autonomy = allowed;
-            assert!(hippocampus_selection_enabled(&config), "{allowed:?} must permit selection");
+            assert!(
+                hippocampus_selection_enabled(&config),
+                "{allowed:?} must permit selection"
+            );
         }
     }
 
@@ -891,7 +897,8 @@ mod tests {
         accepted.autonomy = AutonomyLevel::Standard;
         accepted.memory.hippocampus.enabled = true;
         std::fs::write(&config_path, serde_yaml::to_string(&accepted).unwrap()).unwrap();
-        let controller = crate::config::reload::ReloadController::new(accepted, config_path.clone());
+        let controller =
+            crate::config::reload::ReloadController::new(accepted, config_path.clone());
         std::fs::write(&config_path, "memory: [not a mapping\n").unwrap();
         assert!(controller.try_reload().is_err());
         assert!(hippocampus_selection_enabled(controller.latest().as_ref()));
@@ -960,9 +967,18 @@ mod tests {
         tokio::fs::write(&segment, bytes).await.unwrap();
 
         let mut indexed = store::open(&db).unwrap();
-        assert_eq!(crate::memory::indexer::replay_once(&mut indexed, &segment).await.unwrap(), 3);
+        assert_eq!(
+            crate::memory::indexer::replay_once(&mut indexed, &segment)
+                .await
+                .unwrap(),
+            3
+        );
         let importance: f64 = indexed
-            .query_row("SELECT importance FROM idx_episode WHERE event_id = 175", [], |row| row.get(0))
+            .query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 175",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(
             importance,
@@ -1005,7 +1021,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            standard_rows.iter().map(|row| row.event_id).collect::<Vec<_>>(),
+            standard_rows
+                .iter()
+                .map(|row| row.event_id)
+                .collect::<Vec<_>>(),
             vec![175, 176],
         );
         let cli_args = crate::cli::memory::MemoryArgs {
@@ -1016,9 +1035,17 @@ mod tests {
             ..Default::default()
         };
         let cli_rows = crate::cli::memory::hippocampus_rows_for_cli(&cli_args, "producer").unwrap();
-        let cli_lines = crate::cli::memory::format_hippocampus_rows(&cli_rows, cli_args.output).unwrap();
-        assert_eq!(cli_rows.iter().map(|row| row.event_id).collect::<Vec<_>>(), vec![175, 176]);
-        assert_eq!(cli_lines.len(), 3, "the production table renderer remains bounded by --limit");
+        let cli_lines =
+            crate::cli::memory::format_hippocampus_rows(&cli_rows, cli_args.output).unwrap();
+        assert_eq!(
+            cli_rows.iter().map(|row| row.event_id).collect::<Vec<_>>(),
+            vec![175, 176]
+        );
+        assert_eq!(
+            cli_lines.len(),
+            3,
+            "the production table renderer remains bounded by --limit"
+        );
         assert!(cli_lines[1].contains("selected producer event"));
         assert!(cli_lines[2].contains("boundary producer event"));
 
@@ -1054,7 +1081,10 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(custom_importance < 0.9, "Custom leaves mandatory decay active");
+        assert!(
+            custom_importance < 0.9,
+            "Custom leaves mandatory decay active"
+        );
         assert!(
             !crate::memory::hippocampus::query_current_rows(&read_only, None, 100)
                 .unwrap()
@@ -1084,12 +1114,15 @@ mod tests {
         );
         assert!(cleanup_tick_rx.await.unwrap());
         cleanup_task.await.unwrap();
-        let empty_rows = crate::cli::memory::hippocampus_rows_for_cli(&cli_args, "producer").unwrap();
-        assert!(empty_rows.is_empty(), "archived sources disappear from the CLI read path");
+        let empty_rows =
+            crate::cli::memory::hippocampus_rows_for_cli(&cli_args, "producer").unwrap();
+        assert!(
+            empty_rows.is_empty(),
+            "archived sources disappear from the CLI read path"
+        );
         assert_eq!(
             crate::cli::memory::format_hippocampus_rows(&empty_rows, cli_args.output).unwrap(),
             vec!["no current Hippocampus memberships."],
         );
-
     }
 }

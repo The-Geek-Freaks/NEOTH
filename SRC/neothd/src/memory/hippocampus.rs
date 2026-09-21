@@ -68,7 +68,11 @@ pub fn reconcile(tx: &Transaction<'_>, selected_at_ns: i64) -> Result<ReconcileR
 /// Open an already-existing views database without a schema upgrade, sidecar,
 /// WAL append, or any other write-capable operation.
 pub fn open_read_only(path: &Path) -> Result<Connection> {
-    ensure!(path.is_file(), "views database is absent: {}", path.display());
+    ensure!(
+        path.is_file(),
+        "views database is absent: {}",
+        path.display()
+    );
     let conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -190,12 +194,20 @@ mod tests {
         let tx = conn.transaction().unwrap();
         reconcile(&tx, 100).unwrap();
         tx.commit().unwrap();
-        conn.execute("UPDATE idx_episode SET importance = 0.74 WHERE event_id = 7", [])
-            .unwrap();
+        conn.execute(
+            "UPDATE idx_episode SET importance = 0.74 WHERE event_id = 7",
+            [],
+        )
+        .unwrap();
         let tx = conn.transaction().unwrap();
         assert_eq!(reconcile(&tx, 200).unwrap().removed, 1);
         tx.commit().unwrap();
-        assert_eq!(conn.query_row("SELECT count(*) FROM idx_hippocampus", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM idx_hippocampus", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -208,14 +220,29 @@ mod tests {
         let tx = conn.transaction().unwrap();
         reconcile(&tx, 100).unwrap();
         tx.commit().unwrap();
-        conn.execute("DELETE FROM idx_episode WHERE event_id = 11", []).unwrap();
-        conn.execute("UPDATE idx_episode SET importance = 0.74 WHERE event_id = 14", [])
+        conn.execute("DELETE FROM idx_episode WHERE event_id = 11", [])
             .unwrap();
+        conn.execute(
+            "UPDATE idx_episode SET importance = 0.74 WHERE event_id = 14",
+            [],
+        )
+        .unwrap();
         drop(conn);
         let read_only = open_read_only(&dir.path().join("views.db")).unwrap();
         let rows = query_current_rows(&read_only, None, 20).unwrap();
-        assert_eq!(rows.iter().map(|row| row.event_id).collect::<Vec<_>>(), vec![13, 12]);
-        assert_eq!(query_current_rows(&read_only, Some("event-13"), 1).unwrap().len(), 1);
-        assert_eq!(query_current_rows(&read_only, None, 1).unwrap()[0].event_id, 13);
+        assert_eq!(
+            rows.iter().map(|row| row.event_id).collect::<Vec<_>>(),
+            vec![13, 12]
+        );
+        assert_eq!(
+            query_current_rows(&read_only, Some("event-13"), 1)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            query_current_rows(&read_only, None, 1).unwrap()[0].event_id,
+            13
+        );
     }
 }

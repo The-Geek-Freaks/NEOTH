@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W175_STATIC_APPROVED_HOSTED_PENDING",
-  "base": "543a23eb097473c97072f3efc6280f291fea773f",
+  "status": "W175_HOSTED_COMPILE_FORMAT_REPAIR_PENDING",
+  "base": "da78c6a86c03fcc54247947a20a0390a0c473c7e",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 69885,
-    "sha256": "AD31B64173A35216AE8282C8CB998A20402C67C556B26DB90FF492F369471087"
+    "bytes": 69858,
+    "sha256": "AC52E17885A2C7FAC903985334BD9CB22ABD6A8022A6F7924AC080EB90147371"
   },
   "sourceInputs": 404,
   "requiredNativeTests": [
@@ -1818,7 +1818,7 @@
     {
       "test": "memory::migrations::tests::v39_to_v40_preserves_rows_as_unattributed_and_creates_session_indexes",
       "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
-      "sourceSha256": "7ED828AF4C64D056544843CFCFB8DFE7F9E25E4B0F92A97ED5167D0663EB5507",
+      "sourceSha256": "26489483393FE841C79A65F4EB9308577F1FBA831B13C1E78D269A852B49C3DC",
       "junitClass": "neoth"
     },
     {
@@ -2124,7 +2124,7 @@
     {
       "test": "memory::migrations::tests::migrate_full_chain_preserves_data_and_adds_columns",
       "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
-      "sourceSha256": "7ED828AF4C64D056544843CFCFB8DFE7F9E25E4B0F92A97ED5167D0663EB5507",
+      "sourceSha256": "26489483393FE841C79A65F4EB9308577F1FBA831B13C1E78D269A852B49C3DC",
       "junitClass": "neoth"
     },
     {
@@ -2652,61 +2652,61 @@
     {
       "test": "memory::hippocampus::tests::selection_boundary_is_inclusive_and_idempotent",
       "sourcePath": "SRC/neothd/src/memory/hippocampus.rs",
-      "sourceSha256": "901B01194D3D37F942FF59CD1B4750161D08F548F13B77E9839AECDE2CE244FA",
+      "sourceSha256": "E11C46DD5D54EDDBE9474552C633A7E8EEC5BCD340DFE8B0C73DA7C8B6D25A22",
       "junitClass": "neoth"
     },
     {
       "test": "memory::hippocampus::tests::reconcile_removes_decayed_and_missing_membership_atomically",
       "sourcePath": "SRC/neothd/src/memory/hippocampus.rs",
-      "sourceSha256": "901B01194D3D37F942FF59CD1B4750161D08F548F13B77E9839AECDE2CE244FA",
+      "sourceSha256": "E11C46DD5D54EDDBE9474552C633A7E8EEC5BCD340DFE8B0C73DA7C8B6D25A22",
       "junitClass": "neoth"
     },
     {
       "test": "memory::hippocampus::tests::read_only_query_hides_stale_rows_and_uses_stable_order",
       "sourcePath": "SRC/neothd/src/memory/hippocampus.rs",
-      "sourceSha256": "901B01194D3D37F942FF59CD1B4750161D08F548F13B77E9839AECDE2CE244FA",
+      "sourceSha256": "E11C46DD5D54EDDBE9474552C633A7E8EEC5BCD340DFE8B0C73DA7C8B6D25A22",
       "junitClass": "neoth"
     },
     {
       "test": "memory::migrations::tests::v40_to_v41_adds_membership_without_rewriting_existing_importance",
       "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
-      "sourceSha256": "7ED828AF4C64D056544843CFCFB8DFE7F9E25E4B0F92A97ED5167D0663EB5507",
+      "sourceSha256": "26489483393FE841C79A65F4EB9308577F1FBA831B13C1E78D269A852B49C3DC",
       "junitClass": "neoth"
     },
     {
       "test": "memory::migrations::tests::v40_to_v41_rolls_back_when_an_incompatible_existing_table_blocks_the_index",
       "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
-      "sourceSha256": "7ED828AF4C64D056544843CFCFB8DFE7F9E25E4B0F92A97ED5167D0663EB5507",
+      "sourceSha256": "26489483393FE841C79A65F4EB9308577F1FBA831B13C1E78D269A852B49C3DC",
       "junitClass": "neoth"
     },
     {
       "test": "memory::consolidate::tests::hippocampus_membership_moves_with_retained_event_and_rolls_back_with_decay",
       "sourcePath": "SRC/neothd/src/memory/consolidate.rs",
-      "sourceSha256": "24DA1D1480735F577483CA9ED049E37C63767725F87D1DD9325455718F1ED5EB",
+      "sourceSha256": "9EE52D9FC13AEFBF890DB6DAE7E8303C90C5BA2FB4F536D1984AD54F71C16448",
       "junitClass": "neoth"
     },
     {
       "test": "memory::decay_task::tests::hippocampus_selection_is_default_off_and_custom_fail_closed",
       "sourcePath": "SRC/neothd/src/memory/decay_task.rs",
-      "sourceSha256": "FF6DD6414DCB9D1E9E369291C26FBDEB238DF9A122F452489B7748F7757C9C75",
+      "sourceSha256": "9A7CEF2775B6ED383209595C33961B49DE5E54C70D6545A08B9EFC31CE5B02A7",
       "junitClass": "neoth"
     },
     {
       "test": "memory::decay_task::tests::rejected_reload_keeps_the_last_accepted_hippocampus_policy",
       "sourcePath": "SRC/neothd/src/memory/decay_task.rs",
-      "sourceSha256": "FF6DD6414DCB9D1E9E369291C26FBDEB238DF9A122F452489B7748F7757C9C75",
+      "sourceSha256": "9A7CEF2775B6ED383209595C33961B49DE5E54C70D6545A08B9EFC31CE5B02A7",
       "junitClass": "neoth"
     },
     {
       "test": "memory::decay_task::tests::wal_indexed_importance_flows_through_accepted_tick_to_cli_hippocampus_view",
       "sourcePath": "SRC/neothd/src/memory/decay_task.rs",
-      "sourceSha256": "FF6DD6414DCB9D1E9E369291C26FBDEB238DF9A122F452489B7748F7757C9C75",
+      "sourceSha256": "9A7CEF2775B6ED383209595C33961B49DE5E54C70D6545A08B9EFC31CE5B02A7",
       "junitClass": "neoth"
     },
     {
       "test": "cli::memory::tests::hippocampus_flag_accepts_an_omitted_or_explicit_query",
       "sourcePath": "SRC/neothd/src/cli/memory.rs",
-      "sourceSha256": "42752C896A2E7A317845C74CFAF943AC77EFDACD6B717AD015B5B628A2A5A7A4",
+      "sourceSha256": "B2D30BE006B2482ED1B52520DBFD448F32964EDCA9C143F830783B8F835D44D4",
       "junitClass": "neoth"
     }
   ],
@@ -6655,6 +6655,21 @@
     "sourceTestReceipt": "work/gold-20260906/wave175-next-batch/IMPLEMENTATION-RECEIPT-04.json",
     "sourceTestReceiptSha256": "407A21D0DEC6E95BFF4D70E66154AA989FC3242B3610AEB209C5DC6CC831D0C7",
     "boundary": "STATIC-APPROVE only; Hosted compile/migration/scheduler/CLI/format/Clippy still required",
-    "roadClosure": false
+    "roadClosure": false,
+    "hostedRepair": {
+      "preflight": "35666214987",
+      "formatHunks": 22,
+      "formatFiles": 6,
+      "formatReceiptSha256": "FD47FB80BCB38EC766D470FE73B409C8E90C55BE36635E3DE56273A0C0F47DF7",
+      "cli": "35666228194",
+      "error": "E0277 doubleborrowed slice in renderer",
+      "compilerLogSha256": "55355A24DFBAD75F3B7B28077F2E357F75488754D02763AF198814E2586DBB1D",
+      "compileRepair": "work/gold-20260906/wave175-next-batch/COMPILE-REPAIR.json",
+      "compileRepairSha256": "A543386CFB8A66B763C69BD49BEF34960A9B8DB15A92A6AA3EC43AD0ED0A2B25",
+      "quality": "35666212306 success",
+      "freshHosted": "pending",
+      "review": "work/gold-20260906/wave175-next-batch/COMPILE-REVIEW.md",
+      "reviewSha256": "6D6F5808734D9C130FB5529ADDA977ADF67506C63C2D4E0D0EAD2C3003D7CB02"
+    }
   }
 }

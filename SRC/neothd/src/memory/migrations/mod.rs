@@ -5036,7 +5036,12 @@ mod tests {
         assert!(sqlite_object_exists(&conn, "idx_hippocampus"));
         assert!(sqlite_object_exists(&conn, "idx_hippocampus_selected"));
         assert_eq!(
-            conn.query_row("SELECT importance FROM idx_episode WHERE event_id = 7", [], |row| row.get::<_, f64>(0)).unwrap(),
+            conn.query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = 7",
+                [],
+                |row| row.get::<_, f64>(0)
+            )
+            .unwrap(),
             0.8125
         );
     }

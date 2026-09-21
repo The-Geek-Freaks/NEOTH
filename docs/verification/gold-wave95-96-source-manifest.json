@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W175-Hippocampus-selection",
-  "base": "543a23eb097473c97072f3efc6280f291fea773f",
-  "capturedUtc": "2026-09-21T23:06:59.1258977Z",
-  "validationStatus": "W175_STATIC_APPROVED_HOSTED_PENDING",
-  "scopeNote": "W175 reviewed9 source files+11 behavioral identities; current WAL importance to accepted2h tick and read-only CLI membership. Review04 binds same9 hashes as stable Freeze04. Only explicit W175 source/docs admitted; W178 dirty repairs excluded. No behavior acceptance.",
+  "base": "da78c6a86c03fcc54247947a20a0390a0c473c7e",
+  "capturedUtc": "2026-09-21T23:14:12.4339292Z",
+  "validationStatus": "W175_HOSTED_COMPILE_FORMAT_REPAIR_PENDING",
+  "scopeNote": "W175 22 exact Hosted format hunks plus one slice double-borrow compile repair. Quality35666212306 passed on da78. Six explicit W175 source files+3 docs rehashed; W178 dirty repairs excluded. Fresh compile/format and behavior required.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -123,8 +123,8 @@
     },
     {
       "path": "docs/gold-wave175-verification.md",
-      "bytes": 3185,
-      "sha256": "870081F502A838E7AD3EA1B1F9212ED5744814B90E6BE344146A430DA1F4E265"
+      "bytes": 3707,
+      "sha256": "7B13505E542FA4AA5A83B974850D058A8F1910D0BECFD559275542A0362A2A2F"
     },
     {
       "path": "docs/install.md",
@@ -203,13 +203,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1012521,
-      "sha256": "45BF06BAB776CABB98E47A18E34A63504424222C1011C5B93BC61FF71BA583A1"
+      "bytes": 1012880,
+      "sha256": "ED38C48AEB457A9AA56CCAAE6183C546C7C4B08E2CAF8BACEB72A7DFE9D93BEC"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1607968,
-      "sha256": "50334794A331C3BBE1064D20173E2B048CA9F02AA66F3F0DDF2E58FECC5FFEC1"
+      "bytes": 1608327,
+      "sha256": "AC4C37BC899DCC11E1BE592EC35AA881D19DBFF602AD84DC60EAB343E841FA8C"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -808,8 +808,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/memory.rs",
-      "bytes": 109653,
-      "sha256": "42752C896A2E7A317845C74CFAF943AC77EFDACD6B717AD015B5B628A2A5A7A4"
+      "bytes": 109698,
+      "sha256": "B2D30BE006B2482ED1B52520DBFD448F32964EDCA9C143F830783B8F835D44D4"
     },
     {
       "path": "SRC/neothd/src/cli/meter.rs",
@@ -1443,18 +1443,18 @@
     },
     {
       "path": "SRC/neothd/src/memory/consolidate.rs",
-      "bytes": 35660,
-      "sha256": "24DA1D1480735F577483CA9ED049E37C63767725F87D1DD9325455718F1ED5EB"
+      "bytes": 35970,
+      "sha256": "9EE52D9FC13AEFBF890DB6DAE7E8303C90C5BA2FB4F536D1984AD54F71C16448"
     },
     {
       "path": "SRC/neothd/src/memory/decay_task.rs",
-      "bytes": 43922,
-      "sha256": "FF6DD6414DCB9D1E9E369291C26FBDEB238DF9A122F452489B7748F7757C9C75"
+      "bytes": 44379,
+      "sha256": "9A7CEF2775B6ED383209595C33961B49DE5E54C70D6545A08B9EFC31CE5B02A7"
     },
     {
       "path": "SRC/neothd/src/memory/hippocampus.rs",
-      "bytes": 8899,
-      "sha256": "901B01194D3D37F942FF59CD1B4750161D08F548F13B77E9839AECDE2CE244FA"
+      "bytes": 9208,
+      "sha256": "E11C46DD5D54EDDBE9474552C633A7E8EEC5BCD340DFE8B0C73DA7C8B6D25A22"
     },
     {
       "path": "SRC/neothd/src/memory/indexer.rs",
@@ -1463,13 +1463,13 @@
     },
     {
       "path": "SRC/neothd/src/memory/migrations/mod.rs",
-      "sha256": "7ED828AF4C64D056544843CFCFB8DFE7F9E25E4B0F92A97ED5167D0663EB5507",
-      "bytes": 224020
+      "sha256": "26489483393FE841C79A65F4EB9308577F1FBA831B13C1E78D269A852B49C3DC",
+      "bytes": 224095
     },
     {
       "path": "SRC/neothd/src/memory/mod.rs",
       "bytes": 6829,
-      "sha256": "4B24F7D41339A2779C69E5B349277AF21D3618F5A21B9AC0B192B20735C15516"
+      "sha256": "868ABCEE646C6B70F4461946412F00947D1D32898159DA5C0082164AEF56C2AD"
     },
     {
       "path": "SRC/neothd/src/memory/recall_lanes.rs",
