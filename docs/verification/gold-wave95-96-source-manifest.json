@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W136-skill-registry-and-type-hierarchy",
-  "base": "6c9955d08b352d1a6b44278c8e145cdb89f49d35",
-  "capturedUtc": "2026-09-21T08:52:27.5203494Z",
-  "validationStatus": "W136_INTEGRATED_SOURCE_APPROVED_REMOTE_EXECUTION_REQUIRED",
-  "scopeNote": "308 cumulative inputs. W136 exact11-hunk/four-file hosted format from35579924445, with separate expected-source/index proof. Unadmitted W137/W138 working source excluded. No local validation or Road closure.",
+  "base": "0c2c2a2addc2d01720ee328f414688a377477fd1",
+  "capturedUtc": "2026-09-21T09:05:14.2071734Z",
+  "validationStatus": "W139_OBSERVED_TYPE_SCOPE_REPAIR_REMOTE_EXECUTION_REQUIRED",
+  "scopeNote": "308 cumulative inputs. One reviewed W139 type-path correction after hosted E0412; W137/W138 working source excluded. No local validation or Road closure.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -1183,8 +1183,8 @@
     },
     {
       "path": "SRC/neothd/src/pipeline/enriched_request.rs",
-      "bytes": 55895,
-      "sha256": "97E7A6E69823F6B70A2D7ECE358855B68BB75CECFC23441E52F0F925D61C85E8"
+      "bytes": 55912,
+      "sha256": "E6EBF38E178DF4C5D0BB016C0AA533E3BC04DA4B297C81C02334D19E5EE34AD8"
     },
     {
       "path": "SRC/neothd/src/proactive/action_staging.rs",

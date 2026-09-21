@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W95_W136_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "6c9955d08b352d1a6b44278c8e145cdb89f49d35",
+  "status": "W95_W139_SOURCE_REMOTE_EXECUTION_REQUIRED",
+  "base": "0c2c2a2addc2d01720ee328f414688a377477fd1",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 53280,
-    "sha256": "A106B320630C11C28BA1274A1CAC610F879E2A783B62743F290696621EC6FC4E"
+    "bytes": 53226,
+    "sha256": "3343E2D7F45493B2DA1D77F886480193A2394F2318DA509BB1935F8820DA679C"
   },
   "sourceInputs": 308,
   "requiredNativeTests": [
@@ -828,7 +828,7 @@
     {
       "test": "pipeline::enriched_request::tests::session_start_skill_registry_is_retained_as_typed_block_d_before_skill_body",
       "sourcePath": "SRC/neothd/src/pipeline/enriched_request.rs",
-      "sourceSha256": "97E7A6E69823F6B70A2D7ECE358855B68BB75CECFC23441E52F0F925D61C85E8",
+      "sourceSha256": "E6EBF38E178DF4C5D0BB016C0AA533E3BC04DA4B297C81C02334D19E5EE34AD8",
       "junitClass": "neoth"
     },
     {
@@ -1740,7 +1740,17 @@
       "localFormatterRan": false,
       "codeQuality": 35579924103,
       "codeQualityConclusion": "success",
-      "execution": "PENDING_FRESH_HOSTED_GATES"
+      "execution": "PASS_PREFLIGHT35580411011_CODEQUALITY35580410277_ON0c2c2a2a"
     }
+  },
+  "wave139": {
+    "report": "docs/gold-wave139-verification.md",
+    "sourceReview": "APPROVED_STATIC_ONLY",
+    "reviewSha256": "E9E40F1C0890C1E425F59A31B09A7668B915C8321ADFDF53309BEFF690268390",
+    "failedCi": 35580547601,
+    "failedSource": "0c2c2a2addc2d01720ee328f414688a377477fd1",
+    "failedCiConclusion": "cancelled_after_E0412",
+    "execution": "PENDING_GITHUB_ONLY",
+    "localValidationRan": false
   }
 }

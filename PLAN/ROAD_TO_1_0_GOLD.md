@@ -8,6 +8,15 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W139 observed compile repair (2026-09-21):** Preflight 35580411011 and
+Code Quality 35580410277 passed on 0c2c2a2a. Full CI 35580547601 then found
+E0412 for the new registry-context type in the production composer; the field
+now uses its existing fully qualified re-export. The failed-source run is
+confirmed cancelled. Fresh hosted compilation/runtime is required; see
+[W139](../docs/gold-wave139-verification.md). W137 session/delegation fixtures
+and W138 per-skill autonomy remain unadmitted implementation work. Counts stay
+1324/1015/307/2 and all local validation stays suspended.
+
 **W136 skill registry source admitted (2026-09-21):** chat and channel prompts
 now receive the exact policy-filtered registry metadata as required typed
 context. Delegation, retry and local fallback retain the same snapshot;

@@ -187,7 +187,7 @@ pub struct EnrichmentInputs<'a> {
     /// resolver from the exact snapshot used for routing. This remains typed
     /// Block D data: it describes available skills and has no instruction
     /// authority. `None` on surfaces without that snapshot.
-    pub skill_registry_context: Option<&'a RenderedUntrustedContext>,
+    pub skill_registry_context: Option<&'a crate::pipeline::RenderedUntrustedContext>,
     /// Identifier of the activated skill, plumbed through to the
     /// downstream WAL audit. `None` mirrors `skill_system_prompt`.
     pub used_skill_id: Option<&'a str>,
