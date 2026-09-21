@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W153_HOSTED_FORMAT_AND_FINALIZER_REPAIR_REBUILD_PENDING",
-  "base": "7a0cd8632827522c58fdbc1834f08fbb27c73fee",
+  "status": "W153_CORE_REFERENCE_PASS_NATIVE_GUI_PENDING",
+  "base": "a439a1ee0e078e24cf462cad43a05bc0c67ef8f5",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 56519,
-    "sha256": "89587B9A08CC5B3802875E35A3E384C0E2F5CA8BAEC35EF4DA73281076CC14AB"
+    "bytes": 56526,
+    "sha256": "855C6F6EF120A79F88CAC0D58A97C66631E2D04475257F367553303FE171AFA4"
   },
   "sourceInputs": 327,
   "requiredNativeTests": [
@@ -2826,7 +2826,7 @@
         "executionClaim": false
       }
     ],
-    "execution": "Exact-source hosted compile, native tests, GUI callbacks and generated CLI reference pending",
+    "execution": "Core/reference PASS on a439a1ee; native tests and GUI callbacks pending",
     "releaseReady": false
   },
   "wave153IntegrationRepair": {
@@ -2875,13 +2875,24 @@
       }
     ],
     "localExecution": false,
-    "hostedRebuild": "pending",
+    "hostedRebuild": "PASS:35615137053/core binary and source-bound generated reference",
     "releaseReady": false,
     "compilerReview": {
       "record": "work/gold-20260906/wave153-integration-compile/REPAIR.md",
       "sha256": "5C9EF88D59B1864DB3A772824631E6A6D683701A6C277152C7411B95AFE37602",
       "verdict": "STATIC_APPROVE",
       "executionClaim": false
+    },
+    "generatedReference": {
+      "run": 35615137053,
+      "job": 106383786726,
+      "source": "a439a1ee0e078e24cf462cad43a05bc0c67ef8f5",
+      "conclusion": "success",
+      "artifactSha256": "877E85B849AD945DF2D92A859945F0F2A3AFD3991437376F3214C407FCC0C3AE",
+      "hostedLogSha256": "B4BBD9A3D2ECFE576A8F6281C8A65CD2F14E13D37751339617C10D70858E87EE",
+      "diff": "One generated --show-reasoning entry",
+      "localExecution": false,
+      "scope": "Core CLI binary build and generated reference only; native and GUI tests remain pending"
     }
   }
 }

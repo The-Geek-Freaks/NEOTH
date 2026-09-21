@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W153-transient-reasoning-integration",
-  "base": "7a0cd8632827522c58fdbc1834f08fbb27c73fee",
-  "capturedUtc": "2026-09-21T14:50:03.3117570Z",
-  "validationStatus": "W153_HOSTED_FORMAT_AND_FINALIZER_REPAIR_REBUILD_PENDING",
-  "scopeNote": "327 source inputs; exact 86-hunk hosted formatting import and finalizer Result<(), anyhow::Error> repair after E0308. W155 and W158 dirty sources excluded. All executable verification remains GitHub-hosted; no Road closure.",
+  "base": "a439a1ee0e078e24cf462cad43a05bc0c67ef8f5",
+  "capturedUtc": "2026-09-21T14:59:50.3483666Z",
+  "validationStatus": "W153_CORE_REFERENCE_PASS_NATIVE_GUI_PENDING",
+  "scopeNote": "327 source inputs; W153 format/finalizer source a439a1ee passed Preflight35615137561, CodeQuality35615138192 and core/reference35615137053. Generated reference imported with source/hash proof. Native/GUI execution pending; W155/W158 excluded.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -53,8 +53,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 228814,
-      "sha256": "A223E291DBE80B7ED69247CCED489A9588B632685BFBC8789649BFC0116AE7E4"
+      "bytes": 228961,
+      "sha256": "877E85B849AD945DF2D92A859945F0F2A3AFD3991437376F3214C407FCC0C3AE"
     },
     {
       "path": "docs/code-map-lifecycle.md",

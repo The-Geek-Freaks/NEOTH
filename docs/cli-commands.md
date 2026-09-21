@@ -472,6 +472,7 @@ One-shot LLM round trip. Loads freedom.yaml, sends prompt, prints reply. Both re
 - `--edit` — GOLD-ADOPT-24 — compose the prompt in `$VISUAL`/`$EDITOR` instead of passing it inline. Any inline message/`--message` seeds the editor as prefill. Aborts if the editor is left empty
 - `--config <PATH>` — Override the freedom.yaml path (mostly for tests)
 - `--wal-segment <PATH>` — Diagnostic/test WAL override. Must be a canonical direct child of the selected config home's `wal` directory with a six-digit segment suffix
+- `--show-reasoning` — Display ephemeral provider reasoning for this direct invocation. The private GUI launch envelope overrides this argv flag
 - `--temperature <T>` — Sampling temperature for providers that support it. Range [0.0, 2.0]; Cohere, Bedrock, and legacy Anthropic cap it at 1.0, while Anthropic models after Opus 4.6 accept only 1.0. An unsupported selected provider returns a clear error before transport
 - `--top-p <P>` — Top-p (nucleus) sampling cutoff. Range (0.0, 1.0]; `1.0` keeps every token. Anthropic models after Opus 4.6 accept only [0.99, 1.0]. An unsupported selected provider fails before transport
 - `--sampling-seed <SEED>` — Optional RNG seed for reproducible sampling. Portable range [0, 4294967295]. Pair with `--temperature > 0` for a replayable non-greedy call. Unsupported providers fail

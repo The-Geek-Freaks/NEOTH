@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W153 hosted core/reference PASS (2026-09-21):** repaired source a439a1ee
+passed Preflight 35615137561, Code Quality 35615138192 and core/reference
+35615137053 (job 106383786726). The generated reference was imported only
+after exact source-head and SHA-256 verification (877E85B849AD945D...);
+its sole change is the new `--show-reasoning` option. This proves the core CLI
+build and reference generation. Native tests and GUI callbacks remain pending;
+GOLD-LF-P1-10 stays open.
+
 **W153 hosted repair (2026-09-21):** integration 7a0cd863 passed Code Quality
 35612427039. Preflight 35612427933 supplied 86 exact Rustfmt hunks in seven
 files; all were imported. Core/reference build 35612427120 found one E0308:
