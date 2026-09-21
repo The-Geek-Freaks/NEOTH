@@ -1,8 +1,8 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W142-W150-self-improve-quality-and-gui-compile-recovery",
-  "base": "fb16a751da809951be8e656c5927f1b935288c86",
-  "capturedUtc": "2026-09-21T11:48:49.3052775Z",
+  "base": "b437365ff4337e09401e836299c17a8f70c82f8b",
+  "capturedUtc": "2026-09-21T11:54:34.7429887Z",
   "validationStatus": "W142_HOSTED_FORMAT_AND_REFERENCE_IMPORTED_NATIVE_TESTS_PENDING",
   "scopeNote": "317 inputs; W142 fixed approved quality producer plus exact GUI consent and native callback; W150 observed fixture compile repairs. W149/W151 working files excluded. No local execution or Road closure.",
   "files": [
@@ -273,8 +273,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1777055,
-      "sha256": "8C50D6090B8C6384AF9E8586FA92DF22D8BA959D175EF13B786B0D54C24FA152"
+      "bytes": 1777369,
+      "sha256": "58781A6D3045E6D19AD5DE8920053EA81EE4AF604A32A889AEB634B41C61016C"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",

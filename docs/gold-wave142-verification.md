@@ -53,3 +53,9 @@ aliases were collapsed. All postimages are imported; no local formatter ran.
 Complete hosted-log SHA-256:
 84AB4590657781B47AC192116F7C33B0F271F648FE48B36CA299C57B7C67C8AD.
 Fresh native/GUI test execution remains required.
+
+Shared native fixture follow-up: the production JSON mutation command uses
+--output json as a leading global pair. The staged fixture now normalizes
+only that exact pair to its existing suffix matchers; full argument counts,
+selected IDs and evidence digests stay exact. Independent source review passed;
+actual hosted callback execution remains required.

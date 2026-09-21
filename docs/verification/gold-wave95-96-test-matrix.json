@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W95_W142_W150_SOURCE_REMOTE_EXECUTION_REQUIRED",
-  "base": "fb16a751da809951be8e656c5927f1b935288c86",
+  "base": "b437365ff4337e09401e836299c17a8f70c82f8b",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 54808,
-    "sha256": "F5B95052309B95FA8C676D304144345FC55F7CF79605CF2302EAE99D203EB11E"
+    "sha256": "8A2185B2430C7C5C3682BFDC65C00821A3451DA4C0D41E47383B8B44B3C5471C"
   },
   "sourceInputs": 317,
   "requiredNativeTests": [
@@ -1413,8 +1413,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 1777055,
-      "sha256": "8C50D6090B8C6384AF9E8586FA92DF22D8BA959D175EF13B786B0D54C24FA152"
+      "bytes": 1777369,
+      "sha256": "58781A6D3045E6D19AD5DE8920053EA81EE4AF604A32A889AEB634B41C61016C"
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
@@ -2209,6 +2209,12 @@
       "qualityConclusion": "success",
       "execution": "PENDING_FRESH_GITHUB_NATIVE_GUI",
       "localValidation": false
+    },
+    "fixtureArgvFollowup": {
+      "reviewSha256": "6F7294029F31D29218BA6E3F7A29CA5E6FB265161438DA74DEDDFE14126DF893",
+      "sourceSha256": "58781A6D3045E6D19AD5DE8920053EA81EE4AF604A32A889AEB634B41C61016C",
+      "scope": "Normalize exact global JSON prefix for strict fake CLI suffix matchers; real product command unchanged",
+      "execution": "PENDING_GITHUB_ONLY"
     }
   },
   "wave150": {

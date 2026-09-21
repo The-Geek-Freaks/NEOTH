@@ -8,6 +8,10 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+W142 fixture follow-up aligns the shared fake CLI with the production global
+JSON option spelling; all exact argument/receipt assertions remain. Source
+review passed, hosted callback execution is still pending.
+
 **W142 hosted follow-up (2026-09-21):** CLI build/reference35595632250
 succeeded onfb16a751 and its exact SHA-bound reference is imported. All87
 unique formatter hunks from Preflight35595614938 are imported; CodeQuality

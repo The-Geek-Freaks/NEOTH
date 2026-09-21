@@ -39872,6 +39872,13 @@ mod w58_gui_callback_runtime_tests {
             r#"#!/bin/sh
 base="${0%/*}"
 mode=$(/bin/cat "$base/mode")
+# Clap accepts this global option before or after a subcommand. Mutation
+# helpers use the prefix; read probes keep the suffix. Normalize only that
+# exact pair, then retain every command-specific argument/count check below.
+if [ "$1" = --output ] && [ "$2" = json ]; then
+  shift 2
+  set -- "$@" --output json
+fi
 if [ "$1" = channel ] && [ "$2" = account ] && [ "$3" = remove ] && [ "$4" = telegram ] && [ "$5" = --account ] && [ "$6" = ops_b ] && [ "$7" = --output ] && [ "$8" = json ] && [ "$#" -eq 8 ]; then
   printf 'remove:%s\n' "$6" >> "$base/calls"
   if [ "$mode" = blocked_malformed ]; then
