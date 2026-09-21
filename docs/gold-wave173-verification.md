@@ -1,7 +1,7 @@
 # W173 — retained prompt-tax measurement
 
-Road scope: ADOPT31-D3. Source review is complete; Hosted compilation and
-behavioral acceptance remain required. No Road checkbox closes on this record.
+Road scope: ADOPT31-D3. Source review and Hosted CLI compilation are complete;
+behavioral acceptance remains required. No Road checkbox closes on this record.
 
 The existing final prompt-budget boundary estimates retained skill, memory,
 repository-context, council and explicitly unattributed injection. Dropped or
@@ -46,5 +46,9 @@ Hosted Preflight 35660482045 on cdaae0a4 requested exactly 18 formatting
 hunks across six source files. They are imported from the retained GitHub log;
 the source-bound receipt is FORMAT-HOSTED.json in the W173 work directory
 (SHA-256 16ECA5542841BF20F78DDD1B18D7E8BBAA71E8C0873679F8B46263CDF26E6D58).
-Code Quality 35660480451 passed. CLI build/reference 35660480510 remains in
-progress; fresh formatting and behavioral acceptance are still required.
+Code Quality 35660480451 passed. CLI build/reference 35660480510 passed on
+cdaae0a4. Its generated reference has SHA-256
+C948D52B50F47917AD9E8510178974FFA9C4AD3D603B18B0CCE33E308FAE0493
+and is byte-identical to the existing published reference. On the corrected
+cceefbf5294cd2986ca9bd202bb0764077d18161 source, Preflight 35661037612 and
+Code Quality 35661037740 passed. Native behavioral acceptance remains required.

@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W173 Hosted compilation confirmed (2026-09-22):** CLI build/reference
+35660480510 passed on cdaae0a4. Its generated reference is byte-identical to the
+published reference (SHA-256 C948D52B50F47917AD9E8510178974FFA9C4AD3D603B18B0CCE33E308FAE0493).
+After importing the exact Hosted formatting, Preflight 35661037612 and Code
+Quality 35661037740 passed on cceefbf5. Prompt-tax behavior and native/GUI
+integration remain pending; no checkbox closes. W174 visual ingest is under
+independent review and remains excluded from this evidence publication.
+
 **W173 retained prompt overhead (2026-09-21):** independently reviewed
 source now carries post-budget skill/memory/repo/council/unattributed estimates
 through terminal usage and live meter output. The actual local/paid provider

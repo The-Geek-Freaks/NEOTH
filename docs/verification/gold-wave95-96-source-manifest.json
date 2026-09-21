@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W173-prompt-tax-candidate",
-  "base": "cdaae0a4f52c5a2764163ae3ae9f51cc34a62b1b",
-  "capturedUtc": "2026-09-21T22:05:53.5657158Z",
-  "validationStatus": "W173_HOSTED_FORMAT_IMPORT_NATIVE_PENDING",
-  "scopeNote": "Exact 18 Hosted format hunks across six W173 paths; no semantic change. W174 unfinished video source excluded. Fresh hosted preflight and native behavior still required.",
+  "base": "cceefbf5294cd2986ca9bd202bb0764077d18161",
+  "capturedUtc": "2026-09-21T22:12:20.7952354Z",
+  "validationStatus": "W173_HOSTED_CORE_PASS_NATIVE_PENDING",
+  "scopeNote": "W173 CLI/reference, corrected Preflight and Quality pass. Documentation-only evidence update; W174 unfinished video source excluded; native behavior pending.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -113,8 +113,8 @@
     },
     {
       "path": "docs/gold-wave173-verification.md",
-      "bytes": 3023,
-      "sha256": "70D21BD2023226B9675BA8213544CA0D7C28EC6B7CD7FCE74F26ECAFC7788C01"
+      "bytes": 3297,
+      "sha256": "9D4580086CAB4E6C5A8859562A274A630DCB150DB00B8DBAAE41FFC917C5DD60"
     },
     {
       "path": "docs/install.md",
@@ -193,13 +193,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1008444,
-      "sha256": "70C381D33F7AAB958649001E50484BA1DD6182C0D6883D2E73A2BDD3A9BE3B99"
+      "bytes": 1008993,
+      "sha256": "85973E4AE8A23EAFBDF0928DA4EF9E62DE40EA63E1C4A45F8871D1BF9BA9F8D6"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1603891,
-      "sha256": "9326325B91AD1F7499B770B977A13A3E7A4328708D94557D6BE25D0108997907"
+      "bytes": 1604440,
+      "sha256": "281BD566046854024028F93086E184A91279312D44F23AD420EA62C2D7759433"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
