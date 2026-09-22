@@ -7,3 +7,23 @@ git_blob_sha1=625ad8909b1abdba2292f3a9a10db6864fd5d561
 bytes=1289603
 sha256=7ed98ddbad84ccac4cd0aeb3099049280713df825c610a8ed34543318f1b2c49
 license_sha256=2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b
+
+# Derived production graph; original above remains an immutable conversion input.
+derived_path=silero_vad_16k_op15_tract_16k.onnx
+derived_sha256=0042e699f5b6cd356a28174f7bdb1b777a8f956e8ab07a3bac6e3baa41048e77
+derived_source_revision=b2d0ec2b3613eab450aa222fdc61de33a00cf9ac
+derived_hosted_run=https://github.com/The-Geek-Freaks/NEOTH/actions/runs/35714444646
+derived_transform=bind input[1,576],state[2,1,128],sr=int64(16000); ORT1.19.2 ORT_ENABLE_BASIC
+manual_branch_rewrite=none
+derived_onnx_checker=passed; standard domains; no If nodes
+parity_reference=ORT1.19.2 CPU single-thread,ORT_DISABLE_ALL,session.disable_prepacking=1
+parity_frames=5 scenarios x256 recurrent frames plus same-reference-state one-step comparisons
+parity_atol=1e-6
+parity_rtol=1e-6
+parity_probability_max_abs=0
+parity_state_max_abs=0
+default_ort_probability_max_abs=1.4901161193847656e-7
+default_ort_state=retained measured prepacking kernel difference; see full receipt
+receipt=docs/verification/gold-wave186-silero-specialization.json
+product_runtime=Tract0.23.8; separate Hosted live-audio acceptance required
+derived_license=MIT; unchanged upstream license above

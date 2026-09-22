@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W186 graph import (2026-09-22):** specialization `35714444646` passed on
+`b2d0ec2b`. The downloaded candidate copies and receipt agree on SHA-256
+`0042e699f5b6cd356a28174f7bdb1b777a8f956e8ab07a3bac6e3baa41048e77`.
+The original asset remains unchanged. The two-input derived graph passes the
+ONNX checker, contains only standard operators and no If nodes. Its probability
+and state match the original exactly in 1280 recurrent and same-state reference
+frames with prepacking disabled; default-ORT probability also passes. Measured
+default-state kernel differences remain in the receipt. Tolerances are unchanged.
+The Tract adapter now uses the two-input graph; fresh live-audio runtime tests
+remain required. Full CI `35713920675` and preview `35713923652` on `8b654ebd`
+continue independently. The new Linux Clippy private-interface finding is fixed
+by retaining `classify` as module-private; no behavior rule is changed.
+
 **Current Hosted boundary (2026-09-22):** W189 behavior lane `35712523037`
 passed all 18 exact source-bound identities on `2cef8239`. The downloaded
 selection, source and execution receipts agree: 18 required/selected/executed,
@@ -29,7 +42,7 @@ Linux/macOS audio reach the original Tract If blocker. Windows compiled but
 CRLF in its fixture-name transport yielded zero tests; the Hosted lane now
 writes LF and normalizes terminal CR while still requiring one exact match.
 
-The admitted inventory contains 453 source paths and 555 universal
+The admitted inventory contains 455 source paths and 555 universal
 native identities; platform, GUI and audio counts remain unchanged. Road counts
 remain **1015 checked / 307 open / 2 partial**. This status update changes no
 checkbox or runtime/release acceptance boundary.

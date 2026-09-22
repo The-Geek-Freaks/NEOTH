@@ -387,7 +387,7 @@ fn p90(samples: &[u64]) -> u64 {
     sorted[p90_index]
 }
 
-pub(crate) fn classify(
+fn classify(
     recent: &WindowSamples,
     baseline: &WindowSamples,
     recent_p90: u64,

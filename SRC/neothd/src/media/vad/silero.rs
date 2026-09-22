@@ -9,7 +9,6 @@ use std::{io::Cursor, sync::Arc};
 use anyhow::{Context, Result, bail};
 use tract_onnx::prelude::*;
 
-const SAMPLE_RATE_HZ: u32 = 16_000;
 const FRAME_SAMPLES: usize = 512;
 const CONTEXT_SAMPLES: usize = 64;
 const MODEL_SAMPLES: usize = FRAME_SAMPLES + CONTEXT_SAMPLES;
@@ -18,9 +17,10 @@ const STATE_BATCH: usize = 1;
 const STATE_FEATURES: usize = 128;
 const STATE_SAMPLES: usize = STATE_LAYERS * STATE_BATCH * STATE_FEATURES;
 
-/// The exact model selected by W186.  Hosted import owns adding this file and
-/// validating its provenance before a build is attempted.
-const SILERO_MODEL: &[u8] = include_bytes!("../../../assets/silero-vad/silero_vad_16k_op15.onnx");
+/// The Hosted-verified fixed 16-kHz specialization. The original upstream model
+/// and complete conversion/parity provenance remain alongside this input.
+const SILERO_MODEL: &[u8] =
+    include_bytes!("../../../assets/silero-vad/silero_vad_16k_op15_tract_16k.onnx");
 
 /// Stateful CPU-only adapter for the embedded 16-kHz Silero ONNX graph.
 ///
@@ -38,22 +38,22 @@ pub(crate) struct SileroVad {
 }
 
 impl SileroVad {
-    /// Load the compiled-in graph and constrain its three inputs to the
-    /// upstream `input`, `state`, and `sr` facts.
+    /// Load the compiled-in graph and constrain its two inputs. The sample rate
+    /// is fixed at 16 kHz by the verified graph specialization.
     pub(crate) fn new() -> Result<Self> {
         let mut graph = tract_onnx::onnx()
             .model_for_read(&mut Cursor::new(SILERO_MODEL))
             .context("decode embedded Silero VAD ONNX graph")?;
 
-        // The model's input order is part of the pinned upstream op15 graph:
-        // input [batch, 512 + 64], state [2, batch, 128], sr scalar i64.
+        // The specialized model preserves input [1, 512 + 64] followed by
+        // state [2, 1, 128]; sr is an immutable graph initializer.
         let input_count = graph
             .input_outlets()
             .context("inspect embedded Silero graph inputs")?
             .len();
-        if input_count != 3 {
+        if input_count != 2 {
             bail!(
-                "embedded Silero graph must expose audio, recurrent-state, and sample-rate inputs; got {}",
+                "embedded Silero graph must expose audio and recurrent-state inputs; got {}",
                 input_count
             );
         }
@@ -66,9 +66,6 @@ impl SileroVad {
                 f32::fact([STATE_LAYERS, STATE_BATCH, STATE_FEATURES]).into(),
             )
             .context("validate Silero recurrent-state input fact")?;
-        graph
-            .set_input_fact(2, i64::fact::<[usize; 0]>([]).into())
-            .context("validate Silero sample-rate input fact")?;
 
         let output_count = graph
             .output_outlets()
@@ -126,7 +123,6 @@ impl SileroVad {
                 Tensor::from_shape(&[1, MODEL_SAMPLES], &input)?.into(),
                 Tensor::from_shape(&[STATE_LAYERS, STATE_BATCH, STATE_FEATURES], &state_before)?
                     .into(),
-                Tensor::from(SAMPLE_RATE_HZ as i64).into(),
             ])
             .context("run embedded Silero VAD inference")?;
         if outputs.len() != 2 {

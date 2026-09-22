@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W186_CONTROLLED_REFERENCE_PARITY_PENDING_HOSTED",
-  "base": "425a43b602df513b4b28376ae1faf027b0575b83",
+  "status": "W186_VERIFIED_GRAPH_IMPORTED_TRACT_GATES_PENDING",
+  "base": "b2d0ec2b3613eab450aa222fdc61de33a00cf9ac",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 78132,
-    "sha256": "4A98FBC7AC08241C54D06B802B11B470FDF4EFD9C44095C7EF5299B51A3E899B"
+    "bytes": 78529,
+    "sha256": "9F5034C12328D3EE403AB6A1EA3A4A63C69CB0920744D613AF876A87BFBC7341"
   },
-  "sourceInputs": 453,
+  "sourceInputs": 455,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -3234,37 +3234,37 @@
     {
       "test": "daemon::capability_decay::tests::min_samples_keep_each_identity_inconclusive",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "A2343D3DD3B6FA048796A2B3CC4F8885F59B385CF517C736D513CF17A763B3F8",
+      "sourceSha256": "462BD3BA177BBE5C92AD29B1895F3397E3311C4419016D06497E6DFCAC1E80D6",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::regression_and_recovery_require_separate_conservative_windows",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "A2343D3DD3B6FA048796A2B3CC4F8885F59B385CF517C736D513CF17A763B3F8",
+      "sourceSha256": "462BD3BA177BBE5C92AD29B1895F3397E3311C4419016D06497E6DFCAC1E80D6",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::provider_and_capability_never_share_a_window",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "A2343D3DD3B6FA048796A2B3CC4F8885F59B385CF517C736D513CF17A763B3F8",
+      "sourceSha256": "462BD3BA177BBE5C92AD29B1895F3397E3311C4419016D06497E6DFCAC1E80D6",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::malformed_or_unattributed_terminal_payload_never_becomes_quality_evidence",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "A2343D3DD3B6FA048796A2B3CC4F8885F59B385CF517C736D513CF17A763B3F8",
+      "sourceSha256": "462BD3BA177BBE5C92AD29B1895F3397E3311C4419016D06497E6DFCAC1E80D6",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::authenticated_provider_terminal_producer_reaches_scanner_and_doctor",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "A2343D3DD3B6FA048796A2B3CC4F8885F59B385CF517C736D513CF17A763B3F8",
+      "sourceSha256": "462BD3BA177BBE5C92AD29B1895F3397E3311C4419016D06497E6DFCAC1E80D6",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::authenticated_terminal_history_refuses_a_later_incomplete_prefix",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "A2343D3DD3B6FA048796A2B3CC4F8885F59B385CF517C736D513CF17A763B3F8",
+      "sourceSha256": "462BD3BA177BBE5C92AD29B1895F3397E3311C4419016D06497E6DFCAC1E80D6",
       "junitClass": "neoth"
     },
     {
@@ -8828,5 +8828,57 @@
       }
     ],
     "note": "Evidence35713975510 isolates ORT prepacking. Reviewed oracle disables prepacking equally for original/candidate, strict1e-6 both outputs and recurrent/oneStep; default probability and binding controls still strict, default state diagnostic retained. Tract behavior pending, no asset imported."
+  },
+  "wave186VerifiedGraphImport": {
+    "status": "W186_VERIFIED_GRAPH_IMPORTED_TRACT_GATES_PENDING",
+    "sourceBase": "b2d0ec2b3613eab450aa222fdc61de33a00cf9ac",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/media/vad/silero.rs",
+        "bytes": 8639,
+        "sha256": "9BF8274362FF8AD54A65D6B40034637107E0F4678CBD75F85E29F6A19633A84C"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/capability_decay.rs",
+        "bytes": 26938,
+        "sha256": "462BD3BA177BBE5C92AD29B1895F3397E3311C4419016D06497E6DFCAC1E80D6"
+      },
+      {
+        "path": "SRC/neothd/assets/silero-vad/PROVENANCE.txt",
+        "bytes": 1762,
+        "sha256": "0F35FA10D46D8EC15A7A4B2CAB07164E4884BE92465EC7030D331507B4F67C1C"
+      },
+      {
+        "path": "SRC/neothd/assets/silero-vad/silero_vad_16k_op15_tract_16k.onnx",
+        "bytes": 1247766,
+        "sha256": "0042E699F5B6CD356A28174F7BDB1B777A8F956E8AB07A3BAC6E3BAA41048E77"
+      },
+      {
+        "path": "docs/verification/gold-wave186-silero-specialization.json",
+        "bytes": 253117,
+        "sha256": "B4F48372C352BD5C7BC9DC10C764B5DDD02C3E28F413BD59191D562CF8E40576"
+      },
+      {
+        "path": "docs/verification/gold-wave186-live-audio-tests.json",
+        "bytes": 5147,
+        "sha256": "E8E2CA48EE66DDC8A17FCC8DF876CB678088F40B0965351C7D1B51DBA76B2FD8"
+      },
+      {
+        "path": "docs/gold-wave186-verification.md",
+        "bytes": 5226,
+        "sha256": "37232513A70E1221E5E1D915AE7153F688122F1370D95756A4E59062238F695E"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1028799,
+        "sha256": "4154452BE9171E23EA026047856392D1CC7FF61C1DC94EE53102D6388694AE40"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1624246,
+        "sha256": "10B9CF8B57DAD5DD0D60B2044F1D0F567DCF0FE320CEBDDE9781611B3B802583"
+      }
+    ],
+    "note": "Run35714444646 b2d0ec2b graph/parity passed; exact candidate0042e699 imported, original unchanged. Adapter2inputs; no numerical tolerance inflation. W189 module-private classifier fixes hosted lint. Source455 native555; Tract live-audio remains pending."
   }
 }

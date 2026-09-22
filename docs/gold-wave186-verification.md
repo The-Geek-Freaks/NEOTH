@@ -5,6 +5,19 @@ W186 is the source-integration slice for
 It remains unaccepted: the Road item requires supported-release latency and
 runtime evidence that this source-only batch has not produced.
 
+**W186 graph import (2026-09-22):** specialization `35714444646` passed on
+`b2d0ec2b`. The downloaded candidate copies and receipt agree on SHA-256
+`0042e699f5b6cd356a28174f7bdb1b777a8f956e8ab07a3bac6e3baa41048e77`.
+The original asset remains unchanged. The two-input derived graph passes the
+ONNX checker, contains only standard operators and no If nodes. Its probability
+and state match the original exactly in 1280 recurrent and same-state reference
+frames with prepacking disabled; default-ORT probability also passes. Measured
+default-state kernel differences remain in the receipt. Tolerances are unchanged.
+The Tract adapter now uses the two-input graph; fresh live-audio runtime tests
+remain required. Full CI `35713920675` and preview `35713923652` on `8b654ebd`
+continue independently. The new Linux Clippy private-interface finding is fixed
+by retaining `classify` as module-private; no behavior rule is changed.
+
 The retained Hosted input run `35694695810` on source `87c18246` verified all
 85 artifact checksums, the source revision and the three recorded dependency
 inputs. The resulting working source pins `cpal = 0.18.2` and

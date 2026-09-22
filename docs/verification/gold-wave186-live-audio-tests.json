@@ -36,17 +36,17 @@
     {
       "test": "media::vad::silero::tests::embedded_graph_accepts_silence_with_a_valid_probability",
       "sourcePath": "SRC/neothd/src/media/vad/silero.rs",
-      "sourceSha256": "B687413CFE0CE02ACC8F1FBBBD154B4C6FB888AB73865DFA0A5647D7D5D1F7D7"
+      "sourceSha256": "9BF8274362FF8AD54A65D6B40034637107E0F4678CBD75F85E29F6A19633A84C"
     },
     {
       "test": "media::vad::silero::tests::invalid_frames_fail_before_inference",
       "sourcePath": "SRC/neothd/src/media/vad/silero.rs",
-      "sourceSha256": "B687413CFE0CE02ACC8F1FBBBD154B4C6FB888AB73865DFA0A5647D7D5D1F7D7"
+      "sourceSha256": "9BF8274362FF8AD54A65D6B40034637107E0F4678CBD75F85E29F6A19633A84C"
     },
     {
       "test": "media::vad::silero::tests::reset_restores_the_initial_recurrent_result_for_the_same_frame",
       "sourcePath": "SRC/neothd/src/media/vad/silero.rs",
-      "sourceSha256": "B687413CFE0CE02ACC8F1FBBBD154B4C6FB888AB73865DFA0A5647D7D5D1F7D7"
+      "sourceSha256": "9BF8274362FF8AD54A65D6B40034637107E0F4678CBD75F85E29F6A19633A84C"
     },
     {
       "test": "media::resampler::tests::streaming_sinc_split_matches_contiguous_without_ratio_drift",

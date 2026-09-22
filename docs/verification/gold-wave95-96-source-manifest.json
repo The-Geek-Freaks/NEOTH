@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W189-capability-history",
-  "base": "425a43b602df513b4b28376ae1faf027b0575b83",
-  "capturedUtc": "2026-09-22T10:07:45.6834728Z",
-  "validationStatus": "W186_CONTROLLED_REFERENCE_PARITY_PENDING_HOSTED",
+  "base": "b2d0ec2b3613eab450aa222fdc61de33a00cf9ac",
+  "capturedUtc": "2026-09-22T10:13:20.2849922Z",
+  "validationStatus": "W186_VERIFIED_GRAPH_IMPORTED_TRACT_GATES_PENDING",
   "scopeNote": "W189 bounded authenticated snapshot/history plus ED0 Clippy/Slint repair and strict Silero numerical diagnosis. No roadmap closure; prior waves remain historical.",
   "files": [
     {
@@ -193,8 +193,8 @@
     },
     {
       "path": "docs/gold-wave186-verification.md",
-      "bytes": 4301,
-      "sha256": "7BA9DFC09E9A922DDC325E775B2772D30281F0743E41806B7BC7249D9E6E3A70"
+      "bytes": 5226,
+      "sha256": "37232513A70E1221E5E1D915AE7153F688122F1370D95756A4E59062238F695E"
     },
     {
       "path": "docs/gold-wave187-verification.md",
@@ -249,7 +249,12 @@
     {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
-      "sha256": "AF24E0DB7A7D105133ABF56092F530DA5B7FFCA2D1D428854BDE9F6F25CCD573"
+      "sha256": "E8E2CA48EE66DDC8A17FCC8DF876CB678088F40B0965351C7D1B51DBA76B2FD8"
+    },
+    {
+      "path": "docs/verification/gold-wave186-silero-specialization.json",
+      "bytes": 253117,
+      "sha256": "B4F48372C352BD5C7BC9DC10C764B5DDD02C3E28F413BD59191D562CF8E40576"
     },
     {
       "path": "packaging/linux/build-packages.sh",
@@ -318,13 +323,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1027874,
-      "sha256": "A60E0BD9AE35D62C05F5FCCA6B09091CF2EBE3C9B024D6242432CF5567ED4549"
+      "bytes": 1028799,
+      "sha256": "4154452BE9171E23EA026047856392D1CC7FF61C1DC94EE53102D6388694AE40"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1623321,
-      "sha256": "CB894FC081548A46E224A6D815E207600BF564C4EC2C46356498C0B1E34D5A30"
+      "bytes": 1624246,
+      "sha256": "10B9CF8B57DAD5DD0D60B2044F1D0F567DCF0FE320CEBDDE9781611B3B802583"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -718,8 +723,13 @@
     },
     {
       "path": "SRC/neothd/assets/silero-vad/PROVENANCE.txt",
-      "bytes": 616,
-      "sha256": "DF2265EF44715CA92C7BB04AA4F16088D3582AC4D4E41420F2322885A8AC11C9"
+      "bytes": 1762,
+      "sha256": "0F35FA10D46D8EC15A7A4B2CAB07164E4884BE92465EC7030D331507B4F67C1C"
+    },
+    {
+      "path": "SRC/neothd/assets/silero-vad/silero_vad_16k_op15_tract_16k.onnx",
+      "bytes": 1247766,
+      "sha256": "0042E699F5B6CD356A28174F7BDB1B777A8F956E8AB07A3BAC6E3BAA41048E77"
     },
     {
       "path": "SRC/neothd/assets/silero-vad/silero_vad_16k_op15.onnx",
@@ -1338,8 +1348,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/capability_decay.rs",
-      "bytes": 26949,
-      "sha256": "A2343D3DD3B6FA048796A2B3CC4F8885F59B385CF517C736D513CF17A763B3F8"
+      "bytes": 26938,
+      "sha256": "462BD3BA177BBE5C92AD29B1895F3397E3311C4419016D06497E6DFCAC1E80D6"
     },
     {
       "path": "SRC/neothd/src/daemon/capability_decay/history.rs",
@@ -1643,8 +1653,8 @@
     },
     {
       "path": "SRC/neothd/src/media/vad/silero.rs",
-      "bytes": 8850,
-      "sha256": "B687413CFE0CE02ACC8F1FBBBD154B4C6FB888AB73865DFA0A5647D7D5D1F7D7"
+      "bytes": 8639,
+      "sha256": "9BF8274362FF8AD54A65D6B40034637107E0F4678CBD75F85E29F6A19633A84C"
     },
     {
       "path": "SRC/neothd/src/media/video_dispatch.rs",
