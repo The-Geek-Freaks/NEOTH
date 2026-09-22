@@ -8782,13 +8782,14 @@ mod tests {
         let binding = AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
             ChannelId::Telegram,
         ));
+        let sender_hash = scoped_sender_hash_of(&binding, &msg.sender_id);
         let eid = emit_inbound_ingress(
             &writer,
             dir.path(),
             &report,
             &msg,
             &binding,
-            "h1",
+            &sender_hash,
             &Some("op1".to_string()),
         )
         .await

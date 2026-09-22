@@ -2321,17 +2321,19 @@ system_prompt: |
         record_test_install_incarnation(home.path(), "beta");
         let reload = test_reload_controller(home.path());
         activate_test_skill(home.path(), "alpha", &reload);
+        let readiness = W197FixtureProbe::default();
 
         // Candidate order is canonical by id. Alpha consumes one package
         // entry plus its one authority-record entry and is admitted. Beta's
         // first package entry then crosses the shared limit. The loader must
         // discard that partial map and return the complete bundled-only layer.
-        let snapshot = load_authorized_with_mode_and_budget_override(
+        let snapshot = load_authorized_with_mode_budget_and_probe(
             &skills_dir,
             &reload,
             UserSkillLoadMode::Quarantine,
             Some((2, u64::MAX)),
             InstalledStoreMode::ReconcileForRuntime,
+            Some(&readiness),
         )
         .await
         .unwrap();

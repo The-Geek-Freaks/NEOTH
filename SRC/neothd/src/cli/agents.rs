@@ -660,20 +660,26 @@ mod tests {
         let config = FreedomConfig::default();
         std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
         write_installed_skill(home.path(), "fan-out-ready", true).await;
-        write_installed_skill(home.path(), "fan-out-disabled", false).await;
+        write_installed_skill(home.path(), "fan-out-disabled", true).await;
         crate::skills::authority::initialize_authority_key_for_test(home.path()).unwrap();
         let reload =
             crate::config::reload::ReloadController::new(config.clone(), config_path.clone());
         activate_installed_skill(home.path(), "fan-out-ready", &reload);
         activate_installed_skill(home.path(), "fan-out-disabled", &reload);
 
-        let admitted = fan_out_skill_registry_context(home.path(), &config_path, &config)
+        let mut disabled_config = config.clone();
+        disabled_config
+            .skills
+            .disabled
+            .push("fan-out-disabled".to_string());
+        std::fs::write(&config_path, serde_yaml::to_string(&disabled_config).unwrap()).unwrap();
+        let admitted = fan_out_skill_registry_context(home.path(), &config_path, &disabled_config)
             .await
             .unwrap();
         assert!(admitted.as_str().contains("fan-out-ready"));
         assert!(!admitted.as_str().contains("fan-out-disabled"));
 
-        let mut eval_config = config;
+        let mut eval_config = disabled_config;
         eval_config.skills.disabled_for_eval_sessions = true;
         eval_config.skills.eval_session_active = true;
         std::fs::write(&config_path, serde_yaml::to_string(&eval_config).unwrap()).unwrap();

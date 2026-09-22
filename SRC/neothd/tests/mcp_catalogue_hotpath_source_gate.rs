@@ -163,7 +163,10 @@ fn dispatch_consumes_the_preselected_route_without_recomputing_admission() {
     let chat_pipeline = compact_region(
         CHAT_TURN_PIPELINE,
         "let TurnRouteResolution {",
-        "let post_reply_result = run_post_reply_pipelines(",
+        // The watchdog now owns the post-reply future. Bound this source
+        // region at the real hand-off rather than its former result binding,
+        // while retaining the route-to-dispatch data-flow assertion below.
+        "let post_reply = Box::pin(run_post_reply_pipelines(",
     );
     assert_eq!(
         chat_pipeline.matches("resolve_chat_turn_route(").count(),

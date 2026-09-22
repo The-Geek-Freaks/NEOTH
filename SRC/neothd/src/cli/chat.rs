@@ -19549,10 +19549,20 @@ modes:
         assert_eq!(dec0.header.event_type, EVENT_TYPE_RAW_TEXT);
         assert_eq!(dec0.payload, b"hi");
 
+        // W208 adds an authenticated origin receipt directly after RAW_TEXT.
+        // It is metadata for the raw body, not part of the dispatch sequence.
+        let origin = decode_frame(&frames[dec0.header.total_len as usize..])
+            .expect("decode RAW_TEXT origin receipt");
+        assert_eq!(origin.header.event_type, crate::wal::events::EVENT_TYPE_EXTENDED);
+        assert_eq!(
+            origin.header.event_subtype,
+            crate::wal::events::ExtendedSubtype::RawTextOrigin as u8
+        );
+
         // Turn journal + council decision are prepared before the exact leaf
         // cost gate. The 0x20 intent itself is emitted only after approval,
         // immediately before transport dispatch.
-        let rest = &frames[dec0.header.total_len as usize..];
+        let rest = &frames[dec0.header.total_len as usize + origin.header.total_len as usize..];
         let opened = decode_frame(rest).expect("decode TURN_JOURNAL_OPENED frame");
         assert_eq!(
             opened.header.event_type,

@@ -847,6 +847,10 @@ async fn cancel_requires_the_exact_active_id_and_retains_uncertainty() {
             .outcome,
         LocalModelTerminalOutcome::InterruptedUnknown
     ));
+    assert!(matches!(
+        &row(&refreshed, "tiny:latest").readiness,
+        LocalModelReadiness::InterruptedUnknown { operation_id: persisted } if persisted == &operation_id
+    ));
     let restarted = LocalModelController::new(
         harness._home.path().to_path_buf(),
         LocalModelEndpoint {

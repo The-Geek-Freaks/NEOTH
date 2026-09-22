@@ -42852,13 +42852,15 @@ mod dream_cron_gui_tests {
             + start;
         let finish = &source[start..end];
         assert!(finish.contains("std::thread::spawn"));
-        assert!(finish.contains("setup daemon session is not bound"));
+        assert!(finish.contains("wizard_daemon_session().lock"));
+        assert!(finish.contains("let Some(session) = slot.as_mut()"));
         assert!(!finish.contains("WizardSessionController::open_or_start"));
         assert!(source.contains("window.on_wizard_channel_changed"));
         assert!(source.contains("submit_operator_choice"));
         assert!(finish.contains("prepare_for_commit(config_sha256)"));
         assert!(!finish.contains("complete_gui_initialization("));
         assert!(finish.contains("set_wizard_daemon_available(false)"));
+        assert!(finish.contains("WIZARD_DAEMON_FROZEN.store(true"));
         assert!(finish.contains("w.set_step(WizardStep::Chat)"));
     }
 

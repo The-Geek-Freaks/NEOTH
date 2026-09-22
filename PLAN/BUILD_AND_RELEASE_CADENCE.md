@@ -3,6 +3,24 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W216 Windows regression repair (2026-09-22):** the 14 failures from full CI
+`35765595152` are repaired in source. A real local-model refresh bug erased
+an interrupted operation's uncertainty; refresh now reapplies its exact durable
+receipt. The remaining fixes align admission fixtures, canonical origin/sender
+metadata, read-only long-poll timing, guarded Cron registry, CLI/GUI parity and
+source gates with their current contracts. Four obsolete refusal-retry tests
+now verify W206's intended terminal mirror, preserving selected/fresh registry
+isolation, decoded audit ordering and final visible-response hash/byte binding.
+The older retry/local-shadow path is unreachable under that terminal contract;
+this does not prove broader P2-10 recovery coverage. W215's disabled-skill fixture
+now authorizes before operator-policy disable. Grouped255 `35774216773` on
+`71c0436a` is source-bound at 253/255: both runtime propagation tests and the
+actual-start role fence passed; scanner and admission fixtures are repaired.
+Core/CLI on that source and Preflight on `eefe379d` passed. W216 adds ten exact
+cases to the grouped lane (266); inventory is 530 sources / 809 universal native /
+92 GUI. Fresh Hosted behavior is required. The old macOS full-CI compile remains
+in progress. Road counts remain 1324 / 1015 checked / 307 open / 2 partial.
+See `docs/gold-wave216-verification.md`; the local BSOD hold remains absolute.
 **Hosted regression checkpoint (2026-09-22):** Grouped251 `35772612247` on
 `7689717b` is source-bound at 250/251; all 12 W213 and three W214 tests passed.
 The only failure was an external test file counted as production by the raw-call

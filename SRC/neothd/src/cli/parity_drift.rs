@@ -87,6 +87,29 @@ struct OperationParity {
     state: OperationState,
 }
 
+const fn unwired_operation(
+    id: &'static str,
+    capability: &'static str,
+    cli_path: &'static str,
+    gui_nav: &'static str,
+    gui_surface: &'static str,
+    gap: &'static str,
+) -> OperationParity {
+    OperationParity {
+        id,
+        capability,
+        cli_path,
+        gui_nav,
+        gui_surface,
+        ui_callback: None,
+        rust_handler: None,
+        dispatch_token: None,
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Unwired(gap),
+    }
+}
+
 /// Extract the real `root.nav("...")` keys from the compiled GUI source. This
 /// deliberately avoids a second hand-maintained navigation inventory: a new,
 /// renamed or removed panel changes the test input in the same commit.
@@ -107,7 +130,7 @@ const ADDITIONAL_GUI_NAV_OWNERS: &[(&str, &str)] = &[("mesh", "cluster")];
 
 /// Operation-level inventory for the capabilities whose old top-level
 /// `CliOnly` labels hid real GUI surfaces. It is deliberately compact: every
-/// live leaf below backup/OMI/interface/models is represented, plus the
+/// live leaf below backup/OMI/interface/models/buddy is represented, plus the
 /// still-unwired restore operation adjacent to the GUI's read-only rollback
 /// preview. This prevents a nested local-model CLI leaf from silently escaping
 /// the GUI parity ledger.
@@ -352,6 +375,325 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         readback: Evidence::Missing,
         state: OperationState::Unwired(
             "the GUI does not expose the CLI bandwidth and VRAM fit calculator",
+        ),
+    },
+    OperationParity {
+        id: "models.bge-m3.list",
+        capability: "models",
+        cli_path: "models bge-m3 list",
+        gui_nav: "resources",
+        gui_surface: "Resources > local embedding model",
+        ui_callback: None,
+        rust_handler: None,
+        dispatch_token: None,
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Unwired("the GUI does not invoke the pinned BGE-M3 lifecycle alias"),
+    },
+    OperationParity {
+        id: "models.bge-m3.status",
+        capability: "models",
+        cli_path: "models bge-m3 status",
+        gui_nav: "resources",
+        gui_surface: "Resources > local embedding model",
+        ui_callback: None,
+        rust_handler: None,
+        dispatch_token: None,
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Unwired("the GUI does not invoke the pinned BGE-M3 lifecycle alias"),
+    },
+    OperationParity {
+        id: "models.bge-m3.pull",
+        capability: "models",
+        cli_path: "models bge-m3 pull",
+        gui_nav: "resources",
+        gui_surface: "Resources > local embedding model",
+        ui_callback: None,
+        rust_handler: None,
+        dispatch_token: None,
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Unwired("the GUI does not invoke the pinned BGE-M3 lifecycle alias"),
+    },
+    OperationParity {
+        id: "models.bge-m3.repair",
+        capability: "models",
+        cli_path: "models bge-m3 repair",
+        gui_nav: "resources",
+        gui_surface: "Resources > local embedding model",
+        ui_callback: None,
+        rust_handler: None,
+        dispatch_token: None,
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Unwired("the GUI does not invoke the pinned BGE-M3 lifecycle alias"),
+    },
+    OperationParity {
+        id: "models.bge-m3.prune",
+        capability: "models",
+        cli_path: "models bge-m3 prune",
+        gui_nav: "resources",
+        gui_surface: "Resources > local embedding model",
+        ui_callback: None,
+        rust_handler: None,
+        dispatch_token: None,
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Unwired("the GUI does not invoke the pinned BGE-M3 lifecycle alias"),
+    },
+    OperationParity {
+        id: "models.embedding.list",
+        capability: "models",
+        cli_path: "models embedding list",
+        gui_nav: "resources",
+        gui_surface: "Resources > local embedding model",
+        ui_callback: None,
+        rust_handler: None,
+        dispatch_token: None,
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Unwired("the GUI has no selected-embedding lifecycle action"),
+    },
+    OperationParity {
+        id: "models.embedding.status",
+        capability: "models",
+        cli_path: "models embedding status",
+        gui_nav: "resources",
+        gui_surface: "Resources > local embedding model",
+        ui_callback: None,
+        rust_handler: None,
+        dispatch_token: None,
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Unwired("the GUI has no selected-embedding lifecycle action"),
+    },
+    OperationParity {
+        id: "models.embedding.select",
+        capability: "models",
+        cli_path: "models embedding select",
+        gui_nav: "resources",
+        gui_surface: "Resources > local embedding model",
+        ui_callback: None,
+        rust_handler: None,
+        dispatch_token: None,
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Unwired("the GUI has no selected-embedding lifecycle action"),
+    },
+    OperationParity {
+        id: "models.embedding.probe",
+        capability: "models",
+        cli_path: "models embedding probe",
+        gui_nav: "resources",
+        gui_surface: "Resources > local embedding model",
+        ui_callback: None,
+        rust_handler: None,
+        dispatch_token: None,
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Unwired("the GUI has no selected-embedding lifecycle action"),
+    },
+    OperationParity {
+        id: "models.embedding.pull",
+        capability: "models",
+        cli_path: "models embedding pull",
+        gui_nav: "resources",
+        gui_surface: "Resources > local embedding model",
+        ui_callback: None,
+        rust_handler: None,
+        dispatch_token: None,
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Unwired("the GUI has no selected-embedding lifecycle action"),
+    },
+    OperationParity {
+        id: "models.embedding.repair",
+        capability: "models",
+        cli_path: "models embedding repair",
+        gui_nav: "resources",
+        gui_surface: "Resources > local embedding model",
+        ui_callback: None,
+        rust_handler: None,
+        dispatch_token: None,
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Unwired("the GUI has no selected-embedding lifecycle action"),
+    },
+    OperationParity {
+        id: "models.embedding.prune",
+        capability: "models",
+        cli_path: "models embedding prune",
+        gui_nav: "resources",
+        gui_surface: "Resources > local embedding model",
+        ui_callback: None,
+        rust_handler: None,
+        dispatch_token: None,
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Unwired("the GUI has no selected-embedding lifecycle action"),
+    },
+    OperationParity {
+        id: "buddy.status",
+        capability: "buddy",
+        cli_path: "buddy status",
+        gui_nav: "buddyconfig",
+        gui_surface: "Buddy Config > Refresh",
+        ui_callback: Some("bc-refresh-clicked"),
+        rust_handler: Some("window.on_bc_refresh_clicked"),
+        dispatch_token: Some("refresh_buddyconfig"),
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Partial(
+            "the refresh projects a parsed Buddy snapshot but does not retain a typed status receipt",
+        ),
+    },
+    unwired_operation(
+        "buddy.embedding.list", "buddy", "buddy embedding list", "buddyconfig",
+        "Buddy Config > local embedding model",
+        "the GUI has no buddy-scoped selected-embedding lifecycle action",
+    ),
+    unwired_operation(
+        "buddy.embedding.status", "buddy", "buddy embedding status", "buddyconfig",
+        "Buddy Config > local embedding model",
+        "the GUI has no buddy-scoped selected-embedding lifecycle action",
+    ),
+    unwired_operation(
+        "buddy.embedding.select", "buddy", "buddy embedding select", "buddyconfig",
+        "Buddy Config > local embedding model",
+        "the GUI has no buddy-scoped selected-embedding lifecycle action",
+    ),
+    unwired_operation(
+        "buddy.embedding.probe", "buddy", "buddy embedding probe", "buddyconfig",
+        "Buddy Config > local embedding model",
+        "the GUI has no buddy-scoped selected-embedding lifecycle action",
+    ),
+    unwired_operation(
+        "buddy.embedding.pull", "buddy", "buddy embedding pull", "buddyconfig",
+        "Buddy Config > local embedding model",
+        "the GUI has no buddy-scoped selected-embedding lifecycle action",
+    ),
+    unwired_operation(
+        "buddy.embedding.repair", "buddy", "buddy embedding repair", "buddyconfig",
+        "Buddy Config > local embedding model",
+        "the GUI has no buddy-scoped selected-embedding lifecycle action",
+    ),
+    unwired_operation(
+        "buddy.embedding.prune", "buddy", "buddy embedding prune", "buddyconfig",
+        "Buddy Config > local embedding model",
+        "the GUI has no buddy-scoped selected-embedding lifecycle action",
+    ),
+    OperationParity {
+        id: "buddy.self-activation",
+        capability: "buddy",
+        cli_path: "buddy self-activation",
+        gui_nav: "buddyconfig",
+        gui_surface: "Buddy Config > Self-activation",
+        ui_callback: Some("bc-selfact-toggle"),
+        rust_handler: Some("window.on_bc_selfact_toggle"),
+        dispatch_token: Some("[\"buddy\", \"self-activation\", flag]"),
+        receipt: Evidence::Typed("window.on_bc_selfact_toggle", "BuddySelfActivationAck"),
+        readback: Evidence::Typed("window.on_bc_selfact_toggle", "refresh_buddyconfig"),
+        state: OperationState::Verified,
+    },
+    OperationParity {
+        id: "buddy.proactive",
+        capability: "buddy",
+        cli_path: "buddy proactive",
+        gui_nav: "buddyconfig",
+        gui_surface: "Buddy Config > Proactive",
+        ui_callback: Some("bc-proactive-toggle"),
+        rust_handler: Some("window.on_bc_proactive_toggle"),
+        dispatch_token: Some("[\"buddy\", \"proactive\", flag]"),
+        receipt: Evidence::Typed("window.on_bc_proactive_toggle", "BuddyProactiveAck"),
+        readback: Evidence::Typed("window.on_bc_proactive_toggle", "refresh_buddyconfig"),
+        state: OperationState::Verified,
+    },
+    unwired_operation(
+        "buddy.vault-mirror.status", "buddy", "buddy vault-mirror status", "buddyconfig",
+        "Buddy Config > Vault mirror status",
+        "the GUI projects vault-mirror state through buddy status instead of this exact leaf",
+    ),
+    OperationParity {
+        id: "buddy.vault-mirror.repair",
+        capability: "buddy",
+        cli_path: "buddy vault-mirror repair",
+        gui_nav: "buddyconfig",
+        gui_surface: "Buddy Config > Vault mirror repair",
+        ui_callback: Some("bc-vault-mirror-repair"),
+        rust_handler: Some("fn start_vault_mirror_repair"),
+        dispatch_token: Some("[\"buddy\", \"vault-mirror\", \"repair\"]"),
+        receipt: Evidence::Typed("fn start_vault_mirror_repair", "VaultMirrorRepairAck"),
+        readback: Evidence::Typed(
+            "fn start_vault_mirror_repair",
+            "vault_mirror_readback_matches",
+        ),
+        state: OperationState::Verified,
+    },
+    #[cfg(feature = "cluster")]
+    OperationParity {
+        id: "buddy.cluster.status",
+        capability: "buddy",
+        cli_path: "buddy cluster status",
+        gui_nav: "buddyconfig",
+        gui_surface: "Buddy Config > Cluster membership",
+        ui_callback: None,
+        rust_handler: Some("fn fetch_buddy_cluster_status"),
+        dispatch_token: Some("[\"--output\", \"json\", \"buddy\", \"cluster\", \"status\"]"),
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Partial(
+            "the GUI projects a parsed cluster snapshot but does not retain a typed status receipt",
+        ),
+    },
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "buddy.cluster.invite", "buddy", "buddy cluster invite", "buddyconfig",
+        "Buddy Config > Cluster pairing",
+        "the GUI uses its separate pairing transaction rather than this exact CLI leaf",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "buddy.cluster.confirm", "buddy", "buddy cluster confirm", "buddyconfig",
+        "Buddy Config > Cluster pairing",
+        "the GUI uses its separate pairing transaction rather than this exact CLI leaf",
+    ),
+    #[cfg(feature = "cluster")]
+    unwired_operation(
+        "buddy.cluster.revoke", "buddy", "buddy cluster revoke", "buddyconfig",
+        "Buddy Config > Cluster membership",
+        "the GUI uses its separate membership-revocation transaction rather than this exact CLI leaf",
+    ),
+    #[cfg(feature = "cluster")]
+    OperationParity {
+        id: "buddy.cluster.revoke-status",
+        capability: "buddy",
+        cli_path: "buddy cluster revoke-status",
+        gui_nav: "buddyconfig",
+        gui_surface: "Buddy Config > Cluster revocation status",
+        ui_callback: None,
+        rust_handler: Some("fn fetch_buddy_revocation_status"),
+        dispatch_token: Some("[\"buddy\", \"cluster\", \"revoke-status\", request_id]"),
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Partial(
+            "the GUI validates the response but does not retain a typed revocation-status receipt",
+        ),
+    },
+    #[cfg(feature = "cluster")]
+    OperationParity {
+        id: "buddy.cluster.revoke-unresolved",
+        capability: "buddy",
+        cli_path: "buddy cluster revoke-unresolved",
+        gui_nav: "buddyconfig",
+        gui_surface: "Buddy Config > Unresolved revocations",
+        ui_callback: None,
+        rust_handler: Some("fn fetch_buddy_revocation_health"),
+        dispatch_token: Some("[\"buddy\", \"cluster\", \"revoke-unresolved\"]"),
+        receipt: Evidence::Missing,
+        readback: Evidence::Missing,
+        state: OperationState::Partial(
+            "the GUI validates the health response but does not retain a typed readback receipt",
         ),
     },
     OperationParity {
@@ -1224,23 +1566,63 @@ fn operation_inventory_keeps_r4_05_gaps_explicit() {
         "models.ollama.status",
         "models.catalog",
         "models.recommend",
+        "buddy.status",
     ] {
         assert!(
             partial.contains(expected),
             "`{expected}` must remain explicitly partial until its typed receipt/readback gap is fixed"
         );
     }
+    #[cfg(feature = "cluster")]
+    for expected in [
+        "buddy.cluster.status",
+        "buddy.cluster.revoke-status",
+        "buddy.cluster.revoke-unresolved",
+    ] {
+        assert!(
+            partial.contains(expected),
+            "`{expected}` must remain explicitly partial until its typed receipt/readback gap is fixed"
+        );
+    }
+
+    let mut expected_unwired = BTreeSet::from([
+        "backup.mirror-status",
+        "backup.mirror-run",
+        "backup.mirror-repair",
+        "models.list",
+        "models.pull",
+        "models.prune",
+        "models.fit",
+        "models.bge-m3.list",
+        "models.bge-m3.status",
+        "models.bge-m3.pull",
+        "models.bge-m3.repair",
+        "models.bge-m3.prune",
+        "models.embedding.list",
+        "models.embedding.status",
+        "models.embedding.select",
+        "models.embedding.probe",
+        "models.embedding.pull",
+        "models.embedding.repair",
+        "models.embedding.prune",
+        "buddy.embedding.list",
+        "buddy.embedding.status",
+        "buddy.embedding.select",
+        "buddy.embedding.probe",
+        "buddy.embedding.pull",
+        "buddy.embedding.repair",
+        "buddy.embedding.prune",
+        "buddy.vault-mirror.status",
+        "restore.archive",
+    ]);
+    #[cfg(feature = "cluster")]
+    expected_unwired.extend([
+        "buddy.cluster.invite",
+        "buddy.cluster.confirm",
+        "buddy.cluster.revoke",
+    ]);
     assert_eq!(
         unwired,
-        BTreeSet::from([
-            "backup.mirror-status",
-            "backup.mirror-run",
-            "backup.mirror-repair",
-            "models.list",
-            "models.pull",
-            "models.prune",
-            "models.fit",
-            "restore.archive",
-        ])
+        expected_unwired
     );
 }

@@ -399,6 +399,17 @@ impl LocalModelController {
                     detail: "fresh tags and ps".to_owned(),
                 };
                 state.snapshot.models = join_inventory(tags, ps);
+                if let Some(receipt) = state.snapshot.last_terminal_operation.clone()
+                    && matches!(
+                        receipt.outcome,
+                        LocalModelTerminalOutcome::InterruptedUnknown
+                    )
+                {
+                    // Inventory proves current installation state, but not the
+                    // outcome of an interrupted remote mutation. Preserve the
+                    // durable uncertainty until a later terminal receipt.
+                    apply_terminal(&mut state.snapshot.models, &receipt);
+                }
                 state.snapshot.observed_at_unix_ms = now_ms();
                 state.revision = state.revision.wrapping_add(1);
                 let should_probe = state

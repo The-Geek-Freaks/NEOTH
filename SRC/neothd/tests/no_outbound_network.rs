@@ -204,6 +204,10 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/providers/openai_api.rs",
     "src/updater/self_update.rs",
     "src/installers/n8n.rs",
+    // The n8n adoption probe is restricted to a parsed loopback origin. Its
+    // dedicated client disables ambient proxies and redirects before an API
+    // key is attached, and bounds the request and response body.
+    "src/integrations/n8n.rs",
     "src/installers/ollama.rs",
     "src/installers/omi.rs",
     "src/installers/paperless.rs",

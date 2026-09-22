@@ -438,16 +438,17 @@ async fn read_only_waiters_do_not_wake_each_other() {
             .await
     });
 
+    tokio::task::yield_now().await;
+    let (first_pending, second_pending) = tokio::join!(
+        tokio::time::timeout(std::time::Duration::from_millis(250), &mut first_waiter),
+        tokio::time::timeout(std::time::Duration::from_millis(250), &mut second_waiter),
+    );
     assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(250), &mut first_waiter)
-            .await
-            .is_err(),
+        first_pending.is_err(),
         "a read-only waiter must not wake itself"
     );
     assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(250), &mut second_waiter)
-            .await
-            .is_err(),
+        second_pending.is_err(),
         "a read-only waiter must not wake another waiter"
     );
 

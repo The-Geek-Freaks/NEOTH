@@ -3458,8 +3458,9 @@ channel_accounts:
     }
 
     #[tokio::test]
-    async fn non_briefing_job_receives_no_system_prompt() {
-        // A maintenance job must NOT get a system prompt injected.
+    async fn non_briefing_job_receives_registry_without_briefing_instructions() {
+        // A maintenance job gets no briefing instructions, but every Cron
+        // invocation carries the canonical guarded Skill registry metadata.
         let job = Job {
             id: "cleanup_oh06".into(),
             name: "Database Cleanup".into(),
@@ -3492,10 +3493,24 @@ channel_accounts:
         drop(writer);
         let _ = join.await;
 
-        let sys = captured_system.lock().unwrap().clone();
+        let sys = captured_system
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("Cron request must carry its guarded session registry");
         assert!(
-            sys.is_none(),
-            "non-Briefing job must receive system: None, got Some({sys:?})"
+            sys.contains(crate::pipeline::untrusted_context::GUARD_OPEN),
+            "non-Briefing job must carry the canonical guarded Skill registry: {sys}"
         );
+        assert!(
+            !sys.contains("morning-briefing agent")
+                && !sys.contains("Target 200–400 words")
+                && !sys.contains("Operator timezone:"),
+            "non-Briefing job must not receive briefing instructions: {sys}"
+        );
+        let registry_payload = decoded_cron_registry_payload(&sys);
+        assert!(registry_payload.contains("\"skills\":"));
+        assert!(!registry_payload.contains("\"system_prompt\""));
+        assert!(!registry_payload.contains("\"tool_allowlist\""));
     }
 }
