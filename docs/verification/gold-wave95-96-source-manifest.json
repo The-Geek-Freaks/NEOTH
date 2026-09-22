@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T21:03:29.6434449Z",
-  "validationStatus": "W223 9HostedslimClippy corrections reviewed; current native and lint pending",
+  "capturedUtc": "2026-09-22T21:05:52.2389677Z",
+  "validationStatus": "W223 optional exact Hosted slimClippy recheck available; resultpending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -33,8 +33,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 2589,
-      "sha256": "C5C2D698388AC6FE9579176399A1B13A33911EAC72C7CC580A86C83A32BD10EA"
+      "bytes": 3039,
+      "sha256": "FD5DD2665B0C6DE1B5EA78BA495D7E00C8B9FB878DBEBB856B5A81D0B5526438"
     },
     {
       "path": ".github/workflows/live-audio.yml",

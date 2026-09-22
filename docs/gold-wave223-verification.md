@@ -36,3 +36,9 @@ receipt work. Canonical Road counts remain1015 checked/307 open/2 partial.
 
 Independent bounded source/callsite review PASS; fresh Hosted slim-Clippy
 acceptance remains pending.
+
+The existing CLI-reference Hosted workflow now accepts optional
+slim_clippy=true and runs the exact full-CI slim production command before
+its normal typecheck/build/export. This gives W223 a focused recheck while
+native Windows/macOS continue. It is not a release-CI substitute. Independent
+text review passed; no local workflow parser or compiler ran.

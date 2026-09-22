@@ -2,6 +2,11 @@ name: Generate CLI reference
 
 on:
   workflow_dispatch:
+    inputs:
+      slim_clippy:
+        description: 'Also verify the exact slim-core production Clippy contract'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -30,6 +35,7 @@ jobs:
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: '1.91.0'
+          components: clippy
 
       - name: Restore Gold smoke compiler cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -42,6 +48,12 @@ jobs:
           key: ${{ runner.os }}-gold-smoke-cargo-${{ hashFiles('SRC/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-gold-smoke-cargo-
+
+      - name: Check exact-source slim-core production Clippy
+        if: ${{ inputs.slim_clippy }}
+        timeout-minutes: 20
+        working-directory: SRC
+        run: cargo clippy -p neoth --lib --bins --no-default-features --locked --no-deps -- -D warnings
 
       # Catch shared test-code type errors before dispatching the expensive
       # native matrix. This checks default-feature core tests without linking

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W223 9HostedslimClippy corrections reviewed; current native and lint pending",
+  "status": "W223 optional exact Hosted slimClippy recheck available; resultpending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92002,
-    "sha256": "7F2F576A9E2407F5CDEF1A42CDC8CAC634FCF5A3A4B56A06F07EC0FCCDC94210"
+    "bytes": 91996,
+    "sha256": "6B9A420AD95B7D057C1FA669DBD6BE2E9DF9835E71CC3A56EA512F3765914542"
   },
   "sourceInputs": 531,
   "requiredNativeTests": [
@@ -14942,6 +14942,13 @@
       }
     ],
     "note": "Exact 9 diagnostics from fullCI743 job106931734757 fixed in4files; no newallow",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave223OptionalHostedLint": {
+    "base": "907789270410f252359504920bdaa5f18b37c280",
+    "sources": [],
+    "note": "Existing CLI workflow optional exact fullCI slimlint, noncancelling native jobs",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
