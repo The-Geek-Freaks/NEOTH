@@ -8,6 +8,19 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W220 persisted background registry coverage (2026-09-22):** real installed
+Skill/authority publication A-to-B now has a fixture across metadata rendering,
+required Block D, signed durable job storage, bounded private read, approval
+verification and the worker's unchanged-config gate. The loaded request must
+retain the exact A envelope while the live registry contains B. A separate
+accepted-config-B case requires the existing pre-dispatch gate to refuse the
+queued A job. Independent source review passed; Hosted execution is pending.
+This is persisted-request and pre-dispatch coverage, not full detached CLI
+process acceptance. Inventory: 532 sources / 816 native / 94 GUI, Grouped274;
+GUI platform counts remain 22/22 and macOS custom count 26. Full CI
+`35782661515` continues on W219 source `74334d4b` and must not be cancelled.
+Preflight `35782660911` passed for that source. Road counts remain unchanged;
+see `docs/gold-wave220-verification.md`. The absolute local BSOD hold remains.
 **W219 Buddy retry status compatibility (2026-09-22):** the strict GUI DTO now
 accepts W217's versioned provider retry history. Missing history defaults to
 unavailable; malformed present blocks reject the status. Only six bounded

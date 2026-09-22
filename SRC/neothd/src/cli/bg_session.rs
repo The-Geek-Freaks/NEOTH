@@ -2292,6 +2292,247 @@ mod tests {
         assert!(!error.to_string().contains(&literal));
     }
 
+    #[tokio::test]
+    async fn queued_background_request_keeps_real_registry_metadata_a_after_skill_b_publication() {
+        let home = tempfile::tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        let skill_id = "background-registry-publication";
+        write_background_registry_skill(
+            &skills_dir,
+            skill_id,
+            "BACKGROUND-REGISTRY-DESCRIPTION-A",
+        );
+        install_background_registry_authority_key(home.path());
+        record_background_registry_install_incarnation(home.path(), skill_id);
+
+        let config_a = FreedomConfig::default();
+        let config_path = home.path().join("freedom.yaml");
+        std::fs::write(&config_path, serde_yaml::to_string(&config_a).unwrap()).unwrap();
+        let reload = std::sync::Arc::new(crate::config::reload::ReloadController::new(
+            config_a.clone(),
+            config_path.clone(),
+        ));
+        activate_background_registry_skill(home.path(), skill_id, reload.as_ref());
+        let registry = crate::skills::SkillRegistry::load_with_reload_controller(
+            &skills_dir,
+            std::sync::Arc::clone(&reload),
+        )
+        .await
+        .unwrap();
+        let epoch_a = reload.accepted_snapshot().epoch();
+        let snapshot_a = registry.authority_bound_snapshot_for_epoch(epoch_a).unwrap();
+        let registry_context_a = crate::skills::resolver::SkillRouteResolver::new(snapshot_a)
+            .session_registry_context(&[])
+            .unwrap();
+        let enriched_a = crate::pipeline::build_enriched_request(
+            crate::pipeline::EnrichmentInputs {
+                prompt: "queued background prompt",
+                operator_sovereignty: None,
+                operator_context: None,
+                preset_addendum: None,
+                explicit_system: None,
+                repo_context_block: None,
+                attachment_contexts: None,
+                skill_system_prompt: None,
+                skill_registry_context: Some(&registry_context_a),
+                used_skill_id: None,
+                mcp_catalogue: None,
+                persona_override: None,
+                moral_core: None,
+                identity_anchor: None,
+                identity_locked: false,
+                current_goal: None,
+                communication_profile: None,
+            },
+        );
+        let registry_item_a = enriched_a
+            .budget_items
+            .iter()
+            .find(|item| item.content == registry_context_a.as_str())
+            .expect("real registry context must enter the typed prompt bundle");
+        assert_eq!(registry_item_a.block, crate::tokens::budget::Block::D);
+        assert_eq!(
+            registry_item_a.retention,
+            crate::tokens::budget::PromptRetention::Required
+        );
+        let (queued_prompt, registry_a) =
+            crate::tokens::budget::render_request(&enriched_a.budget_items).unwrap();
+        let registry_a = registry_a.expect("registry Block D must render into the queued system");
+        assert!(registry_a.contains("BACKGROUND-REGISTRY-DESCRIPTION-A"));
+        assert!(
+            !registry_a.contains("BACKGROUND-REGISTRY-INERT-SYSTEM-PROMPT"),
+            "the registry context is admitted metadata, not a Skill instruction body"
+        );
+
+        let id = BgJobId::new().unwrap();
+        let mut queued_request = exact_test_request();
+        queued_request.prompt = queued_prompt;
+        queued_request.system = Some(registry_a.clone());
+        let spec = test_worker_spec(
+            &id,
+            queued_request,
+            config_a.clone(),
+            config_path,
+        );
+        let persisted = serde_json::to_vec(&spec).unwrap();
+        let bgjobs = home.path().join("bgjobs");
+        std::fs::create_dir_all(&bgjobs).unwrap();
+        let job_path = bgjobs.join(format!("{}.job", id.as_str()));
+        crate::util::atomic_write::write_private_create_new_durable(&job_path, &persisted)
+            .unwrap();
+
+        // A completed later installed-Skill publication under the same accepted
+        // config changes the live Registry, never the already durable request.
+        write_background_registry_skill(
+            &skills_dir,
+            skill_id,
+            "BACKGROUND-REGISTRY-DESCRIPTION-B",
+        );
+        record_background_registry_install_incarnation(home.path(), skill_id);
+        activate_background_registry_skill(home.path(), skill_id, reload.as_ref());
+        registry.reload_now().await.unwrap();
+        let snapshot_b = registry.authority_bound_snapshot_for_epoch(epoch_a).unwrap();
+        let registry_context_b = crate::skills::resolver::SkillRouteResolver::new(snapshot_b)
+            .session_registry_context(&[])
+            .unwrap();
+        assert!(
+            registry_context_b
+                .as_str()
+                .contains("BACKGROUND-REGISTRY-DESCRIPTION-B")
+        );
+        assert!(!registry_context_b.as_str().contains("BACKGROUND-REGISTRY-DESCRIPTION-A"));
+
+        let persisted_for_worker = crate::updater::self_update::read_private_control_file_bounded(
+            home.path(),
+            &job_path,
+            BG_JOB_MAX_BYTES,
+            "background worker job",
+        )
+        .unwrap();
+        let loaded: BgWorkerSpec = serde_json::from_slice(&persisted_for_worker).unwrap();
+        loaded
+            .approval
+            .verify(
+                &TEST_APPROVAL_KEY,
+                loaded.schema_version,
+                &id,
+                &loaded.label,
+                &loaded.request,
+                &loaded.config,
+                &loaded.config_path,
+                loaded.queued_unix,
+                &loaded.launcher,
+                crate::time::now_unix_i64(),
+            )
+            .expect("worker must accept the signed persisted request before dispatch");
+        let live_config = load_unchanged_live_background_config(home.path(), &loaded)
+            .expect("unchanged config must permit the worker's pre-dispatch gate");
+        let loaded_system = loaded
+            .request
+            .system
+            .as_deref()
+            .expect("queued request keeps its originating system contract");
+        assert_eq!(loaded_system, registry_a);
+        assert!(!loaded_system.contains("BACKGROUND-REGISTRY-DESCRIPTION-B"));
+
+        let (dispatch_request, canary) =
+            bind_background_session_canary(loaded.request, &live_config, "mock").unwrap();
+        let dispatch_system = dispatch_request
+            .system
+            .as_deref()
+            .expect("worker dispatch retains the queued system contract");
+        assert!(dispatch_system.contains(&registry_a));
+        assert!(!dispatch_system.contains("BACKGROUND-REGISTRY-DESCRIPTION-B"));
+        assert!(dispatch_system.contains(canary.as_context_literal()));
+    }
+
+    #[test]
+    fn accepted_config_b_refuses_the_queued_background_worker_before_dispatch() {
+        let home = tempfile::tempdir().unwrap();
+        let config_a = FreedomConfig::default();
+        let config_path = home.path().join("freedom.yaml");
+        std::fs::write(&config_path, serde_yaml::to_string(&config_a).unwrap()).unwrap();
+        let reload = crate::config::reload::ReloadController::new(config_a.clone(), config_path);
+        let id = BgJobId::new().unwrap();
+        let spec = test_worker_spec(
+            &id,
+            exact_test_request(),
+            config_a,
+            reload.source_path().to_path_buf(),
+        );
+
+        assert!(load_unchanged_live_background_config(home.path(), &spec).is_ok());
+        let epoch_a = reload.accepted_snapshot().epoch();
+        let mut config_b = spec.config.clone();
+        config_b.skills.disabled = vec!["unrelated-bundled-skill".to_owned()];
+        std::fs::write(
+            reload.source_path(),
+            serde_yaml::to_string(&config_b).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            reload.try_reload().unwrap(),
+            crate::config::reload::ReloadResult::Reloaded { .. }
+        ));
+        assert_ne!(epoch_a, reload.accepted_snapshot().epoch());
+        let error = load_unchanged_live_background_config(home.path(), &spec).unwrap_err();
+        assert!(error.to_string().contains("changed after queueing"));
+    }
+
+    fn write_background_registry_skill(skills_dir: &Path, id: &str, description: &str) {
+        let skill_dir = skills_dir.join(id);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("skill.yaml"),
+            format!(
+                "id: {id}\ndescription: {description}\n\
+                 system_prompt: BACKGROUND-REGISTRY-INERT-SYSTEM-PROMPT\n\
+                 trigger_keywords: [background-registry]\nenabled: true\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn install_background_registry_authority_key(home: &Path) {
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&wal_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        #[cfg(windows)]
+        crate::wal::win_native::set_private_current_user_directory_dacl(&wal_dir).unwrap();
+        crate::wal::compaction::load_or_init_key(&wal_dir.join("hmac.key")).unwrap();
+    }
+
+    fn record_background_registry_install_incarnation(home: &Path, id: &str) {
+        let current = crate::skills::installer::inspect_current_install(&home.join("skills"), id)
+            .expect("installed Skill fixture exists");
+        crate::skills::mutation_lifecycle::record_committed_install_incarnation_for_test(
+            home,
+            id,
+            &current.generation_sha256,
+            crate::skills::installer::SkillMutationOrigin::CliInstall,
+        )
+        .unwrap();
+    }
+
+    fn activate_background_registry_skill(
+        home: &Path,
+        id: &str,
+        reload: &crate::config::reload::ReloadController,
+    ) {
+        let decision = crate::skills::authority::SkillAuthorityDecision::new(
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorCli,
+            crate::skills::authority::SkillAuthorityState::Active,
+            None,
+        )
+        .unwrap();
+        crate::skills::authority::publish_installed_authority_decision(home, id, reload, decision)
+            .unwrap();
+    }
+
     #[test]
     fn post_mint_background_failures_never_surface_provider_or_canary_content() {
         let canary = crate::security::injection_tracker::CanaryToken::generate().unwrap();
