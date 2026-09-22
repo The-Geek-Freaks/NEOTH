@@ -3,6 +3,17 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W222 direct CLI fallback registry coverage (2026-09-22):** a real
+`run_chat_with` regression records the primary request, publishes signed Skill
+and accepted config B, then takes the actual typed-quota fallback. Both reached
+provider leaves must receive equal prompt/system bundles with the exact admitted
+A registry, while the newly loaded registry contains B. It uses in-process
+providers and does not claim network delivery. Independent source review passed;
+Hosted execution is pending. Inventory: 532 sources / 817 native / 94 GUI,
+Grouped275. W221 retry denial receipts are still in progress. Full CI
+`35782661515` continues on `74334d4b`; nine Linux slim-Clippy diagnostics are
+being repaired without cancelling other platform jobs. Road unchanged; see
+`docs/gold-wave222-verification.md`. All executable validation remains Hosted.
 **W220 persisted background registry coverage (2026-09-22):** real installed
 Skill/authority publication A-to-B now has a fixture across metadata rendering,
 required Block D, signed durable job storage, bounded private read, approval

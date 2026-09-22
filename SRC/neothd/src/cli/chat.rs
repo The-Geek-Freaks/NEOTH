@@ -18750,6 +18750,307 @@ modes:
         }
     }
 
+    fn write_direct_cli_registry_skill(skills_dir: &std::path::Path, id: &str, description: &str) {
+        let skill_dir = skills_dir.join(id);
+        std::fs::create_dir_all(&skill_dir).expect("create installed direct CLI registry Skill");
+        std::fs::write(
+            skill_dir.join("skill.yaml"),
+            format!(
+                "id: {id}\ndescription: {description}\n\
+                 system_prompt: DIRECT-CLI-REGISTRY-INERT-SYSTEM-PROMPT\n\
+                 trigger_keywords: [direct-cli-registry]\nenabled: true\n"
+            ),
+        )
+        .expect("write installed direct CLI registry Skill");
+    }
+
+    fn install_direct_cli_registry_authority_key(home: &std::path::Path) {
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).expect("create direct CLI registry WAL directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&wal_dir, std::fs::Permissions::from_mode(0o700))
+                .expect("restrict direct CLI registry WAL directory");
+        }
+        #[cfg(windows)]
+        crate::wal::win_native::set_private_current_user_directory_dacl(&wal_dir)
+            .expect("restrict direct CLI registry WAL directory");
+        crate::wal::compaction::load_or_init_key(&wal_dir.join("hmac.key"))
+            .expect("create direct CLI registry authority key");
+    }
+
+    fn record_direct_cli_registry_install_incarnation(home: &std::path::Path, id: &str) {
+        let current = crate::skills::installer::inspect_current_install(&home.join("skills"), id)
+            .expect("installed direct CLI registry Skill exists");
+        crate::skills::mutation_lifecycle::record_committed_install_incarnation_for_test(
+            home,
+            id,
+            &current.generation_sha256,
+            crate::skills::installer::SkillMutationOrigin::CliInstall,
+        )
+        .expect("record direct CLI registry Skill incarnation");
+    }
+
+    fn activate_direct_cli_registry_skill(
+        home: &std::path::Path,
+        id: &str,
+        reload: &crate::config::reload::ReloadController,
+    ) {
+        let decision = crate::skills::authority::SkillAuthorityDecision::new(
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorCli,
+            crate::skills::authority::SkillAuthorityState::Active,
+            None,
+        )
+        .expect("construct active direct CLI registry authority decision");
+        crate::skills::authority::publish_installed_authority_decision(home, id, reload, decision)
+            .expect("publish direct CLI registry Skill authority");
+    }
+
+    struct DirectCliRegistryPrimary {
+        requests: Arc<Mutex<Vec<Request>>>,
+        home: PathBuf,
+        skill_id: String,
+        config_path: PathBuf,
+        config_b: FreedomConfig,
+        reload: Arc<crate::config::reload::ReloadController>,
+        registry: Arc<crate::skills::SkillRegistry>,
+        published_epochs: Arc<Mutex<Option<(u64, u64)>>>,
+    }
+
+    #[async_trait]
+    impl Provider for DirectCliRegistryPrimary {
+        fn name(&self) -> &'static str {
+            "direct-cli-registry-primary"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("direct-cli-registry-primary-model")
+        }
+
+        async fn complete(&self, request: Request) -> Result<Completion> {
+            self.requests
+                .lock()
+                .expect("record direct CLI registry primary request")
+                .push(request);
+
+            let epoch_a = self.reload.accepted_snapshot().epoch();
+            write_direct_cli_registry_skill(
+                &self.home.join("skills"),
+                &self.skill_id,
+                "DIRECT-CLI-REGISTRY-DESCRIPTION-B",
+            );
+            record_direct_cli_registry_install_incarnation(&self.home, &self.skill_id);
+            std::fs::write(
+                &self.config_path,
+                serde_yaml::to_string(&self.config_b)
+                    .expect("serialize accepted direct CLI registry config B"),
+            )
+            .expect("publish direct CLI registry config B");
+            let publication = self
+                .reload
+                .try_reload()
+                .expect("accept direct CLI registry config B");
+            assert!(
+                matches!(publication, crate::config::reload::ReloadResult::Reloaded { .. }),
+                "fixture config B must become an accepted publication"
+            );
+            let epoch_b = self.reload.accepted_snapshot().epoch();
+            activate_direct_cli_registry_skill(&self.home, &self.skill_id, self.reload.as_ref());
+            self.registry
+                .reload_now()
+                .await
+                .expect("publish direct CLI registry B");
+            *self
+                .published_epochs
+                .lock()
+                .expect("record direct CLI registry publication epochs") = Some((epoch_a, epoch_b));
+
+            Err(anyhow::Error::new(crate::providers::quota::QuotaError {
+                provider: self.name(),
+                retry_after: None,
+                body: "fixture primary quota exhaustion".to_owned(),
+            }))
+        }
+    }
+
+    struct DirectCliRegistryFallback {
+        requests: Arc<Mutex<Vec<Request>>>,
+    }
+
+    #[async_trait]
+    impl Provider for DirectCliRegistryFallback {
+        fn name(&self) -> &'static str {
+            "direct-cli-registry-fallback"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("direct-cli-registry-fallback-model")
+        }
+
+        async fn complete(&self, request: Request) -> Result<Completion> {
+            self.requests
+                .lock()
+                .expect("record direct CLI registry fallback request")
+                .push(request);
+            Ok(Completion {
+                termination: Default::default(),
+                text: "fallback completed direct CLI registry turn".to_owned(),
+                identity: Default::default(),
+                model: "direct-cli-registry-fallback-model".to_owned(),
+                latency: Duration::from_millis(1),
+                input_tokens: Some(1),
+                output_tokens: Some(1),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                usage_measurements: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn direct_cli_fallback_keeps_the_admitted_skill_registry_after_real_publication_b() {
+        let fixture = tempfile::tempdir().expect("create direct CLI registry fixture");
+        let home = fixture.path().join("home");
+        let skills_dir = home.join("skills");
+        let config_path = home.join("freedom.yaml");
+        let wal_path = home.join("wal").join("000001.wal");
+        let skill_id = "direct-cli-registry-publication";
+        write_direct_cli_registry_skill(
+            &skills_dir,
+            skill_id,
+            "DIRECT-CLI-REGISTRY-DESCRIPTION-A",
+        );
+        install_direct_cli_registry_authority_key(&home);
+        record_direct_cli_registry_install_incarnation(&home, skill_id);
+
+        let mut config_a = FreedomConfig::default();
+        config_a.autonomy = UNPRICED_TEST_PROVIDER_AUTONOMY;
+        config_a.memory.recall_shortcut = false;
+        config_a.chat_onboarding_completed = true;
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&config_a).expect("serialize direct CLI registry config A"),
+        )
+        .expect("write direct CLI registry config A");
+        let reload = Arc::new(crate::config::reload::ReloadController::new(
+            config_a.clone(),
+            config_path.clone(),
+        ));
+        activate_direct_cli_registry_skill(&home, skill_id, reload.as_ref());
+        let registry = Arc::new(
+            crate::skills::SkillRegistry::load_with_reload_controller(
+                &skills_dir,
+                Arc::clone(&reload),
+            )
+            .await
+            .expect("load signed direct CLI registry A"),
+        );
+        let snapshot_a = registry
+            .authority_bound_snapshot_for_epoch(reload.accepted_snapshot().epoch())
+            .expect("acquire direct CLI registry snapshot A");
+        let registry_a = crate::skills::resolver::SkillRouteResolver::new(snapshot_a)
+            .session_registry_context(&crate::skills::resolver::active_files_from_env())
+            .expect("render exact admitted direct CLI registry A");
+        assert!(registry_a.as_str().contains("DIRECT-CLI-REGISTRY-DESCRIPTION-A"));
+        assert!(
+            !registry_a
+                .as_str()
+                .contains("DIRECT-CLI-REGISTRY-INERT-SYSTEM-PROMPT"),
+            "the direct CLI registry carries metadata, never a Skill instruction body"
+        );
+
+        let mut config_b = config_a.clone();
+        config_b.chat_onboarding_completed = false;
+        let primary_requests = Arc::new(Mutex::new(Vec::new()));
+        let fallback_requests = Arc::new(Mutex::new(Vec::new()));
+        let published_epochs = Arc::new(Mutex::new(None));
+        let primary = DirectCliRegistryPrimary {
+            requests: Arc::clone(&primary_requests),
+            home: home.clone(),
+            skill_id: skill_id.to_owned(),
+            config_path: config_path.clone(),
+            config_b,
+            reload: Arc::clone(&reload),
+            registry: Arc::clone(&registry),
+            published_epochs: Arc::clone(&published_epochs),
+        };
+        let provider = crate::providers::fallback::FallbackProvider::new_with_models_at(
+            vec![Box::new(primary), Box::new(DirectCliRegistryFallback {
+                requests: Arc::clone(&fallback_requests),
+            })],
+            vec![
+                Some("direct-cli-registry-primary-model".to_owned()),
+                Some("direct-cli-registry-fallback-model".to_owned()),
+            ],
+            1,
+            None,
+            home.join("quota.json"),
+        );
+        let args = ChatArgs {
+            attach: Vec::new(),
+            repository_root: None,
+            message: Some("route this direct CLI registry turn".to_owned()),
+            model: None,
+            skill: None,
+            system: None,
+            edit: false,
+            config: Some(config_path),
+            wal_segment: Some(wal_path),
+            stream: false,
+            show_reasoning: false,
+            gui_consent_token_stdin: false,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            resume_from: None,
+            incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: Vec::new(),
+        };
+        run_chat_with(args, config_a, &provider)
+            .await
+            .expect("reachable direct CLI fallback completes");
+
+        let snapshot_b = registry
+            .authority_bound_snapshot_for_epoch(reload.accepted_snapshot().epoch())
+            .expect("acquire published direct CLI registry B");
+        let registry_b = crate::skills::resolver::SkillRouteResolver::new(snapshot_b)
+            .session_registry_context(&crate::skills::resolver::active_files_from_env())
+            .expect("render published direct CLI registry B");
+        assert!(registry_b.as_str().contains("DIRECT-CLI-REGISTRY-DESCRIPTION-B"));
+        assert!(!registry_b.as_str().contains("DIRECT-CLI-REGISTRY-DESCRIPTION-A"));
+        let (epoch_a, epoch_b) = published_epochs
+            .lock()
+            .expect("read direct CLI registry publication epochs")
+            .expect("primary must publish config and registry B before fallback");
+        assert_ne!(epoch_a, epoch_b, "config B must advance the accepted epoch");
+
+        let primary = primary_requests
+            .lock()
+            .expect("read direct CLI primary requests");
+        let fallback = fallback_requests
+            .lock()
+            .expect("read direct CLI fallback requests");
+        assert_eq!(primary.len(), 1, "one primary provider request reaches the quota leaf");
+        assert_eq!(fallback.len(), 1, "one reachable fallback provider request follows the quota leaf");
+        assert_eq!(primary[0].prompt, fallback[0].prompt);
+        assert_eq!(primary[0].system, fallback[0].system);
+        let primary_system = primary[0]
+            .system
+            .as_deref()
+            .expect("primary direct CLI request has a system bundle");
+        let fallback_system = fallback[0]
+            .system
+            .as_deref()
+            .expect("fallback direct CLI request has a system bundle");
+        assert!(primary_system.contains(registry_a.as_str()));
+        assert!(fallback_system.contains(registry_a.as_str()));
+        assert!(!fallback_system.contains("DIRECT-CLI-REGISTRY-DESCRIPTION-B"));
+        assert_ne!(primary[0].model, fallback[0].model, "fallback selects its own leaf model");
+    }
+
     #[tokio::test]
     async fn guarded_provider_error_never_returns_post_mint_request_or_canary_content() {
         let canary = crate::security::injection_tracker::CanaryToken::generate().unwrap();

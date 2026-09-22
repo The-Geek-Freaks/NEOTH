@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T20:53:56.2806356Z",
-  "validationStatus": "W220 exact Hosted formatting imported; source-bound behavior pending",
+  "capturedUtc": "2026-09-22T20:57:35.4787572Z",
+  "validationStatus": "W222 real directCLI quota fallback registry fixture reviewed; Hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -68,8 +68,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 11566,
-      "sha256": "9AFDB81C0BC8737B1D20CC9B83659D7B0412A4F8F3534D3F85DDB1EBA5146ACE"
+      "bytes": 11594,
+      "sha256": "77F9F0EFDAC7441B3EF2CEE7D93738BE95546D7D69B3A2FED495B4BD3B569A56"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -433,18 +433,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 66958,
-      "sha256": "FA51CA173198C378434F341A2E3ED4011A5F7E71376DC0B41E8BFFAD14D06C71"
+      "bytes": 67799,
+      "sha256": "917BDF093BF5D73AEF595B6882667FC5141F8F8E2A6DE9FDDE889768C8AEA853"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1069840,
-      "sha256": "3EB2A99462E09F74F3A7F3DA40C1F593FA13D1053AC9D02D88522F08FB214EA0"
+      "bytes": 1070681,
+      "sha256": "856B0860E1285620FCAF21F9307A4E43C3CD6572F013C493C8E0742F389778E2"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1665287,
-      "sha256": "871DA113CA31E03F4F9EA4FB02D9D314835B21B8D00A522AD644E1DFFBA5C2E6"
+      "bytes": 1666128,
+      "sha256": "5BFD202D17D8AE3AAD8E0268B839D1D5CE5263B96A18A39E741367D3C4BEDB2C"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1023,8 +1023,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1087207,
-      "sha256": "9028F3478BFDF9ADCBA1A8D8DDDA8CD7CB756A8236B3871B34405102472C9345"
+      "bytes": 1100109,
+      "sha256": "FC1D22EC20E7B55FCFFB6BB337FD931FD415240AF7BA67FCF6C6AF982284B952"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
