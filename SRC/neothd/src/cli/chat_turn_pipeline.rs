@@ -2462,9 +2462,7 @@ mod tests {
             .events
             .iter()
             .filter_map(|event| match event {
-                ChatTurnEvent::Output(ChatOutput::StreamFrames { frames }) => {
-                    Some(frames.as_str())
-                }
+                ChatTurnEvent::Output(ChatOutput::StreamFrames { frames }) => Some(frames.as_str()),
                 _ => None,
             })
             .collect::<String>();

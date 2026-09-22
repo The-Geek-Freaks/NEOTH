@@ -86,7 +86,9 @@ fn ensure_loaded(
     tokenizer_path: &Path,
     weights_path: &Path,
 ) -> Result<()> {
-    let mut slot = loaded.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut slot = loaded
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if slot.is_some() {
         return Ok(());
     }
@@ -169,9 +171,7 @@ fn encode_bge_input(tokenizer: &Tokenizer, text: &str) -> Result<tokenizers::Enc
         anyhow::bail!("BGE-M3 tokenizer produced no input tokens");
     }
     if encoding.get_ids().len() > BGE_M3_MAX_TOKENS {
-        anyhow::bail!(
-            "BGE-M3 tokenizer exceeded its configured {BGE_M3_MAX_TOKENS}-token limit"
-        );
+        anyhow::bail!("BGE-M3 tokenizer exceeded its configured {BGE_M3_MAX_TOKENS}-token limit");
     }
     Ok(encoding)
 }
@@ -187,8 +187,12 @@ fn embed_blocking(
         anyhow::bail!("BGE-M3 embedding input is empty");
     }
     ensure_loaded(&loaded, &config_path, &tokenizer_path, &weights_path)?;
-    let slot = loaded.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let loaded = slot.as_ref().expect("BGE-M3 loader populated its cache slot");
+    let slot = loaded
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let loaded = slot
+        .as_ref()
+        .expect("BGE-M3 loader populated its cache slot");
 
     let encoding = encode_bge_input(&loaded.tokenizer, &text)?;
     let input_ids = Tensor::new(encoding.get_ids(), &loaded.device)
@@ -294,11 +298,10 @@ mod tests {
     async fn hosted_official_bge_m3_smoke() {
         let home = std::env::var_os("NEOTH_BGE_M3_HOSTED_NEOTH_HOME")
             .expect("hosted smoke must provide NEOTH_BGE_M3_HOSTED_NEOTH_HOME");
-        let verified = super::super::bge_m3_artifacts::BgeM3Artifacts::at_neoth_home(
-            Path::new(&home),
-        )
-        .verify()
-        .expect("hosted BGE-M3 cache must match the immutable manifest");
+        let verified =
+            super::super::bge_m3_artifacts::BgeM3Artifacts::at_neoth_home(Path::new(&home))
+                .verify()
+                .expect("hosted BGE-M3 cache must match the immutable manifest");
         let adapter = LocalBgeM3Adapter::open_verified(verified).unwrap();
         adapter.validate_load().await.unwrap();
         let english = adapter
@@ -310,7 +313,9 @@ mod tests {
             .await
             .unwrap();
         let german = adapter
-            .embed(EmbedRequest::new("Ein lokaler mehrsprachiger Einbettungstest."))
+            .embed(EmbedRequest::new(
+                "Ein lokaler mehrsprachiger Einbettungstest.",
+            ))
             .await
             .unwrap();
         for response in [&english, &english_repeat, &german] {
@@ -318,7 +323,10 @@ mod tests {
             let length_sq: f32 = response.vector.iter().map(|value| value * value).sum();
             assert!((length_sq - 1.0).abs() < 1e-4);
         }
-        assert_eq!(english.vector, english_repeat.vector, "CPU inference must be deterministic");
+        assert_eq!(
+            english.vector, english_repeat.vector,
+            "CPU inference must be deterministic"
+        );
         assert!(
             super::super::embed::cosine(&english.vector, &german.vector) < 0.99999,
             "distinct bilingual inputs must not collapse to one vector"
@@ -343,7 +351,9 @@ mod tests {
             .clone();
         let long_encoding = encode_bge_input(&tokenizer, &"multilingual ".repeat(10_000)).unwrap();
         assert!(long_encoding.get_ids().len() <= BGE_M3_MAX_TOKENS);
-        let sep_id = tokenizer.token_to_id("</s>").expect("official XLM-R SEP token");
+        let sep_id = tokenizer
+            .token_to_id("</s>")
+            .expect("official XLM-R SEP token");
         assert_eq!(long_encoding.get_ids().last(), Some(&sep_id));
     }
 }

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T17:18:51.3115513Z",
-  "validationStatus": "W210 hosted workflow parse repair; focused200/Core pending",
+  "capturedUtc": "2026-09-22T17:22:11.0330168Z",
+  "validationStatus": "W210 hosted source format imported; native and official model tests running",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -993,8 +993,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "bytes": 164172,
-      "sha256": "E2C8AD960EB3DD0C068FB1DA9ED25A378274A5F7491BB53103121C5FEECA0A7A"
+      "bytes": 164133,
+      "sha256": "7F7F6A55D5C055521AB4CDF4C644D7B695B3B57E06350DC8E22B71FBE6BE8509"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_watchdog.rs",
@@ -1168,8 +1168,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/models.rs",
-      "bytes": 77990,
-      "sha256": "C34DB75CD4FC4DE11DC716FECACD9B5412D174872CC50AE64319EAA79B2105E9"
+      "bytes": 78210,
+      "sha256": "C9913643D2090B2DBF849920162F55FA112F5C1A3991166993147A4F36BFB4A7"
     },
     {
       "path": "SRC/neothd/src/cli/n8n.rs",
@@ -2138,8 +2138,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/mod.rs",
-      "bytes": 224262,
-      "sha256": "7EFFD644EA1BA937B6A5591F1344A083EC50F5C90252DFEC348F19A1CE9C0B2F"
+      "bytes": 224285,
+      "sha256": "62C1CA91394DCC231965048C2E692C61FB7DEA136DB82A0EDE819F90CE5676DF"
     },
     {
       "path": "SRC/neothd/src/providers/ollama_api.rs",
@@ -2608,18 +2608,18 @@
     },
     {
       "path": "SRC/neothd/src/config/embedding.rs",
-      "bytes": 2787,
-      "sha256": "4F4845815F7D033BD61D239E3AA157DEDC4EB234F9917ECCDD360080F4C283F2"
+      "bytes": 2857,
+      "sha256": "FF8816A992D2E3C76ADF8FD7103F0826E05C8249F1C537A910485F9E2CE08212"
     },
     {
       "path": "SRC/neothd/src/providers/bge_m3_artifacts.rs",
-      "bytes": 14447,
-      "sha256": "8FE9776A608E829DDB93B384C42E5EE140D8C95B511FC1CD897723DC3AB3FD41"
+      "bytes": 14733,
+      "sha256": "A4F4D44E4209E766B0184944AB20136B2A613DD3C5A0557B77FEDC6F4C967715"
     },
     {
       "path": "SRC/neothd/src/providers/local_bge_m3.rs",
-      "bytes": 13557,
-      "sha256": "7ECBB30AA9F9F004A45B10445278FE88D000C54A0B2229CF6D4C85427227EDF9"
+      "bytes": 13685,
+      "sha256": "25528185B9EC39CF2F697FBCDEE0F5AF2893292C25BFB05B882DD0DCA129AC80"
     },
     {
       "path": "docs/gold-wave210-verification.md",

@@ -259,7 +259,7 @@ impl ManagedModel {
                         artifacts.cache_dir(),
                     )
                 }
-            },
+            }
             Self::Whisper(target) => target.verified_cache_health(during_attempt),
         }
     }
@@ -930,10 +930,9 @@ struct BgeM3Status {
 }
 
 fn bge_m3_status(neoth_home: &Path, cfg: &FreedomConfig) -> BgeM3Status {
-    let artifacts =
-        crate::providers::bge_m3_artifacts::BgeM3Artifacts::at_neoth_home(neoth_home);
-    let pending = crate::media::model_manager::has_pending_download(artifacts.cache_dir())
-        .unwrap_or(false);
+    let artifacts = crate::providers::bge_m3_artifacts::BgeM3Artifacts::at_neoth_home(neoth_home);
+    let pending =
+        crate::media::model_manager::has_pending_download(artifacts.cache_dir()).unwrap_or(false);
     // Status is intentionally a non-loading, non-hashing artifact snapshot.
     // Pull/repair prove the full manifest and adapter load before D8 success.
     let health = artifacts.cache_health();
@@ -949,7 +948,10 @@ fn bge_m3_status(neoth_home: &Path, cfg: &FreedomConfig) -> BgeM3Status {
     };
     BgeM3Status {
         selected_model: cfg.embed.model.as_str().to_string(),
-        selected: matches!(cfg.embed.model, crate::config::embedding::EmbeddingModel::BgeM3),
+        selected: matches!(
+            cfg.embed.model,
+            crate::config::embedding::EmbeddingModel::BgeM3
+        ),
         repository: crate::providers::bge_m3_artifacts::DEFAULT_REPO,
         revision: crate::providers::bge_m3_artifacts::DEFAULT_REVISION,
         cache_dir: artifacts.cache_dir().display().to_string(),
@@ -970,7 +972,10 @@ async fn run_bge_m3(action: BgeM3ModelsAction, output: &OutputFormat) -> Result<
                     println!("{}", serde_json::to_string_pretty(&status)?);
                 }
                 OutputFormat::Table => {
-                    println!("BGE-M3 selected: {} ({})", status.selected, status.selected_model);
+                    println!(
+                        "BGE-M3 selected: {} ({})",
+                        status.selected, status.selected_model
+                    );
                     println!("pin: {}@{}", status.repository, status.revision);
                     println!("cache: {}", status.cache_dir);
                     println!("status: {}", status.health);
@@ -1299,7 +1304,8 @@ async fn finalize_model_pull(
             if attempt.is_pending() {
                 attempt
                     .finish_ready(
-                        audit_sink.context("completed model attempt has no mandatory audit sink")?,
+                        audit_sink
+                            .context("completed model attempt has no mandatory audit sink")?,
                         cache_dir,
                     )
                     .await
@@ -1505,18 +1511,20 @@ mod tests {
                 action: BgeM3ModelsAction::Repair
             }
         ));
-        assert!(ModelsCli::try_parse_from(["models", "bge-m3", "pull", "--repo", "other/model"])
-            .is_err());
-        assert!(ModelsCli::try_parse_from(["models", "bge-m3", "pull", "--revision", "main"])
-            .is_err());
+        assert!(
+            ModelsCli::try_parse_from(["models", "bge-m3", "pull", "--repo", "other/model"])
+                .is_err()
+        );
+        assert!(
+            ModelsCli::try_parse_from(["models", "bge-m3", "pull", "--revision", "main"]).is_err()
+        );
     }
 
     #[tokio::test]
     async fn bge_m3_load_failure_records_failed_d8_and_never_ready() {
         let home = tempfile::tempdir().unwrap();
         let cache_dir = home.path().join("models").join("bge-m3");
-        let (writer, join) =
-            crate::wal::writer::spawn(home.path().join("attempt.wal")).unwrap();
+        let (writer, join) = crate::wal::writer::spawn(home.path().join("attempt.wal")).unwrap();
         let sink = PullAuditSink::Wal(writer);
         let mut attempt = crate::media::model_manager::ModelDownloadAttempt::acquire(
             &cache_dir,
@@ -1531,7 +1539,9 @@ mod tests {
             &mut attempt,
             Some(&sink),
             &cache_dir,
-            Err(anyhow::anyhow!("BGE-M3 adapter load rejected pinned artifacts")),
+            Err(anyhow::anyhow!(
+                "BGE-M3 adapter load rejected pinned artifacts"
+            )),
         )
         .await
         .unwrap_err();
@@ -1560,10 +1570,12 @@ mod tests {
         .unwrap();
         assert_eq!(terminal_statuses.len(), 1);
         assert_eq!(terminal_statuses[0].0, "failed");
-        assert!(terminal_statuses[0]
-            .1
-            .as_deref()
-            .is_some_and(|reason| reason.contains("adapter load rejected")));
+        assert!(
+            terminal_statuses[0]
+                .1
+                .as_deref()
+                .is_some_and(|reason| reason.contains("adapter load rejected"))
+        );
     }
 
     #[tokio::test]
@@ -1573,11 +1585,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl crate::media::model_manager::ModelDownloadAuditSink for FailComplete {
-            async fn append_model_download(
-                &self,
-                event_type: u8,
-                _payload: Vec<u8>,
-            ) -> Result<()> {
+            async fn append_model_download(&self, event_type: u8, _payload: Vec<u8>) -> Result<()> {
                 if event_type == crate::wal::events::EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE {
                     anyhow::bail!("simulate an accepted-ready cleanup interruption");
                 }
@@ -1601,7 +1609,12 @@ mod tests {
         .unwrap();
         let failing = FailComplete;
         attempt.ensure_started(&failing).await.unwrap();
-        assert!(attempt.finish_ready(&failing, target.cache_path()).await.is_err());
+        assert!(
+            attempt
+                .finish_ready(&failing, target.cache_path())
+                .await
+                .is_err()
+        );
 
         assert!(!target.verified_cache_health(false).is_ready());
         assert!(target.verified_cache_health(true).is_ready());

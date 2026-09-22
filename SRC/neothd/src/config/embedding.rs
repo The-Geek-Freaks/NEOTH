@@ -49,20 +49,24 @@ mod tests {
 
     #[test]
     fn bge_m3_round_trips_at_the_embed_namespace() {
-        let config: FreedomConfig = serde_yaml::from_str(
-            "operator_id: operator\nembed:\n  model: bge_m3\n",
-        )
-        .unwrap();
+        let config: FreedomConfig =
+            serde_yaml::from_str("operator_id: operator\nembed:\n  model: bge_m3\n").unwrap();
         assert_eq!(config.embed.model, EmbeddingModel::BgeM3);
-        assert!(serde_yaml::to_string(&config).unwrap().contains("model: bge_m3"));
+        assert!(
+            serde_yaml::to_string(&config)
+                .unwrap()
+                .contains("model: bge_m3")
+        );
     }
 
     #[test]
     fn unknown_embedding_model_fails_configuration_parse() {
-        assert!(serde_yaml::from_str::<FreedomConfig>(
-            "operator_id: operator\nembed:\n  model: remote_mystery\n",
-        )
-        .is_err());
+        assert!(
+            serde_yaml::from_str::<FreedomConfig>(
+                "operator_id: operator\nembed:\n  model: remote_mystery\n",
+            )
+            .is_err()
+        );
     }
 
     #[test]

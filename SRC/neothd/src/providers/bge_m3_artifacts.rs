@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 
 use crate::media::model_manager::{
-    ArtifactFingerprint, ArtifactKind, CacheHealth, ExpectedArtifactFingerprint, ModelDownloadAttempt,
-    RequiredArtifact,
+    ArtifactFingerprint, ArtifactKind, CacheHealth, ExpectedArtifactFingerprint,
+    ModelDownloadAttempt, RequiredArtifact,
 };
 
 pub(crate) const BGE_M3_REPOSITORY: &str = "BAAI/bge-m3";
@@ -65,13 +65,41 @@ pub(crate) const REQUIRED_ARTIFACTS: &[RequiredArtifact] = &{
                 sha256: "21106b6d7dab2952c1d496fb21d5dc9db75c28ed361a05f5020bbba27810dd08",
             }),
         },
-        json_artifact(CONFIG_FILE, 687, "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa"),
-        json_artifact(TOKENIZER_CONFIG_FILE, 444, "a62b2b6784f990259fddef5f16388693a8043be4f69179e6a5257eeb3f9abac4"),
-        json_artifact(SPECIAL_TOKENS_FILE, 964, "8c785abebea9ae3257b61681b4e6fd8365ceafde980c21970d001e834cf10835"),
-        opaque_artifact("modules.json", 349, "84e40c8e006c9b1d6c122e02cba9b02458120b5fb0c87b746c41e0207cf642cf"),
-        json_artifact("1_Pooling/config.json", 191, "e54c164a07274f2eb45bb724f54a79d1efcc90c41573887cd9a29aeee0597352"),
-        json_artifact("sentence_bert_config.json", 54, "eb9b44b13c0f52a3b3685c3b1cbdea1ba8b04bea123b98f61610048940776eb1"),
-        json_artifact("config_sentence_transformers.json", 123, "1eef72430e7194a1e59680e635aed81ffa083f05668dbc5bb1c56c04c0999c38"),
+        json_artifact(
+            CONFIG_FILE,
+            687,
+            "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa",
+        ),
+        json_artifact(
+            TOKENIZER_CONFIG_FILE,
+            444,
+            "a62b2b6784f990259fddef5f16388693a8043be4f69179e6a5257eeb3f9abac4",
+        ),
+        json_artifact(
+            SPECIAL_TOKENS_FILE,
+            964,
+            "8c785abebea9ae3257b61681b4e6fd8365ceafde980c21970d001e834cf10835",
+        ),
+        opaque_artifact(
+            "modules.json",
+            349,
+            "84e40c8e006c9b1d6c122e02cba9b02458120b5fb0c87b746c41e0207cf642cf",
+        ),
+        json_artifact(
+            "1_Pooling/config.json",
+            191,
+            "e54c164a07274f2eb45bb724f54a79d1efcc90c41573887cd9a29aeee0597352",
+        ),
+        json_artifact(
+            "sentence_bert_config.json",
+            54,
+            "eb9b44b13c0f52a3b3685c3b1cbdea1ba8b04bea123b98f61610048940776eb1",
+        ),
+        json_artifact(
+            "config_sentence_transformers.json",
+            123,
+            "1eef72430e7194a1e59680e635aed81ffa083f05668dbc5bb1c56c04c0999c38",
+        ),
     ]
 };
 
@@ -90,11 +118,7 @@ const fn opaque_artifact(
     }
 }
 
-const fn json_artifact(
-    filename: &'static str,
-    len: u64,
-    sha256: &'static str,
-) -> RequiredArtifact {
+const fn json_artifact(filename: &'static str, len: u64, sha256: &'static str) -> RequiredArtifact {
     RequiredArtifact {
         filename,
         kind: ArtifactKind::JsonObject,
@@ -159,12 +183,12 @@ impl BgeM3Artifacts {
         .await
         .context("join BGE-M3 pre-acquisition SHA-256 verification")?;
         if health.is_ready() {
-            return Ok(VerifiedBgeM3Artifacts { artifacts: self.clone() });
+            return Ok(VerifiedBgeM3Artifacts {
+                artifacts: self.clone(),
+            });
         }
         if !attempt.network_authorized(&self.cache_dir, BGE_M3_REPOSITORY) {
-            bail!(
-                "BGE-M3 network access is not authorized by a confirmed model-download attempt"
-            );
+            bail!("BGE-M3 network access is not authorized by a confirmed model-download attempt");
         }
         crate::providers::local_qwen::preflight_disk_space(
             &self.cache_dir,
@@ -189,10 +213,9 @@ impl BgeM3Artifacts {
             let expected = artifact
                 .expected
                 .context("BGE-M3 manifest artifact is missing its fingerprint")?;
-            let source = repo
-                .download(artifact.filename)
-                .await
-                .with_context(|| format!("download pinned BGE-M3 artifact {}", artifact.filename))?;
+            let source = repo.download(artifact.filename).await.with_context(|| {
+                format!("download pinned BGE-M3 artifact {}", artifact.filename)
+            })?;
             crate::media::model_manager::install_from_hf_source(
                 &source,
                 &self.cache_dir.join(artifact.filename),
@@ -282,11 +305,10 @@ mod tests {
         );
         assert_eq!(modules.len(), 349);
         std::fs::write(cache.path().join("modules.json"), modules).unwrap();
-        assert!(crate::media::model_manager::verified_cache_health(
-            cache.path(),
-            &[modules_artifact()]
-        )
-        .is_ready());
+        assert!(
+            crate::media::model_manager::verified_cache_health(cache.path(), &[modules_artifact()])
+                .is_ready()
+        );
     }
 
     #[test]
@@ -308,13 +330,10 @@ mod tests {
     async fn acquisition_refuses_missing_cache_before_hf_initialization_without_d7() {
         let home = tempfile::tempdir().unwrap();
         let artifacts = BgeM3Artifacts::at_neoth_home(home.path());
-        let attempt = ModelDownloadAttempt::acquire(
-            artifacts.cache_dir(),
-            BGE_M3_REPOSITORY,
-            "test",
-        )
-        .await
-        .unwrap();
+        let attempt =
+            ModelDownloadAttempt::acquire(artifacts.cache_dir(), BGE_M3_REPOSITORY, "test")
+                .await
+                .unwrap();
 
         let error = artifacts.acquire_from_hf(&attempt).await.unwrap_err();
         assert!(error.to_string().contains("not authorized"));
@@ -337,26 +356,24 @@ mod tests {
 
         let home = tempfile::tempdir().unwrap();
         let artifacts = BgeM3Artifacts::at_neoth_home(home.path());
-        let mut first = ModelDownloadAttempt::acquire(
-            artifacts.cache_dir(),
-            BGE_M3_REPOSITORY,
-            "test",
-        )
-        .await
-        .unwrap();
+        let mut first =
+            ModelDownloadAttempt::acquire(artifacts.cache_dir(), BGE_M3_REPOSITORY, "test")
+                .await
+                .unwrap();
         let sink = FailTerminalAudit;
         first.ensure_started(&sink).await.unwrap();
         assert!(first.network_authorized(artifacts.cache_dir(), BGE_M3_REPOSITORY));
-        assert!(first.finish_ready(&sink, artifacts.cache_dir()).await.is_err());
+        assert!(
+            first
+                .finish_ready(&sink, artifacts.cache_dir())
+                .await
+                .is_err()
+        );
         drop(first);
 
-        let retry = ModelDownloadAttempt::acquire(
-            artifacts.cache_dir(),
-            BGE_M3_REPOSITORY,
-            "test",
-        )
-        .await
-        .unwrap();
+        let retry = ModelDownloadAttempt::acquire(artifacts.cache_dir(), BGE_M3_REPOSITORY, "test")
+            .await
+            .unwrap();
         assert_eq!(
             retry.pending_outcome(),
             Some(crate::media::model_manager::PendingModelDownloadOutcome::Ready)

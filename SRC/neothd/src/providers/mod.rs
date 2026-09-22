@@ -17,8 +17,8 @@ pub mod anthropic_api;
 pub mod aws_bedrock;
 pub mod aws_credentials;
 pub mod aws_sigv4;
-pub(crate) mod bge_m3_artifacts;
 pub mod azure_openai;
+pub(crate) mod bge_m3_artifacts;
 pub mod circuit_breaker;
 pub mod circuit_breaker_stream;
 pub mod claude_cli;
@@ -45,8 +45,8 @@ pub mod fallback;
 pub mod gemini_api;
 pub mod http_client;
 pub mod known_endpoints;
-pub mod local_probe;
 pub mod local_bge_m3;
+pub mod local_probe;
 pub mod local_qwen;
 pub mod meter;
 pub mod model_roles;
@@ -5590,16 +5590,18 @@ mod tests {
     async fn explicit_bge_m3_rejects_cloud_embedding_provider_without_dispatch() {
         let mut config = FreedomConfig::default();
         config.embed.model = crate::config::embedding::EmbeddingModel::BgeM3;
-        config.inference.embedding_provider = Some(
-            crate::config::inference::InferenceProvider::OpenAi,
-        );
+        config.inference.embedding_provider =
+            Some(crate::config::inference::InferenceProvider::OpenAi);
 
         let readiness = local_embedding_readiness_from_config(&config).await;
         assert_eq!(
             readiness.selected_model(),
             crate::config::embedding::EmbeddingModel::BgeM3
         );
-        assert!(matches!(&readiness, LocalEmbeddingReadiness::Unavailable { .. }));
+        assert!(matches!(
+            &readiness,
+            LocalEmbeddingReadiness::Unavailable { .. }
+        ));
         assert!(
             readiness
                 .unavailable_reason()
