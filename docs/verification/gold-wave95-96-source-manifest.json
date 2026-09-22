@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W191-research-loop",
-  "base": "71e621fbd2a6c71f639f7734677549aa84468568",
-  "capturedUtc": "2026-09-22T10:53:28.4353656Z",
-  "validationStatus": "W191_FIXTURE_DECODE_REPAIR_RETEST_PENDING",
-  "scopeNote": "W190 optional checkpoint compile repair and exact Hosted format import; W191 actual standalone registry producer and five regressions; observed Beta GUI test compile repairs. Prior evidence remains source-specific; no Road closure.",
+  "item": "GOLD-W95-W193-durable-research-budgets",
+  "base": "1fda1d337b2883fe2f70419a685a34850f8b2479",
+  "capturedUtc": "2026-09-22T11:07:19.9765403Z",
+  "validationStatus": "W193_REVIEWED_HOSTED_PENDING",
+  "scopeNote": "W193 durable per-run provider reservations and active-time consumption across resume, schema v2 fail-closed legacy handling and WAL error propagation. W191 fixture exact decoded IDs repair. W192 unadmitted source excluded; all previous wave receipt bindings remain historical.",
   "files": [
     {
       "path": ".gitattributes",
@@ -63,8 +63,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 9848,
-      "sha256": "5349EC8D8A8FD64713EA5F284C115D72ECC722B8C48826F0B618F9FF5434A921"
+      "bytes": 10323,
+      "sha256": "D476436E85BEF62FB97FFB82A419F69ED1E80F59A63DFBB989FF5CFC7B9102C3"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -222,6 +222,11 @@
       "sha256": "55C305D7AB763AB4D399D5773D38DD72E628221ACF312634EF54814A024E7622"
     },
     {
+      "path": "docs/gold-wave191-verification.md",
+      "bytes": 2945,
+      "sha256": "A7D70E4722B90691F986F91D3697E12DCF1D28A43B2BBCA120E5FF3591970D43"
+    },
+    {
       "path": "docs/install.md",
       "bytes": 13637,
       "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
@@ -328,18 +333,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 27676,
-      "sha256": "699B47BF78A734879403AD274B97C783EED0C25FA0484D0FCBAE2244E6F2697B"
+      "bytes": 27916,
+      "sha256": "69BACFF707D662F5E1A5D19E9179DE96BB7F13B199473A0A276536D3A444F4CF"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1030777,
-      "sha256": "C96E87928FA79513532C44D2DBBAA60CC6263D51A2ED093AFF2BC03971BE173A"
+      "bytes": 1032495,
+      "sha256": "2432BAE26A2BA7918D21AE76B918FA70A8325979D99E571ECDA4EB170E53ACC3"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1626224,
-      "sha256": "4CF615874842A4AA7DB000A3E231E2C78143390FBD4F53A4D168B6C132ABFA71"
+      "bytes": 1627942,
+      "sha256": "323E7456B5C9BC29D99172991193836BE6091A9AC70308C5FB732D280BD90395"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -968,8 +973,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/loop_cmd.rs",
-      "bytes": 29095,
-      "sha256": "2CAD60DDE423DA10D2192DC4DA0B18AFC67DAE97FB0EFC0E15268B812C35140D"
+      "bytes": 29276,
+      "sha256": "32C232DCCFD9DE2F7615E5CCC7E4A2CE4B6AF79E276C29E52A7FD29C08F6E245"
     },
     {
       "path": "SRC/neothd/src/cli/mcp.rs",
@@ -1038,8 +1043,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/research.rs",
-      "bytes": 19156,
-      "sha256": "43EA7D3BC9536018768C841AA71A0193CA350E9A055163FE1E1F18E3988675AF"
+      "bytes": 25533,
+      "sha256": "38B5B2510AD58B0A65F73BF991EC4FC11420BDE7EACD76B625044DF53C2902F0"
     },
     {
       "path": "SRC/neothd/src/cli/review.rs",
@@ -1478,8 +1483,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/research_runs.rs",
-      "bytes": 36544,
-      "sha256": "5E23F99C3002E0215EF0DA4E8C02A628C149D9D36A77918BE9781C4A13B47F12"
+      "bytes": 43038,
+      "sha256": "E2A8CF67F26AFC0AAFEE3FB118018E73B9766B2533CFB5F10E38AF8455CA7FDE"
     },
     {
       "path": "SRC/neothd/src/daemon/session_sort_cron.rs",
@@ -2307,9 +2312,9 @@
       "sha256": "A2F73733618DE347F4876EDD4325391DB8C2F11D853614CC4D8EDC2A82CA497D"
     },
     {
-      "path": "docs/gold-wave191-verification.md",
-      "bytes": 2945,
-      "sha256": "A7D70E4722B90691F986F91D3697E12DCF1D28A43B2BBCA120E5FF3591970D43"
+      "path": "docs/gold-wave193-verification.md",
+      "bytes": 1669,
+      "sha256": "6ED9FB5D807096CF1F699AC38EA5BF7E8082024365C33AFB46C64DCDF70B4BC3"
     }
   ]
 }

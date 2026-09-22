@@ -534,7 +534,7 @@ mod tests {
         request
     }
 
-    fn first_registry_skill_id(request: &crate::providers::Request) -> String {
+    fn registry_skill_ids(request: &crate::providers::Request) -> Vec<String> {
         let system = request.system.as_deref().expect("registry system layer");
         let envelopes: Vec<serde_json::Value> = system
             .lines()
@@ -548,14 +548,22 @@ mod tests {
         assert_eq!(envelopes.len(), 1, "exactly one registry envelope");
         // Registry JSON is data inside the canonical envelope's JSON string.
         // Decode both layers rather than searching its escaped wire bytes.
-        let payload: serde_json::Value = serde_json::from_str(
-            envelopes[0]["data"].as_str().expect("registry data string"),
-        )
-        .expect("registry payload JSON");
-        payload["skills"][0]["id"]
-            .as_str()
+        let payload: serde_json::Value =
+            serde_json::from_str(envelopes[0]["data"].as_str().expect("registry data string"))
+                .expect("registry payload JSON");
+        payload["skills"]
+            .as_array()
+            .expect("complete registry skill array")
+            .iter()
+            .map(|skill| skill["id"].as_str().expect("Skill id").to_owned())
+            .collect()
+    }
+
+    fn first_registry_skill_id(request: &crate::providers::Request) -> String {
+        registry_skill_ids(request)
+            .first()
             .expect("at least one admitted Skill")
-            .to_owned()
+            .clone()
     }
 
     fn record(id: &str, ts_start: i64) -> LoopRunRecord {
@@ -645,7 +653,7 @@ mod tests {
         let baseline = loop_request_for_test(home.path(), &FreedomConfig::default()).await;
         let admitted_id = first_registry_skill_id(&baseline);
         assert!(
-            baseline.system.as_deref().unwrap().contains(&admitted_id),
+            registry_skill_ids(&baseline).contains(&admitted_id),
             "the baseline must prove this fixture uses the production registry loader"
         );
 
@@ -656,12 +664,9 @@ mod tests {
             .insert(admitted_id.clone(), "0".repeat(64));
         let pin_request = loop_request_for_test(home.path(), &pin_rejected).await;
         assert!(
-            !pin_request
-                .system
-                .as_deref()
-                .unwrap()
-                .contains(&admitted_id),
-            "a pinned-hash mismatch must stay out of the standalone loop registry"
+            !registry_skill_ids(&pin_request).contains(&admitted_id),
+            "pinned Skill {admitted_id} must be absent from registry ids: {:?}",
+            registry_skill_ids(&pin_request)
         );
 
         let mut eval_suppressed = FreedomConfig::default();
@@ -669,11 +674,7 @@ mod tests {
         eval_suppressed.skills.eval_session_active = true;
         let eval_request = loop_request_for_test(home.path(), &eval_suppressed).await;
         assert!(
-            !eval_request
-                .system
-                .as_deref()
-                .unwrap()
-                .contains(&admitted_id),
+            !registry_skill_ids(&eval_request).contains(&admitted_id),
             "an eval-suppressed session must expose no Skill registry entry"
         );
     }
@@ -691,13 +692,13 @@ mod tests {
             .insert(admitted_id.clone(), "0".repeat(64));
         let first = loop_request_for_test(home.path(), &reject_first_generation).await;
         assert!(
-            !first.system.as_deref().unwrap().contains(&admitted_id),
+            !registry_skill_ids(&first).contains(&admitted_id),
             "the first loop generation rejects the pinned Skill"
         );
 
         let later = loop_request_for_test(home.path(), &FreedomConfig::default()).await;
         assert!(
-            later.system.as_deref().unwrap().contains(&admitted_id),
+            registry_skill_ids(&later).contains(&admitted_id),
             "a later standalone loop must acquire a fresh registry instead of reusing the rejected generation"
         );
     }

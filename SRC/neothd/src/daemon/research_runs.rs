@@ -17,7 +17,7 @@ const MAX_SCOPE_BYTES: usize = 4_096;
 const MAX_RUNS_LISTED: usize = 200;
 const MAX_STORE_BYTES: usize = 512 * 1024;
 const MAX_AUDIT_ROWS: usize = 128;
-const SCHEMA_VERSION: u8 = 1;
+const SCHEMA_VERSION: u8 = 2;
 const LOCK_FILE: &str = "research-runs.lock";
 
 static RESEARCH_RUNS_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
@@ -63,6 +63,10 @@ pub struct ResearchRun {
     pub control_request: Option<String>,
     pub effect_started: bool,
     pub attempt_token: Option<String>,
+    /// Durable reservations; absent fields are rejected by the strict schema.
+    pub provider_calls_used: u32,
+    pub wall_elapsed_ms: u64,
+    pub attempt_started_unix_ms: Option<i64>,
     pub created_unix: i64,
     pub updated_unix: i64,
     pub result_sha256: Option<String>,
@@ -133,6 +137,9 @@ pub fn create(
         control_request: None,
         effect_started: false,
         attempt_token: None,
+        provider_calls_used: 0,
+        wall_elapsed_ms: 0,
+        attempt_started_unix_ms: None,
         created_unix: now,
         updated_unix: now,
         result_sha256: None,
@@ -187,6 +194,12 @@ pub fn approve(home: &Path, id: &str, expected: u64) -> Result<ResearchRun> {
         Ok(())
     })
 }
+
+/// Atomically reserve one provider call for the current attempt. A rejected
+/// reservation never reaches the wrapped provider and survives pause/resume.
+pub fn reserve_provider_call(home:&Path,id:&str,attempt:&str)->Result<()> {
+    mutate_unchecked(home,id,|run| { require_attempt(run,attempt)?; anyhow::ensure!(run.provider_calls_used < run.budget.max_provider_calls,"immutable research provider-call budget exhausted"); run.provider_calls_used=run.provider_calls_used.checked_add(1).context("research provider call counter overflow")?; run.audit.push(audit("provider_call_reserved",None)); Ok(()) }).map(|_|())
+}
 pub fn request_control(home: &Path, id: &str, expected: u64, request: &str) -> Result<ResearchRun> {
     if request != "pause" && request != "cancel" {
         anyhow::bail!("invalid research control request")
@@ -236,6 +249,7 @@ pub fn observe_control(home: &Path, id: &str, attempt: &str) -> Result<ResearchC
                 run.state = ResearchRunState::Cancelled;
                 run.attempt_token = None;
                 run.effect_started = false;
+                settle_wall_time(&mut run)?;
                 run.revision = run
                     .revision
                     .checked_add(1)
@@ -266,6 +280,7 @@ pub fn pause_at_boundary(home: &Path, id: &str, attempt: &str) -> Result<Researc
         run.state = ResearchRunState::Paused;
         run.attempt_token = None;
         run.effect_started = false;
+        settle_wall_time(run)?;
         run.audit.push(audit("paused_at_checkpoint", None));
         Ok(())
     })
@@ -316,6 +331,7 @@ pub fn begin_effect(home: &Path, id: &str, attempt: &str) -> Result<()> {
             r.state = ResearchRunState::Cancelled;
             r.attempt_token = None;
             r.effect_started = false;
+            settle_wall_time(&mut r)?;
             r.revision = r
                 .revision
                 .checked_add(1)
@@ -345,6 +361,7 @@ pub fn fail_pre_effect(home: &Path, id: &str, attempt: &str) -> Result<()> {
         };
         r.state = ResearchRunState::Failed;
         r.attempt_token = None;
+        settle_wall_time(r)?;
         r.audit.push(audit("setup_failed_before_effect", None));
         Ok(())
     })
@@ -370,6 +387,7 @@ pub fn claim_run(home: &Path, id: &str, expected: u64) -> Result<ResearchRun> {
         r.control_request = None;
         r.state = ResearchRunState::Running;
         r.effect_started = false;
+        r.attempt_started_unix_ms = Some(crate::time::now_unix_ns_i64().saturating_div(1_000_000));
         let nonce = sha(&format!(
             "{}:{}:{}",
             r.id,
@@ -399,6 +417,7 @@ pub fn complete(
         r.report = Some(result.to_owned());
         r.citations = citations.to_vec();
         r.state = ResearchRunState::Completed;
+        settle_wall_time(r)?;
         r.attempt_token = None;
         r.effect_started = false;
         r.audit.push(audit("completed", Some(result_hash.clone())));
@@ -409,6 +428,7 @@ pub fn fail_interrupted(home: &Path, id: &str, attempt: &str) -> Result<Research
     mutate_unchecked(home, id, |r| {
         require_attempt(r, attempt)?;
         r.state = ResearchRunState::Interrupted;
+        settle_wall_time(r)?;
         r.attempt_token = None;
         r.audit.push(audit("interrupted_unknown_effect", None));
         Ok(())
@@ -596,6 +616,7 @@ fn validate_run(run: &ResearchRun) -> Result<()> {
         run.revision > 0 && run.created_unix >= 0 && run.updated_unix >= run.created_unix,
         "invalid research run revision or clock"
     );
+    anyhow::ensure!(run.provider_calls_used <= run.budget.max_provider_calls && run.wall_elapsed_ms <= run.budget.max_wall_secs.saturating_mul(1000) && (run.state == ResearchRunState::Running) == run.attempt_started_unix_ms.is_some(), "invalid durable research budget consumption");
     validate_text("topic", &run.topic, MAX_TOPIC_BYTES)?;
     validate_text("scope", &run.scope, MAX_SCOPE_BYTES)?;
     anyhow::ensure!(
@@ -680,6 +701,9 @@ fn validate_json_shape(value: &serde_json::Value) -> Result<()> {
         "control_request",
         "effect_started",
         "attempt_token",
+        "provider_calls_used",
+        "wall_elapsed_ms",
+        "attempt_started_unix_ms",
         "created_unix",
         "updated_unix",
         "result_sha256",
@@ -746,6 +770,26 @@ fn audit(event: &str, detail: Option<String>) -> ResearchRunAudit {
         event: event.to_owned(),
         detail_sha256: detail,
     }
+}
+
+fn settle_wall_time(run: &mut ResearchRun) -> Result<()> {
+    settle_wall_time_at(
+        run,
+        crate::time::now_unix_ns_i64().saturating_div(1_000_000),
+    )
+}
+
+fn settle_wall_time_at(run: &mut ResearchRun, now: i64) -> Result<()> {
+    let Some(started) = run.attempt_started_unix_ms.take() else { return Ok(()) };
+    anyhow::ensure!(now >= started,"research active clock moved backwards");
+    let cap = run.budget.max_wall_secs.saturating_mul(1000);
+    let elapsed = (now - started) as u64;
+    run.wall_elapsed_ms = run
+        .wall_elapsed_ms
+        .checked_add(elapsed)
+        .context("research wall elapsed overflow")?
+        .min(cap);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -856,16 +900,92 @@ mod tests {
     }
 
     #[test]
+    fn provider_call_reservations_persist_across_pause_reopen_and_resume() {
+        let home=tempfile::tempdir().unwrap();
+        let mut capped=budget(); capped.max_provider_calls=2;
+        let draft=create(home.path(),"topic".into(),"scope".into(),capped).unwrap();
+        let approved=approve(home.path(),&draft.id,draft.revision).unwrap();
+        let first=claim_run(home.path(),&approved.id,approved.revision).unwrap();
+        let first_attempt=first.attempt_token.as_deref().unwrap();
+        reserve_provider_call(home.path(),&first.id,first_attempt).unwrap();
+        checkpoint(home.path(),&first.id,first_attempt,crate::tools::deep_research::ResearchCheckpoint{queries:vec!["one".into()],completed_rounds:1,evidence:Vec::new()}).unwrap();
+        let current=load(home.path(),&first.id).unwrap();
+        let requested=request_control(home.path(),&current.id,current.revision,"pause").unwrap();
+        let paused=pause_at_boundary(home.path(),&requested.id,first_attempt).unwrap();
+        let reopened=load(home.path(),&paused.id).unwrap(); assert_eq!(reopened.provider_calls_used,1);
+        let resumed=claim_run(home.path(),&reopened.id,reopened.revision).unwrap(); let second_attempt=resumed.attempt_token.as_deref().unwrap();
+        reserve_provider_call(home.path(),&resumed.id,second_attempt).unwrap();
+        assert!(reserve_provider_call(home.path(),&resumed.id,second_attempt).is_err(),"resume must not replenish provider-call budget");
+        assert_eq!(load(home.path(),&resumed.id).unwrap().provider_calls_used,2);
+    }
+
+    #[test]
+    fn wall_time_accumulates_active_attempts_without_pause_dwell() {
+        let home = tempfile::tempdir().unwrap();
+        let mut run = create(home.path(), "topic".into(), "scope".into(), budget()).unwrap();
+        run.state = ResearchRunState::Running;
+        run.attempt_started_unix_ms = Some(1_000);
+        settle_wall_time_at(&mut run, 1_400).unwrap();
+        assert_eq!(run.wall_elapsed_ms, 400);
+        assert_eq!(run.attempt_started_unix_ms, None);
+
+        // The 600ms pause is deliberately absent from the durable total.
+        run.state = ResearchRunState::Paused;
+        run.state = ResearchRunState::Running;
+        run.attempt_started_unix_ms = Some(2_000);
+        settle_wall_time_at(&mut run, 2_300).unwrap();
+        assert_eq!(run.wall_elapsed_ms, 700);
+        assert_eq!(run.attempt_started_unix_ms, None);
+    }
+
+    #[test]
+    fn wall_time_settlement_caps_timeout_overshoot_for_terminal_persistence() {
+        let mut capped = budget();
+        capped.max_wall_secs = 1;
+        let home = tempfile::tempdir().unwrap();
+        let mut run = create(home.path(), "topic".into(), "scope".into(), capped).unwrap();
+        run.state = ResearchRunState::Running;
+        run.attempt_started_unix_ms = Some(1_000);
+        settle_wall_time_at(&mut run, 2_001).unwrap();
+        run.state = ResearchRunState::Interrupted;
+        assert_eq!(run.wall_elapsed_ms, 1_000);
+        assert_eq!(run.attempt_started_unix_ms, None);
+        validate_run(&run).unwrap();
+    }
+
+    #[test]
+    fn missing_budget_consumption_fields_refuse_without_overwrite() {
+        let home = tempfile::tempdir().unwrap();
+        let run = create(home.path(), "topic".into(), "scope".into(), budget()).unwrap();
+        let path = home.path().join(STORE_DIR).join(run_file_name(&run.id));
+        for field in [
+            "provider_calls_used",
+            "wall_elapsed_ms",
+            "attempt_started_unix_ms",
+        ] {
+            let mut value = serde_json::to_value(&run).unwrap();
+            value.as_object_mut().unwrap().remove(field);
+            std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+            let before = std::fs::read(&path).unwrap();
+            assert!(load(home.path(), &run.id).is_err(), "missing {field} must fail closed");
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+    }
+
+    #[test]
     fn malformed_unknown_future_or_filename_mismatched_store_refuses_without_overwrite() {
         let home = tempfile::tempdir().unwrap();
         let run = create(home.path(), "topic".into(), "scope".into(), budget()).unwrap();
         let path = home.path().join(STORE_DIR).join(run_file_name(&run.id));
         let mut future = serde_json::to_value(&run).unwrap();
-        future["schema_version"] = serde_json::json!(2);
+        future["schema_version"] = serde_json::json!(SCHEMA_VERSION + 1);
+        let mut legacy = serde_json::to_value(&run).unwrap();
+        legacy["schema_version"] = serde_json::json!(1);
         let mut unknown = serde_json::to_value(&run).unwrap();
         unknown["unknown"] = serde_json::json!(true);
         for bytes in [
             b"{broken".to_vec(),
+            serde_json::to_vec(&legacy).unwrap(),
             serde_json::to_vec(&future).unwrap(),
             serde_json::to_vec(&unknown).unwrap(),
         ] {
@@ -955,6 +1075,7 @@ mod tests {
         let second_token = resumed.attempt_token.clone().unwrap();
         assert_ne!(first_token, second_token);
         let persisted_checkpoint = crate::tools::deep_research::ResearchCheckpoint::default();
+        assert!(reserve_provider_call(home.path(), &resumed.id, &first_token).is_err());
         assert!(checkpoint(home.path(), &resumed.id, &first_token, persisted_checkpoint).is_err());
         assert!(begin_effect(home.path(), &resumed.id, &first_token).is_err());
         assert!(complete(home.path(), &resumed.id, &first_token, "old", &[]).is_err());

@@ -3,6 +3,10 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+W193 extends the focused Research/Loop lane to exactly 20 identities: W190 ten,
+W191 five and W193 five. Every name must bind to one current native source record
+before serial exact discovery/execution. W192 WIP remains outside this lane.
+
 ## Workstation stability constraint — 2026-09-16
 
 All local validation workloads on Shadow-PC are suspended after another reported

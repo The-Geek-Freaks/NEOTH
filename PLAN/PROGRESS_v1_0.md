@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W193 durable research budgets (2026-09-22):** reviewed source now reserves
+provider dispatches durably for the current attempt and carries active elapsed
+milliseconds across pause/resume; paused dwell is excluded. The v2 record format
+refuses v1 without rewriting unknown consumption. WAL finalization failures remain
+errors after a paused/cancelled settlement. Five new regressions join the existing
+15 in the exact-source Hosted lane; runtime verification is pending. W192 resource
+materialization remains unadmitted pending its normal-concurrency repair.
+
+**W191 fixture follow-up:** run `35718608647` again passed the ten W190 tests.
+Its next failure was the pin-rejection assertion searching all rendered system
+text, where a Skill name can occur in another description. Assertions now compare
+exact ids from the decoded registry array. This test-only correction awaits rerun.
+
 **Current Hosted boundary (2026-09-22):** published `71e621fb` passed Preflight
 `35717760949` and Code Quality `35717760377`. W190/W191 `35717294010` compiles;
 the first ten W190 identities passed, then W191's first helper failed because
@@ -19,10 +32,9 @@ audio runs target `71e621fb`. The old `8b` native macOS compile failed on the
 same four GUI test defects already repaired in `8fa6`; Windows is saving cache.
 Preview remains active. This is not microphone/device or release acceptance.
 
-W192 bundled-resource boundary repair and W193 cumulative research-budget/WAL
-failure repair remain unadmitted and are excluded from the imminent Loop-test
-fix plus documentation publication. Road counts remain **1015 checked / 307
-open / 2 partial**; combined source/test inventory is 461/570. No checkbox
+W192 bundled-resource repair remains unadmitted and excluded. W193 is admitted
+as reviewed source with fresh Hosted behavior gates pending. Road counts remain **1015 checked / 307
+open / 2 partial**; combined source/test inventory is 462/575. No checkbox
 changes.
 
 **W186 Tract result (2026-09-22):** new graph run `35714955362` on `3ded02b7`
@@ -44,6 +56,19 @@ The Tract adapter now uses the two-input graph; fresh live-audio runtime tests
 remain required. Full CI `35713920675` and preview `35713923652` on `8b654ebd`
 continue independently. The new Linux Clippy private-interface finding is fixed
 by retaining `classify` as module-private; no behavior rule is changed.
+
+**W193 durable research budgets (2026-09-22):** reviewed source now reserves
+provider dispatches durably for the current attempt and carries active elapsed
+milliseconds across pause/resume; paused dwell is excluded. The v2 record format
+refuses v1 without rewriting unknown consumption. WAL finalization failures remain
+errors after a paused/cancelled settlement. Five new regressions join the existing
+15 in the exact-source Hosted lane; runtime verification is pending. W192 resource
+materialization remains unadmitted pending its normal-concurrency repair.
+
+**W191 fixture follow-up:** run `35718608647` again passed the ten W190 tests.
+Its next failure was the pin-rejection assertion searching all rendered system
+text, where a Skill name can occur in another description. Assertions now compare
+exact ids from the decoded registry array. This test-only correction awaits rerun.
 
 **Current Hosted boundary (2026-09-22):** W189 behavior lane `35712523037`
 passed all 18 exact source-bound identities on `2cef8239`. The downloaded
