@@ -85,6 +85,8 @@ pub struct WizardRejected {
 
 /// Versioned request envelope. The completion digest is lower-case SHA-256 of
 /// canonical `freedom.yaml` bytes; credentials never cross this boundary.
+// Keep the existing Rust request API; these short-lived IPC values are not bulk-stored.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WizardRequest {

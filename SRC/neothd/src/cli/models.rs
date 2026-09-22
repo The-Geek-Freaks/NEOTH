@@ -1334,7 +1334,7 @@ async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
 }
 
 async fn run_pull_at(neoth_home: &Path, name: &str, repo_override: Option<&str>) -> Result<()> {
-    let cfg = load_models_config(&neoth_home)?;
+    let cfg = load_models_config(neoth_home)?;
     run_pull_with_config(neoth_home, &cfg, name, repo_override, false).await
 }
 
@@ -1574,6 +1574,7 @@ fn run_prune_with_config(
     prune_target_with_output(name, &target, neoth_home, quiet)
 }
 
+#[cfg(test)]
 fn prune_target(name: &str, target: &ManagedModel, neoth_home: &std::path::Path) -> Result<()> {
     prune_target_with_output(name, target, neoth_home, false)
 }

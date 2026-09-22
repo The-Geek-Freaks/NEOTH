@@ -19,6 +19,15 @@ use crate::wal::events::{EVENT_TYPE_EXTENDED, EVENT_TYPE_RAW_TEXT, ExtendedSubty
 
 const ORIGIN_LOCAL: &str = "local_attested";
 const ORIGIN_CHANNEL: &str = "channel_bound";
+
+type ExistingOriginRow = (
+    String,
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 const CONSENT_VERIFIED_GRANTED: &str = "verified_granted";
 const CONSENT_REVOKED: &str = "revoked";
 const REVOCATION_WITHOUT_PROOF_KIND: &str = "revocation_without_verified_grant_v1";
@@ -325,7 +334,7 @@ pub fn project_origin(tx: &Transaction<'_>, receipt: &OriginReceipt) -> Result<O
         ParsedOrigin::LocalAttested => (ORIGIN_LOCAL, None),
         ParsedOrigin::ChannelBound(key) => (ORIGIN_CHANNEL, Some(key)),
     };
-    let prior: Option<(String, i64, String, Option<String>, Option<String>, Option<String>)> = tx
+    let prior: Option<ExistingOriginRow> = tx
         .query_row(
             "SELECT origin_kind, origin_event_id, raw_payload_hash, channel_id, account_id, scoped_sender_hash \
              FROM idx_episode_origin_v2 WHERE raw_event_id=?1",
@@ -460,7 +469,7 @@ fn quarantine_conflicted_raw(
         // instead of aborting the conflict quarantine transaction.
         if evidence_ids
             .as_ref()
-            .map_or(true, |ids| ids.contains(&raw_event_id))
+            .is_none_or(|ids| ids.contains(&raw_event_id))
         {
             tx.execute(
                 "UPDATE idx_groundtruth SET revoked_at=?1 WHERE id=?2 AND revoked_at IS NULL",
@@ -686,7 +695,7 @@ pub fn revoke_and_quarantine(
         // here would roll back the exact consent denial and retain the fact.
         if evidence_ids
             .as_ref()
-            .map_or(true, |ids| ids.iter().any(|id| bound_ids.contains(id)))
+            .is_none_or(|ids| ids.iter().any(|id| bound_ids.contains(id)))
         {
             synthesis_facts_revoked += tx.execute(
                 "UPDATE idx_groundtruth SET revoked_at=?1 WHERE id=?2 AND revoked_at IS NULL",

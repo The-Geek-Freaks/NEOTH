@@ -145,7 +145,8 @@ impl SkillPrerequisiteSnapshot {
         probe: &dyn SkillPrerequisiteProbe,
     ) -> Self {
         let candidates = candidates
-            .filter_map(|(id, enabled)| enabled.then(|| (id, for_effective_skill_id(id))))
+            .filter(|(_, enabled)| *enabled)
+            .map(|(id, _)| (id, for_effective_skill_id(id)))
             .filter_map(|(id, prerequisite)| prerequisite.map(|prerequisite| (id, prerequisite)))
             .collect::<Vec<_>>();
         let required = candidates

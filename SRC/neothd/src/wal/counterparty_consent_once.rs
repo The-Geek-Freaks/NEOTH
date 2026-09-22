@@ -14,7 +14,6 @@ use crate::wal::{EventFlags, HeaderBuilder, WalSessionContext};
 use super::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
 use super::header::EventHeaderV2;
 
-const INPUT_DOMAIN: &[u8] = b"neoth/w209/counterparty-consent/input/v1\0";
 const AUDIT_DOMAIN: &[u8] = b"neoth/w209/counterparty-consent/audit/v1\0";
 const MAX_CEREMONY_PAYLOAD_BYTES: usize = 4096;
 

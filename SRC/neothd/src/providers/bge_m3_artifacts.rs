@@ -150,7 +150,7 @@ impl BgeM3Artifacts {
     /// Cheap, side-effect-free status for UI/CLI. This does not download or
     /// hash the large checkpoint; callers that need authority use verify.
     pub(crate) fn cache_health(&self) -> CacheHealth {
-        crate::media::model_manager::cache_health(&self.cache_dir, &REQUIRED_ARTIFACTS)
+        crate::media::model_manager::cache_health(&self.cache_dir, REQUIRED_ARTIFACTS)
     }
 
     /// Verify every exact manifest byte and mint the only capability accepted
@@ -158,7 +158,7 @@ impl BgeM3Artifacts {
     pub(crate) fn verify(self) -> Result<VerifiedBgeM3Artifacts> {
         let health = crate::media::model_manager::verified_cache_health(
             &self.cache_dir,
-            &REQUIRED_ARTIFACTS,
+            REQUIRED_ARTIFACTS,
         );
         if !health.is_ready() {
             bail!("BGE-M3 cache is not verified: {health}");

@@ -149,6 +149,8 @@ impl WizardSessionService {
             },
         }
     }
+    // Retain the existing typed rejection API consumed by all IPC request handlers.
+    #[allow(clippy::result_large_err)]
     fn verify(
         &self,
         session: &WizardSessionId,

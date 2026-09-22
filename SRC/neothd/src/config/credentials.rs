@@ -1189,16 +1189,12 @@ impl Credentials {
                                 .same_as(&prepared.credentials_before),
                         "n8n adoption source configuration changed after preparation; retry the command"
                     );
-                    let mut opened_store = None;
-                    let store = if prepared.keychain_mode {
-                        opened_store = Some(
-                            crate::config::keychain::open_store()
-                                .context("open OS keychain for n8n adoption commit")?,
-                        );
-                        Some(opened_store.as_deref().expect("opened keychain store"))
-                    } else {
-                        None
-                    };
+                    let opened_store = prepared
+                        .keychain_mode
+                        .then(|| crate::config::keychain::open_store())
+                        .transpose()
+                        .context("open OS keychain for n8n adoption commit")?;
+                    let store = opened_store.as_deref();
                     if let Some(store) = store {
                         let backup = prepared
                             .keychain_backup_key
@@ -1476,16 +1472,12 @@ impl Credentials {
                 with_legacy_pair_locks(freedom_path, credentials_path, || {
                     let custody = load_n8n_adoption_custody(&custody_path)?;
                     let (fb, cb, fa, ca) = custody.snapshots()?;
-                    let mut opened_store = None;
-                    let store = if custody.keychain_mode {
-                        opened_store = Some(
-                            crate::config::keychain::open_store()
-                                .context("open OS keychain for n8n adoption rollback")?,
-                        );
-                        Some(opened_store.as_deref().expect("opened keychain store"))
-                    } else {
-                        None
-                    };
+                    let opened_store = custody
+                        .keychain_mode
+                        .then(|| crate::config::keychain::open_store())
+                        .transpose()
+                        .context("open OS keychain for n8n adoption rollback")?;
+                    let store = opened_store.as_deref();
                     let files_before = FileSnapshot::capture(freedom_path)?.same_as(&fb)
                         && FileSnapshot::capture(credentials_path)?.same_as(&cb);
                     let files_after = FileSnapshot::capture(freedom_path)?.same_as(&fa)
@@ -1648,16 +1640,12 @@ impl Credentials {
                             && FileSnapshot::capture(credentials_path)?.same_as(&ca),
                         "n8n adoption target changed before finalization; refusing to remove custody"
                     );
-                    let mut opened_store = None;
-                    let store = if custody.keychain_mode {
-                        opened_store = Some(
-                            crate::config::keychain::open_store()
-                                .context("open OS keychain for completed n8n custody cleanup")?,
-                        );
-                        Some(opened_store.as_deref().expect("opened keychain store"))
-                    } else {
-                        None
-                    };
+                    let opened_store = custody
+                        .keychain_mode
+                        .then(|| crate::config::keychain::open_store())
+                        .transpose()
+                        .context("open OS keychain for completed n8n custody cleanup")?;
+                    let store = opened_store.as_deref();
                     if custody.phase != N8nAdoptionPhase::ReadyFinalizationPending {
                         if let Some(store) = store {
                             let candidate = custody

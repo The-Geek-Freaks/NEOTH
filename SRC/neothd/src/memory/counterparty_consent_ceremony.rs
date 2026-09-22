@@ -231,6 +231,8 @@ enum ReservationKind {
     Revoke,
 }
 
+type PendingAuditRow = (String, String, Vec<u8>, i64, Vec<u8>, Vec<u8>, String, i64);
+
 /// Immutable description of the event that the integration must append using
 /// its closed WAL writer API.  Its payload excludes token plaintext and raw
 /// text.  The writer's durable acknowledgement is converted to
@@ -397,6 +399,7 @@ impl PendingAuditLocator {
         self.input_sha256
     }
 
+    #[cfg(test)]
     pub(crate) fn action(&self) -> &'static str {
         self.action
     }
@@ -487,7 +490,7 @@ pub(crate) fn rehydrate_pending_audit(
     receipt: &crate::wal::writer::CounterpartyConsentInputReceipt,
 ) -> Result<Option<PendingAuditRecovery>> {
     let proof = AuthenticatedInboundProof::from_writer_issued_receipt(receipt)?;
-    let row: Option<(String, String, Vec<u8>, i64, Vec<u8>, Vec<u8>, String, i64)> = conn
+    let row: Option<PendingAuditRow> = conn
         .query_row(
             "SELECT state,operation_id,reservation_evidence_sha256,reservation_input_receipt_event_id, \
                     reservation_input_sha256,reservation_payload_sha256,baseline_consent_state,baseline_consent_revision \
@@ -557,7 +560,7 @@ fn as_sha256(value: &[u8]) -> Result<[u8; SHA256_LEN]> {
 /// an expired, consumed, or cancelled request for this exact sender only.  An
 /// active reservation cannot be replaced, so an audit in flight cannot lose
 /// its replay fence.
-pub fn request_challenge(
+pub(crate) fn request_challenge(
     conn: &mut Connection,
     proof: &AuthenticatedInboundProof,
     now_ns: i64,
@@ -620,7 +623,7 @@ pub fn request_challenge(
 /// This function mutates only the pending replay fence; it cannot make any
 /// episode eligible.  On WAL failure the integration must call
 /// [`cancel_reservation`] and return an unavailable/failed reply.
-pub fn reserve_verified_grant(
+pub(crate) fn reserve_verified_grant(
     conn: &mut Connection,
     proof: &AuthenticatedInboundProof,
     token: &str,
@@ -635,7 +638,7 @@ pub fn reserve_verified_grant(
 /// W208 denial and quarantine with a `revoke_audit_pending` replay record,
 /// then returns the audit reservation.  WAL append failure must leave that
 /// pending record and the denial intact; it never restores positive consent.
-pub fn commit_counterparty_revoke_before_audit(
+pub(crate) fn commit_counterparty_revoke_before_audit(
     conn: &mut Connection,
     proof: &AuthenticatedInboundProof,
     now_ns: i64,
@@ -760,14 +763,13 @@ fn reserve(
         }
         ReservationKind::Revoke => unreachable!("revoke commits fail-closed before audit"),
     }
-    unreachable!("revoke commits fail-closed before audit")
 }
 
 /// Commit the already audited, exact grant.  This is intentionally synchronous
 /// and starts a new immediate transaction after WAL acknowledgement.  Its
 /// state predicate prevents a replay, another sender, a revoke reservation,
 /// or a stale audit from turning a row positive.
-pub fn commit_verified_grant_after_audit(
+pub(crate) fn commit_verified_grant_after_audit(
     conn: &mut Connection,
     proof: &AuthenticatedInboundProof,
     reservation: &AuditReservation,
@@ -827,7 +829,7 @@ pub fn commit_verified_grant_after_audit(
 /// Acknowledge a durable audit for a revoke that was already committed
 /// fail-closed.  This changes only audit bookkeeping; denial and quarantine
 /// remain in force when the WAL append failed, was interrupted, or is unknown.
-pub fn acknowledge_revocation_audit(
+pub(crate) fn acknowledge_revocation_audit(
     conn: &mut Connection,
     proof: &AuthenticatedInboundProof,
     reservation: &AuditReservation,
@@ -862,7 +864,10 @@ pub fn acknowledge_revocation_audit(
 /// WAL append failure is non-authoritative for grants only.  A revoke has
 /// already committed its denial and must retain its replay-repair record;
 /// cancelling it would silently resurrect an unaudited positive state.
-pub fn cancel_reservation(conn: &mut Connection, reservation: &AuditReservation) -> Result<()> {
+pub(crate) fn cancel_reservation(
+    conn: &mut Connection,
+    reservation: &AuditReservation,
+) -> Result<()> {
     let restored = match reservation.kind {
         ReservationKind::Grant => "pending",
         ReservationKind::Revoke => return Ok(()),

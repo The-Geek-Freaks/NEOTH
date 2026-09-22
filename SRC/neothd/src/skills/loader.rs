@@ -50,7 +50,7 @@ pub(crate) struct AuthorizedRuntimeSkillSnapshot {
 /// readiness boundary has decided whether it may become a `RuntimeSkill`.
 enum PendingRuntimeSkill {
     TrustedBundled {
-        skill: Skill,
+        skill: Box<Skill>,
         resource_path: Option<PathBuf>,
     },
     Installed {
@@ -82,7 +82,7 @@ impl PendingRuntimeSkill {
                 skill,
                 resource_path,
             } => {
-                let runtime = RuntimeSkill::from_trusted_bundled(skill)?;
+                let runtime = RuntimeSkill::from_trusted_bundled(*skill)?;
                 match resource_path {
                     Some(path) => runtime.with_verified_bundled_resource_path(path),
                     None => Ok(runtime),
@@ -589,7 +589,7 @@ fn load_pending_trusted_bundled_with_policy(
     for skill in bundled.into_values() {
         let is_drawio = skill.id() == "drawio_diagram";
         pending.push(PendingRuntimeSkill::TrustedBundled {
-            skill,
+            skill: Box::new(skill),
             resource_path: match (is_drawio, drawio_resource_path.as_ref()) {
                 (true, Some(path)) => Some(path.clone()),
                 _ => None,

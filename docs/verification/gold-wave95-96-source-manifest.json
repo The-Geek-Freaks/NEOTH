@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T18:25:38.7852263Z",
-  "validationStatus": "W212 source published; Hosted build and 236-case behavior lane pending",
+  "capturedUtc": "2026-09-22T18:26:37.6660355Z",
+  "validationStatus": "W212 + c417 slim Clippy source repair; Hosted verification pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1168,8 +1168,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/models.rs",
-      "bytes": 90500,
-      "sha256": "68FFCBF0B57EBBD9D31F87242FF75931A894A1665AA5DCB3976C26F947DBD599"
+      "bytes": 90512,
+      "sha256": "A50F7C7985AC0DFD8BE778D658CEDCBB4F31102ADA5B07F82345F7048ECB8B26"
     },
     {
       "path": "SRC/neothd/src/cli/n8n.rs",
@@ -1438,8 +1438,8 @@
     },
     {
       "path": "SRC/neothd/src/config/credentials.rs",
-      "bytes": 354455,
-      "sha256": "9F73656BAE0493B4C49E4E9683BAAA661CB0976BF30C18805D12E00AC2002AD9"
+      "bytes": 353948,
+      "sha256": "8D09825C122CDC51E17E61A626113E3BB929BF5048B26383AB3937565476163C"
     },
     {
       "path": "SRC/neothd/src/config/keychain.rs",
@@ -1698,8 +1698,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/wizard_ipc.rs",
-      "bytes": 38633,
-      "sha256": "86CED8E3D8FF887BF47CCD4CD0FB00D6FF347D3961A574E17CDF39F1297107F2"
+      "bytes": 38757,
+      "sha256": "F3321A64F2275A052F84A65A08F99C73B881CFB30FF4825EF2699C5335377729"
     },
     {
       "path": "SRC/neothd/src/daemon/worker_watch.rs",
@@ -1933,8 +1933,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/counterparty_consent.rs",
-      "bytes": 39692,
-      "sha256": "F54893CC740F359A8000DEE51C69BA597A3836D07E39079C9740F6047D2ADCBC"
+      "bytes": 39760,
+      "sha256": "DD6B71DD6BEE0722365B2965A9D196EFB7B702D9DC725BA1A19A78DA1F4744B0"
     },
     {
       "path": "SRC/neothd/src/memory/decay_task.rs",
@@ -2253,8 +2253,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/loader.rs",
-      "bytes": 127496,
-      "sha256": "0BF03411F4335DB6F2E5C6F8FDA162BAE362F3AD4AFCF54D42938383E74F0BB5"
+      "bytes": 127519,
+      "sha256": "5BE2149D19E6CD1A2C1987DF593A9E5A3FDABCC0CF14D1A9BFB97A531D6BC319"
     },
     {
       "path": "SRC/neothd/src/skills/mod.rs",
@@ -2268,8 +2268,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/prerequisites.rs",
-      "bytes": 10228,
-      "sha256": "6259BDCD6F7F1447AC968C03738423D5664B81D1A040693C7CEBCD79D7E89267"
+      "bytes": 10243,
+      "sha256": "B118D1E4148B48CA361DCF3B9F1A099C995943CDAA01AAAD2BF7B51BD4DFD532"
     },
     {
       "path": "SRC/neothd/src/skills/registry.rs",
@@ -2468,8 +2468,8 @@
     },
     {
       "path": "SRC/neothd/src/wizard/ipc.rs",
-      "bytes": 21093,
-      "sha256": "DA8505535AEC0CF754A2039BB04DBB503B67317C19286BD843F55D5AEDB2BD3D"
+      "bytes": 21219,
+      "sha256": "93E3898F16AEE3B2C96B2EC0790921291C754B97D03919A8E49D925FC686F31E"
     },
     {
       "path": "SRC/neothd/tests/attachment_wiring_source_gate.rs",
@@ -2588,13 +2588,13 @@
     },
     {
       "path": "SRC/neothd/src/memory/counterparty_consent_ceremony.rs",
-      "bytes": 58903,
-      "sha256": "C19519D876F3930D2EB980A9929982F5469E0D1421049A2A4208EDF2138D9D9D"
+      "bytes": 58954,
+      "sha256": "90F700D5A680D233750B0BA9DDB0FCF00905B48F58B0381D616036319BE52062"
     },
     {
       "path": "SRC/neothd/src/wal/counterparty_consent_once.rs",
-      "bytes": 19556,
-      "sha256": "6E3CA1C3D05233E4E638E02108B6B76B4C70363E693088CDEBEA4A65C964A408"
+      "bytes": 19481,
+      "sha256": "1A9F15E376F2EF0836B1AD3A7D865A601A518060803152F2DE736862793FF72D"
     },
     {
       "path": "docs/gold-wave209-verification.md",
@@ -2613,8 +2613,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/bge_m3_artifacts.rs",
-      "bytes": 14733,
-      "sha256": "A4F4D44E4209E766B0184944AB20136B2A613DD3C5A0557B77FEDC6F4C967715"
+      "bytes": 14731,
+      "sha256": "0A2847D083CE1FD5595152BCD5FE29768E4715AE4760CD537A60064951E1445E"
     },
     {
       "path": "SRC/neothd/src/providers/local_bge_m3.rs",
