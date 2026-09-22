@@ -57,6 +57,7 @@ fn descriptor_and_step_plan_are_stable_and_local_only() {
     descriptor.validate().unwrap();
     assert_eq!(descriptor.id.as_str(), N8N_CAPABILITY_ID);
     assert_eq!(descriptor.targets.len(), 1);
+    super::super::state::validate_release_version(ADAPTER_RELEASE_VERSION).unwrap();
     assert_eq!(step_plan_sha256().as_str().len(), 64);
 }
 

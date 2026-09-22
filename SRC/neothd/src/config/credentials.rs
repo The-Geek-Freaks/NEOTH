@@ -1419,6 +1419,21 @@ impl Credentials {
         Self::ensure_n8n_status_snapshot_is_safe(freedom_path)?;
         let freedom_before = FileSnapshot::capture(freedom_path)?;
         let credentials_before = FileSnapshot::capture(credentials_path)?;
+        if matches!(
+            (&freedom_before, &credentials_before),
+            (FileSnapshot::Missing, FileSnapshot::Missing)
+        ) {
+            // A fresh home is an unconfigured, read-only state. Recheck both
+            // the journal boundary and snapshots so a concurrent partial
+            // writer is never mistaken for an empty configuration.
+            Self::ensure_n8n_status_snapshot_is_safe(freedom_path)?;
+            anyhow::ensure!(
+                FileSnapshot::capture(freedom_path)?.same_as(&freedom_before)
+                    && FileSnapshot::capture(credentials_path)?.same_as(&credentials_before),
+                "n8n adoption status changed while it was being read; retry"
+            );
+            return Ok((None, false));
+        }
         let result = (|| {
             let config =
                 crate::config::FreedomConfig::load_public_from_path_unlocked(freedom_path)?;

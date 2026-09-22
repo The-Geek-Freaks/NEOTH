@@ -8,6 +8,22 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W202 first Hosted behavior repair (2026-09-22):** Grouped83 `35735312775`
+on `b704284d` executed every selected identity: 73 passed, ten failed. Eight
+adoption paths stopped at the shared enqueue contract because the adapter
+revision label was not canonical semver. Both producers now use the separate
+adapter release `1.0.0`; artifact provenance remains `n8n-adoption-v1`, with
+no n8n binary-version claim. Fresh-home status now returns unconfigured only
+for two unchanged absent files after repeated pending-journal checks. The
+remaining Cron link failure was already repaired in `2f189197`. Independent
+source review passed, all 83 exact identities/source bindings were verified,
+and no failing test was removed. Core test-target checking, public CLI build
+and export `35735316615` passed; the hash-bound generated reference is imported
+(SHA-256 `59b3d3c91f53d2b6cb9b3168377c22f5c0d64d8b8102a9436b91dfa0d1df0e4a`).
+Three residual rustfmt hunks from Hosted `35736102874` are imported. Fresh
+Hosted behavior/Preflight remain required; W204 remains uncommitted WIP and
+Road counts remain unchanged. No local executable validation ran.
+
 **W203 durable Cron link / W202 format follow-up (2026-09-22):** Hosted
 Grouped60 `35733913541` on `7f1070d9` executed all sixty exact identities;
 59 passed. Its remaining failure exposed a production mismatch: the WAL

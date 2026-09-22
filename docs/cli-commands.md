@@ -2536,15 +2536,24 @@ Print a template's directives without applying it
 
 ## `neoth n8n`
 
-Inspect the n8n integration (READ-ONLY): `status` reports the webhook base URL n8n POSTs to + whether the `n8n` binary is on PATH; `workflows` lists the NEOTH starter workflows bundled in the binary
+Adopt an already-running loopback n8n instance, inspect its durable binding, or list the NEOTH workflow templates bundled in the binary
+
+### `neoth n8n adopt`
+
+Adopt an already-running n8n API at an exact literal-loopback origin
+
+- `--endpoint <ENDPOINT>`
+- `--api-key-stdin`
 
 ### `neoth n8n status`
 
-Report n8n integration status: the webhook base URL n8n POSTs to, whether the `n8n` binary is on PATH, and the bundled-workflow count
+Read durable adoption status. This does not make a live HTTP request
+
+- `--job <JOB>`
 
 ### `neoth n8n workflows`
 
-List the NEOTH workflows bundled in the binary (slug / name / description) that an operator can import into n8n
+List NEOTH workflow templates bundled in the binary
 
 ## `neoth obsidian`
 

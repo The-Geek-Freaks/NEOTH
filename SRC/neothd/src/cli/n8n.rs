@@ -3,7 +3,7 @@
 //! Adoption binds an operator-supplied, already-running literal-loopback n8n
 //! instance. It never installs, starts, discovers, or owns an n8n process.
 
-use std::io::{BufRead, IsTerminal, Read};
+use std::io::{BufRead, IsTerminal};
 use std::thread;
 use std::time::Duration;
 
@@ -96,7 +96,7 @@ async fn read_api_key_from_stdin() -> Result<crate::secret::SecretString> {
         .map_err(|_| anyhow!("n8n API key input could not be read"))?
 }
 
-fn read_api_key_line(mut reader: impl BufRead) -> Result<crate::secret::SecretString> {
+fn read_api_key_line(reader: impl BufRead) -> Result<crate::secret::SecretString> {
     let mut input = zeroize::Zeroizing::new(Vec::new());
     reader
         .take(MAX_N8N_API_KEY_BYTES + 2)

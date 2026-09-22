@@ -31,6 +31,9 @@ use super::{EnqueueResult, IntegrationJobService, JobServiceError, RestartValida
 
 pub const N8N_CAPABILITY_ID: &str = "n8n-instance";
 const ADAPTER_REVISION: &str = "n8n-adoption-v1";
+// This is the lifecycle schema release, not a claim about the adopted n8n
+// binary. The revision remains inside the artifact binding provenance.
+const ADAPTER_RELEASE_VERSION: &str = "1.0.0";
 const N8N_WORKFLOWS_PATH: &str = "/api/v1/workflows";
 const N8N_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const N8N_PROBE_BODY_MAX: usize = 32 * 1024;
@@ -335,7 +338,7 @@ pub(in crate::integrations) fn enqueue_adoption(
     service.enqueue(EnqueueIntegrationJob {
         capability_id: CapabilityId::parse(N8N_CAPABILITY_ID).expect("static id is valid"),
         operation: JobOperation::Install,
-        release_version: ADAPTER_REVISION.into(),
+        release_version: ADAPTER_RELEASE_VERSION.into(),
         manifest_sha256: artifact,
         evidence_contract: contract,
         requested_by: requester,
@@ -380,7 +383,7 @@ fn enqueue_terminal_failure(
         .enqueue(EnqueueIntegrationJob {
             capability_id: CapabilityId::parse(N8N_CAPABILITY_ID).expect("static id is valid"),
             operation: JobOperation::Install,
-            release_version: ADAPTER_REVISION.into(),
+            release_version: ADAPTER_RELEASE_VERSION.into(),
             manifest_sha256: artifact,
             evidence_contract: contract,
             requested_by: requester,
@@ -625,7 +628,8 @@ pub(crate) async fn adopt_at_with_cancel(
     ) {
         Ok(job) => job,
         Err(_) => {
-            return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed").await;
+            return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed")
+                .await;
         }
     };
     if let Some(cancelled) = cancel_if_requested(&service, &configuring, home)? {
@@ -671,7 +675,8 @@ pub(crate) async fn adopt_at_with_cancel(
     ) {
         Ok(job) => job,
         Err(_) => {
-            return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed").await;
+            return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed")
+                .await;
         }
     };
     if let Some(cancelled) = cancel_if_requested(&service, &configuring, home)? {
@@ -693,7 +698,8 @@ pub(crate) async fn adopt_at_with_cancel(
     {
         Ok(job) => job,
         Err(_) => {
-            return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed").await;
+            return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed")
+                .await;
         }
     };
     // Ready is the durable user-visible completion boundary. Cleanup failure

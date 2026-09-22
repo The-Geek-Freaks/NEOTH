@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
-  "base": "b704284d2c2470aeddcfdfd79da6df4926b11583",
-  "capturedUtc": "2026-09-22T13:48:00.1997798Z",
-  "validationStatus": "W202_FORMAT_IMPORTED_W203_LINK_REVIEWED_HOSTED_PENDING",
-  "scopeNote": "Exact Hosted rustfmt patch applied to eight W202 files. W203 Cron helper now returns actual event identity after durable append; strict fixture retained. W204 WIP excluded.",
+  "base": "2f189197cbed8392ca6e256a478b0c443b781cde",
+  "capturedUtc": "2026-09-22T13:58:22.6491181Z",
+  "validationStatus": "W202_HOSTED_BEHAVIOR_REPAIR_PENDING",
+  "scopeNote": "W202 canonical adapter release and absent-status repair after83/73pass. Exact Hosted CLI export and3format hunks imported. W204 WIP not admitted.",
   "files": [
     {
       "path": ".gitattributes",
@@ -88,8 +88,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 235418,
-      "sha256": "75F0C99D5E32CFBB4D673A97DED91A207A5469BBF1296708349CE0E10A8CAE1B"
+      "bytes": 235387,
+      "sha256": "59B3D3C91F53D2B6CB9B3168377C22F5C0D64D8B8102A9436B91DFA0D1DF0E4A"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -278,8 +278,8 @@
     },
     {
       "path": "docs/gold-wave202-verification.md",
-      "bytes": 4564,
-      "sha256": "87048C64532E5F9BF339F19AE19AB13B66FD555D27C15ADDC318CA2F043BCCA5"
+      "bytes": 5703,
+      "sha256": "BFB7CB35D26DE78F7E2EB4F9B7DE3B1BEB5AE8633ACA712ABF6E9EAFD4ADB23C"
     },
     {
       "path": "docs/gold-wave203-verification.md",
@@ -393,18 +393,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 34830,
-      "sha256": "FA66ABA2987892B56958F2B9A7942982369A0D96E74B9FBAC20D2FDEC3C79500"
+      "bytes": 35969,
+      "sha256": "060E580F46DF1C6380258F7E6BC7CEF7C4A88F326713AB9FF53F8B2689832055"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1037713,
-      "sha256": "A0CB017A34D994B7A7E5DEF66D2F330990115744D3F611B2FFE97C55E1FEB77A"
+      "bytes": 1038851,
+      "sha256": "10E8CAD9FFD70248209AD3097AC1F53515E2ABC3C4835727A5F2CB92DB71F4C8"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1633160,
-      "sha256": "73D745163479D4B3AC6CF0B7DBAA50218CD8F3A25D73C8AE7509C50FFF4DB885"
+      "bytes": 1634298,
+      "sha256": "BD13BE62B5ADE2208EDBC985826D449020382D4609A283014AE7EA3398AD2009"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1128,8 +1128,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/n8n.rs",
-      "bytes": 8840,
-      "sha256": "554D15D3B07783C8D161F91BCC4BA772BE84FF787486D16BCD9BAFB5C3D8D1AC"
+      "bytes": 8830,
+      "sha256": "01084B300CE89536D6E20763BD0AB096E01358539C01B4203FAB1AF3E099023F"
     },
     {
       "path": "SRC/neothd/src/cli/ouro.rs",
@@ -1388,8 +1388,8 @@
     },
     {
       "path": "SRC/neothd/src/config/credentials.rs",
-      "bytes": 353681,
-      "sha256": "404E4D46BAE9BA182D1186F0D0D8CE078D89815093BB8DE4F2582F5F26FB05D3"
+      "bytes": 354455,
+      "sha256": "9F73656BAE0493B4C49E4E9683BAAA661CB0976BF30C18805D12E00AC2002AD9"
     },
     {
       "path": "SRC/neothd/src/config/keychain.rs",
@@ -1713,13 +1713,13 @@
     },
     {
       "path": "SRC/neothd/src/integrations/n8n_tests.rs",
-      "bytes": 11544,
-      "sha256": "F12E1C5739EDED1B5FF4C53102677B941BD674C170A71114E5A7278E23D00DC7"
+      "bytes": 11629,
+      "sha256": "0F8512E27037C578CB748FB398A0A4FBF9A3501E8BF1403D002378421EC4BE84"
     },
     {
       "path": "SRC/neothd/src/integrations/n8n.rs",
-      "bytes": 33009,
-      "sha256": "50220711922D3C134CDAEF5B350DCF2EF572CF49A68CAEC9478E734C2779B941"
+      "bytes": 33268,
+      "sha256": "7306A10D66C42D4D037EEAEB284240A6CC37B588C666BB93F3168BDE6A82E6FB"
     },
     {
       "path": "SRC/neothd/src/integrations/state.rs",
