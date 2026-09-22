@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T20:57:35.4787572Z",
-  "validationStatus": "W222 real directCLI quota fallback registry fixture reviewed; Hosted pending",
+  "capturedUtc": "2026-09-22T21:01:06.0636023Z",
+  "validationStatus": "W222 exact Hosted formatting imported; Grouped272 prior rollback PASS; newfixtures pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1023,8 +1023,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1100109,
-      "sha256": "FC1D22EC20E7B55FCFFB6BB337FD931FD415240AF7BA67FCF6C6AF982284B952"
+      "bytes": 1100469,
+      "sha256": "B946D99299B23C31A986BE280F14C29E6C6F0C9CA435AE01FD318FB3B7AE729B"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",

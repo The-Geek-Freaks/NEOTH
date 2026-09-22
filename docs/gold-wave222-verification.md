@@ -36,3 +36,8 @@ It does not close all P2-10 surface acceptance or claim external delivery.
 Full CI35782661515 continues on74334d4b. Its Linux slim-core Clippy stage has
 nine new diagnostics under repair; Windows/macOS jobs are not cancelled.
 Road remains1015 checked/307 open/2 partial.
+
+Publishedcfdaee4b5c5a821e10a7999cac1275818f199cc6. Exact Hosted formatter
+receipt35783811743 imported after source/SHA256 and Git pre/postimage checks.
+No local formatter ran. Grouped27235782455869 is source-bound272/272 on35c410a8,
+including the fixed aggregate Skill rollback; W220/W222 need newer evidence.

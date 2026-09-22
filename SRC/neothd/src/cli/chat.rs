@@ -18852,7 +18852,10 @@ modes:
                 .try_reload()
                 .expect("accept direct CLI registry config B");
             assert!(
-                matches!(publication, crate::config::reload::ReloadResult::Reloaded { .. }),
+                matches!(
+                    publication,
+                    crate::config::reload::ReloadResult::Reloaded { .. }
+                ),
                 "fixture config B must become an accepted publication"
             );
             let epoch_b = self.reload.accepted_snapshot().epoch();
@@ -18916,11 +18919,7 @@ modes:
         let config_path = home.join("freedom.yaml");
         let wal_path = home.join("wal").join("000001.wal");
         let skill_id = "direct-cli-registry-publication";
-        write_direct_cli_registry_skill(
-            &skills_dir,
-            skill_id,
-            "DIRECT-CLI-REGISTRY-DESCRIPTION-A",
-        );
+        write_direct_cli_registry_skill(&skills_dir, skill_id, "DIRECT-CLI-REGISTRY-DESCRIPTION-A");
         install_direct_cli_registry_authority_key(&home);
         record_direct_cli_registry_install_incarnation(&home, skill_id);
 
@@ -18952,7 +18951,11 @@ modes:
         let registry_a = crate::skills::resolver::SkillRouteResolver::new(snapshot_a)
             .session_registry_context(&crate::skills::resolver::active_files_from_env())
             .expect("render exact admitted direct CLI registry A");
-        assert!(registry_a.as_str().contains("DIRECT-CLI-REGISTRY-DESCRIPTION-A"));
+        assert!(
+            registry_a
+                .as_str()
+                .contains("DIRECT-CLI-REGISTRY-DESCRIPTION-A")
+        );
         assert!(
             !registry_a
                 .as_str()
@@ -18976,9 +18979,12 @@ modes:
             published_epochs: Arc::clone(&published_epochs),
         };
         let provider = crate::providers::fallback::FallbackProvider::new_with_models_at(
-            vec![Box::new(primary), Box::new(DirectCliRegistryFallback {
-                requests: Arc::clone(&fallback_requests),
-            })],
+            vec![
+                Box::new(primary),
+                Box::new(DirectCliRegistryFallback {
+                    requests: Arc::clone(&fallback_requests),
+                }),
+            ],
             vec![
                 Some("direct-cli-registry-primary-model".to_owned()),
                 Some("direct-cli-registry-fallback-model".to_owned()),
@@ -19019,8 +19025,16 @@ modes:
         let registry_b = crate::skills::resolver::SkillRouteResolver::new(snapshot_b)
             .session_registry_context(&crate::skills::resolver::active_files_from_env())
             .expect("render published direct CLI registry B");
-        assert!(registry_b.as_str().contains("DIRECT-CLI-REGISTRY-DESCRIPTION-B"));
-        assert!(!registry_b.as_str().contains("DIRECT-CLI-REGISTRY-DESCRIPTION-A"));
+        assert!(
+            registry_b
+                .as_str()
+                .contains("DIRECT-CLI-REGISTRY-DESCRIPTION-B")
+        );
+        assert!(
+            !registry_b
+                .as_str()
+                .contains("DIRECT-CLI-REGISTRY-DESCRIPTION-A")
+        );
         let (epoch_a, epoch_b) = published_epochs
             .lock()
             .expect("read direct CLI registry publication epochs")
@@ -19033,8 +19047,16 @@ modes:
         let fallback = fallback_requests
             .lock()
             .expect("read direct CLI fallback requests");
-        assert_eq!(primary.len(), 1, "one primary provider request reaches the quota leaf");
-        assert_eq!(fallback.len(), 1, "one reachable fallback provider request follows the quota leaf");
+        assert_eq!(
+            primary.len(),
+            1,
+            "one primary provider request reaches the quota leaf"
+        );
+        assert_eq!(
+            fallback.len(),
+            1,
+            "one reachable fallback provider request follows the quota leaf"
+        );
         assert_eq!(primary[0].prompt, fallback[0].prompt);
         assert_eq!(primary[0].system, fallback[0].system);
         let primary_system = primary[0]
@@ -19048,7 +19070,10 @@ modes:
         assert!(primary_system.contains(registry_a.as_str()));
         assert!(fallback_system.contains(registry_a.as_str()));
         assert!(!fallback_system.contains("DIRECT-CLI-REGISTRY-DESCRIPTION-B"));
-        assert_ne!(primary[0].model, fallback[0].model, "fallback selects its own leaf model");
+        assert_ne!(
+            primary[0].model, fallback[0].model,
+            "fallback selects its own leaf model"
+        );
     }
 
     #[tokio::test]
