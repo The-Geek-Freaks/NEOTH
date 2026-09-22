@@ -18,6 +18,8 @@ use rubato::{
 /// Fixed input chunk fed to rubato per `process` call (frames).
 const CHUNK: usize = 1024;
 const MAX_RESAMPLE_OUTPUT_SAMPLES: usize = 32 * 1024 * 1024;
+#[cfg(any(feature = "live-audio", test))]
+const MAX_STREAMING_INPUT_SAMPLES: usize = 4_096;
 
 /// Broad sanity bounds for real-world audio. The lower bound prevents absurd
 /// resample ratios and the upper bound still covers professional PCM formats.
@@ -40,6 +42,12 @@ pub enum ResampleError {
     OutputTooLarge { samples: usize, limit: usize },
     #[error("{stage} allocation failed: {reason}")]
     Allocation { stage: &'static str, reason: String },
+    #[error("live capture changed sample rate from {expected} Hz to {actual} Hz without reset")]
+    StreamingRateChanged { expected: u32, actual: u32 },
+    #[error("live capture block contains {samples} samples, exceeding the {limit}-sample limit")]
+    StreamingInputTooLarge { samples: usize, limit: usize },
+    #[error("streaming sinc resampler {stage} failed: {reason}")]
+    StreamingBackend { stage: &'static str, reason: String },
 }
 
 fn validate_rate(rate: u32, source: bool) -> Result<(), ResampleError> {
@@ -149,6 +157,96 @@ fn sinc_resample_mono(
     Ok(Some(out))
 }
 
+/// Stateful mono resampler for capture callbacks. It retains both the rubato
+/// filter history and incomplete source chunks, so arbitrary callback splits
+/// cannot reset phase, inject padding, or accumulate a rounded per-callback
+/// output length. A device rate is immutable for one instance; [`reset`] is
+/// the explicit boundary before accepting a new device/session.
+#[cfg(any(feature = "live-audio", test))]
+pub(crate) struct StreamingMonoResampler {
+    target_rate_hz: u32,
+    source_rate_hz: Option<u32>,
+    pending: Vec<f32>,
+    sinc: Option<SincFixedIn<f32>>,
+}
+
+#[cfg(any(feature = "live-audio", test))]
+impl StreamingMonoResampler {
+    pub(crate) fn new(target_rate_hz: u32) -> Result<Self, ResampleError> {
+        validate_rate(target_rate_hz, false)?;
+        Ok(Self {
+            target_rate_hz,
+            source_rate_hz: None,
+            pending: Vec::with_capacity(CHUNK + MAX_STREAMING_INPUT_SAMPLES),
+            sinc: None,
+        })
+    }
+
+    /// Append one bounded native callback and return only output backed by full
+    /// source chunks. The incomplete tail remains owned by this stream until a
+    /// later callback completes it or `reset` discards the session.
+    pub(crate) fn push(&mut self, input: &[f32], source_rate_hz: u32) -> Result<Vec<f32>, ResampleError> {
+        validate_mono_pcm(input, source_rate_hz)?;
+        if input.len() > MAX_STREAMING_INPUT_SAMPLES {
+            return Err(ResampleError::StreamingInputTooLarge { samples: input.len(), limit: MAX_STREAMING_INPUT_SAMPLES });
+        }
+        match self.source_rate_hz {
+            Some(expected) if expected != source_rate_hz => return Err(ResampleError::StreamingRateChanged { expected, actual: source_rate_hz }),
+            Some(_) => {}
+            None => {
+                self.source_rate_hz = Some(source_rate_hz);
+                if source_rate_hz != self.target_rate_hz {
+                    self.sinc = Some(new_sinc_resampler(source_rate_hz, self.target_rate_hz)?);
+                }
+            }
+        }
+        if source_rate_hz == self.target_rate_hz {
+            let mut output = Vec::new();
+            output.try_reserve_exact(input.len()).map_err(|error| allocation_error("streaming identity output", error))?;
+            output.extend_from_slice(input);
+            return Ok(output);
+        }
+
+        self.pending.try_reserve(input.len()).map_err(|error| allocation_error("streaming pending input", error))?;
+        self.pending.extend_from_slice(input);
+        let mut output = Vec::new();
+        while self.pending.len() >= CHUNK {
+            let block: Vec<f32> = self.pending.drain(..CHUNK).collect();
+            let processed = self.sinc.as_mut().expect("non-identity stream constructs sinc once")
+                .process(&[block], None)
+                .map_err(|error| ResampleError::StreamingBackend { stage: "process", reason: error.to_string() })?;
+            let channel = processed.first().ok_or_else(|| ResampleError::StreamingBackend {
+                stage: "process", reason: "mono resampler returned no output channel".into(),
+            })?;
+            output.try_reserve(channel.len()).map_err(|error| allocation_error("streaming output", error))?;
+            output.extend_from_slice(channel);
+        }
+        Ok(output)
+    }
+
+    /// Discard source residue and DSP history. A reset is also the only way to
+    /// accept a new device sample rate.
+    pub(crate) fn reset(&mut self) {
+        self.pending.clear();
+        self.source_rate_hz = None;
+        if let Some(sinc) = self.sinc.as_mut() {
+            sinc.reset();
+        }
+        self.sinc = None;
+    }
+}
+
+fn new_sinc_resampler(source_rate_hz: u32, target_rate_hz: u32) -> Result<SincFixedIn<f32>, ResampleError> {
+    let params = SincInterpolationParameters {
+        sinc_len: 128,
+        f_cutoff: 0.95,
+        interpolation: SincInterpolationType::Linear,
+        oversampling_factor: 128,
+        window: WindowFunction::BlackmanHarris2,
+    };
+    SincFixedIn::<f32>::new(target_rate_hz as f64 / source_rate_hz as f64, 1.1, params, CHUNK, 1)
+        .map_err(|error| ResampleError::StreamingBackend { stage: "construction", reason: error.to_string() })
+}
 fn expected_output_samples(
     input_samples: usize,
     src_sr: u32,
@@ -257,5 +355,35 @@ mod tests {
             peak > 0.5,
             "resampled tone should retain amplitude, got peak {peak}"
         );
+    }
+    #[test]
+    fn streaming_sinc_split_matches_contiguous_without_ratio_drift() {
+        let input: Vec<f32> = (0..8_192).map(|index| ((index as f32) * 0.017).sin()).collect();
+        let mut contiguous = StreamingMonoResampler::new(16_000).unwrap();
+        let mut expected = Vec::new();
+        for block in input.chunks(1_024) {
+            expected.extend(contiguous.push(block, 48_000).unwrap());
+        }
+
+        let mut split = StreamingMonoResampler::new(16_000).unwrap();
+        let mut actual = Vec::new();
+        let mut offset = 0usize;
+        for &width in [113usize, 701, 19, 997, 251, 431, 607, 89].iter().cycle() {
+            if offset == input.len() { break; }
+            let end = (offset + width).min(input.len());
+            actual.extend(split.push(&input[offset..end], 48_000).unwrap());
+            offset = end;
+        }
+        assert_eq!(actual, expected, "callback partitioning must not change sample count or phase");
+        assert!(!actual.is_empty());
+    }
+
+    #[test]
+    fn streaming_resampler_rejects_rate_change_until_reset() {
+        let mut stream = StreamingMonoResampler::new(16_000).unwrap();
+        stream.push(&[0.0; 64], 48_000).unwrap();
+        assert!(matches!(stream.push(&[0.0; 64], 44_100), Err(ResampleError::StreamingRateChanged { expected: 48_000, actual: 44_100 })));
+        stream.reset();
+        assert!(stream.push(&[0.0; 64], 44_100).is_ok());
     }
 }

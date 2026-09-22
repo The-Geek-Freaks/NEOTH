@@ -6565,11 +6565,13 @@ mod tests {
             ),
             (
                 "cli/chat.rs",
-                6,
-                // The two additional calls are CanaryGuardedProvider's
-                // post-mint forwarding decorator; its inner provider remains
-                // the same authorized handle passed to chat dispatch.
-                "48faf34b5616d5563b94599be035b1c7d58cba1579a53b6350e97f79299ab1b5",
+                5,
+                // CanaryGuardedProvider forwards complete and pinned complete
+                // to the same authorized inner handle. The remaining direct,
+                // session-naming, and MCP-driver sites respectively use the
+                // canonical chat boundary, a fresh CostAuthorizingProvider,
+                // and the already guarded orchestration boundary.
+                "f1781c7d4549fb3d78cde4941ff957e1b45dbcfd7f0dc49b8ecbf88f52e7c00a",
             ),
             (
                 "cli/clarify_chat.rs",
@@ -6713,7 +6715,9 @@ mod tests {
             (
                 "providers/cost_authorization.rs",
                 4,
-                "3849ff167c46a40b9e50492510a3360d160f93faba1ad3a0bc8a6b5adb451199",
+                // Raw permit methods delegate only into their own canonical
+                // CostAuthorizingProvider or AuthorizedProvider boundary.
+                "b33f092add2d25bec7f883ba7d24cc2b7919cb7bbbc8f81a61c382a8b3c97f8f",
             ),
             (
                 "providers/mod.rs",
@@ -6753,7 +6757,9 @@ mod tests {
             (
                 "sub_agents/runtime.rs",
                 2,
-                "035fbf7d07b8e89ac9573251bbd55263b91d3d8c79500d9778039b03d068415c",
+                // Each primary/QA request uses an AuthorizedProvider cloned
+                // only to carry the owning WAL-session audit context.
+                "0f935a0acb1551fbb1d7ce5d7712794ed5bc4e0fdb585d92af89a7348fa89bf1",
             ),
             (
                 "tools/deep_research.rs",

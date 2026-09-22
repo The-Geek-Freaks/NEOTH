@@ -1,0 +1,9 @@
+source_repo=snakers4/silero-vad
+commit=60b7ffa243625ebdc1070275a29f18c87843786a
+path=src/silero_vad/data/silero_vad_16k_op15.onnx
+model_url=https://raw.githubusercontent.com/snakers4/silero-vad/60b7ffa243625ebdc1070275a29f18c87843786a/src/silero_vad/data/silero_vad_16k_op15.onnx
+license_url=https://raw.githubusercontent.com/snakers4/silero-vad/60b7ffa243625ebdc1070275a29f18c87843786a/LICENSE
+git_blob_sha1=625ad8909b1abdba2292f3a9a10db6864fd5d561
+bytes=1289603
+sha256=7ed98ddbad84ccac4cd0aeb3099049280713df825c610a8ed34543318f1b2c49
+license_sha256=2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b

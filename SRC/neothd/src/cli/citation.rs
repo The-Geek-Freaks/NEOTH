@@ -667,7 +667,13 @@ mod tests {
     #[test]
     fn injected_empty_cache_offline_is_a_typed_miss_without_live_lookup() {
         let root = tempfile::tempdir().unwrap();
-        let cache = CitationCache::new(root.path().join("citations"), 60, 8, 4096).unwrap();
+        let cache = CitationCache::new(
+            root.path().canonicalize().unwrap().join("citations"),
+            60,
+            8,
+            4096,
+        )
+        .unwrap();
         let query = CitationQuery::new(CitationProvider::Crossref, "10.1000/example").unwrap();
         let result = cache.lookup_offline(&query, "bound claim", 1).unwrap();
         assert!(matches!(

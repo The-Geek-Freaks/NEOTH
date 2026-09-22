@@ -76,7 +76,9 @@ mod vault_mirror_scheduler_tests {
             ReloadResult::Reloaded { .. }
         ));
         assert!(desired_cron_keys(&controller.latest()).contains(&CronKey::VaultMirror));
-        let running = HashSet::from([CronKey::VaultMirror]);
+        // A live fleet contains every cron key admitted by the accepted
+        // pre-reload config, not only the vault-mirror task under test.
+        let running = desired_cron_keys(&controller.latest());
         std::fs::write(
             path,
             "vault_mirror:\n  enabled: true\n  allow_nightly_push: false\n  remote_url: ssh://git@git.example.invalid/operator/neoth-vault.git\n",

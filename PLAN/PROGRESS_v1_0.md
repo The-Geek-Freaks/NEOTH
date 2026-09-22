@@ -2,50 +2,48 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
-**Latest verified gates (2026-09-22):** Preflight `35695206750` passed on
-`4e9c0718` (format, locked metadata and offline contracts). Core test-target
-typecheck, public CLI build and reference export in `35694693234` passed on
-`87c18246`. Its exact generated reference is imported (40 new Ollama help lines).
-W186 supply inputs `35694695810` passed on `87c18246`; all 85 artifact checksums
-and the recorded dependency inputs are verified. These are separate source
-boundaries; native/GUI/audio behavior and release acceptance remain open.
+**Latest verified gates (2026-09-22):** GitHub `main` is confirmed at
+`1eb93f14f35b3631f3b3fbc155dad1dd2abbeef9`. Preflight `35695668011` and
+Code Quality `35695667625` passed on that source. Core test-target typecheck,
+public CLI build and reference export `35694693234` passed on `87c18246`; the
+exact generated CLI reference (40 Ollama help lines) is imported. These gates
+do not establish native, GUI, audio, or release behavior.
 
 **Current batch status (2026-09-22):** W185 daemon-owned Ollama operations are
-published in `f091d5fe`, with the first fixture parse repair in `2e7de3f6`.
-Code Quality `35693421727` passed. Preflight `35693422094` exposed formatting;
-150 unique Hosted hunks across ten frozen files are imported. Core test check
-`35693435347` exposed four compiler errors (mutable guard, two error conversions,
-fixture-name shadowing); their narrow source repairs are applied. Fresh Hosted
-formatting, compilation and behavior remain pending. Thirty native and three
-GUI test identities are registered; GOLD-LF-P1-19 stays open. See
+published and retain source-review plus the successful core/reference boundary;
+native model-operation and GUI-callback acceptance remain open. See
 [W185](../docs/gold-wave185-verification.md).
-W185 repair `87c18246` is published. Code Quality `35694661630` passed;
-one final format hunk from Preflight `35694662282` is imported. Core check
-`35694693234` is still running on that source; no behavior acceptance is claimed.
-W186 live capture/Silero remains a separate, unadmitted working batch. Hosted
-supply-input run `35694695810` on `87c18246` succeeded with the exact reviewed
-`borsh 1.6.1 -> 1.8.1` transition. Its artifact is retained and all 85 checksums,
-source commit and three local dependency inputs match. Native dependency/model
-integration, desktop feature selection and audio behavior remain pending.
+The current Road inventory remains **1015 checked / 307 open / 2 partial**;
+this status update changes no checkbox.
 
-W185 Preflight `35695006344` passed Rust formatting and locked metadata, then
-caught a macOS fixture array declaring 23 entries while containing 24. Its
-length is corrected to 24; every registered test identity is preserved. Fresh
-Hosted contracts and native execution remain required.
+W186 is a separate, unadmitted implementation slice for
+[GOLD-LF-P1-13](#gold-lf-p1-13--sub-200ms-voice-streaming-capture). Hosted
+input run `35694695810` on `87c18246` verified 85 artifact checksums and the
+recorded dependency inputs. The working source pins optional `cpal = 0.18.2`
+and `tract-onnx = 0.23.8`; live audio is desktop-only, while default and server
+builds retain an explicit unavailable result. It contains bounded capture,
+Silero VAD and dictation/STT lifecycle source plus 19 registered Hosted test
+identities. Native feature compilation and all microphone/runtime claims remain
+pending. See [W186](../docs/gold-wave186-verification.md).
+
+W187 is a separate source-only repair set for the recorded failed A130 Windows
+and macOS CI groups: private native paths, yearly atomic collision settlement,
+chat/cancellation fixtures and private-child ownership, daemon fixtures, and
+attachment/channel/parity source gates. It also includes the W180 cross-file
+caller fixture repair. Independent review and fresh Hosted validation remain
+pending. See [W187](../docs/gold-wave187-verification.md).
 
 **W184 validation boundary:** full CI `35677727994` on `a130526e` completed
-with failures: five Linux lint diagnostics (source-repaired in W185), 20 distinct
-Windows test failures and 21 macOS test failures. The test failures are grouped
-for targeted repair; they are not acceptance. Earlier core checking and CLI
-compilation on `eabc22a5` passed in `35675458308`. P2-03 stays open. See
-[W184](../docs/gold-wave184-verification.md).
+with five Linux lint diagnostics, 20 distinct Windows failures and 21 macOS
+failures. The failures are inputs to W185/W187 repairs, never acceptance.
+Earlier core checking and CLI compilation on `eabc22a5` passed in `35675458308`.
+P2-03 stays open. See [W184](../docs/gold-wave184-verification.md).
 
-**W180 portable acceptance:** Windows preview `35671504968` on `850aad7e`
-completed native CLI, migration, relay and desktop-GUI builds and portable
-lifecycle acceptance successfully. Portable diff-impact acceptance failed:
-its diagnostic contains one impacted test function and no required caller edge.
-This remains an unresolved behavior failure. No local validation workloads are
-allowed under the BSOD hold.
+**W180 portable acceptance:** preview `35671504968` on `850aad7e` passed the
+CLI, migration, relay, desktop-GUI build and lifecycle scopes, but failed
+portable diff-impact because the required concrete caller edge was absent. The
+new cross-file caller fixture repair is source-only and awaits a fresh preview.
+No local executable validation runs under the BSOD hold.
 
 **W183 yearly period synthesis (2026-09-22):** the independently reviewed CLI
 and cron paths now share a strict Daily-archive composer, source/config hashes,

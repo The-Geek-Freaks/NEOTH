@@ -1144,11 +1144,16 @@ fn normalize_doi(value: &str) -> Result<String, CitationValidationError> {
     {
         value = stripped;
     }
-    if let Some(stripped) = value
-        .strip_prefix("https://doi.org/")
-        .or_else(|| value.strip_prefix("http://doi.org/"))
-    {
-        value = stripped;
+    if let Some((scheme, host_and_path)) = value.split_once("://") {
+        let Some((host, path)) = host_and_path.split_once('/') else {
+            return Err(CitationValidationError::Doi);
+        };
+        if !(scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http"))
+            || !host.eq_ignore_ascii_case("doi.org")
+        {
+            return Err(CitationValidationError::Doi);
+        }
+        value = path;
     }
     if value.is_empty()
         || value.len() > MAX_QUERY_BYTES
@@ -1321,7 +1326,7 @@ mod tests {
         max_bytes: u64,
     ) -> CitationCache {
         CitationCache::new(
-            tmp.path().join("citations"),
+            tmp.path().canonicalize().unwrap().join("citations"),
             ttl_secs,
             max_entries,
             max_bytes,

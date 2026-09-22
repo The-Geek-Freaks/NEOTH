@@ -1,0 +1,102 @@
+{
+  "schema": "neoth-live-audio-tests/v1",
+  "feature": "live-audio",
+  "status": "Source identities; Hosted compile/discovery/execution pending",
+  "requiredTests": [
+    {
+      "test": "media::live_capture::tests::terminal_published_during_pcm_wait_survives_every_wait_result",
+      "sourcePath": "SRC/neothd/src/media/live_capture.rs",
+      "sourceSha256": "B9DDA26899DD0F63F2EDEB217ECF3577B63D699F0711364F71C2C35BE3584497"
+    },
+    {
+      "test": "media::live_capture::tests::synthetic_f32_callback_downmixes_and_keeps_monotonic_timestamp",
+      "sourcePath": "SRC/neothd/src/media/live_capture.rs",
+      "sourceSha256": "B9DDA26899DD0F63F2EDEB217ECF3577B63D699F0711364F71C2C35BE3584497"
+    },
+    {
+      "test": "media::live_capture::tests::synthetic_callback_rejects_oversized_and_non_finite_input",
+      "sourcePath": "SRC/neothd/src/media/live_capture.rs",
+      "sourceSha256": "B9DDA26899DD0F63F2EDEB217ECF3577B63D699F0711364F71C2C35BE3584497"
+    },
+    {
+      "test": "media::live_capture::tests::synthetic_terminal_is_exactly_once_for_error_races",
+      "sourcePath": "SRC/neothd/src/media/live_capture.rs",
+      "sourceSha256": "B9DDA26899DD0F63F2EDEB217ECF3577B63D699F0711364F71C2C35BE3584497"
+    },
+    {
+      "test": "media::live_capture::tests::blocked_synthetic_consumer_cannot_retain_unbounded_pcm_or_hide_terminal",
+      "sourcePath": "SRC/neothd/src/media/live_capture.rs",
+      "sourceSha256": "B9DDA26899DD0F63F2EDEB217ECF3577B63D699F0711364F71C2C35BE3584497"
+    },
+    {
+      "test": "media::live_capture::tests::synthetic_cancel_makes_a_late_callback_token_unpublishable",
+      "sourcePath": "SRC/neothd/src/media/live_capture.rs",
+      "sourceSha256": "B9DDA26899DD0F63F2EDEB217ECF3577B63D699F0711364F71C2C35BE3584497"
+    },
+    {
+      "test": "media::vad::silero::tests::embedded_graph_accepts_silence_with_a_valid_probability",
+      "sourcePath": "SRC/neothd/src/media/vad/silero.rs",
+      "sourceSha256": "09B0E9A74E75DFA4E73344300BD0F179EEDF357359DD340F6C882F200F35A87E"
+    },
+    {
+      "test": "media::vad::silero::tests::invalid_frames_fail_before_inference",
+      "sourcePath": "SRC/neothd/src/media/vad/silero.rs",
+      "sourceSha256": "09B0E9A74E75DFA4E73344300BD0F179EEDF357359DD340F6C882F200F35A87E"
+    },
+    {
+      "test": "media::vad::silero::tests::reset_restores_the_initial_recurrent_result_for_the_same_frame",
+      "sourcePath": "SRC/neothd/src/media/vad/silero.rs",
+      "sourceSha256": "09B0E9A74E75DFA4E73344300BD0F179EEDF357359DD340F6C882F200F35A87E"
+    },
+    {
+      "test": "media::resampler::tests::streaming_sinc_split_matches_contiguous_without_ratio_drift",
+      "sourcePath": "SRC/neothd/src/media/resampler.rs",
+      "sourceSha256": "FF8D4E1B0F4300FD88E3275026B55B510E1766F76F46F7693D096C1240A7CD28"
+    },
+    {
+      "test": "media::resampler::tests::streaming_resampler_rejects_rate_change_until_reset",
+      "sourcePath": "SRC/neothd/src/media/resampler.rs",
+      "sourceSha256": "FF8D4E1B0F4300FD88E3275026B55B510E1766F76F46F7693D096C1240A7CD28"
+    },
+    {
+      "test": "media::dictation::tests::live_utterance_state_uses_probability_not_synthetic_audio_claims",
+      "sourcePath": "SRC/neothd/src/media/dictation.rs",
+      "sourceSha256": "3E65AAB810BF9D5AAF7DF23FA79962A0434EBC71BD8DB6C194864474A52AD926"
+    },
+    {
+      "test": "media::dictation::tests::live_utterance_state_enforces_cap_and_reset_discards_partial_cancelled_audio",
+      "sourcePath": "SRC/neothd/src/media/dictation.rs",
+      "sourceSha256": "3E65AAB810BF9D5AAF7DF23FA79962A0434EBC71BD8DB6C194864474A52AD926"
+    },
+    {
+      "test": "cli::dictate::tests::live_parser_requires_live_for_an_explicit_device_and_rejects_a_file",
+      "sourcePath": "SRC/neothd/src/cli/dictate.rs",
+      "sourceSha256": "1D4182CC098BB9B8A1E033D73AD8B90C63B9B8EB8F98773107727AD32FCBE63B"
+    },
+    {
+      "test": "cli::dictate::tests::bounded_pending_utterances_keep_order_and_drop_the_newest_overflow",
+      "sourcePath": "SRC/neothd/src/cli/dictate.rs",
+      "sourceSha256": "1D4182CC098BB9B8A1E033D73AD8B90C63B9B8EB8F98773107727AD32FCBE63B"
+    },
+    {
+      "test": "cli::dictate::tests::stale_scope_never_calls_the_fake_stt_dispatcher",
+      "sourcePath": "SRC/neothd/src/cli/dictate.rs",
+      "sourceSha256": "1D4182CC098BB9B8A1E033D73AD8B90C63B9B8EB8F98773107727AD32FCBE63B"
+    },
+    {
+      "test": "cli::dictate::tests::full_fake_capture_relay_surfaces_through_the_owned_worker_join",
+      "sourcePath": "SRC/neothd/src/cli/dictate.rs",
+      "sourceSha256": "1D4182CC098BB9B8A1E033D73AD8B90C63B9B8EB8F98773107727AD32FCBE63B"
+    },
+    {
+      "test": "cli::dictate::tests::draining_fake_stt_waits_for_its_fake_wal_sender_and_returns_stale_result",
+      "sourcePath": "SRC/neothd/src/cli/dictate.rs",
+      "sourceSha256": "1D4182CC098BB9B8A1E033D73AD8B90C63B9B8EB8F98773107727AD32FCBE63B"
+    },
+    {
+      "test": "cli::dictate::tests::outer_future_drop_guard_aborts_an_active_task_and_signals_scope",
+      "sourcePath": "SRC/neothd/src/cli/dictate.rs",
+      "sourceSha256": "1D4182CC098BB9B8A1E033D73AD8B90C63B9B8EB8F98773107727AD32FCBE63B"
+    }
+  ]
+}

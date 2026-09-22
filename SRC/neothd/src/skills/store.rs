@@ -4255,6 +4255,40 @@ fn ensure_cap_directory_is_real(dir: &Dir, label: &str, display_path: &Path) -> 
     Ok(())
 }
 
+/// Keep private namespaces bound to a real directory that is inaccessible to
+/// other Unix users. Existing children are never chmodded into acceptance:
+/// their owner and mode are evidence about the namespace that was already
+/// present before this caller acquired its capability.
+pub(crate) fn ensure_cap_directory_is_owner_private(
+    dir: &Dir,
+    label: &str,
+    display_path: &Path,
+) -> Result<()> {
+    ensure_cap_directory_is_real(dir, label, display_path)?;
+    #[cfg(unix)]
+    {
+        use cap_std::fs::{MetadataExt as _, PermissionsExt as _};
+
+        let metadata = dir.dir_metadata().with_context(|| {
+            format!(
+                "inspect opened owner-private {label} directory {}",
+                display_path.display()
+            )
+        })?;
+        anyhow::ensure!(
+            metadata.uid() == unsafe { libc::geteuid() },
+            "{label} owner does not match the effective user: {}",
+            display_path.display()
+        );
+        anyhow::ensure!(
+            metadata.permissions().mode() & 0o077 == 0,
+            "{label} is accessible by group or other users: {}",
+            display_path.display()
+        );
+    }
+    Ok(())
+}
+
 fn validate_child_name(name: &OsStr) -> Result<()> {
     let mut components = Path::new(name).components();
     if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
@@ -4446,6 +4480,45 @@ mod tests {
         atomic_write_private_child(&child, OsStr::new("state.json"), &target, b"private state")
             .expect("hardened private child must support capability-relative atomic publication");
         assert_eq!(std::fs::read(&target).unwrap(), b"private state");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_nonprivate_child_is_rejected_without_permission_mutation() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let root_path = crate::test_env::canonical_tempdir().expect("canonical test root");
+        let child_path = root_path.path().join("existing-public-child");
+        std::fs::create_dir(&child_path).expect("create existing fixture child");
+        std::fs::set_permissions(&child_path, std::fs::Permissions::from_mode(0o755))
+            .expect("make existing fixture child nonprivate");
+        let root = open_bound_directory(root_path.path(), false, "test store")
+            .expect("bind test root")
+            .expect("test root exists");
+
+        let child = open_or_create_private_child_dir(
+            &root.dir,
+            OsStr::new("existing-public-child"),
+            &child_path,
+        )
+        .expect("generic private-child opener preserves legacy directory access");
+        let error = ensure_cap_directory_is_owner_private(
+            &child,
+            "explicit private fixture child",
+            &child_path,
+        )
+        .expect_err("explicit private child verifier must reject a nonprivate existing child");
+
+        assert!(format!("{error:#}").contains("accessible by group or other users"));
+        assert_eq!(
+            std::fs::metadata(&child_path)
+                .expect("inspect rejected fixture child")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755,
+            "rejecting an existing nonprivate child must not chmod it into acceptance"
+        );
     }
 
     #[cfg(windows)]

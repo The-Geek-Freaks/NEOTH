@@ -293,6 +293,30 @@ poison the complete key. Cargo fingerprints remain the authority for reuse. A
 later full CI run must still complete the unchanged compile and execution
 bounds before it counts as macOS evidence.
 
+## W186 live-audio hosted lane
+
+`live-audio.yml` is reusable from CI and can be manually dispatched with one
+platform selector: `all` (the default), `linux`, `windows`, or `macos`. CI
+calls `all`, so its one required job expands to Linux, Windows, and macOS.
+The lane has one Cargo worker, a 120-minute Windows bound, and 90-minute Linux
+and macOS bounds. Linux installs `libasound2-dev` and `pkg-config`; the native
+Linux desktop release build installs the same dependencies with its GUI headers.
+
+The lane builds and runs only the committed, exact `--lib` fixture identities
+from `docs/verification/gold-wave186-live-audio-tests.json` with
+`--features live-audio`. It first verifies every declared source SHA-256 and
+rejects a missing, duplicate, or empty filter. It makes no physical microphone
+capture and no provider request. Cargo output and the verified source-identity
+manifest are always uploaded as a platform artifact, including on a compile or
+fixture failure. The cache key is scoped by operating system, `live-audio`, and
+the committed `SRC/Cargo.lock`.
+
+`live-audio` stays optional for default and release-server/musl builds. Only
+the native `release-desktop` capability bundle enables its pinned direct
+dependencies, `cpal = 0.18.2` and `tract-onnx = 0.23.8`. A manual Linux-only
+dispatch is suitable for an early hosted diagnostic; it does not replace the
+full three-platform CI gate.
+
 ## Final Gold verification
 
 Keep local proposal directories limited to their declared source files and

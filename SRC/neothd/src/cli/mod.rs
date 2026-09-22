@@ -857,10 +857,10 @@ pub enum Commands {
     /// require explicit media consent and provider credentials where needed.
     Tts(tts::TtsArgs),
 
-    /// Transcribe an audio file via the configured STT dispatcher
+    /// Transcribe an audio file or live microphone utterances via the configured STT dispatcher
     /// (GOLD-ADOPT-25; local by default, optional VAD pre-filter). Requires
     /// `media.dictation_enabled: true` in freedom.yaml. Microphone capture
-    /// is a follow-up; this is the file-based dictation surface.
+    /// is available with `neoth dictate --live` and uses Silero VAD.
     Dictate(dictate::DictateArgs),
 
     /// OMI conversation runtime status, sanitizer recovery, retention, and purge controls.

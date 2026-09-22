@@ -39,6 +39,8 @@
 
 // ADOPT31-A4 — the defaults are the documented fallback for `media.vad`, so
 // `config` needs them by name rather than duplicating the literals.
+#[cfg(feature = "live-audio")]
+pub(crate) use silero::SileroVad;
 pub use smoothed::SmoothedVad;
 pub use smoothed::VadDecision;
 pub use smoothed::{
@@ -46,4 +48,6 @@ pub use smoothed::{
     DEFAULT_SPEECH_PROB, MAX_SMOOTH_WINDOW,
 };
 
+#[cfg(feature = "live-audio")]
+mod silero;
 mod smoothed;

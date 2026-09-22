@@ -87,6 +87,29 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
         self.assertEqual(iroh["version"], "1")
         self.assertIs(iroh["optional"], True)
 
+    def test_live_audio_is_a_pinned_desktop_only_capability(self) -> None:
+        features = self.manifest["features"]
+        dependencies = self.manifest["dependencies"]
+        linux_dependencies = workflow_step(
+            self.workflow, "Install Linux GUI build dependencies"
+        )
+
+        self.assertListEqual(
+            features["live-audio"], ["dep:cpal", "dep:tract-onnx"]
+        )
+        self.assertIn("live-audio", features["release-desktop"])
+        for bundle in ("default", "release-server"):
+            with self.subTest(bundle=bundle):
+                self.assertNotIn("live-audio", features[bundle])
+
+        for dependency, version in (("cpal", "=0.18.2"), ("tract-onnx", "=0.23.8")):
+            with self.subTest(dependency=dependency):
+                self.assertEqual(dependencies[dependency]["version"], version)
+                self.assertIs(dependencies[dependency]["optional"], True)
+
+        self.assertIn("libasound2-dev", linux_dependencies)
+        self.assertIn("pkg-config", linux_dependencies)
+
     def test_ssh_tunnel_is_a_patched_opt_in_with_a_locked_ci_contract(self) -> None:
         features = self.manifest["features"]
         russh = self.manifest["dependencies"]["russh"]

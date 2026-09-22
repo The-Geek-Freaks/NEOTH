@@ -9719,10 +9719,11 @@ mod tests {
                     confirm_bus: None,
                     abliterated_loader: None,
                 });
-                // The authority-published installed Skill must be selected by
-                // its unique automatic literal trigger before the real agent
-                // loader applies its `delegate_to` contract.
-                let accepted_inbound = inbound(Some("w137-channel-delegate run"), None);
+                // Select the authority-published installed Skill explicitly.
+                // Automatic keyword routing is covered by the resolver; this
+                // fixture owns the installed-Skill -> real-agent-loader ->
+                // child-scope contract.
+                let accepted_inbound = inbound(Some("/w137-channel-delegate run"), None);
                 let expected_wal_identity = canonical_admitted_channel_wal_identity(
                     &AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
                         ChannelId::Telegram,

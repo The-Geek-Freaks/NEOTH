@@ -29,3 +29,5 @@ packaging/**/fixtures/*.txt text eol=lf
 # This vendor archive is checked against upstream SHA-256 file bytes. Disable
 # checkout conversion for every member, including extensionless metadata.
 SRC/vendor/arrayref/** -text
+# Preserve the pinned Silero model, upstream license and provenance bytes.
+SRC/neothd/assets/silero-vad/** -text

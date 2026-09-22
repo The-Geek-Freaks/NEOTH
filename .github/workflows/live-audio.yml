@@ -1,0 +1,190 @@
+name: W186 live-audio hosted validation
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        description: Hosted platform selection.
+        required: false
+        default: all
+        type: string
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Hosted platform selection.
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - linux
+          - windows
+          - macos
+
+permissions:
+  contents: read
+
+jobs:
+  select-platform:
+    name: Select W186 live-audio platform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - name: Build allowlisted platform matrix
+        id: select
+        shell: bash
+        env:
+          REQUESTED_PLATFORM: ${{ inputs.platform }}
+        run: |
+          set -euo pipefail
+          case "$REQUESTED_PLATFORM" in
+            all)
+              matrix='{"include":[{"platform":"linux","label":"Linux","os":"ubuntu-24.04","timeout":90},{"platform":"windows","label":"Windows","os":"windows-2022","timeout":120},{"platform":"macos","label":"macOS","os":"macos-14","timeout":90}]}'
+              ;;
+            linux)
+              matrix='{"include":[{"platform":"linux","label":"Linux","os":"ubuntu-24.04","timeout":90}]}'
+              ;;
+            windows)
+              matrix='{"include":[{"platform":"windows","label":"Windows","os":"windows-2022","timeout":120}]}'
+              ;;
+            macos)
+              matrix='{"include":[{"platform":"macos","label":"macOS","os":"macos-14","timeout":90}]}'
+              ;;
+            *)
+              echo "::error::unsupported live-audio platform selector: $REQUESTED_PLATFORM"
+              exit 1
+              ;;
+          esac
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  live-audio:
+    name: W186 live-audio / ${{ matrix.label }}
+    needs: select-platform
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select-platform.outputs.matrix) }}
+    env:
+      # The optional tract/cpal graph is deliberately serialized on hosted
+      # runners. This lane is compile + selected hermetic fixtures only.
+      CARGO_BUILD_JOBS: 1
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Linux live-audio build dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      - name: Restore live-audio Cargo cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-live-audio-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-live-audio-cargo-
+
+      # This validates the committed identity list before Cargo starts. The
+      # recorded manifest is uploaded even when compile or a fixture fails.
+      - name: Bind W186 fixture identities to their declared source
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/w186-live-audio"
+          mkdir -p "$evidence_dir"
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+
+          root = pathlib.Path(os.environ["GITHUB_WORKSPACE"])
+          catalog = root / "docs/verification/gold-wave186-live-audio-tests.json"
+          payload = json.loads(catalog.read_text(encoding="utf-8"))
+          if payload.get("schema") != "neoth-live-audio-tests/v1":
+              raise SystemExit("unexpected W186 live-audio test catalog schema")
+          required = payload.get("requiredTests")
+          if not isinstance(required, list) or not required:
+              raise SystemExit("W186 live-audio test catalog has no requiredTests")
+
+          evidence = []
+          names = []
+          for entry in required:
+              if not isinstance(entry, dict):
+                  raise SystemExit("W186 live-audio test catalog entry is not an object")
+              name = entry.get("test")
+              source_path = entry.get("sourcePath")
+              expected = entry.get("sourceSha256")
+              if not all(isinstance(value, str) and value for value in (name, source_path, expected)):
+                  raise SystemExit("W186 live-audio test catalog entry is incomplete")
+              path = root / source_path
+              if not path.is_file():
+                  raise SystemExit(f"W186 fixture source is missing: {source_path}")
+              actual = hashlib.sha256(path.read_bytes()).hexdigest()
+              if actual.lower() != expected.lower():
+                  raise SystemExit(f"W186 fixture source SHA-256 mismatch: {source_path}")
+              names.append(name)
+              evidence.append({"test": name, "sourcePath": source_path, "sourceSha256": actual})
+          if len(names) != len(set(names)):
+              raise SystemExit("W186 live-audio test catalog has duplicate test identities")
+          evidence_dir = pathlib.Path(os.environ["RUNNER_TEMP"]) / "w186-live-audio"
+          (evidence_dir / "fixture-identities.json").write_text(
+              json.dumps({"schema": "gold-wave186-live-audio-hosted-evidence/v1", "fixtures": evidence}, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          (evidence_dir / "fixture-names.txt").write_text("\n".join(names) + "\n", encoding="utf-8")
+          inputs = ("docs/verification/gold-wave186-live-audio-tests.json", "SRC/Cargo.lock")
+          (evidence_dir / "declared-inputs.sha256").write_text(
+              "".join(f"{hashlib.sha256((root / path).read_bytes()).hexdigest()}  {path}\n" for path in inputs),
+              encoding="utf-8",
+          )
+          PY
+
+      # Each identity is discovered with --exact before it is run. An empty
+      # Cargo filter cannot satisfy this lane; fixtures are hermetic and must
+      # not open a microphone or contact a provider.
+      - name: Compile and run exact live-audio fixtures
+        shell: bash
+        working-directory: SRC
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/w186-live-audio"
+          : > "$evidence_dir/cargo-live-audio.log"
+          while IFS= read -r test_name; do
+            [[ -n "$test_name" ]] || { echo "empty W186 live-audio fixture identity" >&2; exit 1; }
+            {
+              echo "=== list $test_name ==="
+              listed="$(cargo test -p neoth --lib --locked --features live-audio "$test_name" -- --exact --list)"
+              printf '%s\n' "$listed"
+              test "$(printf '%s\n' "$listed" | grep -Fxc "$test_name: test")" -eq 1
+              echo "=== run $test_name ==="
+              cargo test -p neoth --lib --locked --features live-audio "$test_name" -- --exact --test-threads=1
+            } 2>&1 | tee -a "$evidence_dir/cargo-live-audio.log"
+          done < "$evidence_dir/fixture-names.txt"
+
+      - name: Upload W186 live-audio hosted evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w186-live-audio-${{ matrix.platform }}-${{ github.sha }}
+          path: ${{ runner.temp }}/w186-live-audio/
+          if-no-files-found: error
+          retention-days: 14

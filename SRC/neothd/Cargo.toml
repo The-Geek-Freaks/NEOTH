@@ -54,10 +54,14 @@ release-server = [
 ]
 release-desktop = [
     "release-server",
+    "live-audio",
     "cluster-iroh",
     "os-clipboard",
     "wasm-plugin-host",
 ]
+# Native microphone capture and the compiled-in Silero model. Linux desktop
+# builds need ALSA development headers; headless/musl builds exclude this tree.
+live-audio = ["dep:cpal", "dep:tract-onnx"]
 # Interactive TTY wizard for `neoth init`. Disable for slim daemon-only builds
 # (containers, embedded targets). When off, `neoth init --non-interactive` still works.
 wizard = ["dep:dialoguer", "dep:indicatif", "dep:console"]
@@ -240,6 +244,12 @@ recursive-mas = []
 hash-bench = ["dep:opthash"]
 
 [dependencies]
+# W186 hosted supply-input resolution only; implementation lands separately.
+tract-onnx = { version = "=0.23.8", optional = true }
+
+# W186 hosted supply-input resolution only; implementation lands separately.
+cpal = { version = "=0.18.2", optional = true }
+
 proc-macro2 = { version = "1", features = ["span-locations"] }
 syn = { version = "2", features = ["full", "visit"] }
 # GOLD-ADAPT-HASH-01 — ElasticHashMap + FunnelHashMap bench spike.

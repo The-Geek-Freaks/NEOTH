@@ -238,19 +238,22 @@ $neothHome = Join-Path $workRootPath 'private NEOTH_HOME'
 New-Item -ItemType Directory -Path $src, $tests, $neothHome | Out-Null
 
 $libraryPath = Join-Path $src 'lib.rs'
+$callerPath = Join-Path $src 'caller.rs'
 $testPath = Join-Path $tests 'diff_impact_test.rs'
 @'
 pub fn changed_symbol() -> &'static str {
     "before"
 }
+'@ | Set-Content -LiteralPath $libraryPath -Encoding utf8
 
+@'
 pub fn caller_symbol() -> &'static str {
     changed_symbol()
 }
-'@ | Set-Content -LiteralPath $libraryPath -Encoding utf8
+'@ | Set-Content -LiteralPath $callerPath -Encoding utf8
 @'
 #[test]
-fn test_caller_symbol() {
+fn test_calling_caller() {
     assert_eq!(caller_symbol(), "after");
 }
 '@ | Set-Content -LiteralPath $testPath -Encoding utf8
@@ -308,16 +311,21 @@ $impactDiagnostic = [ordered]@{
         [ordered]@{ file = $_.file; symbol = $_.symbol; line = $_.line; kind = $_.kind }
     })
     caller_edge_present = @($impact.Json.traversed_edges | Where-Object {
-        $_.caller.file -ceq 'src/lib.rs' -and $_.caller.symbol -ceq 'caller_symbol' -and
+        $_.caller.file -ceq 'src/caller.rs' -and $_.caller.symbol -ceq 'caller_symbol' -and
         $_.callee.file -ceq 'src/lib.rs' -and $_.callee.symbol -ceq 'changed_symbol'
     }).Count -gt 0
     caller_edge_unresolved = @($impact.Json.unresolved_edges | Where-Object {
-        $_.from_file -ceq 'src/lib.rs' -and $_.from_symbol -ceq 'caller_symbol' -and $_.to_name -ceq 'changed_symbol'
+        $_.from_file -ceq 'src/caller.rs' -and $_.from_symbol -ceq 'caller_symbol' -and $_.to_name -ceq 'changed_symbol'
     }).Count -gt 0
 }
 $impactDiagnostic | ConvertTo-Json -Depth 5 -Compress | Write-Output
-$callerNodes = @($impact.Json.impacted_nodes | Where-Object { $_.file -ceq 'src/lib.rs' -and $_.symbol -ceq 'caller_symbol' })
+$callerNodes = @($impact.Json.impacted_nodes | Where-Object { $_.file -ceq 'src/caller.rs' -and $_.symbol -ceq 'caller_symbol' })
 if ($callerNodes.Count -lt 1) { Stop-Acceptance 'callers impact did not retain caller_symbol as a concrete affected declaration' }
+$callerEdges = @($impact.Json.traversed_edges | Where-Object {
+    $_.caller.file -ceq 'src/caller.rs' -and $_.caller.symbol -ceq 'caller_symbol' -and
+    $_.callee.file -ceq 'src/lib.rs' -and $_.callee.symbol -ceq 'changed_symbol'
+})
+if ($callerEdges.Count -ne 1) { Stop-Acceptance 'callers impact did not retain the concrete caller_symbol to changed_symbol edge' }
 Add-Result -Results $results -Name 'diff_impact_exact_symbol_and_caller' -Process $impact
 
 $gaps = Invoke-NeothJson -Neoth $neoth -Arguments @('--output', 'json', 'code-map', 'diff-test-gaps', '--root', $repo, '--direction', 'callers', '--max-depth', '1', '--max-nodes', '16') -WorkingDirectory $workRootPath -NeothHome $neothHome -Label 'fresh diff test gaps'
@@ -331,14 +339,14 @@ if ($gaps.Json.outcome -ne 'complete' -or $gaps.Json.input.stale -or $gaps.Json.
     Stop-Acceptance 'diff test-gap receipt was not a fresh, complete generation-bound observation'
 }
 $callerGap = @($gaps.Json.per_node | Where-Object {
-    $_.impact_node.file -ceq 'src/lib.rs' -and $_.impact_node.symbol -ceq 'caller_symbol' -and $_.identity -eq 'exact'
+    $_.impact_node.file -ceq 'src/caller.rs' -and $_.impact_node.symbol -ceq 'caller_symbol' -and $_.identity -eq 'exact'
 })
 if ($callerGap.Count -ne 1 -or $null -eq $callerGap[0].coverage) {
     Stop-Acceptance 'diff test-gap receipt did not retain exact caller coverage evidence'
 }
 $observed = @($callerGap[0].coverage.observed_tests | Where-Object {
-    $_.test.file -ceq 'tests/diff_impact_test.rs' -and $_.test.symbol -ceq 'test_caller_symbol' -and
-    $_.target.file -ceq 'src/lib.rs' -and $_.target.symbol -ceq 'caller_symbol' -and
+    $_.test.file -ceq 'tests/diff_impact_test.rs' -and $_.test.symbol -ceq 'test_calling_caller' -and
+    $_.target.file -ceq 'src/caller.rs' -and $_.target.symbol -ceq 'caller_symbol' -and
     $_.confidence_tier -eq 'resolved' -and $_.provenance -eq 'framework_and_conventional_path'
 })
 if ($observed.Count -ne 1 -or $callerGap[0].coverage.uncertainty.no_observed_test) {

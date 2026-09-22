@@ -769,7 +769,13 @@ mod tests {
         let _serial = serial_test_guard().await;
         clear_cooldowns_for_test();
         let directory = tempfile::tempdir().unwrap();
-        let cache = CitationCache::new(directory.path().join("citations"), 60, 8, 100_000).unwrap();
+        let cache = CitationCache::new(
+            directory.path().canonicalize().unwrap().join("citations"),
+            60,
+            8,
+            100_000,
+        )
+        .unwrap();
         let query = query(CitationProvider::Crossref);
         let record = CitationRecord::new(
             &query,
@@ -816,7 +822,13 @@ mod tests {
         let _serial = serial_test_guard().await;
         clear_cooldowns_for_test();
         let directory = tempfile::tempdir().unwrap();
-        let cache = CitationCache::new(directory.path().join("citations"), 60, 8, 100_000).unwrap();
+        let cache = CitationCache::new(
+            directory.path().canonicalize().unwrap().join("citations"),
+            60,
+            8,
+            100_000,
+        )
+        .unwrap();
         let home = tempfile::tempdir().unwrap();
         let query = query(CitationProvider::Crossref);
         let record = CitationRecord::new(

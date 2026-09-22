@@ -360,6 +360,12 @@ pub(crate) fn read_training_export_candidates(
     else {
         return Ok(Vec::new());
     };
+    crate::skills::store::ensure_cap_directory_is_owner_private(
+        &namespace.dir,
+        "response feedback export directory",
+        &namespace_path,
+    )
+    .map_err(|_| ResponseFeedbackRejection::Unavailable)?;
     let projection = read_projection(&namespace.dir, &namespace_path.join(STORE_FILE))?;
     Ok(projection
         .targets
@@ -472,6 +478,12 @@ fn with_projection<T>(
     let namespace = crate::skills::store::open_or_create_private_child_dir(
         &home_directory.dir,
         OsStr::new(STORE_DIR),
+        &namespace_path,
+    )
+    .map_err(|_| ResponseFeedbackRejection::Unavailable)?;
+    crate::skills::store::ensure_cap_directory_is_owner_private(
+        &namespace,
+        "response feedback directory",
         &namespace_path,
     )
     .map_err(|_| ResponseFeedbackRejection::Unavailable)?;

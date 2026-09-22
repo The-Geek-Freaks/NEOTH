@@ -48,6 +48,8 @@ pub mod frame_decoder;
 /// (FMA3/AVX2/AVX) and best available accelerator class; `require_fma3`
 /// guards against SIGILL on pre-Haswell CPUs.
 pub mod hw_probe;
+#[cfg(feature = "live-audio")]
+pub(crate) mod live_capture;
 /// GOLD-ADAPT-HANDY-04 — model download manager: SHA-256 verify, resumable
 /// `Range` downloads, and atomic tmp→dest rename.
 pub mod model_manager;

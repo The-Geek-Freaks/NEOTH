@@ -155,10 +155,17 @@ fn typed_attachment_batch_reaches_main_agent_and_slash_builders() {
     assert!(
         ENRICHED_REQUEST.contains("pub attachment_contexts: Option<&'a AttachmentContextBatch>")
     );
-    assert!(
-        ENRICHED_REQUEST
-            .contains("budget_item(Block::D, None, attachment.as_str()).with_required_retention()")
+    let attachment_items = between(
+        ENRICHED_REQUEST,
+        "if let Some(attachments) = inputs.attachment_contexts {",
+        "if let Some(skill_registry_context)",
     );
+    assert!(attachment_items.contains("attachments.blocks().iter().map(|attachment|"));
+    assert!(attachment_items.contains("budget_item("));
+    assert!(attachment_items.contains("Block::D,"));
+    assert!(attachment_items.contains("Some(PromptTaxSource::Unattributed),"));
+    assert!(attachment_items.contains("attachment.as_str(),"));
+    assert!(attachment_items.contains(".with_required_retention()"));
 
     assert!(CHAT.contains("attachment_contexts: attachment_contexts.cloned()"));
     assert!(CHAT.contains("attachment_contexts: layers.attachment_contexts.as_ref()"));

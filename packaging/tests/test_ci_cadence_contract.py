@@ -22,6 +22,7 @@ CI_TEXT = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
 PREFLIGHT_TEXT = (WORKFLOWS / "preflight.yml").read_text(encoding="utf-8")
 RELEASE_TEXT = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
 SECURITY_TEXT = (WORKFLOWS / "security.yml").read_text(encoding="utf-8")
+LIVE_AUDIO_TEXT = (WORKFLOWS / "live-audio.yml").read_text(encoding="utf-8")
 PREVIEW_WINDOWS_TEXT = (WORKFLOWS / "preview-windows.yml").read_text(encoding="utf-8")
 GUI_MAIN_TEXT = (ROOT / "SRC" / "neothd-gui" / "src" / "main.rs").read_text(
     encoding="utf-8"
@@ -201,6 +202,58 @@ def transitive_dependencies(jobs: dict[str, str], job: str) -> set[str]:
 
 
 class CiCadenceContractTests(unittest.TestCase):
+    def test_live_audio_reusable_lane_is_required_by_gold_ci(self) -> None:
+        triggers = trigger_block(LIVE_AUDIO_TEXT)
+        self.assertRegex(triggers, r"(?m)^  workflow_call:\s*$")
+        self.assertRegex(triggers, r"(?m)^  workflow_dispatch:\s*$")
+        self.assertIn("default: all", triggers)
+        for platform in ("all", "linux", "windows", "macos"):
+            self.assertIn(f"- {platform}", triggers)
+
+        jobs = workflow_jobs(LIVE_AUDIO_TEXT)
+        selector = jobs["select-platform"]
+        self.assertIn("matrix: ${{ steps.select.outputs.matrix }}", selector)
+        self.assertIn("REQUESTED_PLATFORM: ${{ inputs.platform }}", selector)
+        self.assertIn('case "$REQUESTED_PLATFORM" in', selector)
+        self.assertIn("timeout-minutes: 5", selector)
+        for platform in ("all", "linux", "windows", "macos"):
+            self.assertIn(f"{platform})", selector)
+
+        live_audio = jobs["live-audio"]
+        self.assertIn("needs: select-platform", live_audio)
+        self.assertIn(
+            "matrix: ${{ fromJSON(needs.select-platform.outputs.matrix) }}",
+            live_audio,
+        )
+        self.assertNotRegex(live_audio, r"(?m)^    if:.*matrix\.")
+        self.assertIn("runs-on: ${{ matrix.os }}", live_audio)
+        self.assertIn("timeout-minutes: ${{ matrix.timeout }}", live_audio)
+        self.assertIn("CARGO_BUILD_JOBS: 1", live_audio)
+        self.assertIn('"os":"ubuntu-24.04","timeout":90', selector)
+        self.assertIn('"os":"windows-2022","timeout":120', selector)
+        self.assertIn('"os":"macos-14","timeout":90', selector)
+        self.assertIn("libasound2-dev pkg-config", live_audio)
+        self.assertIn(
+            "${{ runner.os }}-live-audio-cargo-${{ hashFiles('SRC/Cargo.lock') }}",
+            live_audio,
+        )
+        self.assertIn("docs/verification/gold-wave186-live-audio-tests.json", live_audio)
+        self.assertIn("sourceSha256", live_audio)
+        self.assertIn("--lib --locked --features live-audio", live_audio)
+        self.assertIn("--exact --list", live_audio)
+        self.assertIn('grep -Fxc "$test_name: test"', live_audio)
+        self.assertIn("if: always()", live_audio)
+        self.assertIn("cargo-live-audio.log", live_audio)
+
+        ci_jobs = workflow_jobs(CI_TEXT)
+        caller = ci_jobs["live-audio"]
+        self.assertIn("uses: ./.github/workflows/live-audio.yml", caller)
+        self.assertIn("platform: all", caller)
+        gold = ci_jobs["gold-ci"]
+        self.assertIn("live-audio", job_dependencies(gold))
+        self.assertIn("LIVE_AUDIO: ${{ needs['live-audio'].result }}", gold)
+        self.assertIn("live-audio=$LIVE_AUDIO", gold)
+
     def test_preflight_is_the_only_main_push_workflow_in_this_contract(self) -> None:
         preflight = trigger_block(PREFLIGHT_TEXT)
         self.assertRegex(preflight, r"(?m)^  pull_request:\s*$")

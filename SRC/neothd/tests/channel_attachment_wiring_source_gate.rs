@@ -84,10 +84,17 @@ fn channel_media_is_capped_before_single_owner_snapshot() {
 
 #[test]
 fn channel_attachment_is_required_d_and_delegation_cannot_drop_it() {
-    assert!(
-        ENRICHED
-            .contains("budget_item(Block::D, None, attachment.as_str()).with_required_retention()")
+    let attachment_items = between(
+        ENRICHED,
+        "if let Some(attachments) = inputs.attachment_contexts {",
+        "if let Some(skill_registry_context)",
     );
+    assert!(attachment_items.contains("attachments.blocks().iter().map(|attachment|"));
+    assert!(attachment_items.contains("budget_item("));
+    assert!(attachment_items.contains("Block::D,"));
+    assert!(attachment_items.contains("Some(PromptTaxSource::Unattributed),"));
+    assert!(attachment_items.contains("attachment.as_str(),"));
+    assert!(attachment_items.contains(".with_required_retention()"));
     let delegated = between(SERVE, "fn delegated_system_bundle(", "#[cfg(test)]");
     assert!(delegated.contains("item.block == Block::D"));
     assert!(delegated.contains("item.retention == PromptRetention::Required"));
@@ -149,7 +156,9 @@ fn sanitized_transcripts_and_media_errors_stay_behind_policy_boundaries() {
         "if has_media",
         "// ── GOLD-ADAPT-GOOSE-03: UUID-reply fast-path",
     );
-    assert!(media_slash.contains("release_local_channel_notice("));
+    assert!(media_slash.contains("release_local_channel_notice_in("));
+    assert!(media_slash.contains("&neoth_home,"));
+    assert!(media_slash.contains("&inbound_binding,"));
     assert!(!media_slash.contains("reply_to_inbound("));
 
     let media_extract = between(
@@ -157,7 +166,9 @@ fn sanitized_transcripts_and_media_errors_stay_behind_policy_boundaries() {
         "let channel_attachment_contexts = match media.take()",
         "let channel_enriched =",
     );
-    assert!(media_extract.contains("release_local_channel_notice("));
+    assert!(media_extract.contains("release_local_channel_notice_in("));
+    assert!(media_extract.contains("&neoth_home,"));
+    assert!(media_extract.contains("&inbound_binding,"));
     assert!(!media_extract.contains("reply_to_inbound("));
 
     let provider_budget = between(
@@ -165,7 +176,9 @@ fn sanitized_transcripts_and_media_errors_stay_behind_policy_boundaries() {
         "let budgeted = match crate::cli::chat::finalize_provider_request(",
         "let crate::cli::chat::BudgetedProviderRequest",
     );
-    assert!(provider_budget.contains("release_local_channel_notice("));
+    assert!(provider_budget.contains("release_local_channel_notice_in("));
+    assert!(provider_budget.contains("&neoth_home,"));
+    assert!(provider_budget.contains("&inbound_binding,"));
     assert!(provider_budget.contains("\"provider-request-budget-error\""));
     assert!(!provider_budget.contains("reply_to_inbound("));
 }
@@ -180,7 +193,9 @@ fn queued_task_ack_reuses_the_ingress_session_and_policy_egress() {
     let task_ack = between(handler, "let ack = format!(", "// ── K-Wire-3 (Session 23)");
     assert!(task_ack.contains("&ody26_session"));
     assert!(!task_ack.contains("ody26_task_session"));
-    assert!(task_ack.contains("release_local_channel_notice("));
+    assert!(task_ack.contains("release_local_channel_notice_in("));
+    assert!(task_ack.contains("&neoth_home,"));
+    assert!(task_ack.contains("&inbound_binding,"));
     assert!(task_ack.contains("\"task-queued\""));
 }
 
@@ -314,8 +329,9 @@ fn one_unforgeable_audio_permit_spans_decode_and_every_stt_entry() {
         "fn extract_blocking_with_context(",
         "fn transcription_model_detail(",
     );
-    assert!(blocking.contains("dispatch_pcm_f32_with_audio_permit("));
+    assert!(blocking.contains("dispatch_pcm_f32_with_audio_permit_in("));
     assert!(blocking.contains("&permit"));
+    assert!(blocking.contains("wal_session"));
 
     let file_decode = between(
         AUDIO,

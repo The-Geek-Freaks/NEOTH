@@ -814,6 +814,15 @@ jobs:
             eval-report/report.md
           if-no-files-found: error
 
+  # W186 owns the optional microphone/VAD graph separately from the default
+  # workspace matrix. It calls the reusable workflow with its all-platform
+  # selector, which expands to Linux, Windows, and macOS hosted validation.
+  live-audio:
+    name: W186 live-audio hosted validation
+    uses: ./.github/workflows/live-audio.yml
+    with:
+      platform: all
+
   # One stable branch-protection target. `always()` is essential: without it,
   # a failed prerequisite would skip this job and could leave an old required
   # check looking green. Advisory beta is intentionally not a dependency.
@@ -829,6 +838,7 @@ jobs:
       - wasm-plugin
       - feature-matrix
       - gold-smoke
+      - live-audio
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -843,6 +853,7 @@ jobs:
           WASM_PLUGIN: ${{ needs['wasm-plugin'].result }}
           FEATURE_MATRIX: ${{ needs['feature-matrix'].result }}
           GOLD_SMOKE: ${{ needs['gold-smoke'].result }}
+          LIVE_AUDIO: ${{ needs['live-audio'].result }}
         run: |
           failed=0
           for contract in \
@@ -853,7 +864,8 @@ jobs:
             "platform-tests=$PLATFORM_TESTS" \
             "wasm-plugin=$WASM_PLUGIN" \
             "feature-matrix=$FEATURE_MATRIX" \
-            "gold-smoke=$GOLD_SMOKE"
+            "gold-smoke=$GOLD_SMOKE" \
+            "live-audio=$LIVE_AUDIO"
           do
             name="${contract%%=*}"
             result="${contract#*=}"

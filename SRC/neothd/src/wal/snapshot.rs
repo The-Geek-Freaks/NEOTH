@@ -780,10 +780,13 @@ mod tests {
         use tempfile::tempdir;
 
         let home = tempdir().unwrap();
-        let segment = home.path().join("snapshot-session-000001.wal");
-        let (writer, join) = spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
+        let home_path = home.path().canonicalize().unwrap();
+        let wal_path = home_path.join("wal");
+        std::fs::create_dir(&wal_path).unwrap();
+        let segment = wal_path.join("snapshot-session-000001.wal");
+        let (writer, join) = spawn_for_home(segment.clone(), home_path.clone()).unwrap();
         let wal_session = WalSessionContext::from_admitted_identity(
-            home.path(),
+            &home_path,
             b"test\0rollback-snapshot\0admitted-turn",
         )
         .unwrap();

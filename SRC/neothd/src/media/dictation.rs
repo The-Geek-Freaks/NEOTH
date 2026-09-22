@@ -30,8 +30,8 @@
 //!
 //! # Audio capture
 //!
-//! Actual mic capture is not implemented; `neoth dictate <file>` decodes a
-//! caller-selected audio file and feeds this module PCM.
+//! `neoth dictate <file>` decodes caller-selected audio. `neoth dictate --live`
+//! consumes bounded native capture frames through the Silero assembler.
 //!
 //! # Tests
 //!
@@ -41,6 +41,8 @@ use tracing::{info, warn};
 
 use crate::config::features::MediaConfig;
 use crate::media::vad::{SmoothedVad, VadDecision};
+#[cfg(feature = "live-audio")]
+use crate::media::vad::SileroVad;
 
 // ── First-use sentinel ───────────────────────────────────────────────────────
 
@@ -141,6 +143,7 @@ pub async fn transcribe_utterance_with_writer(
         neoth_home,
         wal_writer,
         None,
+        true,
     )
     .await
 }
@@ -166,6 +169,34 @@ pub(crate) async fn transcribe_utterance_with_audio_permit(
         neoth_home,
         wal_writer,
         Some(permit),
+        true,
+    )
+    .await
+}
+
+/// Live-only dispatch seam. Its caller has already applied the mandatory
+/// Silero gate while assembling the utterance, so the legacy energy VAD must
+/// not become a second decision-maker for live microphone audio.
+#[allow(clippy::too_many_arguments)]
+#[cfg(feature = "live-audio")]
+pub(crate) async fn transcribe_live_utterance_with_audio_permit(
+    pcm: &[f32],
+    sample_rate_hz: u32,
+    config: &MediaConfig,
+    updater: &crate::config::UpdaterConfig,
+    neoth_home: &std::path::Path,
+    wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    permit: &crate::media::audio::AudioWorkPermit,
+) -> Result<String, DictationError> {
+    transcribe_utterance_inner(
+        pcm,
+        sample_rate_hz,
+        config,
+        updater,
+        neoth_home,
+        wal_writer,
+        Some(permit),
+        false,
     )
     .await
 }
@@ -179,6 +210,7 @@ async fn transcribe_utterance_inner(
     neoth_home: &std::path::Path,
     wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
     permit: Option<&crate::media::audio::AudioWorkPermit>,
+    apply_legacy_vad: bool,
 ) -> Result<String, DictationError> {
     // ── Gate 1: feature enabled check ───────────────────────────────────────
     if !config.dictation_enabled {
@@ -199,12 +231,12 @@ async fn transcribe_utterance_inner(
              ╔══════════════════════════════════════════════════════════════╗\n\
              ║  NEOTH DICTATION — AUDIO PRIVACY NOTICE                     ║\n\
              ║                                                              ║\n\
-             ║  Dictation mode transcribes the audio file you selected.     ║\n\
+             ║  Dictation mode transcribes selected or captured audio.     ║\n\
              ║  transcribes it using the configured STT provider            ║\n\
              ║  (local candle Whisper by default; cloud only if explicitly  ║\n\
              ║  enabled in freedom.yaml media.stt).                         ║\n\
              ║                                                              ║\n\
-             ║  Live microphone capture is not enabled by this command.     ║\n\
+             ║  Live microphone: `neoth dictate --live`.     ║\n\
              ║  To disable dictation at any time:                           ║\n\
              ║    neoth config set media.dictation_enabled false            ║\n\
              ╚══════════════════════════════════════════════════════════════╝\n"
@@ -213,7 +245,7 @@ async fn transcribe_utterance_inner(
     }
 
     // ── Gate 2: VAD pre-filter ───────────────────────────────────────────────
-    if config.vad_enabled {
+    if apply_legacy_vad && config.vad_enabled {
         // ADOPT31-A4 — honour `media.vad` instead of the compile-time defaults.
         // Validated here rather than clamped: a VAD that quietly ignores its own
         // configuration is worse than one that refuses to run.
@@ -276,6 +308,168 @@ async fn transcribe_utterance_inner(
     }
 }
 
+// ── Live utterance assembly ─────────────────────────────────────────────────
+
+#[cfg(any(feature = "live-audio", test))]
+const LIVE_VAD_SAMPLE_RATE_HZ: u32 = 16_000;
+#[cfg(any(feature = "live-audio", test))]
+const LIVE_VAD_FRAME_SAMPLES: usize = 512;
+#[cfg(feature = "live-audio")]
+const LIVE_UTTERANCE_MAX_SAMPLES: usize = LIVE_VAD_SAMPLE_RATE_HZ as usize * 30;
+
+/// Internal transitions from the live, content-bearing capture path. PCM never
+/// crosses this boundary into CLI output; only the CLI may send a completed
+/// utterance to the existing permit-aware STT dispatcher.
+#[derive(Debug, PartialEq)]
+#[cfg(any(feature = "live-audio", test))]
+pub(crate) enum LiveUtteranceEvent {
+    SpeechStarted,
+    UtteranceReady { sequence: u64, pcm: Vec<f32> },
+}
+
+/// Pure utterance-boundary state, separate from the model so probability
+/// transitions can be tested without treating synthetic audio as speech.
+#[cfg(any(feature = "live-audio", test))]
+struct LiveUtteranceState {
+    utterance: Vec<f32>,
+    speaking: bool,
+    trailing_silence_frames: usize,
+    hangover_frames: usize,
+    speech_probability: f32,
+    next_sequence: u64,
+    max_utterance_samples: usize,
+}
+
+#[cfg(any(feature = "live-audio", test))]
+impl LiveUtteranceState {
+    fn new(speech_probability: f32, hangover_frames: usize, max_utterance_samples: usize) -> Self {
+        Self {
+            utterance: Vec::new(),
+            speaking: false,
+            trailing_silence_frames: 0,
+            hangover_frames,
+            speech_probability,
+            next_sequence: 1,
+            max_utterance_samples,
+        }
+    }
+
+    /// Deterministic state transition seam. Production supplies the probability
+    /// only from Silero; tests can verify segmentation without asserting that a
+    /// synthetic waveform represents speech.
+    fn observe_probability(&mut self, probability: f32, block: Vec<f32>) -> Result<Option<LiveUtteranceEvent>, DictationError> {
+        if !probability.is_finite() || !(0.0..=1.0).contains(&probability) {
+            return Err(DictationError::Transcription("live Silero VAD returned an invalid probability".into()));
+        }
+        let speech = probability >= self.speech_probability;
+        if !self.speaking && !speech {
+            return Ok(None);
+        }
+        let started = !self.speaking;
+        if started {
+            self.speaking = true;
+            self.trailing_silence_frames = 0;
+            self.utterance.clear();
+        }
+        if self.utterance.len().saturating_add(block.len()) > self.max_utterance_samples {
+            self.reset();
+            return Err(DictationError::Transcription(format!(
+                "live utterance exceeded the {}-second limit",
+                self.max_utterance_samples / LIVE_VAD_SAMPLE_RATE_HZ as usize
+            )));
+        }
+        self.utterance.extend(block);
+        if speech {
+            self.trailing_silence_frames = 0;
+            return Ok(started.then_some(LiveUtteranceEvent::SpeechStarted));
+        }
+        self.trailing_silence_frames = self.trailing_silence_frames.saturating_add(1);
+        if self.trailing_silence_frames < self.hangover_frames {
+            return Ok(None);
+        }
+        let pcm = std::mem::take(&mut self.utterance);
+        self.speaking = false;
+        self.trailing_silence_frames = 0;
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        Ok(Some(LiveUtteranceEvent::UtteranceReady { sequence, pcm }))
+    }
+
+    fn reset(&mut self) {
+        self.utterance.clear();
+        self.speaking = false;
+        self.trailing_silence_frames = 0;
+    }
+}
+
+/// Stateful Silero-only utterance assembler for one live-capture session.
+///
+/// The streaming resampler retains filter history and incomplete device chunks;
+/// its output is then buffered until an exact 512-sample Silero frame is
+/// available. The legacy energy VAD is not a fallback for this path.
+#[cfg(feature = "live-audio")]
+pub(crate) struct LiveUtteranceAssembler {
+    vad: SileroVad,
+    resampler: crate::media::resampler::StreamingMonoResampler,
+    residual: Vec<f32>,
+    state: LiveUtteranceState,
+}
+
+#[cfg(feature = "live-audio")]
+impl LiveUtteranceAssembler {
+    pub(crate) fn new(config: &MediaConfig) -> Result<Self, DictationError> {
+        if !config.dictation_enabled {
+            return Err(DictationError::NotEnabled);
+        }
+        config.vad.validate().map_err(|error| DictationError::Config(format!("{error:#}")))?;
+        let hangover_samples = usize::try_from(config.vad.hangover_ms)
+            .unwrap_or(usize::MAX)
+            .saturating_mul(LIVE_VAD_SAMPLE_RATE_HZ as usize)
+            / 1_000;
+        Ok(Self {
+            vad: SileroVad::new().map_err(|error| DictationError::Transcription(format!("live Silero VAD initialization failed: {error}")))?,
+            resampler: crate::media::resampler::StreamingMonoResampler::new(LIVE_VAD_SAMPLE_RATE_HZ)
+                .map_err(|error| DictationError::Transcription(format!("live streaming resampler initialization failed: {error}")))?,
+            residual: Vec::with_capacity(LIVE_VAD_FRAME_SAMPLES * 2),
+            state: LiveUtteranceState::new(
+                config.vad.speech_prob,
+                hangover_samples.div_ceil(LIVE_VAD_FRAME_SAMPLES).max(1),
+                LIVE_UTTERANCE_MAX_SAMPLES,
+            ),
+        })
+    }
+
+    /// Consume one bounded device frame. The caller owns cancellation and must
+    /// suppress the returned events if its generation is stale.
+    pub(crate) fn push_frame(&mut self, frame: &crate::media::live_capture::CapturedPcmFrame) -> Result<Vec<LiveUtteranceEvent>, DictationError> {
+        let normalized = self.resampler.push(&frame.pcm, frame.sample_rate_hz)
+            .map_err(|error| DictationError::Transcription(format!("live capture streaming normalization failed: {error}")))?;
+        self.residual.extend(normalized);
+
+        let mut events = Vec::new();
+        while self.residual.len() >= LIVE_VAD_FRAME_SAMPLES {
+            let block: Vec<f32> = self.residual.drain(..LIVE_VAD_FRAME_SAMPLES).collect();
+            let probability = self.vad.speech_probability(&block)
+                .map_err(|error| DictationError::Transcription(format!("live Silero VAD inference failed: {error}")))?;
+            if let Some(event) = self.state.observe_probability(probability, block)? {
+                if matches!(event, LiveUtteranceEvent::UtteranceReady { .. }) {
+                    self.vad.reset();
+                }
+                events.push(event);
+            }
+        }
+        Ok(events)
+    }
+
+    /// Discard partial PCM, resampler history, and recurrent VAD state after
+    /// cancellation or a terminal capture failure.
+    pub(crate) fn reset(&mut self) {
+        self.resampler.reset();
+        self.residual.clear();
+        self.state.reset();
+        self.vad.reset();
+    }
+}
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -475,5 +669,35 @@ mod tests {
             }
             other => panic!("expected cloud-gate refusal; got: {other:?}"),
         }
+    }
+    fn live_state(threshold: f32, hangover_frames: usize, cap: usize) -> LiveUtteranceState {
+        LiveUtteranceState::new(threshold, hangover_frames, cap)
+    }
+
+    fn vad_block() -> Vec<f32> {
+        vec![0.0; LIVE_VAD_FRAME_SAMPLES]
+    }
+
+    #[test]
+    fn live_utterance_state_uses_probability_not_synthetic_audio_claims() {
+        let mut state = live_state(0.6, 2, LIVE_VAD_FRAME_SAMPLES * 8);
+        assert_eq!(state.observe_probability(0.1, vad_block()).unwrap(), None);
+        assert_eq!(state.observe_probability(0.9, vad_block()).unwrap(), Some(LiveUtteranceEvent::SpeechStarted));
+        assert_eq!(state.observe_probability(0.1, vad_block()).unwrap(), None);
+        let ready = state.observe_probability(0.1, vad_block()).unwrap();
+        assert!(matches!(ready, Some(LiveUtteranceEvent::UtteranceReady { sequence: 1, ref pcm }) if pcm.len() == LIVE_VAD_FRAME_SAMPLES * 3));
+    }
+
+    #[test]
+    fn live_utterance_state_enforces_cap_and_reset_discards_partial_cancelled_audio() {
+        let mut state = live_state(0.6, 2, LIVE_VAD_FRAME_SAMPLES * 2);
+        assert!(matches!(state.observe_probability(0.9, vad_block()).unwrap(), Some(LiveUtteranceEvent::SpeechStarted)));
+        assert!(state.observe_probability(0.9, vad_block()).is_ok());
+        assert!(matches!(state.observe_probability(0.9, vad_block()), Err(DictationError::Transcription(_))));
+        assert_eq!(state.observe_probability(0.1, vad_block()).unwrap(), None, "cap error must clear the partial utterance");
+
+        assert!(matches!(state.observe_probability(0.9, vad_block()).unwrap(), Some(LiveUtteranceEvent::SpeechStarted)));
+        state.reset();
+        assert_eq!(state.observe_probability(0.1, vad_block()).unwrap(), None, "cancel/reset must prevent a later silence block from completing old PCM");
     }
 }

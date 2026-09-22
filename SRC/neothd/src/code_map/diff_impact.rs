@@ -366,13 +366,18 @@ mod tests {
     }
 
     #[test]
-    fn fresh_snapshot_diff_impact_retains_same_file_caller_declaration() {
+    fn context_spanning_diff_retains_file_fallback_and_cross_file_caller_edge() {
         let repo = tempdir().unwrap();
         std::fs::create_dir(repo.path().join("src")).unwrap();
         std::fs::write(
             repo.path().join("src/lib.rs"),
-            "pub fn changed_symbol() -> &'static str {\n    \"after\"\n}\n\n\
-             pub fn caller_symbol() -> &'static str {\n    changed_symbol()\n}\n",
+            "pub const DIFF_CONTEXT: &str = \"fixture\";\n\n\
+             pub fn changed_symbol() -> &'static str {\n    \"after\"\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.path().join("src/caller.rs"),
+            "pub fn caller_symbol() -> &'static str {\n    changed_symbol()\n}\n",
         )
         .unwrap();
         let root = CanonicalRepoRoot::discover(repo.path()).unwrap();
@@ -387,9 +392,13 @@ mod tests {
                     "diff --git a/src/lib.rs b/src/lib.rs\n",
                     "--- a/src/lib.rs\n",
                     "+++ b/src/lib.rs\n",
-                    "@@ -2 +2 @@\n",
+                    "@@ -1,5 +1,5 @@\n",
+                    " pub const DIFF_CONTEXT: &str = \"fixture\";\n",
+                    "\n",
+                    " pub fn changed_symbol() -> &'static str {\n",
                     "-    \"before\"\n",
                     "+    \"after\"\n",
+                    " }\n",
                 )
                 .into(),
             ),
@@ -405,16 +414,23 @@ mod tests {
         assert_eq!(receipt.index_generation, refreshed.index_generation);
         assert_eq!(receipt.graph_generation, refreshed.graph_generation);
         assert_eq!(
-            receipt.exact_symbol_seeds,
+            receipt.file_fallback_seeds,
             vec![DiffImpactSeedReceipt {
                 file: "src/lib.rs".into(),
-                symbol: Some("changed_symbol".into()),
+                symbol: None,
             }]
         );
+        assert!(receipt.exact_symbol_seeds.is_empty());
         assert!(
             receipt.impact.impacted_nodes.iter().any(|node| {
-                node.node.file == "src/lib.rs" && node.node.symbol == "caller_symbol"
+                node.node.file == "src/caller.rs" && node.node.symbol == "caller_symbol"
             })
         );
+        assert!(receipt.impact.traversed_edges.iter().any(|edge| {
+            edge.caller.file == "src/caller.rs"
+                && edge.caller.symbol == "caller_symbol"
+                && edge.callee.file == "src/lib.rs"
+                && edge.callee.symbol == "changed_symbol"
+        }));
     }
 }

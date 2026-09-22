@@ -2130,12 +2130,7 @@ pub fn settle_yearly_synthesis(
         Ok(crate::skills::store::PrivateChildCommit::PublishedDurabilityUnknown(error)) => {
             Err(std::io::Error::other(error))
         }
-        Err(error)
-            if error
-                .root_cause()
-                .downcast_ref::<std::io::Error>()
-                .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists) =>
-        {
+        Err(error) if yearly_receipt_create_new_conflicted(&error) => {
             let existing = crate::skills::store::read_regular_file_bounded(
                 &yearly,
                 OsStr::new(&name),
@@ -2154,6 +2149,37 @@ pub fn settle_yearly_synthesis(
         }
         Err(error) => Err(std::io::Error::other(error)),
     }
+}
+
+/// The create-new primitive preserves the pre-commit error so a second
+/// settler can only inspect the winner after the kernel rejected its rename.
+/// Unix retains the `AlreadyExists` I/O cause. Windows' handle-relative
+/// `NtSetInformationFile` adapter reports the equivalent ERROR_FILE_EXISTS
+/// (183) in its native diagnostic, so recognize that precise no-replace
+/// result as well. Both branches re-read through the retained yearly
+/// capability before accepting an existing receipt.
+fn yearly_receipt_create_new_conflicted(
+    error: &crate::skills::store::PrivateChildPreCommitError,
+) -> bool {
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(current) = cause {
+        if current
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists)
+        {
+            return true;
+        }
+        cause = current.source();
+    }
+
+    #[cfg(windows)]
+    {
+        let diagnostic = error.to_string();
+        return diagnostic.contains("atomically rename ")
+            && diagnostic.contains("Win32 error 0x000000b7");
+    }
+    #[cfg(not(windows))]
+    false
 }
 
 fn valid_yearly_synthesis_receipt_tags(tags: &[String]) -> bool {
@@ -4657,7 +4683,7 @@ mod tests {
 
     #[test]
     fn yearly_source_reader_uses_only_strict_daily_archive_records_in_tag_order() {
-        let home = tempfile::tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().unwrap();
         let now = 1_787_788_800_i64;
         let earlier_tag = date_tag_from_unix(now - 86_400);
         let current_tag = date_tag_from_unix(now);
@@ -4697,7 +4723,7 @@ mod tests {
 
     #[test]
     fn yearly_synthesis_receipt_is_exactly_once_and_refuses_changed_sources() {
-        let home = tempfile::tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().unwrap();
         let mut expected = build_reflection(
             PeriodKind::Yearly,
             "2026",

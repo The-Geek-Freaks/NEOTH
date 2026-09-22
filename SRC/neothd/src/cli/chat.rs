@@ -20362,7 +20362,7 @@ modes:
 
     #[tokio::test]
     async fn dispatch_pending_stream_open_cancellation_closes_unobserved_once() {
-        let home = tempfile::tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().expect("canonical temporary home");
         let segment = home.path().join("pending-reasoning-open.wal");
         let entered = std::sync::Arc::new(tokio::sync::Notify::new());
         let provider = PendingOpenReasoningProvider {
@@ -20370,25 +20370,30 @@ modes:
         };
         let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
         let close = cancellation.clone();
-        let cancel_after_open = async move {
-            entered.notified().await;
-            close.close();
-        };
         let mut sink = ReasoningRecordingSink::default();
-        let (result, ()) = tokio::time::timeout(Duration::from_millis(250), async {
-            tokio::join!(
-                dispatch_reasoning_stream_fixture(
-                    home.path(),
-                    segment.clone(),
-                    &provider,
-                    &cancellation,
-                    &mut sink,
-                ),
-                cancel_after_open,
-            )
-        })
-        .await
-        .expect("stream-open cancellation must settle without a detached wait");
+        let result = {
+            let dispatch = dispatch_reasoning_stream_fixture(
+                home.path(),
+                segment.clone(),
+                &provider,
+                &cancellation,
+                &mut sink,
+            );
+            tokio::pin!(dispatch);
+            tokio::time::timeout(Duration::from_secs(10), async {
+                tokio::select! {
+                    result = &mut dispatch => panic!(
+                        "pending stream-open fixture completed before cancellation: {result:?}"
+                    ),
+                    () = entered.notified() => close.close(),
+                }
+            })
+            .await
+            .expect("stream-open fixture must reach its pending provider operation");
+            tokio::time::timeout(Duration::from_millis(250), &mut dispatch)
+                .await
+                .expect("stream-open cancellation must settle without a detached wait")
+        };
         assert!(result.is_err());
         let reasoning_events = without_authenticated_throughput(&sink.0, "cancelled", "cancelled");
         assert!(matches!(
@@ -20458,7 +20463,7 @@ modes:
 
     #[tokio::test]
     async fn dispatch_pending_stream_next_cancellation_keeps_bound_leaf_and_closes_once() {
-        let home = tempfile::tempdir().unwrap();
+        let home = crate::test_env::canonical_tempdir().expect("canonical temporary home");
         let segment = home.path().join("pending-reasoning-next.wal");
         let entered = std::sync::Arc::new(tokio::sync::Notify::new());
         let provider = PendingNextReasoningProvider {
@@ -20466,25 +20471,30 @@ modes:
         };
         let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
         let close = cancellation.clone();
-        let cancel_after_delta = async move {
-            entered.notified().await;
-            close.close();
-        };
         let mut sink = ReasoningRecordingSink::default();
-        let (result, ()) = tokio::time::timeout(Duration::from_millis(250), async {
-            tokio::join!(
-                dispatch_reasoning_stream_fixture(
-                    home.path(),
-                    segment.clone(),
-                    &provider,
-                    &cancellation,
-                    &mut sink,
-                ),
-                cancel_after_delta,
-            )
-        })
-        .await
-        .expect("pending next-item cancellation must settle without a detached wait");
+        let result = {
+            let dispatch = dispatch_reasoning_stream_fixture(
+                home.path(),
+                segment.clone(),
+                &provider,
+                &cancellation,
+                &mut sink,
+            );
+            tokio::pin!(dispatch);
+            tokio::time::timeout(Duration::from_secs(10), async {
+                tokio::select! {
+                    result = &mut dispatch => panic!(
+                        "pending next-item fixture completed before cancellation: {result:?}"
+                    ),
+                    () = entered.notified() => close.close(),
+                }
+            })
+            .await
+            .expect("pending next-item fixture must reach its pending provider operation");
+            tokio::time::timeout(Duration::from_millis(250), &mut dispatch)
+                .await
+                .expect("pending next-item cancellation must settle without a detached wait")
+        };
         assert!(result.is_err());
         let reasoning_events = without_authenticated_throughput(&sink.0, "cancelled", "cancelled");
         assert!(matches!(
@@ -25418,12 +25428,13 @@ mod wave35_adapter_lifecycle_tests {
             missing_sink.0.as_slice(),
             [
                 ChatTurnEvent::Output(ChatOutput::StreamDone { .. }),
+                ChatTurnEvent::Output(ChatOutput::Notice { text, .. }),
                 ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete {
                     response_feedback: None,
                     response_feedback_unavailable: true,
                     ..
                 })
-            ]
+            ] if text == "[neoth:feedback] response feedback unavailable"
         ));
         assert!(!home.path().join("feedback").exists());
 
@@ -25454,12 +25465,13 @@ mod wave35_adapter_lifecycle_tests {
             foreign_sink.0.as_slice(),
             [
                 ChatTurnEvent::Output(ChatOutput::StreamDone { .. }),
+                ChatTurnEvent::Output(ChatOutput::Notice { text, .. }),
                 ChatTurnEvent::Terminal(chat_turn_pipeline::ChatTurnTerminal::Complete {
                     response_feedback: None,
                     response_feedback_unavailable: true,
                     ..
                 })
-            ]
+            ] if text == "[neoth:feedback] response feedback unavailable"
         ));
         assert!(!home.path().join("feedback").exists());
     }

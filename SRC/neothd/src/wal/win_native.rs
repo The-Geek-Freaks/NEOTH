@@ -870,10 +870,12 @@ pub(crate) fn open_or_create_private_child_directory_relative<P: AsRawHandle + ?
     //   reparse point rather than following it; the identity proof rejects it.
     // - FILE_OPEN_IF uses the supplied DACL only for a newly-created child and
     //   never changes an existing child's DACL. Delete sharing is withheld.
+    // - the returned child is identified with GetFileInformationByHandle, so
+    //   FILE_READ_ATTRIBUTES is included in the requested access mask.
     let nt_status = unsafe {
         crate::windows_nt::NtCreateFile(
             &mut raw,
-            FILE_LIST_DIRECTORY | READ_CONTROL | 0x0010_0000,
+            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | READ_CONTROL | 0x0010_0000,
             &attributes,
             &mut status,
             std::ptr::null(),

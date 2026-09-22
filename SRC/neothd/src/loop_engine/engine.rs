@@ -1116,6 +1116,10 @@ mod tests {
                             crate::permissions::CustomDecision::Allow,
                         ),
                         (
+                            crate::permissions::ActionKind::UnboundedPaidProviderCall,
+                            crate::permissions::CustomDecision::Allow,
+                        ),
+                        (
                             crate::permissions::ActionKind::McpToolInvocation,
                             crate::permissions::CustomDecision::Deny,
                         ),
