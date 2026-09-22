@@ -1656,12 +1656,8 @@ fn run_task_delegate_assignment(
             allowed,
             expected_revision,
         } => {
-            let readback = task_delegate_assignment_set_at(
-                &home,
-                &peer_key,
-                allowed,
-                expected_revision,
-            )?;
+            let readback =
+                task_delegate_assignment_set_at(&home, &peer_key, allowed, expected_revision)?;
             match output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&readback)?),
                 OutputFormat::Jsonl => println!("{}", serde_json::to_string(&readback)?),
@@ -5197,8 +5193,8 @@ mod tests {
     fn task_delegate_set_show_is_revisioned_and_readback_exact() {
         let home = tempfile::tempdir().unwrap();
         let now = crate::time::now_unix_i64();
-        let identity = crate::cluster::membership::LocalNodeIdentity::load_or_create(home.path())
-            .unwrap();
+        let identity =
+            crate::cluster::membership::LocalNodeIdentity::load_or_create(home.path()).unwrap();
         let transport = crate::cluster::membership::TransportIdentity::peeroxide(
             &identity.peeroxide_key_pair().public_key,
         );
@@ -5228,7 +5224,10 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(task_delegate_assignment_show_at(home.path(), &peer_key).unwrap(), None);
+        assert_eq!(
+            task_delegate_assignment_show_at(home.path(), &peer_key).unwrap(),
+            None
+        );
         let allowed = task_delegate_assignment_set_at(home.path(), &peer_key, true, 0).unwrap();
         assert!(allowed.allowed);
         assert_eq!(allowed.revision, 1);
@@ -5236,10 +5235,12 @@ mod tests {
             task_delegate_assignment_show_at(home.path(), &peer_key).unwrap(),
             Some(allowed.clone())
         );
-        assert!(task_delegate_assignment_set_at(home.path(), &peer_key, false, 0)
-            .unwrap_err()
-            .to_string()
-            .contains("revision conflict"));
+        assert!(
+            task_delegate_assignment_set_at(home.path(), &peer_key, false, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("revision conflict")
+        );
         assert_eq!(
             task_delegate_assignment_show_at(home.path(), &peer_key).unwrap(),
             Some(allowed)

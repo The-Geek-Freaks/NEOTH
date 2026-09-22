@@ -951,7 +951,11 @@ mod tests {
 
         let home = tempfile::tempdir().unwrap();
         let queued = job(home.path(), "queued before assignment revoke");
-        let peer_key = queued.membership_grant.transport_identity().as_str().to_string();
+        let peer_key = queued
+            .membership_grant
+            .transport_identity()
+            .as_str()
+            .to_string();
         crate::cluster::membership::MembershipStore::open(home.path())
             .unwrap()
             .set_task_delegate_assignment(&peer_key, false, 1)
@@ -1001,7 +1005,11 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let queued = job(home.path(), "final assignment revoke");
         let assignment_home = home.path().to_path_buf();
-        let assignment_peer = queued.membership_grant.transport_identity().as_str().to_string();
+        let assignment_peer = queued
+            .membership_grant
+            .transport_identity()
+            .as_str()
+            .to_string();
         let revoke_before_external = move || {
             crate::cluster::membership::MembershipStore::open(&assignment_home)
                 .unwrap()

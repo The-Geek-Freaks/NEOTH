@@ -10,7 +10,9 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 
 use anyhow::{Context, Result};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier as _, VerifyingKey};
-use rusqlite::{Connection, OpenFlags, OptionalExtension as _, Transaction, TransactionBehavior, params};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension as _, Transaction, TransactionBehavior, params,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -2714,7 +2716,10 @@ impl MembershipStore {
         Ok((MembershipEpoch::new(epoch)?, MembershipEpoch::new(floor)?))
     }
 
-    pub fn task_delegate_assignment(&self, peer_key: &str) -> Result<Option<TaskDelegateAssignment>> {
+    pub fn task_delegate_assignment(
+        &self,
+        peer_key: &str,
+    ) -> Result<Option<TaskDelegateAssignment>> {
         validate_peeroxide_transport_key(peer_key)?;
         let conn = self.connection()?;
         Self::read_task_delegate_assignment_on(&conn, peer_key)
@@ -2732,7 +2737,10 @@ impl MembershipStore {
         )
         .optional()?
         .map(|(allowed, revision)| {
-            anyhow::ensure!(matches!(allowed, 0 | 1), "invalid task delegate assignment flag");
+            anyhow::ensure!(
+                matches!(allowed, 0 | 1),
+                "invalid task delegate assignment flag"
+            );
             anyhow::ensure!(revision > 0, "invalid task delegate assignment revision");
             Ok(TaskDelegateAssignment {
                 peer_key: peer_key.to_string(),
@@ -2769,7 +2777,10 @@ impl MembershipStore {
             [peer_key],
             |row| row.get(0),
         )?;
-        anyhow::ensure!(is_active == 1, "task delegate assignment requires an active exact peeroxide membership");
+        anyhow::ensure!(
+            is_active == 1,
+            "task delegate assignment requires an active exact peeroxide membership"
+        );
         let current = tx
             .query_row(
                 "SELECT revision FROM task_delegate_assignments
@@ -2783,7 +2794,9 @@ impl MembershipStore {
             current == expected_revision,
             "task delegate assignment revision conflict: expected {expected_revision}, current {current}"
         );
-        let revision = current.checked_add(1).context("task delegate assignment revision exhausted")?;
+        let revision = current
+            .checked_add(1)
+            .context("task delegate assignment revision exhausted")?;
         tx.execute(
             "INSERT INTO task_delegate_assignments
                  (carrier,transport_identity,allowed,revision)
@@ -4809,8 +4822,11 @@ fn migrate(conn: &Connection) -> Result<()> {
 
 fn validate_peeroxide_transport_key(value: &str) -> Result<()> {
     anyhow::ensure!(
-        value.len() == 64 && value == value.to_ascii_lowercase()
-            && value.chars().all(|character| matches!(character, '0'..='9' | 'a'..='f')),
+        value.len() == 64
+            && value == value.to_ascii_lowercase()
+            && value
+                .chars()
+                .all(|character| matches!(character, '0'..='9' | 'a'..='f')),
         "task delegate peer key must be exactly 64 lowercase hex characters"
     );
     Ok(())
@@ -5059,7 +5075,9 @@ mod tests {
                 now,
             )
             .unwrap();
-        let grant = store.admit(CarrierKind::Peeroxide, &transport, now).unwrap();
+        let grant = store
+            .admit(CarrierKind::Peeroxide, &transport, now)
+            .unwrap();
 
         assert_eq!(store.task_delegate_assignment(&peer_key).unwrap(), None);
         assert!(!grant.task_delegate_authorized().unwrap());
@@ -5069,21 +5087,25 @@ mod tests {
             .unwrap();
         assert_eq!(allowed.revision, 1);
         assert!(grant.task_delegate_authorized().unwrap());
-        assert!(store
-            .task_delegate_assignment(&"ab".repeat(32))
-            .unwrap()
-            .is_none());
+        assert!(
+            store
+                .task_delegate_assignment(&"ab".repeat(32))
+                .unwrap()
+                .is_none()
+        );
 
         let revoked = store
             .set_task_delegate_assignment(&peer_key, false, allowed.revision)
             .unwrap();
         assert_eq!(revoked.revision, 2);
         assert!(!grant.task_delegate_authorized().unwrap());
-        assert!(store
-            .set_task_delegate_assignment(&peer_key, true, allowed.revision)
-            .unwrap_err()
-            .to_string()
-            .contains("revision conflict"));
+        assert!(
+            store
+                .set_task_delegate_assignment(&peer_key, true, allowed.revision)
+                .unwrap_err()
+                .to_string()
+                .contains("revision conflict")
+        );
     }
 
     #[test]
