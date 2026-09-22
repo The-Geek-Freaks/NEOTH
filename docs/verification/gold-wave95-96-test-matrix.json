@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W218 exact Hosted formatting imported; Grouped272/nativeGUIpending",
+  "status": "W219 typed Buddy retry GUI and aggregate Skill rollback reviewed; Hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 91823,
-    "sha256": "C4B07174A86E9007CBDFECCEC74B19FA047EF46DE45B5084A5431A8A6FD3F5D9"
+    "bytes": 91837,
+    "sha256": "12BB7C14F0514D66C9968C1BC543BDB6B315BA164932E2244EA890C992AF280C"
   },
   "sourceInputs": 531,
   "requiredNativeTests": [
@@ -930,7 +930,7 @@
     {
       "test": "skills::loader::tests::read_only_inventory_keeps_pending_recovery_artifacts_and_never_creates_a_lock",
       "sourcePath": "SRC/neothd/src/skills/loader.rs",
-      "sourceSha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099",
+      "sourceSha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
       "junitClass": "neoth"
     },
     {
@@ -3461,55 +3461,55 @@
     },
     {
       "sourcePath": "SRC/neothd/src/skills/loader.rs",
-      "sourceSha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099",
+      "sourceSha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
       "test": "skills::loader::tests::w192_runtime_bundled_drawio_has_verified_materialized_siblings",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/skills/loader.rs",
-      "sourceSha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099",
+      "sourceSha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
       "test": "skills::loader::tests::w192_bundled_drawio_hash_is_stable_across_materialized_homes",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/skills/loader.rs",
-      "sourceSha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099",
+      "sourceSha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
       "test": "skills::loader::tests::w192_read_only_bundled_fallback_never_materializes_resources",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/skills/loader.rs",
-      "sourceSha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099",
+      "sourceSha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
       "test": "skills::loader::tests::w192_corrupt_materialized_cache_is_refused_without_overwrite",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/skills/loader.rs",
-      "sourceSha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099",
+      "sourceSha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
       "test": "skills::loader::tests::w192_symlinked_resource_cache_namespace_is_refused",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/skills/loader.rs",
-      "sourceSha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099",
+      "sourceSha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
       "test": "skills::loader::tests::w192_interrupted_resource_stage_is_refused_without_cleanup_or_reuse",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/skills/loader.rs",
-      "sourceSha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099",
+      "sourceSha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
       "test": "skills::loader::tests::w192_concurrent_materializers_wait_then_reuse_one_verified_package",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/skills/loader.rs",
-      "sourceSha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099",
+      "sourceSha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
       "test": "skills::loader::tests::w192_read_only_loader_does_not_create_bundled_resource_cache",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/skills/loader.rs",
-      "sourceSha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099",
+      "sourceSha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
       "test": "skills::loader::tests::w192_runtime_loader_preserves_bundled_drawio_provenance_and_resources",
       "junitClass": "neoth"
     },
@@ -3648,25 +3648,25 @@
     {
       "test": "skills::loader::tests::w197_force_enable_and_enable_all_cannot_admit_not_ready_graphify",
       "sourcePath": "SRC/neothd/src/skills/loader.rs",
-      "sourceSha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099",
+      "sourceSha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
       "junitClass": "neoth"
     },
     {
       "test": "skills::loader::tests::w197_bundled_only_fallback_cannot_admit_not_ready_force_enabled_graphify",
       "sourcePath": "SRC/neothd/src/skills/loader.rs",
-      "sourceSha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099",
+      "sourceSha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
       "junitClass": "neoth"
     },
     {
       "test": "skills::loader::tests::w197_authorized_same_id_override_stays_shadowing_when_not_ready",
       "sourcePath": "SRC/neothd/src/skills/loader.rs",
-      "sourceSha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099",
+      "sourceSha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
       "junitClass": "neoth"
     },
     {
       "test": "skills::loader::tests::w197_ready_bundled_candidate_preserves_hash_and_provenance",
       "sourcePath": "SRC/neothd/src/skills/loader.rs",
-      "sourceSha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099",
+      "sourceSha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
       "junitClass": "neoth"
     },
     {
@@ -4854,7 +4854,7 @@
     {
       "test": "skills::loader::tests::aggregate_authority_overflow_discards_partially_admitted_snapshot",
       "sourcePath": "SRC/neothd/src/skills/loader.rs",
-      "sourceSha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099",
+      "sourceSha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
       "junitClass": "neoth"
     },
     {
@@ -4987,7 +4987,8 @@
     "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_actions_for_unselected_or_qwen_rows",
     "panel_logic::embedding_models_contract_tests::buddy_gate_rejects_cache_source_even_with_ready_bge",
     "panel_logic::embedding_models_contract_tests::embedding_snapshot_rejects_wrong_pin_and_impossible_observation",
-    "buddy_wiring_tests::w218_buddy_embedding_callbacks_use_instance_config_and_shared_freshness_fence"
+    "buddy_wiring_tests::w218_buddy_embedding_callbacks_use_instance_config_and_shared_freshness_fence",
+    "panel_logic::tests::w219_provider_retry_is_strict_bounded_redacted_and_absence_compatible"
   ],
   "requiredGuiClass": "neothd-gui::bin/neothd-gui",
   "additionalGuiCopies": {
@@ -5019,7 +5020,9 @@
       "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight": "neothd-gui::neothd-gui-macos-native",
       "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts": "neothd-gui::neothd-gui-macos-native",
       "w58_gui_callback_runtime_tests::w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback": "neothd-gui::neothd-gui-macos-native",
-      "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe": "neothd-gui::neothd-gui-macos-native"
+      "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe": "neothd-gui::neothd-gui-macos-native",
+      "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good": "neothd-gui::neothd-gui-macos-native",
+      "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback": "neothd-gui::neothd-gui-macos-native"
     },
     "Windows": {
       "gui_crate_has_non_authorizing_reducer_fixtures_and_explicit_consent_types": "neothd-gui::gui_chat_bridge_public_api"
@@ -5483,8 +5486,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2127913,
-      "sha256": "AE57F155771A3D8BC4AB09943AA8B09FFCF60FDAB56F172CF0AFC0929645467C"
+      "bytes": 2134396,
+      "sha256": "47A3841B56AA562ECB48C0087DCE1729D6CA7F2E68CC26228E2CB6E87A56ADF7"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -5493,8 +5496,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 592600,
-      "sha256": "3957B9634CBAF1B4F6C54F8CC589BEFA0973EEBCB91ADD3BB4E9246AA6B0055D"
+      "bytes": 601899,
+      "sha256": "77973565AD50B438A3FF7BBA625B463419A63267571EDA20FC4038331C30318C"
     },
     {
       "path": "SRC/neothd-gui/tests/gui_chat_bridge_public_api.rs",
@@ -5513,8 +5516,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/main.slint",
-      "bytes": 322349,
-      "sha256": "21FB6687DD41F6645718662095EC2BAFDC901A509473C7573E873F56ECE069C0"
+      "bytes": 322871,
+      "sha256": "EA45AD27120D4FCC532AC0FE4755E8A417C115A8C8B50C01A0DC6DC4541796B6"
     },
     {
       "path": "SRC/neothd-gui/ui/overlay.slint",
@@ -5850,7 +5853,8 @@
       "w58_gui_callback_runtime_tests::w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback",
       "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback",
       "wizard_session_controller::tests::private_server_controller_observer_and_mutation_progress_concurrently",
-      "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe"
+      "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe",
+      "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good"
     ],
     "macOS": [
       "w58_gui_callback_runtime_tests::w116_channel_account_retirement_callback_preserves_projection_until_exact_receipt",
@@ -5873,7 +5877,8 @@
       "w58_gui_callback_runtime_tests::w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback",
       "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback",
       "wizard_session_controller::tests::private_server_controller_observer_and_mutation_progress_concurrently",
-      "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe"
+      "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe",
+      "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good"
     ],
     "Windows": [
       "wizard_session_controller::tests::private_server_controller_observer_and_mutation_progress_concurrently"
@@ -14737,6 +14742,59 @@
       }
     ],
     "note": "Hosted35779348622 source/patch hashes and exact Git pre/postimages verified; no local formatter",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave219": {
+    "sourceBase": "ea33c5079c139548ee4ec06a2cced1dfdecb0e7e",
+    "requiredGuiTests": [
+      "panel_logic::tests::w219_provider_retry_is_strict_bounded_redacted_and_absence_compatible"
+    ],
+    "requiredNativeGuiTests": [
+      "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good"
+    ],
+    "macosCustomHarnessCount": 26,
+    "report": "docs/gold-wave219-verification.md",
+    "review": "Independent static review PASS including semantic class/disposition fix, actual callback and aggregate rollback",
+    "localValidationRan": false,
+    "releaseReady": false,
+    "aggregateRollback": "Production partial-admission map discarded on aggregate error; existing exact-baseline regression retained; Hosted pending"
+  },
+  "wave219SourceBinding": {
+    "base": "ea33c5079c139548ee4ec06a2cced1dfdecb0e7e",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2134396,
+        "sha256": "47A3841B56AA562ECB48C0087DCE1729D6CA7F2E68CC26228E2CB6E87A56ADF7",
+        "blob": "8f9148d97d01ba2db0362fc0499498b3bb1eff4b"
+      },
+      {
+        "path": "SRC/neothd-gui/src/panel_logic.rs",
+        "bytes": 601899,
+        "sha256": "77973565AD50B438A3FF7BBA625B463419A63267571EDA20FC4038331C30318C",
+        "blob": "aba44d00003a034cd9ca1d41573a746b6a9b1d8e"
+      },
+      {
+        "path": "SRC/neothd-gui/ui/buddyconfig.slint",
+        "bytes": 62461,
+        "sha256": "CEE8A6EB50F57AC20E3EC004974D59C7E8F8F00EF4244CB4B76D6B8C019838BD",
+        "blob": "c3aeeb010f803857f911bacfad973f443da11973"
+      },
+      {
+        "path": "SRC/neothd-gui/ui/main.slint",
+        "bytes": 322871,
+        "sha256": "EA45AD27120D4FCC532AC0FE4755E8A417C115A8C8B50C01A0DC6DC4541796B6",
+        "blob": "6213d4aba3fb012007cbc4c31f33d13232beda88"
+      },
+      {
+        "path": "SRC/neothd/src/skills/loader.rs",
+        "bytes": 128737,
+        "sha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D",
+        "blob": "2a919833c32ddc847079cd8ec95307ef2c2a2a03"
+      }
+    ],
+    "note": "W219 strict wire/passive GUI and real refresh fixture; production aggregate rollback fixed. Root index whitelist, BSOD hold observed.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

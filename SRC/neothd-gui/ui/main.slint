@@ -48,7 +48,7 @@ import { ActivitySidecar, ActivityRow } from "activity.slint";
 import { ObsidianView } from "obsidian.slint";
 import { DreamingView, DreamDayRow, DreamEntryRow } from "dreaming.slint";
 import { WikiView, WikiRow } from "wiki.slint";
-import { BuddyConfigView, SelfActSkill, BuddySelfImproveProposal, BuddyEmbeddingModel } from "buddyconfig.slint";
+import { BuddyConfigView, SelfActSkill, BuddySelfImproveProposal, BuddyEmbeddingModel, BuddyProviderRetryRow } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow, MeshConflictRow, MeshSyncRow } from "mesh.slint";
 export { SettingsTab, ChatMessage, ChatChannelRow, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow, MenuItem, BgJobRow, SlashCmdRow, ChannelAccountRow, TelegramPairingRequestRow, CitationChip }
@@ -69,6 +69,7 @@ export { WikiRow }
 export { SelfActSkill }
 export { BuddySelfImproveProposal }
 export { BuddyEmbeddingModel }
+export { BuddyProviderRetryRow }
 export { MeshPeerRow, MeshForeignRow, MeshConflictRow, MeshSyncRow }
 // DES-12 — plugin WAL-feed detail pane event row.
 export { PluginEventRow }
@@ -932,6 +933,9 @@ export component MainWindow inherits Window {
     in property <bool>            bc-vault-mirror-repair-available: false;
     in property <bool>            bc-vault-mirror-in-flight: false;
     callback bc-vault-mirror-repair();
+    in property <bool> bc-provider-retry-available: false;
+    in property <bool> bc-provider-retry-authenticated-complete: false;
+    in property <[BuddyProviderRetryRow]> bc-provider-retry-rows: [];
     in property <[BuddyEmbeddingModel]> bc-embedding-models: [];
     in property <bool>            bc-embedding-status-valid: false;
     in property <string>          bc-embedding-status-error: "";
@@ -5008,6 +5012,9 @@ export component MainWindow inherits Window {
                     bc-vault-mirror-repair-available: root.bc-vault-mirror-repair-available;
                     bc-vault-mirror-in-flight: root.bc-vault-mirror-in-flight;
                     bc-vault-mirror-repair() => { root.bc-vault-mirror-repair(); }
+                    bc-provider-retry-available: root.bc-provider-retry-available;
+                    bc-provider-retry-authenticated-complete: root.bc-provider-retry-authenticated-complete;
+                    bc-provider-retry-rows: root.bc-provider-retry-rows;
                     bc-embedding-models: root.bc-embedding-models;
                     bc-embedding-status-valid: root.bc-embedding-status-valid;
                     bc-embedding-status-error: root.bc-embedding-status-error;

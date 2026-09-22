@@ -53,6 +53,11 @@ export struct BuddyEmbeddingModel {
     can-prune: bool,
 }
 
+export struct BuddyProviderRetryRow {
+    class: string, attempt: string, provider: string, wire-model: string,
+    disposition: string, follow-up-lifecycle: string,
+}
+
 // ── Internal micro-components ─────────────────────────────────────────────────
 
 // Explanation text — small, muted, left-aligned.
@@ -210,6 +215,9 @@ export component BuddyConfigView inherits Rectangle {
     in property <string> bc-vault-mirror-verified-at: "";
     in property <bool> bc-vault-mirror-repair-available: false;
     in property <bool> bc-vault-mirror-in-flight: false;
+    in property <bool> bc-provider-retry-available: false;
+    in property <bool> bc-provider-retry-authenticated-complete: false;
+    in property <[BuddyProviderRetryRow]> bc-provider-retry-rows: [];
 
     /// W218 Buddy-scoped selected embedding lifecycle projection. A status
     /// sample is cache-only until an explicit Verify returns fresh readiness.
@@ -450,6 +458,25 @@ export component BuddyConfigView inherits Rectangle {
                                         NeothButton { label: "Prune"; size: "sm"; danger: true; enabled: row.can-prune && !root.bc-embedding-in-flight; clicked => { root.bc-embedding-prune(row.model); } }
                                         Rectangle { horizontal-stretch: 1; }
                                     }
+                                }
+                            }
+                        }
+                    }
+
+                    Card {
+                        VerticalLayout {
+                            padding: Theme.space-4; spacing: Theme.space-3; alignment: start;
+                            HorizontalLayout { Kicker { label: "PROVIDER RETRY HISTORY"; } Rectangle { horizontal-stretch: 1; } Led { state: !root.bc-status-valid ? "connecting" : root.bc-provider-retry-available ? "live" : "off"; dot-size: 7px; } }
+                            Note { body: "Passive retry receipts only. Observed means a later lifecycle was admitted; it does not mean a request was delivered, sent, or retried successfully."; }
+                            if !root.bc-status-valid: Text { text: "Last verified retry history is stale."; color: Theme.text-tertiary; font-family: Theme.font-sans; font-size: Theme.font-size-xs; }
+                            if !root.bc-provider-retry-available: Text { text: "Retry history is unavailable for this Buddy status snapshot."; color: Theme.text-tertiary; font-family: Theme.font-sans; font-size: Theme.font-size-xs; }
+                            if root.bc-provider-retry-available && !root.bc-provider-retry-authenticated-complete: Text { text: "Retry history is incomplete; this status snapshot was not authenticated complete."; color: Theme.text-tertiary; font-family: Theme.font-sans; font-size: Theme.font-size-xs; }
+                            if root.bc-provider-retry-available && root.bc-provider-retry-rows.length == 0: Text { text: "No recent provider retry receipts."; color: Theme.text-tertiary; font-family: Theme.font-sans; font-size: Theme.font-size-xs; }
+                            for row in root.bc-provider-retry-rows: Rectangle {
+                                border-radius: Theme.radius-md; background: Theme.surface-1; border-width: 1px; border-color: Theme.border-subtle;
+                                VerticalLayout { padding: Theme.space-3; spacing: Theme.space-1;
+                                    Text { text: row.class + " · attempt " + row.attempt + " · " + row.disposition; color: Theme.text-primary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; }
+                                    Text { text: row.provider + " · " + row.wire-model + " · later lifecycle " + (row.follow-up-lifecycle == "observed" ? "observed" : "not observed"); color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; wrap: word-wrap; }
                                 }
                             }
                         }

@@ -3,6 +3,25 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W219 Buddy retry status compatibility (2026-09-22):** the strict GUI DTO now
+accepts W217's versioned provider retry history. Missing history defaults to
+unavailable; malformed present blocks reject the status. Only six bounded
+content-free fields reach the passive card, with explicit incomplete/stale
+history labels and no delivery claim. The real refresh fixture covers safe
+publication and preservation of the previous projection after invalid output.
+Inventory: 531 sources / 814 universal native / 94 GUI, plus 22 Linux and
+22 macOS GUI extras; macOS custom harness has 26 cases. Hosted GUI compilation,
+callbacks and visual/accessibility acceptance remain open.
+**Hosted checkpoint:** Core/CLI `35778911671` on `28cdd082` passed.
+Grouped270 `35778908791` is source-bound at 269/270, including all four W217
+cases, W198 n8n 6/6 and W199 Cron 5/5. Its only failure still retains installed
+`alpha` in the aggregate-overflow fixture; the new exact-baseline assertion
+shows a production rollback bug. The aggregate error branch now rebuilds a
+fresh trusted bundled-only map; review passed, Hosted behavior is pending.
+Grouped272 `35779348058` independently confirms 271/272 before this fix.
+No Road checkbox closes on this checkpoint; 1015 checked / 307 open / 2 partial
+remain. Local compilation, tests, parsers and GUI execution remain prohibited.
+See `docs/gold-wave219-verification.md`.
 **W218 Buddy embedding GUI bridge (2026-09-22):** Buddy Config now exposes
 confirmed embedding selection and BGE Verify/Pull/Repair/Prune through the
 existing `buddy embedding --config PATH` lifecycle. Resources and Buddy share

@@ -36013,6 +36013,14 @@ fn refresh_buddyconfig(weak: slint::Weak<MainWindow>) {
                 w.set_bc_smart_approve(snap.smart_approve_any);
                 w.set_bc_autonomy(snap.autonomy.as_str().into());
                 w.set_bc_proactive_enabled(snap.proactive_enabled);
+                let retry_rows = snap.provider_retry.rows.into_iter().map(|row| BuddyProviderRetryRow {
+                    class: row.class.into(), attempt: row.attempt.to_string().into(),
+                    provider: row.provider.into(), wire_model: row.wire_model.into(),
+                    disposition: row.disposition.into(), follow_up_lifecycle: row.follow_up_lifecycle.into(),
+                }).collect::<Vec<_>>();
+                w.set_bc_provider_retry_available(snap.provider_retry.available);
+                w.set_bc_provider_retry_authenticated_complete(snap.provider_retry.authenticated_complete);
+                w.set_bc_provider_retry_rows(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(retry_rows))));
                 match snap.self_improve_quality {
                     panel_logic::BuddySelfImproveQualitySnap::Available { proposals } => {
                         let rows: Vec<BuddySelfImproveProposal> = proposals
@@ -43284,7 +43292,7 @@ mod w58_gui_callback_runtime_tests {
         register_channel_pairing_request_callbacks,
         register_code_map_enrichment_readiness_callbacks, register_embedding_model_callbacks,
         register_local_model_callbacks, register_selfimprove_accept_callback,
-        register_skill_autonomy_callbacks, start_code_map_lifecycle_config_apply,
+        register_skill_autonomy_callbacks, refresh_buddyconfig, start_code_map_lifecycle_config_apply,
         start_code_map_lifecycle_refresh, which_neothd,
     };
 
@@ -48399,6 +48407,126 @@ exit 0
     }
 
     #[cfg(not(windows))]
+    fn w219_provider_retry_status() -> String {
+        let mut status: serde_json::Value =
+            serde_json::from_str(&w184_mirror_status("verified", "run-w219"))
+                .expect("W219 base Buddy status JSON");
+        status["provider_retry"] = serde_json::json!({
+            "kind": "available",
+            "authenticated_complete": true,
+            "receipts": [{
+                "receipt": {
+                    "schema": "neoth.retry-receipt.v1",
+                    "retry_chain_id": "chain-w219-private",
+                    "class": "transient",
+                    "attempt": 2,
+                    "provider": "claude",
+                    "wire_model": "claude-test",
+                    "disposition": "retry_intent_closed"
+                },
+                "session": "session-w219-private",
+                "follow_up_lifecycle": "observed"
+            }]
+        });
+        status.to_string()
+    }
+
+    #[cfg(not(windows))]
+    fn w219_pump_buddy_refresh(window: &MainWindow, calls: &Path, status_calls: usize) {
+        let completed = Rc::new(Cell::new(false));
+        let seen = Rc::clone(&completed);
+        let weak = window.as_weak();
+        let calls = calls.to_path_buf();
+        let ticks = Rc::new(Cell::new(0_u16));
+        let observed_ticks = Rc::clone(&ticks);
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                if weak.upgrade().is_some_and(|window| {
+                    w184_call_count(&calls, "buddy-status") == status_calls
+                        && (window.get_bc_status_valid() || !window.get_bc_status_error().is_empty())
+                }) {
+                    seen.set(true);
+                    let _ = slint::quit_event_loop();
+                    return;
+                }
+                if observed_ticks.get().saturating_add(1) >= 500 {
+                    let _ = slint::quit_event_loop();
+                } else {
+                    observed_ticks.set(observed_ticks.get() + 1);
+                }
+            },
+        );
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("run W219 Buddy status fixture event loop");
+        drop(timer);
+        assert!(completed.get(), "W219 Buddy status refresh did not settle");
+    }
+
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good() {
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial W219 GUI fixture environment");
+        let fixture = TempDir::new().expect("create W219 CLI fixture");
+        let bin = w116_stage_fake_neoth(&fixture);
+        let mode = fixture.path().join("mode");
+        let status = fixture.path().join("w184-buddy-status.json");
+        let calls = fixture.path().join("calls");
+        std::fs::write(&calls, b"").expect("initialize W219 calls");
+        std::fs::write(&mode, b"w219").expect("select W219 status fixture");
+        let _path = PathGuard::install(fixture.path());
+        assert_eq!(
+            std::fs::canonicalize(which_neothd().expect("resolve staged W219 CLI")).unwrap(),
+            std::fs::canonicalize(bin).unwrap()
+        );
+        let window = MainWindow::new().expect("construct W219 MainWindow");
+
+        let valid = w219_provider_retry_status();
+        std::fs::write(&status, &valid).expect("write valid W219 Buddy status");
+        refresh_buddyconfig(window.as_weak());
+        w219_pump_buddy_refresh(&window, &calls, 1);
+        assert!(window.get_bc_status_valid());
+        assert!(window.get_bc_provider_retry_available());
+        assert!(window.get_bc_provider_retry_authenticated_complete());
+        let rows = window.get_bc_provider_retry_rows();
+        assert_eq!(rows.row_count(), 1);
+        let row = rows.row_data(0).expect("projected W219 retry row");
+        assert_eq!(row.class.to_string(), "transient");
+        assert_eq!(row.attempt.to_string(), "2");
+        assert_eq!(row.provider.to_string(), "claude");
+        assert_eq!(row.wire_model.to_string(), "claude-test");
+        assert_eq!(row.disposition.to_string(), "retry_intent_closed");
+        assert_eq!(row.follow_up_lifecycle.to_string(), "observed");
+
+        std::fs::write(&status, valid.replace("retry_intent_closed", "exhausted"))
+            .expect("write invalid present W219 provider retry status");
+        refresh_buddyconfig(window.as_weak());
+        w219_pump_buddy_refresh(&window, &calls, 2);
+        assert!(!window.get_bc_status_valid());
+        assert!(
+            window
+                .get_bc_status_error()
+                .to_string()
+                .contains("provider retry follow-up observation"),
+            "invalid present retry block must fail the overall Buddy status read"
+        );
+        let retained_rows = window.get_bc_provider_retry_rows();
+        assert_eq!(retained_rows.row_count(), 1);
+        assert_eq!(
+            retained_rows
+                .row_data(0)
+                .expect("last-known-good retry row")
+                .provider
+                .to_string(),
+            "claude"
+        );
+    }
+
+    #[cfg(not(windows))]
     #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback() {
         let _environment = GUI_CALLBACK_ENV_LOCK
@@ -49393,7 +49521,7 @@ exit 7
     }
 
     #[cfg(target_os = "macos")]
-    const MACOS_NATIVE_HARNESS_TESTS: [&str; 25] = [
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 26] = [
         "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
         "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
@@ -49419,6 +49547,7 @@ exit 7
         "w58_gui_callback_runtime_tests::w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback",
         "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback",
         "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe",
+        "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good",
     ];
 
     /// Native macOS Nextest bridge. Keep its stdout restricted to the libtest
@@ -49549,6 +49678,9 @@ exit 7
                     }
                     "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe" => {
                         w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe()
+                    }
+                    "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good" => {
+                        w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good()
                     }
                     _ => return Err(format!("unknown macOS native GUI test {test_name:?}")),
                 }

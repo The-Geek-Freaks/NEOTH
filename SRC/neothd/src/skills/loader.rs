@@ -456,7 +456,19 @@ async fn load_authorized_with_mode_budget_and_probe(
                         error = %error,
                         "installed Skill authority batch exceeded its aggregate validation boundary; publishing trusted bundled-only runtime snapshot"
                     );
-                    return finish_pending_authorized_snapshot(&reload, accepted_epoch, by_id, fallback_bundled);
+                    let aggregate_fallback_by_id = load_pending_trusted_bundled_with_policy(
+                        &policy,
+                        materialize_bundled_resources.then_some(home),
+                    )?
+                    .into_iter()
+                    .map(|skill| (skill.id().to_string(), skill))
+                    .collect();
+                    return finish_pending_authorized_snapshot(
+                        &reload,
+                        accepted_epoch,
+                        aggregate_fallback_by_id,
+                        fallback_bundled,
+                    );
                 }
             }
         }

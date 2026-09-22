@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T20:18:32.6047095Z",
-  "validationStatus": "W218 exact Hosted formatting imported; Grouped272/nativeGUIpending",
+  "capturedUtc": "2026-09-22T20:43:45.5233359Z",
+  "validationStatus": "W219 typed Buddy retry GUI and aggregate Skill rollback reviewed; Hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -423,8 +423,8 @@
     },
     {
       "path": "packaging/tests/verify_macos_native_gui_fixture_discovery.py",
-      "bytes": 5834,
-      "sha256": "A272B087ED86EB00D0F4831463F6C61702DA4758B8E050DD3314819F9441AFAB"
+      "bytes": 5965,
+      "sha256": "1D23714E395A02486181C328951FDBA9761C587E216E495AB947FDC0B28F1E8F"
     },
     {
       "path": "packaging/windows/smoke-installer.ps1",
@@ -433,18 +433,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 64568,
-      "sha256": "43F5FCC27482179A2B8D228D0A7C111D4590E891D4959CF6E31337BB8788A7FA"
+      "bytes": 65963,
+      "sha256": "21CC8031A58601A3759A264510D5BAA6E85DE18DEDFBDE9A6A398AAC59569FE5"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1067450,
-      "sha256": "067433E7870FF7AB23944E7C0471D6323A182CDE2638ECECDEDBB46BEDCD4DA5"
+      "bytes": 1068845,
+      "sha256": "D57600D78969958D6E9400E72399D9EEBF8498AB0629196BA081802320A40F11"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1662897,
-      "sha256": "2FE42B68A427DDCA4BD5FE5281C7E74A37E23425185D496456CA2662BBD2B6D1"
+      "bytes": 1664292,
+      "sha256": "BC2D946F55381FF782E49BC1CD6AC820C340021927A498638EE796371F203A59"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -648,8 +648,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2127913,
-      "sha256": "AE57F155771A3D8BC4AB09943AA8B09FFCF60FDAB56F172CF0AFC0929645467C"
+      "bytes": 2134396,
+      "sha256": "47A3841B56AA562ECB48C0087DCE1729D6CA7F2E68CC26228E2CB6E87A56ADF7"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -658,8 +658,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 592600,
-      "sha256": "3957B9634CBAF1B4F6C54F8CC589BEFA0973EEBCB91ADD3BB4E9246AA6B0055D"
+      "bytes": 601899,
+      "sha256": "77973565AD50B438A3FF7BBA625B463419A63267571EDA20FC4038331C30318C"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
@@ -718,8 +718,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/buddyconfig.slint",
-      "bytes": 59556,
-      "sha256": "3A3DA952AEE20798DD485ED229339AF9F61F20D37E1079D476E891DC8AE9028B"
+      "bytes": 62461,
+      "sha256": "CEE8A6EB50F57AC20E3EC004974D59C7E8F8F00EF4244CB4B76D6B8C019838BD"
     },
     {
       "path": "SRC/neothd-gui/ui/calendar.slint",
@@ -763,8 +763,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/main.slint",
-      "bytes": 322349,
-      "sha256": "21FB6687DD41F6645718662095EC2BAFDC901A509473C7573E873F56ECE069C0"
+      "bytes": 322871,
+      "sha256": "EA45AD27120D4FCC532AC0FE4755E8A417C115A8C8B50C01A0DC6DC4541796B6"
     },
     {
       "path": "SRC/neothd-gui/ui/memory_graph.slint",
@@ -2318,8 +2318,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/loader.rs",
-      "bytes": 128248,
-      "sha256": "ACB96851A3BEC2A30F4CFD447E6771E7ADF506D2739547B7660F18D6A400A099"
+      "bytes": 128737,
+      "sha256": "BFB0578E25F83D5BF036C0685BE92C661C6E7B1EC8EA018AFCA0E0E46CF4B35D"
     },
     {
       "path": "SRC/neothd/src/skills/mod.rs",
