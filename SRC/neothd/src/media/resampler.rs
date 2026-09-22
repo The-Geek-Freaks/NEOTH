@@ -174,10 +174,14 @@ pub(crate) struct StreamingMonoResampler {
 impl StreamingMonoResampler {
     pub(crate) fn new(target_rate_hz: u32) -> Result<Self, ResampleError> {
         validate_rate(target_rate_hz, false)?;
+        let mut pending = Vec::new();
+        pending
+            .try_reserve_exact(CHUNK + MAX_STREAMING_INPUT_SAMPLES)
+            .map_err(|error| allocation_error("streaming pending input", error))?;
         Ok(Self {
             target_rate_hz,
             source_rate_hz: None,
-            pending: Vec::with_capacity(CHUNK + MAX_STREAMING_INPUT_SAMPLES),
+            pending,
             sinc: None,
         })
     }

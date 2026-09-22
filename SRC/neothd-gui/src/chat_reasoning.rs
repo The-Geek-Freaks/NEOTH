@@ -160,10 +160,15 @@ impl Projection {
         protocol_version: u64,
     ) -> Result<(), &'static str> {
         let result = self.apply_json_inner(line, expected_token, protocol_version);
-        if result.is_err() {
-            // A bad frame invalidates this exact request-owned slot. The
-            // caller keys projections by request and guards UI delivery, so a
-            // stale worker cannot use this to erase a newer request.
+        if matches!(
+            result.as_ref(),
+            Err(error) if *error != "gapped or duplicate reasoning delta"
+        ) {
+            // A rejected sequence frame cannot mutate this projection, so a
+            // later terminal frame with the retained counters remains valid.
+            // Other malformed or forged controls invalidate this exact
+            // request-owned slot; delivery guards prevent stale work from
+            // erasing a newer request.
             self.clear();
         }
         result

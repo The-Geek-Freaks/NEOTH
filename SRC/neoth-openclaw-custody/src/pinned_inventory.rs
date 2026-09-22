@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{AUDITED_OPENCLAW_SCHEMA_COMMIT, CHANNEL_ALIASES, KNOWN_CHANNEL_KEYS, sha256_bytes};
 
 const FIXTURE: &str = include_str!("fixtures/pinned_channel_inventory_v1.json");
-const FIXTURE_SHA256: &str = "2b8f946815db4dd5910dfe313c5b9629a678bcab6d3cd42d74235feadcc9d2af";
+const FIXTURE_SHA256: &str = "54e9966a4508b8259bb6a05f88dd53daa9b827754b6b96fe0bda4bb516b753e9";
 const UPSTREAM_EVIDENCE: &str = include_str!("fixtures/openclaw_upstream_evidence_v1.json");
 const UPSTREAM_EVIDENCE_SHA256: &str =
     "a38299e9e80de3fa3dbd31db8093aaa211172cadb50333746855589e25d7800b";

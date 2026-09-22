@@ -865,6 +865,10 @@ async fn cancel_requires_the_exact_active_id_and_retains_uncertainty() {
             .outcome,
         LocalModelTerminalOutcome::InterruptedUnknown
     ));
+    assert!(matches!(
+        &row(&restarted.status().await, "tiny:latest").readiness,
+        LocalModelReadiness::InterruptedUnknown { operation_id: persisted } if persisted == &operation_id
+    ));
     let retry = harness
         .controller
         .start(LocalModelAction::Retry {

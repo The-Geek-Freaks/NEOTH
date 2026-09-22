@@ -74,7 +74,7 @@ fn attachment_ignoring_slashes_are_rejected_before_extraction() {
         .map(|offset| writer_drop + offset)
         .expect("completion-aware writer wait");
     let finalizer = adapter_compact[completion..]
-        .find("finish_cli_chat_turn(")
+        .find("finish_cli_chat_turn_with_response_feedback(")
         .map(|offset| completion + offset)
         .expect("post-completion CLI finalizer");
     assert!(

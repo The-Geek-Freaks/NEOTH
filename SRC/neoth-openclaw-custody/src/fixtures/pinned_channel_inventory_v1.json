@@ -46,7 +46,7 @@
       "row_id": 3,
       "canonical_id": "googlechat",
       "current_importer_target": "gchat",
-      "current_registry_channel": "google_chat",
+      "current_registry_channel": "gchat",
       "openclaw_aliases": [
         "gchat",
         "google-chat"

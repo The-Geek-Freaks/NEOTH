@@ -304,8 +304,8 @@ fn subprocess_transports_stay_bounded() {
     assert!(cli.contains("const MAX_RETAINED_VISIBLE_BYTES:"));
     assert_eq!(
         cli.matches("quoted_stderr(&output.stderr)").count(),
-        2,
-        "both exit paths must quote a bounded prefix, never the whole pipe"
+        3,
+        "every CLI status path must quote the bounded stderr prefix, never the whole pipe"
     );
 
     let tmux = production(TMUX_SESSION);

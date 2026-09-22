@@ -9612,6 +9612,9 @@ mod tests {
                 config.code_map.coding_callers_per_symbol = 1;
                 config.code_map.coding_summary_token_budget = 256;
                 config.code_map.requested_context_max_bfs_depth = 2;
+                // Keep the installed fixture explicit in the accepted policy.
+                // Installed authority is still validated independently.
+                config.skills.enabled.push(SKILL_ID.to_owned());
                 std::fs::write(
                     home.path().join("freedom.yaml"),
                     serde_yaml::to_string(&config).expect("serialize W137 delegated config"),

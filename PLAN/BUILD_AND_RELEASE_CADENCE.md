@@ -7,6 +7,13 @@ W192/W194 extend the focused Research/Loop lane to exactly 34 identities: W190
 ten, W191 five, W192 ten, W193 five and W194 four. Every name must bind to one
 current native source record before serial exact discovery/execution.
 
+W195 repairs the 13 failures observed in the completed 17,296-case Windows
+run `35713920675`, then requires a fresh full-CI milestone after focused/core
+checks. The grouped34 lane first exposed two new fixture/cache compile errors;
+those are repaired alongside the exact 48 Hosted formatter hunks. No failed
+identity is skipped or removed. Staging/commit/push remain root-only to avoid
+shared-index interference; narrow worker-owned source changes stay unstaged.
+
 ## Workstation stability constraint — 2026-09-16
 
 All local validation workloads on Shadow-PC are suspended after another reported

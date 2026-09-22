@@ -51,12 +51,12 @@
     {
       "test": "media::resampler::tests::streaming_sinc_split_matches_contiguous_without_ratio_drift",
       "sourcePath": "SRC/neothd/src/media/resampler.rs",
-      "sourceSha256": "C043A09C8F769D208BE64F08C11DEB250C771DBC40ED71F828081E9175B670B4"
+      "sourceSha256": "6AF24DCD472FDA87F6855588C88BABAAEA0273BFC0F8E8428487E6CF25FB1832"
     },
     {
       "test": "media::resampler::tests::streaming_resampler_rejects_rate_change_until_reset",
       "sourcePath": "SRC/neothd/src/media/resampler.rs",
-      "sourceSha256": "C043A09C8F769D208BE64F08C11DEB250C771DBC40ED71F828081E9175B670B4"
+      "sourceSha256": "6AF24DCD472FDA87F6855588C88BABAAEA0273BFC0F8E8428487E6CF25FB1832"
     },
     {
       "test": "media::dictation::tests::live_utterance_state_uses_probability_not_synthetic_audio_claims",

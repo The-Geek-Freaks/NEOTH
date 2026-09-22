@@ -394,7 +394,7 @@ mod tests {
                     "+++ b/src/lib.rs\n",
                     "@@ -1,5 +1,5 @@\n",
                     " pub const DIFF_CONTEXT: &str = \"fixture\";\n",
-                    "\n",
+                    " \n",
                     " pub fn changed_symbol() -> &'static str {\n",
                     "-    \"before\"\n",
                     "+    \"after\"\n",

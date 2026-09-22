@@ -259,6 +259,13 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/email/imap_fetch.rs",
     "src/daemon/omi_client.rs",
     "src/daemon/omi_ingest_task.rs",
+    // Local-model daemon adapter. Both clients are constructed only after
+    // `parsed_loopback_url` validates the configured Ollama origin as HTTP(S)
+    // loopback; they disable proxies and redirects. Every operation rechecks
+    // the retained client before it can inventory, pull, probe, or delete.
+    // Keep this concrete adapter boundary rather than allowing daemon-wide
+    // client construction.
+    "src/daemon/local_models.rs",
     // GOLD-ADAPT-JV-PAPERLESS-01 — default-OFF email ingest cron. IMAP fetch is
     // build-feature + credential gated; Paperless NGX upload requires the
     // operator-configured `paperless_url` + `paperless_token`, uses a 10 s
@@ -1755,9 +1762,16 @@ fn collect_use_aliases(
             };
             // `use serde_json;` means the path is already directly spelled
             // `serde_json`; retaining `serde_json -> serde_json` turns every
-            // later lookup into a synthetic cycle.  It adds no resolution
-            // information, so do not record exact identity bindings.
-            let is_identity = target.len() == 1 && target.first() == Some(&local_name);
+            // later lookup into a synthetic cycle. `use anyhow::{anyhow, ...}`
+            // has the same effect in this value/type-path scanner: the macro
+            // import shares the external-crate spelling but does not change
+            // how `anyhow::Error` resolves. It adds no path-resolution
+            // information, so do not record either self spelling.
+            let is_identity = (target.len() == 1 && target.first() == Some(&local_name))
+                || (prefix.len() == 1
+                    && target.len() == 2
+                    && target.first() == Some(&local_name)
+                    && target.get(1) == Some(&local_name));
             if !is_identity {
                 aliases.insert(local_name, target);
             }
@@ -4276,6 +4290,34 @@ fn production() { store::insert(); }
     assert!(
         forbidden_network_constructions_in_production(source).is_empty(),
         "an isolated module file must preserve unresolved super paths without cycling"
+    );
+}
+
+#[test]
+fn alias_resolver_ignores_a_grouped_macro_import_that_shares_its_crate_name() {
+    let source = r#"
+use anyhow::{anyhow, Result};
+fn production() -> Result<()> { anyhow::Error::from(anyhow!("bounded failure")); Ok(()) }
+"#;
+
+    assert!(
+        forbidden_network_constructions_in_production(source).is_empty(),
+        "a grouped macro import must not create a synthetic value/type alias cycle"
+    );
+}
+
+#[test]
+fn grouped_same_name_import_does_not_hide_a_reqwest_constructor() {
+    let source = r#"
+use reqwest::{reqwest, Client};
+fn production() { let _ = reqwest::Client::new(); }
+"#;
+
+    assert!(
+        forbidden_network_constructions_in_production(source)
+            .iter()
+            .any(|(_, pattern)| *pattern == "reqwest::Client::new"),
+        "the same-name import exception must preserve direct network detection"
     );
 }
 

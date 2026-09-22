@@ -8,27 +8,27 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
-**Current W192/W194 publication boundary (2026-09-22):** W192 and W194 passed
-final static review. The planned focused lane has 34 exact identities: W190 10,
-W191 5, W192 10, W193 5 and W194 4. W193 imported all 15 exact Hosted Rustfmt
-hunks from Preflight `35719894133` on `98c`; Code Quality on `98c` passed.
-Run `35719894902` compiled and passed W190's 10 plus W191's first four, then
-the last fallback fixture failed because its required WAL writer was absent; a
-narrow fixture repair now attaches the real WAL writer and verifies its audit; W193 was not reached. Runtime acceptance remains
-pending for every unrun identity.
+**Current W195 publication boundary (2026-09-22):** the Windows run in full CI
+`35713920675` on `8b654ebd` executed 17,296 tests and reported 13 failures.
+The reviewed repair covers all 13 causes: CLI operation parity, installed-Skill
+fixture policy, valid diff context, durable model-operation uncertainty through
+restart, bounded Windows pipe-busy retry, fallible resampler allocation, precise
+source gates, canonical OpenClaw registry mapping, and GUI sequence rejection.
+Fresh Hosted behavior is pending; this is not a full-CI success claim.
 
-**Current audio/native boundary (2026-09-22):** all 19 audio identities passed
-on Linux `35717299461` (`8fa6`), Windows `35718376823` (`71e`) and macOS
-`35718379383` (`71e`); all source/input/name/log custody is verified. Full CI `35713920675`
-on `8b` completed failed. A separate Windows 17k-test run has real failures
-under triage; the old macOS GUI compile errors are repaired. Preview `35713923652`
-on `8b` is rechecking read-only after cache saving. These facts establish no
-full-CI, preview, microphone/device or release acceptance.
+W192/W194 were published in `4833365a` (its commit subject understates the batch).
+The grouped34 run `35721899294` found two compile errors in the new fixtures/cache;
+both are repaired. Its 48 exact Hosted format hunks are imported. The next
+published source must rerun grouped34, core targets and full CI. The current
+inventory is 480 sources / 598 native identities, plus unchanged platform,
+GUI, audio and custom-harness selections. Details: `docs/gold-wave195-verification.md`.
 
-Admitted inventory is 478 source paths and 589 universal native
-identities; platform additions (6 Windows, 8 Linux, 7 macOS), 80 GUI, 19 Unix-GUI,
-19 audio and 24 macOS custom identities remain unchanged. Road remains
-**1015 checked / 307 open / 2 partial** (1324 total). No checkbox changes.
+All 19 audio identities passed on Linux `35717299461` (`8fa6`), Windows
+`35718376823` (`71e`) and macOS `35718379383` (`71e`), with source/input/name/log
+custody verified. Core `35719897455` passed on `98c`. Old preview `35713923652`
+is still independent and cannot validate later sources. Device/microphone,
+provider and release acceptance remain separate. Road remains **1015 checked /
+307 open / 2 partial** (1324 total), with no checkbox changes.
 
 **W186 Tract result (2026-09-22):** new graph run `35714955362` on `3ded02b7`
 passes all three Silero runtime cases on Linux, along with the first 18 of 19

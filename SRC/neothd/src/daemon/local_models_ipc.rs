@@ -743,11 +743,39 @@ impl LocalModelsIpcClient {
         };
         #[cfg(windows)]
         let response = {
-            let mut stream = crate::windows_private_ipc::connect(&self.endpoint).await?;
+            let mut stream = connect_windows_with_busy_retry(&self.endpoint).await?;
             request_over_stream(&mut stream, request.as_bytes(), body).await?
         };
         parse_success_response(&response)
     }
+}
+
+/// A listener rotates its pending named-pipe instance immediately after each
+/// accept. Windows can briefly report ERROR_PIPE_BUSY (231) during that handoff
+/// even though the same private listener remains live. Retry only this precise
+/// transient condition within the existing bounded IPC deadline; all other
+/// connection or attestation failures remain fail-closed.
+#[cfg(windows)]
+async fn connect_windows_with_busy_retry(
+    endpoint: &crate::windows_private_ipc::PrivatePipeEndpoint,
+) -> Result<tokio::net::windows::named_pipe::NamedPipeClient> {
+    const MAX_BUSY_RETRIES: u8 = 8;
+    for attempt in 0..=MAX_BUSY_RETRIES {
+        match crate::windows_private_ipc::connect(endpoint).await {
+            Ok(stream) => return Ok(stream),
+            Err(error)
+                if error
+                    .root_cause()
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.raw_os_error() == Some(231))
+                    && attempt < MAX_BUSY_RETRIES =>
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("bounded named-pipe retry loop returns on its final attempt")
 }
 
 #[derive(Serialize)]

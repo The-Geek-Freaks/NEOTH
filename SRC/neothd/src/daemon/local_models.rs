@@ -702,13 +702,8 @@ impl LocalModelController {
                     "daemon restarted while remote outcome was uncertain",
                 )),
             };
-            for row in &mut saved.models {
-                if row.model == active.model {
-                    row.readiness = LocalModelReadiness::InterruptedUnknown {
-                        operation_id: active.operation_id.clone(),
-                    };
-                }
-            }
+            apply_terminal(&mut saved.models, &receipt);
+
             saved.last_terminal_operation = Some(receipt);
         }
         // Persisted observations are diagnostic only. Rebind status to the
@@ -725,7 +720,9 @@ impl LocalModelController {
         };
         for row in &mut saved.models {
             row.loaded = None;
-            row.readiness = LocalModelReadiness::Unavailable;
+            if !matches!(row.readiness, LocalModelReadiness::InterruptedUnknown { .. }) {
+                row.readiness = LocalModelReadiness::Unavailable;
+            }
         }
         let snapshot = saved.clone();
         let mut state =
@@ -1449,7 +1446,7 @@ fn same_loaded_tag(loaded: &PsModel, tag: &Tag) -> bool {
     loaded_model == tag_model && loaded.digest == tag.digest
 }
 fn suppress_ready_for_operation(rows: &mut [LocalModelRow], operation: &LocalModelOperation) {
-    for row in rows {
+    for row in rows.iter_mut() {
         if row.model == operation.model {
             row.readiness = match operation.action {
                 LocalModelActionKind::Pull => LocalModelReadiness::Downloading {
@@ -1474,9 +1471,11 @@ fn suppress_ready_for_operation(rows: &mut [LocalModelRow], operation: &LocalMod
         }
     }
 }
-fn apply_terminal(rows: &mut [LocalModelRow], receipt: &LocalModelTerminalReceipt) {
-    for row in rows {
+fn apply_terminal(rows: &mut Vec<LocalModelRow>, receipt: &LocalModelTerminalReceipt) {
+    let mut matched = false;
+    for row in rows.iter_mut() {
         if row.model == receipt.model {
+            matched = true;
             match receipt.outcome {
                 LocalModelTerminalOutcome::Completed => {
                     row.readiness = LocalModelReadiness::Installed
@@ -1499,6 +1498,21 @@ fn apply_terminal(rows: &mut [LocalModelRow], receipt: &LocalModelTerminalReceip
                 }
             }
         }
+    }
+    // An interrupted remote effect must remain visible even if a concurrent
+    // inventory refresh omitted the target row. Do not invent an installed
+    // digest or readiness proof: retain only the exact operation uncertainty.
+    if !matched && matches!(receipt.outcome, LocalModelTerminalOutcome::InterruptedUnknown) {
+        rows.push(LocalModelRow {
+            model: receipt.model.clone(),
+            digest: "unknown".to_owned(),
+            size_bytes: 0,
+            loaded: None,
+            readiness: LocalModelReadiness::InterruptedUnknown {
+                operation_id: receipt.operation_id.clone(),
+            },
+            last_error: receipt.error.clone(),
+        });
     }
 }
 fn persist(

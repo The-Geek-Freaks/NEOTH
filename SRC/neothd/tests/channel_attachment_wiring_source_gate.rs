@@ -507,7 +507,10 @@ fn every_encoded_stt_dispatch_and_faster_whisper_child_keeps_its_permits() {
         "async fn dispatch_pcm_f32_inner(",
         "#[cfg(test)]",
     );
-    assert!(pcm.contains("dispatch_transcription_with_audio_permit("));
+    assert!(pcm.contains("dispatch_transcription_with_audio_permit_in("));
+    assert!(pcm.contains("audit.writer"));
+    assert!(pcm.contains("audit.wal_session"));
+    assert!(pcm.contains("permit,"));
     assert!(!pcm.contains("dispatch_transcription("));
 
     let faster = between(
