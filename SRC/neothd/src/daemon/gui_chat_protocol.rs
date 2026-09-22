@@ -55,6 +55,7 @@ impl fmt::Debug for GuiChatDigest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("GuiChatDigest(<sha256>)")
     }
+
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -389,6 +390,12 @@ pub(crate) enum GuiChatFramePayload {
     Notice {
         code: String,
     },
+    /// Provider dispatch made no meaningful progress before the core-owned
+    /// silence watchdog elapsed. This is a failed turn, never a completion.
+    TurnSilenceTimeout {
+        timeout_seconds: u64,
+        retryable: bool,
+    },
     Delta {
         text: String,
     },
@@ -450,6 +457,14 @@ impl fmt::Debug for GuiChatFramePayload {
             Self::Notice { code } => formatter
                 .debug_struct("Notice")
                 .field("code", code)
+                .finish(),
+            Self::TurnSilenceTimeout {
+                timeout_seconds,
+                retryable,
+            } => formatter
+                .debug_struct("TurnSilenceTimeout")
+                .field("timeout_seconds", timeout_seconds)
+                .field("retryable", retryable)
                 .finish(),
             Self::Delta { text } => formatter.debug_struct("Delta").field("text", text).finish(),
             Self::ReasoningState {
@@ -843,6 +858,17 @@ pub(crate) fn validate_stream_frame(frame: &GuiChatStreamFrame) -> GuiChatResult
     match &frame.payload {
         GuiChatFramePayload::Notice { code } => {
             validate_nonempty("notice_code", code, GUI_CHAT_NOTICE_MAX_BYTES)?;
+        }
+        GuiChatFramePayload::TurnSilenceTimeout {
+            timeout_seconds,
+            retryable,
+        } => {
+            if *timeout_seconds
+                != crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT.as_secs()
+                || !retryable
+            {
+                return Err(GuiChatProtocolError::Invalid("turn_silence_timeout_fields"));
+            }
         }
         GuiChatFramePayload::Delta { text } => {
             validate_nonempty("delta", text, GUI_CHAT_FRAME_MAX_BYTES)?;
@@ -1956,5 +1982,42 @@ mod tests {
                 .unwrap()
                 .contains("ephemeral")
         );
+    }
+
+    #[test]
+    fn silence_timeout_frame_is_typed_and_cannot_be_misreported_as_completion() {
+        let frame = GuiChatStreamFrame {
+            schema_version: GUI_CHAT_V1_SCHEMA_VERSION,
+            boot_id: "boot".into(),
+            turn_id: GuiChatTurnId(Uuid::now_v7()),
+            subscription: GuiChatSubscription {
+                session_id: "session".into(),
+                surface: GuiChatSurface::Main,
+                generation: 1,
+            },
+            sequence: 1,
+            payload: GuiChatFramePayload::TurnSilenceTimeout {
+                timeout_seconds: crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT.as_secs(),
+                retryable: true,
+            },
+        };
+        validate_stream_frame(&frame).expect("typed silence timeout frame validates");
+        let encoded = serde_json::to_string(&frame).expect("encode silence timeout frame");
+        assert!(encoded.contains("turn_silence_timeout"));
+        assert!(encoded.contains("retryable"));
+        assert!(!encoded.contains("provider_done"));
+        assert!(!encoded.contains("complete"));
+
+        let invalid = GuiChatStreamFrame {
+            payload: GuiChatFramePayload::TurnSilenceTimeout {
+                timeout_seconds: 1,
+                retryable: false,
+            },
+            ..frame
+        };
+        assert!(matches!(
+            validate_stream_frame(&invalid),
+            Err(GuiChatProtocolError::Invalid("turn_silence_timeout_fields"))
+        ));
     }
 }

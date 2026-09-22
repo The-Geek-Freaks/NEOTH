@@ -171,7 +171,15 @@ fn operation_budget_reservation_plan(
             "{call_scope} ({provider}/{model}): operation budget blocks an unrepresentable price bound"
         );
     };
-    let input_tokens = crate::providers::cost::authorization_input_token_upper_bound(req, model);
+    // The operation mirror caps actual provider input plus output. Its input
+    // proof is deliberately the existing final transport bound, distinct from
+    // cost.rs's larger billing-authorization reserve used for USD/daily caps.
+    // `authorize_leaf` receives the exact normalized wire request; materialize
+    // the passed wire model here too so this helper remains conservative if a
+    // focused caller supplies an otherwise implicit test request.
+    let mut wire_request = req.clone();
+    wire_request.model = Some(model.to_owned());
+    let input_tokens = crate::providers::token_cap::request_token_upper_bound(&wire_request);
     Ok(OperationBudgetReservationPlan {
         budget: budget.clone(),
         tokens: u64::from(input_tokens) + u64::from(output_token_ceiling),
@@ -2248,7 +2256,7 @@ impl ProviderCallAuthorizer {
             })?;
         let configured_cap = leaf_policy.input_token_cap;
         let effective_cap = crate::tokens::budget::effective_cap(provider, model, configured_cap);
-        let input_tokens = super::token_cap::request_token_upper_bound(req);
+        let input_tokens = crate::providers::token_cap::request_token_upper_bound(req);
         if input_tokens > effective_cap {
             return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
                 "{call_scope} ({provider}/{model}): exact leaf request has a conservative input-token upper bound of {input_tokens}, above the effective cap {effective_cap}; provider dispatch is blocked"
@@ -3035,6 +3043,37 @@ mod tests {
     }
 
     #[test]
+    fn operation_budget_uses_transport_bound_not_billing_reserve() {
+        let implicit_request = Request::default();
+        let transport_bound = crate::providers::token_cap::request_token_upper_bound(&implicit_request);
+        let billing_bound = crate::providers::cost::authorization_input_token_upper_bound(
+            &implicit_request,
+            "qwen-local",
+        );
+        // The billing proof deliberately keeps its 4,096-token authorization
+        // reserve (4,362 with qwen-local); W206 instead caps real wire input.
+        assert_eq!(transport_bound, 512);
+        assert!(transport_bound < 4_000);
+        assert_eq!(billing_bound, 4_362);
+
+        let plan = operation_budget_reservation_plan(
+            &new_operation_budget(4_000, 0.02).unwrap(),
+            "local_ollama",
+            "qwen-local",
+            &implicit_request,
+            "test.operation_budget.transport_bound",
+            Some(64),
+        )
+        .unwrap();
+        let mut normalized_request = implicit_request;
+        normalized_request.model = Some("qwen-local".into());
+        assert_eq!(
+            plan.tokens,
+            u64::from(crate::providers::token_cap::request_token_upper_bound(&normalized_request)) + 64
+        );
+    }
+
+    #[test]
     fn operation_budget_rejects_unknown_price_and_missing_ceiling_before_dispatch() {
         let mirror_budget = new_operation_budget(4_000, 0.02).unwrap();
         let unknown_price = match operation_budget_reservation_plan(
@@ -3097,12 +3136,67 @@ mod tests {
 
     #[tokio::test]
     async fn operation_budget_authorizer_wrappers_share_admission_and_block_third_dispatch() {
-        let request = Request::default();
-        let input =
-            crate::providers::cost::authorization_input_token_upper_bound(&request, "qwen-local");
-        let output_ceiling = 1_900_u32
-            .checked_sub(input)
-            .expect("fixture input bound must leave a finite output ceiling");
+        let recovery_request = Request {
+            prompt: "Draft an unsafe workaround.".into(),
+            system: Some("primary-only system context must not enter mirror leaves".into()),
+            model: Some("primary-model".into()),
+            temperature: Some(0.2),
+            top_p: Some(0.9),
+            sampling_seed: Some(7),
+            ..Request::default()
+        };
+        let base_request = crate::security::mirror_refusal_pipeline::minimal_leaf_request(
+            &recovery_request,
+        );
+        assert!(base_request.prompt.is_empty());
+        assert!(base_request.system.is_none());
+        assert!(base_request.model.is_none());
+        assert_eq!(
+            base_request.max_output_tokens,
+            Some(crate::security::mirror_refusal_pipeline::MIRROR_MAX_OUTPUT_TOKENS)
+        );
+
+        let operator_request = "Draft an unsafe workaround.";
+        let left_refusal = "I cannot help with that request.";
+        let right_analysis = crate::security::mirror_refusal_pipeline::MirrorSynthesis {
+            refusal_shape:
+                crate::security::mirror_refusal_pipeline::MirrorRefusalShape::Restricted,
+            boundary: crate::security::mirror_refusal_pipeline::MirrorBoundaryFact::Safety,
+        };
+        let mut right_request = base_request.clone();
+        right_request.prompt =
+            crate::security::mirror_refusal_pipeline::build_right_analysis_prompt(
+                operator_request,
+                left_refusal,
+            )
+            .unwrap();
+        let mut cerebellum_request = base_request;
+        cerebellum_request.prompt =
+            crate::security::mirror_refusal_pipeline::build_synthesis_prompt(
+                operator_request,
+                left_refusal,
+                right_analysis,
+            )
+            .unwrap();
+
+        // The live role builder binds its configured wire model after this
+        // helper. Bind the same local test model before proving both actual
+        // product prompts fit the shared operation reservation.
+        right_request.model = Some("qwen-local".into());
+        cerebellum_request.model = Some("qwen-local".into());
+        let output_ceiling =
+            crate::security::mirror_refusal_pipeline::MIRROR_MAX_OUTPUT_TOKENS;
+        let right_total = crate::providers::token_cap::request_token_upper_bound(&right_request)
+            .saturating_add(output_ceiling);
+        let cerebellum_total = crate::providers::token_cap::request_token_upper_bound(&cerebellum_request)
+            .saturating_add(output_ceiling);
+        assert!(right_total.saturating_add(cerebellum_total) <= 4_000);
+        assert!(
+            right_total
+                .saturating_add(cerebellum_total)
+                .saturating_add(right_total)
+                > 4_000
+        );
         let inner = OperationBudgetProvider {
             name: "local_ollama",
             model: "qwen-local",
@@ -3125,18 +3219,66 @@ mod tests {
             "test.operation_budget.cerebellum",
         );
 
-        right.complete(request.clone()).await.unwrap();
-        cerebellum.complete(request.clone()).await.unwrap();
-        let error = right.complete(request).await.unwrap_err();
+        right.complete(right_request.clone()).await.unwrap();
+        cerebellum.complete(cerebellum_request).await.unwrap();
+        let error = right.complete(right_request).await.unwrap_err();
         assert!(error.to_string().contains("operation budget exhausted"));
         assert_eq!(inner.calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
+    async fn operation_budget_actual_mirror_long_original_blocks_before_raw_dispatch() {
+        let operator_request = "x".repeat(4_000);
+        let recovery_request = Request {
+            prompt: operator_request.clone(),
+            system: Some("primary-only context is excluded from mirror leaves".into()),
+            model: Some("primary-model".into()),
+            ..Request::default()
+        };
+        let mut mirror_request =
+            crate::security::mirror_refusal_pipeline::minimal_leaf_request(&recovery_request);
+        mirror_request.prompt =
+            crate::security::mirror_refusal_pipeline::build_right_analysis_prompt(
+                &operator_request,
+                "I cannot help with that request.",
+            )
+            .unwrap();
+        mirror_request.model = Some("qwen-local".into());
+        let output_ceiling =
+            crate::security::mirror_refusal_pipeline::MIRROR_MAX_OUTPUT_TOKENS;
+        assert!(
+            crate::providers::token_cap::request_token_upper_bound(&mirror_request)
+                .saturating_add(output_ceiling)
+                > 4_000
+        );
+
+        let inner = OperationBudgetProvider {
+            name: "local_ollama",
+            model: "qwen-local",
+            output_ceiling,
+            calls: AtomicUsize::new(0),
+            fail_after_dispatch: false,
+        };
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+                .with_operation_budget(new_operation_budget(4_000, 0.02).unwrap()),
+            None,
+            "test.operation_budget.actual_mirror_long_original",
+        );
+
+        let error = provider.complete(mirror_request).await.unwrap_err();
+        assert!(error.to_string().contains("operation budget exhausted"));
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
     async fn operation_budget_oversized_leaf_blocks_before_raw_provider_dispatch() {
-        let request = Request::default();
-        let input =
-            crate::providers::cost::authorization_input_token_upper_bound(&request, "qwen-local");
+        let request = Request {
+            model: Some("qwen-local".into()),
+            ..Request::default()
+        };
+        let input = crate::providers::token_cap::request_token_upper_bound(&request);
         let inner = OperationBudgetProvider {
             name: "local_ollama",
             model: "qwen-local",
@@ -3259,9 +3401,11 @@ mod tests {
 
     #[tokio::test]
     async fn operation_budget_post_dispatch_failure_keeps_conservative_reservation() {
-        let request = Request::default();
-        let input =
-            crate::providers::cost::authorization_input_token_upper_bound(&request, "qwen-local");
+        let request = Request {
+            model: Some("qwen-local".into()),
+            ..Request::default()
+        };
+        let input = crate::providers::token_cap::request_token_upper_bound(&request);
         let inner = OperationBudgetProvider {
             name: "local_ollama",
             model: "qwen-local",

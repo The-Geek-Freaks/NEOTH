@@ -48,8 +48,23 @@ impl Default for ChatTurnCancellation {
 
 impl ChatTurnCancellation {
     pub(crate) fn close(&self) {
-        self.closed.store(true, Ordering::Release);
+        let _ = self.try_close();
         self.wake.notify_waiters();
+    }
+
+    /// Atomically claim this turn's one cancellation terminal boundary.
+    /// Returns `true` only for the caller that moved the gate from open to
+    /// closed. A silence watchdog must use this instead of a load-then-store so
+    /// an already-linearized user/shutdown cancellation wins its expiry race.
+    pub(crate) fn try_close(&self) -> bool {
+        let claimed = self
+            .closed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok();
+        if claimed {
+            self.wake.notify_waiters();
+        }
+        claimed
     }
 
     pub(crate) fn is_closed(&self) -> bool {
@@ -1078,7 +1093,10 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     // One shared budget begins at prepared-turn admission and follows any
     // council-shaped post-reply work. Do not mint a fresh cap in a fallback.
     let council_budget = crate::council::BudgetToken::from_council(&config.council);
-    let dispatch_output = match dispatch_provider(
+    let mut silence_watchdog =
+        crate::cli::chat_turn_watchdog::TurnSilenceWatchdog::new(cancellation.clone());
+    let provider_progress = silence_watchdog.progress_handle();
+    let dispatch = dispatch_provider(
         final_prompt,
         final_system,
         &args,
@@ -1111,16 +1129,35 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         &once_guard,
         turn_effect_gate.clone(),
         skill_invocation_policy,
+        Some(&provider_progress),
         output,
-    )
-    .await
-    {
-        Ok(output) => output,
-        Err(error) => {
+    );
+    let dispatch_output = match silence_watchdog.race_nonterminal(dispatch).await {
+        crate::cli::chat_turn_watchdog::TurnWatchdogPoll::Completed(Ok(output)) => {
+            // A complete non-streaming provider response is also meaningful
+            // progress before the same turn enters post-reply work.
+            provider_progress.meaningful_signal();
+            output
+        },
+        crate::cli::chat_turn_watchdog::TurnWatchdogPoll::Completed(Err(error)) => {
             // The adapter returned after a transport attempt. Its exact commit
             // cannot be disproven here, so recovery classifies it indeterminate
             // and blocks every fallback/new external leaf for this turn.
             return Err(error);
+        }
+        crate::cli::chat_turn_watchdog::TurnWatchdogPoll::Cancelled => {
+            return Err(anyhow::anyhow!("chat turn cancelled during provider dispatch"));
+        }
+        crate::cli::chat_turn_watchdog::TurnWatchdogPoll::SilenceExpired => {
+            emit_chat_notice(
+                output,
+                args.stream,
+                "[neoth] provider made no meaningful progress for 120 seconds; retry the turn",
+            )
+            .context("emit provider silence timeout diagnostic")?;
+            return Err(anyhow::Error::new(
+                crate::cli::chat_turn_watchdog::TurnSilenceTimeout,
+            ));
         }
     };
     let DispatchOutput {
@@ -1152,7 +1189,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     let stream_control_token_ref = stream_control_token.as_ref().map(|token| token.as_str());
     cancellation.check_open("post-provider external starts")?;
     let mut feedback_eligible_agent_receipt = None;
-    let post_reply_result = run_post_reply_pipelines(
+    let post_reply = run_post_reply_pipelines(
         completion,
         writer,
         config,
@@ -1204,8 +1241,24 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         Some(turn_id.as_str()),
         &mut feedback_eligible_agent_receipt,
         output,
-    )
-    .await;
+    );
+    let post_reply_result = match silence_watchdog.race(post_reply).await {
+        crate::cli::chat_turn_watchdog::TurnWatchdogPoll::Completed(result) => result,
+        crate::cli::chat_turn_watchdog::TurnWatchdogPoll::Cancelled => {
+            return Err(anyhow::anyhow!("chat turn cancelled during post-provider processing"));
+        }
+        crate::cli::chat_turn_watchdog::TurnWatchdogPoll::SilenceExpired => {
+            emit_chat_notice(
+                output,
+                args.stream,
+                "[neoth] response processing made no meaningful progress for 120 seconds; retry the turn",
+            )
+            .context("emit post-provider silence timeout diagnostic")?;
+            return Err(anyhow::Error::new(
+                crate::cli::chat_turn_watchdog::TurnSilenceTimeout,
+            ));
+        }
+    };
     let stream_done_line = match post_reply_result {
         Ok(done_line) => done_line,
         Err(error) => {
@@ -1322,6 +1375,327 @@ mod tests {
                 usage_measurements: None,
             })
         }
+    }
+
+    #[derive(Clone)]
+    struct W207StreamStep {
+        delay: Duration,
+        payload: crate::providers::ProviderStreamPayload,
+    }
+
+    /// A real event-stream leaf whose admission edge is observable by the
+    /// paused-clock turn tests.  The edge is deliberately after all prepared
+    /// turn/WAL work: advancing time before it would make a filesystem delay
+    /// look like provider silence.
+    struct W207DelayedEventProvider {
+        steps: Vec<W207StreamStep>,
+        stream_calls: AtomicUsize,
+        admitted: std::sync::atomic::AtomicBool,
+        admitted_notify: std::sync::Arc<tokio::sync::Notify>,
+    }
+
+    impl W207DelayedEventProvider {
+        fn new(steps: Vec<W207StreamStep>) -> Self {
+            Self {
+                steps,
+                stream_calls: AtomicUsize::new(0),
+                admitted: std::sync::atomic::AtomicBool::new(false),
+                admitted_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+            }
+        }
+
+        async fn wait_for_admission(&self) {
+            while !self.admitted.load(Ordering::Acquire) {
+                let notified = self.admitted_notify.notified();
+                tokio::pin!(notified);
+                // Register before the second state read, matching the shared
+                // cancellation gate's close-between-check-and-await defense.
+                notified.as_mut().enable();
+                if self.admitted.load(Ordering::Acquire) {
+                    break;
+                }
+                notified.await;
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for W207DelayedEventProvider {
+        fn name(&self) -> &'static str {
+            "w207-delayed-event-provider"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("w207-delayed-event-model")
+        }
+
+        fn streams_on_wire(&self) -> bool {
+            true
+        }
+
+        async fn complete(&self, _request: Request) -> Result<Completion> {
+            anyhow::bail!("W207 fixture must take the real event-stream path")
+        }
+
+        async fn stream_events_raw(
+            &self,
+            _request: Request,
+            _permit: &crate::providers::ProviderDispatchPermit,
+            _reasoning_display: crate::providers::ReasoningDisplayGrant,
+        ) -> Result<crate::providers::ProviderEventStream> {
+            self.stream_calls.fetch_add(1, Ordering::SeqCst);
+            self.admitted.store(true, Ordering::Release);
+            self.admitted_notify.notify_waiters();
+            let steps = self.steps.clone();
+            let identity = CompletionIdentity {
+                provider: self.name().to_owned(),
+                wire_model: self.default_model().expect("fixture model").to_owned(),
+                dispatch_route: Vec::new(),
+            };
+            Ok(Box::pin(async_stream::try_stream! {
+                for (index, step) in steps.into_iter().enumerate() {
+                    tokio::time::sleep(step.delay).await;
+                    yield crate::providers::ProviderStreamEvent {
+                        identity: identity.clone(),
+                        sequence: (index + 1) as u64,
+                        payload: step.payload,
+                    };
+                }
+            }))
+        }
+    }
+
+    fn w207_visible(delta: &str, done: bool) -> crate::providers::ProviderStreamPayload {
+        let identity = CompletionIdentity {
+            provider: "w207-delayed-event-provider".to_owned(),
+            wire_model: "w207-delayed-event-model".to_owned(),
+            dispatch_route: Vec::new(),
+        };
+        let chunk = crate::providers::CompletionChunk {
+            delta: delta.to_owned(),
+            done,
+            identity,
+            termination: Default::default(),
+            input_tokens: done.then_some(3),
+            output_tokens: done.then_some(2),
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
+        };
+        if done {
+            crate::providers::ProviderStreamPayload::Done { chunk }
+        } else {
+            crate::providers::ProviderStreamPayload::VisibleText { chunk }
+        }
+    }
+
+    fn w207_prepared_turn(
+        home_path: std::path::PathBuf,
+        cancellation: ChatTurnCancellation,
+    ) -> PreparedChatTurn {
+        let selected_config_path = home_path.join("freedom.yaml");
+        let instance_paths = InstancePaths::new(&home_path, &selected_config_path);
+        let mut config = FreedomConfig {
+            provider_kind: Some(ProviderKind::ClaudeCli),
+            provider_binary: Some("claude".to_owned()),
+            provider_model: Some("w207-delayed-event-model".to_owned()),
+            autonomy: crate::permissions::AutonomyLevel::Full,
+            review_gate_enabled: false,
+            steps_completed: vec![1, 2, 3, 4, 5, 6, 7],
+            ..Default::default()
+        };
+        config.council.disabled = Some(true);
+        config.memory.recall_shortcut = false;
+        PreparedChatTurn {
+            input: ChatTurnInput {
+                message: Some("W207 streaming prompt".to_owned()),
+                model: Some("w207-delayed-event-model".to_owned()),
+                skill: None,
+                system: None,
+                attach: Vec::new(),
+                repository_root: None,
+                edit: false,
+                resume_from: None,
+                incognito: false,
+                loop_mode: false,
+                iterations: None,
+                until: Vec::new(),
+                stream: true,
+                temperature: None,
+                top_p: None,
+                sampling_seed: None,
+            },
+            preparation: ChatTurnPreparation {
+                config,
+                ephemeral_consent: crate::consent::EphemeralConsent::default(),
+                stream_control_token: None,
+                typed_gui_controls: false,
+                reasoning_display: false,
+                cancellation,
+                session_canary: std::sync::Arc::new(
+                    crate::security::injection_tracker::CanaryToken::generate()
+                        .expect("mint W207 session canary"),
+                ),
+                instance_paths,
+                first_tour_home: home_path,
+                selected_config_path,
+                prompt: "W207 streaming prompt".to_owned(),
+                current_session_id: "w207-streaming-regression".to_owned(),
+                wal_session: None,
+                chat_ts_unix: 1_725_000_207,
+                mcp_servers: crate::mcp::McpServers::default(),
+                scoped_mcp_servers: Vec::new(),
+                tweaks: crate::tweaks::Tweaks::default(),
+                profile_extensions:
+                    crate::profile::extension_registry::TypedExtensionRegistry::default(),
+                slash_skill_name: None,
+                explicit_route_requested: false,
+            },
+            abliterated_loader: None,
+            deferred_failure_output: None,
+            deferred_terminal: None,
+            feedback_eligible_agent_receipt: None,
+        }
+    }
+
+    async fn run_w207_stream_turn(
+        provider: std::sync::Arc<W207DelayedEventProvider>,
+        cancellation: ChatTurnCancellation,
+    ) -> (Result<Option<ChatOutput>>, PreparedChatTurn, CollectingSink) {
+        let home = tempfile::tempdir().expect("create W207 home");
+        let home_path = home.path().to_path_buf();
+        let wal_dir = home_path.join("wal");
+        std::fs::create_dir_all(&wal_dir).expect("create W207 WAL directory");
+        crate::consent::grant(&home_path, ProviderKind::ClaudeCli)
+            .expect("grant W207 fixture provider consent");
+        let mut prepared = w207_prepared_turn(home_path.clone(), cancellation);
+        let segment_path = wal_dir.join("w207-000001.wal");
+        let (writer, writer_completion) =
+            crate::wal::writer::spawn_for_home_with_completion(segment_path.clone(), home_path)
+                .expect("spawn W207 caller-owned WAL writer");
+        let mut sink = CollectingSink::default();
+        let result = run_prepared_chat_turn(
+            &mut prepared,
+            provider.as_ref(),
+            &writer,
+            &segment_path,
+            &mut sink,
+        )
+        .await;
+        drop(writer);
+        writer_completion
+            .wait()
+            .await
+            .expect("caller drains W207 WAL before returning its assertion state");
+        (result, prepared, sink)
+    }
+
+    /// The first call is the real foreground reply. The second is the first
+    /// provider call of the two-stage review gate, which only runs after
+    /// `dispatch_provider` has returned a completion to post-reply work.
+    struct W207PostReplyReviewProvider {
+        calls: AtomicUsize,
+        review_entered: std::sync::atomic::AtomicBool,
+        review_notify: std::sync::Arc<tokio::sync::Notify>,
+    }
+
+    impl W207PostReplyReviewProvider {
+        fn new() -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                review_entered: std::sync::atomic::AtomicBool::new(false),
+                review_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+            }
+        }
+
+        async fn wait_for_review_call(&self) {
+            while !self.review_entered.load(Ordering::Acquire) {
+                let notified = self.review_notify.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self.review_entered.load(Ordering::Acquire) {
+                    break;
+                }
+                notified.await;
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for W207PostReplyReviewProvider {
+        fn name(&self) -> &'static str {
+            "w207-post-reply-review-provider"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("w207-post-reply-review-model")
+        }
+
+        async fn complete(&self, _request: Request) -> Result<Completion> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                return Ok(Completion {
+                    text: "primary W207 reply".to_owned(),
+                    identity: CompletionIdentity {
+                        provider: self.name().to_owned(),
+                        wire_model: self.default_model().expect("fixture model").to_owned(),
+                        dispatch_route: Vec::new(),
+                    },
+                    model: self.default_model().expect("fixture model").to_owned(),
+                    ..Default::default()
+                });
+            }
+            assert_eq!(call, 1, "W207 waits at the first post-reply review call");
+            self.review_entered.store(true, Ordering::Release);
+            self.review_notify.notify_waiters();
+            tokio::time::sleep(Duration::from_secs(121)).await;
+            anyhow::bail!("W207 review call must be cancelled by the shared turn watchdog")
+        }
+    }
+
+    async fn run_w207_post_reply_review_turn(
+        provider: std::sync::Arc<W207PostReplyReviewProvider>,
+        cancellation: ChatTurnCancellation,
+    ) -> (Result<Option<ChatOutput>>, PreparedChatTurn, CollectingSink) {
+        let home = tempfile::tempdir().expect("create W207 post-reply home");
+        let home_path = home.path().to_path_buf();
+        let wal_dir = home_path.join("wal");
+        let agent_dir = home_path.join("agents");
+        std::fs::create_dir_all(&wal_dir).expect("create W207 post-reply WAL directory");
+        std::fs::create_dir_all(&agent_dir).expect("create W207 review agent directory");
+        std::fs::write(
+            agent_dir.join("w207-review.toml"),
+            "name = \"w207-review\"\ndescription = \"W207 test reviewer\"\nsystem = \"Review the response.\"\nmodel = \"w207-post-reply-review-model\"\n",
+        )
+        .expect("write W207 review-agent fixture");
+        crate::consent::grant(&home_path, ProviderKind::ClaudeCli)
+            .expect("grant W207 post-reply fixture provider consent");
+        let mut prepared = w207_prepared_turn(home_path.clone(), cancellation);
+        let review_prompt = "/agent w207-review assess the reply".to_owned();
+        prepared.input.message = Some(review_prompt.clone());
+        prepared.input.model = Some("w207-post-reply-review-model".to_owned());
+        prepared.preparation.prompt = review_prompt;
+        prepared.preparation.config.provider_model =
+            Some("w207-post-reply-review-model".to_owned());
+        prepared.preparation.config.review_gate_enabled = true;
+        let segment_path = wal_dir.join("w207-post-reply-review-000001.wal");
+        let (writer, writer_completion) =
+            crate::wal::writer::spawn_for_home_with_completion(segment_path.clone(), home_path)
+                .expect("spawn W207 post-reply caller-owned WAL writer");
+        let mut sink = CollectingSink::default();
+        let result = run_prepared_chat_turn(
+            &mut prepared,
+            provider.as_ref(),
+            &writer,
+            &segment_path,
+            &mut sink,
+        )
+        .await;
+        drop(writer);
+        writer_completion
+            .wait()
+            .await
+            .expect("caller drains W207 post-reply WAL before asserting");
+        (result, prepared, sink)
     }
 
     /// Records the concrete requests of an initial native refusal plus its
@@ -2005,6 +2379,196 @@ mod tests {
             Some(ChatTurnEvent::Terminal(ChatTurnTerminal::Complete { provider, model, .. }))
                 if provider == "neutral-engine-mock" && model == "neutral-engine-model"
         ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn w207_nonempty_stream_deltas_keep_the_actual_prepared_turn_alive_past_120_seconds() {
+        let provider = std::sync::Arc::new(W207DelayedEventProvider::new(vec![
+            W207StreamStep {
+                delay: Duration::from_secs(119),
+                payload: w207_visible("first", false),
+            },
+            W207StreamStep {
+                delay: Duration::from_secs(119),
+                payload: w207_visible(" second", false),
+            },
+            W207StreamStep {
+                delay: Duration::from_secs(119),
+                payload: crate::providers::ProviderStreamPayload::ReasoningTerminal {
+                    state: crate::providers::ReasoningTerminalState::Hidden,
+                },
+            },
+            W207StreamStep {
+                delay: Duration::ZERO,
+                payload: w207_visible(" done", true),
+            },
+        ]));
+        let cancellation = ChatTurnCancellation::default();
+        let turn = tokio::spawn(run_w207_stream_turn(
+            std::sync::Arc::clone(&provider),
+            cancellation,
+        ));
+        provider.wait_for_admission().await;
+
+        for signal_index in 0..3 {
+            tokio::time::advance(Duration::from_secs(119)).await;
+            tokio::task::yield_now().await;
+            if signal_index < 2 {
+                assert!(
+                    !turn.is_finished(),
+                    "a meaningful provider delta must rearm the prepared-turn watchdog"
+                );
+            }
+        }
+        tokio::task::yield_now().await;
+        let (result, prepared, sink) = turn.await.expect("join W207 live stream turn");
+
+        assert!(result.is_ok(), "timely visible deltas complete the real turn");
+        assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 1);
+        assert!(prepared.deferred_failure_output.is_none());
+        assert!(prepared.deferred_terminal.is_some());
+        assert!(sink.events.iter().any(|event| matches!(
+            event,
+            ChatTurnEvent::Output(ChatOutput::ProviderDelta { text, .. }) if text == "first"
+        )));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn w207_silent_or_metadata_only_events_expire_once_without_done_terminal_or_retry() {
+        let provider = std::sync::Arc::new(W207DelayedEventProvider::new(vec![
+            W207StreamStep {
+                delay: Duration::ZERO,
+                payload: w207_visible("", false),
+            },
+            W207StreamStep {
+                delay: Duration::ZERO,
+                payload: crate::providers::ProviderStreamPayload::ReasoningTerminal {
+                    state: crate::providers::ReasoningTerminalState::Hidden,
+                },
+            },
+            W207StreamStep {
+                delay: Duration::from_secs(121),
+                payload: w207_visible("too late", false),
+            },
+        ]));
+        let turn = tokio::spawn(run_w207_stream_turn(
+            std::sync::Arc::clone(&provider),
+            ChatTurnCancellation::default(),
+        ));
+        provider.wait_for_admission().await;
+        tokio::task::yield_now().await;
+        tokio::time::advance(crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT).await;
+        tokio::task::yield_now().await;
+        let (result, prepared, sink) = turn.await.expect("join W207 silence turn");
+
+        let error = result.expect_err("metadata-only stream traffic must time out");
+        assert!(
+            error
+                .downcast_ref::<crate::cli::chat_turn_watchdog::TurnSilenceTimeout>()
+                .is_some(),
+            "the prepared turn returns the typed silence result exactly once"
+        );
+        assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 1);
+        assert!(prepared.deferred_failure_output.is_none());
+        assert!(prepared.deferred_terminal.is_none());
+        assert_eq!(
+            sink.events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    ChatTurnEvent::Output(ChatOutput::Notice { text, .. })
+                        if text.contains("made no meaningful progress")
+                ))
+                .count(),
+            1,
+            "one watchdog expiry produces one typed presentation notice"
+        );
+        assert!(
+            !sink.events.iter().any(|event| matches!(
+                event,
+                ChatTurnEvent::Output(ChatOutput::StreamDone { .. }) | ChatTurnEvent::Terminal(_)
+            )),
+            "a timed-out stream cannot publish done or a deferred terminal"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn w207_cancellation_terminates_the_admitted_stream_without_a_lingering_effect() {
+        let provider = std::sync::Arc::new(W207DelayedEventProvider::new(vec![W207StreamStep {
+            delay: Duration::from_secs(3_600),
+            payload: w207_visible("must never arrive", false),
+        }]));
+        let cancellation = ChatTurnCancellation::default();
+        let turn = tokio::spawn(run_w207_stream_turn(
+            std::sync::Arc::clone(&provider),
+            cancellation.clone(),
+        ));
+        provider.wait_for_admission().await;
+        cancellation.close();
+        tokio::task::yield_now().await;
+        let (result, prepared, sink) = turn.await.expect("join W207 cancelled stream turn");
+
+        assert!(result.is_err(), "closing the shared turn gate terminates the stream");
+        assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 1);
+        assert!(prepared.deferred_failure_output.is_none());
+        assert!(prepared.deferred_terminal.is_none());
+        assert!(
+            !sink.events.iter().any(|event| matches!(
+                event,
+                ChatTurnEvent::Output(ChatOutput::StreamDone { .. }) | ChatTurnEvent::Terminal(_)
+            )),
+            "the cancelled provider effect leaves no completion after its task returns"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn w207_post_reply_review_stall_times_out_before_done_or_terminal_success() {
+        let provider = std::sync::Arc::new(W207PostReplyReviewProvider::new());
+        let mut turn = tokio::spawn(run_w207_post_reply_review_turn(
+            std::sync::Arc::clone(&provider),
+            ChatTurnCancellation::default(),
+        ));
+        tokio::select! {
+            () = provider.wait_for_review_call() => {}
+            _ = &mut turn => panic!("the prepared turn completed before reaching its post-reply review call"),
+        }
+        tokio::time::advance(crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT).await;
+        tokio::task::yield_now().await;
+        let (result, prepared, sink) = turn.await.expect("join W207 post-reply review turn");
+
+        let error = result.expect_err("a stalled post-reply review call must time out the turn");
+        assert!(
+            error
+                .downcast_ref::<crate::cli::chat_turn_watchdog::TurnSilenceTimeout>()
+                .is_some(),
+            "the post-reply review stall keeps the typed silence outcome"
+        );
+        assert_eq!(
+            provider.calls.load(Ordering::SeqCst),
+            2,
+            "one foreground dispatch and one review-stage provider call are admitted"
+        );
+        assert!(prepared.deferred_failure_output.is_none());
+        assert!(prepared.deferred_terminal.is_none());
+        assert_eq!(
+            sink.events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    ChatTurnEvent::Output(ChatOutput::Notice { text, .. })
+                        if text.contains("made no meaningful progress")
+                ))
+                .count(),
+            1,
+            "post-reply review expiry emits its typed presentation notice once"
+        );
+        assert!(
+            !sink.events.iter().any(|event| matches!(
+                event,
+                ChatTurnEvent::Output(ChatOutput::StreamDone { .. }) | ChatTurnEvent::Terminal(_)
+            )),
+            "a post-reply review timeout cannot leak done or a successful terminal"
+        );
     }
 
     #[test]

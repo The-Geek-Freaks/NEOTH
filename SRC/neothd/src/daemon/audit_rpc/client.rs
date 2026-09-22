@@ -17,6 +17,10 @@ use super::token::read_rpc_token;
 
 const MAX_RPC_RESPONSE_BYTES: usize = 1024 * 1024;
 const RPC_EXCHANGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// The core watchdog owns the 120-second meaningful-progress boundary. The
+/// attach reader keeps only a small delivery margin so a legitimate final
+/// watchdog frame is not preempted by a shorter client idle deadline.
+const GUI_CHAT_ATTACH_TERMINAL_MARGIN: std::time::Duration = std::time::Duration::from_secs(5);
 /// Bound the entire local health exchange, including local connect, peer
 /// attestation, request write, response read, and scheduling delays.
 const HEALTH_CHECK_EXCHANGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
@@ -39,6 +43,13 @@ pub(crate) enum DaemonPlainChatClientError {
     PreWriteUnavailable(String),
     #[error("daemon plain-chat refused the request: HTTP {0}")]
     Refused(u16),
+    #[error(
+        "daemon plain-chat provider made no meaningful progress for {timeout_seconds}s; retryable: {retryable}"
+    )]
+    TurnSilenceTimeout {
+        timeout_seconds: u64,
+        retryable: bool,
+    },
     #[error("daemon plain-chat outcome is indeterminate after request write: {0}")]
     Indeterminate(String),
 }
@@ -451,29 +462,21 @@ pub(crate) async fn try_daemon_plain_chat_turn(
                     "connect {endpoint_label}: {error}"
                 ))
             })?;
-    let (status, response) = tokio::time::timeout(super::CHAT_TURN_RESPONSE_TIMEOUT, async {
-        stream
-            .write_all(wire_request.as_bytes())
-            .await
-            .map_err(|error| format!("write: {error}"))?;
-        read_rpc_response_with_limit(
-            &mut stream,
-            super::DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES.saturating_add(4096),
-        )
+    tokio::time::timeout(RPC_EXCHANGE_TIMEOUT, stream.write_all(wire_request.as_bytes()))
         .await
-        .map_err(|error| error.to_string())
-    })
+        .map_err(|_| {
+            DaemonPlainChatClientError::Indeterminate("chat request write deadline".into())
+        })?
+        .map_err(|error| DaemonPlainChatClientError::Indeterminate(format!("write: {error}")))?;
+    // Do not impose a total response deadline here. A daemon-owned provider
+    // can make legitimate meaningful progress beyond 125 seconds; the shared
+    // turn watchdog is the authority that publishes its typed timeout.
+    let (status, response) = read_rpc_response_with_limit(
+        &mut stream,
+        super::DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES.saturating_add(4096),
+    )
     .await
-    .map_err(|_| {
-        DaemonPlainChatClientError::Indeterminate(format!(
-            "response exceeded the {}s chat deadline",
-            super::CHAT_TURN_RESPONSE_TIMEOUT.as_secs()
-        ))
-    })?
-    .map_err(DaemonPlainChatClientError::Indeterminate)?;
-    if status != 200 {
-        return Err(DaemonPlainChatClientError::Refused(status));
-    }
+    .map_err(|error| DaemonPlainChatClientError::Indeterminate(error.to_string()))?;
     let response_body = response
         .split_once("\r\n\r\n")
         .map(|(_, body)| body)
@@ -482,6 +485,21 @@ pub(crate) async fn try_daemon_plain_chat_turn(
                 "parsed chat response lost its header boundary".into(),
             )
         })?;
+    if status != 200 {
+        if let Ok(error) = serde_json::from_str::<super::DaemonPlainChatErrorResponse>(response_body)
+            && super::validate_daemon_plain_chat_error_response(&error).is_ok()
+        {
+            return match error.code {
+                super::DaemonPlainChatErrorCode::TurnSilenceTimeout => {
+                    Err(DaemonPlainChatClientError::TurnSilenceTimeout {
+                        timeout_seconds: error.timeout_seconds,
+                        retryable: error.retryable,
+                    })
+                }
+            };
+        }
+        return Err(DaemonPlainChatClientError::Refused(status));
+    }
     let response: super::DaemonPlainChatResponse =
         serde_json::from_str(response_body).map_err(|_| {
             DaemonPlainChatClientError::Indeterminate("invalid sealed chat response".into())
@@ -664,7 +682,16 @@ pub(crate) async fn gui_chat_attach(
     let mut header = false;
     let mut expected = request.after_sequence.saturating_add(1);
     loop {
-        let n = tokio::time::timeout(std::time::Duration::from_secs(30), stream.read(&mut chunk))
+        let read_timeout = if header {
+            crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT
+                + GUI_CHAT_ATTACH_TERMINAL_MARGIN
+        } else {
+            RPC_EXCHANGE_TIMEOUT
+        };
+        let n = tokio::time::timeout(
+            read_timeout,
+            stream.read(&mut chunk),
+        )
             .await
             .map_err(|_| GuiChatClientError::Indeterminate("attach frame deadline".into()))?
             .map_err(|e| GuiChatClientError::Indeterminate(format!("attach read: {e}")))?;

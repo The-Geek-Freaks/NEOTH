@@ -90,6 +90,12 @@ pub enum DaemonChatEventKind {
     PhaseReceiving,
     PhaseFinalizing,
     Notice,
+    /// A typed, daemon-originated provider silence timeout. It remains
+    /// distinct from generic notices until the terminal failed frame arrives.
+    TurnSilenceTimeout {
+        timeout_seconds: u64,
+        retryable: bool,
+    },
     Delta(String),
     /// A separate authenticated plane. `ReasoningText` redacts its Debug
     /// representation and is kept out of every visible-text field below.
@@ -165,6 +171,10 @@ struct DaemonChatSubscriptionState {
     cancel_requested: bool,
     provider_done: bool,
     terminal: Option<DaemonChatTerminal>,
+    /// Typed timeout presentation belongs to this exact daemon subscription.
+    /// It remains available after the following failed terminal, but is
+    /// dropped with the slot on detach or generation replacement.
+    turn_silence_timeout: Option<(u64, bool)>,
     reply: zeroize::Zeroizing<String>,
     canonical_preview: Option<zeroize::Zeroizing<String>>,
     /// This grant is captured by the attested preflight and immutable for the
@@ -248,6 +258,7 @@ impl DaemonChatPresentationReducer {
             cancel_requested: false,
             provider_done: false,
             terminal: None,
+            turn_silence_timeout: None,
             reply: zeroize::Zeroizing::new(String::new()),
             canonical_preview: None,
             reasoning_display,
@@ -296,6 +307,17 @@ impl DaemonChatPresentationReducer {
 
         let transition = match event.kind {
             DaemonChatEventKind::Accepted | DaemonChatEventKind::Notice => true,
+            DaemonChatEventKind::TurnSilenceTimeout {
+                timeout_seconds,
+                retryable,
+            } => {
+                if timeout_seconds == 0 {
+                    false
+                } else {
+                    current.turn_silence_timeout = Some((timeout_seconds, retryable));
+                    true
+                }
+            }
             DaemonChatEventKind::PhaseWaiting => current.phase == ChatStreamPhase::Waiting,
             DaemonChatEventKind::PhaseReceiving => {
                 if current.cancel_requested || current.phase == ChatStreamPhase::Finalizing {
@@ -505,6 +527,17 @@ impl DaemonChatPresentationReducer {
             .map(|state| state.reply.as_str())
     }
 
+    /// Presentation-only timeout metadata for the exact attached daemon
+    /// subscription. It never contributes to a canonical reply or preview.
+    pub fn turn_silence_timeout(
+        &self,
+        surface: ChatStreamSurface,
+    ) -> Option<(u64, bool)> {
+        self.slot(surface)
+            .as_ref()
+            .and_then(|state| state.turn_silence_timeout)
+    }
+
     /// This is intentionally empty until the exact current subscription has a
     /// valid daemon terminal completion. Incognito never exports a sidebar
     /// preview from the reducer.
@@ -593,6 +626,71 @@ mod daemon_chat_presentation_tests {
             reducer.canonical_preview(ChatStreamSurface::Main),
             Some("hello")
         );
+    }
+
+    #[test]
+    fn timeout_guidance_survives_failed_terminal_and_cannot_cross_generation() {
+        let mut reducer = DaemonChatPresentationReducer::default();
+        reducer
+            .attach(ChatStreamSurface::Main, identity(), 1, 0, false, false)
+            .unwrap();
+        assert_eq!(
+            reducer.apply(event(1, DaemonChatEventKind::Delta("partial".into()))),
+            DaemonChatApply::Applied
+        );
+        assert_eq!(
+            reducer.apply(event(
+                2,
+                DaemonChatEventKind::TurnSilenceTimeout {
+                    timeout_seconds: 120,
+                    retryable: true,
+                }
+            )),
+            DaemonChatApply::Applied
+        );
+        assert_eq!(
+            reducer.apply(event(
+                3,
+                DaemonChatEventKind::Terminal(DaemonChatTerminal::Failed)
+            )),
+            DaemonChatApply::Applied
+        );
+        assert_eq!(reducer.phase(ChatStreamSurface::Main), Some(ChatStreamPhase::Failed));
+        assert_eq!(reducer.visible_reply(ChatStreamSurface::Main), Some("partial"));
+        assert_eq!(
+            reducer.turn_silence_timeout(ChatStreamSurface::Main),
+            Some((120, true))
+        );
+        assert!(reducer.canonical_preview(ChatStreamSurface::Main).is_none());
+
+        reducer
+            .attach(ChatStreamSurface::Main, identity(), 2, 0, false, false)
+            .unwrap();
+        assert_eq!(reducer.turn_silence_timeout(ChatStreamSurface::Main), None);
+        let mut stale_turn = event(
+            1,
+            DaemonChatEventKind::TurnSilenceTimeout {
+                timeout_seconds: 120,
+                retryable: true,
+            },
+        );
+        stale_turn.generation = 2;
+        stale_turn.identity.turn_id = "other-session-turn".into();
+        assert_eq!(
+            reducer.apply(stale_turn),
+            DaemonChatApply::Rejected(DaemonChatReject::WrongTurn)
+        );
+        assert_eq!(
+            reducer.apply(event(
+                4,
+                DaemonChatEventKind::TurnSilenceTimeout {
+                    timeout_seconds: 120,
+                    retryable: true,
+                }
+            )),
+            DaemonChatApply::Rejected(DaemonChatReject::WrongGeneration)
+        );
+        assert_eq!(reducer.turn_silence_timeout(ChatStreamSurface::Main), None);
     }
 
     #[test]

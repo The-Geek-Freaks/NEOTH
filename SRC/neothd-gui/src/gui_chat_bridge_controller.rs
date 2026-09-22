@@ -302,6 +302,22 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
                     None,
                     false,
                 ),
+                neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::TurnSilenceTimeout {
+                    subscription,
+                    sequence,
+                    timeout_seconds,
+                    retryable,
+                } => (
+                    subscription,
+                    sequence,
+                    DaemonChatEventKind::TurnSilenceTimeout {
+                        timeout_seconds,
+                        retryable,
+                    },
+                    false,
+                    None,
+                    false,
+                ),
                 neothd::daemon::gui_chat_bridge::GuiChatBridgeEvent::Delta {
                     subscription,
                     sequence,
@@ -473,7 +489,18 @@ impl neothd::daemon::gui_chat_bridge::GuiChatBridgeEventSink for BridgeSink {
         let phase = reducer
             .phase(surface)
             .unwrap_or(crate::chat_stream_phase::ChatStreamPhase::Failed);
-        let text = reducer.visible_reply(surface).unwrap_or("").to_owned();
+        let text = reducer
+            .turn_silence_timeout(surface)
+            .map(|(timeout_seconds, retryable)| {
+                if retryable {
+                    format!(
+                        "No provider progress for {timeout_seconds} seconds. You can retry this chat turn."
+                    )
+                } else {
+                    format!("No provider progress for {timeout_seconds} seconds.")
+                }
+            })
+            .unwrap_or_else(|| reducer.visible_reply(surface).unwrap_or("").to_owned());
         let reasoning_status = reducer
             .reasoning_status(surface)
             .map(|status| status.as_wire())

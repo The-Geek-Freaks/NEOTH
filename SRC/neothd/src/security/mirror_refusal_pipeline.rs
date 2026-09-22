@@ -17,6 +17,27 @@ use crate::security::prompt_envelope::{
 use super::mirror_refusal_templates;
 use super::refusal_detect::{RefusalClass, RefusalReport, classify};
 
+/// Both bounded mirror leaves share this concrete provider-enforced output
+/// ceiling. Their input upper bounds and these two ceilings are reserved from
+/// the one 4k per-mirror operation budget before each leaf transport starts.
+pub(crate) const MIRROR_MAX_OUTPUT_TOKENS: u32 = 128;
+
+/// Start mirror leaves from no inherited operator system/context. The original
+/// request and refusal are already carried only in the fenced core prompt.
+/// Keep neutral sampling knobs; role-specific model selection is resolved by
+/// the existing hemisphere builder, not inherited from the primary provider.
+pub(crate) fn minimal_leaf_request(
+    source: &crate::providers::Request,
+) -> crate::providers::Request {
+    crate::providers::Request {
+        temperature: source.temperature,
+        top_p: source.top_p,
+        sampling_seed: source.sampling_seed,
+        max_output_tokens: Some(MIRROR_MAX_OUTPUT_TOKENS),
+        ..Default::default()
+    }
+}
+
 /// Provider-independent input admitted after Schicht-0 has emitted
 /// `REFUSAL_OBSERVED`. `right` and `cerebellum` are already selected by the
 /// accepted topology; this pipeline never selects or cascades providers.
@@ -680,5 +701,27 @@ mod tests {
         assert_eq!(outcome.condition, MirrorTerminalCondition::DeadlineExceeded);
         assert_eq!(right.calls.load(Ordering::SeqCst), 1);
         assert_eq!(cerebellum.calls(), 0);
+    }
+
+    #[test]
+    fn minimal_leaf_request_preserves_sampling_without_operator_context() {
+        let source = crate::providers::Request {
+            prompt: "operator request".into(),
+            system: Some("large inherited system context".into()),
+            model: Some("primary-model".into()),
+            temperature: Some(0.3),
+            top_p: Some(0.8),
+            sampling_seed: Some(7),
+            max_output_tokens: Some(8_000),
+            ..Default::default()
+        };
+        let leaf = minimal_leaf_request(&source);
+        assert!(leaf.prompt.is_empty());
+        assert!(leaf.system.is_none());
+        assert!(leaf.model.is_none());
+        assert_eq!(leaf.temperature, source.temperature);
+        assert_eq!(leaf.top_p, source.top_p);
+        assert_eq!(leaf.sampling_seed, source.sampling_seed);
+        assert_eq!(leaf.max_output_tokens, Some(MIRROR_MAX_OUTPUT_TOKENS));
     }
 }

@@ -9807,9 +9807,23 @@ mod tests {
                 .expect("accepted W137 channel context is derivable after writer initialization")
                 .header_id();
                 let mut contextual_headers = std::collections::BTreeSet::new();
+                // Keep this diagnostic metadata-only: a hosted failure must identify
+                // the missing contract without serializing payload bytes, paths,
+                // prompts, tool arguments, or the opaque session identifier.
+                let mut observed_frame_families = std::collections::BTreeSet::new();
                 crate::wal::scan::for_each_frame(
                     &std::fs::read(&wal_path).expect("read W137 accepted-turn WAL"),
                     |_, frame| {
+                        observed_frame_families.insert(format!(
+                            "type=0x{:02x},subtype=0x{:02x},session={}",
+                            frame.header.event_type,
+                            frame.header.event_subtype,
+                            if frame.header.session_id == expected_wal_session {
+                                "accepted"
+                            } else {
+                                "other"
+                            },
+                        ));
                         let session_bound = match frame.header.event_type {
                             EVENT_TYPE_RAW_TEXT => Some("raw_text"),
                             EVENT_TYPE_CHANNEL_INGRESS => Some("channel_ingress"),
@@ -9842,19 +9856,23 @@ mod tests {
                     },
                 )
                 .expect("scan W137 accepted-turn WAL");
+                let required_contextual_headers = [
+                    "raw_text",
+                    "channel_ingress",
+                    "provider_request",
+                    "provider_response",
+                    "mcp_tool",
+                    "code_map",
+                    "channel_egress",
+                ];
+                let missing_contextual_headers = required_contextual_headers
+                    .iter()
+                    .copied()
+                    .filter(|event| !contextual_headers.contains(event))
+                    .collect::<Vec<_>>();
                 assert!(
-                    [
-                        "raw_text",
-                        "channel_ingress",
-                        "provider_request",
-                        "provider_response",
-                        "mcp_tool",
-                        "code_map",
-                        "channel_egress",
-                    ]
-                    .into_iter()
-                    .all(|event| contextual_headers.contains(event)),
-                    "accepted channel fixture covers ingress/provider/code-map/MCP/egress under one retained session"
+                    missing_contextual_headers.is_empty(),
+                    "accepted channel fixture covers ingress/provider/code-map/MCP/egress under one retained session; missing_roles={missing_contextual_headers:?}; observed_frame_families={observed_frame_families:?}"
                 );
                 assert!(!initial_system.contains("W137 selected skill body"));
                 let registry = retained_skill_registry_context(&initial_system);

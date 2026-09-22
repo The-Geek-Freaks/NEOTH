@@ -17,10 +17,11 @@ use crate::cli::chat_turn_pipeline::{
 };
 use crate::config::reload::{AcceptedConfigSnapshot, ReloadController};
 use crate::daemon::audit_rpc::{
-    CHAT_TURN_RESPONSE_TIMEOUT, DAEMON_PLAIN_CHAT_MAX_RECORDS,
+    DAEMON_PLAIN_CHAT_MAX_RECORDS,
     DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES, DaemonPlainChatRecord, DaemonPlainChatRecordKind,
-    DaemonPlainChatRequest, DaemonPlainChatResponse, DaemonPlainChatResponseFeedbackTarget,
-    DaemonPlainChatTerminal, validate_daemon_plain_chat_request,
+    DaemonPlainChatErrorCode, DaemonPlainChatErrorResponse, DaemonPlainChatRequest,
+    DaemonPlainChatResponse, DaemonPlainChatResponseFeedbackTarget, DaemonPlainChatTerminal,
+    validate_daemon_plain_chat_error_response, validate_daemon_plain_chat_request,
     validate_daemon_plain_chat_response,
 };
 use crate::providers::Provider;
@@ -421,29 +422,32 @@ impl DaemonChatRuntime {
             id: admission.id,
         };
 
-        // Close the gate before the deadline branch releases the owned engine
-        // future.  There is no spawned provider task to outlive this scope;
-        // dropping the future is cancellation of this connection-owned turn,
-        // never evidence that a remote provider completed or was reverted.
-        let turn_result = {
-            let operation = self.execute_turn(
+        // The shared turn pipeline owns the only meaningful-progress timeout.
+        // An outer equally-timed daemon deadline would race its typed outcome
+        // and could misreport the provider attempt as a generic transport
+        // failure.
+        let turn_result = self
+            .execute_turn(
                 request,
                 Arc::clone(&admission.provider),
                 Arc::clone(&admission.accepted),
                 admission.cancellation.clone(),
-            );
-            tokio::pin!(operation);
-            tokio::select! {
-                result = &mut operation => Ok(result),
-                _ = tokio::time::sleep(CHAT_TURN_RESPONSE_TIMEOUT) => {
-                    admission.cancellation.close();
-                    Err(())
-                }
-            }
-        };
+            )
+            .await;
         match turn_result {
-            Ok(Ok(response)) => write_with_deadline(&mut stream, response).await,
-            Ok(Err(error)) => {
+            Ok(response) => write_with_deadline(&mut stream, response).await,
+            Err(error) => {
+                if error
+                    .downcast_ref::<crate::cli::chat_turn_watchdog::TurnSilenceTimeout>()
+                    .is_some()
+                {
+                    return match write_turn_silence_timeout_with_deadline(&mut stream).await {
+                        Ok(()) => Err(error),
+                        Err(write_error) => Err(error.context(format!(
+                            "write daemon chat silence-timeout response: {write_error}"
+                        ))),
+                    };
+                }
                 match write_failure_with_deadline(&mut stream, 500, "daemon chat turn failed").await
                 {
                     Ok(()) => Err(error),
@@ -451,18 +455,6 @@ impl DaemonChatRuntime {
                         Err(error
                             .context(format!("write daemon chat failure response: {write_error}")))
                     }
-                }
-            }
-            Err(()) => {
-                match write_failure_with_deadline(&mut stream, 503, "daemon chat turn timed out")
-                    .await
-                {
-                    Ok(()) => Err(anyhow::anyhow!(
-                        "daemon chat turn exceeded response deadline"
-                    )),
-                    Err(write_error) => Err(anyhow::anyhow!(
-                        "daemon chat turn exceeded response deadline; timeout response write failed: {write_error}"
-                    )),
                 }
             }
         }
@@ -703,6 +695,23 @@ async fn write_failure_with_deadline(
     )
     .await
     .map_err(|_| anyhow::anyhow!("daemon chat failure response write exceeded deadline"))?
+}
+
+async fn write_turn_silence_timeout_with_deadline(
+    stream: &mut crate::daemon::audit_rpc::AuditStream,
+) -> Result<()> {
+    let body = DaemonPlainChatErrorResponse {
+        code: DaemonPlainChatErrorCode::TurnSilenceTimeout,
+        timeout_seconds: crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT.as_secs(),
+        retryable: true,
+    };
+    validate_daemon_plain_chat_error_response(&body)
+        .map_err(anyhow::Error::msg)
+        .context("validate daemon chat silence-timeout response")?;
+    let body = serde_json::to_vec(&body).context("serialize daemon chat silence-timeout response")?;
+    tokio::time::timeout(CHAT_TURN_WRITE_TIMEOUT, write_http_json(stream, 503, &body))
+        .await
+        .map_err(|_| anyhow::anyhow!("daemon chat silence-timeout response write exceeded deadline"))?
 }
 
 async fn write_http_json(

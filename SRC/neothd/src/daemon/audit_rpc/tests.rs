@@ -2308,6 +2308,129 @@ async fn gui_attach_delivers_ndjson_incrementally_before_terminal() {
     server.await.unwrap();
 }
 
+/// A stream may make its first meaningful provider progress just before the
+/// shared watchdog expires, then later receive the watchdog's typed failure.
+/// The attach client must not substitute its own shorter idle deadline for
+/// either daemon-owned outcome.
+#[tokio::test(start_paused = true)]
+async fn gui_attach_accepts_late_progress_then_typed_silence_timeout() {
+    use crate::daemon::gui_chat_protocol as gui;
+
+    let home = tempdir().unwrap();
+    let nonce = test_endpoint_nonce();
+    let _token = init_rpc_token(home.path()).unwrap();
+    let (mut listener, endpoint) = super::transport::bind(home.path(), &nonce).await.unwrap();
+    let _owner = publish_test_endpoint(home.path(), &endpoint, &nonce);
+    let boot = super::client::instance_commitment_for_nonce(&nonce).0;
+    let turn = gui::GuiChatTurnId(uuid::Uuid::now_v7());
+    let request = gui::GuiChatAttachRequest {
+        schema_version: 1,
+        expected_boot_id: boot.clone(),
+        turn_id: turn.clone(),
+        session_id: "session".into(),
+        surface: gui::GuiChatSurface::Main,
+        subscription_generation: 1,
+        attach_capability: gui::GuiChatOpaqueCapability("capability".into()),
+        after_sequence: 0,
+    };
+    let (header_sent, header_observed) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let mut stream = listener.accept().await.unwrap();
+        let mut request_bytes = [0_u8; 4096];
+        let _ = stream.read(&mut request_bytes).await.unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        header_sent.send(()).unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(119)).await;
+        let subscription = gui::GuiChatSubscription {
+            session_id: "session".into(),
+            surface: gui::GuiChatSurface::Main,
+            generation: 1,
+        };
+        let late_delta = gui::GuiChatStreamFrame {
+            schema_version: 1,
+            boot_id: boot.clone(),
+            turn_id: turn.clone(),
+            subscription: subscription.clone(),
+            sequence: 1,
+            payload: gui::GuiChatFramePayload::Delta { text: "late".into() },
+        };
+        stream
+            .write_all(format!("{}\n", serde_json::to_string(&late_delta).unwrap()).as_bytes())
+            .await
+            .unwrap();
+        tokio::time::sleep(crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT).await;
+        let timeout = gui::GuiChatStreamFrame {
+            schema_version: 1,
+            boot_id: boot.clone(),
+            turn_id: turn.clone(),
+            subscription: subscription.clone(),
+            sequence: 2,
+            payload: gui::GuiChatFramePayload::TurnSilenceTimeout {
+                timeout_seconds: crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT.as_secs(),
+                retryable: true,
+            },
+        };
+        let failed = gui::GuiChatStreamFrame {
+            schema_version: 1,
+            boot_id: boot,
+            turn_id: turn,
+            subscription,
+            sequence: 3,
+            payload: gui::GuiChatFramePayload::Terminal {
+                terminal: gui::GuiChatTerminal {
+                    state: gui::GuiChatTerminalState::Failed,
+                    response_digest: gui::GuiChatDigest("0".repeat(64)),
+                    provider: "provider_silence_timeout".into(),
+                    model: "accepted_model".into(),
+                    usage: gui::GuiChatUsage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        elapsed_ms: 0,
+                    },
+                    lifecycle_receipt_id: gui::GuiChatDigest("1".repeat(64)),
+                    response_feedback_target: None,
+                    response_feedback_unavailable: false,
+                },
+            },
+        };
+        for frame in [timeout, failed] {
+            stream
+                .write_all(format!("{}\n", serde_json::to_string(&frame).unwrap()).as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+    let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed_callback = Arc::clone(&observed);
+    let client = tokio::spawn(async move {
+        let mut callback = move |frame: gui::GuiChatStreamFrame| {
+            observed_callback
+                .lock()
+                .unwrap()
+                .push((frame.sequence, matches!(frame.payload, gui::GuiChatFramePayload::TurnSilenceTimeout { .. })));
+            Ok(())
+        };
+        super::client::gui_chat_attach(home.path(), &request, &mut callback).await
+    });
+    header_observed.await.unwrap();
+    tokio::task::yield_now().await;
+    tokio::task::yield_now().await;
+    tokio::time::advance(std::time::Duration::from_secs(119)).await;
+    tokio::task::yield_now().await;
+    tokio::time::advance(crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT).await;
+    client.await.unwrap().unwrap();
+    assert_eq!(
+        *observed.lock().unwrap(),
+        vec![(1, false), (2, true), (3, false)]
+    );
+    server.await.unwrap();
+}
+
 #[tokio::test]
 async fn gui_attach_eof_after_write_is_indeterminate_without_reconnect() {
     use crate::daemon::gui_chat_protocol as gui;

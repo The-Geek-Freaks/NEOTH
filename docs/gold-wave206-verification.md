@@ -1,5 +1,15 @@
 # Wave 206 terminal refusal mirror
 
+**Grouped121 correction (2026-09-22):** all 121 selected identities ran on
+`0e6ca107` (run 35745827466); 115 passed and 6 failed. Four failures revealed
+that the billing input reserve already exceeded the entire 4000 operation cap.
+Operation tokens now use the existing conservative transport bound with the
+actual canonical wire model; USD/daily bounds remain unchanged. Each mirror
+leaf starts with no inherited primary system/model/context and a 128-token
+output ceiling. The real Right/Cerebellum prompt-builder regression checks both
+wrapper dispatches under one budget; a long original request is rejected before
+raw dispatch. A new regression separates transport and billing bounds. These
+repairs passed independent static review and require fresh Hosted execution.
 **W204/W205 behavior repair and W206 Hosted format (2026-09-22):** the
 Grouped101 failure exposed an unchanged wizard snapshot waking its own and
 other read-only long-polls. The owner now publishes only changed snapshots;

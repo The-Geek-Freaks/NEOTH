@@ -5868,6 +5868,7 @@ pub(super) async fn dispatch_provider(
     once_guard: &crate::hooks::SessionOnceGuard,
     turn_effect_gate: Option<std::sync::Arc<dyn crate::providers::ChatTurnEffectGate>>,
     skill_invocation_policy: Option<crate::skills::resolver::SkillInvocationPolicy>,
+    progress: Option<&crate::cli::chat_turn_watchdog::TurnProgressHandle>,
     output: &mut dyn ChatTurnEventSink,
 ) -> Result<DispatchOutput> {
     // Consent is revalidated by ProviderCallAuthorizer immediately before
@@ -6348,6 +6349,19 @@ pub(super) async fn dispatch_provider(
                             response_identity = Some(event.identity.clone());
                         }
                         reasoning_lifecycle.observe_identity(&event.identity);
+                        let meaningful_progress = match &event.payload {
+                            crate::providers::ProviderStreamPayload::VisibleText { chunk }
+                            | crate::providers::ProviderStreamPayload::Done { chunk } => {
+                                !chunk.delta.is_empty() || chunk.done
+                            }
+                            crate::providers::ProviderStreamPayload::ReasoningDelta { delta } => {
+                                !delta.is_empty()
+                            }
+                            crate::providers::ProviderStreamPayload::ReasoningTerminal { .. } => false,
+                        };
+                        if meaningful_progress && let Some(progress) = progress {
+                            progress.meaningful_signal();
+                        }
                         let event_identity = event.identity.clone();
                         let chunk = match event.payload {
                             crate::providers::ProviderStreamPayload::VisibleText { chunk }
@@ -7691,11 +7705,9 @@ pub(super) async fn run_post_reply_pipelines(
                         .with_council_daily_cap(&instance_paths.home, config.council.daily_usd_cap)
                     {
                         Ok(mirror_authorizer) => {
-                            let mut mirror_base_request = recovery_request.clone();
-                            // A finite, provider-enforced ceiling is required for the
-                            // shared per-mirror token/USD reservation. Unsupported
-                            // providers reject this leaf and deterministically template.
-                            mirror_base_request.max_output_tokens = Some(1_024);
+                            let mirror_base_request = crate::security::mirror_refusal_pipeline::minimal_leaf_request(
+                                &recovery_request,
+                            );
                             let right: Box<dyn crate::council::orchestrator::HemisphereProvider> =
                                 match build_hemisphere(
                                     &config,
@@ -20482,6 +20494,7 @@ modes:
             &crate::hooks::SessionOnceGuard::new(),
             None,
             None,
+            None,
             output,
         )
         .await;
@@ -24483,6 +24496,7 @@ modes:
             &crate::hooks::SessionOnceGuard::new(),
             None,
             None,
+            None,
             &mut CliChatOutput,
         )
         .await;
@@ -24631,6 +24645,7 @@ modes:
             &pre_tool_once_guard,
             None,
             None,
+            None,
             &mut output,
         );
 
@@ -24775,6 +24790,7 @@ modes:
             &crate::cli::chat_turn_pipeline::ChatTurnCancellation::default(),
             &[],
             &crate::hooks::SessionOnceGuard::new(),
+            None,
             None,
             None,
             &mut CliChatOutput,

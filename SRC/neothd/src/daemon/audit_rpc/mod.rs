@@ -121,7 +121,10 @@ pub(crate) const DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES: usize = 64 * 1024;
 const DAEMON_PLAIN_CHAT_RESPONSE_ID_BYTES: usize = 32;
 const DAEMON_PLAIN_CHAT_SESSION_ID_MAX_BYTES: usize = 128;
 pub(crate) const CHAT_TURN_RESPONSE_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(120);
+    // This is a transport envelope, not a second provider-progress watchdog.
+    // It leaves the core-owned 120-second silence timeout enough time to
+    // reach the peer as its typed failed outcome.
+    std::time::Duration::from_secs(125);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -135,6 +138,22 @@ pub(crate) struct DaemonPlainChatRequest {
 pub(crate) struct DaemonPlainChatResponse {
     pub(crate) records: Vec<DaemonPlainChatRecord>,
     pub(crate) terminal: DaemonPlainChatTerminal,
+}
+
+/// A post-admission daemon outcome. It is deliberately a non-200 response so
+/// callers cannot turn a timed-out provider attempt into a success terminal.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DaemonPlainChatErrorResponse {
+    pub(crate) code: DaemonPlainChatErrorCode,
+    pub(crate) timeout_seconds: u64,
+    pub(crate) retryable: bool,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DaemonPlainChatErrorCode {
+    TurnSilenceTimeout,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -233,6 +252,20 @@ pub(crate) fn validate_daemon_plain_chat_response(
         }
     }
     Ok(())
+}
+
+pub(crate) fn validate_daemon_plain_chat_error_response(
+    response: &DaemonPlainChatErrorResponse,
+) -> std::result::Result<(), &'static str> {
+    match response.code {
+        DaemonPlainChatErrorCode::TurnSilenceTimeout
+            if response.timeout_seconds
+                == crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT.as_secs()
+                && response.retryable => Ok(()),
+        DaemonPlainChatErrorCode::TurnSilenceTimeout => {
+            Err("chat_turn_silence_timeout_fields_invalid")
+        }
+    }
 }
 
 /// Closed same-user transport for a descriptor already resolved by Gate and
@@ -398,6 +431,29 @@ mod daemon_plain_chat_contract_tests {
         assert_eq!(
             validate_daemon_plain_chat_response(&response, 0),
             Err("chat_response_feedback_session_mismatch")
+        );
+    }
+
+    #[test]
+    fn silence_timeout_error_is_typed_retry_guidance_not_a_success_response() {
+        let response = DaemonPlainChatErrorResponse {
+            code: DaemonPlainChatErrorCode::TurnSilenceTimeout,
+            timeout_seconds: crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT.as_secs(),
+            retryable: true,
+        };
+        assert_eq!(validate_daemon_plain_chat_error_response(&response), Ok(()));
+        let encoded = serde_json::to_string(&response).expect("encode typed silence timeout");
+        assert!(encoded.contains("turn_silence_timeout"));
+        assert!(encoded.contains("retryable"));
+        assert!(!encoded.contains("terminal"));
+
+        let invalid = DaemonPlainChatErrorResponse {
+            retryable: false,
+            ..response
+        };
+        assert_eq!(
+            validate_daemon_plain_chat_error_response(&invalid),
+            Err("chat_turn_silence_timeout_fields_invalid")
         );
     }
 

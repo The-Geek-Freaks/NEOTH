@@ -23,6 +23,7 @@ pub mod channel;
 pub mod chat;
 pub mod chat_display;
 pub(crate) mod chat_turn_pipeline;
+pub(crate) mod chat_turn_watchdog;
 pub mod citation;
 pub mod clarify_chat;
 pub mod cloud;

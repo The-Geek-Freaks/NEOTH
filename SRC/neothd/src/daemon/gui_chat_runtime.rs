@@ -679,6 +679,11 @@ impl DaemonGuiChatRuntime {
                         Some(effect),
                     )
                     .await;
+                let silence_timeout = result.as_ref().err().is_some_and(|error| {
+                    error
+                        .downcast_ref::<crate::cli::chat_turn_watchdog::TurnSilenceTimeout>()
+                        .is_some()
+                });
                 let mut state = runtime.state.lock().await;
                 let Some(turn) = state.turns.get_mut(&turn_id) else {
                     return turn_id;
@@ -717,6 +722,30 @@ impl DaemonGuiChatRuntime {
                         }),
                         response_feedback_unavailable,
                     },
+                    _ if silence_timeout => {
+                        Self::emit(
+                            turn,
+                            GuiChatFramePayload::TurnSilenceTimeout {
+                                timeout_seconds: crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT
+                                    .as_secs(),
+                                retryable: true,
+                            },
+                        );
+                        GuiChatTerminal {
+                            state: GuiChatTerminalState::Failed,
+                            response_digest: GuiChatDigest(hex::encode(sink.response.finalize())),
+                            provider: "provider_silence_timeout".into(),
+                            model: "accepted_model".into(),
+                            usage: GuiChatUsage {
+                                input_tokens: 0,
+                                output_tokens: 0,
+                                elapsed_ms: 0,
+                            },
+                            lifecycle_receipt_id: GuiChatDigest(Self::capability()),
+                            response_feedback_target: None,
+                            response_feedback_unavailable: false,
+                        }
+                    }
                     _ => GuiChatTerminal {
                         state: GuiChatTerminalState::Indeterminate,
                         response_digest: GuiChatDigest(hex::encode(sink.response.finalize())),
@@ -733,7 +762,9 @@ impl DaemonGuiChatRuntime {
                     },
                 };
                 turn.phase = GuiChatPhase::Finalizing;
-                Self::emit(turn, GuiChatFramePayload::ProviderDone);
+                if terminal.state == GuiChatTerminalState::Complete {
+                    Self::emit(turn, GuiChatFramePayload::ProviderDone);
+                }
                 turn.terminal = Some(terminal.clone());
                 Self::emit(turn, GuiChatFramePayload::Terminal { terminal });
                 runtime.changed.notify_waiters();

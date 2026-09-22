@@ -99,6 +99,11 @@ async fn serve_fails_with_helpful_error_when_freedom_yaml_missing() {
 #[tokio::test]
 async fn ordinary_serve_still_rejects_an_incomplete_home_before_wal_startup() {
     let dir = tempdir().unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
     let cfg_path = dir.path().join("freedom.yaml");
     std::fs::write(
         &cfg_path,

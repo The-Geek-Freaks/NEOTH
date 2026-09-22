@@ -3,7 +3,32 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
-**Hosted checkpoint (2026-09-22):** repairs are on main at `0e6ca107`; Grouped121 `35745827466` and Core/CLI `35745831818` are active. Preflight `35745808249` found only one formatting hunk in the new two-waiter test; its exact source-bound postimage is imported. No local formatter ran.
+**Hosted checkpoint (2026-09-22, continued):** main is `7e80402a` with
+Preflight `35746218451` and Code Quality `35746218488` successful. Source
+`0e6ca107` passed Core test-target checking, public CLI build and export
+(`35745831818`). Grouped121 `35745827466` executed all 121 exact identities:
+115 passed and six failed. Both wizard long-poll tests now pass. Remaining
+failures are the incomplete-home fixture permissions, the delegated-channel
+WAL-role integration, and four mirror operation-authorizer cases. The budget
+repair separates transport tokens from the billing reserve, uses minimal
+mirror requests and 128-token output ceilings, retaining the 4k/USD0.02 cap.
+The incomplete-home fixture now explicitly sets Unix 0700; the channel test
+retains all role assertions and adds content-free missing-role diagnostics.
+These changes require a fresh Hosted run. W207's request-local watchdog and
+typed terminal mapping are being completed with prepared-turn tests; W208
+origin/consent work remains uncommitted and is not accepted. The older Windows
+preview `35731976627` succeeded on `a68442cb`, not the current source. Road
+remains 1324 total / 1015 checked / 307 open / 2 partial. No local executable
+validation ran under the BSOD hold.
+**W207 source batch (2026-09-22):** one 120-second meaningful-progress
+watchdog now spans provider dispatch and post-reply work. The typed timeout
+crosses plain daemon RPC and GUI attach without a competing shorter deadline;
+GUI retry guidance survives a partial reply followed by Failed and remains
+bound to its subscription generation. Seventeen core and one GUI regressions
+plus three W206 budget regressions are added to the source inventory. Independent
+static review passed; fresh Hosted compile and behavior remain required.
+See `docs/gold-wave207-verification.md`. W208 provenance/consent integration
+is separate uncommitted work. No Road box is closed.
 
 **W204/W205 behavior repair and W206 Hosted format (2026-09-22):** the
 Grouped101 failure exposed an unchanged wizard snapshot waking its own and

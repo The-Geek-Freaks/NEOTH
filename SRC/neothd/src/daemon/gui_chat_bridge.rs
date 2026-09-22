@@ -347,6 +347,12 @@ pub enum GuiChatBridgeEvent {
         sequence: u64,
         code: String,
     },
+    TurnSilenceTimeout {
+        subscription: GuiChatSubscriptionMetadata,
+        sequence: u64,
+        timeout_seconds: u64,
+        retryable: bool,
+    },
     Delta {
         subscription: GuiChatSubscriptionMetadata,
         sequence: u64,
@@ -1155,6 +1161,15 @@ fn map_frame(
                 code,
             }
         }
+        crate::daemon::gui_chat_protocol::GuiChatFramePayload::TurnSilenceTimeout {
+            timeout_seconds,
+            retryable,
+        } => GuiChatBridgeEvent::TurnSilenceTimeout {
+            subscription,
+            sequence,
+            timeout_seconds,
+            retryable,
+        },
         crate::daemon::gui_chat_protocol::GuiChatFramePayload::Delta { text } => {
             GuiChatBridgeEvent::Delta {
                 subscription,
