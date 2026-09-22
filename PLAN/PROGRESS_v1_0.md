@@ -2,6 +2,15 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W205 Hosted formatting follow-up (2026-09-22):** source `6bf25239` is on
+GitHub main. Preflight `35739707562` exported exactly two formatting hunks;
+source HEAD, receipt SHA-256 and full Git pre/postimage identities were checked
+before import. The new source-scan collector is inlined at its sole caller to
+avoid an eight-argument wrapper while preserving both audits and diagnostics.
+Core test-target checking in `35739731593` has passed; public CLI build and
+Grouped86 `35739726969` are still active. Code Quality `35739707200` passed.
+W204 and W206 remain separate uncommitted work. Road counts stay unchanged.
+
 **W205 Windows fixture contracts / W202 HTTP framing repair (2026-09-22):**
 Hosted Grouped83 `35737278608` on `9024b7db` executed all 83 identities: 81
 passed, including the strict Cron WAL event-link regression. The two remaining

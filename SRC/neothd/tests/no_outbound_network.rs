@@ -379,8 +379,7 @@ fn no_direct_pre_expansion_network_construction_outside_reviewed_boundaries() {
             violations.push(format!("unparseable caller-audit source {repo_rel}"));
             return;
         };
-        let test_only_ranges =
-            test_only_item_ranges_from_file(&normalized_content, &file);
+        let test_only_ranges = test_only_item_ranges_from_file(&normalized_content, &file);
         let mut caller_visitor = PublicRendezvousCallerVisitor {
             test_only_ranges: &test_only_ranges,
             scopes: vec![Scope::crate_root()],
@@ -400,16 +399,19 @@ fn no_direct_pre_expansion_network_construction_outside_reviewed_boundaries() {
         if test_only_external_modules.contains(&canonical_path) {
             return;
         }
-        collect_network_violations_from_parsed(
-            &mut violations,
-            &repo_rel,
+        for (line_no, pattern) in forbidden_network_constructions_in_parsed_source(
             &normalized_content,
             &file,
             &test_only_ranges,
             repo_rel == "src/daemon/audit_rpc/transport/unix.rs",
             repo_rel == "src/media/stt_provider.rs",
             repo_rel == "src/graphify_runner.rs" && graphify_launch_contract,
-        );
+        ) {
+            violations.push(format!(
+                "{}:{}: direct network-construction pattern `{}` outside explicitly reviewed boundary modules",
+                repo_rel, line_no, pattern,
+            ));
+        }
     })
     .expect("source traversal and reads must succeed");
 
@@ -756,33 +758,6 @@ fn is_public_rendezvous_path(path: Vec<String>) -> bool {
                 && second == "hyperswarm"
                 && third == "spawn_public_rendezvous"
     )
-}
-
-fn collect_network_violations_from_parsed(
-    violations: &mut Vec<String>,
-    rel: &str,
-    content: &str,
-    file: &syn::File,
-    test_only_ranges: &[Range<usize>],
-    allows_audit_rpc_af_unix: bool,
-    allows_stt_pidfd_syscalls: bool,
-    allows_graphify_denial_probe: bool,
-) {
-    for (line_no, pattern) in forbidden_network_constructions_in_parsed_source(
-        content,
-        file,
-        test_only_ranges,
-        allows_audit_rpc_af_unix,
-        allows_stt_pidfd_syscalls,
-        allows_graphify_denial_probe,
-    ) {
-        violations.push(format!(
-            "{}:{}: direct network-construction pattern `{}` outside explicitly reviewed boundary modules",
-            rel,
-            line_no,
-            pattern,
-        ));
-    }
 }
 
 /// Return network-construction calls which remain in the production source

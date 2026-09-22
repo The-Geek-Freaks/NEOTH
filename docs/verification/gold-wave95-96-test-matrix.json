@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W205_AND_W202_HOSTED_REPAIRS_PENDING",
-  "base": "9024b7dbb7eeb4adbd6178e3555baa07b303f24a",
+  "base": "6bf252395e3ff672a6ce74009257907d0dcb6c50",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 86112,
-    "sha256": "CB9849356587F04694BBD8441E4D6A845A42588A4AA7AE1C94C37ADD66A3AAC4"
+    "bytes": 86087,
+    "sha256": "8ED33953570B866CBDB727B20ABFED9300AB2EFB2CCA7043AEE3D093FFD819F7"
   },
   "sourceInputs": 498,
   "requiredNativeTests": [
@@ -2118,7 +2118,7 @@
     {
       "test": "cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity",
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "F65D93C6F7BE25C256751DCCF30ECD56A42865C2A987DD94F5039EA382B965B9",
+      "sourceSha256": "D0577C75432E184DBB597E0900DEEBF6FE1B7593311B1D838CD31B38CD29DC74",
       "junitClass": "neoth"
     },
     {
@@ -3545,13 +3545,13 @@
     },
     {
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "F65D93C6F7BE25C256751DCCF30ECD56A42865C2A987DD94F5039EA382B965B9",
+      "sourceSha256": "D0577C75432E184DBB597E0900DEEBF6FE1B7593311B1D838CD31B38CD29DC74",
       "test": "cli::parity_drift::operation_inventory_binds_gui_callbacks_handlers_and_evidence",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "F65D93C6F7BE25C256751DCCF30ECD56A42865C2A987DD94F5039EA382B965B9",
+      "sourceSha256": "D0577C75432E184DBB597E0900DEEBF6FE1B7593311B1D838CD31B38CD29DC74",
       "test": "cli::parity_drift::operation_inventory_tracks_live_nested_cli_leaves",
       "junitClass": "neoth"
     },
@@ -3575,19 +3575,19 @@
     },
     {
       "sourcePath": "SRC/neothd/tests/no_outbound_network.rs",
-      "sourceSha256": "6D08F7C475BA4C8DFD53F7D1C6D2C1E7E2B9C420EA49A6FC2F6FB065EEB036B9",
+      "sourceSha256": "17420E9139F4833475CBDF6E3ABC9B32E640BDD5DD504ACFB15F51C5E40A1C6B",
       "test": "no_direct_pre_expansion_network_construction_outside_reviewed_boundaries",
       "junitClass": "neoth::no_outbound_network"
     },
     {
       "sourcePath": "SRC/neothd/tests/no_outbound_network.rs",
-      "sourceSha256": "6D08F7C475BA4C8DFD53F7D1C6D2C1E7E2B9C420EA49A6FC2F6FB065EEB036B9",
+      "sourceSha256": "17420E9139F4833475CBDF6E3ABC9B32E640BDD5DD504ACFB15F51C5E40A1C6B",
       "test": "alias_resolver_ignores_a_grouped_macro_import_that_shares_its_crate_name",
       "junitClass": "neoth::no_outbound_network"
     },
     {
       "sourcePath": "SRC/neothd/tests/no_outbound_network.rs",
-      "sourceSha256": "6D08F7C475BA4C8DFD53F7D1C6D2C1E7E2B9C420EA49A6FC2F6FB065EEB036B9",
+      "sourceSha256": "17420E9139F4833475CBDF6E3ABC9B32E640BDD5DD504ACFB15F51C5E40A1C6B",
       "test": "grouped_same_name_import_does_not_hide_a_reqwest_constructor",
       "junitClass": "neoth::no_outbound_network"
     },
@@ -11029,6 +11029,46 @@
     ],
     "hostedEvidence": "Grouped83 35737278608 all83/81pass; fullCI35726117022 Windows9fail/17334; no source removed",
     "review": "Independent static PASS for all four fixture/contracts, shared AST scan and all five exact HTTP framing corrections; no acceptance relaxed",
+    "localValidationRan": false,
+    "releaseReady": false
+  },
+  "wave205FormatFollowup": {
+    "sourceBase": "6bf252395e3ff672a6ce74009257907d0dcb6c50",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/parity_drift.rs",
+        "bytes": 47777,
+        "sha256": "D0577C75432E184DBB597E0900DEEBF6FE1B7593311B1D838CD31B38CD29DC74"
+      },
+      {
+        "path": "SRC/neothd/tests/no_outbound_network.rs",
+        "bytes": 191464,
+        "sha256": "17420E9139F4833475CBDF6E3ABC9B32E640BDD5DD504ACFB15F51C5E40A1C6B"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1636619,
+        "sha256": "9C012DD4351288D252E47EA39E630CFB9189BD6CC586C0E80F96002F4545BF40"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1041172,
+        "sha256": "0A11E3979D4B3189C1359ACAD8392C4446C046F11E52DABBC4FFC0E498762BCE"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 38290,
+        "sha256": "8C5AE274122630307B5039456B8115C222F7836351F20D9F644799AF5337330D"
+      },
+      {
+        "path": "docs/gold-wave205-verification.md",
+        "bytes": 2354,
+        "sha256": "0F83DCF3A8A4438B889F7BA6B02BAB46727BA43D14AEC98ADDD5EE25D7DDB923"
+      }
+    ],
+    "hostedFormatRun": 35739707562,
+    "patchSha256": "e32279c9c9dd909276df201f71d15194039b7b778b148a4fe23c963461d3061d",
+    "note": "Exact format pre/postimage admitted; collector sole caller inlined without changing checks",
     "localValidationRan": false,
     "releaseReady": false
   }
