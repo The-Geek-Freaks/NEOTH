@@ -6153,39 +6153,9 @@ pub(super) async fn dispatch_provider(
             } else {
                 crate::providers::ReasoningDisplayGrant::Hidden
             };
-            let stream_open = provider.stream_events(req, reasoning_grant);
-            tokio::pin!(stream_open);
-            let stream_open_result = tokio::select! {
-                result = &mut stream_open => result,
-                () = cancellation.cancelled() => {
-                    if let Some(p) = stream_permit {
-                        p.record_failure();
-                    }
-                    if let Some(throughput) = live_throughput.as_mut() {
-                        throughput.terminal(
-                            crate::daemon::live_throughput::LiveThroughputUnavailable::Cancelled,
-                            output,
-                            stream_control_token,
-                        )?;
-                    }
-                    if let Err(error) = reasoning_lifecycle
-                        .finalize(
-                            &writer,
-                            turn_id,
-                            crate::providers::ReasoningTerminalState::Cancelled,
-                            crate::wal::reasoning_audit::ReasoningAuditReasonCode::Cancelled,
-                            output,
-                        )
-                        .await
-                    {
-                        return_dispatch_error!("reasoning_terminal", error);
-                    }
-                    return_dispatch_error!(
-                        "stream_cancelled",
-                        anyhow::anyhow!("chat turn cancelled while provider stream was opening")
-                    );
-                }
-            };
+            let stream_open_result = authorized_provider
+                .stream_events_cancellable(req, reasoning_grant, cancellation)
+                .await;
             let mut stream = match stream_open_result {
                 Ok(s) => s,
                 Err(e) => {
@@ -6294,21 +6264,13 @@ pub(super) async fn dispatch_provider(
             // after stream admission.
             throughput_idle_tick.tick().await;
             loop {
-                // Cancellation stays first. The persistent interval is next
-                // so a due idle transition wins over a sustained ready stream
-                // of reasoning/control records; no ticker task or live WAL
-                // write is created.
+                // The authorized stream owns cancellation so its provider
+                // terminal audit is acknowledged before this caller observes
+                // the resulting stream error. The persistent interval stays
+                // first among this layer's local events so a due idle
+                // transition wins over sustained reasoning/control records.
                 let item = tokio::select! {
                     biased;
-                    () = cancellation.cancelled() => {
-                        if let Some(p) = stream_permit {
-                            p.record_failure();
-                        }
-                        return_stream_error!(
-                            "stream_cancelled",
-                            anyhow::anyhow!("chat turn cancelled while provider stream was active")
-                        );
-                    }
                     _ = throughput_idle_tick.tick() => {
                         if let Some(throughput) = live_throughput.as_mut()
                             && let Err(error) = throughput.observe_idle(
@@ -15072,7 +15034,9 @@ mod tests {
     use super::*;
     use crate::cli::init::ProviderKind;
     use crate::providers::{Completion, Provider};
-    use crate::wal::events::{EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_PROVIDER_RESPONSE};
+    use crate::wal::events::{
+        EVENT_TYPE_PROVIDER_ERROR, EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_PROVIDER_RESPONSE,
+    };
     use crate::wal::frame::decode_frame;
     use crate::wal::segment_header::SEGMENT_HEADER_LEN;
     use async_trait::async_trait;
@@ -20935,6 +20899,28 @@ modes:
         audits
     }
 
+    fn provider_cancellation_lifecycle_at(
+        segment: &std::path::Path,
+    ) -> Vec<(u8, serde_json::Value)> {
+        let bytes = std::fs::read(segment).expect("read fixture WAL");
+        let mut lifecycle = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, decoded| {
+            if matches!(
+                decoded.header.event_type,
+                EVENT_TYPE_PROVIDER_REQUEST | EVENT_TYPE_PROVIDER_ERROR
+            ) {
+                lifecycle.push((
+                    decoded.header.event_type,
+                    serde_json::from_slice(decoded.payload)
+                        .expect("decode provider lifecycle receipt"),
+                ));
+            }
+            Ok(())
+        })
+        .expect("scan fixture WAL");
+        lifecycle
+    }
+
     struct NativeTerminalThenErrorProvider;
 
     #[async_trait]
@@ -21126,6 +21112,11 @@ modes:
         );
         assert_eq!(audits[0]["terminal_state"], "cancelled");
         assert_eq!(audits[0]["reason_code"], "cancelled");
+        let lifecycle = provider_cancellation_lifecycle_at(&segment);
+        assert_eq!(lifecycle.len(), 2);
+        assert_eq!(lifecycle[0].0, EVENT_TYPE_PROVIDER_REQUEST);
+        assert_eq!(lifecycle[1].0, EVENT_TYPE_PROVIDER_ERROR);
+        assert_eq!(lifecycle[1].1["error_kind"], "stream_cancelled");
     }
 
     struct PendingNextReasoningProvider {
@@ -21237,6 +21228,11 @@ modes:
         assert_eq!(audits[0]["byte_count"], 20);
         assert_eq!(audits[0]["terminal_state"], "cancelled");
         assert_eq!(audits[0]["reason_code"], "cancelled");
+        let lifecycle = provider_cancellation_lifecycle_at(&segment);
+        assert_eq!(lifecycle.len(), 2);
+        assert_eq!(lifecycle[0].0, EVENT_TYPE_PROVIDER_REQUEST);
+        assert_eq!(lifecycle[1].0, EVENT_TYPE_PROVIDER_ERROR);
+        assert_eq!(lifecycle[1].1["error_kind"], "stream_cancelled");
         assert!(
             !serde_json::to_string(&audits[0])
                 .unwrap()

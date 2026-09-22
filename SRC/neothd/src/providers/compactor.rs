@@ -414,7 +414,11 @@ impl CompactingProvider {
             &'static str,
         )>,
         raw_permit: Option<&ProviderDispatchPermit>,
+        cancellation: Option<&crate::cli::chat_turn_pipeline::ChatTurnCancellation>,
     ) -> Result<Request> {
+        if cancellation.is_some_and(|cancellation| cancellation.is_closed()) {
+            anyhow::bail!("chat turn cancelled before history compaction");
+        }
         let system_text = req.system.as_deref().unwrap_or("");
         // GOLD-PXP-04: use calibrated chars-per-token estimate instead of flat char/4.
         let estimated_tokens = estimate_tokens_pxp(&req.prompt) + estimate_tokens_pxp(system_text);
@@ -472,8 +476,25 @@ impl CompactingProvider {
             };
             let summary_result = match authorization {
                 Some((authorizer, _)) => {
-                    util.complete_authorized(summary_req, authorizer, "history_compaction.summary")
-                        .await
+                    match cancellation {
+                        Some(cancellation) => {
+                            util.complete_authorized_cancellable(
+                                summary_req,
+                                authorizer,
+                                "history_compaction.summary",
+                                cancellation,
+                            )
+                            .await
+                        }
+                        None => {
+                            util.complete_authorized(
+                                summary_req,
+                                authorizer,
+                                "history_compaction.summary",
+                            )
+                            .await
+                        }
+                    }
                 }
                 None => {
                     util.complete_raw(
@@ -574,7 +595,19 @@ impl CompactingProvider {
                     let header = HeaderBuilder::new(EVENT_TYPE_HISTORY_COMPACTION_FIRED, &bytes)
                         .flags(EventFlags::empty())
                         .build();
-                    if let Err(e) = wal.append(header, bytes).await {
+                    let append = wal.append(header, bytes);
+                    tokio::pin!(append);
+                    let append = match cancellation {
+                        Some(cancellation) => tokio::select! {
+                            biased;
+                            () = cancellation.cancelled() => {
+                                anyhow::bail!("chat turn cancelled while history compaction was finalizing");
+                            }
+                            result = &mut append => result,
+                        },
+                        None => append.await,
+                    };
+                    if let Err(e) = append {
                         warn!(error = %e, "compactor: WAL emit failed (non-fatal)");
                     }
                 }
@@ -632,7 +665,7 @@ impl Provider for CompactingProvider {
         req: Request,
         permit: &ProviderDispatchPermit,
     ) -> Result<Completion> {
-        let req = self.maybe_compact(req, None, Some(permit)).await?;
+        let req = self.maybe_compact(req, None, Some(permit), None).await?;
         self.inner.complete_raw(req, permit).await
     }
 
@@ -641,7 +674,7 @@ impl Provider for CompactingProvider {
         req: Request,
         permit: &ProviderDispatchPermit,
     ) -> Result<ChunkStream> {
-        let req = self.maybe_compact(req, None, Some(permit)).await?;
+        let req = self.maybe_compact(req, None, Some(permit), None).await?;
         self.inner.stream_raw(req, permit).await
     }
 
@@ -651,7 +684,7 @@ impl Provider for CompactingProvider {
         permit: &ProviderDispatchPermit,
         reasoning_display: ReasoningDisplayGrant,
     ) -> Result<ProviderEventStream> {
-        let req = self.maybe_compact(req, None, Some(permit)).await?;
+        let req = self.maybe_compact(req, None, Some(permit), None).await?;
         self.inner
             .stream_events_raw(req, permit, reasoning_display)
             .await
@@ -664,10 +697,33 @@ impl Provider for CompactingProvider {
         call_scope: &'static str,
     ) -> Result<Completion> {
         let req = self
-            .maybe_compact(req, Some((authorizer, call_scope)), None)
+            .maybe_compact(req, Some((authorizer, call_scope)), None, None)
             .await?;
         self.inner
             .complete_authorized(req, authorizer, call_scope)
+            .await
+    }
+
+    async fn complete_authorized_cancellable(
+        &self,
+        req: Request,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    ) -> Result<Completion> {
+        if cancellation.is_closed() {
+            anyhow::bail!("chat turn cancelled before history compaction");
+        }
+        let req = self
+            .maybe_compact(
+                req,
+                Some((authorizer, call_scope)),
+                None,
+                Some(cancellation),
+            )
+            .await?;
+        self.inner
+            .complete_authorized_cancellable(req, authorizer, call_scope, cancellation)
             .await
     }
 
@@ -679,7 +735,7 @@ impl Provider for CompactingProvider {
         call_scope: &'static str,
     ) -> Result<Completion> {
         let req = self
-            .maybe_compact(req, Some((authorizer, call_scope)), None)
+            .maybe_compact(req, Some((authorizer, call_scope)), None, None)
             .await?;
         self.inner
             .complete_authorized_pinned(req, expected, authorizer, call_scope)
@@ -693,7 +749,7 @@ impl Provider for CompactingProvider {
         call_scope: &'static str,
     ) -> Result<ChunkStream> {
         let req = self
-            .maybe_compact(req, Some((authorizer, call_scope)), None)
+            .maybe_compact(req, Some((authorizer, call_scope)), None, None)
             .await?;
         self.inner
             .stream_authorized(req, authorizer, call_scope)
@@ -708,10 +764,40 @@ impl Provider for CompactingProvider {
         reasoning_display: ReasoningDisplayGrant,
     ) -> Result<ProviderEventStream> {
         let req = self
-            .maybe_compact(req, Some((authorizer, call_scope)), None)
+            .maybe_compact(req, Some((authorizer, call_scope)), None, None)
             .await?;
         self.inner
             .stream_events_authorized(req, authorizer, call_scope, reasoning_display)
+            .await
+    }
+
+    async fn stream_events_authorized_cancellable(
+        &self,
+        req: Request,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+        reasoning_display: ReasoningDisplayGrant,
+        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    ) -> Result<ProviderEventStream> {
+        if cancellation.is_closed() {
+            anyhow::bail!("chat turn cancelled before history compaction");
+        }
+        let req = self
+            .maybe_compact(
+                req,
+                Some((authorizer, call_scope)),
+                None,
+                Some(cancellation),
+            )
+            .await?;
+        self.inner
+            .stream_events_authorized_cancellable(
+                req,
+                authorizer,
+                call_scope,
+                reasoning_display,
+                cancellation,
+            )
             .await
     }
 }
@@ -793,6 +879,17 @@ pub fn arc_from_config(
                 .complete_authorized(req, authorizer, call_scope)
                 .await
         }
+        async fn complete_authorized_cancellable(
+            &self,
+            req: Request,
+            authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+            call_scope: &'static str,
+            cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        ) -> Result<Completion> {
+            self.0
+                .complete_authorized_cancellable(req, authorizer, call_scope, cancellation)
+                .await
+        }
         async fn complete_authorized_pinned(
             &self,
             req: Request,
@@ -821,6 +918,24 @@ pub fn arc_from_config(
         ) -> Result<ProviderEventStream> {
             self.0
                 .stream_events_authorized(req, authorizer, call_scope, reasoning_display)
+                .await
+        }
+        async fn stream_events_authorized_cancellable(
+            &self,
+            req: Request,
+            authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+            call_scope: &'static str,
+            reasoning_display: ReasoningDisplayGrant,
+            cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        ) -> Result<ProviderEventStream> {
+            self.0
+                .stream_events_authorized_cancellable(
+                    req,
+                    authorizer,
+                    call_scope,
+                    reasoning_display,
+                    cancellation,
+                )
                 .await
         }
     }
@@ -1019,6 +1134,116 @@ mod tests {
             cursor = cursor.saturating_add(total);
         }
         payloads
+    }
+
+    fn provider_lifecycle(seg: &std::path::Path) -> Vec<(u8, serde_json::Value)> {
+        let bytes = std::fs::read(seg).unwrap();
+        let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = header.header_len();
+        let mut lifecycle = Vec::new();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            if matches!(
+                frame.header.event_type,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST
+                    | crate::wal::events::EVENT_TYPE_PROVIDER_ERROR
+            ) {
+                lifecycle.push((
+                    frame.header.event_type,
+                    serde_json::from_slice(frame.payload).unwrap(),
+                ));
+            }
+            let total = frame.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        lifecycle
+    }
+
+    struct PendingUtilityProvider {
+        entered: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl Provider for PendingUtilityProvider {
+        fn name(&self) -> &'static str {
+            "pending_compaction_utility"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("pending-compaction-utility-model")
+        }
+
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            self.entered.notify_one();
+            std::future::pending::<Result<Completion>>().await
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellable_compaction_settles_pending_utility_before_main_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("compactor-cancelled-utility.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let (main, main_calls) = StubProvider::new("main must not run");
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let compactor = CompactingProvider::new(
+            Box::new(main),
+            Some(Box::new(PendingUtilityProvider {
+                entered: Arc::clone(&entered),
+            })),
+            100,
+            0.8,
+            50,
+            Some(writer.clone()),
+        );
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+            crate::permissions::AutonomyLevel::Full,
+            Some(writer.clone()),
+            crate::config::TokensConfig::default_max_per_request(),
+        );
+        let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
+        let close = cancellation.clone();
+        let result = {
+            let dispatch = compactor.complete_authorized_cancellable(
+                Request {
+                    prompt: long_prompt(500),
+                    ..Request::default()
+                },
+                &authorizer,
+                "compactor.cancelled_utility",
+                &cancellation,
+            );
+            tokio::pin!(dispatch);
+            tokio::time::timeout(Duration::from_secs(10), async {
+                tokio::select! {
+                    result = &mut dispatch => panic!("pending utility completed before cancellation: {result:?}"),
+                    () = entered.notified() => close.close(),
+                }
+            })
+            .await
+            .expect("utility completion must become pending");
+            tokio::time::timeout(Duration::from_millis(250), &mut dispatch)
+                .await
+                .expect("utility cancellation must settle through its acknowledged terminal")
+        };
+        assert!(result.is_err());
+        assert!(main_calls.lock().unwrap().is_empty());
+
+        drop(compactor);
+        drop(authorizer);
+        drop(writer);
+        tokio::time::timeout(Duration::from_millis(250), join)
+            .await
+            .expect("utility cancellation fixture WAL writer must drain")
+            .expect("utility cancellation fixture WAL writer must not panic");
+        let lifecycle = provider_lifecycle(&seg);
+        assert_eq!(lifecycle.len(), 2);
+        assert_eq!(lifecycle[0].0, crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
+        assert_eq!(lifecycle[1].0, crate::wal::events::EVENT_TYPE_PROVIDER_ERROR);
+        assert_eq!(lifecycle[1].1["error_kind"], "stream_cancelled");
     }
 
     #[tokio::test]

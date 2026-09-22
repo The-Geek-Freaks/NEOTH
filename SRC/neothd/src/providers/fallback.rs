@@ -294,6 +294,7 @@ impl FallbackProvider {
             &'static str,
         )>,
         raw_permit: Option<&ProviderDispatchPermit>,
+        cancellation: Option<&crate::cli::chat_turn_pipeline::ChatTurnCancellation>,
     ) -> Result<Completion> {
         let mut tracker = QuotaTracker::load_from(&self.quota_path)
             .with_context(|| format!("load fallback quota state {}", self.quota_path.display()))?;
@@ -365,9 +366,23 @@ impl FallbackProvider {
             let candidate_req = self.request_for_candidate(i, candidate.as_ref(), &req)?;
             let result = match authorization {
                 Some((authorizer, call_scope)) => {
-                    candidate
-                        .complete_authorized(candidate_req, authorizer, call_scope)
-                        .await
+                    match cancellation {
+                        Some(cancellation) => {
+                            candidate
+                                .complete_authorized_cancellable(
+                                    candidate_req,
+                                    authorizer,
+                                    call_scope,
+                                    cancellation,
+                                )
+                                .await
+                        }
+                        None => {
+                            candidate
+                                .complete_authorized(candidate_req, authorizer, call_scope)
+                                .await
+                        }
+                    }
                 }
                 None => {
                     candidate
@@ -498,7 +513,7 @@ impl Provider for FallbackProvider {
         req: Request,
         permit: &ProviderDispatchPermit,
     ) -> Result<Completion> {
-        self.complete_with_authorization(req, None, Some(permit))
+        self.complete_with_authorization(req, None, Some(permit), None)
             .await
     }
 
@@ -508,8 +523,27 @@ impl Provider for FallbackProvider {
         authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
         call_scope: &'static str,
     ) -> Result<Completion> {
-        self.complete_with_authorization(req, Some((authorizer, call_scope)), None)
+        self.complete_with_authorization(req, Some((authorizer, call_scope)), None, None)
             .await
+    }
+
+    async fn complete_authorized_cancellable(
+        &self,
+        req: Request,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    ) -> Result<Completion> {
+        if cancellation.is_closed() {
+            anyhow::bail!("chat turn cancelled before fallback completion dispatch");
+        }
+        self.complete_with_authorization(
+            req,
+            Some((authorizer, call_scope)),
+            None,
+            Some(cancellation),
+        )
+        .await
     }
 
     async fn complete_authorized_pinned(
@@ -663,6 +697,31 @@ impl Provider for FallbackProvider {
             .await?;
         Ok(Self::stamp_event_stream_route(stream, 0))
     }
+
+    async fn stream_events_authorized_cancellable(
+        &self,
+        req: Request,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+        reasoning_display: ReasoningDisplayGrant,
+        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    ) -> Result<ProviderEventStream> {
+        let primary = self
+            .chain
+            .first()
+            .expect("FallbackProvider chain is non-empty");
+        let req = self.request_for_candidate(0, primary.as_ref(), &req)?;
+        let stream = primary
+            .stream_events_authorized_cancellable(
+                req,
+                authorizer,
+                call_scope,
+                reasoning_display,
+                cancellation,
+            )
+            .await?;
+        Ok(Self::stamp_event_stream_route(stream, 0))
+    }
 }
 
 #[cfg(test)]
@@ -734,6 +793,83 @@ mod tests {
             wal_writer,
             home.join("quota.json"),
         )
+    }
+
+    struct PendingCompletionProvider {
+        entered: std::sync::Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl Provider for PendingCompletionProvider {
+        fn name(&self) -> &'static str {
+            "pending_fallback_completion"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("pending-fallback-completion-model")
+        }
+
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            self.entered.notify_one();
+            std::future::pending::<Result<Completion>>().await
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellable_authorized_completion_forwards_to_primary_leaf() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("fallback-cancelled-completion.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let entered = std::sync::Arc::new(tokio::sync::Notify::new());
+        let fallback = fallback_at(
+            dir.path(),
+            vec![Box::new(PendingCompletionProvider {
+                entered: std::sync::Arc::clone(&entered),
+            })],
+            0,
+            None,
+        );
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+            crate::permissions::AutonomyLevel::Full,
+            Some(writer.clone()),
+            crate::config::TokensConfig::default_max_per_request(),
+        );
+        let cancellation = crate::cli::chat_turn_pipeline::ChatTurnCancellation::default();
+        let close = cancellation.clone();
+        let result = {
+            let dispatch = fallback.complete_authorized_cancellable(
+                Request::default(),
+                &authorizer,
+                "fallback.cancelled_completion",
+                &cancellation,
+            );
+            tokio::pin!(dispatch);
+            tokio::time::timeout(Duration::from_secs(10), async {
+                tokio::select! {
+                    result = &mut dispatch => panic!("pending fallback leaf completed before cancellation: {result:?}"),
+                    () = entered.notified() => close.close(),
+                }
+            })
+            .await
+            .expect("fallback must reach its pending primary leaf");
+            tokio::time::timeout(Duration::from_millis(250), &mut dispatch)
+                .await
+                .expect("fallback cancellation must settle through the primary terminal")
+        };
+        assert!(result.is_err());
+
+        drop(fallback);
+        drop(authorizer);
+        drop(writer);
+        tokio::time::timeout(Duration::from_millis(250), join)
+            .await
+            .expect("fallback cancellation fixture WAL writer must drain")
+            .expect("fallback cancellation fixture WAL writer must not panic");
+        let lifecycle = lifecycle_frames(&seg);
+        assert_eq!(lifecycle.len(), 2);
+        assert_eq!(lifecycle[0].0, crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
+        assert_eq!(lifecycle[1].0, crate::wal::events::EVENT_TYPE_PROVIDER_ERROR);
+        assert_eq!(lifecycle[1].1["error_kind"], "stream_cancelled");
     }
 
     #[tokio::test]

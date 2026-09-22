@@ -2549,6 +2549,94 @@ pub trait Provider: Send + Sync {
         }
     }
 
+    /// Chat-only authorized completion with an explicitly observed
+    /// cancellation terminal. This is used by cancellation-aware middleware
+    /// such as history compaction before it opens the final event stream.
+    async fn complete_authorized_cancellable(
+        &self,
+        mut req: Request,
+        authorizer: &cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    ) -> Result<Completion> {
+        if cancellation.is_closed() {
+            anyhow::bail!("chat turn cancelled before provider completion authorization");
+        }
+        self.validate_request_controls(&req)?;
+        let identity = bind_wire_identity(self, &mut req)?;
+        let output_token_ceiling = validated_output_token_ceiling(self, &req)?;
+        let mut authorized = authorizer
+            .authorize_leaf(self.name(), &req, call_scope, false, output_token_ceiling)
+            .await?;
+        let role_dispatch = authorized.take_role_dispatch();
+        let provider_subject = authorized.take_provider_subject();
+        let effect = authorized.effect_context();
+        let gated_effect = effect.is_some();
+        let audit = authorized.begin_dispatch().await?;
+        let mut permit = ProviderDispatchPermit::authorized(
+            audit,
+            authorizer.clone(),
+            self.name(),
+            self.consent_route(),
+            req.clone(),
+            call_scope,
+            output_token_ceiling,
+            provider_subject,
+            effect,
+            self.w41_effect_start_adapter(W41EffectStartProbe::new()),
+            role_dispatch,
+        );
+        if gated_effect {
+            permit.require_composed_effect_start_adapter().await?;
+        } else {
+            permit.ensure_consent_before_send().await?;
+        }
+        if let Err(error) = permit.ensure_role_dispatch_before_send(&req) {
+            if let Err(audit_error) = permit.failure("role_dispatch_policy_changed").await {
+                return Err(anyhow::anyhow!(
+                    "role dispatch changed and terminal audit failed: {audit_error}; provider error: {error}"
+                ));
+            }
+            return Err(error);
+        }
+        if cancellation.is_closed() {
+            permit.failure("stream_cancelled").await?;
+            anyhow::bail!("chat turn cancelled before provider completion started");
+        }
+        let completion = {
+            let completion = self.complete_raw(req, &permit);
+            tokio::pin!(completion);
+            tokio::select! {
+                biased;
+                () = cancellation.cancelled() => None,
+                result = &mut completion => Some(result),
+            }
+        };
+        match completion {
+            None => {
+                permit.failure("stream_cancelled").await?;
+                anyhow::bail!("chat turn cancelled while provider completion was active");
+            }
+            Some(Ok(mut completion)) => {
+                stamp_completion_identity(
+                    &mut completion,
+                    &identity,
+                    self.preserves_inner_response_identity(),
+                );
+                permit.complete_success(&completion).await?;
+                Ok(completion)
+            }
+            Some(Err(error)) => {
+                if let Err(audit_error) = permit.failure("provider_call_failed").await {
+                    return Err(anyhow::anyhow!(
+                        "provider call failed and terminal audit failed: {audit_error}; provider error: {error}"
+                    ));
+                }
+                Err(error)
+            }
+        }
+    }
+
     /// Streaming twin of [`Self::complete_authorized`]. The authorization
     /// payload records streaming mode and is completed before a stream can
     /// open. Decorators recurse into the actual streaming child.
@@ -2641,11 +2729,53 @@ pub trait Provider: Send + Sync {
     /// a second authorization/audit lifecycle.
     async fn stream_events_authorized(
         &self,
-        mut req: Request,
+        req: Request,
         authorizer: &cost_authorization::ProviderCallAuthorizer,
         call_scope: &'static str,
         reasoning_display: ReasoningDisplayGrant,
     ) -> Result<ProviderEventStream> {
+        self.stream_events_authorized_inner(
+            req,
+            authorizer,
+            call_scope,
+            reasoning_display,
+            None,
+        )
+        .await
+    }
+
+    /// Chat-only authorized event-stream entry with explicit cancellation
+    /// ownership. Existing callers retain the ordinary stream entry.
+    async fn stream_events_authorized_cancellable(
+        &self,
+        req: Request,
+        authorizer: &cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+        reasoning_display: ReasoningDisplayGrant,
+        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    ) -> Result<ProviderEventStream> {
+        self.stream_events_authorized_inner(
+            req,
+            authorizer,
+            call_scope,
+            reasoning_display,
+            Some(cancellation.clone()),
+        )
+        .await
+    }
+
+    #[doc(hidden)]
+    async fn stream_events_authorized_inner(
+        &self,
+        mut req: Request,
+        authorizer: &cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+        reasoning_display: ReasoningDisplayGrant,
+        cancellation: Option<crate::cli::chat_turn_pipeline::ChatTurnCancellation>,
+    ) -> Result<ProviderEventStream> {
+        if cancellation.as_ref().is_some_and(|cancellation| cancellation.is_closed()) {
+            anyhow::bail!("chat turn cancelled before provider event-stream authorization");
+        }
         self.validate_request_controls(&req)?;
         let identity = bind_wire_identity(self, &mut req)?;
         let output_token_ceiling = validated_output_token_ceiling(self, &req)?;
@@ -2704,17 +2834,41 @@ pub trait Provider: Send + Sync {
             }
             return Err(error);
         }
-        match self
-            .stream_events_raw(req, &permit, reasoning_display)
-            .await
-        {
-            Ok(stream) => Ok(audit.wrap_event_stream(normalize_event_stream(
-                stamp_event_stream_identity(
+        let stream_open = self.stream_events_raw(req, &permit, reasoning_display);
+        tokio::pin!(stream_open);
+        let stream_open = match cancellation.as_ref() {
+            Some(cancellation) => {
+                if cancellation.is_closed() {
+                    audit.failure("stream_cancelled").await?;
+                    return Err(anyhow::anyhow!(
+                        "chat turn cancelled before provider event stream opened"
+                    ));
+                }
+                tokio::select! {
+                    biased;
+                    () = cancellation.cancelled() => {
+                        audit.failure("stream_cancelled").await?;
+                        return Err(anyhow::anyhow!(
+                            "chat turn cancelled while provider event stream was opening"
+                        ));
+                    }
+                    result = &mut stream_open => result,
+                }
+            }
+            None => stream_open.await,
+        };
+        match stream_open {
+            Ok(stream) => {
+                let stream = normalize_event_stream(stamp_event_stream_identity(
                     stream,
                     identity,
                     self.preserves_inner_response_identity(),
-                ),
-            ))),
+                ));
+                Ok(match cancellation {
+                    Some(cancellation) => audit.wrap_event_stream_cancellable(stream, cancellation),
+                    None => audit.wrap_event_stream(stream),
+                })
+            }
             Err(error) => {
                 if let Err(audit_error) = audit.failure("stream_open_failed").await {
                     return Err(anyhow::anyhow!(

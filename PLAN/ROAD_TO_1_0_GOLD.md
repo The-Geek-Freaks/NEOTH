@@ -8,6 +8,18 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W235 cancellation settlement (2026-09-23):** explicit authorized cancellation
+now awaits the provider terminal WAL acknowledgement across stream opening,
+stream consumption and history-compaction utility completion. Concrete-leaf
+forwarding is preserved through token-cap, fallback and compactor. Two existing
+250 ms chat cases are strengthened; two new real utility/fallback regressions
+also bound writer teardown after releasing the authorizer sender. Independent
+source review passed; actual Hosted execution remains pending. Selection is
+**Grouped402**, inventory **535 sources / 845 native / 94 GUI**, platform GUI
+extras unchanged. Preflight35795288640 passed on3e99cfa5; that does not validate
+W235. Road remains1016checked/306open/2partial. See
+`docs/gold-wave235-cancellation-settlement.md`. Local BSOD hold unchanged.
+
 **W234 GUI fixture/discovery follow-up (2026-09-23):** reviewed fixes preserve
 fresh receipts while correcting FIFO-toast expectations, request settlement,
 claim-bound citation fixtures and deterministic bounded throughput observation.

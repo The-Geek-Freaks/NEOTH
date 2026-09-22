@@ -127,6 +127,19 @@ impl Provider for TokenCappedProvider<'_> {
             .await
     }
 
+    async fn complete_authorized_cancellable(
+        &self,
+        req: Request,
+        authorizer: &ProviderCallAuthorizer,
+        call_scope: &'static str,
+        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    ) -> Result<Completion> {
+        ensure_request_fits(&req, self.cap)?;
+        self.inner
+            .complete_authorized_cancellable(req, authorizer, call_scope, cancellation)
+            .await
+    }
+
     async fn complete_authorized_pinned(
         &self,
         mut req: Request,
@@ -163,6 +176,26 @@ impl Provider for TokenCappedProvider<'_> {
         ensure_request_fits(&req, self.cap)?;
         self.inner
             .stream_events_authorized(req, authorizer, call_scope, reasoning_display)
+            .await
+    }
+
+    async fn stream_events_authorized_cancellable(
+        &self,
+        req: Request,
+        authorizer: &ProviderCallAuthorizer,
+        call_scope: &'static str,
+        reasoning_display: ReasoningDisplayGrant,
+        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+    ) -> Result<ProviderEventStream> {
+        ensure_request_fits(&req, self.cap)?;
+        self.inner
+            .stream_events_authorized_cancellable(
+                req,
+                authorizer,
+                call_scope,
+                reasoning_display,
+                cancellation,
+            )
             .await
     }
 }
