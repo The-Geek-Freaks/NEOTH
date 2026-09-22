@@ -257,7 +257,9 @@ mod tests {
         }
 
         assert_eq!(
-            watchdog.race(Box::pin(async { "provider completed" })).await,
+            watchdog
+                .race(Box::pin(async { "provider completed" }))
+                .await,
             TurnWatchdogPoll::Completed("provider completed")
         );
     }

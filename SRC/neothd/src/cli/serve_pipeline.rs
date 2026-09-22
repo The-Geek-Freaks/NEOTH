@@ -5947,7 +5947,8 @@ mod tests {
         let first_writer = writer.clone();
         let first_outcome = Arc::clone(&outcome);
         let first = tokio::spawn(async move {
-            retain_channel_repo_context_unavailable_outcome(&first_writer, &first_outcome, None).await
+            retain_channel_repo_context_unavailable_outcome(&first_writer, &first_outcome, None)
+                .await
         });
         gate.wait_until_durable().await;
         first.abort();
@@ -5956,7 +5957,8 @@ mod tests {
         let replay_writer = writer.clone();
         let replay_outcome = Arc::clone(&outcome);
         let replay = tokio::spawn(async move {
-            retain_channel_repo_context_unavailable_outcome(&replay_writer, &replay_outcome, None).await
+            retain_channel_repo_context_unavailable_outcome(&replay_writer, &replay_outcome, None)
+                .await
         });
         tokio::task::yield_now().await;
         assert!(

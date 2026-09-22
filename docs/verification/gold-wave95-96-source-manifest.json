@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T16:21:09.8464290Z",
+  "capturedUtc": "2026-09-22T16:25:37.6686852Z",
   "validationStatus": "W205_W207_HOSTED_BEHAVIOR_REPAIR_STATIC_REVIEWED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -998,8 +998,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_watchdog.rs",
-      "bytes": 13687,
-      "sha256": "EE5CEF3B7486BA2F5F12E5E40AC5F402260B7BA3ABDB766B9F0C30D0A1431419"
+      "bytes": 13721,
+      "sha256": "D70BB2E64A567FE1C9DC140D3F49AF89DCC49150E6CD3AF8509CFE5AC715685F"
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
@@ -1228,8 +1228,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "bytes": 462637,
-      "sha256": "361A3B32EC31747A3DA1CCB51C13C7D9E308E7ABAB72F31CA2F698D94FD0FE5A"
+      "bytes": 462671,
+      "sha256": "05CDBA7EAFCF35F4C3CE2892D7A10C22D3DE9128DD03639D80BEFEB4AD7650B3"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
