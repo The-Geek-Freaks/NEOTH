@@ -335,6 +335,7 @@ fn build_provider_request(
     config: &crate::config::FreedomConfig,
     req: &ProviderCallRequest,
     effective_model: Option<String>,
+    skill_registry_context: Option<&crate::pipeline::RenderedUntrustedContext>,
 ) -> anyhow::Result<crate::providers::Request> {
     // Read-only by design: automation prompts may be machine-generated and
     // therefore must never become behavioral evidence. `compile_prompt`
@@ -360,7 +361,7 @@ fn build_provider_request(
         repo_context_block: None,
         attachment_contexts: None,
         skill_system_prompt: None,
-        skill_registry_context: None,
+        skill_registry_context,
         used_skill_id: None,
         mcp_catalogue: None,
         persona_override: None,
@@ -392,6 +393,56 @@ fn build_provider_request(
         model: effective_model,
         ..Default::default()
     })
+}
+
+/// Resolve the one prompt-visible Skill registry for an n8n provider call.
+///
+/// n8n is a bare-metal provider surface, so it deliberately has no selected
+/// Skill body, tool catalogue, or routing result. It does receive the same
+/// bounded, typed Block D session registry as other daemon entry points. The
+/// caller pins the accepted config epoch first; a missing, foreign-home, or
+/// stale daemon registry is an error, never an empty inventory.
+fn n8n_session_skill_registry_context(
+    home: &std::path::Path,
+    config: &crate::config::FreedomConfig,
+    reload_controller: &Arc<crate::config::reload::ReloadController>,
+    accepted_config_epoch: u64,
+    registry: Option<Arc<crate::skills::registry::SkillRegistry>>,
+) -> anyhow::Result<crate::pipeline::RenderedUntrustedContext> {
+    let expected_skills_dir = home.join("skills");
+    let registry = registry.context("n8n provider_call requires the daemon SkillRegistry")?;
+    anyhow::ensure!(
+        registry.skills_dir() == expected_skills_dir.as_path(),
+        "n8n provider_call daemon SkillRegistry belongs to a different home"
+    );
+    anyhow::ensure!(
+        registry.uses_reload_controller(reload_controller),
+        "n8n provider_call daemon SkillRegistry is bound to a different accepted config controller"
+    );
+    let snapshot = registry
+        .authority_bound_snapshot_for_epoch(accepted_config_epoch)
+        .context("acquire authority-bound n8n Skill snapshot")?;
+
+    let mut blocked_skill_ids = std::collections::BTreeSet::<String>::new();
+    if !config.skills.pinned_hashes.is_empty() {
+        let verdicts = crate::skills::versioning::check_pinned_hashes(
+            snapshot
+                .skills()
+                .iter()
+                .map(|skill| (skill.id(), skill.content_hash.as_str())),
+            &config.skills.pinned_hashes,
+        );
+        for (skill, verdict) in snapshot.skills().iter().zip(verdicts) {
+            if verdict.verdict == crate::skills::versioning::PinnedHashOutcome::Mismatch {
+                blocked_skill_ids.insert(skill.id().to_owned());
+            }
+        }
+    }
+    let eval_suppress = config.skills.should_suppress_for_eval();
+    crate::skills::resolver::SkillRouteResolver::new(snapshot)
+        .retaining(|skill| !eval_suppress && !blocked_skill_ids.contains(skill.id()))
+        .session_registry_context(&[])
+        .context("render n8n session-start Skill registry context")
 }
 
 /// H1 (2026-06-12) — cloud-egress consent gate for the n8n `provider_call`
@@ -467,7 +518,28 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
     //     n8n-initiated call alongside chat — one audit truth.
     // (c) the circuit-breaker wrap happens INSIDE
     //     `provider.complete()` (GR-04) — automatic.
-    let live_config = state.reload_controller.latest();
+    // Retain one accepted config+epoch snapshot for the entire request. The
+    // registry below must be bound to this same epoch before any provider is
+    // constructed, so n8n cannot combine a newer config with old authority.
+    let accepted_config = state.reload_controller.accepted_snapshot();
+    let accepted_config_epoch = accepted_config.epoch();
+    let live_config = accepted_config.config();
+    let skill_registry_context = match n8n_session_skill_registry_context(
+        &state.home,
+        live_config.as_ref(),
+        &state.reload_controller,
+        accepted_config_epoch,
+        crate::skills::registry::global(),
+    ) {
+        Ok(context) => context,
+        Err(error) => {
+            return HandlerOutcome::error(
+                ApiErrorCode::UpstreamError,
+                format!("n8n provider_call Skill registry unavailable: {error:#}"),
+                "start the daemon with its accepted skills directory and retry after the registry is current",
+            );
+        }
+    };
     let provider_kind = live_config.provider_kind;
     // GR-003 + H1 (2026-06-12): cloud egress on the n8n surface goes through
     // `cloud_egress_gate` — at autonomy=Strict cloud is refused outright (the
@@ -539,6 +611,7 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
         live_config.as_ref(),
         &req,
         effective_model.clone(),
+        Some(&skill_registry_context),
     ) {
         Ok(request) => request,
         Err(error) => {
@@ -681,6 +754,24 @@ pub async fn route(ctx: ApiRequestCtx, state: Arc<ApiState>) -> HandlerOutcome {
 mod tests {
     use super::*;
 
+    async fn n8n_test_registry(
+        home: &std::path::Path,
+        config: crate::config::FreedomConfig,
+    ) -> (
+        Arc<crate::config::reload::ReloadController>,
+        Arc<crate::skills::registry::SkillRegistry>,
+    ) {
+        let config_path = home.join("freedom.yaml");
+        let controller = Arc::new(crate::config::reload::ReloadController::new(config, config_path));
+        let registry = crate::skills::registry::SkillRegistry::load_with_reload_controller(
+            home.join("skills"),
+            Arc::clone(&controller),
+        )
+        .await
+        .expect("load n8n test SkillRegistry");
+        (controller, registry)
+    }
+
     fn pin_preference(
         home: &std::path::Path,
         subject_id: &str,
@@ -757,7 +848,13 @@ mod tests {
             incognito: false,
         };
 
-        let request = build_provider_request(home.path(), &config, &req, Some("wire-model".into()))
+        let request = build_provider_request(
+            home.path(),
+            &config,
+            &req,
+            Some("wire-model".into()),
+            None,
+        )
             .expect("compose provider request");
         let system = request.system.expect("communication + explicit system");
         let communication_pos = system.find("Be direct.").expect("compiled accommodation");
@@ -786,7 +883,7 @@ mod tests {
             "omitted flag must remain backward-compatible"
         );
         assert!(
-            build_provider_request(home.path(), &config, &legacy, None).is_err(),
+            build_provider_request(home.path(), &config, &legacy, None, None).is_err(),
             "non-incognito must not silently drop corrupt configured state"
         );
 
@@ -794,7 +891,7 @@ mod tests {
             r#"{"prompt":"private automation","system":"EXPLICIT_ONLY","incognito":true}"#,
         )
         .expect("incognito request parses");
-        let request = build_provider_request(home.path(), &config, &incognito, None)
+        let request = build_provider_request(home.path(), &config, &incognito, None, None)
             .expect("incognito skips communication-state read");
         assert_eq!(request.system.as_deref(), Some("EXPLICIT_ONLY"));
         assert_eq!(
@@ -832,7 +929,7 @@ mod tests {
         let req: ProviderCallRequest =
             serde_json::from_str(r#"{"prompt":"task","subject":"attacker","incognito":false}"#)
                 .expect("request with unrelated legacy field parses");
-        let request = build_provider_request(home.path(), &config, &req, None)
+        let request = build_provider_request(home.path(), &config, &req, None, None)
             .expect("compose fixed-subject request");
         let system = request.system.expect("operator accommodation");
         assert!(system.contains("Use short bullet lists for parallel points."));
@@ -862,7 +959,7 @@ mod tests {
             incognito: false,
         };
 
-        let request = build_provider_request(home.path(), &config, &req, None)
+        let request = build_provider_request(home.path(), &config, &req, None, None)
             .expect("compose provider request");
         let system = request.system.expect("compiled accommodation");
         assert!(system.contains("ask at most one concise question"));
@@ -883,6 +980,188 @@ mod tests {
             before,
             "automation provider calls must never record behavioral evidence"
         );
+    }
+
+    #[tokio::test]
+    async fn n8n_provider_request_includes_exactly_one_guarded_registry_without_route_leaks() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let config = crate::config::FreedomConfig::default();
+        let (controller, registry) = n8n_test_registry(home.path(), config.clone()).await;
+        let context = n8n_session_skill_registry_context(
+            home.path(),
+            &config,
+            &controller,
+            controller.accepted_snapshot().epoch(),
+            Some(registry),
+        )
+        .expect("render admitted n8n registry");
+        let request = build_provider_request(
+            home.path(),
+            &config,
+            &ProviderCallRequest {
+                prompt: "automation task".into(),
+                system: None,
+                model: None,
+                incognito: true,
+            },
+            Some("wire-model".into()),
+            Some(&context),
+        )
+        .expect("compose n8n provider request");
+        let system = request.system.expect("typed Block D registry system layer");
+        assert_eq!(system.matches(context.as_str()).count(), 1);
+        assert!(context.as_str().contains("UNTRUSTED data"));
+        assert!(context.as_str().contains("\"skills\""));
+        assert!(!system.contains("\"system_prompt\""));
+        assert!(!system.contains("\"used_skill_id\""));
+    }
+
+    #[tokio::test]
+    async fn n8n_registry_excludes_eval_and_pinned_hash_mismatch_skills() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let mut config = crate::config::FreedomConfig::default();
+        config.skills.disabled_for_eval_sessions = true;
+        config.skills.eval_session_active = true;
+        let (controller, registry) = n8n_test_registry(home.path(), config.clone()).await;
+        let eval_context = n8n_session_skill_registry_context(
+            home.path(),
+            &config,
+            &controller,
+            controller.accepted_snapshot().epoch(),
+            Some(Arc::clone(&registry)),
+        )
+        .expect("eval registry remains a valid empty typed envelope");
+        assert!(eval_context.as_str().contains("\"skills\":[]"));
+
+        let mut pinned_config = crate::config::FreedomConfig::default();
+        let pinned_skill = registry.snapshot().skills()[0].id().to_owned();
+        pinned_config
+            .skills
+            .pinned_hashes
+            .insert(pinned_skill.clone(), "deliberately-wrong-hash".into());
+        let (pinned_controller, pinned_registry) =
+            n8n_test_registry(home.path(), pinned_config.clone()).await;
+        let pinned_context = n8n_session_skill_registry_context(
+            home.path(),
+            &pinned_config,
+            &pinned_controller,
+            pinned_controller.accepted_snapshot().epoch(),
+            Some(pinned_registry),
+        )
+        .expect("pinned registry renders after excluding mismatch");
+        assert!(
+            !pinned_context.as_str().contains(&pinned_skill),
+            "a pinned-hash mismatch must not be advertised to n8n"
+        );
+    }
+
+    #[tokio::test]
+    async fn n8n_registry_refuses_absent_foreign_or_stale_daemon_registry() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let config = crate::config::FreedomConfig::default();
+        let (controller, registry) = n8n_test_registry(home.path(), config.clone()).await;
+        let epoch = controller.accepted_snapshot().epoch();
+        assert!(n8n_session_skill_registry_context(
+            home.path(),
+            &config,
+            &controller,
+            epoch,
+            None,
+        )
+        .is_err());
+        let foreign_home = tempfile::tempdir().expect("foreign tempdir");
+        assert!(n8n_session_skill_registry_context(
+            foreign_home.path(),
+            &config,
+            &controller,
+            epoch,
+            Some(Arc::clone(&registry)),
+        )
+        .is_err());
+        let same_path_controller = Arc::new(crate::config::reload::ReloadController::new(
+            config.clone(),
+            home.path().join("freedom.yaml"),
+        ));
+        assert!(n8n_session_skill_registry_context(
+            home.path(),
+            &config,
+            &same_path_controller,
+            epoch,
+            Some(Arc::clone(&registry)),
+        )
+        .is_err());
+        let different_path_controller = Arc::new(crate::config::reload::ReloadController::new(
+            config.clone(),
+            home.path().join("other-freedom.yaml"),
+        ));
+        assert!(n8n_session_skill_registry_context(
+            home.path(),
+            &config,
+            &different_path_controller,
+            epoch,
+            Some(Arc::clone(&registry)),
+        )
+        .is_err());
+        assert!(n8n_session_skill_registry_context(
+            home.path(),
+            &config,
+            &controller,
+            epoch.saturating_add(1),
+            Some(registry),
+        )
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn n8n_provider_request_retains_registry_a_after_later_accepted_b() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let config_a = crate::config::FreedomConfig::default();
+        let (controller, registry) = n8n_test_registry(home.path(), config_a.clone()).await;
+        let registry_a = n8n_session_skill_registry_context(
+            home.path(),
+            &config_a,
+            &controller,
+            controller.accepted_snapshot().epoch(),
+            Some(Arc::clone(&registry)),
+        )
+        .expect("render registry A");
+
+        let mut config_b = config_a.clone();
+        config_b.skills.disabled_for_eval_sessions = true;
+        config_b.skills.eval_session_active = true;
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&config_b).expect("serialize config B"),
+        )
+        .expect("write config B");
+        controller.try_reload().expect("accept config B");
+        registry.reload_now().await.expect("publish registry B");
+        let registry_b = n8n_session_skill_registry_context(
+            home.path(),
+            &config_b,
+            &controller,
+            controller.accepted_snapshot().epoch(),
+            Some(registry),
+        )
+        .expect("render registry B");
+        assert!(registry_b.as_str().contains("\"skills\":[]"));
+
+        let request_a = build_provider_request(
+            home.path(),
+            &config_a,
+            &ProviderCallRequest {
+                prompt: "automation task".into(),
+                system: None,
+                model: None,
+                incognito: true,
+            },
+            None,
+            Some(&registry_a),
+        )
+        .expect("compose retained A request");
+        let system_a = request_a.system.expect("retained A registry");
+        assert!(system_a.contains(registry_a.as_str()));
+        assert!(!system_a.contains(registry_b.as_str()));
     }
 
     // ── H1 (2026-06-12): cloud-egress consent gate ──────────────────

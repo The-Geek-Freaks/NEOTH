@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W196-pinned-n8n-prerequisite",
-  "base": "7f2b8636e92ac01f647d7f9aa9e88cd9d505e03b",
-  "capturedUtc": "2026-09-22T11:58:21.2308627Z",
-  "validationStatus": "W196_HOSTED_FORMAT_FOLLOWUP_PENDING",
-  "scopeNote": "W196 version/OCI-pinned n8n commands and stable Node>=24 gate in both wizard paths; grouped38 collecting independent failures; W195 extractor digest+W191 authorizer wiring followups. Historical wave receipt sources unchanged.",
+  "item": "GOLD-W95-W200-skill-session-admission",
+  "base": "0d18bb17d2f6adda0a1d176ef3ef63ffa6316eb9",
+  "capturedUtc": "2026-09-22T12:32:43.5264521Z",
+  "validationStatus": "W197_W200_REVIEWED_HOSTED_PENDING",
+  "scopeNote": "W197 bounded prerequisite admission; W198 exact-controller n8n registry; W199 per-job Cron registry+terminal failure; W200 observed Linux8 lint and W191 fixture shutdown repair. Historical wave sources retained.",
   "files": [
     {
       "path": ".gitattributes",
@@ -63,8 +63,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 12216,
-      "sha256": "E5D9B3C3327BEB33D678C97C2562869878BCDC03EA69380D0EE2AFEA1B371195"
+      "bytes": 10468,
+      "sha256": "291ABB8D40628CA0C2B153A1DF849C7E01C62A630E0FB5C9BE8131256BF23E96"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -358,18 +358,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 28611,
-      "sha256": "7B98D9DBA7930AFD87D3FF1DD8D0867D32C7EA4FAA865ED23C4A8DBF25083D2A"
+      "bytes": 29839,
+      "sha256": "5BBB07E76974688817E021FD9FF7601290AC379F8B116BBCD07B8A64D949D602"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1030836,
-      "sha256": "2F1FB4AE971F238044B5619B3499D8387F9E7C06E9D5E68C54F616D20FBCAAC2"
+      "bytes": 1031620,
+      "sha256": "3E96C78B0073683C0813A96B3BF1B273754FF6514ABE47C4C9F07205D403DD2F"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1626283,
-      "sha256": "531EA1708689B6979F087F9BDDEAD79BD49932BFF4F71D85EA9AEF80DECAD98E"
+      "bytes": 1627067,
+      "sha256": "4CD26278BD131D15157680A6B66C3CE2D2ADAF8B3934F07C42B7941C3025F29B"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1128,8 +1128,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/research.rs",
-      "bytes": 26736,
-      "sha256": "647F8AF351B00529A44AB2C1FE44F700A66CF4A9BE2EF0A22E89D7CF54304A88"
+      "bytes": 26588,
+      "sha256": "81E5A92742A0D58034831188C64790EC7EA1F484F868CCD6A2AAC9B9E2476D17"
     },
     {
       "path": "SRC/neothd/src/cli/review.rs",
@@ -1413,8 +1413,8 @@
     },
     {
       "path": "SRC/neothd/src/cron/runner.rs",
-      "bytes": 121215,
-      "sha256": "42B1C9CE4F689CD013BE668F16D964A74F28B5A254EC6B5362AD114F7B97C573"
+      "bytes": 137720,
+      "sha256": "B617EF236B1B75A6A893098C6A2D2EAC3DA84702B0C06A154A148B7EF88FBC4B"
     },
     {
       "path": "SRC/neothd/src/cron/state.rs",
@@ -1668,8 +1668,8 @@
     },
     {
       "path": "SRC/neothd/src/loop_engine/engine.rs",
-      "bytes": 79222,
-      "sha256": "1F83C2DA66520325EFDF15853A20A369F19E11EE875D99BFF21FC8E1598CC254"
+      "bytes": 79508,
+      "sha256": "04C90D996CB2921E023A052456C5559EE9CA630AF128A7F3D4D3D568C775F50A"
     },
     {
       "path": "SRC/neothd/src/mcp/catalogue.rs",
@@ -1873,8 +1873,8 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers.rs",
-      "bytes": 40769,
-      "sha256": "C9E460455C064B5ED69E8123E241507772ABEE95DB7A13806F32B54B15068F00"
+      "bytes": 52004,
+      "sha256": "4B8D0F6E0853AB28207566B5FE974CADCB7309487AF66EAE90C6232797630EF0"
     },
     {
       "path": "SRC/neothd/src/permissions/gate.rs",
@@ -2083,8 +2083,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/bundled_resources.rs",
-      "bytes": 15481,
-      "sha256": "2E9A40A515EB38A43B73AC85F55887142FC0A2D01EE857239C4B3D0E28911D90"
+      "bytes": 15479,
+      "sha256": "0E46478EEE91C7B9FB1057EB82F5F7ED63F74C0F3FA7BF11693A5558AA3E6DC8"
     },
     {
       "path": "SRC/neothd/src/skills/creator.rs",
@@ -2098,13 +2098,13 @@
     },
     {
       "path": "SRC/neothd/src/skills/loader.rs",
-      "bytes": 112367,
-      "sha256": "DFB626708F00E5C42CFDD931F7D68E886B8B00169E65CB76992042E06E572271"
+      "bytes": 126520,
+      "sha256": "FF8318E7CB10AC11F9203DB294D62D3A7D4AFA76DF35E2C2B089F5CE377C1916"
     },
     {
       "path": "SRC/neothd/src/skills/mod.rs",
-      "bytes": 4984,
-      "sha256": "9DE032D6EF8C9800D69E693C1B8134B99C38EECA7AF96ED1A3592FA2F4DEB756"
+      "bytes": 5014,
+      "sha256": "A1581D44F5FAE84634A15A93B71819709C215D3D45C0B2C0CFBE628C89E3F59C"
     },
     {
       "path": "SRC/neothd/src/skills/mutation_lifecycle.rs",
@@ -2113,8 +2113,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/registry.rs",
-      "bytes": 132923,
-      "sha256": "C9E575C644023175C43CB1F366AD2172FB2DAADD6C9F2A7477ACF7FC2E55B05F"
+      "bytes": 133379,
+      "sha256": "E973EDE0003F6AA15B1244C02889A3CBD20C97E80834CB3F74F5AC72B261CED1"
     },
     {
       "path": "SRC/neothd/src/skills/resolver.rs",
@@ -2420,6 +2420,31 @@
       "path": "THIRD_PARTY_LICENSES",
       "bytes": 2299156,
       "sha256": "A2F73733618DE347F4876EDD4325391DB8C2F11D853614CC4D8EDC2A82CA497D"
+    },
+    {
+      "path": "SRC/neothd/src/skills/prerequisites.rs",
+      "bytes": 9682,
+      "sha256": "23FD42AF6295A3C04B91AF8B701F88ED2D26349A20813CB96BBE8B3AF32D50A4"
+    },
+    {
+      "path": "docs/gold-wave197-verification.md",
+      "bytes": 2224,
+      "sha256": "9B221D52DC0E0AA3FCDB70DF2E14D7CF4DE25B6AE565469981EA7383DE210694"
+    },
+    {
+      "path": "docs/gold-wave198-verification.md",
+      "bytes": 2133,
+      "sha256": "DE6D59F97F50D0C343DCECC9112815991B5D3B2FAD46037348F0F26ADA499850"
+    },
+    {
+      "path": "docs/gold-wave199-verification.md",
+      "bytes": 2238,
+      "sha256": "3B9B2D4C4045B7594ED100AC601CE92FAB7DE78BC1C59C4144E5E888D8858F5A"
+    },
+    {
+      "path": "docs/gold-wave200-verification.md",
+      "bytes": 1840,
+      "sha256": "E6286E598CF6097E7ADB494C98717E35290A1A413A041050BF30196C3CCA6164"
     }
   ]
 }

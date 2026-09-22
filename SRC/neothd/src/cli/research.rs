@@ -233,7 +233,6 @@ async fn run(home: &std::path::Path, id: &str, revision: u64, output: &OutputFor
     ) {
         Ok(value) => value,
         Err(error) => {
-            drop(budgeted);
             drop(wrapped);
             drop(writer);
             let wal = join.await.context("join research lifecycle WAL writer");
@@ -282,7 +281,6 @@ async fn run(home: &std::path::Path, id: &str, revision: u64, output: &OutputFor
                 Some(milliseconds) => milliseconds,
                 None if run.effect_started => {
                     drop(http);
-                    drop(budgeted);
                     drop(wrapped);
                     drop(writer);
                     let wal = join.await.context("join research lifecycle WAL writer");
@@ -307,7 +305,6 @@ async fn run(home: &std::path::Path, id: &str, revision: u64, output: &OutputFor
                 }
                 None => {
                     drop(http);
-                    drop(budgeted);
                     drop(wrapped);
                     drop(writer);
                     let wal = join.await.context("join research lifecycle WAL writer");
@@ -334,7 +331,6 @@ async fn run(home: &std::path::Path, id: &str, revision: u64, output: &OutputFor
         }
         Err(error) => {
             drop(http);
-            drop(budgeted);
             drop(wrapped);
             drop(writer);
             let wal = join.await.context("join research lifecycle WAL writer");
@@ -367,7 +363,6 @@ async fn run(home: &std::path::Path, id: &str, revision: u64, output: &OutputFor
             "immutable research wall-time budget exhausted"
         )),
     };
-    drop(budgeted);
     drop(wrapped);
     drop(http);
     drop(writer);

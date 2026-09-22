@@ -15,6 +15,7 @@
 
 use std::path::Path;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -189,6 +190,105 @@ async fn run_job_at_inner(
         &config,
     )
     .await
+}
+
+/// Render one Cron invocation's prompt-visible Skill inventory from the same
+/// accepted policy generation that admitted the job.  Cron has no selected
+/// Skill route: this is metadata-only Block D context and intentionally never
+/// carries a Skill body, tools, route, or model authority.
+///
+/// A new controller/registry is deliberately made per invocation.  A later
+/// job therefore observes its own already-loaded `freedom.yaml` generation,
+/// while retries retain the request built from this one rendered value.
+async fn cron_session_skill_registry_context(
+    home: &Path,
+    config: &crate::config::FreedomConfig,
+) -> Result<crate::pipeline::RenderedUntrustedContext> {
+    let skills_dir = home.join("skills");
+    let reload = Arc::new(crate::config::reload::ReloadController::new(
+        config.clone(),
+        home.join("freedom.yaml"),
+    ));
+    let config_epoch = reload.accepted_snapshot().epoch();
+    let registry = crate::skills::SkillRegistry::load_with_reload_controller(
+        &skills_dir,
+        Arc::clone(&reload),
+    )
+    .await
+    .with_context(|| format!("load Cron Skill registry from {}", skills_dir.display()))?;
+    let snapshot = registry
+        .authority_bound_snapshot_for_epoch(config_epoch)
+        .context("acquire authority-bound Cron Skill snapshot")?;
+    cron_session_skill_registry_context_from_snapshot(config, snapshot)
+}
+
+/// Pure filtering/rendering seam for the per-invocation registry above.
+/// Keeping it parameterized lets the failure boundaries and exact retained
+/// bytes be covered without process-wide registry overrides.
+fn cron_session_skill_registry_context_from_snapshot(
+    config: &crate::config::FreedomConfig,
+    snapshot: crate::skills::registry::SkillSnapshot,
+) -> Result<crate::pipeline::RenderedUntrustedContext> {
+    let mut blocked_skill_ids = std::collections::BTreeSet::<String>::new();
+    if !config.skills.pinned_hashes.is_empty() {
+        let verdicts = crate::skills::versioning::check_pinned_hashes(
+            snapshot
+                .skills()
+                .iter()
+                .map(|skill| (skill.id(), skill.content_hash.as_str())),
+            &config.skills.pinned_hashes,
+        );
+        for (skill, verdict) in snapshot.skills().iter().zip(verdicts) {
+            if verdict.verdict == crate::skills::versioning::PinnedHashOutcome::Mismatch {
+                blocked_skill_ids.insert(skill.id().to_owned());
+            }
+        }
+    }
+    let eval_suppress = config.skills.should_suppress_for_eval();
+    crate::skills::resolver::SkillRouteResolver::new(snapshot)
+        .retaining(|skill| !eval_suppress && !blocked_skill_ids.contains(skill.id()))
+        .session_registry_context(&[])
+        .context("render Cron session-start Skill registry context")
+}
+
+/// Compose the one enriched request submitted for a Cron job.  The registry
+/// is rendered once here before provider dispatch; `req.clone()` and the
+/// briefing retry's `..req` retain its exact typed Block D bytes.
+async fn cron_enriched_request(
+    home: &Path,
+    config: &crate::config::FreedomConfig,
+    prompt: &str,
+    explicit_system: Option<&str>,
+    model: String,
+    thinking_budget: Option<u32>,
+) -> Result<Request> {
+    let skill_registry_context = cron_session_skill_registry_context(home, config).await?;
+    let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
+        prompt,
+        operator_sovereignty: None,
+        operator_context: None,
+        preset_addendum: None,
+        explicit_system,
+        repo_context_block: None,
+        attachment_contexts: None,
+        skill_system_prompt: None,
+        skill_registry_context: Some(&skill_registry_context),
+        used_skill_id: None,
+        mcp_catalogue: None,
+        persona_override: None,
+        moral_core: None,
+        identity_anchor: None,
+        identity_locked: false,
+        current_goal: None,
+        communication_profile: None,
+    });
+    Ok(Request {
+        prompt: enriched.prompt,
+        system: enriched.system,
+        model: Some(model),
+        thinking_budget,
+        ..Default::default()
+    })
 }
 
 async fn resolve_job_provider<'a>(
@@ -622,12 +722,31 @@ async fn run_job_with_paths(
     )?;
 
     // ── Provider call (bounded by timeout_seconds) ─────────────────────────
-    let req = Request {
-        prompt: effective_prompt.clone(),
-        system: system_prompt,
-        model: Some(request_model),
-        thinking_budget: job.execution.thinking_budget,
-        ..Default::default()
+    let req = match cron_enriched_request(
+        home,
+        config,
+        &effective_prompt,
+        system_prompt.as_deref(),
+        request_model,
+        job.execution.thinking_budget,
+    )
+    .await
+    .with_context(|| format!("build Cron request registry for job `{}`", job.id))
+    {
+        Ok(request) => request,
+        Err(error) => {
+            warn!(job_id = %job.id, error = %error,
+                "Cron Skill registry preparation failed; blocking provider dispatch");
+            return finish_job_fired_failure(
+                job,
+                writer,
+                &started,
+                fired_event_id,
+                "cron_skill_registry_failed",
+                format!("Cron Skill registry preparation failed: {error:#}"),
+            )
+            .await;
+        }
     };
     let timeout_dur = Duration::from_secs(job.timeout_seconds.max(1) as u64);
     let provider_deadline = tokio::time::Instant::now() + timeout_dur;
@@ -1887,6 +2006,79 @@ channel_accounts:
         }
     }
 
+    /// Captures the real Cron request envelope at the provider seam.  This is
+    /// intentionally local to these tests: production continues to use the
+    /// ordinary `Provider` trait with no test-only global override.
+    struct RequestRecordingProvider {
+        calls: Arc<AtomicUsize>,
+        requests: Arc<Mutex<Vec<Request>>>,
+        outputs: Mutex<std::collections::VecDeque<String>>,
+    }
+
+    #[async_trait]
+    impl Provider for RequestRecordingProvider {
+        fn name(&self) -> &'static str {
+            "cron-request-recording-mock"
+        }
+
+        async fn complete(&self, request: Request) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.requests.lock().unwrap().push(request);
+            let text = self
+                .outputs
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("test provider output exhausted");
+            Ok(Completion {
+                termination: Default::default(),
+                text,
+                identity: Default::default(),
+                model: "mock".into(),
+                latency: Duration::from_millis(1),
+                input_tokens: Some(1),
+                output_tokens: Some(1),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                usage_measurements: None,
+            })
+        }
+    }
+
+    fn cron_registry_fixture_skill(
+        id: &str,
+        enabled: bool,
+    ) -> crate::skills::schema::RuntimeSkill {
+        let manifest = crate::skills::schema::SkillManifest {
+            id: id.to_owned(),
+            description: format!("{id} Cron registry fixture"),
+            version: "1.0.0".to_owned(),
+            trigger_keywords: Vec::new(),
+            system_prompt: format!("{id} private body must not enter Cron"),
+            tool_allowlist: vec!["private-tool-authority".to_owned()],
+            author: None,
+            tags: Vec::new(),
+            homepage: None,
+            source: None,
+            modes: Vec::new(),
+            enabled,
+            delegate_to: None,
+            model: Some("private-model-authority".to_owned()),
+            paths: Vec::new(),
+            effort: None,
+            loop_trigger: false,
+            visibility: crate::config::SkillVisibility::On,
+        };
+        crate::skills::schema::RuntimeSkill::from_trusted_bundled(
+            crate::skills::schema::Skill::from_trusted_bundled(
+                manifest,
+                std::path::PathBuf::from(format!("<bundled>/{id}/skill.yaml")),
+                format!("hash-{id}"),
+            ),
+        )
+        .expect("build trusted Cron registry fixture")
+    }
+
     struct DelayedQualityProvider {
         calls: Arc<AtomicUsize>,
         delay: Duration,
@@ -1928,6 +2120,200 @@ channel_accounts:
         format!("# Morning Brief\n\n{facts}")
     }
 
+    #[test]
+    fn cron_registry_filters_disabled_pinned_and_eval_skills() {
+        let snapshot = crate::skills::registry::SkillSnapshot::from_test_skills(vec![
+            cron_registry_fixture_skill("enabled", true),
+            cron_registry_fixture_skill("disabled", false),
+            cron_registry_fixture_skill("pinned", true),
+        ]);
+
+        let visible = cron_session_skill_registry_context_from_snapshot(
+            &crate::config::FreedomConfig::default(),
+            snapshot.clone(),
+        )
+        .expect("render enabled Cron registry");
+        assert!(visible.payload().contains("enabled"));
+        assert!(visible.payload().contains("pinned"));
+        assert!(!visible.payload().contains("disabled"));
+        assert!(!visible.payload().contains("private body"));
+        assert!(!visible.payload().contains("private-tool-authority"));
+        assert!(!visible.payload().contains("private-model-authority"));
+
+        let mut pinned = crate::config::FreedomConfig::default();
+        pinned
+            .skills
+            .pinned_hashes
+            .insert("pinned".to_owned(), "wrong-hash".to_owned());
+        let pin_filtered =
+            cron_session_skill_registry_context_from_snapshot(&pinned, snapshot.clone())
+                .expect("render pin-filtered Cron registry");
+        assert!(pin_filtered.payload().contains("enabled"));
+        assert!(!pin_filtered.payload().contains("pinned"));
+
+        let mut eval = crate::config::FreedomConfig::default();
+        eval.skills.disabled_for_eval_sessions = true;
+        eval.skills.eval_session_active = true;
+        let eval_filtered = cron_session_skill_registry_context_from_snapshot(&eval, snapshot)
+            .expect("render eval-filtered Cron registry");
+        assert!(eval_filtered.payload().contains("\"skills\":[]"));
+    }
+
+    #[tokio::test]
+    async fn cron_registry_first_request_has_one_typed_metadata_envelope() {
+        let home = tempdir().unwrap();
+        let segment = home.path().join("cron-registry-first.wal");
+        let (writer, join) = wal_spawn(segment).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = authorized(RequestRecordingProvider {
+            calls: Arc::clone(&calls),
+            requests: Arc::clone(&requests),
+            outputs: Mutex::new(std::collections::VecDeque::from(["done".to_owned()])),
+        });
+
+        run_job_at(home.path(), &delivery_job("telegram"), &provider, &writer)
+            .await
+            .expect("Cron job reaches provider with a registry envelope");
+        drop(writer);
+        let _ = join.await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let request = requests
+            .lock()
+            .unwrap()
+            .pop()
+            .expect("one provider request");
+        let system = request.system.expect("Cron registry is Block D system context");
+        assert_eq!(system.matches("\"skills\":").count(), 1);
+        assert!(system.contains("UNTRUSTED data"));
+        assert!(!system.contains("\"system_prompt\""));
+        assert!(!system.contains("\"tool_allowlist\""));
+        assert!(!system.contains("\"model\""));
+    }
+
+    #[tokio::test]
+    async fn cron_registry_retry_retains_byte_identical_system_context() {
+        let home = tempdir().unwrap();
+        let segment = home.path().join("cron-registry-retry.wal");
+        let (writer, join) = wal_spawn(segment).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = authorized(RequestRecordingProvider {
+            calls: Arc::clone(&calls),
+            requests: Arc::clone(&requests),
+            outputs: Mutex::new(std::collections::VecDeque::from([
+                "too short".to_owned(),
+                passing_briefing(),
+            ])),
+        });
+
+        run_job_at(home.path(), &briefing_job(), &provider, &writer)
+            .await
+            .expect("briefing retry completes");
+        drop(writer);
+        let _ = join.await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        // The quality retry deliberately changes only the user prompt.  Its
+        // `..req` update must retain the byte-identical enriched system layer.
+        assert_eq!(requests[0].system, requests[1].system);
+        assert_eq!(requests[0].model, requests[1].model);
+        assert_ne!(requests[0].prompt, requests[1].prompt);
+    }
+
+    #[tokio::test]
+    async fn cron_registry_later_job_uses_its_changed_config_generation() {
+        let home = tempdir().unwrap();
+        let segment = home.path().join("cron-registry-generations.wal");
+        let (writer, join) = wal_spawn(segment).unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = authorized(RequestRecordingProvider {
+            calls: Arc::new(AtomicUsize::new(0)),
+            requests: Arc::clone(&requests),
+            outputs: Mutex::new(std::collections::VecDeque::from([
+                "first".to_owned(),
+                "second".to_owned(),
+            ])),
+        });
+        let job = delivery_job("telegram");
+
+        run_job_at(home.path(), &job, &provider, &writer)
+            .await
+            .expect("generation A Cron job");
+        let mut config_b = crate::config::FreedomConfig::default();
+        config_b.skills.disabled_for_eval_sessions = true;
+        config_b.skills.eval_session_active = true;
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            config_b.public_yaml().expect("serialize generation B"),
+        )
+        .expect("persist generation B");
+        run_job_at(home.path(), &job, &provider, &writer)
+            .await
+            .expect("generation B Cron job");
+        drop(writer);
+        let _ = join.await;
+
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        let system_a = requests[0]
+            .system
+            .as_deref()
+            .expect("generation A registry");
+        let system_b = requests[1]
+            .system
+            .as_deref()
+            .expect("generation B registry");
+        assert!(!system_a.contains("\"skills\":[]"));
+        assert!(system_b.contains("\"skills\":[]"));
+    }
+
+    #[tokio::test]
+    async fn cron_registry_load_failure_stops_before_provider_dispatch() {
+        let home = tempdir().unwrap();
+        let broken = home.path().join("skills").join("broken");
+        std::fs::create_dir_all(&broken).expect("create malformed Skill fixture");
+        std::fs::write(
+            broken.join("skill.yaml"),
+            "id: broken\ndescription: malformed Cron fixture\nsystem_prompt: test\nunexpected: true\n",
+        )
+        .expect("write malformed Skill fixture");
+        let segment = home.path().join("cron-registry-failure.wal");
+        let (writer, join) = wal_spawn(segment).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = authorized(CountingProvider {
+            calls: Arc::clone(&calls),
+        });
+
+        let outcome = run_job_at(home.path(), &delivery_job("telegram"), &provider, &writer)
+            .await
+            .expect("registry failure must become a terminal Cron outcome");
+        assert!(!outcome.success);
+        assert!(outcome
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("Cron Skill registry")));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        drop(writer);
+        let _ = join.await;
+
+        let events = wal_json_events_with_ids(&segment);
+        assert_eq!(
+            events.iter().map(|(kind, _, _)| *kind).collect::<Vec<_>>(),
+            vec![EVENT_TYPE_JOB_FIRED, EVENT_TYPE_JOB_FAILED],
+            "registry refusal must terminate the fired Cron run"
+        );
+        assert_eq!(
+            events[1].2["fired_event_id"].as_u64(),
+            Some(events[0].1),
+            "JOB_FAILED must link to its preceding JOB_FIRED event"
+        );
+        assert_eq!(events[1].2["failure_kind"], "cron_skill_registry_failed");
+    }
+
     /// The cron events a segment holds, without WAL infrastructure frames.
     ///
     /// A segment also carries chain-integrity frames — the compaction marker
@@ -1943,6 +2329,25 @@ channel_accounts:
             if frame.header.event_type != crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
                 let payload = serde_json::from_slice(frame.payload).expect("JSON cron payload");
                 events.push((frame.header.event_type, payload));
+            }
+            cursor = &cursor[frame.header.total_len as usize..];
+        }
+        events
+    }
+
+    fn wal_json_events_with_ids(path: &Path) -> Vec<(u8, u64, serde_json::Value)> {
+        let bytes = std::fs::read(path).expect("read WAL segment");
+        let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
+        let mut events = Vec::new();
+        while !cursor.is_empty() {
+            let frame = decode_frame(cursor).expect("decode WAL frame");
+            if frame.header.event_type != crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
+                let payload = serde_json::from_slice(frame.payload).expect("JSON cron payload");
+                events.push((
+                    frame.header.event_type,
+                    frame.header.event_id.0,
+                    payload,
+                ));
             }
             cursor = &cursor[frame.header.total_len as usize..];
         }

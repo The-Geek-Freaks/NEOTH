@@ -46,6 +46,109 @@ pub(crate) struct AuthorizedRuntimeSkillSnapshot {
     pub(crate) accepted_config_epoch: u64,
 }
 
+/// One authority-selected candidate whose provenance is retained until the
+/// readiness boundary has decided whether it may become a `RuntimeSkill`.
+enum PendingRuntimeSkill {
+    TrustedBundled {
+        skill: Skill,
+        resource_path: Option<PathBuf>,
+    },
+    Installed {
+        authority: Box<super::authority::ValidatedInstalledSkillAuthority>,
+        path: PathBuf,
+        content_hash: String,
+        manifest_sha256: String,
+    },
+}
+
+impl PendingRuntimeSkill {
+    fn id(&self) -> &str {
+        match self {
+            Self::TrustedBundled { skill, .. } => skill.id(),
+            Self::Installed { authority, .. } => authority.manifest().id.as_str(),
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        match self {
+            Self::TrustedBundled { skill, .. } => skill.is_enabled(),
+            Self::Installed { authority, .. } => authority.manifest().enabled,
+        }
+    }
+
+    fn into_runtime(self) -> Result<RuntimeSkill> {
+        match self {
+            Self::TrustedBundled {
+                skill,
+                resource_path,
+            } => {
+                let runtime = RuntimeSkill::from_trusted_bundled(skill)?;
+                match resource_path {
+                    Some(path) => runtime.with_verified_bundled_resource_path(path),
+                    None => Ok(runtime),
+                }
+            }
+            Self::Installed {
+                authority,
+                path,
+                content_hash,
+                manifest_sha256,
+            } => RuntimeSkill::from_validated_installed(
+                *authority,
+                path,
+                content_hash,
+                &manifest_sha256,
+            ),
+        }
+    }
+}
+
+struct PendingAuthorizedRuntimeSkillSnapshot {
+    skills: Vec<PendingRuntimeSkill>,
+    bundled_only: Vec<PendingRuntimeSkill>,
+    accepted_config_epoch: u64,
+}
+
+/// Apply readiness after policy and installed same-id authority selection, but
+/// before either origin is wrapped as a `RuntimeSkill`.
+async fn inspect_runtime_prerequisites<'a>(
+    candidates: impl Iterator<Item = &'a PendingRuntimeSkill>,
+    probe: Option<&dyn super::prerequisites::SkillPrerequisiteProbe>,
+) -> super::prerequisites::SkillPrerequisiteSnapshot {
+    let candidates = candidates.map(|skill| (skill.id(), skill.is_enabled()));
+    match probe {
+        Some(probe) => super::prerequisites::SkillPrerequisiteSnapshot::inspect_enabled_candidates(candidates, probe).await,
+        None => super::prerequisites::SkillPrerequisiteSnapshot::inspect_production(candidates).await,
+    }
+}
+
+fn filter_runtime_prerequisites(
+    mut skills: Vec<PendingRuntimeSkill>,
+    readiness: &super::prerequisites::SkillPrerequisiteSnapshot,
+) -> Vec<PendingRuntimeSkill> {
+    skills.retain(|skill| {
+        let permitted = readiness.permits(skill.id());
+        if !permitted {
+            tracing::warn!(
+                id = %skill.id(),
+                prerequisite = ?readiness.prerequisite_for(skill.id()),
+                "bundled Skill prerequisite is not ready; excluding effective candidate from runtime admission"
+            );
+        }
+        permitted
+    });
+    skills
+}
+
+fn construct_runtime_skills(skills: Vec<PendingRuntimeSkill>) -> Result<Vec<RuntimeSkill>> {
+    let mut runtime = skills
+        .into_iter()
+        .map(PendingRuntimeSkill::into_runtime)
+        .collect::<Result<Vec<_>>>()?;
+    runtime.sort_by(|left, right| left.id().cmp(right.id()));
+    Ok(runtime)
+}
+
 /// Load every available skill into a raw diagnostic/mutation inventory —
 /// bundled-in-binary defaults plus user-installed candidates from
 /// `<skills_dir>` if it exists.
@@ -152,6 +255,25 @@ async fn load_authorized_with_mode_and_budget_override(
     authority_budget_override: Option<(usize, u64)>,
     installed_store_mode: InstalledStoreMode,
 ) -> Result<AuthorizedRuntimeSkillSnapshot> {
+    load_authorized_with_mode_budget_and_probe(
+        skills_dir,
+        reload,
+        user_skill_load_mode,
+        authority_budget_override,
+        installed_store_mode,
+        None,
+    )
+    .await
+}
+
+async fn load_authorized_with_mode_budget_and_probe(
+    skills_dir: &Path,
+    reload: &crate::config::reload::ReloadController,
+    user_skill_load_mode: UserSkillLoadMode,
+    authority_budget_override: Option<(usize, u64)>,
+    installed_store_mode: InstalledStoreMode,
+    prerequisite_probe: Option<&dyn super::prerequisites::SkillPrerequisiteProbe>,
+) -> Result<AuthorizedRuntimeSkillSnapshot> {
     let materialize_bundled_resources = matches!(
         installed_store_mode,
         InstalledStoreMode::ReconcileForRuntime
@@ -215,14 +337,19 @@ async fn load_authorized_with_mode_and_budget_override(
     let accepted_config = accepted.config();
     let policy = SkillPolicy::from_config(&accepted_config.skills);
 
-    tokio::task::spawn_blocking(move || {
-        let bundled_only = load_trusted_bundled_with_policy(
+    let reload_for_worker = reload.clone();
+    let snapshot = tokio::task::spawn_blocking(move || {
+        let reload = reload_for_worker;
+        let bundled_only = load_pending_trusted_bundled_with_policy(
             &policy,
-            materialize_bundled_resources.then(|| home.as_deref()).flatten(),
+            materialize_bundled_resources.then_some(home.as_deref()).flatten(),
         )?;
-        let mut by_id: HashMap<String, RuntimeSkill> = bundled_only
-            .iter()
-            .cloned()
+        let fallback_bundled = load_pending_trusted_bundled_with_policy(
+            &policy,
+            materialize_bundled_resources.then_some(home.as_deref()).flatten(),
+        )?;
+        let mut by_id: HashMap<String, PendingRuntimeSkill> = bundled_only
+            .into_iter()
             .map(|skill| (skill.id().to_string(), skill))
             .collect();
 
@@ -245,7 +372,7 @@ async fn load_authorized_with_mode_and_budget_override(
             Vec::new()
         };
         let Some(home) = home.as_deref() else {
-            return finish_authorized_snapshot(&reload, accepted_epoch, bundled_only);
+            return finish_pending_authorized_snapshot(&reload, accepted_epoch, by_id, fallback_bundled);
         };
         let mut authority_batch = if candidates.is_empty() {
             None
@@ -273,7 +400,7 @@ async fn load_authorized_with_mode_and_budget_override(
                         error = %error,
                         "installed Skill authority batch is unavailable; publishing trusted bundled-only runtime snapshot"
                     );
-                    return finish_authorized_snapshot(&reload, accepted_epoch, bundled_only);
+                    return finish_pending_authorized_snapshot(&reload, accepted_epoch, by_id, fallback_bundled);
                 }
             }
         };
@@ -284,32 +411,22 @@ async fn load_authorized_with_mode_and_budget_override(
             };
             match authority_batch.validate(&id, &reload) {
                 Ok(super::authority::InstalledSkillAuthorityValidation::Active(authority)) => {
-                    let skill = match RuntimeSkill::from_validated_installed(
-                        *authority,
-                        candidate.skill.path,
-                        candidate.skill.content_hash,
-                        &candidate.manifest_sha256,
-                    )
-                    .with_context(|| format!("materialize authorized installed Skill `{id}`"))
-                    {
-                        Ok(skill) => skill,
-                        Err(error) => {
-                            tracing::warn!(
-                                id = %id,
-                                error = %error,
-                                "quarantining installed Skill whose authority and loaded bytes do not match"
-                            );
-                            continue;
-                        }
-                    };
                     let overrode_bundled = by_id.contains_key(&id);
                     debug!(
                         id = %id,
                         overrode_bundled,
-                        content_hash = %skill.content_hash,
+                        content_hash = %candidate.skill.content_hash,
                         "admitted installed Skill with validated runtime authority"
                     );
-                    by_id.insert(id, skill);
+                    by_id.insert(
+                        id,
+                        PendingRuntimeSkill::Installed {
+                            authority,
+                            path: candidate.skill.path,
+                            content_hash: candidate.skill.content_hash,
+                            manifest_sha256: candidate.manifest_sha256,
+                        },
+                    );
                 }
                 Ok(super::authority::InstalledSkillAuthorityValidation::Inactive(reason)) => {
                     if matches!(
@@ -332,7 +449,7 @@ async fn load_authorized_with_mode_and_budget_override(
                         error = %error,
                         "installed Skill authority batch exceeded its aggregate validation boundary; publishing trusted bundled-only runtime snapshot"
                     );
-                    return finish_authorized_snapshot(&reload, accepted_epoch, bundled_only);
+                    return finish_pending_authorized_snapshot(&reload, accepted_epoch, by_id, fallback_bundled);
                 }
             }
         }
@@ -341,25 +458,31 @@ async fn load_authorized_with_mode_and_budget_override(
             reload.accepted_snapshot().epoch() == accepted_epoch,
             "accepted Skill policy changed while building authorized runtime registry"
         );
-        let mut out: Vec<RuntimeSkill> = by_id.into_values().collect();
-        out.sort_by(|left, right| left.id().cmp(right.id()));
-        if let Err(error) = super::mode_registry::ModeRegistry::from_skills(&out) {
-            tracing::warn!(
-                error = %error,
-                "authorized installed Skill modes conflict; publishing trusted bundled-only runtime snapshot"
-            );
-            return Ok(AuthorizedRuntimeSkillSnapshot {
-                skills: bundled_only,
-                accepted_config_epoch: accepted_epoch,
-            });
-        }
-        Ok(AuthorizedRuntimeSkillSnapshot {
-            skills: out,
+        Ok(PendingAuthorizedRuntimeSkillSnapshot {
+            skills: by_id.into_values().collect(),
+            bundled_only: fallback_bundled,
             accepted_config_epoch: accepted_epoch,
         })
     })
     .await
-    .with_context(|| format!("authorized Skill loader worker failed for {skills_dir_display}"))?
+    .with_context(|| format!("authorized Skill loader worker failed for {skills_dir_display}"))??;
+    let readiness = inspect_runtime_prerequisites(
+        snapshot.skills.iter().chain(snapshot.bundled_only.iter()),
+        prerequisite_probe,
+    )
+    .await;
+    let skills = construct_runtime_skills(filter_runtime_prerequisites(snapshot.skills, &readiness))?;
+    if let Err(error) = super::mode_registry::ModeRegistry::from_skills(&skills) {
+        tracing::warn!(
+            error = %error,
+            "authorized installed Skill modes conflict; publishing trusted bundled-only runtime snapshot"
+        );
+        let fallback = construct_runtime_skills(
+            filter_runtime_prerequisites(snapshot.bundled_only, &readiness),
+        )?;
+        return finish_authorized_snapshot(&reload, snapshot.accepted_config_epoch, fallback);
+    }
+    finish_authorized_snapshot(&reload, snapshot.accepted_config_epoch, skills)
 }
 
 /// Build a complete bundled-only runtime layer from one stable accepted policy
@@ -369,6 +492,13 @@ async fn load_authorized_with_mode_and_budget_override(
 pub(crate) async fn load_trusted_bundled_from_reload_controller(
     reload: &crate::config::reload::ReloadController,
 ) -> Result<AuthorizedRuntimeSkillSnapshot> {
+    load_trusted_bundled_from_reload_controller_with_probe(reload, None).await
+}
+
+async fn load_trusted_bundled_from_reload_controller_with_probe(
+    reload: &crate::config::reload::ReloadController,
+    prerequisite_probe: Option<&dyn super::prerequisites::SkillPrerequisiteProbe>,
+) -> Result<AuthorizedRuntimeSkillSnapshot> {
     const MAX_ACCEPTED_EPOCH_RETRIES: usize = 8;
 
     let reload = reload.clone();
@@ -377,14 +507,20 @@ pub(crate) async fn load_trusted_bundled_from_reload_controller(
         let accepted_epoch = accepted.epoch();
         let policy = SkillPolicy::from_config(&accepted.config().skills);
         let bundled =
-            tokio::task::spawn_blocking(move || load_trusted_bundled_with_policy(&policy, None))
+            tokio::task::spawn_blocking(move || load_pending_trusted_bundled_with_policy(&policy, None))
                 .await
                 .context("trusted bundled Skill fallback worker failed")??;
         if reload.accepted_snapshot().epoch() == accepted_epoch {
-            return Ok(AuthorizedRuntimeSkillSnapshot {
-                skills: bundled,
-                accepted_config_epoch: accepted_epoch,
-            });
+            let readiness = inspect_runtime_prerequisites(bundled.iter(), prerequisite_probe).await;
+            let skills = construct_runtime_skills(filter_runtime_prerequisites(bundled, &readiness))?;
+            super::mode_registry::ModeRegistry::from_skills(&skills)
+                .context("validate trusted bundled Skill modes")?;
+            if reload.accepted_snapshot().epoch() == accepted_epoch {
+                return Ok(AuthorizedRuntimeSkillSnapshot {
+                    skills,
+                    accepted_config_epoch: accepted_epoch,
+                });
+            }
         }
         debug!(
             attempt,
@@ -402,6 +538,17 @@ fn load_trusted_bundled_with_policy(
     policy: &SkillPolicy,
     materialize_home: Option<&Path>,
 ) -> Result<Vec<RuntimeSkill>> {
+    let pending = load_pending_trusted_bundled_with_policy(policy, materialize_home)?;
+    let runtime = construct_runtime_skills(pending)?;
+    super::mode_registry::ModeRegistry::from_skills(&runtime)
+        .context("validate trusted bundled Skill modes")?;
+    Ok(runtime)
+}
+
+fn load_pending_trusted_bundled_with_policy(
+    policy: &SkillPolicy,
+    materialize_home: Option<&Path>,
+) -> Result<Vec<PendingRuntimeSkill>> {
     let mut bundled = parse_bundled_skills()?;
     // The embedded Drawio manifest refers to sibling scripts and indexes. A
     // read-only fallback is forbidden from creating that package, so it must
@@ -426,21 +573,36 @@ fn load_trusted_bundled_with_policy(
             .transpose()?,
         None => None,
     };
-    let mut runtime = Vec::with_capacity(bundled.len());
+    let mut pending = Vec::with_capacity(bundled.len());
     for skill in bundled.into_values() {
         let is_drawio = skill.id() == "drawio_diagram";
-        let runtime_skill = RuntimeSkill::from_trusted_bundled(skill)?;
-        runtime.push(match (is_drawio, drawio_resource_path.as_ref()) {
-            (true, Some(path)) => {
-                runtime_skill.with_verified_bundled_resource_path(path.clone())?
-            }
-            _ => runtime_skill,
+        pending.push(PendingRuntimeSkill::TrustedBundled {
+            skill,
+            resource_path: match (is_drawio, drawio_resource_path.as_ref()) {
+                (true, Some(path)) => Some(path.clone()),
+                _ => None,
+            },
         });
     }
-    runtime.sort_by(|left, right| left.id().cmp(right.id()));
-    super::mode_registry::ModeRegistry::from_skills(&runtime)
-        .context("validate trusted bundled Skill modes")?;
-    Ok(runtime)
+    pending.sort_by(|left, right| left.id().cmp(right.id()));
+    Ok(pending)
+}
+
+fn finish_pending_authorized_snapshot(
+    reload: &crate::config::reload::ReloadController,
+    accepted_epoch: u64,
+    skills: HashMap<String, PendingRuntimeSkill>,
+    bundled_only: Vec<PendingRuntimeSkill>,
+) -> Result<PendingAuthorizedRuntimeSkillSnapshot> {
+    anyhow::ensure!(
+        reload.accepted_snapshot().epoch() == accepted_epoch,
+        "accepted Skill policy changed while building authorized runtime registry"
+    );
+    Ok(PendingAuthorizedRuntimeSkillSnapshot {
+        skills: skills.into_values().collect(),
+        bundled_only,
+        accepted_config_epoch: accepted_epoch,
+    })
 }
 
 fn finish_authorized_snapshot(
@@ -1527,6 +1689,39 @@ mod tests {
         crate::config::reload::ReloadController::new(config, config_path)
     }
 
+    fn test_reload_controller_with_config(
+        home: &Path,
+        config: crate::config::FreedomConfig,
+    ) -> crate::config::reload::ReloadController {
+        let config_path = home.join("freedom.yaml");
+        std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        crate::config::reload::ReloadController::new(config, config_path)
+    }
+
+    #[derive(Default)]
+    struct W197FixtureProbe {
+        statuses: std::collections::BTreeMap<
+            super::super::prerequisites::BundledSkillPrerequisite,
+            super::super::prerequisites::PrerequisiteStatus,
+        >,
+        calls: std::sync::Mutex<Vec<super::super::prerequisites::BundledSkillPrerequisite>>,
+    }
+
+    impl super::super::prerequisites::SkillPrerequisiteProbe for W197FixtureProbe {
+        fn inspect(
+            &self,
+            prerequisite: super::super::prerequisites::BundledSkillPrerequisite,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = super::super::prerequisites::PrerequisiteStatus> + Send + '_>> {
+            self.calls.lock().unwrap().push(prerequisite);
+            Box::pin(async move {
+                self.statuses
+                    .get(&prerequisite)
+                    .copied()
+                    .unwrap_or(super::super::prerequisites::PrerequisiteStatus::Ready)
+            })
+        }
+    }
+
     #[tokio::test]
     async fn w192_read_only_loader_does_not_create_bundled_resource_cache() {
         let home = tempdir().unwrap();
@@ -1616,6 +1811,182 @@ mod tests {
         .unwrap();
         super::super::authority::publish_installed_authority_decision(home, id, reload, decision)
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn w197_force_enable_and_enable_all_cannot_admit_not_ready_graphify() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        let mut config = crate::config::FreedomConfig::default();
+        config.skills.enable_all_bundled = true;
+        config.skills.enabled.push("graphify".to_string());
+        let reload = test_reload_controller_with_config(home.path(), config);
+        let probe = W197FixtureProbe {
+            statuses: [(
+                super::super::prerequisites::BundledSkillPrerequisite::GraphifyRuntime,
+                super::super::prerequisites::PrerequisiteStatus::NotReady,
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+
+        let snapshot = load_authorized_with_mode_budget_and_probe(
+            &skills_dir,
+            &reload,
+            UserSkillLoadMode::Strict,
+            None,
+            InstalledStoreMode::ReconcileForRuntime,
+            Some(&probe),
+        )
+        .await
+        .unwrap();
+
+        assert!(snapshot.skills.iter().all(|skill| skill.id() != "graphify"));
+        assert_eq!(
+            *probe.calls.lock().unwrap(),
+            vec![super::super::prerequisites::BundledSkillPrerequisite::DrawioPython,
+                 super::super::prerequisites::BundledSkillPrerequisite::PptMasterPythonPptx,
+                 super::super::prerequisites::BundledSkillPrerequisite::GraphifyRuntime,
+                 super::super::prerequisites::BundledSkillPrerequisite::OfficeCli]
+        );
+    }
+
+    #[tokio::test]
+    async fn w197_bundled_only_fallback_cannot_admit_not_ready_force_enabled_graphify() {
+        let home = tempdir().unwrap();
+        let mut config = crate::config::FreedomConfig::default();
+        config.skills.enable_all_bundled = true;
+        config.skills.enabled.push("graphify".to_string());
+        let reload = test_reload_controller_with_config(home.path(), config);
+        let probe = W197FixtureProbe {
+            statuses: [(
+                super::super::prerequisites::BundledSkillPrerequisite::GraphifyRuntime,
+                super::super::prerequisites::PrerequisiteStatus::NotReady,
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+        let snapshot = load_trusted_bundled_from_reload_controller_with_probe(&reload, Some(&probe))
+            .await
+            .unwrap();
+        assert!(snapshot.skills.iter().all(|skill| skill.id() != "graphify"));
+    }
+
+    #[tokio::test]
+    async fn w197_authorized_same_id_override_stays_shadowing_when_not_ready() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        write_manifest(
+            &skills_dir,
+            "graphify",
+            "id: graphify\ndescription: installed graphify\nsystem_prompt: INSTALLED-GRAPHIFY\ntrigger_keywords: [graphify]\n",
+        )
+        .await;
+        install_test_wal_key(home.path());
+        record_test_install_incarnation(home.path(), "graphify");
+        let reload = test_reload_controller(home.path());
+        activate_test_skill(home.path(), "graphify", &reload);
+        let ready_probe = W197FixtureProbe::default();
+        let ready_snapshot = load_authorized_with_mode_budget_and_probe(
+            &skills_dir,
+            &reload,
+            UserSkillLoadMode::Strict,
+            None,
+            InstalledStoreMode::ReconcileForRuntime,
+            Some(&ready_probe),
+        )
+        .await
+        .unwrap();
+        let ready_graphify = ready_snapshot
+            .skills
+            .iter()
+            .find(|skill| skill.id() == "graphify")
+            .expect("active installed same-id candidate must replace bundled graphify");
+        assert!(!ready_graphify.is_trusted_bundled());
+        assert_eq!(ready_graphify.system_prompt(), "INSTALLED-GRAPHIFY");
+        assert_eq!(
+            ready_probe
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|kind| **kind == super::super::prerequisites::BundledSkillPrerequisite::GraphifyRuntime)
+                .count(),
+            1,
+        );
+        let probe = W197FixtureProbe {
+            statuses: [(
+                super::super::prerequisites::BundledSkillPrerequisite::GraphifyRuntime,
+                super::super::prerequisites::PrerequisiteStatus::NotReady,
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+
+        let snapshot = load_authorized_with_mode_budget_and_probe(
+            &skills_dir,
+            &reload,
+            UserSkillLoadMode::Strict,
+            None,
+            InstalledStoreMode::ReconcileForRuntime,
+            Some(&probe),
+        )
+        .await
+        .unwrap();
+        assert!(snapshot.skills.iter().all(|skill| skill.id() != "graphify"));
+        assert_eq!(
+            snapshot.accepted_config_epoch,
+            ready_snapshot.accepted_config_epoch,
+            "the deterministic Ready then NotReady builds use one accepted policy epoch"
+        );
+        assert_eq!(
+            ready_graphify.system_prompt(),
+            "INSTALLED-GRAPHIFY",
+            "the retained Ready snapshot keeps its immutable routed body after a later NotReady build"
+        );
+    }
+
+    #[tokio::test]
+    async fn w197_ready_bundled_candidate_preserves_hash_and_provenance() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        let reload = test_reload_controller(home.path());
+        let probe = W197FixtureProbe::default();
+        let snapshot = load_authorized_with_mode_budget_and_probe(
+            &skills_dir,
+            &reload,
+            UserSkillLoadMode::Strict,
+            None,
+            InstalledStoreMode::ReconcileForRuntime,
+            Some(&probe),
+        )
+        .await
+        .unwrap();
+        let graphify = snapshot.skills.iter().find(|skill| skill.id() == "graphify").unwrap();
+        let expected = load_trusted_bundled_with_policy(
+            &SkillPolicy::from_config(&crate::config::SkillsConfig::default()),
+            Some(home.path()),
+        )
+        .unwrap()
+        .into_iter()
+        .find(|skill| skill.id() == "graphify")
+        .unwrap();
+        assert!(graphify.is_trusted_bundled());
+        assert_eq!(graphify.content_hash, expected.content_hash);
+        assert_eq!(serde_json::to_vec(graphify).unwrap(), serde_json::to_vec(&expected).unwrap());
+        assert_eq!(
+            probe
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|kind| **kind == super::super::prerequisites::BundledSkillPrerequisite::GraphifyRuntime)
+                .count(),
+            1,
+        );
     }
 
     #[tokio::test]

@@ -681,6 +681,16 @@ impl SkillRegistry {
         &self.skills_dir
     }
 
+    /// Whether this registry is bound to the exact accepted-config controller
+    /// retained by a daemon consumer. Path and numeric epoch equality alone do
+    /// not prove that two independently constructed controllers share policy.
+    pub(crate) fn uses_reload_controller(
+        &self,
+        reload_controller: &Arc<crate::config::reload::ReloadController>,
+    ) -> bool {
+        Arc::ptr_eq(&self.reload_controller, reload_controller)
+    }
+
     /// Exact active config path that owns this registry's policy.
     pub fn config_path(&self) -> &Path {
         &self.config_path

@@ -107,7 +107,7 @@ fn materialize_locked(
         target_path.display()
     );
     if let Some(target) =
-        open_real_child_dir_if_present(&skill_dir, OsStr::new(&digest), &target_path)?
+        open_real_child_dir_if_present(skill_dir, OsStr::new(&digest), &target_path)?
     {
         verify_package(&target, &target_path, resources)?;
         return Ok(target_path.join("skill.yaml"));
@@ -121,7 +121,7 @@ fn materialize_locked(
     // remains no-follow.
     let stage_name = format!(".{digest}.staging-{}", uuid::Uuid::new_v4().simple());
     let stage_path = skill_path.join(&stage_name);
-    if open_real_child_dir_if_present(&skill_dir, OsStr::new(&stage_name), &stage_path)?.is_some() {
+    if open_real_child_dir_if_present(skill_dir, OsStr::new(&stage_name), &stage_path)?.is_some() {
         anyhow::bail!(
             "unexpected existing bundled resource stage: {}",
             stage_path.display()

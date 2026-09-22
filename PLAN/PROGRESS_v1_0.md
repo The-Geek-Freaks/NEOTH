@@ -2,28 +2,40 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
-**W196 next publication (2026-09-22):** n8n's offered install commands now use
-reviewed version 2.40.5 and its immutable OCI digest. Both wizard branches offer
-npm only after a complete stable Node version >=24 and npm are observed.
-Four focused identities expand the existing grouped lane from 34 to 38. It now
-records all independently failing behavior fixtures before returning failure;
-compile/discovery errors still stop immediately. Independent source/lane review
-passed, with the matching matrix admission included in this publication.
+**W197-W200 publication (2026-09-22):** the authorized Skill loader now
+checks the exact Drawio/PPT/Graphify/OfficeCLI prerequisite families before
+RuntimeSkill construction. One bounded readiness result is shared by primary
+and fallback admission; unready installed overrides cannot expose bundled
+predecessors. W198 adds metadata-only registry context to n8n provider sessions,
+requiring the exact Home, ReloadController identity and accepted config epoch.
+W199 gives each operator-authored Cron invocation its own authority-bound
+registry, retained through retries; registry failure produces linked
+JOB_FIRED/JOB_FAILED records before any provider call. Independent source review
+passed after timeout, controller-identity and terminal-WAL corrections.
 
-W195 is published in `ff23b247`, followed by exact Hosted formatting in `bb91c4d3`.
-Preflight `35723253662` reached the source contracts and found the extractor's
-stale inventory digest; it now matches the corrected canonical gchat fixture.
-Grouped34 `35722981118` compiled, passed its first 14 identities, then showed
-that the fallback's call authorizer also needed the real WAL writer. The fixture
-now binds both writer and private usage home; remaining behavior awaits Hosted
-execution. No successful W192/W193 behavior claim is made yet.
+W200 repairs eight strict-Clippy findings from full-CI `35726117022` on
+`0d18bb17`. Grouped38 `35724290786` compiled and passed fourteen identities,
+then hung in W191's fallback fixture because the provider still owned a WAL
+sender during writer join. The cancelled run's log confirms that exact boundary.
+The fixture now releases the provider first and bounds the join. The next grouped
+lane requires sixty exact source-bound identities, including retained-registry
+and oversize cases. Each behavior invocation has a finite timeout; every failed
+identity remains in the receipt and makes the aggregate fail. New Hosted
+formatting, compilation, lint and behavior results remain required.
 
-Current inventory: 483 source paths / 602 universal native identities; existing
-platform/GUI/audio/custom selections are unchanged. Audio19 previously passed on
-all three platforms with exact custody. W195's resampler source change still
-requires its new-source audio run. Road remains **1015 checked / 307 open /
-2 partial**, 1324 total; managed install, authenticated readiness, live-device
-and release gates remain open. Details: `docs/gold-wave196-verification.md`.
+Preflight `35724608957` and Code Quality `35724608139` passed on `0d18bb17`.
+Core test targets, public CLI build and reference export `35724293711` passed on
+`7f2b8636`; the downloaded reference is byte-identical to the committed file.
+Other jobs of full-CI `35726117022` remain active and are preserved for native
+and new-source audio results. These earlier-source results do not admit the
+W197-W200 changes. Details: `docs/gold-wave197-verification.md` through
+`docs/gold-wave200-verification.md`.
+
+Current inventory: 488 source paths / 620 universal native identities; existing
+platform/GUI/audio/custom selections are unchanged. Road remains **1015 checked
+/ 307 open / 2 partial**, 1324 total. P2-10, managed installation, authenticated
+readiness, live-device and release qualification remain open until their actual
+acceptance gates pass. All local executable validation remains suspended.
 
 **W186 Tract result (2026-09-22):** new graph run `35714955362` on `3ded02b7`
 passes all three Silero runtime cases on Linux, along with the first 18 of 19

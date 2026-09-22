@@ -41,6 +41,7 @@ pub(crate) mod mutation_lifecycle;
 /// into the skill layer and verifies the SHA-256 hash before every
 /// provider call so a tampered plan file is blocked with `[PLAN TAMPERED]`.
 pub mod plan_attestation;
+pub(crate) mod prerequisites;
 pub mod registry;
 pub mod resolver;
 pub mod route_ownership;

@@ -17,6 +17,25 @@ identities continue; a nonempty failure receipt makes the final result fail.
 Compile/discovery and source-binding failures still stop immediately. This gives
 one useful error inventory per build without weakening any pass requirement.
 
+
+After `0d18bb17` Preflight/Code Quality and `7f2b8636` core test-target/CLI
+checks passed, full-CI milestone `35726117022` was dispatched on `0d18bb17`.
+It includes the fresh W195 resampler audio matrix. Preserve this run across
+ordinary W197/W198 source pushes; those pushes do not dispatch or replace a
+full matrix. The grouped38 behavior result remains separately pending. W197
+prerequisite admission and W198 n8n session-registry changes need their own
+reviewed, source-bound Hosted fixture selection before acceptance.
+
+W197-W200 now require exactly sixty grouped identities: W19010/W1915/W19210/
+W1935/W1944/W1964/W19711/W1986/W1995. W197 includes the existing real reload
+and metadata-pinning fixtures; W198 includes both existing oversize fixtures.
+The literal per-wave map is validated before compilation, and each selected
+behavior invocation is limited to 180 seconds plus ten seconds for termination.
+This follows the confirmed W191 WAL-join fixture deadlock in run35724290786;
+its cancelled fourteen-pass receipt is partial evidence only. The release pass
+condition remains all exact selected tests completed successfully. W200 also
+repairs the eight observed Linux lint findings without suppressing diagnostics.
+
 ## Workstation stability constraint — 2026-09-16
 
 All local validation workloads on Shadow-PC are suspended after another reported

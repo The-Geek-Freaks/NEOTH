@@ -1302,8 +1302,13 @@ mod tests {
         )
         .await
         .expect("quota fallback recovers the loop provider request");
+        // The fallback owns another sender; release it before waiting for WAL shutdown.
+        drop(provider);
         drop(writer);
-        join.await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), join)
+            .await
+            .expect("fallback WAL writer must terminate after all senders are released")
+            .unwrap();
 
         let bytes = std::fs::read(&wal_path).expect("fallback WAL segment");
         let header = crate::wal::segment_header::parse_segment_header(&bytes)
