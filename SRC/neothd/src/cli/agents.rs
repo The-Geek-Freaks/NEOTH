@@ -578,8 +578,8 @@ mod tests {
         id: &str,
         reload: &crate::config::reload::ReloadController,
     ) {
-        let current = crate::skills::installer::inspect_current_install(&home.join("skills"), id)
-            .unwrap();
+        let current =
+            crate::skills::installer::inspect_current_install(&home.join("skills"), id).unwrap();
         crate::skills::mutation_lifecycle::record_committed_install_incarnation_for_test(
             home,
             id,
@@ -662,10 +662,8 @@ mod tests {
         write_installed_skill(home.path(), "fan-out-ready", true).await;
         write_installed_skill(home.path(), "fan-out-disabled", false).await;
         crate::skills::authority::initialize_authority_key_for_test(home.path()).unwrap();
-        let reload = crate::config::reload::ReloadController::new(
-            config.clone(),
-            config_path.clone(),
-        );
+        let reload =
+            crate::config::reload::ReloadController::new(config.clone(), config_path.clone());
         activate_installed_skill(home.path(), "fan-out-ready", &reload);
         activate_installed_skill(home.path(), "fan-out-disabled", &reload);
 
@@ -679,10 +677,9 @@ mod tests {
         eval_config.skills.disabled_for_eval_sessions = true;
         eval_config.skills.eval_session_active = true;
         std::fs::write(&config_path, serde_yaml::to_string(&eval_config).unwrap()).unwrap();
-        let suppressed =
-            fan_out_skill_registry_context(home.path(), &config_path, &eval_config)
-                .await
-                .unwrap();
+        let suppressed = fan_out_skill_registry_context(home.path(), &config_path, &eval_config)
+            .await
+            .unwrap();
         assert!(!suppressed.as_str().contains("fan-out-ready"));
         assert!(!suppressed.as_str().contains("fan-out-disabled"));
     }

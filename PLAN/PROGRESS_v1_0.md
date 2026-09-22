@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**Hosted regression checkpoint (2026-09-22):** Grouped251 `35772612247` on
+`7689717b` is source-bound at 250/251; all 12 W213 and three W214 tests passed.
+The only failure was an external test file counted as production by the raw-call
+scanner. Explicit file-wide cfg(test) recognition and a regression correct its
+scope without widening production allowlisting. The W215 standalone QA API now
+delegates to one shared implementation, preserving two production call sites.
+The current lane is Grouped256 / 530 sources / 803 universal native / 92 GUI.
+Old full CI `35765595152` Windows completed 17,489 cases with 14 failures;
+those are under bounded subsystem repair while macOS continues compiling.
+No Road checkbox or release gate closes from these results.
+
 **W215 sub-agent registry / actual-start role fence (2026-09-22):** the real
 CLI fan-out now captures one admitted Skill registry from its exact accepted
 config and instance home, requires it in the production worker, and preserves

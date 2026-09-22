@@ -2061,7 +2061,9 @@ async fn complete_tmux_uncached(
                 })
                 .await?
             {
-                Some(effect) => Some(begin_effect_start_or_role_terminal(permit, &req, effect).await?),
+                Some(effect) => {
+                    Some(begin_effect_start_or_role_terminal(permit, &req, effect).await?)
+                }
                 None => None,
             };
             let session = super::tmux_session::TmuxSession::new_with_socket_and_effect(
@@ -2123,7 +2125,9 @@ async fn complete_tmux_uncached(
                 })
                 .await?
             {
-                Some(effect) => Some(begin_effect_start_or_role_terminal(permit, &req, effect).await?),
+                Some(effect) => {
+                    Some(begin_effect_start_or_role_terminal(permit, &req, effect).await?)
+                }
                 None => None,
             };
             // Pick #35 (Session 14, B-6 gap-fix): use the operator-tunable

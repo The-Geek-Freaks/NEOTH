@@ -1426,9 +1426,9 @@ impl EffectStartAuthority for ProviderLiveConsent {
                 .authorizer
                 .resolve_role_dispatch(&expected.model)
                 .map_err(anyhow::Error::new)?
-                .ok_or_else(|| anyhow::anyhow!(
-                    "role dispatch start authority lost its Council binding"
-                ))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!("role dispatch start authority lost its Council binding")
+                })?;
             if current != expected {
                 anyhow::bail!(
                     "role dispatch policy changed after authorization; provider start blocked"
@@ -4720,7 +4720,10 @@ mod tests {
         let permit = ProviderDispatchPermit::transport_only(
             None,
             Some(ProviderEffectContext::new(gate.clone(), "binding".into())),
-            Some(ProviderLiveConsent::new(authorizer.clone(), Some(route.clone()))),
+            Some(ProviderLiveConsent::new(
+                authorizer.clone(),
+                Some(route.clone()),
+            )),
             true,
             None,
         );
@@ -4784,14 +4787,19 @@ mod tests {
                 model: Some("gpt-allowed".into()),
             }],
         });
-        std::fs::write(&config_path, serde_yaml::to_string(&initial).expect("serialize policy"))
-            .expect("write initial policy");
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&initial).expect("serialize policy"),
+        )
+        .expect("write initial policy");
         let reload = Arc::new(crate::config::reload::ReloadController::new(
             initial.clone(),
             config_path.clone(),
         ));
         let mut ephemeral = crate::consent::EphemeralConsent::default();
-        ephemeral.allow_route(&route).expect("grant exact one-shot route");
+        ephemeral
+            .allow_route(&route)
+            .expect("grant exact one-shot route");
         let authorizer = cost_authorization::ProviderCallAuthorizer::test_only(
             crate::permissions::AutonomyLevel::Full,
         )
@@ -4807,11 +4815,19 @@ mod tests {
             .resolve_role_dispatch("gpt-allowed")
             .expect("initial role resolution")
             .expect("bound role decision");
-        let gate = Arc::new(effect_test_support::RecordingEffectGate::new(Duration::from_secs(1)));
+        let gate = Arc::new(effect_test_support::RecordingEffectGate::new(
+            Duration::from_secs(1),
+        ));
         let permit = ProviderDispatchPermit::transport_only(
             None,
-            Some(ProviderEffectContext::new(gate.clone(), "role-intent".into())),
-            Some(ProviderLiveConsent::new(authorizer.clone(), Some(route.clone()))),
+            Some(ProviderEffectContext::new(
+                gate.clone(),
+                "role-intent".into(),
+            )),
+            Some(ProviderLiveConsent::new(
+                authorizer.clone(),
+                Some(route.clone()),
+            )),
             true,
             Some(decision),
         );
@@ -4836,8 +4852,11 @@ mod tests {
                 provider: InferenceProvider::OpenAi,
                 model: Some("gpt-other".into()),
             });
-        std::fs::write(&config_path, serde_yaml::to_string(&changed).expect("serialize changed policy"))
-            .expect("write changed policy");
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&changed).expect("serialize changed policy"),
+        )
+        .expect("write changed policy");
         assert!(matches!(
             reload.try_reload().expect("role-policy-only reload"),
             crate::config::reload::ReloadResult::Reloaded { .. }
@@ -4848,7 +4867,10 @@ mod tests {
             .await
             .err()
             .expect("changed role-policy blocks the actual effect start");
-        assert!(error.to_string().contains("role dispatch policy changed"), "{error:#}");
+        assert!(
+            error.to_string().contains("role dispatch policy changed"),
+            "{error:#}"
+        );
         assert_eq!(gate.phase(), effect_test_support::RecordedPhase::Aborted);
         authorizer
             .ensure_live_consent(Some(&route))
@@ -4877,7 +4899,10 @@ mod tests {
         let permit = ProviderDispatchPermit::transport_only(
             None,
             Some(ProviderEffectContext::new(gate, "binding".into())),
-            Some(ProviderLiveConsent::new(authorizer.clone(), Some(route.clone()))),
+            Some(ProviderLiveConsent::new(
+                authorizer.clone(),
+                Some(route.clone()),
+            )),
             true,
             None,
         );

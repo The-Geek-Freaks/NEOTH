@@ -54,6 +54,15 @@ per-command configuration.
 
 ## Verification boundary
 
+Grouped251 `35772612247` on `7689717b` executed every selected test: 250 passed,
+including all 12 W213 and all three W214 cases. All 52 source paths, identities,
+matrix and lock match that source. The sole failure was the production-callsite
+scanner treating the external role test module as production. The module now
+declares its actual file-wide `#![cfg(test)]`; the scanner recognizes only this
+explicit first substantive attribute, never a filename or comment. A focused
+regression preserves detection of unguarded calls. Production allowlisting is
+unchanged. The correction needs a fresh Hosted result.
+
 The post-publication actual-start correction passed independent bounded source
 review. Its new regression changes the accepted role policy after effect intent,
 requires the start to abort and proves AllowOnce remains available. It awaits

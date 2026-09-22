@@ -173,7 +173,13 @@ impl ProviderSubAgentWorker {
         retry_failed: bool,
         writer: WalWriterHandle,
     ) -> Self {
-        Self::new(provider, agents, retry_failed, writer, test_registry_context())
+        Self::new(
+            provider,
+            agents,
+            retry_failed,
+            writer,
+            test_registry_context(),
+        )
     }
 }
 
@@ -202,7 +208,8 @@ impl SubAgentWorker for ProviderSubAgentWorker {
         // primary can spend a provider call. Retries reuse this same primary
         // system, so no later attempt can bypass the aggregate bound.
         let primary_system = compose_system(agent_system(agent), &self.skill_registry_context)?;
-        let _qa_system = compose_system(qa_system_prompt().to_string(), &self.skill_registry_context)?;
+        let _qa_system =
+            compose_system(qa_system_prompt().to_string(), &self.skill_registry_context)?;
 
         let mut prompt = primary_prompt(&request.context)?;
         let mut retry_parts: Option<(String, String, String)> = None;
@@ -265,13 +272,13 @@ impl SubAgentWorker for ProviderSubAgentWorker {
                 ));
             }
 
-            let qa = match request_qa_verdict_with_skill_registry_context(
+            let qa = match request_qa_verdict_impl(
                 &provider,
                 &request,
                 &output,
                 agent.model.clone(),
                 attempt,
-                &self.skill_registry_context,
+                Some(&self.skill_registry_context),
             )
             .await
             {
@@ -524,41 +531,27 @@ pub async fn request_qa_verdict(
     model: Option<String>,
     attempt: u8,
 ) -> Result<QaCallOutcome> {
-    if candidate.len() > MAX_QA_CANDIDATE_BYTES {
-        anyhow::bail!("candidate exceeds bounded QA limit");
-    }
-    let prompt = qa_prompt(request, candidate)?;
-    let system = qa_system_prompt().to_string();
-    let segments = PromptSegments::qa(&prompt, &system, &request.context, candidate);
-    let temperature = crate::providers::internal_temperature(provider, 0.0, "sub_agents.qa");
-    let completion = provider
-        .complete(Request {
-            prompt,
-            system: Some(system),
-            model,
-            temperature,
-            ..Request::default()
-        })
-        .await
-        .context("structured QA provider call")?;
-    let call = provider_call("qa", attempt, &completion, &segments)?;
-    let verdict = parse_qa_verdict(&completion.text);
-    Ok(QaCallOutcome { verdict, call })
+    request_qa_verdict_impl(provider, request, candidate, model, attempt, None).await
 }
 
-async fn request_qa_verdict_with_skill_registry_context(
+async fn request_qa_verdict_impl(
     provider: &AuthorizedProvider,
     request: &SubAgentRequest,
     candidate: &str,
     model: Option<String>,
     attempt: u8,
-    skill_registry_context: &crate::pipeline::RenderedUntrustedContext,
+    skill_registry_context: Option<&crate::pipeline::RenderedUntrustedContext>,
 ) -> Result<QaCallOutcome> {
     if candidate.len() > MAX_QA_CANDIDATE_BYTES {
         anyhow::bail!("candidate exceeds bounded QA limit");
     }
     let prompt = qa_prompt(request, candidate)?;
-    let system = compose_system(qa_system_prompt().to_string(), skill_registry_context)?;
+    let system = match skill_registry_context {
+        Some(skill_registry_context) => {
+            compose_system(qa_system_prompt().to_string(), skill_registry_context)?
+        }
+        None => qa_system_prompt().to_string(),
+    };
     let segments = PromptSegments::qa(&prompt, &system, &request.context, candidate);
     let temperature = crate::providers::internal_temperature(provider, 0.0, "sub_agents.qa");
     let completion = provider

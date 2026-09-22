@@ -7255,7 +7255,19 @@ mod tests {
     fn raw_callsite_multiset_digest(source: &str) -> (usize, String) {
         use sha2::{Digest, Sha256};
 
-        let lines = source.lines().collect::<Vec<_>>();
+        // An external test module has no production surface when its first
+        // substantive line explicitly excludes the entire file from builds.
+        // Do not infer this from a filename or from an attribute in a comment.
+        let file_is_test_only = source
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty() && !line.starts_with("//"))
+            == Some("#![cfg(test)]");
+        let lines = if file_is_test_only {
+            Vec::new()
+        } else {
+            source.lines().collect::<Vec<_>>()
+        };
         let production_end = lines
             .iter()
             .enumerate()
@@ -7313,6 +7325,19 @@ mod tests {
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
         (contexts.len(), digest)
+    }
+
+    #[test]
+    fn raw_callsite_digest_excludes_only_explicit_test_only_files() {
+        let body = "fn run() {\n    raw_cloud_provider.complete(req).await;\n}\n";
+        let guarded = format!("//! External regression fixtures.\n#![cfg(test)]\n{body}");
+        let commented = format!("// #![cfg(test)]\n{body}");
+        assert_eq!(
+            raw_callsite_multiset_digest(&guarded),
+            raw_callsite_multiset_digest("")
+        );
+        assert_eq!(raw_callsite_multiset_digest(&commented).0, 1);
+        assert_eq!(raw_callsite_multiset_digest(body).0, 1);
     }
 
     #[test]

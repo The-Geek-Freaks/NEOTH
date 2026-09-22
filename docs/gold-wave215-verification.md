@@ -31,7 +31,11 @@ QA-specific aggregate overflow with zero provider calls. One further regression
 in the concurrent W213 correction proves role revocation after effect intent
 blocks actual start without spending AllowOnce. The grouped lane selects 255
 tests; inventory is 530 source paths / 802 universal native / 92 GUI identities,
-with platform extras unchanged.
+with platform extras unchanged. A subsequent scanner-scope regression brings
+the current grouped count to 256 and native inventory to 803, retaining 530
+source paths. The standalone self-improve QA API delegates to the same optional-
+registry QA implementation as the worker, preserving the two reviewed production
+provider-call sites. Source/SHA-bound formatting from run `35774197387` is imported.
 
 Core/CLI run `35772615830` on `7689717b` passed test-target type-check and public
 CLI build. Its source/SHA-bound CLI reference is imported, including all seven
