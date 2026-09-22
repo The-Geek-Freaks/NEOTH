@@ -66,10 +66,17 @@ impl CounterpartyConsentInputDescriptor {
         let inbound = admitted.inbound();
         let wal_session = admitted.wal_session();
         let exact_command = admitted.exact_command();
-        ensure!(inbound.channel == binding.channel_ref.channel_id, "W209 admitted channel binding");
-        ensure!(!exact_command.is_empty() && exact_command.len() <= 512, "W209 command bound");
+        ensure!(
+            inbound.channel == binding.channel_ref.channel_id,
+            "W209 admitted channel binding"
+        );
+        ensure!(
+            !exact_command.is_empty() && exact_command.len() <= 512,
+            "W209 command bound"
+        );
         let channel_ref = binding.channel_ref.clone();
-        let scoped_sender_hash = crate::cli::serve_pipeline::scoped_sender_hash_of(binding, &inbound.sender_id);
+        let scoped_sender_hash =
+            crate::cli::serve_pipeline::scoped_sender_hash_of(binding, &inbound.sender_id);
         ensure!(
             !scoped_sender_hash.is_empty() && scoped_sender_hash.len() <= 128,
             "W209 scoped sender hash bounds"
@@ -84,7 +91,10 @@ impl CounterpartyConsentInputDescriptor {
             conversation_sha256: hex::encode(conversation_sha256),
             input_sha256: hex::encode(input_sha256),
         })?;
-        ensure!(payload.len() <= MAX_CEREMONY_PAYLOAD_BYTES, "W209 input payload bound");
+        ensure!(
+            payload.len() <= MAX_CEREMONY_PAYLOAD_BYTES,
+            "W209 input payload bound"
+        );
         let header = HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
             .event_subtype(ExtendedSubtype::CounterpartyConsentInput as u8)
             .flags(EventFlags::SYNTHETIC)
@@ -101,8 +111,12 @@ impl CounterpartyConsentInputDescriptor {
         })
     }
 
-    pub(crate) fn header(&self) -> EventHeaderV2 { self.header }
-    pub(crate) fn payload(&self) -> Vec<u8> { self.payload.clone() }
+    pub(crate) fn header(&self) -> EventHeaderV2 {
+        self.header
+    }
+    pub(crate) fn payload(&self) -> Vec<u8> {
+        self.payload.clone()
+    }
     fn receipt(&self, event_id: i64) -> CounterpartyConsentInputReceipt {
         CounterpartyConsentInputReceipt {
             channel_ref: self.channel_ref.clone(),
@@ -148,11 +162,18 @@ fn conversation_sha256(
         inbound.thread_id.as_deref().map_or(&[][..], str::as_bytes),
         inbound.sender_id.as_bytes(),
     ];
-    let size = fields.iter().try_fold(b"neoth/w209/conversation/v1\0".len(), |total, field| {
-        total.checked_add(8).and_then(|value| value.checked_add(field.len()))
-            .ok_or_else(|| anyhow::anyhow!("W209 conversation identity overflow"))
-    })?;
-    ensure!(size <= crate::wal::MAX_ADMITTED_IDENTITY_BYTES, "W209 conversation identity bound");
+    let size = fields
+        .iter()
+        .try_fold(b"neoth/w209/conversation/v1\0".len(), |total, field| {
+            total
+                .checked_add(8)
+                .and_then(|value| value.checked_add(field.len()))
+                .ok_or_else(|| anyhow::anyhow!("W209 conversation identity overflow"))
+        })?;
+    ensure!(
+        size <= crate::wal::MAX_ADMITTED_IDENTITY_BYTES,
+        "W209 conversation identity bound"
+    );
     let mut hasher = Sha256::new();
     hasher.update(b"neoth/w209/conversation/v1\0");
     for field in fields {
@@ -202,23 +223,48 @@ impl CounterpartyConsentAuditDescriptor {
         wal_session_id: [u8; 16],
     ) -> Result<Self> {
         let bytes = payload.canonical_bytes()?;
-        ensure!(bytes.len() <= MAX_CEREMONY_PAYLOAD_BYTES, "W209 audit payload bound");
+        ensure!(
+            bytes.len() <= MAX_CEREMONY_PAYLOAD_BYTES,
+            "W209 audit payload bound"
+        );
         let value: serde_json::Value = serde_json::from_slice(&bytes)?;
-        let object = value.as_object().ok_or_else(|| anyhow::anyhow!("W209 audit payload object"))?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("W209 audit payload object"))?;
         let required = [
-            "schema_version", "operation_id", "action", "channel_id", "account_id",
-            "scoped_sender_hash", "evidence_sha256", "input_receipt_event_id",
-            "input_sha256", "baseline_consent_state", "baseline_consent_revision",
+            "schema_version",
+            "operation_id",
+            "action",
+            "channel_id",
+            "account_id",
+            "scoped_sender_hash",
+            "evidence_sha256",
+            "input_receipt_event_id",
+            "input_sha256",
+            "baseline_consent_state",
+            "baseline_consent_revision",
         ];
         ensure!(
             object.len() == required.len() && required.iter().all(|key| object.contains_key(*key)),
             "W209 audit payload fields"
         );
-        let operation_id = object.get("operation_id").and_then(serde_json::Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("W209 audit operation id"))?.to_owned();
-        let action = object.get("action").and_then(serde_json::Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("W209 audit action"))?.to_owned();
-        ensure!(operation_id.len() == 32 && operation_id.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()), "W209 audit operation id canonical");
+        let operation_id = object
+            .get("operation_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("W209 audit operation id"))?
+            .to_owned();
+        let action = object
+            .get("action")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("W209 audit action"))?
+            .to_owned();
+        ensure!(
+            operation_id.len() == 32
+                && operation_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+            "W209 audit operation id canonical"
+        );
         let subtype = match action.as_str() {
             "verified_grant" => ExtendedSubtype::CounterpartyConsentGrant,
             "counterparty_revoke" => ExtendedSubtype::CounterpartyConsentRevoked,
@@ -230,13 +276,28 @@ impl CounterpartyConsentAuditDescriptor {
             .flags(EventFlags::SYNTHETIC)
             .build();
         header.session_id = crate::wal::SessionId::from_bytes(wal_session_id);
-        Ok(Self { header, payload: bytes, operation_id, action, payload_sha256 })
+        Ok(Self {
+            header,
+            payload: bytes,
+            operation_id,
+            action,
+            payload_sha256,
+        })
     }
 
-    pub(crate) fn header(&self) -> EventHeaderV2 { self.header }
-    pub(crate) fn payload(&self) -> Vec<u8> { self.payload.clone() }
+    pub(crate) fn header(&self) -> EventHeaderV2 {
+        self.header
+    }
+    pub(crate) fn payload(&self) -> Vec<u8> {
+        self.payload.clone()
+    }
     fn receipt(&self, event_id: i64) -> CounterpartyConsentAuditReceipt {
-        CounterpartyConsentAuditReceipt { operation_id: self.operation_id.clone(), action: self.action.clone(), event_id, payload_sha256: self.payload_sha256 }
+        CounterpartyConsentAuditReceipt {
+            operation_id: self.operation_id.clone(),
+            action: self.action.clone(),
+            event_id,
+            payload_sha256: self.payload_sha256,
+        }
     }
 }
 
@@ -252,12 +313,24 @@ pub(crate) struct CounterpartyConsentInputReceipt {
     input_sha256: [u8; 32],
 }
 impl CounterpartyConsentInputReceipt {
-    pub(crate) fn channel_ref(&self) -> &ChannelRef { &self.channel_ref }
-    pub(crate) fn scoped_sender_hash(&self) -> &str { &self.scoped_sender_hash }
-    pub(crate) const fn conversation_sha256(&self) -> [u8; 32] { self.conversation_sha256 }
-    pub(crate) const fn event_id(&self) -> i64 { self.event_id }
-    pub(crate) const fn wal_session_id(&self) -> [u8; 16] { self.wal_session_id }
-    pub(crate) const fn input_sha256(&self) -> [u8; 32] { self.input_sha256 }
+    pub(crate) fn channel_ref(&self) -> &ChannelRef {
+        &self.channel_ref
+    }
+    pub(crate) fn scoped_sender_hash(&self) -> &str {
+        &self.scoped_sender_hash
+    }
+    pub(crate) const fn conversation_sha256(&self) -> [u8; 32] {
+        self.conversation_sha256
+    }
+    pub(crate) const fn event_id(&self) -> i64 {
+        self.event_id
+    }
+    pub(crate) const fn wal_session_id(&self) -> [u8; 16] {
+        self.wal_session_id
+    }
+    pub(crate) const fn input_sha256(&self) -> [u8; 32] {
+        self.input_sha256
+    }
 }
 
 /// Opaque successful durable audit acknowledgement.
@@ -269,10 +342,18 @@ pub(crate) struct CounterpartyConsentAuditReceipt {
     payload_sha256: [u8; 32],
 }
 impl CounterpartyConsentAuditReceipt {
-    pub(crate) fn operation_id(&self) -> &str { &self.operation_id }
-    pub(crate) fn action(&self) -> &str { &self.action }
-    pub(crate) const fn event_id(&self) -> i64 { self.event_id }
-    pub(crate) const fn payload_sha256(&self) -> [u8; 32] { self.payload_sha256 }
+    pub(crate) fn operation_id(&self) -> &str {
+        &self.operation_id
+    }
+    pub(crate) fn action(&self) -> &str {
+        &self.action
+    }
+    pub(crate) const fn event_id(&self) -> i64 {
+        self.event_id
+    }
+    pub(crate) const fn payload_sha256(&self) -> [u8; 32] {
+        self.payload_sha256
+    }
 }
 
 pub(crate) fn tagged_sha256(domain: &[u8], payload: &[u8]) -> [u8; 32] {
@@ -289,9 +370,24 @@ pub(crate) enum CounterpartyConsentDescriptor {
     Audit(CounterpartyConsentAuditDescriptor),
 }
 impl CounterpartyConsentDescriptor {
-    pub(crate) fn header(&self) -> EventHeaderV2 { match self { Self::Input(value) => value.header(), Self::Audit(value) => value.header() } }
-    pub(crate) fn payload(&self) -> Vec<u8> { match self { Self::Input(value) => value.payload(), Self::Audit(value) => value.payload() } }
-    fn receipt(&self, event_id: i64) -> CounterpartyConsentDurability { match self { Self::Input(value) => CounterpartyConsentDurability::Input(value.receipt(event_id)), Self::Audit(value) => CounterpartyConsentDurability::Audit(value.receipt(event_id)) } }
+    pub(crate) fn header(&self) -> EventHeaderV2 {
+        match self {
+            Self::Input(value) => value.header(),
+            Self::Audit(value) => value.header(),
+        }
+    }
+    pub(crate) fn payload(&self) -> Vec<u8> {
+        match self {
+            Self::Input(value) => value.payload(),
+            Self::Audit(value) => value.payload(),
+        }
+    }
+    fn receipt(&self, event_id: i64) -> CounterpartyConsentDurability {
+        match self {
+            Self::Input(value) => CounterpartyConsentDurability::Input(value.receipt(event_id)),
+            Self::Audit(value) => CounterpartyConsentDurability::Audit(value.receipt(event_id)),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -308,7 +404,10 @@ pub(crate) enum Lookup {
     Indeterminate,
 }
 
-pub(crate) fn lookup_exact_at_home(home: &std::path::Path, expected: &CounterpartyConsentDescriptor) -> Lookup {
+pub(crate) fn lookup_exact_at_home(
+    home: &std::path::Path,
+    expected: &CounterpartyConsentDescriptor,
+) -> Lookup {
     let header = expected.header();
     let payload = expected.payload();
     let mut count = 0usize;
@@ -330,16 +429,23 @@ pub(crate) fn lookup_exact_at_home(home: &std::path::Path, expected: &Counterpar
             Ok(())
         },
     );
-    let Ok(scan) = scan else { return Lookup::Indeterminate; };
-    if conflict { Lookup::Conflict }
-    else if count > 1 { Lookup::Duplicate }
-    else if count == 1 {
+    let Ok(scan) = scan else {
+        return Lookup::Indeterminate;
+    };
+    if conflict {
+        Lookup::Conflict
+    } else if count > 1 {
+        Lookup::Duplicate
+    } else if count == 1 {
         match i64::try_from(header.event_id.0) {
             Ok(event_id) if event_id > 0 => Lookup::Exact(expected.receipt(event_id)),
             _ => Lookup::Indeterminate,
         }
-    } else if scan.complete { Lookup::AbsentComplete }
-    else { Lookup::Indeterminate }
+    } else if scan.complete {
+        Lookup::AbsentComplete
+    } else {
+        Lookup::Indeterminate
+    }
 }
 
 /// Rehydrate an input capability only from a marker-authenticated primary-WAL
@@ -350,7 +456,9 @@ pub(crate) fn input_receipt_at_home(
     event_id: i64,
     input_sha256: [u8; 32],
 ) -> std::result::Result<Option<CounterpartyConsentInputReceipt>, CounterpartyConsentOnceError> {
-    if event_id <= 0 { return Err(CounterpartyConsentOnceError::Indeterminate); }
+    if event_id <= 0 {
+        return Err(CounterpartyConsentOnceError::Indeterminate);
+    }
     let mut found = None;
     let mut count = 0usize;
     let scan = super::scan::for_each_authenticated_prefix_frame_at_home(
@@ -360,36 +468,77 @@ pub(crate) fn input_receipt_at_home(
             if frame.header.event_type != EVENT_TYPE_EXTENDED
                 || frame.header.event_subtype != ExtendedSubtype::CounterpartyConsentInput as u8
                 || i64::try_from(frame.header.event_id.0).ok() != Some(event_id)
-            { return Ok(()); }
-            if frame.payload.len() > MAX_CEREMONY_PAYLOAD_BYTES { return Err(anyhow::anyhow!("W209 input payload bound")); }
+            {
+                return Ok(());
+            }
+            if frame.payload.len() > MAX_CEREMONY_PAYLOAD_BYTES {
+                return Err(anyhow::anyhow!("W209 input payload bound"));
+            }
             let value: serde_json::Value = serde_json::from_slice(frame.payload)?;
-            let object = value.as_object().ok_or_else(|| anyhow::anyhow!("W209 input payload object"))?;
-            let channel = object.get("channel_id").and_then(serde_json::Value::as_str).ok_or_else(|| anyhow::anyhow!("W209 input channel"))?;
-            let account = object.get("account_id").and_then(serde_json::Value::as_str).ok_or_else(|| anyhow::anyhow!("W209 input account"))?;
-            let sender = object.get("scoped_sender_hash").and_then(serde_json::Value::as_str).ok_or_else(|| anyhow::anyhow!("W209 input sender"))?;
-            let conversation = decode_sha256(object.get("conversation_sha256").and_then(serde_json::Value::as_str))?;
-            let observed_input = decode_sha256(object.get("input_sha256").and_then(serde_json::Value::as_str))?;
-            if observed_input != input_sha256 { return Ok(()); }
-            let channel_id = crate::channels::registry::resolve_channel_id(channel).ok_or_else(|| anyhow::anyhow!("W209 input unknown channel"))?;
-            let account_id = account.parse().map_err(|_| anyhow::anyhow!("W209 input account canonical"))?;
+            let object = value
+                .as_object()
+                .ok_or_else(|| anyhow::anyhow!("W209 input payload object"))?;
+            let channel = object
+                .get("channel_id")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("W209 input channel"))?;
+            let account = object
+                .get("account_id")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("W209 input account"))?;
+            let sender = object
+                .get("scoped_sender_hash")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("W209 input sender"))?;
+            let conversation = decode_sha256(
+                object
+                    .get("conversation_sha256")
+                    .and_then(serde_json::Value::as_str),
+            )?;
+            let observed_input = decode_sha256(
+                object
+                    .get("input_sha256")
+                    .and_then(serde_json::Value::as_str),
+            )?;
+            if observed_input != input_sha256 {
+                return Ok(());
+            }
+            let channel_id = crate::channels::registry::resolve_channel_id(channel)
+                .ok_or_else(|| anyhow::anyhow!("W209 input unknown channel"))?;
+            let account_id = account
+                .parse()
+                .map_err(|_| anyhow::anyhow!("W209 input account canonical"))?;
             let session = *frame.header.session_id.as_bytes();
             found = Some(CounterpartyConsentInputReceipt {
                 channel_ref: crate::channels::registry::ChannelRef::new(channel_id, account_id),
-                scoped_sender_hash: sender.to_owned(), conversation_sha256: conversation,
-                event_id, wal_session_id: session, input_sha256,
+                scoped_sender_hash: sender.to_owned(),
+                conversation_sha256: conversation,
+                event_id,
+                wal_session_id: session,
+                input_sha256,
             });
             count = count.saturating_add(1);
             Ok(())
         },
-    ).map_err(|_| CounterpartyConsentOnceError::Indeterminate)?;
-    if !scan.complete { return Err(CounterpartyConsentOnceError::Indeterminate); }
-    if count > 1 { return Err(CounterpartyConsentOnceError::Duplicate); }
+    )
+    .map_err(|_| CounterpartyConsentOnceError::Indeterminate)?;
+    if !scan.complete {
+        return Err(CounterpartyConsentOnceError::Indeterminate);
+    }
+    if count > 1 {
+        return Err(CounterpartyConsentOnceError::Duplicate);
+    }
     Ok(found)
 }
 
 fn decode_sha256(value: Option<&str>) -> Result<[u8; 32]> {
     let value = value.ok_or_else(|| anyhow::anyhow!("W209 digest missing"))?;
     let bytes = hex::decode(value)?;
-    ensure!(bytes.len() == 32 && hex::encode(&bytes) == value, "W209 digest canonical");
-    let mut output = [0_u8; 32]; output.copy_from_slice(&bytes); Ok(output)
+    ensure!(
+        bytes.len() == 32 && hex::encode(&bytes) == value,
+        "W209 digest canonical"
+    );
+    let mut output = [0_u8; 32];
+    output.copy_from_slice(&bytes);
+    Ok(output)
 }

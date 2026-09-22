@@ -5143,10 +5143,7 @@ pub(crate) fn spawn_consent_outbox_recovery(
             .await
             {
                 Ok(0) => {}
-                Ok(recovered) => info!(
-                    recovered,
-                    "counterparty-consent audit recovery completed"
-                ),
+                Ok(recovered) => info!(recovered, "counterparty-consent audit recovery completed"),
                 Err(error) => warn!(
                     %error,
                     "counterparty-consent audit recovery failed; denial remains pending"
@@ -8516,8 +8513,10 @@ pub(crate) async fn shutdown_background_tasks(
             );
         }
     }
-    match crate::cli::serve_pipeline::recover_counterparty_consent_pending_with_writer(home, &writer)
-        .await
+    match crate::cli::serve_pipeline::recover_counterparty_consent_pending_with_writer(
+        home, &writer,
+    )
+    .await
     {
         Ok(0) => {}
         Ok(recovered) => info!(

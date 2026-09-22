@@ -1540,8 +1540,9 @@ impl AdmittedCounterpartyConsentInput {
         binding: &AuthenticatedInboundBinding,
         inbound: &InboundMessage,
     ) -> Result<Self> {
-        mint_admitted_counterparty_consent_input(home, binding, inbound)?
-            .ok_or_else(|| anyhow::anyhow!("W209 test fixture requires an exact non-media ceremony command"))
+        mint_admitted_counterparty_consent_input(home, binding, inbound)?.ok_or_else(|| {
+            anyhow::anyhow!("W209 test fixture requires an exact non-media ceremony command")
+        })
     }
 }
 
@@ -1610,7 +1611,8 @@ pub(crate) async fn recover_counterparty_consent_pending_with_writer(
             home,
             locator.input_receipt_event_id(),
             locator.input_sha256(),
-        )? else {
+        )?
+        else {
             continue;
         };
         let recovery = {
@@ -1789,25 +1791,44 @@ async fn handle_counterparty_consent_ingress<P: crate::permissions::PolicyArgume
                 Err(_) => "Counterparty consent is unavailable; no grant was applied.".to_owned(),
             };
             let reply = release_counterparty_consent_reply(
-                writer, home, autonomy_policy, inbound, binding, channel_str, sender_hash, &body,
-                channel_asker, once_guard, Some(wal_session),
+                writer,
+                home,
+                autonomy_policy,
+                inbound,
+                binding,
+                channel_str,
+                sender_hash,
+                &body,
+                channel_asker,
+                once_guard,
+                Some(wal_session),
             )
             .await?;
             Ok(CounterpartyConsentIngress::Handled(reply))
         }
         CounterpartyConsentCommand::Grant { token } => {
-            let reservation = with_counterparty_consent_connection(views_conn, home, |connection| {
-                crate::memory::counterparty_consent_ceremony::reserve_verified_grant(
-                    connection, &proof, &token, now_ns,
-                )
-            })
-            .await;
+            let reservation =
+                with_counterparty_consent_connection(views_conn, home, |connection| {
+                    crate::memory::counterparty_consent_ceremony::reserve_verified_grant(
+                        connection, &proof, &token, now_ns,
+                    )
+                })
+                .await;
             let Ok(reservation) = reservation else {
                 let reply = release_counterparty_consent_reply(
-                    writer, home, autonomy_policy, inbound, binding, channel_str, sender_hash,
-                    "Counterparty consent grant was rejected.", channel_asker, once_guard,
+                    writer,
+                    home,
+                    autonomy_policy,
+                    inbound,
+                    binding,
+                    channel_str,
+                    sender_hash,
+                    "Counterparty consent grant was rejected.",
+                    channel_asker,
+                    once_guard,
                     Some(wal_session),
-                ).await?;
+                )
+                .await?;
                 return Ok(CounterpartyConsentIngress::Handled(reply));
             };
             let audit_descriptor = crate::wal::counterparty_consent_once::CounterpartyConsentAuditDescriptor::from_ceremony_payload(
@@ -1847,9 +1868,19 @@ async fn handle_counterparty_consent_ingress<P: crate::permissions::PolicyArgume
                 }
             };
             let reply = release_counterparty_consent_reply(
-                writer, home, autonomy_policy, inbound, binding, channel_str, sender_hash, body,
-                channel_asker, once_guard, Some(wal_session),
-            ).await?;
+                writer,
+                home,
+                autonomy_policy,
+                inbound,
+                binding,
+                channel_str,
+                sender_hash,
+                body,
+                channel_asker,
+                once_guard,
+                Some(wal_session),
+            )
+            .await?;
             Ok(CounterpartyConsentIngress::Handled(reply))
         }
         CounterpartyConsentCommand::Revoke => {
@@ -1860,21 +1891,36 @@ async fn handle_counterparty_consent_ingress<P: crate::permissions::PolicyArgume
             }).await;
             let Ok(reservation) = reservation else {
                 let reply = release_counterparty_consent_reply(
-                    writer, home, autonomy_policy, inbound, binding, channel_str, sender_hash,
-                    "Counterparty consent revoke could not be completed.", channel_asker, once_guard,
+                    writer,
+                    home,
+                    autonomy_policy,
+                    inbound,
+                    binding,
+                    channel_str,
+                    sender_hash,
+                    "Counterparty consent revoke could not be completed.",
+                    channel_asker,
+                    once_guard,
                     Some(wal_session),
-                ).await?;
+                )
+                .await?;
                 return Ok(CounterpartyConsentIngress::Handled(reply));
             };
             let audit_descriptor = crate::wal::counterparty_consent_once::CounterpartyConsentAuditDescriptor::from_ceremony_payload(
                 reservation.audit_payload(&proof), wal_session,
             )?;
-            let body = match writer.append_counterparty_consent_audit_once(home, audit_descriptor).await {
-                Ok(receipt) => {
-                    let audit = DurableCeremonyAudit::from_writer_issued_receipt(
-                        &reservation, &proof, receipt,
-                    )?;
-                    match with_counterparty_consent_connection(views_conn, home, |connection| {
+            let body =
+                match writer
+                    .append_counterparty_consent_audit_once(home, audit_descriptor)
+                    .await
+                {
+                    Ok(receipt) => {
+                        let audit = DurableCeremonyAudit::from_writer_issued_receipt(
+                            &reservation,
+                            &proof,
+                            receipt,
+                        )?;
+                        match with_counterparty_consent_connection(views_conn, home, |connection| {
                         crate::memory::counterparty_consent_ceremony::acknowledge_revocation_audit(
                             connection, &proof, &reservation, &audit,
                         )
@@ -1882,13 +1928,23 @@ async fn handle_counterparty_consent_ingress<P: crate::permissions::PolicyArgume
                         Ok(()) => "Counterparty consent revoked.",
                         Err(_) => "Counterparty consent revoked; audit recovery is pending.",
                     }
-                }
-                Err(_) => "Counterparty consent revoked; audit recovery is pending.",
-            };
+                    }
+                    Err(_) => "Counterparty consent revoked; audit recovery is pending.",
+                };
             let reply = release_counterparty_consent_reply(
-                writer, home, autonomy_policy, inbound, binding, channel_str, sender_hash, body,
-                channel_asker, once_guard, Some(wal_session),
-            ).await?;
+                writer,
+                home,
+                autonomy_policy,
+                inbound,
+                binding,
+                channel_str,
+                sender_hash,
+                body,
+                channel_asker,
+                once_guard,
+                Some(wal_session),
+            )
+            .await?;
             Ok(CounterpartyConsentIngress::Handled(reply))
         }
     }
@@ -2141,11 +2197,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             let sender_hash = scoped_sender_hash_of(&inbound_binding, &inbound.sender_id);
             let channel_name = inbound.channel;
             let channel_str = channel_name.as_str();
-            let counterparty_consent_input = mint_admitted_counterparty_consent_input(
-                &neoth_home,
-                &inbound_binding,
-                &inbound,
-            )?;
+            let counterparty_consent_input =
+                mint_admitted_counterparty_consent_input(&neoth_home, &inbound_binding, &inbound)?;
 
             match handle_counterparty_consent_ingress(
                 &writer,
@@ -7033,9 +7086,11 @@ mod tests {
         .await
         .expect("counterparty request is handled locally")
         .expect("counterparty request releases a channel reply");
-        assert!(reply.text.contains(
-            crate::memory::counterparty_consent_ceremony::COMMAND_GRANT_PREFIX
-        ));
+        assert!(
+            reply
+                .text
+                .contains(crate::memory::counterparty_consent_ceremony::COMMAND_GRANT_PREFIX)
+        );
         assert!(
             provider.request.lock().unwrap().is_none(),
             "reserved command never reaches the provider"
@@ -7062,10 +7117,19 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        assert_eq!(input, 1, "the exact request receives one sealed input receipt");
+        assert_eq!(
+            input, 1,
+            "the exact request receives one sealed input receipt"
+        );
         assert_eq!(raw, 0, "ceremony text must never become RAW_TEXT");
-        assert_eq!(ingress, 0, "ceremony text must never become CHANNEL_INGRESS");
-        assert_eq!(egress, 1, "the local ceremony reply uses normal channel egress");
+        assert_eq!(
+            ingress, 0,
+            "ceremony text must never become CHANNEL_INGRESS"
+        );
+        assert_eq!(
+            egress, 1,
+            "the local ceremony reply uses normal channel egress"
+        );
     }
 
     #[tokio::test]
@@ -7140,7 +7204,10 @@ mod tests {
         .unwrap();
         assert_eq!(input, 0, "malformed ceremony input gets no durable receipt");
         assert_eq!(raw, 0, "malformed ceremony text must never become RAW_TEXT");
-        assert_eq!(ingress, 0, "malformed ceremony text must never become CHANNEL_INGRESS");
+        assert_eq!(
+            ingress, 0,
+            "malformed ceremony text must never become CHANNEL_INGRESS"
+        );
         assert_eq!(egress, 1, "controlled rejection uses normal channel egress");
     }
 
@@ -7189,11 +7256,17 @@ mod tests {
         let grant_command = request_reply
             .text
             .lines()
-            .find(|line| line.starts_with(crate::memory::counterparty_consent_ceremony::COMMAND_GRANT_PREFIX))
+            .find(|line| {
+                line.starts_with(crate::memory::counterparty_consent_ceremony::COMMAND_GRANT_PREFIX)
+            })
             .expect("challenge reply retains one exact grant command")
             .to_owned();
         assert_eq!(
-            handler(inbound(Some(&grant_command), None)).await.unwrap().unwrap().text,
+            handler(inbound(Some(&grant_command), None))
+                .await
+                .unwrap()
+                .unwrap()
+                .text,
             "Counterparty consent verified."
         );
         let status_key = crate::memory::counterparty_consent::CounterpartyKey::from_authenticated(
@@ -7252,7 +7325,9 @@ mod tests {
             None,
         );
         let request_admission = AdmittedCounterpartyConsentInput::for_authenticated_test(
-            home.path(), &binding, &request,
+            home.path(),
+            &binding,
+            &request,
         )
         .unwrap();
         let request_descriptor = crate::wal::counterparty_consent_once::CounterpartyConsentInputDescriptor::from_admitted_input(
@@ -7263,17 +7338,16 @@ mod tests {
             .append_counterparty_consent_input_once(home.path(), request_descriptor)
             .await
             .unwrap();
-        let request_proof = AuthenticatedInboundProof::from_writer_issued_receipt(request_receipt)
-            .unwrap();
+        let request_proof =
+            AuthenticatedInboundProof::from_writer_issued_receipt(request_receipt).unwrap();
         let mut connection = store::open(&home.path().join("views.db")).unwrap();
         let challenge = request_challenge(&mut connection, &request_proof, 1).unwrap();
         drop(connection);
 
         let grant = inbound(Some(&challenge.command), None);
-        let grant_admission = AdmittedCounterpartyConsentInput::for_authenticated_test(
-            home.path(), &binding, &grant,
-        )
-        .unwrap();
+        let grant_admission =
+            AdmittedCounterpartyConsentInput::for_authenticated_test(home.path(), &binding, &grant)
+                .unwrap();
         let grant_descriptor = crate::wal::counterparty_consent_once::CounterpartyConsentInputDescriptor::from_admitted_input(
             &grant_admission,
         )
@@ -7282,8 +7356,8 @@ mod tests {
             .append_counterparty_consent_input_once(home.path(), grant_descriptor)
             .await
             .unwrap();
-        let grant_proof = AuthenticatedInboundProof::from_writer_issued_receipt(grant_receipt)
-            .unwrap();
+        let grant_proof =
+            AuthenticatedInboundProof::from_writer_issued_receipt(grant_receipt).unwrap();
         let token = challenge
             .command
             .strip_prefix(crate::memory::counterparty_consent_ceremony::COMMAND_GRANT_PREFIX)
@@ -7335,7 +7409,9 @@ mod tests {
             None,
         );
         let admission = AdmittedCounterpartyConsentInput::for_authenticated_test(
-            home.path(), &binding, &revoke,
+            home.path(),
+            &binding,
+            &revoke,
         )
         .unwrap();
         let descriptor = crate::wal::counterparty_consent_once::CounterpartyConsentInputDescriptor::from_admitted_input(
@@ -7371,9 +7447,11 @@ mod tests {
             crate::memory::counterparty_consent::status(&connection, &status_key).unwrap(),
             crate::memory::counterparty_consent::ConsentStatus::Revoked { .. }
         ));
-        assert!(crate::memory::counterparty_consent_ceremony::pending_audit_locators(&connection)
-            .unwrap()
-            .is_empty());
+        assert!(
+            crate::memory::counterparty_consent_ceremony::pending_audit_locators(&connection)
+                .unwrap()
+                .is_empty()
+        );
 
         drop(connection);
         drop(writer);

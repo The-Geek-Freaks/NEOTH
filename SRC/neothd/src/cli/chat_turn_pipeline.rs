@@ -2461,7 +2461,9 @@ mod tests {
             .events
             .iter()
             .filter_map(|event| match event {
-                ChatTurnEvent::Output(ChatOutput::ProviderDelta { text, .. }) => Some(text.as_str()),
+                ChatTurnEvent::Output(ChatOutput::ProviderDelta { text, .. }) => {
+                    Some(text.as_str())
+                }
                 _ => None,
             })
             .collect::<String>();

@@ -97,7 +97,9 @@ impl std::fmt::Debug for CounterpartyConsentCommand {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Request => formatter.write_str("CounterpartyConsentCommand::Request"),
-            Self::Grant { .. } => formatter.write_str("CounterpartyConsentCommand::Grant([REDACTED])"),
+            Self::Grant { .. } => {
+                formatter.write_str("CounterpartyConsentCommand::Grant([REDACTED])")
+            }
             Self::Revoke => formatter.write_str("CounterpartyConsentCommand::Revoke"),
         }
     }
@@ -285,7 +287,10 @@ fn audit_payload_sha256(payload: &CeremonyAuditPayload) -> Result<[u8; SHA256_LE
 
 fn baseline_from_status(value: ConsentStatus) -> ConsentBaseline {
     match value {
-        ConsentStatus::Absent => ConsentBaseline { state: "absent", revision: 0 },
+        ConsentStatus::Absent => ConsentBaseline {
+            state: "absent",
+            revision: 0,
+        },
         ConsentStatus::VerifiedGranted { revision, .. } => ConsentBaseline {
             state: "verified_granted",
             revision,
@@ -299,9 +304,18 @@ fn baseline_from_status(value: ConsentStatus) -> ConsentBaseline {
 
 fn decode_baseline(state: &str, revision: i64) -> Result<ConsentBaseline> {
     match state {
-        "absent" if revision == 0 => Ok(ConsentBaseline { state: "absent", revision: 0 }),
-        "verified_granted" if revision > 0 => Ok(ConsentBaseline { state: "verified_granted", revision }),
-        "revoked" if revision > 0 => Ok(ConsentBaseline { state: "revoked", revision }),
+        "absent" if revision == 0 => Ok(ConsentBaseline {
+            state: "absent",
+            revision: 0,
+        }),
+        "verified_granted" if revision > 0 => Ok(ConsentBaseline {
+            state: "verified_granted",
+            revision,
+        }),
+        "revoked" if revision > 0 => Ok(ConsentBaseline {
+            state: "revoked",
+            revision,
+        }),
         _ => bail!("W209 persisted consent baseline is malformed"),
     }
 }
@@ -344,10 +358,11 @@ impl DurableCeremonyAudit {
     ) -> Result<Self> {
         ensure!(
             receipt.operation_id() == reservation.operation_id
-                && receipt.action() == match reservation.kind {
-                    ReservationKind::Grant => "verified_grant",
-                    ReservationKind::Revoke => "counterparty_revoke",
-                }
+                && receipt.action()
+                    == match reservation.kind {
+                        ReservationKind::Grant => "verified_grant",
+                        ReservationKind::Revoke => "counterparty_revoke",
+                    }
                 && receipt.event_id() > 0
                 && receipt.payload_sha256() == reservation.payload_sha256
                 && reservation.input_receipt_event_id == proof.input_receipt_event_id
@@ -424,12 +439,9 @@ impl PendingAuditRecovery {
                 )?;
                 Ok(())
             }
-            ReservationKind::Revoke => acknowledge_revocation_audit(
-                conn,
-                &self.proof,
-                &self.reservation,
-                &audit,
-            ),
+            ReservationKind::Revoke => {
+                acknowledge_revocation_audit(conn, &self.proof, &self.reservation, &audit)
+            }
         }
     }
 }
@@ -456,7 +468,11 @@ pub(crate) fn pending_audit_locators(conn: &Connection) -> Result<Vec<PendingAud
                 "revoke_audit_pending" => "counterparty_revoke",
                 _ => unreachable!("query restricts pending audit states"),
             };
-            Ok(PendingAuditLocator { input_receipt_event_id, input_sha256, action })
+            Ok(PendingAuditLocator {
+                input_receipt_event_id,
+                input_sha256,
+                action,
+            })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("W209 enumerate pending durable-audit recovery")
@@ -484,7 +500,17 @@ pub(crate) fn rehydrate_pending_audit(
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?)),
         )
         .optional()?;
-    let Some((state, operation_id, evidence, input_receipt_event_id, input_sha256, payload_sha256, baseline_state, baseline_revision)) = row else {
+    let Some((
+        state,
+        operation_id,
+        evidence,
+        input_receipt_event_id,
+        input_sha256,
+        payload_sha256,
+        baseline_state,
+        baseline_revision,
+    )) = row
+    else {
         return Ok(None);
     };
     validate_operation_id(&operation_id)?;
@@ -518,7 +544,10 @@ pub(crate) fn rehydrate_pending_audit(
 }
 
 fn as_sha256(value: &[u8]) -> Result<[u8; SHA256_LEN]> {
-    ensure!(value.len() == SHA256_LEN, "W209 stored SHA-256 has invalid length");
+    ensure!(
+        value.len() == SHA256_LEN,
+        "W209 stored SHA-256 has invalid length"
+    );
     let mut result = [0; SHA256_LEN];
     result.copy_from_slice(value);
     Ok(result)
@@ -545,14 +574,21 @@ pub fn request_challenge(
         .query_row(
             "SELECT state,expires_at_ns FROM idx_counterparty_consent_challenge_v1 \
              WHERE channel_id=?1 AND account_id=?2 AND scoped_sender_hash=?3",
-            params![proof.key.channel_id(), proof.key.account_id(), proof.key.scoped_sender_hash()],
+            params![
+                proof.key.channel_id(),
+                proof.key.account_id(),
+                proof.key.scoped_sender_hash()
+            ],
             |row| row.get(0),
         )
         .optional()
         .context("W209 load prior challenge")?;
     if let Some(state) = prior {
         ensure!(
-            !matches!(state.as_str(), "grant_audit_pending" | "revoke_audit_pending"),
+            !matches!(
+                state.as_str(),
+                "grant_audit_pending" | "revoke_audit_pending"
+            ),
             "W209 consent ceremony already has a durable-audit reservation"
         );
     }
@@ -611,7 +647,11 @@ pub fn commit_counterparty_revoke_before_audit(
         .query_row(
             "SELECT state FROM idx_counterparty_consent_challenge_v1 \
              WHERE channel_id=?1 AND account_id=?2 AND scoped_sender_hash=?3",
-            params![proof.key.channel_id(), proof.key.account_id(), proof.key.scoped_sender_hash()],
+            params![
+                proof.key.channel_id(),
+                proof.key.account_id(),
+                proof.key.scoped_sender_hash()
+            ],
             |row| row.get(0),
         )
         .optional()?;
@@ -687,15 +727,16 @@ fn reserve(
                         proof.conversation_sha256.as_slice(), expected.as_slice(), now_ns],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             ).optional()?;
-            let (issued_state, issued_revision) = issued.ok_or_else(|| anyhow!(
-                "W209 grant echo is absent, expired, wrong-scope, or already consumed"
-            ))?;
+            let (issued_state, issued_revision) = issued.ok_or_else(|| {
+                anyhow!("W209 grant echo is absent, expired, wrong-scope, or already consumed")
+            })?;
             let issued_baseline = decode_baseline(&issued_state, issued_revision)?;
             ensure!(
                 baseline_from_status(status(&tx, &proof.key)?) == issued_baseline,
                 "W209 challenge baseline changed; pre-revoke token is stale"
             );
-            let reservation = make_reservation(operation_id, ReservationKind::Grant, proof, issued_baseline)?;
+            let reservation =
+                make_reservation(operation_id, ReservationKind::Grant, proof, issued_baseline)?;
             let changed = tx.execute(
                 "UPDATE idx_counterparty_consent_challenge_v1 \
                  SET state=?1,operation_id=?2,reservation_evidence_sha256=?3,reservation_input_receipt_event_id=?4, \
@@ -710,7 +751,10 @@ fn reserve(
                         proof.key.scoped_sender_hash(), proof.conversation_sha256.as_slice(),
                         expected.as_slice(), now_ns, issued_baseline.state, issued_baseline.revision],
             )?;
-            ensure!(changed == 1, "W209 grant echo is absent, expired, wrong-scope, or already consumed");
+            ensure!(
+                changed == 1,
+                "W209 grant echo is absent, expired, wrong-scope, or already consumed"
+            );
             tx.commit()?;
             return Ok(reservation);
         }
@@ -730,7 +774,10 @@ pub fn commit_verified_grant_after_audit(
     audit: &DurableCeremonyAudit,
     now_ns: i64,
 ) -> Result<ConsentStatus> {
-    ensure!(reservation.kind == ReservationKind::Grant, "W209 reservation is not a grant");
+    ensure!(
+        reservation.kind == ReservationKind::Grant,
+        "W209 reservation is not a grant"
+    );
     verify_audit_binding(reservation, audit)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let current = baseline_from_status(status(&tx, &proof.key)?);
@@ -750,8 +797,14 @@ pub fn commit_verified_grant_after_audit(
                 reservation.input_receipt_event_id, reservation.input_sha256.as_slice(),
                 reservation.payload_sha256.as_slice(), reservation.baseline.state, reservation.baseline.revision],
     )?;
-    ensure!(changed == 1, "W209 grant reservation was superseded or already consumed");
-    let revision = reservation.baseline.revision.checked_add(1)
+    ensure!(
+        changed == 1,
+        "W209 grant reservation was superseded or already consumed"
+    );
+    let revision = reservation
+        .baseline
+        .revision
+        .checked_add(1)
         .ok_or_else(|| anyhow!("W209 consent revision overflow"))?;
     let proof_sha256 = grant_proof_sha256(proof, reservation, audit);
     tx.execute(
@@ -765,7 +818,10 @@ pub fn commit_verified_grant_after_audit(
                 GRANT_PROOF_KIND, proof_sha256.as_slice(), now_ns, revision],
     )?;
     tx.commit()?;
-    Ok(ConsentStatus::VerifiedGranted { revision, verified_at_ns: now_ns })
+    Ok(ConsentStatus::VerifiedGranted {
+        revision,
+        verified_at_ns: now_ns,
+    })
 }
 
 /// Acknowledge a durable audit for a revoke that was already committed
@@ -777,7 +833,10 @@ pub fn acknowledge_revocation_audit(
     reservation: &AuditReservation,
     audit: &DurableCeremonyAudit,
 ) -> Result<()> {
-    ensure!(reservation.kind == ReservationKind::Revoke, "W209 reservation is not a revoke");
+    ensure!(
+        reservation.kind == ReservationKind::Revoke,
+        "W209 reservation is not a revoke"
+    );
     verify_audit_binding(reservation, audit)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let changed = tx.execute(
@@ -792,7 +851,10 @@ pub fn acknowledge_revocation_audit(
                 reservation.input_receipt_event_id, reservation.input_sha256.as_slice(),
                 reservation.payload_sha256.as_slice(), reservation.baseline.state, reservation.baseline.revision],
     )?;
-    ensure!(changed == 1, "W209 revoke audit acknowledgement was superseded or already recorded");
+    ensure!(
+        changed == 1,
+        "W209 revoke audit acknowledgement was superseded or already recorded"
+    );
     tx.commit()?;
     Ok(())
 }
@@ -809,16 +871,33 @@ pub fn cancel_reservation(conn: &mut Connection, reservation: &AuditReservation)
         "UPDATE idx_counterparty_consent_challenge_v1 SET state=?1,operation_id=NULL \
          WHERE channel_id=?2 AND account_id=?3 AND scoped_sender_hash=?4 AND operation_id=?5 \
            AND state='grant_audit_pending'",
-        params![restored, reservation.key.channel_id(), reservation.key.account_id(),
-                reservation.key.scoped_sender_hash(), reservation.operation_id],
+        params![
+            restored,
+            reservation.key.channel_id(),
+            reservation.key.account_id(),
+            reservation.key.scoped_sender_hash(),
+            reservation.operation_id
+        ],
     )?;
     Ok(())
 }
 
-fn verify_audit_binding(reservation: &AuditReservation, audit: &DurableCeremonyAudit) -> Result<()> {
-    ensure!(audit.operation_id == reservation.operation_id, "W209 audit belongs to another ceremony");
-    ensure!(audit.audit_event_id > 0, "W209 audit receipt is not durable");
-    ensure!(audit.payload_sha256 == reservation.payload_sha256, "W209 audit payload digest is not the reserved exact payload");
+fn verify_audit_binding(
+    reservation: &AuditReservation,
+    audit: &DurableCeremonyAudit,
+) -> Result<()> {
+    ensure!(
+        audit.operation_id == reservation.operation_id,
+        "W209 audit belongs to another ceremony"
+    );
+    ensure!(
+        audit.audit_event_id > 0,
+        "W209 audit receipt is not durable"
+    );
+    ensure!(
+        audit.payload_sha256 == reservation.payload_sha256,
+        "W209 audit payload digest is not the reserved exact payload"
+    );
     Ok(())
 }
 
@@ -882,7 +961,10 @@ fn random_hex(bytes: usize) -> Result<String> {
 
 fn validate_token(token: &str) -> Result<()> {
     ensure!(
-        token.len() == TOKEN_HEX_LEN && token.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+        token.len() == TOKEN_HEX_LEN
+            && token
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
         "W209 consent token is malformed"
     );
     Ok(())
@@ -892,7 +974,9 @@ fn validate_token(token: &str) -> Result<()> {
 fn validate_operation_id(operation_id: &str) -> Result<()> {
     ensure!(
         operation_id.len() == OPERATION_HEX_LEN
-            && operation_id.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+            && operation_id
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
         "W209 ceremony operation id is malformed"
     );
     Ok(())
@@ -918,14 +1002,20 @@ mod tests {
         conn
     }
 
-    fn proof(sender: &str, receipt_id: i64, marker: u8, command: &str) -> AuthenticatedInboundProof {
+    fn proof(
+        sender: &str,
+        receipt_id: i64,
+        marker: u8,
+        command: &str,
+    ) -> AuthenticatedInboundProof {
         AuthenticatedInboundProof {
             key: CounterpartyKey::from_authenticated(
                 &crate::channels::registry::ChannelRef::default_account(
                     crate::channels::registry::ChannelId::Telegram,
                 ),
                 sender,
-            ).unwrap(),
+            )
+            .unwrap(),
             conversation_sha256: [marker; SHA256_LEN],
             input_receipt_event_id: receipt_id,
             wal_session_id: [marker; 16],
@@ -934,7 +1024,11 @@ mod tests {
     }
 
     fn echoed_token(reply: &ChallengeReply) -> String {
-        reply.command.strip_prefix(COMMAND_GRANT_PREFIX).unwrap().to_owned()
+        reply
+            .command
+            .strip_prefix(COMMAND_GRANT_PREFIX)
+            .unwrap()
+            .to_owned()
     }
 
     fn audit_for(reservation: &AuditReservation) -> DurableCeremonyAudit {
@@ -948,8 +1042,14 @@ mod tests {
     #[test]
     fn parser_accepts_only_whole_ascii_ceremony_commands() {
         let token = "a".repeat(TOKEN_HEX_LEN);
-        assert_eq!(parse_command(COMMAND_REQUEST), CeremonyCommandParse::Command(CounterpartyConsentCommand::Request));
-        assert_eq!(parse_command(COMMAND_REVOKE), CeremonyCommandParse::Command(CounterpartyConsentCommand::Revoke));
+        assert_eq!(
+            parse_command(COMMAND_REQUEST),
+            CeremonyCommandParse::Command(CounterpartyConsentCommand::Request)
+        );
+        assert_eq!(
+            parse_command(COMMAND_REVOKE),
+            CeremonyCommandParse::Command(CounterpartyConsentCommand::Revoke)
+        );
         assert_eq!(
             parse_command(&format!("{COMMAND_GRANT_PREFIX}{token}")),
             CeremonyCommandParse::Command(CounterpartyConsentCommand::Grant { token })
@@ -960,7 +1060,11 @@ mod tests {
             "/neoth consent clustering grant AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             "/neoth consent clustering revoke\nignored",
         ] {
-            assert_eq!(parse_command(invalid), CeremonyCommandParse::MalformedReserved, "unexpected command: {invalid:?}");
+            assert_eq!(
+                parse_command(invalid),
+                CeremonyCommandParse::MalformedReserved,
+                "unexpected command: {invalid:?}"
+            );
         }
         assert_eq!(
             parse_command("please /neoth consent clustering request"),
@@ -1004,7 +1108,11 @@ mod tests {
         assert_eq!(locators[0].action(), "verified_grant");
         assert_eq!(locators[1].input_receipt_event_id(), 72);
         assert_eq!(locators[1].action(), "counterparty_revoke");
-        assert!(locators.iter().all(|locator| locator.input_sha256() == [0; SHA256_LEN]));
+        assert!(
+            locators
+                .iter()
+                .all(|locator| locator.input_sha256() == [0; SHA256_LEN])
+        );
     }
 
     #[test]
@@ -1013,7 +1121,8 @@ mod tests {
         let request = proof("0123456789abcdef", 61, 41, COMMAND_REQUEST);
         let reply = request_challenge(&mut conn, &request, 100).unwrap();
         let grant = proof("0123456789abcdef", 62, 41, &reply.command);
-        let reservation = reserve_verified_grant(&mut conn, &grant, &echoed_token(&reply), 101).unwrap();
+        let reservation =
+            reserve_verified_grant(&mut conn, &grant, &echoed_token(&reply), 101).unwrap();
         let before: (String, i64, Vec<u8>) = conn.query_row(
             "SELECT state,reservation_input_receipt_event_id,reservation_payload_sha256 \
              FROM idx_counterparty_consent_challenge_v1 WHERE scoped_sender_hash='0123456789abcdef'",
@@ -1031,7 +1140,10 @@ mod tests {
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         ).unwrap();
-        assert_eq!(before, after, "later request must preserve the exact pending audit custody");
+        assert_eq!(
+            before, after,
+            "later request must preserve the exact pending audit custody"
+        );
         assert_eq!(after.0, "grant_audit_pending");
         assert_eq!(after.1, reservation.input_receipt_event_id);
     }
@@ -1042,30 +1154,61 @@ mod tests {
         let first_request = proof("0123456789abcdef", 11, 1, COMMAND_REQUEST);
         let first_reply = request_challenge(&mut conn, &first_request, 10).unwrap();
         let first_grant = proof("0123456789abcdef", 12, 1, &first_reply.command);
-        let first_reservation = reserve_verified_grant(&mut conn, &first_grant, &echoed_token(&first_reply), 11).unwrap();
+        let first_reservation =
+            reserve_verified_grant(&mut conn, &first_grant, &echoed_token(&first_reply), 11)
+                .unwrap();
         let first_audit = audit_for(&first_reservation);
         assert!(matches!(
-            commit_verified_grant_after_audit(&mut conn, &first_grant, &first_reservation, &first_audit, 12).unwrap(),
+            commit_verified_grant_after_audit(
+                &mut conn,
+                &first_grant,
+                &first_reservation,
+                &first_audit,
+                12
+            )
+            .unwrap(),
             ConsentStatus::VerifiedGranted { revision: 1, .. }
         ));
 
         let stale_request = proof("0123456789abcdef", 13, 2, COMMAND_REQUEST);
         let stale_reply = request_challenge(&mut conn, &stale_request, 20).unwrap();
         let revoke_proof = proof("0123456789abcdef", 14, 3, COMMAND_REVOKE);
-        let (revoke_reservation, _) = commit_counterparty_revoke_before_audit(&mut conn, &revoke_proof, 21).unwrap();
+        let (revoke_reservation, _) =
+            commit_counterparty_revoke_before_audit(&mut conn, &revoke_proof, 21).unwrap();
         assert!(
-            reserve_verified_grant(&mut conn, &proof("0123456789abcdef", 15, 2, &stale_reply.command), &echoed_token(&stale_reply), 22).is_err(),
+            reserve_verified_grant(
+                &mut conn,
+                &proof("0123456789abcdef", 15, 2, &stale_reply.command),
+                &echoed_token(&stale_reply),
+                22
+            )
+            .is_err(),
             "a token issued before revoke must not adopt the later revoked baseline"
         );
-        acknowledge_revocation_audit(&mut conn, &revoke_proof, &revoke_reservation, &audit_for(&revoke_reservation)).unwrap();
+        acknowledge_revocation_audit(
+            &mut conn,
+            &revoke_proof,
+            &revoke_reservation,
+            &audit_for(&revoke_reservation),
+        )
+        .unwrap();
 
         let fresh_request = proof("0123456789abcdef", 16, 4, COMMAND_REQUEST);
         let fresh_reply = request_challenge(&mut conn, &fresh_request, 23).unwrap();
         let fresh_grant = proof("0123456789abcdef", 17, 4, &fresh_reply.command);
-        let fresh_reservation = reserve_verified_grant(&mut conn, &fresh_grant, &echoed_token(&fresh_reply), 24).unwrap();
+        let fresh_reservation =
+            reserve_verified_grant(&mut conn, &fresh_grant, &echoed_token(&fresh_reply), 24)
+                .unwrap();
         let fresh_audit = audit_for(&fresh_reservation);
         assert!(matches!(
-            commit_verified_grant_after_audit(&mut conn, &fresh_grant, &fresh_reservation, &fresh_audit, 25).unwrap(),
+            commit_verified_grant_after_audit(
+                &mut conn,
+                &fresh_grant,
+                &fresh_reservation,
+                &fresh_audit,
+                25
+            )
+            .unwrap(),
             ConsentStatus::VerifiedGranted { revision: 3, .. }
         ));
     }
@@ -1076,25 +1219,48 @@ mod tests {
         let initial_request = proof("fedcba9876543210", 21, 11, COMMAND_REQUEST);
         let initial_reply = request_challenge(&mut conn, &initial_request, 10).unwrap();
         let initial_grant = proof("fedcba9876543210", 22, 11, &initial_reply.command);
-        let initial_reservation = reserve_verified_grant(&mut conn, &initial_grant, &echoed_token(&initial_reply), 11).unwrap();
-        commit_verified_grant_after_audit(&mut conn, &initial_grant, &initial_reservation, &audit_for(&initial_reservation), 12).unwrap();
+        let initial_reservation =
+            reserve_verified_grant(&mut conn, &initial_grant, &echoed_token(&initial_reply), 11)
+                .unwrap();
+        commit_verified_grant_after_audit(
+            &mut conn,
+            &initial_grant,
+            &initial_reservation,
+            &audit_for(&initial_reservation),
+            12,
+        )
+        .unwrap();
 
         let pending_request = proof("fedcba9876543210", 23, 12, COMMAND_REQUEST);
         let pending_reply = request_challenge(&mut conn, &pending_request, 20).unwrap();
         let pending = proof("fedcba9876543210", 24, 12, &pending_reply.command);
-        let pending_reservation = reserve_verified_grant(&mut conn, &pending, &echoed_token(&pending_reply), 21).unwrap();
+        let pending_reservation =
+            reserve_verified_grant(&mut conn, &pending, &echoed_token(&pending_reply), 21).unwrap();
         let revoke = proof("fedcba9876543210", 25, 13, COMMAND_REVOKE);
         let (_, outcome) = commit_counterparty_revoke_before_audit(&mut conn, &revoke, 22).unwrap();
         assert_eq!(outcome.revision, 2);
-        assert!(matches!(status(&conn, &revoke.key).unwrap(), ConsentStatus::Revoked { revision: 2, .. }));
+        assert!(matches!(
+            status(&conn, &revoke.key).unwrap(),
+            ConsentStatus::Revoked { revision: 2, .. }
+        ));
         let terminal: i64 = conn.query_row(
             "SELECT COUNT(*) FROM idx_counterparty_consent_audit_terminal_v1 WHERE operation_id=?1",
             [&pending_reservation.operation_id],
             |row| row.get(0),
         ).unwrap();
-        assert_eq!(terminal, 1, "pending grant custody must survive the revocation fence");
+        assert_eq!(
+            terminal, 1,
+            "pending grant custody must survive the revocation fence"
+        );
         assert!(
-            commit_verified_grant_after_audit(&mut conn, &pending, &pending_reservation, &audit_for(&pending_reservation), 23).is_err(),
+            commit_verified_grant_after_audit(
+                &mut conn,
+                &pending,
+                &pending_reservation,
+                &audit_for(&pending_reservation),
+                23
+            )
+            .is_err(),
             "a terminally fenced regrant must never turn consent positive"
         );
     }
@@ -1106,32 +1272,66 @@ mod tests {
         let reply = request_challenge(&mut conn, &request, 100).unwrap();
         let token = echoed_token(&reply);
         assert!(
-            reserve_verified_grant(&mut conn, &proof("0123456789abcdef", 32, 21, COMMAND_REQUEST), &token, 101).is_err(),
+            reserve_verified_grant(
+                &mut conn,
+                &proof("0123456789abcdef", 32, 21, COMMAND_REQUEST),
+                &token,
+                101
+            )
+            .is_err(),
             "a request receipt cannot be substituted for its grant echo"
         );
         assert!(
-            reserve_verified_grant(&mut conn, &proof("fedcba9876543210", 32, 21, &reply.command), &token, 101).is_err(),
+            reserve_verified_grant(
+                &mut conn,
+                &proof("fedcba9876543210", 32, 21, &reply.command),
+                &token,
+                101
+            )
+            .is_err(),
             "another sender cannot consume the token"
         );
         assert!(
-            reserve_verified_grant(&mut conn, &proof("0123456789abcdef", 32, 22, &reply.command), &token, 101).is_err(),
+            reserve_verified_grant(
+                &mut conn,
+                &proof("0123456789abcdef", 32, 22, &reply.command),
+                &token,
+                101
+            )
+            .is_err(),
             "another conversation cannot consume the token"
         );
         assert!(
-            reserve_verified_grant(&mut conn, &proof("0123456789abcdef", 32, 21, &reply.command), &token, 100 + CHALLENGE_TTL_NS + 1).is_err(),
+            reserve_verified_grant(
+                &mut conn,
+                &proof("0123456789abcdef", 32, 21, &reply.command),
+                &token,
+                100 + CHALLENGE_TTL_NS + 1
+            )
+            .is_err(),
             "expired token must fail"
         );
 
         let fresh_request = proof("0123456789abcdef", 33, 21, COMMAND_REQUEST);
         let fresh_reply = request_challenge(&mut conn, &fresh_request, 200).unwrap();
         let fresh_grant = proof("0123456789abcdef", 34, 21, &fresh_reply.command);
-        let reservation = reserve_verified_grant(&mut conn, &fresh_grant, &echoed_token(&fresh_reply), 201).unwrap();
+        let reservation =
+            reserve_verified_grant(&mut conn, &fresh_grant, &echoed_token(&fresh_reply), 201)
+                .unwrap();
         assert!(
-            reserve_verified_grant(&mut conn, &fresh_grant, &echoed_token(&fresh_reply), 202).is_err(),
+            reserve_verified_grant(&mut conn, &fresh_grant, &echoed_token(&fresh_reply), 202)
+                .is_err(),
             "one token cannot create a second reservation"
         );
         assert!(
-            commit_verified_grant_after_audit(&mut conn, &fresh_grant, &reservation, &audit_for(&reservation), 203).is_ok(),
+            commit_verified_grant_after_audit(
+                &mut conn,
+                &fresh_grant,
+                &reservation,
+                &audit_for(&reservation),
+                203
+            )
+            .is_ok(),
             "the exact authenticated echo remains usable once"
         );
     }

@@ -5142,8 +5142,7 @@ mod tests {
             [],
         )
         .unwrap();
-        crate::memory::embeddings::upsert(&conn, "episode", "88", "pre-v43-local", &[1.0])
-            .unwrap();
+        crate::memory::embeddings::upsert(&conn, "episode", "88", "pre-v43-local", &[1.0]).unwrap();
         conn.execute_batch(
             "INSERT INTO idx_episode_origin_v2 \
                 (raw_event_id,origin_kind,origin_event_id,raw_payload_hash,channel_id,account_id,scoped_sender_hash) \
@@ -5165,7 +5164,13 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(episode, ("pre-v43 retained text".to_owned(), "0000000000000058".to_owned()));
+        assert_eq!(
+            episode,
+            (
+                "pre-v43 retained text".to_owned(),
+                "0000000000000058".to_owned()
+            )
+        );
         let preserved: (i64, i64, i64) = conn
             .query_row(
                 "SELECT \
@@ -5184,7 +5189,9 @@ mod tests {
             "idx_counterparty_consent_audit_terminal_v1",
         ] {
             let rows: i64 = conn
-                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
                 .unwrap();
             assert_eq!(rows, 0, "v43 must not backfill {table}");
         }
