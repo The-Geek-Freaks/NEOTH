@@ -280,6 +280,138 @@ async fn accepted_role_policy_reload_between_authorization_and_raw_send_is_block
 }
 
 #[tokio::test]
+async fn w225_effect_start_role_rejection_closes_admitted_retry_with_denial_receipt() {
+    let home = tempfile::tempdir().expect("temporary authenticated home");
+    let config_path = home.path().join("freedom.yaml");
+    let initial = (*configured_role_policy(InferenceProvider::LocalOllama, "qwen-allowed")).clone();
+    std::fs::write(
+        &config_path,
+        serde_yaml::to_string(&initial).expect("serialize initial config"),
+    )
+    .expect("write initial config");
+    let reload = Arc::new(crate::config::reload::ReloadController::new(
+        initial.clone(),
+        config_path.clone(),
+    ));
+    let wal = home.path().join("wal");
+    std::fs::create_dir_all(&wal).expect("create home WAL directory");
+    let segment = wal.join("000001.wal");
+    let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
+        segment.clone(),
+        home.path().to_path_buf(),
+    )
+    .expect("start authenticated WAL writer");
+    ready.wait().await.expect("ready authenticated WAL writer");
+    let gate = Arc::new(
+        crate::providers::effect_test_support::RecordingEffectGate::new(Duration::from_secs(5)),
+    );
+
+    let authorizer = ProviderCallAuthorizer::fail_closed(
+        AutonomyLevel::Full,
+        Some(writer.clone()),
+        crate::config::TokensConfig::default_max_per_request(),
+    )
+    .with_usage_home(home.path())
+    .with_turn_effect_gate(Some(gate.clone()))
+    .with_role_dispatch(
+        HemisphereRole::Left,
+        InferenceProvider::LocalOllama,
+        Arc::new(initial),
+    )
+    .with_role_policy_reload(reload.clone());
+    let req = Request {
+        model: Some("qwen-allowed".into()),
+        ..Request::default()
+    };
+    let mut authorized = authorizer
+        .authorize_leaf("local_ollama", &req, "w225.effect_start", false, Some(128))
+        .await
+        .expect("admit initial retry-capable leaf");
+    let role_dispatch = authorized.take_role_dispatch();
+    let provider_subject = authorized.take_provider_subject();
+    let effect = authorized.effect_context();
+    let audit = authorized.begin_dispatch().await.expect("write initial lifecycle");
+    let permit = ProviderDispatchPermit::authorized(
+        audit,
+        authorizer,
+        "local_ollama",
+        None,
+        req.clone(),
+        "w225.effect_start",
+        Some(128),
+        provider_subject,
+        effect,
+        true,
+        role_dispatch,
+    );
+    permit
+        .finish_attempt_for_retry(ProviderRetryReason::Transient)
+        .await
+        .expect("close first retry intent");
+    permit
+        .begin_retry_attempt()
+        .await
+        .expect("admit second retry lifecycle");
+    let effect = permit
+        .prepare_effect(ChatTurnEffectKind::Provider {
+            call_scope: "w225.effect_start",
+            streaming: false,
+        })
+        .await
+        .expect("actual permit reserves the effect before policy reload")
+        .expect("gated retry permit yields a preparing effect");
+
+    let mut reloaded = reload.latest().as_ref().clone();
+    reloaded
+        .inference
+        .role_policy
+        .as_mut()
+        .expect("initial role policy")
+        .rules
+        .clear();
+    std::fs::write(
+        &config_path,
+        serde_yaml::to_string(&reloaded).expect("serialize reloaded config"),
+    )
+    .expect("write changed role policy");
+    assert!(matches!(
+        reload.try_reload().expect("reload changed role policy"),
+        crate::config::reload::ReloadResult::Reloaded { .. }
+    ));
+
+    let error = crate::providers::claude_cli::test_only_begin_effect_start_or_role_terminal(
+        &permit, &req, effect,
+    )
+    .await
+    .expect_err("changed role policy must stop before effect start");
+    assert!(error.to_string().contains("role dispatch"), "{error:#}");
+    assert_eq!(
+        gate.phase(),
+        crate::providers::effect_test_support::RecordedPhase::Aborted,
+        "live role authority rejects the preparing effect before a started lease"
+    );
+
+    drop(permit);
+    drop(writer);
+    join.await.expect("authenticated WAL writer drained");
+    let lifecycle = lifecycle_frames(&segment);
+    assert_eq!(
+        lifecycle.iter().map(|(event, _)| *event).collect::<Vec<_>>(),
+        [
+            crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+            crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+            crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+        ]
+    );
+    assert_eq!(lifecycle[1].1["retry_receipt"]["disposition"], "retry_intent_closed");
+    assert_eq!(lifecycle[3].1["error_kind"], "role_dispatch_policy_changed");
+    assert_eq!(lifecycle[3].1["retry_receipt"]["disposition"], "authorization_denied");
+    assert_eq!(lifecycle[3].1["retry_receipt"]["class"], "transient");
+    assert_eq!(lifecycle[3].1["retry_receipt"]["attempt"], 2);
+}
+
+#[tokio::test]
 async fn non_council_leaf_ignores_a_closed_policy_without_role_binding() {
     let dir = tempfile::tempdir().expect("temporary compatibility config directory");
     let closed_config = (*configured_role_policy(InferenceProvider::OpenAi, "gpt-5")).clone();

@@ -584,7 +584,10 @@ async fn begin_effect_start_or_role_terminal(
         Ok(lease) => Ok(lease),
         Err(start_error) => {
             if let Err(role_error) = permit.ensure_role_dispatch_before_send(req) {
-                if let Err(audit_error) = permit.failure("role_dispatch_policy_changed").await {
+                if let Err(audit_error) = permit
+                    .finish_retry_authorization_denied("role_dispatch_policy_changed")
+                    .await
+                {
                     return Err(anyhow::anyhow!(
                         "role dispatch changed and start terminal audit failed: {audit_error}; provider error: {role_error}"
                     ));
@@ -594,6 +597,15 @@ async fn begin_effect_start_or_role_terminal(
             Err(start_error)
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) async fn test_only_begin_effect_start_or_role_terminal(
+    permit: &ProviderDispatchPermit,
+    req: &Request,
+    effect: super::PreparingEffect,
+) -> Result<super::EffectStartLease> {
+    begin_effect_start_or_role_terminal(permit, req, effect).await
 }
 
 struct ManagedClaudeChild {

@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W224 accepted / W225 queued (2026-09-22):** P2-10 is now accepted against
+`778637e0`: Grouped281 `35785415701` passed all 281 exact selected tests;
+58 source-path hashes, the matrix, Cargo.lock and each case's result terminal
+match. This covers dependency readiness, typed registry injection, CLI/Channel/
+Background/loop/n8n/Cron/Sub-Agent retention, reload and subject/policy isolation.
+Independent contract review passed. Road: **1016 checked / 306 open / 2 partial**
+(1324 total). See `docs/gold-wave224-registry-acceptance.md`.
+W221 consent-denial cases both passed in the same run. W225 adds the real
+Claude effect-start role-reload denial regression; independent source review
+passed, Hosted execution is pending. Its separate warm-pane fence remains open.
+Inventory: 532 source paths / 820 native / 94 GUI, unchanged platform extras;
+Grouped282 includes W225. Slim-core Clippy and test typecheck on `c4203898`
+passed; CLI export is still running. Full CI `35782661515` remains running
+on `74334d4b` for Windows/macOS. Local executable hold remains absolute.
 **Hosted checkpoint (2026-09-22):** Grouped275 `35784185143` on `e716997a`
 passed 275/275 exact cases, including actual CLI fallback; 57 source paths,
 matrix, lock and per-case terminals are verified. Grouped281 `35785415701`

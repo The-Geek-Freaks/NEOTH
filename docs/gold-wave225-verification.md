@@ -1,0 +1,31 @@
+# W225 — Role-policy denial at the actual Claude effect-start boundary
+
+An admitted retry whose Council role policy changes before its effect starts
+must close the existing durable request with an `authorization_denied` receipt.
+The Claude effect-start helper now uses the W221 terminal operation, retaining
+the original retry class and current attempt without inventing another request.
+
+This batch changes only `begin_effect_start_or_role_terminal`. The separate
+warm-pane pre-send role fence remains unchanged and is not accepted by this
+batch. No complete tmux, subprocess or external provider-delivery proof is
+claimed.
+
+## Regression and evidence boundary
+
+The selected native identity is
+`providers::cost_authorization::role_dispatch_tests::w225_effect_start_role_rejection_closes_admitted_retry_with_denial_receipt`.
+
+It must bind the real role authorizer to the same recording effect gate,
+prepare the retry effect through the permit, reload the accepted role policy,
+then invoke the actual Claude effect-start helper. The role-policy start
+authority must abort before a Started lease. After draining the authenticated
+home WAL, the fixture requires exactly two request/error pairs and a final
+`role_dispatch_policy_changed` terminal with `authorization_denied`, origin
+class `transient`, and attempt 2.
+
+An initial test draft manually closed a separate gate; independent review
+rejected it because it bypassed the production effect/start-authority binding.
+The corrected fixture passed independent source review. Hosted execution is
+pending; no local compiler, parser, formatter, tests or runtime ran. Grouped282
+will include the new identity alongside all 281 prior selections. No Road
+checkbox is closed by source changes alone.

@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W224 checkpoint Markdown escaping repaired; W221/W224 Hosted acceptance pending; local BSOD hold",
+  "status": "W224 P2-10 ACCEPTED Group281; W225 effect-start retry denial statically reviewed, Hosted pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 92022,
-    "sha256": "A4BCF50EFA1B2762B71253A11E7C2D9B0190B7AF4759BFFB25CBECBD0ECBE1EB"
+    "sha256": "A103CA1CE915ABBEAD74B38974BB87B7C6B0D7A4F608DBB7EA65F1BFC21CB930"
   },
-  "sourceInputs": 531,
+  "sourceInputs": 532,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -1146,37 +1146,37 @@
     {
       "test": "providers::claude_cli::tests::parse_stream_event_extracts_cli_assistant_envelope",
       "sourcePath": "SRC/neothd/src/providers/claude_cli.rs",
-      "sourceSha256": "E2399198279A5033506FFDD45B2CC943DAC0174E2B8E9BACDCBE3261DE9C3159",
+      "sourceSha256": "0150562E008A5AF562BC395AFAEEFF9FD22B33A3B4AD1DC047496F937702DAB3",
       "junitClass": "neoth"
     },
     {
       "test": "providers::claude_cli::tests::parse_stream_event_recognises_redacted_cli_reasoning_block",
       "sourcePath": "SRC/neothd/src/providers/claude_cli.rs",
-      "sourceSha256": "E2399198279A5033506FFDD45B2CC943DAC0174E2B8E9BACDCBE3261DE9C3159",
+      "sourceSha256": "0150562E008A5AF562BC395AFAEEFF9FD22B33A3B4AD1DC047496F937702DAB3",
       "junitClass": "neoth"
     },
     {
       "test": "providers::claude_cli::tests::parsed_stream_json_strings_are_recursively_zeroized_after_extraction",
       "sourcePath": "SRC/neothd/src/providers/claude_cli.rs",
-      "sourceSha256": "E2399198279A5033506FFDD45B2CC943DAC0174E2B8E9BACDCBE3261DE9C3159",
+      "sourceSha256": "0150562E008A5AF562BC395AFAEEFF9FD22B33A3B4AD1DC047496F937702DAB3",
       "junitClass": "neoth"
     },
     {
       "test": "providers::claude_cli::tests::cli_result_text_is_only_a_fallback_after_visible_assistant_content",
       "sourcePath": "SRC/neothd/src/providers/claude_cli.rs",
-      "sourceSha256": "E2399198279A5033506FFDD45B2CC943DAC0174E2B8E9BACDCBE3261DE9C3159",
+      "sourceSha256": "0150562E008A5AF562BC395AFAEEFF9FD22B33A3B4AD1DC047496F937702DAB3",
       "junitClass": "neoth"
     },
     {
       "test": "providers::claude_cli::tests::parse_stream_event_extracts_native_thinking_delta_without_mixing_visible_text",
       "sourcePath": "SRC/neothd/src/providers/claude_cli.rs",
-      "sourceSha256": "E2399198279A5033506FFDD45B2CC943DAC0174E2B8E9BACDCBE3261DE9C3159",
+      "sourceSha256": "0150562E008A5AF562BC395AFAEEFF9FD22B33A3B4AD1DC047496F937702DAB3",
       "junitClass": "neoth"
     },
     {
       "test": "providers::claude_cli::tests::parse_stream_event_extracts_reasoning_alias_delta",
       "sourcePath": "SRC/neothd/src/providers/claude_cli.rs",
-      "sourceSha256": "E2399198279A5033506FFDD45B2CC943DAC0174E2B8E9BACDCBE3261DE9C3159",
+      "sourceSha256": "0150562E008A5AF562BC395AFAEEFF9FD22B33A3B4AD1DC047496F937702DAB3",
       "junitClass": "neoth"
     },
     {
@@ -4752,31 +4752,31 @@
     {
       "test": "providers::cost_authorization::role_dispatch_tests::configured_role_denial_blocks_raw_transport",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "54D90F3C1F067DDB3772CC995E718E7CBD5AD18688A63917523BAC94A2AF3DCD",
+      "sourceSha256": "312A68292D555FAABCE66C498045D5CE146D5F662A75648C3E793FFCAF02E98E",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::allowed_council_leaf_returns_response_and_audits_typed_role_identity",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "54D90F3C1F067DDB3772CC995E718E7CBD5AD18688A63917523BAC94A2AF3DCD",
+      "sourceSha256": "312A68292D555FAABCE66C498045D5CE146D5F662A75648C3E793FFCAF02E98E",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::resolved_leaf_model_outside_role_policy_is_denied_before_raw_transport",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "54D90F3C1F067DDB3772CC995E718E7CBD5AD18688A63917523BAC94A2AF3DCD",
+      "sourceSha256": "312A68292D555FAABCE66C498045D5CE146D5F662A75648C3E793FFCAF02E98E",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::accepted_role_policy_reload_between_authorization_and_raw_send_is_blocked",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "54D90F3C1F067DDB3772CC995E718E7CBD5AD18688A63917523BAC94A2AF3DCD",
+      "sourceSha256": "312A68292D555FAABCE66C498045D5CE146D5F662A75648C3E793FFCAF02E98E",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::non_council_leaf_ignores_a_closed_policy_without_role_binding",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "54D90F3C1F067DDB3772CC995E718E7CBD5AD18688A63917523BAC94A2AF3DCD",
+      "sourceSha256": "312A68292D555FAABCE66C498045D5CE146D5F662A75648C3E793FFCAF02E98E",
       "junitClass": "neoth"
     },
     {
@@ -4921,6 +4921,12 @@
       "sourcePath": "SRC/neothd/src/providers/cost_authorization.rs",
       "sourceSha256": "08168284A106851934533B40AE67699C2BE507A22986C626CF9F5CBBDE3CE660",
       "test": "providers::cost_authorization::tests::mixed_retry_chain_retains_origin_only_for_final_authorization_denial",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "providers::cost_authorization::role_dispatch_tests::w225_effect_start_role_rejection_closes_admitted_retry_with_denial_receipt",
+      "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+      "sourceSha256": "312A68292D555FAABCE66C498045D5CE146D5F662A75648C3E793FFCAF02E98E",
       "junitClass": "neoth"
     }
   ],
@@ -14984,7 +14990,16 @@
     ],
     "report": "docs/gold-wave224-registry-acceptance.md",
     "note": "Explicitly select four existing P2-10 core/channel cases previously absent from grouped lane. No closure until actual pass receipts.",
-    "localValidationRan": false
+    "localValidationRan": false,
+    "acceptance": {
+      "run": 35785415701,
+      "head": "778637e05d611cba84504adecfcfa325715348b1",
+      "passed": 281,
+      "failed": 0,
+      "sourcePaths": 58,
+      "sourceMatrixLockAndTerminalsVerified": true,
+      "road": "GOLD-LF-P2-10 accepted; native/release gates separate"
+    }
   },
   "wave221SourceBinding": {
     "base": "48c080500eca10a1f927d4558748ade856d5f0fd",
@@ -15054,6 +15069,36 @@
     "base": "c42038984897887c435c82536dd5557ed65dc0a8",
     "sources": [],
     "note": "Repair three Markdown checkpoint paragraphs after PowerShell interpolation introduced ESC and literal backtick-n; documentation only.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave225": {
+    "sourceBase": "fa537f175e59259ecf1be58d0793ce3603c42620",
+    "requiredTests": [
+      "providers::cost_authorization::role_dispatch_tests::w225_effect_start_role_rejection_closes_admitted_retry_with_denial_receipt"
+    ],
+    "report": "docs/gold-wave225-verification.md",
+    "review": "Independent static PASS after actual production effect/start-authority binding",
+    "localValidationRan": false,
+    "releaseReady": false
+  },
+  "wave225SourceBinding": {
+    "base": "fa537f175e59259ecf1be58d0793ce3603c42620",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/providers/claude_cli.rs",
+        "bytes": 162009,
+        "sha256": "0150562E008A5AF562BC395AFAEEFF9FD22B33A3B4AD1DC047496F937702DAB3",
+        "blob": "341c852a24590eba9e886eca471dceb076de1e21"
+      },
+      {
+        "path": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+        "bytes": 15502,
+        "sha256": "312A68292D555FAABCE66C498045D5CE146D5F662A75648C3E793FFCAF02E98E",
+        "blob": "50f5532272fb8dd3c274b18ff7155f4e510b30e3"
+      }
+    ],
+    "note": "Actual effect-start role-reload denial receipt; production-bound regression. W224 acceptance281/281; W221 core passed. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
