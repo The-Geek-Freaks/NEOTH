@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T17:22:11.0330168Z",
-  "validationStatus": "W210 hosted source format imported; native and official model tests running",
+  "capturedUtc": "2026-09-22T17:38:46.2103183Z",
+  "validationStatus": "W210 hosted model success; W205 full-symbol fixture pending hosted execution",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -88,8 +88,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 235387,
-      "sha256": "59B3D3C91F53D2B6CB9B3168377C22F5C0D64D8B8102A9436B91DFA0D1DF0E4A"
+      "bytes": 235964,
+      "sha256": "FE3E760B69B4624D216AFB6A4672BE9D26F5EC0725856FD628FF86CF583EF01F"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -418,18 +418,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 46909,
-      "sha256": "24F9B6ADDE9A94DC90FE2F43B25E64983EAB5180A5295311D4EA37A024E4D065"
+      "bytes": 50383,
+      "sha256": "4EF8F3B2A705CD44FFBA57FD743630A9F6F5028CCF7DF8A950A5DF4135A29BFA"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1049791,
-      "sha256": "1A1B6B996AE046F42D506FBE3A4ED0B387AB99FE88CE87B3F6C5BA6559525B6C"
+      "bytes": 1053265,
+      "sha256": "0067A2FBA8E1F3CB90DE9D5929FBDAD27BCEF9833ACF496733DBC0D1AE1EDDA0"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1645238,
-      "sha256": "B9D8668B2BF46370347532798FA5B1A848099BA70C3BAB555E689C00E3E5D868"
+      "bytes": 1648712,
+      "sha256": "5CDC24583799AF0A9649C29080E193508C1F2AC485B41EF79635AC5620543534"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1228,8 +1228,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "bytes": 501990,
-      "sha256": "C0DEA2080C5C30E5C77BD80E61A5BEAAC156C58F16B7413204BF62B5C6CD3C21"
+      "bytes": 502474,
+      "sha256": "8FC05241C1F2823BA68C19C6CA45702345775381D732D78608398E0A68740FEC"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",

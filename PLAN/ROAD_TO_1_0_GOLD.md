@@ -8,13 +8,26 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W210 Hosted model result and W205 exact-symbol correction (2026-09-22):**
+BGE run `35760067844` on `db27a66c` succeeded, including product CLI pull,
+native official-model load and the exact smoke/recovery tests; detailed receipt
+admission is being finalized. Core/CLI export `35759967854` on `ab2902ec`
+succeeded and its source/SHA-bound CLI reference is imported. Grouped200
+`35759964957` executed all 200 tests with one remaining W205 failure. The
+previous `delegated` fixture correction was insufficient: exact identifier
+recall requires `leaf_delegated`, which the real seed publishes in `x.rs`.
+The fixture now verifies actual retained repo context before asserting the
+mandatory session-bound WAL receipt; no receipt assertion is removed.
+W211 embedding GUI/CLI integration is under independent review. Road remains
+1324 / 1015 checked / 307 open / 2 partial; no local executable validation ran.
+
 **Hosted consent acceptance and fixture repair (2026-09-22):** Grouped187
 `35758426828` on `7209c07d` executed 185 passes / 2 ordinary failures / no
 process aborts. All 30 W208 and all 16 W209 behavior tests passed. The three
 artifacts, 187 identities across 40 source paths, matrix and Cargo.lock match
 the run exactly. Core test-check, public CLI build and export `35758430620`
 also passed. The two remaining fixtures had incorrect setup/observation:
-W205 must query its seeded `delegated` marker to require a real code-map
+W205 must query the full seeded `leaf_delegated` symbol to require a code-map
 receipt (`0x26`; `0x25` is SkillRouteResolved). W207's default refusal-recovery
 mode publishes its exact final body through `StreamFrames`, not early deltas.
 Both mandatory behavioral assertions remain intact with corrected fixture

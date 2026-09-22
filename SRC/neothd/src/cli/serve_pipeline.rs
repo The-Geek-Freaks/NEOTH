@@ -10677,11 +10677,22 @@ mod tests {
                 // Automatic keyword routing is covered by the resolver; this
                 // fixture owns the installed-Skill -> real-agent-loader ->
                 // child-scope contract.
-                // The sole persisted root contains the `delegated` fixture marker.
-                // Include it in the accepted command body so the real channel
-                // auto-context path has a retained code-map result to audit;
-                // an empty selection deliberately produces no code-map receipt.
-                let accepted_inbound = inbound(Some("/w137-channel-delegate delegated"), None);
+                // Recall matches complete identifiers, not a bare fixture suffix.
+                // The seed publishes `leaf_delegated` in `x.rs`; prove that this
+                // exact accepted command selects it before checking WAL custody.
+                const ACCEPTED_COMMAND: &str = "/w137-channel-delegate leaf_delegated";
+                let recall = crate::cli::chat::maybe_repo_context_recall_with_policy(
+                    &config,
+                    ACCEPTED_COMMAND,
+                    &crate::config::InstancePaths::for_home(home.path()),
+                    &root,
+                    true,
+                );
+                assert!(
+                    recall.injected().is_some(),
+                    "W137 seeded full identifier must produce retained repo context: {recall:?}"
+                );
+                let accepted_inbound = inbound(Some(ACCEPTED_COMMAND), None);
                 let expected_wal_identity = canonical_admitted_channel_wal_identity(
                     &AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
                         ChannelId::Telegram,

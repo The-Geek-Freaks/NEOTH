@@ -2367,6 +2367,30 @@ Manage the local model caches under `~/.neoth/models/`
 
 _Aliases:_ `neoth model`
 
+### `neoth models bge-m3`
+
+Operate the immutable, local-only BGE-M3 embedding artifact
+
+#### `neoth models bge-m3 list`
+
+Show the selected embedding model and the BGE-M3 cache row
+
+#### `neoth models bge-m3 prune`
+
+Remove only the exact owned BGE-M3 cache after lifecycle safeguards
+
+#### `neoth models bge-m3 pull`
+
+Download and verify the exact pinned BGE-M3 manifest
+
+#### `neoth models bge-m3 repair`
+
+Reconcile a pending, missing, or corrupt exact BGE-M3 generation
+
+#### `neoth models bge-m3 status`
+
+Show selected-model readiness plus the immutable BGE-M3 artifact pin
+
 ### `neoth models catalog`
 
 H18 — dump the live provider-model catalog (the wizard's model select source, `~/.neoth/models_catalog.json`) as JSON for the GUI's regenerate-with-model picker. Read-only; never-fetched or stale providers surface their fetch error so consumers degrade honestly instead of guessing model ids
