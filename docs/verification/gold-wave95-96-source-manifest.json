@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-grouped-behavior-repair",
-  "base": "17b2a9f8ef64fb34c5e96466e61ed9eab5fd0303",
-  "capturedUtc": "2026-09-22T13:09:56.1470428Z",
+  "base": "a68442cb4d7e839b7e347d2eab8be22c33f0db4c",
+  "capturedUtc": "2026-09-22T13:14:17.7588299Z",
   "validationStatus": "W203_REVIEWED_HOSTED_PENDING",
-  "scopeNote": "W203 repairs observed missing-budget state and typed registry assertions; corrects Cron exact discovery; bounded Hosted preview recovery. W202 uncommitted WIP excluded.",
+  "scopeNote": "W203 Hosted preview contract expectation follow-up; W202 WIP remains excluded.",
   "files": [
     {
       "path": ".gitattributes",
@@ -278,8 +278,8 @@
     },
     {
       "path": "docs/gold-wave203-verification.md",
-      "bytes": 2716,
-      "sha256": "1381512BD3CDAD8B426A0DEB6F7CB471B5CD664954FB97DC1FFEF32761BB6522"
+      "bytes": 3209,
+      "sha256": "1E8850126A004C17B6A2FBC8FD1567F6B0948566F2CF8BBDED1F3B8F8E7770D6"
     },
     {
       "path": "docs/install.md",
@@ -348,13 +348,13 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 40881,
-      "sha256": "7685FFDF26714C0BF3DB8914521EBDB5DE9B2161B0889D38D611B1B0B29C0382"
+      "bytes": 40882,
+      "sha256": "AA5770E70B865E1623A5BEEE1B4E3A85D44278DFA26832DC32E82621ACBC0ABD"
     },
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
-      "bytes": 13137,
-      "sha256": "8BC0239A382F3E26B1A5F9E890F21D6336C0A23137CD3CC4CBB6648644CDE5F7"
+      "bytes": 13138,
+      "sha256": "F18CA9E97FFB78CD9C7F8BA1524F1CF495BCE5079B6CA52FF892D47D10786903"
     },
     {
       "path": "packaging/tests/test_publish_crates_contract.py",
@@ -388,18 +388,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 31323,
-      "sha256": "0AC7E1E1871618509AE2D2E9CFB0B51BF80D54592EF278B4A5B4CBC8D9AA839C"
+      "bytes": 31816,
+      "sha256": "084F047BBD2C541CF1429347BC23FF7037C69730AF78126565B3D7F62633551A"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1034702,
-      "sha256": "AB6BEC954812985D62665725DBD499CFC0BCF8C2A68BB27AC0CB4DCDDE424CE6"
+      "bytes": 1035017,
+      "sha256": "C39A0086CA18662E11DE034CF7707DACC925DA2EF790C68EA4A134017A480303"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1630149,
-      "sha256": "51C1A051A82F1DA12897506A2A28FA742A99CE80DB1EB22ABDF88307B858C7B5"
+      "bytes": 1630464,
+      "sha256": "6F05A3A18A436F194F1B75B8636416E13D5FE58029D901BA1471C1D433653385"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",

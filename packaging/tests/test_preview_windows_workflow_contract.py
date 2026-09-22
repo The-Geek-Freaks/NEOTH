@@ -91,7 +91,7 @@ class PreviewWindowsWorkflowContractTest(unittest.TestCase):
         for step_name, timeout in (
             ("Build native CLI and compatibility executables", 90),
             ("Build native migration and relay executables", 15),
-            ("Build native desktop GUI", 90),
+            ("Build native desktop GUI", 120),
         ):
             self.assertIn(f"timeout-minutes: {timeout}", self.step(step_name))
 

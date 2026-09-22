@@ -41,3 +41,11 @@ its interrupted cache was saved. Only the Hosted GUI step ceiling increases
 to 120 minutes; the GitHub-hosted six-hour job maximum, one-worker build,
 features, preview profile and all acceptance steps remain intact. No preview,
 installed-product or release success is claimed. Road boxes remain unchanged.
+
+W203 Hosted Preflight `35731939537` passed Rust formatting, then exposed two
+stale preview-contract expectations for the old90-minute GUI ceiling. Both
+contract suites now assert the intentional120-minute GUI limit while retaining
+the360-minute outer bound, serial build, unchanged command and acceptance
+checks. The contract correction needs a fresh Hosted Preflight; no Python or
+other local validation ran. New grouped/core/preview runs on `a68442cb` remain
+independent and are preserved.

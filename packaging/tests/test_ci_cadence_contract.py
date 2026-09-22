@@ -820,7 +820,7 @@ class CiCadenceContractTests(unittest.TestCase):
         )
 
         gui_build = workflow_steps(preview)["Build native desktop GUI"]
-        self.assertIn("timeout-minutes: 90", gui_build)
+        self.assertIn("timeout-minutes: 120", gui_build)
         self.assertIn(
             "cargo build --release --locked -p neothd-gui --features release-desktop --target x86_64-pc-windows-msvc",
             gui_build,

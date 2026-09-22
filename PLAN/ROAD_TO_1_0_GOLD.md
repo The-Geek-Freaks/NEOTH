@@ -8,6 +8,8 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W203 contract follow-up:** Hosted Preflight 35731939537 passed Rust formatting, then found stale90-minute GUI timeout assertions. Both contract suites now match the deliberate120-minute Hosted GUI ceiling and preserve the360-minute job limit. New grouped/core/preview gates remain active; Road counts unchanged.
+
 **W203 behavior repair (2026-09-22):** Grouped60 `35729827037` on `737b9835`
 executed 55 identities: 50 passed, five failed. All W190/W191/W194/W196/W197
 identities passed, including the prior WAL-join case and all eleven prerequisite

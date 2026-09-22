@@ -508,3 +508,11 @@ Candidate publication requires finite outputs, valid probabilities, no remaining
 If nodes and 1e-6 absolute/relative parity. It only exports a candidate and receipt;
 Rust embedding, platform tests and microphone acceptance remain separate. It
 permits no workstation execution.
+
+W203 Hosted Preflight `35731939537` passed Rust formatting, then exposed two
+stale preview-contract expectations for the old90-minute GUI ceiling. Both
+contract suites now assert the intentional120-minute GUI limit while retaining
+the360-minute outer bound, serial build, unchanged command and acceptance
+checks. The contract correction needs a fresh Hosted Preflight; no Python or
+other local validation ran. New grouped/core/preview runs on `a68442cb` remain
+independent and are preserved.

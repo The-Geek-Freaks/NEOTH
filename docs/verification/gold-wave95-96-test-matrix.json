@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
   "status": "W203_REVIEWED_HOSTED_PENDING",
-  "base": "17b2a9f8ef64fb34c5e96466e61ed9eab5fd0303",
+  "base": "a68442cb4d7e839b7e347d2eab8be22c33f0db4c",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 84785,
-    "sha256": "8A7C3782D0BB1A6A8A3FE0E12859429DC7425C676E663DD71AC7042A8E04F402"
+    "bytes": 84695,
+    "sha256": "00809907C3B6937075D4E716B7F378AF982DE266576D85B72D94305D777B527E"
   },
   "sourceInputs": 490,
   "requiredNativeTests": [
@@ -10459,5 +10459,44 @@
     "previewStatus": "GUI timeout90min",
     "localValidationRan": false,
     "releaseReady": false
+  },
+  "wave203ContractFollowup": {
+    "sourceBase": "a68442cb4d7e839b7e347d2eab8be22c33f0db4c",
+    "sources": [
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 40882,
+        "sha256": "AA5770E70B865E1623A5BEEE1B4E3A85D44278DFA26832DC32E82621ACBC0ABD"
+      },
+      {
+        "path": "packaging/tests/test_preview_windows_workflow_contract.py",
+        "bytes": 13138,
+        "sha256": "F18CA9E97FFB78CD9C7F8BA1524F1CF495BCE5079B6CA52FF892D47D10786903"
+      },
+      {
+        "path": "docs/gold-wave203-verification.md",
+        "bytes": 3209,
+        "sha256": "1E8850126A004C17B6A2FBC8FD1567F6B0948566F2CF8BBDED1F3B8F8E7770D6"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 31816,
+        "sha256": "084F047BBD2C541CF1429347BC23FF7037C69730AF78126565B3D7F62633551A"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1630464,
+        "sha256": "6F05A3A18A436F194F1B75B8636416E13D5FE58029D901BA1471C1D433653385"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1035017,
+        "sha256": "C39A0086CA18662E11DE034CF7707DACC925DA2EF790C68EA4A134017A480303"
+      }
+    ],
+    "failedPreflight": 35731939537,
+    "formatting": "passed",
+    "status": "CONTRACT_EXPECTATIONS_CORRECTED_HOSTED_PENDING",
+    "localValidationRan": false
   }
 }
