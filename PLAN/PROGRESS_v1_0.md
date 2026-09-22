@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W203 second behavior follow-up (2026-09-22):** Grouped60 `35731968545` on
+`a68442cb` executed all sixty identities:58 passed, two failed. W190/W191/
+W192/W193/W194/W196/W197 now passed their complete selections. The remaining
+n8n pin assertion now compares decoded Skill IDs against a proven nonempty
+baseline; the Cron failure fixture now obstructs the mandatory bundled-resource
+directory instead of supplying an unsigned manifest the loader correctly
+excludes. Both focused changes passed independent static review; their new
+Hosted execution is pending. Core/CLI `35731972532` passed on the same source
+and exported the unchanged reference. `c82fc033` Preflight `35732446246` and
+Code Quality `35732446029` passed. No Road checkbox changed.
+
 **W203 contract follow-up:** Hosted Preflight 35731939537 passed Rust formatting, then found stale90-minute GUI timeout assertions. Both contract suites now match the deliberate120-minute Hosted GUI ceiling and preserve the360-minute job limit. New grouped/core/preview gates remain active; Road counts unchanged.
 
 **W203 behavior repair (2026-09-22):** Grouped60 `35729827037` on `737b9835`

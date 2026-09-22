@@ -1032,12 +1032,23 @@ mod tests {
         assert!(eval_context.payload().contains("\"skills\":[]"));
 
         let mut pinned_config = crate::config::FreedomConfig::default();
-        let pinned_skill = registry
-            .snapshot()
-            .iter()
-            .find(|skill| skill.is_enabled())
-            .expect("pin fixture needs an enabled Skill")
-            .id()
+        let (baseline_controller, baseline_registry) =
+            n8n_test_registry(home.path(), pinned_config.clone()).await;
+        let baseline_context = n8n_session_skill_registry_context(
+            home.path(),
+            &pinned_config,
+            &baseline_controller,
+            baseline_controller.accepted_snapshot().epoch(),
+            Some(baseline_registry),
+        )
+        .expect("unpinned baseline registry");
+        let baseline: serde_json::Value =
+            serde_json::from_str(baseline_context.payload()).expect("registry payload JSON");
+        let pinned_skill = baseline["skills"]
+            .as_array()
+            .and_then(|skills| skills.first())
+            .and_then(|skill| skill["id"].as_str())
+            .expect("pin fixture needs an advertised Skill")
             .to_owned();
         pinned_config
             .skills
@@ -1053,8 +1064,14 @@ mod tests {
             Some(pinned_registry),
         )
         .expect("pinned registry renders after excluding mismatch");
+        let pinned: serde_json::Value =
+            serde_json::from_str(pinned_context.payload()).expect("pinned registry payload JSON");
         assert!(
-            !pinned_context.as_str().contains(&pinned_skill),
+            pinned["skills"]
+                .as_array()
+                .expect("complete pinned Skill inventory")
+                .iter()
+                .all(|skill| skill["id"].as_str() != Some(pinned_skill.as_str())),
             "a pinned-hash mismatch must not be advertised to n8n"
         );
     }

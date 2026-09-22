@@ -49,3 +49,14 @@ the360-minute outer bound, serial build, unchanged command and acceptance
 checks. The contract correction needs a fresh Hosted Preflight; no Python or
 other local validation ran. New grouped/core/preview runs on `a68442cb` remain
 independent and are preserved.
+
+**W203 second behavior follow-up (2026-09-22):** Grouped60 `35731968545` on
+`a68442cb` executed all sixty identities:58 passed, two failed. W190/W191/
+W192/W193/W194/W196/W197 now passed their complete selections. The remaining
+n8n pin assertion now compares decoded Skill IDs against a proven nonempty
+baseline; the Cron failure fixture now obstructs the mandatory bundled-resource
+directory instead of supplying an unsigned manifest the loader correctly
+excludes. Both focused changes passed independent static review; their new
+Hosted execution is pending. Core/CLI `35731972532` passed on the same source
+and exported the unchanged reference. `c82fc033` Preflight `35732446246` and
+Code Quality `35732446029` passed. No Road checkbox changed.

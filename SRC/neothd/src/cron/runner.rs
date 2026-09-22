@@ -2298,13 +2298,14 @@ channel_accounts:
     #[tokio::test]
     async fn cron_registry_load_failure_stops_before_provider_dispatch() {
         let home = tempdir().unwrap();
-        let broken = home.path().join("skills").join("broken");
-        std::fs::create_dir_all(&broken).expect("create malformed Skill fixture");
+        // Invalid unauthorised installed manifests are intentionally excluded
+        // while trusted bundled skills remain usable. Obstruct the required
+        // bundled-resource directory to exercise a real registry-load error.
         std::fs::write(
-            broken.join("skill.yaml"),
-            "id: broken\ndescription: malformed Cron fixture\nsystem_prompt: test\nunexpected: true\n",
+            home.path().join("bundled-skill-resources"),
+            b"not a resource directory",
         )
-        .expect("write malformed Skill fixture");
+        .expect("create a conflicting bundled-resource file");
         let segment = home.path().join("cron-registry-failure.wal");
         let (writer, join) = wal_spawn(segment.clone()).unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
