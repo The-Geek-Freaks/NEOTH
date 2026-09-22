@@ -22,10 +22,14 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: 1
-      RECEIPT_DIR: ${{ runner.temp }}/w210-bge-m3-receipt
-      NEOTH_BGE_M3_HOSTED_NEOTH_HOME: ${{ runner.temp }}/w210-bge-m3-home
-      NEOTH_HOME: ${{ runner.temp }}/w210-bge-m3-home
     steps:
+      - name: Bind runner-local receipt and model paths
+        shell: bash
+        run: |
+          echo "RECEIPT_DIR=$RUNNER_TEMP/w210-bge-m3-receipt" >> "$GITHUB_ENV"
+          echo "NEOTH_BGE_M3_HOSTED_NEOTH_HOME=$RUNNER_TEMP/w210-bge-m3-home" >> "$GITHUB_ENV"
+          echo "NEOTH_HOME=$RUNNER_TEMP/w210-bge-m3-home" >> "$GITHUB_ENV"
+
       - name: Checkout main without credentials
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

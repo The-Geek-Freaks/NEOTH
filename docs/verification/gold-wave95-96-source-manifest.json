@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T17:17:21.3744267Z",
-  "validationStatus": "W20830/W20916 hostedPASS7209; W205/W207 fixture repair and W210 pending",
+  "capturedUtc": "2026-09-22T17:18:51.3115513Z",
+  "validationStatus": "W210 hosted workflow parse repair; focused200/Core pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2603,8 +2603,8 @@
     },
     {
       "path": ".github/workflows/bge-m3.yml",
-      "bytes": 4815,
-      "sha256": "A03F5BCD83AADC79AED40B5BCC18E1BA6E988FF647E71C96E1E5DF6C6758B459"
+      "bytes": 4970,
+      "sha256": "CE587DC01FA879DBD4BF211AA059C9783E0CA2D9BDD7804B0CCB3E8DDD7216AB"
     },
     {
       "path": "SRC/neothd/src/config/embedding.rs",
