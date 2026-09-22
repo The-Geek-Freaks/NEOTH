@@ -1,5 +1,14 @@
 # Wave 207 request-local chat silence watchdog
 
+**Hosted behavior checkpoint:** df9d9d22 passed Core test-target checking and
+CLI build/export (35751196645). Grouped141 (35751191741) had 132 passes,
+three assertion failures and six stack-overflow aborts. All four new actual
+Prepared-Turn fixtures aborted; the isolated watchdog units passed. The repair
+pins dispatch/post-reply on the heap and type-erases the watchdog input as a
+boxed Send future, retaining the existing spawned regression tests. Stack
+limits and behavioral assertions are unchanged; the repair needs Hosted proof.
+The channel unavailable-context receipt now retains its admitted WAL session;
+the mirror fixture declares sampling/output controls and a truthful finite cap.
 **Hosted compile correction:** Grouped141 on d630708d stopped on E0382 before
 any behavior test ran. Save the stream boolean before moving ChatArgs into
 post-reply work; fresh hosted compilation and behavior remain required.

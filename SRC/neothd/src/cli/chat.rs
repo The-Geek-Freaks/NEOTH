@@ -12444,6 +12444,17 @@ pub(crate) async fn emit_repo_context_unavailable_audit(
     outcome: &RepoContextOutcome,
     surface: &'static str,
 ) -> Result<()> {
+    emit_repo_context_unavailable_audit_in(writer, outcome, surface, None).await
+}
+
+/// Channel callers retain the opaque capability minted at admission so an
+/// unavailable-context receipt stays attributable to the accepted turn.
+pub(crate) async fn emit_repo_context_unavailable_audit_in(
+    writer: &crate::wal::writer::WalWriterHandle,
+    outcome: &RepoContextOutcome,
+    surface: &'static str,
+    wal_session: Option<crate::wal::WalSessionContext>,
+) -> Result<()> {
     let Some(receipt) = outcome.unavailable_receipt().cloned() else {
         return Ok(());
     };
@@ -12461,6 +12472,7 @@ pub(crate) async fn emit_repo_context_unavailable_audit(
             let header =
                 crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &payload)
                     .event_subtype(crate::wal::events::ExtendedSubtype::CodeMapRecallResolved as u8)
+                    .session_context(wal_session)
                     .build();
             let terminal = if writer.append(header, payload).await.is_ok() {
                 RepoContextReceiptState::Durable

@@ -4182,8 +4182,29 @@ mod tests {
             Some(self.model)
         }
 
-        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
-            Some(self.output_ceiling)
+        fn request_controls(&self) -> ProviderRequestControls {
+            ProviderRequestControls::SAMPLING.with_output_token_limit()
+        }
+
+        fn validate_request_controls(&self, req: &Request) -> Result<()> {
+            self.request_controls().validate(self.name(), req)?;
+            if let Some(requested) = req.max_output_tokens
+                && requested > self.output_ceiling
+            {
+                anyhow::bail!(
+                    "operation-budget fixture enforces at most {} output tokens, got {requested}",
+                    self.output_ceiling
+                );
+            }
+            Ok(())
+        }
+
+        fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
+            Some(
+                req.max_output_tokens
+                    .unwrap_or(self.output_ceiling)
+                    .min(self.output_ceiling),
+            )
         }
 
         async fn complete(&self, _req: Request) -> Result<Completion> {

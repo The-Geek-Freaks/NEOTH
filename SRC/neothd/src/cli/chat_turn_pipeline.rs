@@ -1111,7 +1111,10 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     let mut silence_watchdog =
         crate::cli::chat_turn_watchdog::TurnSilenceWatchdog::new(cancellation.clone());
     let provider_progress = silence_watchdog.progress_handle();
-    let dispatch = dispatch_provider(
+    // `dispatch_provider` is a very large async state machine. Keep it behind
+    // one heap allocation before the watchdog's select state stores it, so the
+    // request-local timer does not duplicate that state on narrow test stacks.
+    let dispatch = Box::pin(dispatch_provider(
         final_prompt,
         final_system,
         &args,
@@ -1146,7 +1149,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         skill_invocation_policy,
         Some(&provider_progress),
         output,
-    );
+    ));
     let dispatch_output = match silence_watchdog.race_nonterminal(dispatch).await {
         crate::cli::chat_turn_watchdog::TurnWatchdogPoll::Completed(Ok(output)) => {
             // A complete non-streaming provider response is also meaningful
@@ -1207,7 +1210,10 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     let is_stream = args.stream;
     cancellation.check_open("post-provider external starts")?;
     let mut feedback_eligible_agent_receipt = None;
-    let post_reply = run_post_reply_pipelines(
+    // Post-reply recovery/binding is likewise a large response-producing
+    // future. Pin its state on the heap at the watchdog boundary instead of
+    // nesting it in the select future's stack frame.
+    let post_reply = Box::pin(run_post_reply_pipelines(
         completion,
         writer,
         config,
@@ -1259,7 +1265,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         Some(turn_id.as_str()),
         &mut feedback_eligible_agent_receipt,
         output,
-    );
+    ));
     let post_reply_result = match silence_watchdog.race(post_reply).await {
         crate::cli::chat_turn_watchdog::TurnWatchdogPoll::Completed(result) => result,
         crate::cli::chat_turn_watchdog::TurnWatchdogPoll::Cancelled => {

@@ -3,19 +3,24 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
-**Hosted checkpoint (2026-09-22, W207):** W206 budget repair and W207 watchdog
-are published at `d630708d`, followed by source-bound hosted formatting at
-`bc63cc1e`. Current formatting Preflight `35750570446` and Code Quality
-`35750571713` passed. Grouped141 `35750204078` stopped before behavior execution
-on one E0382: the post-reply timeout notice read `args.stream` after moving
-`args`. The repair saves that boolean before the move; a fresh hosted run is
-required. The original W205 missing-WAL-role assertion remains intact. Previous
-source `0e6ca107` passed Core/CLI, but Grouped121 had 115 passes and six failures;
-those are not accepted without the fresh run. Inventory: 512 sources, 688
-universal native identities, 87 GUI identities, with unchanged platform extras.
-W208 provenance/consent work remains separately uncommitted. The older Windows
-preview passed on `a68442cb` only. Road remains 1324 total / 1015 checked / 307
-open / 2 partial. No local executable validation ran under the BSOD hold.
+**Hosted checkpoint (2026-09-22, W205-W208):** W208 origin/consumer source is
+published at `0cf1a0ef`, with exact-source Hosted formatting at `e06f9763`.
+Preflight `35752755982` and Code Quality `35752756146` passed. Earlier source
+`df9d9d22` passed Core test-target checks, public CLI build and export in
+`35751196645`. Its Grouped141 `35751191741` executed all exact identities:
+132 passed, three assertions failed and six processes aborted with stack
+overflow. The original assertions remain intact. The focused repair binds the
+unavailable code-map receipt to the channel WAL session, makes the mirror test
+provider declare and enforce its real request controls/output ceiling, and
+heap-pins Send futures at the watchdog boundary without increasing stack limits.
+These repairs require fresh Hosted execution. W208 Grouped171 `35752386943`
+and Core/CLI `35752390598` on `0cf1a0ef` are still running; the latter has passed
+its core test-target step. Inventory: 516 sources, 718 universal native
+identities and 87 GUI identities, with unchanged platform extras. W209's
+sender-verified consent ceremony is isolated uncommitted work under review.
+The Windows preview passed on `a68442cb` only. Road remains 1324 total /
+1015 checked / 307 open / 2 partial. No local executable validation ran.
+
 **W208 origin/consumer source (2026-09-22):** local chat and authenticated
 channel RAW now have exact header/session-bound origin receipts. Unknown data
 is denied for episode vectors and clustering; local-only construction and
@@ -32,8 +37,8 @@ GUI retry guidance survives a partial reply followed by Failed and remains
 bound to its subscription generation. Seventeen core and one GUI regressions
 plus three W206 budget regressions are added to the source inventory. Independent
 static review passed; fresh Hosted compile and behavior remain required.
-See `docs/gold-wave207-verification.md`. W208 provenance/consent integration
-is separate uncommitted work. No Road box is closed.
+See `docs/gold-wave207-verification.md`. W208 origin/consumer integration
+is published; the W209 ceremony remains uncommitted. No Road box is closed.
 
 **W204/W205 behavior repair and W206 Hosted format (2026-09-22):** the
 Grouped101 failure exposed an unchanged wizard snapshot waking its own and

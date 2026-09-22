@@ -137,7 +137,7 @@ impl TurnSilenceWatchdog {
     /// `select!` chose the deadline.
     pub(crate) async fn race<T>(
         &mut self,
-        operation: impl Future<Output = T>,
+        operation: Pin<Box<dyn Future<Output = T> + Send + '_>>,
     ) -> TurnWatchdogPoll<T> {
         self.race_inner(operation, true).await
     }
@@ -147,18 +147,17 @@ impl TurnSilenceWatchdog {
     /// same silence budget into the immediately following post-reply stage.
     pub(crate) async fn race_nonterminal<T>(
         &mut self,
-        operation: impl Future<Output = T>,
+        operation: Pin<Box<dyn Future<Output = T> + Send + '_>>,
     ) -> TurnWatchdogPoll<T> {
         self.race_inner(operation, false).await
     }
 
     async fn race_inner<T>(
         &mut self,
-        operation: impl Future<Output = T>,
+        mut operation: Pin<Box<dyn Future<Output = T> + Send + '_>>,
         disarm_on_completion: bool,
     ) -> TurnWatchdogPoll<T> {
         debug_assert!(!self.disarmed, "a disarmed chat-turn watchdog was reused");
-        tokio::pin!(operation);
         let cancellation = self.cancellation.clone();
         let outcome = loop {
             tokio::select! {
@@ -213,7 +212,7 @@ mod tests {
         tokio::time::advance(TURN_SILENCE_TIMEOUT).await;
 
         assert_eq!(
-            watchdog.race(std::future::pending::<()>()).await,
+            watchdog.race(Box::pin(std::future::pending::<()>())).await,
             TurnWatchdogPoll::SilenceExpired
         );
         assert!(cancellation.is_closed());
@@ -226,10 +225,11 @@ mod tests {
         let mut watchdog = TurnSilenceWatchdog::new(cancellation);
         let progress = watchdog.progress_handle();
         let (done, receiver) = tokio::sync::oneshot::channel::<&'static str>();
-        let raced =
-            tokio::spawn(
-                async move { watchdog.race(async move { receiver.await.unwrap() }).await },
-            );
+        let raced = tokio::spawn(async move {
+            watchdog
+                .race(Box::pin(async move { receiver.await.unwrap() }))
+                .await
+        });
         tokio::task::yield_now().await;
 
         for _ in 0..3 {
@@ -257,7 +257,7 @@ mod tests {
         }
 
         assert_eq!(
-            watchdog.race(async { "provider completed" }).await,
+            watchdog.race(Box::pin(async { "provider completed" })).await,
             TurnWatchdogPoll::Completed("provider completed")
         );
     }
@@ -271,7 +271,7 @@ mod tests {
         progress.meaningful_signal();
 
         assert_eq!(
-            watchdog.race(async { "late completion" }).await,
+            watchdog.race(Box::pin(async { "late completion" })).await,
             TurnWatchdogPoll::SilenceExpired
         );
         assert!(cancellation.is_closed());
@@ -285,7 +285,7 @@ mod tests {
         tokio::time::advance(TURN_SILENCE_TIMEOUT).await;
 
         assert_eq!(
-            watchdog.race(std::future::pending::<()>()).await,
+            watchdog.race(Box::pin(std::future::pending::<()>())).await,
             TurnWatchdogPoll::Cancelled
         );
         assert!(watchdog.is_disarmed());
@@ -297,11 +297,11 @@ mod tests {
         let mut watchdog = TurnSilenceWatchdog::new(cancellation.clone());
         let raced = tokio::spawn(async move {
             watchdog
-                .race(async {
+                .race(Box::pin(async {
                     loop {
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
-                })
+                }))
                 .await
         });
         tokio::task::yield_now().await;
@@ -318,7 +318,7 @@ mod tests {
         tokio::time::advance(TURN_SILENCE_TIMEOUT).await;
 
         assert_eq!(
-            watchdog.race(async { "late completion" }).await,
+            watchdog.race(Box::pin(async { "late completion" })).await,
             TurnWatchdogPoll::SilenceExpired
         );
         assert!(cancellation.is_closed());
@@ -330,7 +330,7 @@ mod tests {
         let mut watchdog = TurnSilenceWatchdog::new(cancellation.clone());
 
         assert_eq!(
-            watchdog.race(async { 7_u8 }).await,
+            watchdog.race(Box::pin(async { 7_u8 })).await,
             TurnWatchdogPoll::Completed(7)
         );
         tokio::time::advance(TURN_SILENCE_TIMEOUT).await;
@@ -345,7 +345,7 @@ mod tests {
 
         assert_eq!(
             watchdog
-                .race_nonterminal(async { "provider completed" })
+                .race_nonterminal(Box::pin(async { "provider completed" }))
                 .await,
             TurnWatchdogPoll::Completed("provider completed")
         );
@@ -353,7 +353,7 @@ mod tests {
         tokio::time::advance(TURN_SILENCE_TIMEOUT).await;
 
         assert_eq!(
-            watchdog.race(std::future::pending::<()>()).await,
+            watchdog.race(Box::pin(std::future::pending::<()>())).await,
             TurnWatchdogPoll::SilenceExpired
         );
         assert!(cancellation.is_closed());

@@ -2819,6 +2819,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 if retain_channel_repo_context_unavailable_outcome(
                     &writer,
                     &channel_repo_context_outcome,
+                    channel_wal_session,
                 )
                 .await
                 .is_err()
@@ -5845,8 +5846,15 @@ fn delegated_system_bundle(
 async fn retain_channel_repo_context_unavailable_outcome(
     writer: &crate::wal::writer::WalWriterHandle,
     outcome: &crate::cli::chat::RepoContextOutcome,
+    wal_session: Option<crate::wal::WalSessionContext>,
 ) -> anyhow::Result<()> {
-    crate::cli::chat::emit_repo_context_unavailable_audit(writer, outcome, "channel").await
+    crate::cli::chat::emit_repo_context_unavailable_audit_in(
+        writer,
+        outcome,
+        "channel",
+        wal_session,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -5912,7 +5920,7 @@ mod tests {
             true,
         );
         let writer = crate::wal::writer::closed_test_writer();
-        let error = retain_channel_repo_context_unavailable_outcome(&writer, &outcome)
+        let error = retain_channel_repo_context_unavailable_outcome(&writer, &outcome, None)
             .await
             .expect_err("channel pre-provider receipt failure must block dispatch");
         assert!(error.to_string().contains("not durably acknowledged"));
@@ -5939,7 +5947,7 @@ mod tests {
         let first_writer = writer.clone();
         let first_outcome = Arc::clone(&outcome);
         let first = tokio::spawn(async move {
-            retain_channel_repo_context_unavailable_outcome(&first_writer, &first_outcome).await
+            retain_channel_repo_context_unavailable_outcome(&first_writer, &first_outcome, None).await
         });
         gate.wait_until_durable().await;
         first.abort();
@@ -5948,7 +5956,7 @@ mod tests {
         let replay_writer = writer.clone();
         let replay_outcome = Arc::clone(&outcome);
         let replay = tokio::spawn(async move {
-            retain_channel_repo_context_unavailable_outcome(&replay_writer, &replay_outcome).await
+            retain_channel_repo_context_unavailable_outcome(&replay_writer, &replay_outcome, None).await
         });
         tokio::task::yield_now().await;
         assert!(
