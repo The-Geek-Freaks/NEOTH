@@ -2,6 +2,13 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W217 Hosted compile correction (2026-09-22):** Grouped270 `35778050758`
+on `33566416` stopped before tests with seven E0433 diagnostics: new nested
+fixture references used the wrong module depth. They now use the explicit
+`crate::providers::claude_retry` path; production behavior is unchanged.
+Superseded Core `35778054554` and Grouped `35778613062` are confirmed cancelled.
+The W216 baseline correction and exact W217 formatting are published at
+`fdbea060`. Fresh Hosted compilation and all 270 cases remain required.
 **Hosted regression checkpoint (2026-09-22, W216/W217):** Grouped266
 `35776784587` on `558163ad` is source-bound at 265/266. All W215 tests and
 nine of the ten added W216 cases passed; the only failure was the overflow

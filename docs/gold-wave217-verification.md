@@ -69,3 +69,10 @@ Published33566416757ea69da6e84e4e39233b00955aec09. Exact Hosted formatter
 receipt35778052636 is imported after source SHA, patch SHA and both Git
 pre/postimages were verified. No formatter ran locally. Grouped27035778050758
 and Core35778054554 are running on that source; behavior remains pending.
+
+Grouped27035778050758 stopped before tests with seven E0433 references in the
+nested cost_authorization tests. All seven now use the explicit providers
+module path. No production behavior changed. Superseded Core35778054554 and
+Grouped35778613062 are confirmed cancelled. fdbea060 already contains exact
+Hosted formatting and the W216 baseline fixture correction; fresh Hosted gates
+remain required after this compiler repair.

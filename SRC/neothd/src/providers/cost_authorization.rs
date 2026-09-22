@@ -3961,8 +3961,8 @@ mod tests {
     }
 
     struct FinalRetryProvider {
-        class: super::claude_retry::RetryClass,
-        disposition: super::claude_retry::RetryDisposition,
+        class: crate::providers::claude_retry::RetryClass,
+        disposition: crate::providers::claude_retry::RetryDisposition,
         attempts: AtomicUsize,
     }
 
@@ -4172,14 +4172,14 @@ mod tests {
     async fn final_retry_receipts_close_once_and_buddy_never_marks_them_followed_up() {
         for (class, disposition, expected_class, expected_disposition) in [
             (
-                super::claude_retry::RetryClass::Auth,
-                super::claude_retry::RetryDisposition::AuthNonRetryable,
+                crate::providers::claude_retry::RetryClass::Auth,
+                crate::providers::claude_retry::RetryDisposition::AuthNonRetryable,
                 "auth",
                 "auth_non_retryable",
             ),
             (
-                super::claude_retry::RetryClass::Transient,
-                super::claude_retry::RetryDisposition::Exhausted,
+                crate::providers::claude_retry::RetryClass::Transient,
+                crate::providers::claude_retry::RetryDisposition::Exhausted,
                 "transient",
                 "exhausted",
             ),
@@ -4248,7 +4248,7 @@ mod tests {
             assert_eq!(receipt["provider"], "local_ollama");
             assert_eq!(receipt["wire_model"], "qwen-final-retry-test");
 
-            let history = super::claude_retry::retry_operator_history(home.path());
+            let history = crate::providers::claude_retry::retry_operator_history(home.path());
             let rows = history["receipts"].as_array().expect("Buddy receipt rows");
             assert_eq!(rows.len(), 1);
             assert_eq!(rows[0]["follow_up_lifecycle"], "not_observed");
