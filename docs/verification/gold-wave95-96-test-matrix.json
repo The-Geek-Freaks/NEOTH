@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W234 reviewed native path/receipt/cache repairs and exact class-aware GUI lane; Hosted behavior pending",
+  "status": "W234 reviewed GUI lifecycle/receipt/FIFO fixtures and exact name corrections; W153child launch diagnostic only",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92545,
-    "sha256": "523D603A6A5580B5FBED75B43711116F2952C91FF815FB47F0C29FA511FA723D"
+    "bytes": 92552,
+    "sha256": "705562696E973788147EA75D0941BB5C351D6D3F4D2C34C61D3A42FD00BA24A2"
   },
   "sourceInputs": 535,
   "requiredNativeTests": [
@@ -2230,13 +2230,13 @@
       "junitClass": "neoth"
     },
     {
-      "test": "daemon::audit_rpc::tests::sealed_response_rejects_unknown_shape_and_declared_bounds",
+      "test": "daemon::audit_rpc::daemon_plain_chat_contract_tests::sealed_response_rejects_unknown_shape_and_declared_bounds",
       "sourcePath": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
       "sourceSha256": "10CB7E414145B6C00F9FBF2334B29AE6DF0F81D9F004877FA02FB91D98212238",
       "junitClass": "neoth"
     },
     {
-      "test": "daemon::audit_rpc::tests::sealed_response_feedback_target_requires_exact_terminal_session",
+      "test": "daemon::audit_rpc::daemon_plain_chat_contract_tests::sealed_response_feedback_target_requires_exact_terminal_session",
       "sourcePath": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
       "sourceSha256": "10CB7E414145B6C00F9FBF2334B29AE6DF0F81D9F004877FA02FB91D98212238",
       "junitClass": "neoth"
@@ -5660,8 +5660,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2135453,
-      "sha256": "261E15D8B47EE5D06F2A5360D8AF1DCC828E76DDE0E026D8D6E296E30871F97C"
+      "bytes": 2140511,
+      "sha256": "BFEB933B7C3C2847FDF0E3297E724B6D170A1ED2317311ED5C4C07F0B74969D3"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -6651,7 +6651,7 @@
       {
         "test": "updater::process_containment::tests::retained_directory_windows_accepts_canonical_path_and_refuses_distinct_capability",
         "sourcePath": "SRC/neothd/src/updater/process_containment.rs",
-        "sourceSha256": "5742ED3429C27DF3CB5E84F0DB45F2CEA25A0C1144D11C77C2EAD67559B1A436",
+        "sourceSha256": "E1E97135336F90E26A76F4637F1B8B686B9BC90BF97AD0B2E7BD8FA832DDD335",
         "junitClass": "neoth"
       },
       {
@@ -6749,7 +6749,7 @@
       {
         "test": "updater::process_containment::tests::retained_directory_cwd_survives_namespace_rename_before_spawn",
         "sourcePath": "SRC/neothd/src/updater/process_containment.rs",
-        "sourceSha256": "5742ED3429C27DF3CB5E84F0DB45F2CEA25A0C1144D11C77C2EAD67559B1A436",
+        "sourceSha256": "E1E97135336F90E26A76F4637F1B8B686B9BC90BF97AD0B2E7BD8FA832DDD335",
         "junitClass": "neoth"
       },
       {
@@ -6859,7 +6859,7 @@
       {
         "test": "updater::process_containment::tests::retained_directory_cwd_survives_namespace_rename_before_spawn",
         "sourcePath": "SRC/neothd/src/updater/process_containment.rs",
-        "sourceSha256": "5742ED3429C27DF3CB5E84F0DB45F2CEA25A0C1144D11C77C2EAD67559B1A436",
+        "sourceSha256": "E1E97135336F90E26A76F4637F1B8B686B9BC90BF97AD0B2E7BD8FA832DDD335",
         "junitClass": "neoth"
       },
       {
@@ -8663,14 +8663,14 @@
         "platform": "all"
       },
       {
-        "test": "daemon::audit_rpc::tests::sealed_response_rejects_unknown_shape_and_declared_bounds",
+        "test": "daemon::audit_rpc::daemon_plain_chat_contract_tests::sealed_response_rejects_unknown_shape_and_declared_bounds",
         "sourcePath": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
         "sourceSha256": "E2ABB92C8A8C6C3676CD52A15911BCFAE8FA1EADA115AA1934AA182020698DFC",
         "junitClass": "neoth",
         "platform": "all"
       },
       {
-        "test": "daemon::audit_rpc::tests::sealed_response_feedback_target_requires_exact_terminal_session",
+        "test": "daemon::audit_rpc::daemon_plain_chat_contract_tests::sealed_response_feedback_target_requires_exact_terminal_session",
         "sourcePath": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
         "sourceSha256": "E2ABB92C8A8C6C3676CD52A15911BCFAE8FA1EADA115AA1934AA182020698DFC",
         "junitClass": "neoth",
@@ -15602,8 +15602,8 @@
       "cli::feedback::tests::response_command_accepts_only_fixed_signal_and_no_freeform_or_implicit_session",
       "cli::feedback::tests::response_status_requires_the_same_explicit_terminal_pair",
       "cli::feedback::tests::response_outcome_rendering_covers_successes_and_typed_rejections",
-      "daemon::audit_rpc::tests::sealed_response_rejects_unknown_shape_and_declared_bounds",
-      "daemon::audit_rpc::tests::sealed_response_feedback_target_requires_exact_terminal_session",
+      "daemon::audit_rpc::daemon_plain_chat_contract_tests::sealed_response_rejects_unknown_shape_and_declared_bounds",
+      "daemon::audit_rpc::daemon_plain_chat_contract_tests::sealed_response_feedback_target_requires_exact_terminal_session",
       "daemon::gui_chat_protocol::tests::terminal_response_feedback_target_is_strict_and_complete_only",
       "daemon::audit_rpc::tests::gui_attach_delivers_ndjson_incrementally_before_terminal",
       "wal::writer::tests::writer_drain_flushes_batchable_only_writes_on_shutdown",
@@ -15742,6 +15742,26 @@
       }
     ],
     "note": "Root stages5core/test paths+2workflows, excludes GUIcallback andW235cancellation WIP; independent reviews passed. PriorGroup340/341 admitted. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave234GuiFixtureSourceBinding": {
+    "base": "9ba28efffcf8e6da00a16b52286966f2fd10e242",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2140511,
+        "sha256": "BFEB933B7C3C2847FDF0E3297E724B6D170A1ED2317311ED5C4C07F0B74969D3",
+        "blob": "ef2841e8f6541494599c1476e7f4074337aa1db8"
+      },
+      {
+        "path": "SRC/neothd/src/updater/process_containment.rs",
+        "bytes": 52857,
+        "sha256": "E1E97135336F90E26A76F4637F1B8B686B9BC90BF97AD0B2E7BD8FA832DDD335",
+        "blob": "963b2fdeff29711a02cde0542d3ba4b31d5a2a69"
+      }
+    ],
+    "note": "MainGUI source/delta review passed, W168bounded/unwind cleanup; exact updater Hostedformatimport; sealed-response identities corrected after source-bound384pass10unexecuted; W235 excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

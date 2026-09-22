@@ -8,6 +8,16 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W234 GUI fixture/discovery follow-up (2026-09-23):** reviewed fixes preserve
+fresh receipts while correcting FIFO-toast expectations, request settlement,
+claim-bound citation fixtures and deterministic bounded throughput observation.
+W153/W164 child-start remains unresolved; the next Hosted run now records its
+precise phase without weakening containment. Grouped394 on1927280f is bound at
+384executed/384passed, then one discovery failure left10cases unexecuted.
+All79source hashes/matrix/lock/terminals match. Two stale sealed-response module
+names are corrected; no tests removed. Exact Hosted updater formatting is
+imported. Sources535/native843/GUI94 and Group398 counts remain; Road stays
+1016checked/306open/2partial. See `docs/gold-wave234-native-and-gui-recovery.md`.
 **W234 native/GUI recovery (2026-09-23):** Grouped340 and341 are admitted at
 340/340 and341/341, all71source hashes/matrix/lock/actualterminals verified.
 The latter proves W229's real RPC and revoke-first start behavior; Core35792359278

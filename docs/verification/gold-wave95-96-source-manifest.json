@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T22:49:41.4493677Z",
-  "validationStatus": "W234 reviewed native path/receipt/cache repairs and exact class-aware GUI lane; Hosted behavior pending",
+  "capturedUtc": "2026-09-22T22:55:29.5583243Z",
+  "validationStatus": "W234 reviewed GUI lifecycle/receipt/FIFO fixtures and exact name corrections; W153child launch diagnostic only",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -433,18 +433,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 79260,
-      "sha256": "94A1378685E26E7C9CD0B165098AB2A054C57516CB18D55637AD17A59DA8C1FE"
+      "bytes": 80040,
+      "sha256": "A496A166ABC4326F129E22D9F622C4D3E771844D75E874F106C58BE04E3CB063"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1082195,
-      "sha256": "643461BA83669F04FD44198D232ECC4DA3CFDBBB002BB81BBD8C4B752120CBD4"
+      "bytes": 1082975,
+      "sha256": "4162D58DA585E059E56501FE0FCD8474239D83DA901714331B0533554C9C16BD"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1677763,
-      "sha256": "CBE50E11DCB19D09770C35721B03A9B9D0D0F955CADA05B67EB52833904B8633"
+      "bytes": 1678543,
+      "sha256": "7CFC07DCFA646891E16D6BA4D3F16004125539D7BB923534B5298CCAFC97A71D"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -648,8 +648,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2135453,
-      "sha256": "261E15D8B47EE5D06F2A5360D8AF1DCC828E76DDE0E026D8D6E296E30871F97C"
+      "bytes": 2140511,
+      "sha256": "BFEB933B7C3C2847FDF0E3297E724B6D170A1ED2317311ED5C4C07F0B74969D3"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -2448,8 +2448,8 @@
     },
     {
       "path": "SRC/neothd/src/updater/process_containment.rs",
-      "bytes": 52869,
-      "sha256": "5742ED3429C27DF3CB5E84F0DB45F2CEA25A0C1144D11C77C2EAD67559B1A436"
+      "bytes": 52857,
+      "sha256": "E1E97135336F90E26A76F4637F1B8B686B9BC90BF97AD0B2E7BD8FA832DDD335"
     },
     {
       "path": "SRC/neothd/src/updater/reconcile.rs",

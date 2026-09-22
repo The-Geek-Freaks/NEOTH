@@ -43348,9 +43348,41 @@ mod w58_gui_callback_runtime_tests {
     static GUI_CALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[cfg(not(windows))]
+    type W167ThroughputGate = Arc<(Mutex<W167ThroughputGateState>, std::sync::Condvar)>;
+
+    #[cfg(not(windows))]
+    #[derive(Default)]
+    struct W167ThroughputGateState {
+        released: bool,
+    }
+
+    #[cfg(not(windows))]
+    struct W167ThroughputReleaseGuard(W167ThroughputGate);
+
+    #[cfg(not(windows))]
+    impl W167ThroughputReleaseGuard {
+        fn release(&self) {
+            let (state, signal) = self.0.as_ref();
+            state
+                .lock()
+                .expect("release W167 throughput boundary")
+                .released = true;
+            signal.notify_all();
+        }
+    }
+
+    #[cfg(not(windows))]
+    impl Drop for W167ThroughputReleaseGuard {
+        fn drop(&mut self) {
+            self.release();
+        }
+    }
+
+    #[cfg(not(windows))]
     struct W167ScriptedBridge {
         turn_id: Mutex<neothd::daemon::gui_chat_bridge::GuiChatTurnId>,
         surface: Mutex<GuiChatSurface>,
+        throughput_release: Option<W167ThroughputGate>,
     }
 
     #[cfg(not(windows))]
@@ -43359,7 +43391,23 @@ mod w58_gui_callback_runtime_tests {
             Self {
                 turn_id: Mutex::new(gui_bridge_test_support::new_turn_id()),
                 surface: Mutex::new(GuiChatSurface::Main),
+                throughput_release: None,
             }
+        }
+
+        fn with_throughput_gate() -> (Self, W167ThroughputReleaseGuard) {
+            let throughput_release = Arc::new((
+                Mutex::new(W167ThroughputGateState::default()),
+                std::sync::Condvar::new(),
+            ));
+            (
+                Self {
+                    turn_id: Mutex::new(gui_bridge_test_support::new_turn_id()),
+                    surface: Mutex::new(GuiChatSurface::Main),
+                    throughput_release: Some(Arc::clone(&throughput_release)),
+                },
+                W167ThroughputReleaseGuard(throughput_release),
+            )
         }
 
         fn turn(&self, surface: GuiChatSurface) -> GuiChatBridgeTurn {
@@ -43447,9 +43495,18 @@ mod w58_gui_callback_runtime_tests {
                     per_second: 12.5,
                 },
             });
-            // Give the native callback fixture a real live-projection turn
-            // before it receives the provider boundary in this attach worker.
-            std::thread::sleep(Duration::from_millis(80));
+            if let Some(release) = &self.throughput_release {
+                let (state, signal) = release.as_ref();
+                let state = state.lock().expect("W167 throughput release");
+                let (state, timeout) = signal
+                    .wait_timeout_while(state, Duration::from_secs(5), |state| !state.released)
+                    .expect("W167 throughput release wait");
+                if timeout.timed_out() && !state.released {
+                    return Err(neothd::daemon::gui_chat_bridge::GuiChatBridgeError::invalid(
+                        "W168 fixture did not release the observed throughput boundary",
+                    ));
+                }
+            }
             let status = match metadata.surface {
                 GuiChatSurface::Main => GuiChatBridgeRecallChipStatus::Ready,
                 GuiChatSurface::Buddy => GuiChatBridgeRecallChipStatus::Missing,
@@ -46541,7 +46598,7 @@ exit 72
         w142_drain_refresh(
             &window,
             &calls,
-            [5, 10, 6, 5, 7, 3],
+            [5, 10, 6, 5, 7, 2],
             "current",
             "newest current",
         );
@@ -46549,14 +46606,14 @@ exit 72
         w142_drain_refresh(
             &window,
             &calls,
-            [5, 10, 6, 6, 8, 3],
+            [5, 10, 6, 6, 8, 2],
             "current",
             "newest current",
         );
         assert_eq!(
             w142_toast_count(&window, "Accepted"),
-            3,
-            "late old refresh cannot publish another terminal toast"
+            2,
+            "three-slot FIFO retains two Accepted toasts; a late old refresh cannot publish another terminal toast"
         );
     }
 
@@ -46943,6 +47000,7 @@ if [ "$1" = "--output" ] && [ "$3" = "feedback" ] && [ "$4" = "response" ]; then
 fi
 body=$(/bin/cat)
 printf '%s' "$body" > "$base/envelope"
+printf '%s\n' 'envelope-read' > "$base/w153-stage"
 token=$(printf '%s' "$body" | /usr/bin/sed -n 's/.*"stream_control_token":"\([^"]*\)".*/\1/p')
 [ -n "$token" ] || { printf 'missing W153 sealed token\n' >&2; exit 91; }
 if [ -x /usr/bin/sha256sum ]; then
@@ -46956,8 +47014,11 @@ if [ "$mode" = forged ]; then request=000000000000000000000000000000000000000000
 printf 'chat --stream\n' >> "$base/calls"
 route='{"outcome":"match","stage":"explicit","config_epoch":7,"authority_epoch":11,"snapshot_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","candidates":[{"skill_id":"systematic_debugging","mode_id":null,"matched_terms":[],"score":1.0,"execution":{"trusted_bundled":true,"content_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","package_generation_sha256":null,"manifest_sha256":null,"install_incarnation":null,"install_terminal_receipt_sha256":null,"authority_record_sha256":null}}],"rejection":null,"degraded_reason":null}'
 reasoning='PRIVATE_W153_CHILD_SENTINEL'
+printf '%s\n' 'route-write' > "$base/w153-stage"
 printf '\036NEOTH/1 {"neoth_stream":"skill_route","protocol_version":3,"request_id":"%s","control_token":"%s","report":%s}\n' "$request" "$token" "$route"
+printf '%s\n' 'route-written' > "$base/w153-stage"
 printf '\036NEOTH/1 {"neoth_stream":"reasoning_delta","protocol_version":3,"request_id":"%s","control_token":"%s","sequence":1,"delta":"%s"}\n' "$request" "$token" "$reasoning"
+printf '%s\n' 'reasoning-written' > "$base/w153-stage"
 : > "$base/started"
 while [ ! -f "$base/release" ]; do /bin/sleep 0.01; done
 if [ "$mode" = success ]; then
@@ -47017,6 +47078,49 @@ exit 0
         slint::run_event_loop_until_quit().expect("pump W153 Slint event loop");
         drop(timer);
         assert!(done.get(), "timed out waiting for W153 {label}");
+    }
+
+    #[cfg(not(windows))]
+    fn w153_wait_for_child_start<F>(window: &MainWindow, fixture: &TempDir, complete: F)
+    where
+        F: Fn(&MainWindow) -> bool + 'static,
+    {
+        let done = Rc::new(Cell::new(false));
+        let observed_done = Rc::clone(&done);
+        let ticks = Rc::new(Cell::new(0_u16));
+        let observed_ticks = Rc::clone(&ticks);
+        let weak = window.as_weak();
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                let Some(window) = weak.upgrade() else {
+                    let _ = slint::quit_event_loop();
+                    return;
+                };
+                if complete(&window) {
+                    observed_done.set(true);
+                    let _ = slint::quit_event_loop();
+                    return;
+                }
+                let next = observed_ticks.get().saturating_add(1);
+                observed_ticks.set(next);
+                if next >= 700 {
+                    let _ = slint::quit_event_loop();
+                }
+            },
+        );
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("pump W153 child-start event loop");
+        drop(timer);
+        let stage = std::fs::read_to_string(fixture.path().join("w153-stage"))
+            .unwrap_or_else(|_| "child did not write a stage marker".to_string());
+        assert!(
+            done.get(),
+            "timed out waiting for W153 child start; child stage: {}",
+            stage.trim(),
+        );
     }
 
     #[cfg(not(windows))]
@@ -47086,7 +47190,7 @@ exit 0
                     );
                 }
             }
-            w153_pump_until(&window, "child start", {
+            w153_wait_for_child_start(&window, &fixture, {
                 let started = fixture.path().join("started");
                 let overlay = overlay.as_weak();
                 move |window| {
@@ -47586,7 +47690,7 @@ exit 0
                 ),
             }
             let started = fixture.path().join("started");
-            w153_pump_until(&window, "W164 child start", move |_| started.exists());
+            w153_wait_for_child_start(&window, &fixture, move |_| started.exists());
             assert!(!window.get_chat_response_feedback_available());
             assert!(!overlay.get_response_feedback_available());
             std::fs::write(fixture.path().join("release"), b"").expect("release W164 child");
@@ -47801,11 +47905,17 @@ exit 0
             &old_snapshot[0],
         );
         assert!(window.get_chat_recall_chips_active());
-        runtime
+        let mut stream = runtime
             .chat_stream
             .lock()
-            .expect("settle prior W163 request")
-            .settle(old_request, true);
+            .expect("settle prior W163 request");
+        stream
+            .provider_finished(old_request)
+            .expect("finish prior W163 request before replacement");
+        stream
+            .settle(old_request, true)
+            .expect("settle prior W163 request");
+        drop(stream);
         let _replacement_request = w153_prepare_approved_request(
             &window,
             &overlay,
@@ -48072,7 +48182,8 @@ exit 0
             Arc::new(Mutex::new(std::collections::HashMap::new()));
         let feedback: ChatResponseFeedbackProjections =
             Arc::new(Mutex::new(std::collections::HashMap::new()));
-        let bridge: Arc<dyn GuiChatBridge> = Arc::new(W167ScriptedBridge::new());
+        let (scripted_bridge, throughput_release) = W167ScriptedBridge::with_throughput_gate();
+        let bridge: Arc<dyn GuiChatBridge> = Arc::new(scripted_bridge);
         let _installed =
             super::gui_chat_bridge_controller::GuiChatBridgeController::install_with_test_bridge(
                 &window,
@@ -48085,6 +48196,8 @@ exit 0
                 bridge,
             )
             .expect("install W168 typed bridge callbacks");
+        // Release the attach worker before the installed controller is dropped.
+        let throughput_release = throughput_release;
 
         window.invoke_chat_send_clicked("main W168".into(), false);
         w153_pump_until(&window, "W168 Main live throughput", |window| {
@@ -48099,6 +48212,7 @@ exit 0
                 .expect("W168 Main projection")
                 .contains_key(&daemon_throughput_projection_id(1))
         );
+        throughput_release.release();
         w153_pump_until(&window, "W168 Main provider boundary", |window| {
             !window.get_chat_send_in_flight() && !window.get_chat_throughput_active()
         });
@@ -48651,8 +48765,8 @@ exit 0
         assert_eq!(window.get_bc_vault_mirror_phase().to_string(), "verified");
         assert_eq!(
             w142_toast_count(&window, "Vault mirror verified"),
-            2,
-            "retry after failure may succeed only after its own fresh readback"
+            1,
+            "three-slot FIFO may evict the earlier verified toast; retry still requires its own fresh readback"
         );
     }
 
@@ -49461,6 +49575,13 @@ exit 7
         // cannot replay the same challenge while the first is in flight.
         std::fs::write(fixture.path().join("mode"), "found")
             .expect("select W155 approved final mode");
+        let live_request = CitationGuiRequest::new("live claim".into(), doi.into(), 0, false)
+            .expect("construct W155 approved live request");
+        std::fs::write(
+            fixture.path().join("found.json"),
+            w155_found_offline_receipt(&live_request),
+        )
+        .expect("write W155 approved live receipt");
         window.invoke_chat_citation_consent_approved();
         window.invoke_chat_citation_consent_approved();
         w153_pump_until(&window, "approved citation final lookup", |w| {
@@ -49537,6 +49658,13 @@ exit 7
 
         std::fs::write(fixture.path().join("mode"), "preflight-ready")
             .expect("select W155 ready preflight");
+        let ready_request = CitationGuiRequest::new("ready live claim".into(), doi.into(), 0, false)
+            .expect("construct W155 ready live request");
+        std::fs::write(
+            fixture.path().join("found.json"),
+            w155_found_offline_receipt(&ready_request),
+        )
+        .expect("write W155 ready live receipt");
         std::fs::remove_file(fixture.path().join("lookup-stdin")).ok();
         window.invoke_chat_citation_lookup_clicked("ready live claim".into(), doi.into(), 0, false);
         w153_pump_until(&window, "ready citation final lookup", |w| {

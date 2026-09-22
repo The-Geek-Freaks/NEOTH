@@ -66,3 +66,29 @@ execution. Cancellation/WAL lifecycle repair is W235 and is excluded here.
 No compiler, formatter, parser, test, product or GUI was executed locally.
 Inventory535sources/843native/94GUI plus22Linux/22macOS extras/26macOS custom.
 No Road checkbox is closed from these partial or source-only outcomes.
+
+## GUI fixture follow-up and discovery repair
+
+Known W142/W184 toast expectations now account for the bounded three-slot FIFO;
+receipt/fresh-readback checks are preserved. W163 performs provider_finished
+before settle and replacement. W155's later fixture receipts bind the actual
+live claim. W168 replaces its timing sleep with a bounded condition wait and
+an unwind-safe release guard that drops before controller teardown. Independent
+source/delta review passed these changes.
+
+W153/W164 child-start failure remains unresolved. The original hash protocol
+was retained; bounded stage markers now distinguish pre-exec/envelope, route
+write, route completion and reasoning write on the next Hosted run. These
+markers are diagnostic evidence, not a claimed launch fix. No containment or
+parser gate is relaxed.
+
+Grouped39435792961441 on1927280f is source-bound at384/384 executed passes,
+then discovery failed. All79 source hashes, matrix, lock and actual terminals
+match. Ten selected cases did not execute. Two stale sealed-response module
+paths are corrected to daemon::audit_rpc::daemon_plain_chat_contract_tests;
+no case is removed. The already-running398 run on9ba28eff has the old names,
+so a new-source grouped run remains necessary before admitting its remainder.
+
+Preflight35794569338 produced one exact formatter patch for the updater test;
+its source-head/SHA/Git+local preimages and postimage are verified and imported.
+No local executable validation ran.
