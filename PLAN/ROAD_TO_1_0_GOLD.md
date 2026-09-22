@@ -17,6 +17,12 @@ This is compilation only; native, GUI, optional-feature and release behavior
 gates remain. First Hosted result is pending. W177/W180 Preflight35670551761 and
 Quality35670550997 passed on97e2137a. See [W182](../docs/gold-wave182-verification.md).
 
+W177/W180 CLI build/reference35670551411 passed on97e2137a, together with
+Preflight35670551761 and Quality35670550997. The generated reference is imported
+byte-for-byte: SHA256 B71F75178457DD99A3576E03ECE092BB1CC0E2D2060989FA2E7F2C7AD602E166;
+its only public-help delta adds export training-set. Behavioral acceptance and
+the new W182 core-test check remain pending; no checkbox closes.
+
 **W177 accepted training-set export and W180 portable diagnosis (2026-09-22):**
 W177 source and final independent review cover strict committed response receipts,
 post-drain capabilities, explicit Accepted in CLI/Main/Buddy, revision-CAS and

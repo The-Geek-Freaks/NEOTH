@@ -1376,6 +1376,14 @@ GDPR-style operator data export — JSONL or markdown dump of exportable operato
 - `--subject <SUBJECT>` — Reserved private-DSAR selector. Generic export has no authenticated private DSAR authority, so this currently fails without reading or writing local state
 - `--list-subjects` — Reserved private-DSAR inventory. Generic export has no authenticated private DSAR authority, so this currently fails without reading or printing local state
 
+### `neoth export training-set`
+
+Build a local redacted SFT JSONL from exact Accepted terminal receipts
+
+- `--out <FILE>` — Explicit JSONL destination. A sibling `.manifest.json` is published with it
+- `--format <FORMAT>`
+- `--home <DIR>`
+
 ## `neoth fact-check`
 
 GOLD-WIRE-11 — fact-check a claim. Decomposes the text into atomic propositions, classifies each (verifiable / plausible / opinion / suspect) with deterministic heuristics (no LLM call), and prints a `clean` / `needs_framing` / `needs_revision` verdict. `neoth fact-check "NEOTH was released in 2026."`

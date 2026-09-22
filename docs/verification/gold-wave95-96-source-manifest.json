@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W182-early-hosted-core-test-check",
-  "base": "97e2137ae13c5e3cfd1cee7786be1bd15d725aed",
-  "capturedUtc": "2026-09-22T00:09:24.4463995Z",
-  "validationStatus": "W182_WORKFLOW_REVIEWED_FIRST_HOSTED_PENDING",
-  "scopeNote": "Five explicit workflow/cadence/doc paths only; W177/W180 source unchanged. Existing core-test typechecking precedes reference build; no new tests or behavioral closure.",
+  "base": "1e8beb99eb0a303b74115478264d2f7ba3d862d4",
+  "capturedUtc": "2026-09-22T00:11:15.8592619Z",
+  "validationStatus": "W177_CLI_REFERENCE_COMPILED_NATIVE_AND_W182_CHECK_PENDING",
+  "scopeNote": "Fourexplicitdocs: exactW177CLIreference97e2137a artifact imported; no source changes. W182earlytestcheck and fullbehavior remain pending.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -58,8 +58,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 232129,
-      "sha256": "14F8DABA4804E5CCA138FF4CDFF65446363ED43D5589C90104B117F65675DA43"
+      "bytes": 232371,
+      "sha256": "B71F75178457DD99A3576E03ECE092BB1CC0E2D2060989FA2E7F2C7AD602E166"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -128,8 +128,8 @@
     },
     {
       "path": "docs/gold-wave177-verification.md",
-      "bytes": 4121,
-      "sha256": "04F78A39A576D764D90B244D91108263948C8B47A9A0943F91667B4E3124C188"
+      "bytes": 4622,
+      "sha256": "C42C5F7DC9EA94C6AA32FCC8E23F0C9E51F643F4B5CAB0916001A7A603F5F03B"
     },
     {
       "path": "docs/gold-wave178-verification.md",
@@ -228,13 +228,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1017491,
-      "sha256": "874DCB7C5AF1415658CACC0B59FD7AD7F80B53FF18972C0417F8186F1D629518"
+      "bytes": 1017879,
+      "sha256": "C01FB3322D3EDDF10749747D86C9A82FA0104F2E2B464C0857D1E875BCA265EC"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1612938,
-      "sha256": "0F8B608AAD2A42F56094C81D1678F7C165FDFD77E36B61DA6576B596EAF667B4"
+      "bytes": 1613326,
+      "sha256": "FEFB72A374D6B2F8793622D757985B3BCD38B8846F3651F7795D19A1710E4B99"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",

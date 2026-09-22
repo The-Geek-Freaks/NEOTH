@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W182_WORKFLOW_REVIEWED_FIRST_HOSTED_PENDING",
-  "base": "97e2137ae13c5e3cfd1cee7786be1bd15d725aed",
+  "status": "W177_CLI_REFERENCE_COMPILED_NATIVE_AND_W182_CHECK_PENDING",
+  "base": "1e8beb99eb0a303b74115478264d2f7ba3d862d4",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 71317,
-    "sha256": "889A97BEAF470C24D7A8743F9BC9FC568D532012C9BF621F4784263A93671FAE"
+    "bytes": 71300,
+    "sha256": "259618EC42CCA387DC4DFACFA062C0439ED9061704C84D9CCEA38A629F45A637"
   },
   "sourceInputs": 413,
   "requiredNativeTests": [
@@ -6923,6 +6923,18 @@
       "receiptSha256": "4C1116CAB323306FFB92452E7E5CD407865ED212E16545992426907FF2569C16",
       "quality": "35670058797 success",
       "freshHosted": "pending"
+    },
+    "hostedCompileReference": {
+      "schema": "neoth-generated-cli-reference-import/v1",
+      "run": "35670551411",
+      "sourceHead": "97e2137ae13c5e3cfd1cee7786be1bd15d725aed",
+      "artifact": "10670934743",
+      "archiveDigestReportedByGitHub": "sha256:750364cbdb728c2c9c894d6b0b2d7fbc20682f432b94d145beb859a64fe3a492",
+      "bytes": 232371,
+      "sha256": "B71F75178457DD99A3576E03ECE092BB1CC0E2D2060989FA2E7F2C7AD602E166",
+      "destination": "docs/cli-commands.md",
+      "proof": "source-head exactly matched; artifact SHA256SUMS matched downloaded bytes; destination byte hash equals artifact",
+      "boundary": "Hosted CLI build/reference only; native/GUI/export behavior still pending"
     }
   },
   "wave180": {

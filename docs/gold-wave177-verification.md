@@ -62,3 +62,10 @@ those imports repairs the scope. A fresh CLI build, formatting and behavior
 run is required. The old a72 full CI is confirmed cancelled after its shared
 library-test compile failures; completed evidence is retained.
 Formatter receipt SHA-256: 4C1116CAB323306FFB92452E7E5CD407865ED212E16545992426907FF2569C16.
+
+W177/W180 CLI build/reference35670551411 passed on97e2137a, together with
+Preflight35670551761 and Quality35670550997. The generated reference is imported
+byte-for-byte: SHA256 B71F75178457DD99A3576E03ECE092BB1CC0E2D2060989FA2E7F2C7AD602E166;
+its only public-help delta adds export training-set. Behavioral acceptance and
+the new W182 core-test check remain pending; no checkbox closes.
+Artifact10670934743 source-head and SHA256SUMS matched; receipt CLI-REFERENCE-IMPORT-97E.json preserves custody.
