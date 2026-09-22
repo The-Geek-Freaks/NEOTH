@@ -92,3 +92,8 @@ so a new-source grouped run remains necessary before admitting its remainder.
 Preflight35794569338 produced one exact formatter patch for the updater test;
 its source-head/SHA/Git+local preimages and postimage are verified and imported.
 No local executable validation ran.
+
+Preflight35795043931 on480ff458 supplied the exact GUI fixture formatting.
+Source-head/SHA256SUMS, Git/local preimages, apply-check and postimage match;
+the patch is imported without running a local formatter. Hosted behavior
+continues on the pre-format source, and no release acceptance is inferred.

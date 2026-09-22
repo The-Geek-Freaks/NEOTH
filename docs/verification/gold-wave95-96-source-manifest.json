@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T22:55:29.5583243Z",
-  "validationStatus": "W234 reviewed GUI lifecycle/receipt/FIFO fixtures and exact name corrections; W153child launch diagnostic only",
+  "capturedUtc": "2026-09-22T22:58:39.2199337Z",
+  "validationStatus": "W234 exact Hosted GUI formatting imported; behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -648,8 +648,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2140511,
-      "sha256": "BFEB933B7C3C2847FDF0E3297E724B6D170A1ED2317311ED5C4C07F0B74969D3"
+      "bytes": 2140582,
+      "sha256": "8FEA6A829BEF57CA354F4486C27D7EB60D1D76ED1E491885FD333DF99EB24DFA"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",

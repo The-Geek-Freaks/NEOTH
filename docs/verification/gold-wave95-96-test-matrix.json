@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W234 reviewed GUI lifecycle/receipt/FIFO fixtures and exact name corrections; W153child launch diagnostic only",
+  "status": "W234 exact Hosted GUI formatting imported; behavior pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92552,
-    "sha256": "705562696E973788147EA75D0941BB5C351D6D3F4D2C34C61D3A42FD00BA24A2"
+    "bytes": 92501,
+    "sha256": "EB37CA468512898E44FD486D8F7614DEA96B22E79764899BF85659E02E2B2AF5"
   },
   "sourceInputs": 535,
   "requiredNativeTests": [
@@ -5660,8 +5660,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2140511,
-      "sha256": "BFEB933B7C3C2847FDF0E3297E724B6D170A1ED2317311ED5C4C07F0B74969D3"
+      "bytes": 2140582,
+      "sha256": "8FEA6A829BEF57CA354F4486C27D7EB60D1D76ED1E491885FD333DF99EB24DFA"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -15762,6 +15762,20 @@
       }
     ],
     "note": "MainGUI source/delta review passed, W168bounded/unwind cleanup; exact updater Hostedformatimport; sealed-response identities corrected after source-bound384pass10unexecuted; W235 excluded.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave234GuiHostedFormat": {
+    "base": "480ff45855cb16db99fec714ef1005c58ccd40cb",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2140582,
+        "sha256": "8FEA6A829BEF57CA354F4486C27D7EB60D1D76ED1E491885FD333DF99EB24DFA",
+        "blob": "1b7913f63830c95fce88c218f9bdf24891c69031"
+      }
+    ],
+    "note": "Preflight35795043931 source480ff458 exactsource/SHA/preimages/postimage1file verified; no local formatter; W235excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

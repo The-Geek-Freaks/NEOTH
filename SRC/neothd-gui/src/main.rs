@@ -43502,9 +43502,11 @@ mod w58_gui_callback_runtime_tests {
                     .wait_timeout_while(state, Duration::from_secs(5), |state| !state.released)
                     .expect("W167 throughput release wait");
                 if timeout.timed_out() && !state.released {
-                    return Err(neothd::daemon::gui_chat_bridge::GuiChatBridgeError::invalid(
-                        "W168 fixture did not release the observed throughput boundary",
-                    ));
+                    return Err(
+                        neothd::daemon::gui_chat_bridge::GuiChatBridgeError::invalid(
+                            "W168 fixture did not release the observed throughput boundary",
+                        ),
+                    );
                 }
             }
             let status = match metadata.surface {
@@ -49658,8 +49660,9 @@ exit 7
 
         std::fs::write(fixture.path().join("mode"), "preflight-ready")
             .expect("select W155 ready preflight");
-        let ready_request = CitationGuiRequest::new("ready live claim".into(), doi.into(), 0, false)
-            .expect("construct W155 ready live request");
+        let ready_request =
+            CitationGuiRequest::new("ready live claim".into(), doi.into(), 0, false)
+                .expect("construct W155 ready live request");
         std::fs::write(
             fixture.path().join("found.json"),
             w155_found_offline_receipt(&ready_request),
