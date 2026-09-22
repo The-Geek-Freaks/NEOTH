@@ -157,18 +157,21 @@ async fn run_fan_out(
         })
         .collect::<Result<_>>()?;
 
-    let neoth_home = FreedomConfig::default_neoth_home();
-    let config = FreedomConfig::load_from_default_path()
+    let config_path = home.join("freedom.yaml");
+    let config = FreedomConfig::load_from_path(&config_path)
         .context("load freedom.yaml — run `neoth init` first")?;
-    let wal_dir = neoth_home.join("wal");
+    let skill_registry_context = fan_out_skill_registry_context(home, &config_path, &config)
+        .await
+        .context("capture authority-bound Skill registry for this fan-out run")?;
+    let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir)
         .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
     let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "sub-agents");
-    let (writer, writer_join) = crate::wal::writer::spawn_for_home(segment, neoth_home.clone())
+    let (writer, writer_join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
         .context("spawn sub-agent audit WAL writer")?;
 
     let raw_provider =
-        crate::providers::fallback_chain_from_config(&config, &neoth_home, Some(writer.clone()))
+        crate::providers::fallback_chain_from_config(&config, home, Some(writer.clone()))
             .await
             .context("build sub-agent provider")?;
     canonicalize_agent_models(&config, raw_provider.as_ref(), &mut selected)?;
@@ -190,6 +193,7 @@ async fn run_fan_out(
         selected,
         retry_failed,
         writer.clone(),
+        skill_registry_context,
     ));
 
     let now_ns = crate::time::now_unix_ns();
@@ -236,6 +240,36 @@ async fn run_fan_out(
     let _ = writer_join.await;
     let (record, path) = record_result?;
     render_run(&record, &path, output)
+}
+
+/// Capture one complete, authority-admitted registry before any fan-out work.
+/// The returned typed block is owned by the worker for the life of this run;
+/// a later config or authority publication therefore cannot affect retries.
+async fn fan_out_skill_registry_context(
+    neoth_home: &std::path::Path,
+    config_path: &std::path::Path,
+    config: &FreedomConfig,
+) -> Result<crate::pipeline::RenderedUntrustedContext> {
+    let reload = Arc::new(crate::config::reload::ReloadController::new(
+        config.clone(),
+        config_path.to_path_buf(),
+    ));
+    let config_epoch = reload.accepted_snapshot().epoch();
+    let registry = crate::skills::registry::SkillRegistry::load_with_reload_controller(
+        neoth_home.join("skills"),
+        Arc::clone(&reload),
+    )
+    .await
+    .context("load exact fan-out Skill registry authority")?;
+    let snapshot = registry
+        .authority_bound_snapshot_for_epoch(config_epoch)
+        .context("acquire authority-bound fan-out Skill snapshot")?;
+    let active_files = crate::skills::resolver::active_files_from_env();
+    let eval_suppress = config.skills.should_suppress_for_eval();
+    crate::skills::resolver::SkillRouteResolver::new(snapshot)
+        .retaining(move |_| !eval_suppress)
+        .session_registry_context(&active_files)
+        .context("render complete fan-out Skill registry context")
 }
 
 /// Agent TOML is a second model-selection surface after `freedom.yaml`.
@@ -485,6 +519,7 @@ fn render_show(name: &str, rows: &[AgentRow<'_>], output: &OutputFormat) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     struct AliasProvider;
 
@@ -523,6 +558,43 @@ mod tests {
             omit_recall: false,
             omit_repo_context: false,
         }
+    }
+
+    async fn write_installed_skill(home: &Path, id: &str, enabled: bool) {
+        let dir = home.join("skills").join(id);
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::write(
+            dir.join("skill.yaml"),
+            format!(
+                "id: {id}\ndescription: {id} registry fixture\nsystem_prompt: {id} body\ntrigger_keywords: [{id}]\nenabled: {enabled}\n"
+            ),
+        )
+        .await
+        .unwrap();
+    }
+
+    fn activate_installed_skill(
+        home: &Path,
+        id: &str,
+        reload: &crate::config::reload::ReloadController,
+    ) {
+        let current = crate::skills::installer::inspect_current_install(&home.join("skills"), id)
+            .unwrap();
+        crate::skills::mutation_lifecycle::record_committed_install_incarnation_for_test(
+            home,
+            id,
+            &current.generation_sha256,
+            crate::skills::installer::SkillMutationOrigin::CliInstall,
+        )
+        .unwrap();
+        let decision = crate::skills::authority::SkillAuthorityDecision::new(
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorCli,
+            crate::skills::authority::SkillAuthorityState::Active,
+            None,
+        )
+        .unwrap();
+        crate::skills::authority::publish_installed_authority_decision(home, id, reload, decision)
+            .unwrap();
     }
 
     #[test]
@@ -579,6 +651,40 @@ mod tests {
     fn render_list_empty_does_not_error() {
         render_list(&[], &OutputFormat::Json).unwrap();
         render_list(&[], &OutputFormat::Table).unwrap();
+    }
+
+    #[tokio::test]
+    async fn fan_out_registry_admits_only_enabled_skills_and_suppresses_eval() {
+        let home = tempfile::tempdir().unwrap();
+        let config_path = home.path().join("fan-out-freedom.yaml");
+        let config = FreedomConfig::default();
+        std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        write_installed_skill(home.path(), "fan-out-ready", true).await;
+        write_installed_skill(home.path(), "fan-out-disabled", false).await;
+        crate::skills::authority::initialize_authority_key_for_test(home.path()).unwrap();
+        let reload = crate::config::reload::ReloadController::new(
+            config.clone(),
+            config_path.clone(),
+        );
+        activate_installed_skill(home.path(), "fan-out-ready", &reload);
+        activate_installed_skill(home.path(), "fan-out-disabled", &reload);
+
+        let admitted = fan_out_skill_registry_context(home.path(), &config_path, &config)
+            .await
+            .unwrap();
+        assert!(admitted.as_str().contains("fan-out-ready"));
+        assert!(!admitted.as_str().contains("fan-out-disabled"));
+
+        let mut eval_config = config;
+        eval_config.skills.disabled_for_eval_sessions = true;
+        eval_config.skills.eval_session_active = true;
+        std::fs::write(&config_path, serde_yaml::to_string(&eval_config).unwrap()).unwrap();
+        let suppressed =
+            fan_out_skill_registry_context(home.path(), &config_path, &eval_config)
+                .await
+                .unwrap();
+        assert!(!suppressed.as_str().contains("fan-out-ready"));
+        assert!(!suppressed.as_str().contains("fan-out-disabled"));
     }
 
     #[tokio::test]

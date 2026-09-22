@@ -537,6 +537,7 @@ fn spawn_claude_with_env(
 /// the caller and must never rewrite that settlement after the fact.
 async fn spawn_claude_for_effect<F>(
     permit: &ProviderDispatchPermit,
+    req: &Request,
     streaming: bool,
     start: F,
 ) -> Result<ManagedClaudeChild>
@@ -553,7 +554,7 @@ where
         return start().map_err(Into::into);
     };
 
-    let lease = effect.begin_start().await?;
+    let lease = begin_effect_start_or_role_terminal(permit, req, effect).await?;
     if tokio::time::Instant::now() >= lease.deadline() {
         lease.indeterminate().await?;
         anyhow::bail!("claude CLI start lease expired before subprocess spawn");
@@ -568,6 +569,29 @@ where
             // adapter has not started the local CLI process.
             lease.aborted_proven_pre_start().await?;
             Err(error.into())
+        }
+    }
+}
+
+/// Convert a role-policy revocation discovered by the effect-start authority
+/// into the same known terminal used by the direct raw-send fence.
+async fn begin_effect_start_or_role_terminal(
+    permit: &ProviderDispatchPermit,
+    req: &Request,
+    effect: super::PreparingEffect,
+) -> Result<super::EffectStartLease> {
+    match effect.begin_start().await {
+        Ok(lease) => Ok(lease),
+        Err(start_error) => {
+            if let Err(role_error) = permit.ensure_role_dispatch_before_send(req) {
+                if let Err(audit_error) = permit.failure("role_dispatch_policy_changed").await {
+                    return Err(anyhow::anyhow!(
+                        "role dispatch changed and start terminal audit failed: {audit_error}; provider error: {role_error}"
+                    ));
+                }
+                return Err(role_error);
+            }
+            Err(start_error)
         }
     }
 }
@@ -1180,7 +1204,7 @@ impl Provider for ClaudeCliAdapter {
             // as complete_uncached — use spawn_claude_with_extra_env when the
             // request carries a thinking_budget, plain spawn_claude otherwise.
             let mut child = if let Some(budget) = req.thinking_budget {
-                spawn_claude_for_effect(permit, true, || {
+                spawn_claude_for_effect(permit, &req, true, || {
                     spawn_claude_with_extra_env(
                         &self.binary,
                         &args,
@@ -1189,7 +1213,7 @@ impl Provider for ClaudeCliAdapter {
                 })
                 .await
             } else {
-                spawn_claude_for_effect(permit, true, || spawn_claude(&self.binary, &args)).await
+                spawn_claude_for_effect(permit, &req, true, || spawn_claude(&self.binary, &args)).await
             }
             .with_context(|| {
                 format!(
@@ -1390,7 +1414,7 @@ impl Provider for ClaudeCliAdapter {
                     &self.resume_session_id,
                 );
                 let mut child = if let Some(budget) = req.thinking_budget {
-                    spawn_claude_for_effect(permit, true, || {
+                    spawn_claude_for_effect(permit, &req, true, || {
                         spawn_claude_with_extra_env(
                             &self.binary,
                             &args,
@@ -1399,7 +1423,7 @@ impl Provider for ClaudeCliAdapter {
                     })
                     .await
                 } else {
-                    spawn_claude_for_effect(permit, true, || spawn_claude(&self.binary, &args))
+                    spawn_claude_for_effect(permit, &req, true, || spawn_claude(&self.binary, &args))
                         .await
                 }
                 .with_context(|| {
@@ -1712,7 +1736,7 @@ async fn complete_uncached(
     // (10 000). We use `spawn_claude_with_extra_env` rather than mutating the
     // `OnceLock`-cached env (which is immutable post-startup by contract).
     let mut child = if let Some(budget) = req.thinking_budget {
-        spawn_claude_for_effect(permit, false, || {
+        spawn_claude_for_effect(permit, &req, false, || {
             spawn_claude_with_extra_env(
                 binary,
                 &args,
@@ -1721,7 +1745,7 @@ async fn complete_uncached(
         })
         .await
     } else {
-        spawn_claude_for_effect(permit, false, || spawn_claude(binary, &args)).await
+        spawn_claude_for_effect(permit, &req, false, || spawn_claude(binary, &args)).await
     }
     .with_context(|| {
         format!(
@@ -2037,7 +2061,7 @@ async fn complete_tmux_uncached(
                 })
                 .await?
             {
-                Some(effect) => Some(effect.begin_start().await?),
+                Some(effect) => Some(begin_effect_start_or_role_terminal(permit, &req, effect).await?),
                 None => None,
             };
             let session = super::tmux_session::TmuxSession::new_with_socket_and_effect(
@@ -2072,16 +2096,20 @@ async fn complete_tmux_uncached(
                 .begin_retry_attempt()
                 .await
                 .context("authorize exact claude_cli retry attempt")?;
-            if let Err(error) = permit.ensure_role_dispatch_before_send(&req) {
-                if let Err(audit_error) = permit.failure("role_dispatch_policy_changed").await {
-                    return Err(anyhow::anyhow!(
-                        "role dispatch changed and retry terminal audit failed: {audit_error}; provider error: {error}"
-                    ));
-                }
-                return Err(error);
-            }
             // No false-reset needed: the only setter is the transport-retry
             // arm below, which re-arms it before the next read.
+        }
+
+        // Both the first and retry sends can wait for the tmux slot, cold
+        // session creation and its initial prompt. Recheck only after that
+        // work, immediately before reserving/sending the warm-pane effect.
+        if let Err(error) = permit.ensure_role_dispatch_before_send(&req) {
+            if let Err(audit_error) = permit.failure("role_dispatch_policy_changed").await {
+                return Err(anyhow::anyhow!(
+                    "role dispatch changed and send terminal audit failed: {audit_error}; provider error: {error}"
+                ));
+            }
+            return Err(error);
         }
 
         let send_result = {
@@ -2095,7 +2123,7 @@ async fn complete_tmux_uncached(
                 })
                 .await?
             {
-                Some(effect) => Some(effect.begin_start().await?),
+                Some(effect) => Some(begin_effect_start_or_role_terminal(permit, &req, effect).await?),
                 None => None,
             };
             // Pick #35 (Session 14, B-6 gap-fix): use the operator-tunable

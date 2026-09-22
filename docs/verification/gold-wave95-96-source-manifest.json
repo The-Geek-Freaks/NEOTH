@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T19:13:19.0044630Z",
-  "validationStatus": "W213/W214 blocked at three Copilot fixture constructors; corrected source awaiting hosted execution",
+  "capturedUtc": "2026-09-22T19:28:17.3490989Z",
+  "validationStatus": "W215+actual-start role correction reviewed;Grouped255 pending; prior7689Core/CLI pass",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -68,8 +68,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 11337,
-      "sha256": "C2D9C390AA412280049D4C869DCD5BE904F21928FF5716F1738AF4A9EDBCA86A"
+      "bytes": 11410,
+      "sha256": "D3355DE6C06E8651F859BC682FFBE84B715185F183116CC6303E9EC579AAD024"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -93,8 +93,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 236869,
-      "sha256": "D74370E169ED970BF46C9F0A792F2FA107A07FCB0503EE10D8F8475A6C3DC117"
+      "bytes": 237826,
+      "sha256": "21F1714853194846D7C29426F8A95FC234483D7527F535325CD6618F8DB6C423"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -433,18 +433,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 57906,
-      "sha256": "844C4FEA429F684CC0BE6A764576701BE4C3B4EB7917B5EFDA5A19810F4C4C19"
+      "bytes": 58879,
+      "sha256": "DE0A6B02430E440C623D64C0039D4C35F739E30B53CDBCA6862DEBA5666D9C9B"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1060788,
-      "sha256": "902E46654B663B1C3D678FD9218BAE86406C6D3A3CA332D81126C20B89D3B3E5"
+      "bytes": 1061761,
+      "sha256": "91FA7D9D727D347DB89190F335DF4696485C36C26D939B9B5D66EF820B90EA4F"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1656235,
-      "sha256": "140048CBC90CEB1DE6C10D30A0733E8AD60FD64747220A45537B22DBC6B4880B"
+      "bytes": 1657208,
+      "sha256": "761A19909FAAC6745E755D1CA5C8922B70100E2F4E3094D490F233E0A9FFE882"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -970,6 +970,11 @@
       "path": "SRC/neothd/src/channels/telegram.rs",
       "bytes": 85974,
       "sha256": "53503928B5CDB203EAD92FB77F3AD92BF1A19099F6AD52353B9B8EE51BD9DDAF"
+    },
+    {
+      "path": "SRC/neothd/src/cli/agents.rs",
+      "bytes": 26308,
+      "sha256": "BEA310DA5778D9941FC88BF64F3140DE4EA54AFC0E9D1D51543B20E1B6FBEF15"
     },
     {
       "path": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
@@ -2143,8 +2148,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/claude_cli.rs",
-      "bytes": 159818,
-      "sha256": "ED7166CF30C31F8663422B521022F3B5EEAF95BE2A5407A47EF9E42FBFE0C6E6"
+      "bytes": 161100,
+      "sha256": "4667CA554BD1113312055125460B126F5425F3021FE9C074698800C8A53EE9F5"
     },
     {
       "path": "SRC/neothd/src/providers/claude_tmux.rs",
@@ -2193,8 +2198,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/mod.rs",
-      "bytes": 241567,
-      "sha256": "79B7A676BA7F8E4A2770606222446312B8D06403DE1FADB659780F61AA9CF9D0"
+      "bytes": 246607,
+      "sha256": "88BB8F47ADE7F0DB20528246379B398D4D27CD5316AF84C4F98C3A974718F03A"
     },
     {
       "path": "SRC/neothd/src/providers/ollama_api.rs",
@@ -2368,8 +2373,8 @@
     },
     {
       "path": "SRC/neothd/src/sub_agents/runtime.rs",
-      "bytes": 53301,
-      "sha256": "AA889C0F2BCF07FC68772179E628DF272EDF4D647DAF13B875C78DB3F8F0F91A"
+      "bytes": 61069,
+      "sha256": "313415F3F903BD50D0E374B89A765EF6C7B26C3F20DF4DB917F29CA41741A6FD"
     },
     {
       "path": "SRC/neothd/src/tokens/budget.rs",

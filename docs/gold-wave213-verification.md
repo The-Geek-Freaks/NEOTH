@@ -36,9 +36,13 @@ The decision survives into the permit and durable lifecycle audit as
 
 Complete, stream and event-stream boundaries compare the final request model
 and current policy with that retained decision before entering raw transport.
-The Claude tmux internal retry repeats the same check after retry authorization
-and before preparing the next send. A rejection after durable request audit
-gets the known `role_dispatch_policy_changed` terminal.
+The Claude tmux first and retry calls repeat the check after slot/session
+readiness and optional retry authorization, before preparing the next send.
+The actual effect-start callback shares the permit's retained role decision;
+it rechecks current policy before consuming AllowOnce consent. This also closes
+the wait between effect intent and subprocess/cold-session/pane start. A role
+rejection after durable request audit gets the known
+`role_dispatch_policy_changed` terminal in the Claude start paths.
 
 The daemon keeps the handler's accepted topology, budget and channel authority
 fixed. A separate reload controller checks only role-policy liveness. The
@@ -49,6 +53,12 @@ other inference fields remain restart-bound. CLI commands retain their fixed
 per-command configuration.
 
 ## Verification boundary
+
+The post-publication actual-start correction passed independent bounded source
+review. Its new regression changes the accepted role policy after effect intent,
+requires the start to abort and proves AllowOnce remains available. It awaits
+Hosted execution. Core/CLI run `35772615830` on `7689717b` passed after the three
+Copilot constructor fixes; it precedes this actual-start correction.
 
 Grouped248 `35771699017` on `889d3df8` failed before execution: three existing Copilot token tests still called the extended transport-only permit constructor with four arguments. The fixtures now explicitly pass no role decision as the fifth argument. No W213 test result is claimed; a fresh Hosted run is required.
 

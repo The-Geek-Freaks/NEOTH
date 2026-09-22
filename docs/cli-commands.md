@@ -273,6 +273,42 @@ List authoritative durable Pending and Indeterminate revocation requests
 
 Summarize the versioned membership-authority snapshot
 
+### `neoth buddy embedding`
+
+Inspect or explicitly operate the selected local embedding model using the same lifecycle owner as `neoth models embedding`. `--config` binds the operation to that exact instance home
+
+- `--config <PATH>`
+
+#### `neoth buddy embedding list`
+
+Cheap cache/config snapshot. It never reports a loaded runtime ready
+
+#### `neoth buddy embedding probe`
+
+Construct and validate only the explicitly selected local adapter
+
+#### `neoth buddy embedding prune`
+
+Prune the exact BGE-M3 cache, then return a fresh snapshot
+
+#### `neoth buddy embedding pull`
+
+Pull the exact pinned BGE-M3 artifacts, then return a fresh snapshot
+
+#### `neoth buddy embedding repair`
+
+Reconcile BGE-M3's exact lifecycle, then return a fresh snapshot
+
+#### `neoth buddy embedding select`
+
+Persist the closed embedding-model selection and return exact readback
+
+- `<MODEL>`
+
+#### `neoth buddy embedding status`
+
+Alias of list for GUI and operator status polling
+
 ### `neoth buddy proactive`
 
 Toggle `proactive.enabled` in freedom.yaml

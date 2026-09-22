@@ -1411,12 +1411,45 @@ struct ProviderRetryAuthorization {
 struct ProviderLiveConsent {
     authorizer: cost_authorization::ProviderCallAuthorizer,
     consent_route: Option<crate::consent::ConsentRoute>,
+    role_dispatch: Arc<std::sync::Mutex<Option<crate::config::role_policy::RoleDispatchDecision>>>,
 }
 
 impl EffectStartAuthority for ProviderLiveConsent {
     fn recheck(&self) -> Result<()> {
+        let expected = self
+            .role_dispatch
+            .lock()
+            .map_err(|_| anyhow::anyhow!("role dispatch start authority state is poisoned"))?
+            .clone();
+        if let Some(expected) = expected {
+            let current = self
+                .authorizer
+                .resolve_role_dispatch(&expected.model)
+                .map_err(anyhow::Error::new)?
+                .ok_or_else(|| anyhow::anyhow!(
+                    "role dispatch start authority lost its Council binding"
+                ))?;
+            if current != expected {
+                anyhow::bail!(
+                    "role dispatch policy changed after authorization; provider start blocked"
+                );
+            }
+        }
         self.authorizer
             .ensure_live_consent(self.consent_route.as_ref())
+    }
+}
+
+impl ProviderLiveConsent {
+    fn new(
+        authorizer: cost_authorization::ProviderCallAuthorizer,
+        consent_route: Option<crate::consent::ConsentRoute>,
+    ) -> Self {
+        Self {
+            authorizer,
+            consent_route,
+            role_dispatch: Arc::new(std::sync::Mutex::new(None)),
+        }
     }
 }
 
@@ -1425,10 +1458,7 @@ pub(crate) fn test_live_consent_start_authority(
     authorizer: cost_authorization::ProviderCallAuthorizer,
     consent_route: crate::consent::ConsentRoute,
 ) -> Arc<dyn EffectStartAuthority> {
-    Arc::new(ProviderLiveConsent {
-        authorizer,
-        consent_route: Some(consent_route),
-    })
+    Arc::new(ProviderLiveConsent::new(authorizer, Some(consent_route)))
 }
 
 /// Sealed probe supplied only by the default authorization boundary to a
@@ -1732,7 +1762,7 @@ pub struct ProviderDispatchPermit {
         std::sync::Mutex<Option<crate::security::provider_subject::ProviderSubjectIdentifier>>,
     audit: tokio::sync::Mutex<ProviderDispatchAuditState>,
     effect: std::sync::Mutex<Option<ProviderEffectContext>>,
-    role_dispatch: std::sync::Mutex<Option<crate::config::role_policy::RoleDispatchDecision>>,
+    role_dispatch: Arc<std::sync::Mutex<Option<crate::config::role_policy::RoleDispatchDecision>>>,
     _private: (),
 }
 
@@ -1751,10 +1781,9 @@ impl ProviderDispatchPermit {
         effect_start_adapter: bool,
         role_dispatch: Option<crate::config::role_policy::RoleDispatchDecision>,
     ) -> Self {
-        let live_consent = ProviderLiveConsent {
-            authorizer: authorizer.clone(),
-            consent_route: consent_route.clone(),
-        };
+        let role_dispatch = Arc::new(std::sync::Mutex::new(role_dispatch));
+        let mut live_consent = ProviderLiveConsent::new(authorizer.clone(), consent_route.clone());
+        live_consent.role_dispatch = Arc::clone(&role_dispatch);
         Self {
             retry: Some(ProviderRetryAuthorization {
                 authorizer,
@@ -1769,7 +1798,7 @@ impl ProviderDispatchPermit {
             provider_subject: std::sync::Mutex::new(provider_subject),
             audit: tokio::sync::Mutex::new(ProviderDispatchAuditState::Active(Box::new(audit))),
             effect: std::sync::Mutex::new(effect),
-            role_dispatch: std::sync::Mutex::new(role_dispatch),
+            role_dispatch,
             _private: (),
         }
     }
@@ -1781,6 +1810,11 @@ impl ProviderDispatchPermit {
         effect_start_adapter: bool,
         role_dispatch: Option<crate::config::role_policy::RoleDispatchDecision>,
     ) -> Self {
+        let role_dispatch = Arc::new(std::sync::Mutex::new(role_dispatch));
+        let live_consent = live_consent.map(|mut live| {
+            live.role_dispatch = Arc::clone(&role_dispatch);
+            live
+        });
         Self {
             retry: None,
             live_consent,
@@ -1788,7 +1822,7 @@ impl ProviderDispatchPermit {
             provider_subject: std::sync::Mutex::new(provider_subject),
             audit: tokio::sync::Mutex::new(ProviderDispatchAuditState::TransportOnly),
             effect: std::sync::Mutex::new(effect),
-            role_dispatch: std::sync::Mutex::new(role_dispatch),
+            role_dispatch,
             _private: (),
         }
     }
@@ -2402,10 +2436,10 @@ pub trait Provider: Send + Sync {
         let permit = ProviderDispatchPermit::transport_only(
             provider_subject,
             effect,
-            Some(ProviderLiveConsent {
-                authorizer: authorizer.clone(),
-                consent_route: self.consent_route(),
-            }),
+            Some(ProviderLiveConsent::new(
+                authorizer.clone(),
+                self.consent_route(),
+            )),
             effect_start_adapter,
             role_dispatch,
         );
@@ -2490,10 +2524,10 @@ pub trait Provider: Send + Sync {
         let permit = ProviderDispatchPermit::transport_only(
             provider_subject,
             effect,
-            Some(ProviderLiveConsent {
-                authorizer: authorizer.clone(),
-                consent_route: self.consent_route(),
-            }),
+            Some(ProviderLiveConsent::new(
+                authorizer.clone(),
+                self.consent_route(),
+            )),
             effect_start_adapter,
             role_dispatch,
         );
@@ -4586,14 +4620,14 @@ mod tests {
         );
         let mut ephemeral = crate::consent::EphemeralConsent::default();
         ephemeral.allow_route(&route).expect("exact one-shot route");
-        let live = ProviderLiveConsent {
-            authorizer: cost_authorization::ProviderCallAuthorizer::test_only(
+        let live = ProviderLiveConsent::new(
+            cost_authorization::ProviderCallAuthorizer::test_only(
                 crate::permissions::AutonomyLevel::Full,
             )
             .with_usage_home(home.path().to_path_buf())
             .with_ephemeral_consent(ephemeral),
-            consent_route: Some(route),
-        };
+            Some(route),
+        );
         let gate = effect_test_support::RecordingEffectGate::new(Duration::from_secs(1));
         let reservation = gate
             .intent(
@@ -4649,10 +4683,7 @@ mod tests {
         let permit = ProviderDispatchPermit::transport_only(
             None,
             None,
-            Some(ProviderLiveConsent {
-                authorizer,
-                consent_route: None,
-            }),
+            Some(ProviderLiveConsent::new(authorizer, None)),
             false,
             Some(original),
         );
@@ -4689,10 +4720,7 @@ mod tests {
         let permit = ProviderDispatchPermit::transport_only(
             None,
             Some(ProviderEffectContext::new(gate.clone(), "binding".into())),
-            Some(ProviderLiveConsent {
-                authorizer: authorizer.clone(),
-                consent_route: Some(route.clone()),
-            }),
+            Some(ProviderLiveConsent::new(authorizer.clone(), Some(route.clone()))),
             true,
             None,
         );
@@ -4741,6 +4769,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn role_policy_change_after_effect_intent_blocks_start_without_spending_allow_once() {
+        let home = tempfile::tempdir().expect("role-policy start fixture home");
+        let config_path = home.path().join("freedom.yaml");
+        let route = crate::consent::ConsentRoute::new(
+            ProviderKind::OpenaiApi,
+            Some("https://api.openai.com"),
+        );
+        let mut initial = crate::config::FreedomConfig::default();
+        initial.inference.role_policy = Some(crate::config::role_policy::RolePolicyConfig {
+            rules: vec![crate::config::role_policy::RolePolicyRule {
+                role: HemisphereRole::Left,
+                provider: InferenceProvider::OpenAi,
+                model: Some("gpt-allowed".into()),
+            }],
+        });
+        std::fs::write(&config_path, serde_yaml::to_string(&initial).expect("serialize policy"))
+            .expect("write initial policy");
+        let reload = Arc::new(crate::config::reload::ReloadController::new(
+            initial.clone(),
+            config_path.clone(),
+        ));
+        let mut ephemeral = crate::consent::EphemeralConsent::default();
+        ephemeral.allow_route(&route).expect("grant exact one-shot route");
+        let authorizer = cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .with_usage_home(home.path().to_path_buf())
+        .with_ephemeral_consent(ephemeral)
+        .with_role_dispatch(
+            HemisphereRole::Left,
+            InferenceProvider::OpenAi,
+            Arc::new(initial),
+        )
+        .with_role_policy_reload(Arc::clone(&reload));
+        let decision = authorizer
+            .resolve_role_dispatch("gpt-allowed")
+            .expect("initial role resolution")
+            .expect("bound role decision");
+        let gate = Arc::new(effect_test_support::RecordingEffectGate::new(Duration::from_secs(1)));
+        let permit = ProviderDispatchPermit::transport_only(
+            None,
+            Some(ProviderEffectContext::new(gate.clone(), "role-intent".into())),
+            Some(ProviderLiveConsent::new(authorizer.clone(), Some(route.clone()))),
+            true,
+            Some(decision),
+        );
+        let reservation = permit
+            .prepare_effect(ChatTurnEffectKind::Provider {
+                call_scope: "w213-role-policy-after-intent",
+                streaming: false,
+            })
+            .await
+            .expect("effect intent is admitted before reload")
+            .expect("gated permit has a reservation");
+
+        let mut changed = reload.latest().as_ref().clone();
+        changed
+            .inference
+            .role_policy
+            .as_mut()
+            .expect("configured role policy")
+            .rules
+            .push(crate::config::role_policy::RolePolicyRule {
+                role: HemisphereRole::Right,
+                provider: InferenceProvider::OpenAi,
+                model: Some("gpt-other".into()),
+            });
+        std::fs::write(&config_path, serde_yaml::to_string(&changed).expect("serialize changed policy"))
+            .expect("write changed policy");
+        assert!(matches!(
+            reload.try_reload().expect("role-policy-only reload"),
+            crate::config::reload::ReloadResult::Reloaded { .. }
+        ));
+
+        let error = reservation
+            .begin_start()
+            .await
+            .err()
+            .expect("changed role-policy blocks the actual effect start");
+        assert!(error.to_string().contains("role dispatch policy changed"), "{error:#}");
+        assert_eq!(gate.phase(), effect_test_support::RecordedPhase::Aborted);
+        authorizer
+            .ensure_live_consent(Some(&route))
+            .expect("role rejection before start leaves AllowOnce unspent");
+        assert!(authorizer.ensure_live_consent(Some(&route)).is_err());
+    }
+
+    #[tokio::test]
     async fn rejected_intent_through_real_permit_leaves_allow_once_for_one_later_start() {
         let home = tempfile::tempdir().expect("rejected-intent fixture home");
         let route = crate::consent::ConsentRoute::new(
@@ -4761,10 +4877,7 @@ mod tests {
         let permit = ProviderDispatchPermit::transport_only(
             None,
             Some(ProviderEffectContext::new(gate, "binding".into())),
-            Some(ProviderLiveConsent {
-                authorizer: authorizer.clone(),
-                consent_route: Some(route.clone()),
-            }),
+            Some(ProviderLiveConsent::new(authorizer.clone(), Some(route.clone()))),
             true,
             None,
         );

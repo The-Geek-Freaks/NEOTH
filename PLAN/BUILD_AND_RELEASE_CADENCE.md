@@ -3,6 +3,20 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W215 sub-agent registry / actual-start role fence (2026-09-22):** the real
+CLI fan-out now captures one admitted Skill registry from its exact accepted
+config and instance home, requires it in the production worker, and preserves
+the same guarded envelope through primary/QA/retry requests. Final primary
+and QA system limits are checked before the first provider call. Three new
+regressions and independent source review cover admission and propagation.
+The W213 correction also rechecks first/retry tmux sends after readiness and
+shares the role decision with the actual effect-start authority before
+AllowOnce is spent; one new race regression and source review cover that gap.
+Inventory is 530 sources / 802 universal native / 92 GUI identities; Grouped255
+awaits Hosted execution. Core/CLI `35772615830` passed on prior `7689717b`,
+and its source/SHA-bound Buddy command reference is imported. Road counts
+remain unchanged; see `docs/gold-wave215-verification.md`.
+
 **W213/W214 Hosted compile repair (2026-09-22):** Grouped248 `35771699017`
 on `889d3df8` stopped before test execution with three E0061 diagnostics in
 existing Copilot token fixtures. Their transport-only permit constructors now
