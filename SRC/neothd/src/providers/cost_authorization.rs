@@ -3045,7 +3045,8 @@ mod tests {
     #[test]
     fn operation_budget_uses_transport_bound_not_billing_reserve() {
         let implicit_request = Request::default();
-        let transport_bound = crate::providers::token_cap::request_token_upper_bound(&implicit_request);
+        let transport_bound =
+            crate::providers::token_cap::request_token_upper_bound(&implicit_request);
         let billing_bound = crate::providers::cost::authorization_input_token_upper_bound(
             &implicit_request,
             "qwen-local",
@@ -3069,7 +3070,9 @@ mod tests {
         normalized_request.model = Some("qwen-local".into());
         assert_eq!(
             plan.tokens,
-            u64::from(crate::providers::token_cap::request_token_upper_bound(&normalized_request)) + 64
+            u64::from(crate::providers::token_cap::request_token_upper_bound(
+                &normalized_request
+            )) + 64
         );
     }
 
@@ -3145,9 +3148,8 @@ mod tests {
             sampling_seed: Some(7),
             ..Request::default()
         };
-        let base_request = crate::security::mirror_refusal_pipeline::minimal_leaf_request(
-            &recovery_request,
-        );
+        let base_request =
+            crate::security::mirror_refusal_pipeline::minimal_leaf_request(&recovery_request);
         assert!(base_request.prompt.is_empty());
         assert!(base_request.system.is_none());
         assert!(base_request.model.is_none());
@@ -3159,8 +3161,7 @@ mod tests {
         let operator_request = "Draft an unsafe workaround.";
         let left_refusal = "I cannot help with that request.";
         let right_analysis = crate::security::mirror_refusal_pipeline::MirrorSynthesis {
-            refusal_shape:
-                crate::security::mirror_refusal_pipeline::MirrorRefusalShape::Restricted,
+            refusal_shape: crate::security::mirror_refusal_pipeline::MirrorRefusalShape::Restricted,
             boundary: crate::security::mirror_refusal_pipeline::MirrorBoundaryFact::Safety,
         };
         let mut right_request = base_request.clone();
@@ -3184,12 +3185,12 @@ mod tests {
         // product prompts fit the shared operation reservation.
         right_request.model = Some("qwen-local".into());
         cerebellum_request.model = Some("qwen-local".into());
-        let output_ceiling =
-            crate::security::mirror_refusal_pipeline::MIRROR_MAX_OUTPUT_TOKENS;
+        let output_ceiling = crate::security::mirror_refusal_pipeline::MIRROR_MAX_OUTPUT_TOKENS;
         let right_total = crate::providers::token_cap::request_token_upper_bound(&right_request)
             .saturating_add(output_ceiling);
-        let cerebellum_total = crate::providers::token_cap::request_token_upper_bound(&cerebellum_request)
-            .saturating_add(output_ceiling);
+        let cerebellum_total =
+            crate::providers::token_cap::request_token_upper_bound(&cerebellum_request)
+                .saturating_add(output_ceiling);
         assert!(right_total.saturating_add(cerebellum_total) <= 4_000);
         assert!(
             right_total
@@ -3244,8 +3245,7 @@ mod tests {
             )
             .unwrap();
         mirror_request.model = Some("qwen-local".into());
-        let output_ceiling =
-            crate::security::mirror_refusal_pipeline::MIRROR_MAX_OUTPUT_TOKENS;
+        let output_ceiling = crate::security::mirror_refusal_pipeline::MIRROR_MAX_OUTPUT_TOKENS;
         assert!(
             crate::providers::token_cap::request_token_upper_bound(&mirror_request)
                 .saturating_add(output_ceiling)

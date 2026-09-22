@@ -7705,9 +7705,10 @@ pub(super) async fn run_post_reply_pipelines(
                         .with_council_daily_cap(&instance_paths.home, config.council.daily_usd_cap)
                     {
                         Ok(mirror_authorizer) => {
-                            let mirror_base_request = crate::security::mirror_refusal_pipeline::minimal_leaf_request(
-                                &recovery_request,
-                            );
+                            let mirror_base_request =
+                                crate::security::mirror_refusal_pipeline::minimal_leaf_request(
+                                    &recovery_request,
+                                );
                             let right: Box<dyn crate::council::orchestrator::HemisphereProvider> =
                                 match build_hemisphere(
                                     &config,

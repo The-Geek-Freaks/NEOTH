@@ -2,7 +2,7 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T15:49:48.3360420Z",
+  "capturedUtc": "2026-09-22T15:53:16.5105652Z",
   "validationStatus": "W206_BUDGET_REPAIR_W207_SOURCE_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
@@ -578,8 +578,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/chat_stream_phase.rs",
-      "bytes": 61594,
-      "sha256": "13EB9A892570BF78CC50791885C9AA0B05D3BEA3CD3921DA6EC74720E30AE28D"
+      "bytes": 61639,
+      "sha256": "280F37D2500FE57CFA421F978D283ED749B52E9C72250B7119035C83BCEDA8F6"
     },
     {
       "path": "SRC/neothd-gui/src/chat_throughput.rs",
@@ -988,18 +988,18 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "bytes": 162294,
-      "sha256": "0EC97DB45BE24641E3C608F811F2A572306E155808967604DFD95C61740048AF"
+      "bytes": 162421,
+      "sha256": "15B378F6D6E1386E84303CDF48835E142C990A0577A2D1418FF51C067C4DF16E"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_watchdog.rs",
-      "bytes": 13518,
-      "sha256": "0D30D95310AF8EC86F2DF289E022A727C12D4ADDD6DA84B26F530B104932B833"
+      "bytes": 13541,
+      "sha256": "0E1234A838F6BFE9A9151B7456BF1FD817502BBD86677BBDF1AE8BDCBCA17263"
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1083763,
-      "sha256": "5B0B75A7C5AF4044FE6A5E2F26B84DA360DB2AAE2DEC6A079C71503AF820222F"
+      "bytes": 1083803,
+      "sha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -1508,13 +1508,13 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
-      "bytes": 49976,
-      "sha256": "415354FBBF4B2D6821A41BA17AE6C46A01210510FDD018F40B214D2BFE0A1FA0"
+      "bytes": 49924,
+      "sha256": "4CE39155B8D09905AB1562A4926E9F2B30B1A6A498802E521EA6B98273BC8467"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
-      "bytes": 19929,
-      "sha256": "A10A965EDC30D25F5CAF1C4AA4497F595F5679C0EC2FE33FEEFD40BA61E3E06D"
+      "bytes": 19960,
+      "sha256": "F206651AA782CF98985E6F7A26A0BA8DD1F1763FD1F40678C753BB59397D4183"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
@@ -1523,8 +1523,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
-      "bytes": 99739,
-      "sha256": "209E73DB495807ABABBA0D1D0862FAC2BDF2D5C8555A3A9E8154E13B52EDAC8A"
+      "bytes": 99822,
+      "sha256": "273E0C9AD20C1FDC13221D4E8A5A11DE9EB110A1BB05335B49C5C7E1DCFECFC9"
     },
     {
       "path": "SRC/neothd/src/daemon/auto_update.rs",
@@ -1563,8 +1563,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/chat_runtime.rs",
-      "bytes": 54594,
-      "sha256": "F55DBD57515564C29A98BD92CF5D48D97146A8C1FE634768A0010E423A6AB9E7"
+      "bytes": 54622,
+      "sha256": "AE3FD7ACDEA9134B4C64232A7C883AB57C3C5697C17DCDE5DC6A0554D6B34B0A"
     },
     {
       "path": "SRC/neothd/src/daemon/checkin_cron.rs",
@@ -1578,13 +1578,13 @@
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_protocol.rs",
-      "bytes": 74303,
-      "sha256": "6B6504E6AD7AA296A37148B010AD4DD65417CC41C333801A5254B24C1DA02738"
+      "bytes": 74286,
+      "sha256": "C8909C52863D75805C6CD849D63C9A30F4278B91549419E40E8ED3704488268E"
     },
     {
       "path": "SRC/neothd/src/daemon/gui_chat_runtime.rs",
-      "bytes": 140013,
-      "sha256": "74B5A5D899D6BBD7451EE6440960A0B2368671EB0BAED277E41C0E6048799850"
+      "bytes": 140012,
+      "sha256": "C3A3D77F7AB057976F94E27FD5091D5255F29C5498F976F93CD364699DA51CBE"
     },
     {
       "path": "SRC/neothd/src/daemon/live_throughput.rs",
@@ -2098,8 +2098,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 289682,
-      "sha256": "473F65795C0B16E0CC1D6C8261BA2E931D63DF344A0552400ABCEAC0E6B05891"
+      "bytes": 289689,
+      "sha256": "1035052CE1B6E3F2EC70F0F5AAC4AFAEC64FFE8FC40C5060763C919DE684BB41"
     },
     {
       "path": "SRC/neothd/src/providers/fallback.rs",

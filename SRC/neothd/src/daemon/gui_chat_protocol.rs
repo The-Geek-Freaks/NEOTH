@@ -55,7 +55,6 @@ impl fmt::Debug for GuiChatDigest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("GuiChatDigest(<sha256>)")
     }
-
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -863,8 +862,7 @@ pub(crate) fn validate_stream_frame(frame: &GuiChatStreamFrame) -> GuiChatResult
             timeout_seconds,
             retryable,
         } => {
-            if *timeout_seconds
-                != crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT.as_secs()
+            if *timeout_seconds != crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT.as_secs()
                 || !retryable
             {
                 return Err(GuiChatProtocolError::Invalid("turn_silence_timeout_fields"));

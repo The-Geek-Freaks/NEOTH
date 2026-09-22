@@ -529,10 +529,7 @@ impl DaemonChatPresentationReducer {
 
     /// Presentation-only timeout metadata for the exact attached daemon
     /// subscription. It never contributes to a canonical reply or preview.
-    pub fn turn_silence_timeout(
-        &self,
-        surface: ChatStreamSurface,
-    ) -> Option<(u64, bool)> {
+    pub fn turn_silence_timeout(&self, surface: ChatStreamSurface) -> Option<(u64, bool)> {
         self.slot(surface)
             .as_ref()
             .and_then(|state| state.turn_silence_timeout)
@@ -655,8 +652,14 @@ mod daemon_chat_presentation_tests {
             )),
             DaemonChatApply::Applied
         );
-        assert_eq!(reducer.phase(ChatStreamSurface::Main), Some(ChatStreamPhase::Failed));
-        assert_eq!(reducer.visible_reply(ChatStreamSurface::Main), Some("partial"));
+        assert_eq!(
+            reducer.phase(ChatStreamSurface::Main),
+            Some(ChatStreamPhase::Failed)
+        );
+        assert_eq!(
+            reducer.visible_reply(ChatStreamSurface::Main),
+            Some("partial")
+        );
         assert_eq!(
             reducer.turn_silence_timeout(ChatStreamSurface::Main),
             Some((120, true))

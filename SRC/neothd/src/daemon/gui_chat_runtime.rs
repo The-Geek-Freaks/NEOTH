@@ -726,8 +726,8 @@ impl DaemonGuiChatRuntime {
                         Self::emit(
                             turn,
                             GuiChatFramePayload::TurnSilenceTimeout {
-                                timeout_seconds: crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT
-                                    .as_secs(),
+                                timeout_seconds:
+                                    crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT.as_secs(),
                                 retryable: true,
                             },
                         );

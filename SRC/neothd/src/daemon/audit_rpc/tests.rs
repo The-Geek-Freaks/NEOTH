@@ -2357,7 +2357,9 @@ async fn gui_attach_accepts_late_progress_then_typed_silence_timeout() {
             turn_id: turn.clone(),
             subscription: subscription.clone(),
             sequence: 1,
-            payload: gui::GuiChatFramePayload::Delta { text: "late".into() },
+            payload: gui::GuiChatFramePayload::Delta {
+                text: "late".into(),
+            },
         };
         stream
             .write_all(format!("{}\n", serde_json::to_string(&late_delta).unwrap()).as_bytes())
@@ -2409,10 +2411,13 @@ async fn gui_attach_accepts_late_progress_then_typed_silence_timeout() {
     let observed_callback = Arc::clone(&observed);
     let client = tokio::spawn(async move {
         let mut callback = move |frame: gui::GuiChatStreamFrame| {
-            observed_callback
-                .lock()
-                .unwrap()
-                .push((frame.sequence, matches!(frame.payload, gui::GuiChatFramePayload::TurnSilenceTimeout { .. })));
+            observed_callback.lock().unwrap().push((
+                frame.sequence,
+                matches!(
+                    frame.payload,
+                    gui::GuiChatFramePayload::TurnSilenceTimeout { .. }
+                ),
+            ));
             Ok(())
         };
         super::client::gui_chat_attach(home.path(), &request, &mut callback).await

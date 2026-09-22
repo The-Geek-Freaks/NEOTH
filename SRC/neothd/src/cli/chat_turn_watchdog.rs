@@ -226,11 +226,10 @@ mod tests {
         let mut watchdog = TurnSilenceWatchdog::new(cancellation);
         let progress = watchdog.progress_handle();
         let (done, receiver) = tokio::sync::oneshot::channel::<&'static str>();
-        let raced = tokio::spawn(async move {
-            watchdog
-                .race(async move { receiver.await.unwrap() })
-                .await
-        });
+        let raced =
+            tokio::spawn(
+                async move { watchdog.race(async move { receiver.await.unwrap() }).await },
+            );
         tokio::task::yield_now().await;
 
         for _ in 0..3 {
@@ -345,7 +344,9 @@ mod tests {
         let mut watchdog = TurnSilenceWatchdog::new(cancellation.clone());
 
         assert_eq!(
-            watchdog.race_nonterminal(async { "provider completed" }).await,
+            watchdog
+                .race_nonterminal(async { "provider completed" })
+                .await,
             TurnWatchdogPoll::Completed("provider completed")
         );
         assert!(!watchdog.is_disarmed());

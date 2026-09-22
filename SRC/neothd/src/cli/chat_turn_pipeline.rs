@@ -1138,7 +1138,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
             // progress before the same turn enters post-reply work.
             provider_progress.meaningful_signal();
             output
-        },
+        }
         crate::cli::chat_turn_watchdog::TurnWatchdogPoll::Completed(Err(error)) => {
             // The adapter returned after a transport attempt. Its exact commit
             // cannot be disproven here, so recovery classifies it indeterminate
@@ -1146,7 +1146,9 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
             return Err(error);
         }
         crate::cli::chat_turn_watchdog::TurnWatchdogPoll::Cancelled => {
-            return Err(anyhow::anyhow!("chat turn cancelled during provider dispatch"));
+            return Err(anyhow::anyhow!(
+                "chat turn cancelled during provider dispatch"
+            ));
         }
         crate::cli::chat_turn_watchdog::TurnWatchdogPoll::SilenceExpired => {
             emit_chat_notice(
@@ -1245,7 +1247,9 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     let post_reply_result = match silence_watchdog.race(post_reply).await {
         crate::cli::chat_turn_watchdog::TurnWatchdogPoll::Completed(result) => result,
         crate::cli::chat_turn_watchdog::TurnWatchdogPoll::Cancelled => {
-            return Err(anyhow::anyhow!("chat turn cancelled during post-provider processing"));
+            return Err(anyhow::anyhow!(
+                "chat turn cancelled during post-provider processing"
+            ));
         }
         crate::cli::chat_turn_watchdog::TurnWatchdogPoll::SilenceExpired => {
             emit_chat_notice(
@@ -2423,7 +2427,10 @@ mod tests {
         tokio::task::yield_now().await;
         let (result, prepared, sink) = turn.await.expect("join W207 live stream turn");
 
-        assert!(result.is_ok(), "timely visible deltas complete the real turn");
+        assert!(
+            result.is_ok(),
+            "timely visible deltas complete the real turn"
+        );
         assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 1);
         assert!(prepared.deferred_failure_output.is_none());
         assert!(prepared.deferred_terminal.is_some());
@@ -2508,7 +2515,10 @@ mod tests {
         tokio::task::yield_now().await;
         let (result, prepared, sink) = turn.await.expect("join W207 cancelled stream turn");
 
-        assert!(result.is_err(), "closing the shared turn gate terminates the stream");
+        assert!(
+            result.is_err(),
+            "closing the shared turn gate terminates the stream"
+        );
         assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 1);
         assert!(prepared.deferred_failure_output.is_none());
         assert!(prepared.deferred_terminal.is_none());

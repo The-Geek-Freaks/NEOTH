@@ -17,12 +17,11 @@ use crate::cli::chat_turn_pipeline::{
 };
 use crate::config::reload::{AcceptedConfigSnapshot, ReloadController};
 use crate::daemon::audit_rpc::{
-    DAEMON_PLAIN_CHAT_MAX_RECORDS,
-    DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES, DaemonPlainChatRecord, DaemonPlainChatRecordKind,
-    DaemonPlainChatErrorCode, DaemonPlainChatErrorResponse, DaemonPlainChatRequest,
-    DaemonPlainChatResponse, DaemonPlainChatResponseFeedbackTarget, DaemonPlainChatTerminal,
-    validate_daemon_plain_chat_error_response, validate_daemon_plain_chat_request,
-    validate_daemon_plain_chat_response,
+    DAEMON_PLAIN_CHAT_MAX_RECORDS, DAEMON_PLAIN_CHAT_RESPONSE_MAX_BYTES, DaemonPlainChatErrorCode,
+    DaemonPlainChatErrorResponse, DaemonPlainChatRecord, DaemonPlainChatRecordKind,
+    DaemonPlainChatRequest, DaemonPlainChatResponse, DaemonPlainChatResponseFeedbackTarget,
+    DaemonPlainChatTerminal, validate_daemon_plain_chat_error_response,
+    validate_daemon_plain_chat_request, validate_daemon_plain_chat_response,
 };
 use crate::providers::Provider;
 use crate::wal::writer::WalWriterHandle;
@@ -708,10 +707,13 @@ async fn write_turn_silence_timeout_with_deadline(
     validate_daemon_plain_chat_error_response(&body)
         .map_err(anyhow::Error::msg)
         .context("validate daemon chat silence-timeout response")?;
-    let body = serde_json::to_vec(&body).context("serialize daemon chat silence-timeout response")?;
+    let body =
+        serde_json::to_vec(&body).context("serialize daemon chat silence-timeout response")?;
     tokio::time::timeout(CHAT_TURN_WRITE_TIMEOUT, write_http_json(stream, 503, &body))
         .await
-        .map_err(|_| anyhow::anyhow!("daemon chat silence-timeout response write exceeded deadline"))?
+        .map_err(|_| {
+            anyhow::anyhow!("daemon chat silence-timeout response write exceeded deadline")
+        })?
 }
 
 async fn write_http_json(

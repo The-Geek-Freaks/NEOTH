@@ -261,7 +261,10 @@ pub(crate) fn validate_daemon_plain_chat_error_response(
         DaemonPlainChatErrorCode::TurnSilenceTimeout
             if response.timeout_seconds
                 == crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT.as_secs()
-                && response.retryable => Ok(()),
+                && response.retryable =>
+        {
+            Ok(())
+        }
         DaemonPlainChatErrorCode::TurnSilenceTimeout => {
             Err("chat_turn_silence_timeout_fields_invalid")
         }

@@ -462,12 +462,13 @@ pub(crate) async fn try_daemon_plain_chat_turn(
                     "connect {endpoint_label}: {error}"
                 ))
             })?;
-    tokio::time::timeout(RPC_EXCHANGE_TIMEOUT, stream.write_all(wire_request.as_bytes()))
-        .await
-        .map_err(|_| {
-            DaemonPlainChatClientError::Indeterminate("chat request write deadline".into())
-        })?
-        .map_err(|error| DaemonPlainChatClientError::Indeterminate(format!("write: {error}")))?;
+    tokio::time::timeout(
+        RPC_EXCHANGE_TIMEOUT,
+        stream.write_all(wire_request.as_bytes()),
+    )
+    .await
+    .map_err(|_| DaemonPlainChatClientError::Indeterminate("chat request write deadline".into()))?
+    .map_err(|error| DaemonPlainChatClientError::Indeterminate(format!("write: {error}")))?;
     // Do not impose a total response deadline here. A daemon-owned provider
     // can make legitimate meaningful progress beyond 125 seconds; the shared
     // turn watchdog is the authority that publishes its typed timeout.
@@ -486,7 +487,8 @@ pub(crate) async fn try_daemon_plain_chat_turn(
             )
         })?;
     if status != 200 {
-        if let Ok(error) = serde_json::from_str::<super::DaemonPlainChatErrorResponse>(response_body)
+        if let Ok(error) =
+            serde_json::from_str::<super::DaemonPlainChatErrorResponse>(response_body)
             && super::validate_daemon_plain_chat_error_response(&error).is_ok()
         {
             return match error.code {
@@ -683,15 +685,11 @@ pub(crate) async fn gui_chat_attach(
     let mut expected = request.after_sequence.saturating_add(1);
     loop {
         let read_timeout = if header {
-            crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT
-                + GUI_CHAT_ATTACH_TERMINAL_MARGIN
+            crate::cli::chat_turn_watchdog::TURN_SILENCE_TIMEOUT + GUI_CHAT_ATTACH_TERMINAL_MARGIN
         } else {
             RPC_EXCHANGE_TIMEOUT
         };
-        let n = tokio::time::timeout(
-            read_timeout,
-            stream.read(&mut chunk),
-        )
+        let n = tokio::time::timeout(read_timeout, stream.read(&mut chunk))
             .await
             .map_err(|_| GuiChatClientError::Indeterminate("attach frame deadline".into()))?
             .map_err(|e| GuiChatClientError::Indeterminate(format!("attach read: {e}")))?;
