@@ -110,6 +110,9 @@ pub mod kanban_sse;
 /// The hot provider stream path is parallel-reserved; wiring the emit there
 /// is a follow-up. Ships standalone with unit + WAL-integration tests.
 pub mod live_throughput;
+/// W185 — daemon-owned local model inventory and operations.
+pub(crate) mod local_models;
+pub(crate) mod local_models_ipc;
 pub mod metering;
 pub mod model_download_audit;
 /// HO-07 — neoth-monitor alerting cron. Scans WAL integrity + crash.log +
@@ -229,9 +232,6 @@ pub mod synthesis_cron;
 /// frames over a rolling baseline; emits `0x6E TOKEN_ANOMALY_DETECTED`).
 pub mod token_anomaly_cron;
 pub mod train_export;
-/// W185 — daemon-owned local model inventory and operations.
-pub(crate) mod local_models;
-pub(crate) mod local_models_ipc;
 pub(crate) mod updater_cron;
 /// W184 — dedicated, default-off Git mirror for WAL-inclusive backups.
 pub mod vault_mirror;

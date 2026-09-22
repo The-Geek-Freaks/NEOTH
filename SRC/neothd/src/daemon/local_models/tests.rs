@@ -275,7 +275,13 @@ async fn ready_requires_exact_chat_then_fresh_matching_ps_digest() {
         &row(&snapshot, "tiny:latest").readiness,
         LocalModelReadiness::Ready { .. }
     ));
-    assert_eq!(row(&snapshot, "tiny:latest").loaded.as_ref().map(|loaded| loaded.digest.as_str()), Some("sha256:exact"));
+    assert_eq!(
+        row(&snapshot, "tiny:latest")
+            .loaded
+            .as_ref()
+            .map(|loaded| loaded.digest.as_str()),
+        Some("sha256:exact")
+    );
 
     let requests = harness.fixture.state.lock().await.requests.clone();
     let chat = requests
@@ -283,10 +289,12 @@ async fn ready_requires_exact_chat_then_fresh_matching_ps_digest() {
         .position(|request| request.starts_with("POST /api/chat "))
         .expect("model-specific chat probe");
     assert!(requests[chat].contains(r#""model":"tiny:latest""#));
-    assert!(requests[chat + 1..]
-        .iter()
-        .any(|request| request.starts_with("GET /api/ps ")),
-        "a fresh /api/ps must follow the successful chat probe");
+    assert!(
+        requests[chat + 1..]
+            .iter()
+            .any(|request| request.starts_with("GET /api/ps ")),
+        "a fresh /api/ps must follow the successful chat probe"
+    );
     harness.stop().await;
 }
 
@@ -337,7 +345,10 @@ async fn restart_does_not_revive_a_previous_ready_observation() {
     )
     .expect("restart controller");
     let snapshot = restarted.status().await;
-    assert!(matches!(snapshot.endpoint, LocalEndpointStatus::Unavailable { .. }));
+    assert!(matches!(
+        snapshot.endpoint,
+        LocalEndpointStatus::Unavailable { .. }
+    ));
     assert!(matches!(
         &row(&snapshot, "tiny:latest").readiness,
         LocalModelReadiness::Unavailable
@@ -379,12 +390,14 @@ async fn mutation_admission_is_rejected_while_a_real_probe_is_in_flight() {
         &row(&admission.snapshot, "tiny:latest").readiness,
         LocalModelReadiness::Probing
     ));
-    assert!(fixture
-        .requests
-        .lock()
-        .await
-        .iter()
-        .all(|request| !request.starts_with("POST /api/pull ")));
+    assert!(
+        fixture
+            .requests
+            .lock()
+            .await
+            .iter()
+            .all(|request| !request.starts_with("POST /api/pull "))
+    );
 
     fixture.release_chat.notify_one();
     let snapshot = tokio::time::timeout(Duration::from_secs(2), refresh)
@@ -437,7 +450,10 @@ async fn terminal_persistence_failure_after_send_keeps_intent_blocks_actions_and
             model: "tiny:latest".to_owned(),
         })
         .await;
-    let operation_id = admitted.operation_id.clone().expect("durably admitted operation id");
+    let operation_id = admitted
+        .operation_id
+        .clone()
+        .expect("durably admitted operation id");
     wait_for_pull(&harness.fixture).await;
     harness.controller.fail_next_critical_persist_for_test();
 
@@ -541,8 +557,15 @@ async fn concurrent_cancel_and_shutdown_reap_one_blocked_pull_with_one_uncertain
         LocalModelTerminalOutcome::InterruptedUnknown
     ));
     let state = harness.controller.inner.state.lock().await;
-    assert!(state.active.is_none(), "the joined pull handle must not remain detached");
-    assert_eq!(state.receipts.len(), 1, "exactly one terminal receipt is retained");
+    assert!(
+        state.active.is_none(),
+        "the joined pull handle must not remain detached"
+    );
+    assert_eq!(
+        state.receipts.len(),
+        1,
+        "exactly one terminal receipt is retained"
+    );
     assert!(matches!(
         &state.receipts[0].outcome,
         LocalModelTerminalOutcome::InterruptedUnknown
@@ -612,21 +635,21 @@ async fn inventory_uses_tag_name_when_ollama_omits_model() {
 async fn pull_requires_terminal_success_and_fresh_target_inventory() {
     let mut missing_target = FixtureState::default();
     missing_target.script.pull_frames = vec![r#"{"status":"success"}"#.to_owned()];
-    let harness = harness(missing_target, None).await;
-    let ack = harness
+    let missing_target_harness = harness(missing_target, None).await;
+    let ack = missing_target_harness
         .controller
         .start(LocalModelAction::Pull {
             model: "missing:latest".to_owned(),
         })
         .await;
     assert!(ack.ok);
-    let snapshot = terminal_snapshot(&harness.controller).await;
+    let snapshot = terminal_snapshot(&missing_target_harness.controller).await;
     assert!(matches!(
         snapshot.last_terminal_operation.expect("receipt").outcome,
         LocalModelTerminalOutcome::InterruptedUnknown
     ));
-    assert_eq!(harness.fixture.state.lock().await.pulls_started, 1);
-    harness.stop().await;
+    assert_eq!(missing_target_harness.fixture.state.lock().await.pulls_started, 1);
+    missing_target_harness.stop().await;
 
     let mut eof = FixtureState::default();
     eof.models.insert(
@@ -634,28 +657,30 @@ async fn pull_requires_terminal_success_and_fresh_target_inventory() {
         installed_model("tiny:latest", "sha256:exact", false),
     );
     eof.script.pull_frames = vec![r#"{"status":"pulling","completed":1,"total":2}"#.to_owned()];
-    let harness = harness(eof, None).await;
-    let ack = harness
+    let eof_harness = harness(eof, None).await;
+    let ack = eof_harness
         .controller
         .start(LocalModelAction::Pull {
             model: "tiny:latest".to_owned(),
         })
         .await;
     assert!(ack.ok);
-    let snapshot = terminal_snapshot(&harness.controller).await;
+    let snapshot = terminal_snapshot(&eof_harness.controller).await;
     let receipt = snapshot.last_terminal_operation.expect("receipt");
     assert!(matches!(
         receipt.outcome,
         LocalModelTerminalOutcome::InterruptedUnknown
     ));
-    assert!(!harness
-        .controller
-        .start(LocalModelAction::Retry {
-            terminal_operation_id: receipt.operation_id,
-        })
-        .await
-        .ok);
-    harness.stop().await;
+    assert!(
+        !eof_harness
+            .controller
+            .start(LocalModelAction::Retry {
+                terminal_operation_id: receipt.operation_id,
+            })
+            .await
+            .ok
+    );
+    eof_harness.stop().await;
 }
 
 #[tokio::test]
@@ -666,16 +691,21 @@ async fn completed_operation_handle_is_reaped_before_a_refresh_observation() {
         installed_model("tiny:latest", "sha256:exact", false),
     );
     let harness = harness(state, None).await;
-    assert!(harness
-        .controller
-        .start(LocalModelAction::Pull {
-            model: "tiny:latest".to_owned(),
-        })
-        .await
-        .ok);
+    assert!(
+        harness
+            .controller
+            .start(LocalModelAction::Pull {
+                model: "tiny:latest".to_owned(),
+            })
+            .await
+            .ok
+    );
     let terminal = terminal_snapshot(&harness.controller).await;
     assert!(matches!(
-        terminal.last_terminal_operation.expect("completed receipt").outcome,
+        terminal
+            .last_terminal_operation
+            .expect("completed receipt")
+            .outcome,
         LocalModelTerminalOutcome::Completed
     ));
 
@@ -714,12 +744,14 @@ async fn shutdown_aborts_blocked_terminal_reconciliation_without_rewriting_compl
         },
     )
     .expect("terminal-reconciliation controller");
-    assert!(controller
-        .start(LocalModelAction::Pull {
-            model: "tiny:latest".to_owned(),
-        })
-        .await
-        .ok);
+    assert!(
+        controller
+            .start(LocalModelAction::Pull {
+                model: "tiny:latest".to_owned(),
+            })
+            .await
+            .ok
+    );
     tokio::time::timeout(
         Duration::from_secs(2),
         fixture.reconciliation_chat_entered.notified(),
@@ -772,12 +804,26 @@ async fn cancel_requires_the_exact_active_id_and_retains_uncertainty() {
     let wrong = harness.controller.cancel("another-operation").await;
     assert!(!wrong.ok);
     assert_eq!(wrong.operation_id.as_deref(), Some(operation_id.as_str()));
-    assert_eq!(harness.controller.status().await.active_operation.as_ref().map(|active| active.operation_id.as_str()), Some(operation_id.as_str()));
+    assert_eq!(
+        harness
+            .controller
+            .status()
+            .await
+            .active_operation
+            .as_ref()
+            .map(|active| active.operation_id.as_str()),
+        Some(operation_id.as_str())
+    );
 
     let cancelled = harness.controller.cancel(&operation_id).await;
     assert!(cancelled.ok);
     assert!(matches!(
-        cancelled.snapshot.last_terminal_operation.as_ref().expect("uncertain receipt").outcome,
+        cancelled
+            .snapshot
+            .last_terminal_operation
+            .as_ref()
+            .expect("uncertain receipt")
+            .outcome,
         LocalModelTerminalOutcome::InterruptedUnknown
     ));
     assert!(matches!(
@@ -786,7 +832,11 @@ async fn cancel_requires_the_exact_active_id_and_retains_uncertainty() {
     ));
     let refreshed = harness.controller.refresh().await;
     assert!(matches!(
-        refreshed.last_terminal_operation.as_ref().expect("retained uncertainty").outcome,
+        refreshed
+            .last_terminal_operation
+            .as_ref()
+            .expect("retained uncertainty")
+            .outcome,
         LocalModelTerminalOutcome::InterruptedUnknown
     ));
     let restarted = LocalModelController::new(
@@ -798,7 +848,13 @@ async fn cancel_requires_the_exact_active_id_and_retains_uncertainty() {
     )
     .expect("restart controller");
     assert!(matches!(
-        restarted.status().await.last_terminal_operation.as_ref().expect("restart receipt").outcome,
+        restarted
+            .status()
+            .await
+            .last_terminal_operation
+            .as_ref()
+            .expect("restart receipt")
+            .outcome,
         LocalModelTerminalOutcome::InterruptedUnknown
     ));
     let retry = harness
@@ -807,7 +863,10 @@ async fn cancel_requires_the_exact_active_id_and_retains_uncertainty() {
             terminal_operation_id: operation_id,
         })
         .await;
-    assert!(!retry.ok, "an uncertain post-send outcome must not be retried");
+    assert!(
+        !retry.ok,
+        "an uncertain post-send outcome must not be retried"
+    );
     assert_eq!(harness.fixture.state.lock().await.pulls_started, 1);
     harness.stop().await;
 }
@@ -815,15 +874,20 @@ async fn cancel_requires_the_exact_active_id_and_retains_uncertainty() {
 #[tokio::test]
 async fn prune_refuses_absent_or_loaded_targets_and_proves_exact_fresh_absence() {
     let absent = harness(FixtureState::default(), None).await;
-    assert!(absent
-        .controller
-        .start(LocalModelAction::Prune {
-            model: "missing:latest".to_owned(),
-        })
-        .await
-        .ok);
+    assert!(
+        absent
+            .controller
+            .start(LocalModelAction::Prune {
+                model: "missing:latest".to_owned(),
+            })
+            .await
+            .ok
+    );
     let snapshot = terminal_snapshot(&absent.controller).await;
-    assert!(matches!(snapshot.last_terminal_operation.expect("receipt").outcome, LocalModelTerminalOutcome::Failed));
+    assert!(matches!(
+        snapshot.last_terminal_operation.expect("receipt").outcome,
+        LocalModelTerminalOutcome::Failed
+    ));
     assert!(absent.fixture.state.lock().await.deletes.is_empty());
     absent.stop().await;
 
@@ -833,15 +897,20 @@ async fn prune_refuses_absent_or_loaded_targets_and_proves_exact_fresh_absence()
         installed_model("tiny:latest", "sha256:exact", true),
     );
     let loaded = harness(loaded, None).await;
-    assert!(loaded
-        .controller
-        .start(LocalModelAction::Prune {
-            model: "tiny:latest".to_owned(),
-        })
-        .await
-        .ok);
+    assert!(
+        loaded
+            .controller
+            .start(LocalModelAction::Prune {
+                model: "tiny:latest".to_owned(),
+            })
+            .await
+            .ok
+    );
     let snapshot = terminal_snapshot(&loaded.controller).await;
-    assert!(matches!(snapshot.last_terminal_operation.expect("receipt").outcome, LocalModelTerminalOutcome::Failed));
+    assert!(matches!(
+        snapshot.last_terminal_operation.expect("receipt").outcome,
+        LocalModelTerminalOutcome::Failed
+    ));
     assert!(loaded.fixture.state.lock().await.deletes.is_empty());
     loaded.stop().await;
 
@@ -859,7 +928,10 @@ async fn prune_refuses_absent_or_loaded_targets_and_proves_exact_fresh_absence()
         .await;
     assert!(ack.ok);
     let snapshot = terminal_snapshot(&removable.controller).await;
-    assert!(matches!(snapshot.last_terminal_operation.expect("receipt").outcome, LocalModelTerminalOutcome::Completed));
+    assert!(matches!(
+        snapshot.last_terminal_operation.expect("receipt").outcome,
+        LocalModelTerminalOutcome::Completed
+    ));
     assert!(snapshot.models.iter().all(|row| row.model != "tiny:latest"));
     assert_eq!(
         removable.fixture.state.lock().await.deletes,
@@ -877,13 +949,15 @@ async fn retry_requires_an_exact_retained_failed_action_and_never_runs_implicitl
     );
     state.script.pull_frames = vec![r#"{"error":"scripted remote rejection"}"#.to_owned()];
     let harness = harness(state, None).await;
-    assert!(harness
-        .controller
-        .start(LocalModelAction::Pull {
-            model: "tiny:latest".to_owned(),
-        })
-        .await
-        .ok);
+    assert!(
+        harness
+            .controller
+            .start(LocalModelAction::Pull {
+                model: "tiny:latest".to_owned(),
+            })
+            .await
+            .ok
+    );
     let failed = terminal_snapshot(&harness.controller).await;
     assert!(matches!(
         failed
@@ -901,7 +975,11 @@ async fn retry_requires_an_exact_retained_failed_action_and_never_runs_implicitl
         .clone();
     assert_eq!(harness.fixture.state.lock().await.pulls_started, 1);
     tokio::time::sleep(Duration::from_millis(25)).await;
-    assert_eq!(harness.fixture.state.lock().await.pulls_started, 1, "failed operations are never retried automatically");
+    assert_eq!(
+        harness.fixture.state.lock().await.pulls_started,
+        1,
+        "failed operations are never retried automatically"
+    );
 
     let unknown = harness
         .controller
@@ -921,11 +999,13 @@ async fn retry_requires_an_exact_retained_failed_action_and_never_runs_implicitl
     let _ = terminal_snapshot(&harness.controller).await;
     let fixture = harness.fixture.state.lock().await;
     assert_eq!(fixture.pulls_started, 2);
-    assert!(fixture
-        .requests
-        .iter()
-        .filter(|request| request.starts_with("POST /api/pull "))
-        .all(|request| request.contains(r#""name":"tiny:latest""#)));
+    assert!(
+        fixture
+            .requests
+            .iter()
+            .filter(|request| request.starts_with("POST /api/pull "))
+            .all(|request| request.contains(r#""name":"tiny:latest""#))
+    );
     drop(fixture);
     harness.stop().await;
 }
@@ -968,7 +1048,10 @@ async fn bounded_http_response_is_rejected_before_inventory_is_accepted() {
     let harness = harness(state, None).await;
 
     let snapshot = harness.controller.refresh().await;
-    assert!(matches!(snapshot.endpoint, LocalEndpointStatus::Unavailable { .. }));
+    assert!(matches!(
+        snapshot.endpoint,
+        LocalEndpointStatus::Unavailable { .. }
+    ));
     assert!(snapshot.models.is_empty());
     harness.stop().await;
 }

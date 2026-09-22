@@ -11347,7 +11347,9 @@ fn main() -> Result<()> {
                                 apply_hardware(&w, snap);
                                 if let Some(result) = local_models {
                                     match result {
-                                        Ok((presentation, _)) => apply_local_models(&w, presentation),
+                                        Ok((presentation, _)) => {
+                                            apply_local_models(&w, presentation)
+                                        }
                                         Err(error) => mark_local_models_unverified(&w, &error),
                                     }
                                 }
@@ -24479,28 +24481,62 @@ fn apply_hardware(window: &MainWindow, snap: panel_logic::HardwareSnapshot) {
 
 /// W185 reads the daemon-owned controller snapshot. The CLI exit is not enough:
 /// `panel_logic` deserializes the exact schema before anything reaches Slint.
-fn parse_local_models_status(json: &str) -> std::result::Result<(panel_logic::LocalModelsPresentation, panel_logic::LocalModelsSnapshotWire), String> {
+fn parse_local_models_status(
+    json: &str,
+) -> std::result::Result<
+    (
+        panel_logic::LocalModelsPresentation,
+        panel_logic::LocalModelsSnapshotWire,
+    ),
+    String,
+> {
     let presentation = panel_logic::parse_local_models_snapshot(json)?;
     let snapshot: panel_logic::LocalModelsSnapshotWire = serde_json::from_str(json)
         .map_err(|error| format!("invalid local-model status JSON: {error}"))?;
-    if snapshot.schema_version != 1 { return Err("unsupported local-model status schema".into()); }
+    if snapshot.schema_version != 1 {
+        return Err("unsupported local-model status schema".into());
+    }
     Ok((presentation, snapshot))
 }
 
-fn fetch_local_models_status() -> std::result::Result<(panel_logic::LocalModelsPresentation, panel_logic::LocalModelsSnapshotWire), String> {
+fn fetch_local_models_status() -> std::result::Result<
+    (
+        panel_logic::LocalModelsPresentation,
+        panel_logic::LocalModelsSnapshotWire,
+    ),
+    String,
+> {
     let mut command = neothd_json_command(&["models", "ollama", "status"])?;
-    let output = command.output().map_err(|error| format!("could not start local-model status: {error}"))?;
-    validate_neothd_probe_exit("Local-model status", output.status.success(), &output.stderr, output.status.code())?;
+    let output = command
+        .output()
+        .map_err(|error| format!("could not start local-model status: {error}"))?;
+    validate_neothd_probe_exit(
+        "Local-model status",
+        output.status.success(),
+        &output.stderr,
+        output.status.code(),
+    )?;
     parse_local_models_status(&String::from_utf8_lossy(&output.stdout))
 }
 
 fn apply_local_models(window: &MainWindow, presentation: panel_logic::LocalModelsPresentation) {
     use slint::{ModelRc, VecModel};
-    let rows = presentation.rows.into_iter().map(|row| LocalModelRow {
-        model: row.model.into(), readiness: row.readiness.into(), progress: row.progress.into(),
-        resources: row.resources.into(), operation_id: row.operation_id.into(), can_pull: row.can_pull, can_update: row.can_update,
-        can_prune: row.can_prune, can_cancel: row.can_cancel, can_retry: row.can_retry,
-    }).collect::<Vec<_>>();
+    let rows = presentation
+        .rows
+        .into_iter()
+        .map(|row| LocalModelRow {
+            model: row.model.into(),
+            readiness: row.readiness.into(),
+            progress: row.progress.into(),
+            resources: row.resources.into(),
+            operation_id: row.operation_id.into(),
+            can_pull: row.can_pull,
+            can_update: row.can_update,
+            can_prune: row.can_prune,
+            can_cancel: row.can_cancel,
+            can_retry: row.can_retry,
+        })
+        .collect::<Vec<_>>();
     window.set_local_model_rows(ModelRc::new(VecModel::from(rows)));
     window.set_local_model_endpoint(presentation.endpoint.into());
     window.set_local_model_status_valid(presentation.valid);
@@ -24519,29 +24555,67 @@ fn mark_local_models_unverified(window: &MainWindow, error: &str) {
     window.set_local_model_refreshed("".into());
 }
 
-fn local_models_snapshot_binds_action(snapshot: &panel_logic::LocalModelsSnapshotWire, operation_id: &str, action: &str, model: Option<&str>) -> Result<(), String> {
-    let matches = |id: &str, action_value: panel_logic::LocalModelActionKindWire, row_model: &str| {
-        id == operation_id && format!("{action_value:?}").eq_ignore_ascii_case(action) && model.map_or(true, |expected| expected == row_model)
-    };
-    if snapshot.active_operation.as_ref().is_some_and(|entry| matches(&entry.operation_id, entry.action, &entry.model))
-        || snapshot.last_terminal_operation.as_ref().is_some_and(|entry| matches(&entry.operation_id, entry.action, &entry.model)) {
+fn local_models_snapshot_binds_action(
+    snapshot: &panel_logic::LocalModelsSnapshotWire,
+    operation_id: &str,
+    action: &str,
+    model: Option<&str>,
+) -> Result<(), String> {
+    let matches =
+        |id: &str, action_value: panel_logic::LocalModelActionKindWire, row_model: &str| {
+            id == operation_id
+                && format!("{action_value:?}").eq_ignore_ascii_case(action)
+                && model.map_or(true, |expected| expected == row_model)
+        };
+    if snapshot
+        .active_operation
+        .as_ref()
+        .is_some_and(|entry| matches(&entry.operation_id, entry.action, &entry.model))
+        || snapshot
+            .last_terminal_operation
+            .as_ref()
+            .is_some_and(|entry| matches(&entry.operation_id, entry.action, &entry.model))
+    {
         return Ok(());
     }
     Err("local-model acknowledgement/readback is not bound to the requested operation".into())
 }
 
-fn local_models_retry_binding(snapshot: &panel_logic::LocalModelsSnapshotWire, terminal_operation_id: &str) -> Result<(String, String), String> {
-    let receipt = snapshot.last_terminal_operation.as_ref().filter(|entry| entry.operation_id == terminal_operation_id)
+fn local_models_retry_binding(
+    snapshot: &panel_logic::LocalModelsSnapshotWire,
+    terminal_operation_id: &str,
+) -> Result<(String, String), String> {
+    let receipt = snapshot
+        .last_terminal_operation
+        .as_ref()
+        .filter(|entry| entry.operation_id == terminal_operation_id)
         .ok_or_else(|| "retry target is not the retained terminal operation".to_string())?;
-    if !matches!(receipt.outcome, panel_logic::LocalModelTerminalOutcomeWire::Failed) {
+    if !matches!(
+        receipt.outcome,
+        panel_logic::LocalModelTerminalOutcomeWire::Failed
+    ) {
         return Err("core permits retry only for a failed terminal operation".into());
     }
-    Ok((format!("{:?}", receipt.action).to_ascii_lowercase(), receipt.model.clone()))
+    Ok((
+        format!("{:?}", receipt.action).to_ascii_lowercase(),
+        receipt.model.clone(),
+    ))
 }
 
-fn start_local_model_action(weak: slint::Weak<MainWindow>, cli: &'static str, expected_action: Option<&'static str>, target: String, model: Option<String>) {
+fn start_local_model_action(
+    weak: slint::Weak<MainWindow>,
+    cli: &'static str,
+    expected_action: Option<&'static str>,
+    target: String,
+    model: Option<String>,
+) {
     if LOCAL_MODEL_ACTION_ACTIVE.swap(true, std::sync::atomic::Ordering::AcqRel) {
-        push_toast(&weak, "info", "Local models", "An action and its status readback are already in progress.");
+        push_toast(
+            &weak,
+            "info",
+            "Local models",
+            "An action and its status readback are already in progress.",
+        );
         return;
     }
     if let Some(window) = weak.upgrade() {
@@ -24550,73 +24624,151 @@ fn start_local_model_action(weak: slint::Weak<MainWindow>, cli: &'static str, ex
     }
     let flight = LocalModelActionFlight;
     let worker_weak = weak.clone();
-    let worker = std::thread::Builder::new().name("neoth-local-model-action".into()).spawn(move || {
-        let result: std::result::Result<(panel_logic::LocalModelsPresentation, bool), String> = (|| {
-            // Retry is bound before mutation to the exact terminal receipt the
-            // operator selected; core resolves Retry to that receipt's action.
-            let retry_binding = if cli == "retry" {
-                let (_, before) = fetch_local_models_status()?;
-                Some(local_models_retry_binding(&before, &target)?)
-            } else { None };
-            let args: Vec<&str> = match cli {
-                "cancel" => vec!["models", "ollama", "cancel", &target],
-                "retry" => vec!["models", "ollama", "retry", &target],
-                _ => vec!["models", "ollama", cli, &target],
-            };
-            let acknowledgement = run_neothd_json_action::<gui_action::LocalModelActionAck>(&args, "Local-model action")?;
-            let acknowledged_operation_id = acknowledgement.verify(expected_action)?;
-            if cli == "cancel" && acknowledged_operation_id != target {
-                return Err("cancel acknowledgement is bound to a different operation id".into());
-            }
-            let action = acknowledgement.action.as_str();
-            let expected_model = retry_binding.as_ref().map(|(_, model)| model.as_str()).or(model.as_deref());
-            if let Some((expected_retry_action, _)) = retry_binding.as_ref()
-                && action != expected_retry_action {
-                return Err("retry acknowledgement resolved a different underlying action".into());
-            }
-            let (_, acknowledged_snapshot) = parse_local_models_status(&acknowledgement.snapshot_json()?)?;
-            local_models_snapshot_binds_action(&acknowledged_snapshot, acknowledged_operation_id, action, expected_model)?;
-            let acknowledged_at = acknowledged_snapshot.observed_at_unix_ms;
-            let (readback, fresh_snapshot) = fetch_local_models_status()?;
-            if fresh_snapshot.observed_at_unix_ms < acknowledged_at {
-                return Err("local-model status readback predates the acknowledgement snapshot".into());
-            }
-            local_models_snapshot_binds_action(&fresh_snapshot, acknowledged_operation_id, action, expected_model)?;
-            Ok((readback, true))
-        })();
-        let _ = slint::invoke_from_event_loop(move || {
-            let _flight = flight;
-            let Some(window) = worker_weak.upgrade() else { return; };
-            window.set_local_model_in_flight(false);
-            match result {
-                Ok((presentation, _)) => {
-                    apply_local_models(&window, presentation);
-                    buddy(&window, GuiActivity::LocalModelVerified);
-                    push_toast(&worker_weak, "success", "Local models", "Action acknowledgement matched a fresh daemon status readback.");
+    let worker = std::thread::Builder::new()
+        .name("neoth-local-model-action".into())
+        .spawn(move || {
+            let result: std::result::Result<(panel_logic::LocalModelsPresentation, bool), String> =
+                (|| {
+                    // Retry is bound before mutation to the exact terminal receipt the
+                    // operator selected; core resolves Retry to that receipt's action.
+                    let retry_binding = if cli == "retry" {
+                        let (_, before) = fetch_local_models_status()?;
+                        Some(local_models_retry_binding(&before, &target)?)
+                    } else {
+                        None
+                    };
+                    let args: Vec<&str> = match cli {
+                        "cancel" => vec!["models", "ollama", "cancel", &target],
+                        "retry" => vec!["models", "ollama", "retry", &target],
+                        _ => vec!["models", "ollama", cli, &target],
+                    };
+                    let acknowledgement = run_neothd_json_action::<gui_action::LocalModelActionAck>(
+                        &args,
+                        "Local-model action",
+                    )?;
+                    let acknowledged_operation_id = acknowledgement.verify(expected_action)?;
+                    if cli == "cancel" && acknowledged_operation_id != target {
+                        return Err(
+                            "cancel acknowledgement is bound to a different operation id".into(),
+                        );
+                    }
+                    let action = acknowledgement.action.as_str();
+                    let expected_model = retry_binding
+                        .as_ref()
+                        .map(|(_, model)| model.as_str())
+                        .or(model.as_deref());
+                    if let Some((expected_retry_action, _)) = retry_binding.as_ref()
+                        && action != expected_retry_action
+                    {
+                        return Err(
+                            "retry acknowledgement resolved a different underlying action".into(),
+                        );
+                    }
+                    let (_, acknowledged_snapshot) =
+                        parse_local_models_status(&acknowledgement.snapshot_json()?)?;
+                    local_models_snapshot_binds_action(
+                        &acknowledged_snapshot,
+                        acknowledged_operation_id,
+                        action,
+                        expected_model,
+                    )?;
+                    let acknowledged_at = acknowledged_snapshot.observed_at_unix_ms;
+                    let (readback, fresh_snapshot) = fetch_local_models_status()?;
+                    if fresh_snapshot.observed_at_unix_ms < acknowledged_at {
+                        return Err(
+                            "local-model status readback predates the acknowledgement snapshot"
+                                .into(),
+                        );
+                    }
+                    local_models_snapshot_binds_action(
+                        &fresh_snapshot,
+                        acknowledged_operation_id,
+                        action,
+                        expected_model,
+                    )?;
+                    Ok((readback, true))
+                })();
+            let _ = slint::invoke_from_event_loop(move || {
+                let _flight = flight;
+                let Some(window) = worker_weak.upgrade() else {
+                    return;
+                };
+                window.set_local_model_in_flight(false);
+                match result {
+                    Ok((presentation, _)) => {
+                        apply_local_models(&window, presentation);
+                        buddy(&window, GuiActivity::LocalModelVerified);
+                        push_toast(
+                            &worker_weak,
+                            "success",
+                            "Local models",
+                            "Action acknowledgement matched a fresh daemon status readback.",
+                        );
+                    }
+                    Err(error) => {
+                        buddy(&window, GuiActivity::LocalModelFailed);
+                        mark_local_models_unverified(&window, &error);
+                        push_toast(
+                            &worker_weak,
+                            "warn",
+                            "Local-model action incomplete",
+                            &error,
+                        );
+                    }
                 }
-                Err(error) => {
-                    buddy(&window, GuiActivity::LocalModelFailed);
-                    mark_local_models_unverified(&window, &error);
-                    push_toast(&worker_weak, "warn", "Local-model action incomplete", &error);
-                }
-            }
+            });
         });
-    });
     if let Err(error) = worker {
         if let Some(window) = weak.upgrade() {
             window.set_local_model_in_flight(false);
             buddy(&window, GuiActivity::LocalModelFailed);
-            mark_local_models_unverified(&window, &format!("Could not start local-model action worker: {error}"));
+            mark_local_models_unverified(
+                &window,
+                &format!("Could not start local-model action worker: {error}"),
+            );
         }
     }
 }
 
 fn register_local_model_callbacks(window: &MainWindow) {
-    let weak = window.as_weak(); window.on_local_model_pull(move |model| start_local_model_action(weak.clone(), "pull", Some("pull"), model.to_string(), Some(model.to_string())));
-    let weak = window.as_weak(); window.on_local_model_update(move |model| start_local_model_action(weak.clone(), "update", Some("update"), model.to_string(), Some(model.to_string())));
-    let weak = window.as_weak(); window.on_local_model_prune(move |model| start_local_model_action(weak.clone(), "prune", Some("prune"), model.to_string(), Some(model.to_string())));
-    let weak = window.as_weak(); window.on_local_model_cancel(move |operation| start_local_model_action(weak.clone(), "cancel", None, operation.to_string(), None));
-    let weak = window.as_weak(); window.on_local_model_retry(move |operation| start_local_model_action(weak.clone(), "retry", None, operation.to_string(), None));
+    let weak = window.as_weak();
+    window.on_local_model_pull(move |model| {
+        start_local_model_action(
+            weak.clone(),
+            "pull",
+            Some("pull"),
+            model.to_string(),
+            Some(model.to_string()),
+        )
+    });
+    let weak = window.as_weak();
+    window.on_local_model_update(move |model| {
+        start_local_model_action(
+            weak.clone(),
+            "update",
+            Some("update"),
+            model.to_string(),
+            Some(model.to_string()),
+        )
+    });
+    let weak = window.as_weak();
+    window.on_local_model_prune(move |model| {
+        start_local_model_action(
+            weak.clone(),
+            "prune",
+            Some("prune"),
+            model.to_string(),
+            Some(model.to_string()),
+        )
+    });
+    let weak = window.as_weak();
+    window.on_local_model_cancel(move |operation| {
+        start_local_model_action(weak.clone(), "cancel", None, operation.to_string(), None)
+    });
+    let weak = window.as_weak();
+    window.on_local_model_retry(move |operation| {
+        start_local_model_action(weak.clone(), "retry", None, operation.to_string(), None)
+    });
 }
 
 /// SL-02 — fetch the shared, versioned membership snapshot rendered by
@@ -47219,41 +47371,76 @@ exit 0
     }
 
     #[cfg(not(windows))]
-    fn w185_snapshot(operation_id: &str, action: &str, model: &str, readiness: &str, completed: u64) -> String {
+    fn w185_snapshot(
+        operation_id: &str,
+        action: &str,
+        model: &str,
+        readiness: &str,
+        completed: u64,
+    ) -> String {
         let active = if readiness == "working" {
-            format!(r#"{{"operation_id":"{operation_id}","action":"{action}","model":"{model}","started_at_unix_ms":1,"progress":{{"status":"downloading","completed":{completed},"total":10}},"cancellation_requested":false}}"#)
-        } else { "null".to_string() };
-        let terminal = if readiness == "working" { "null".to_string() } else {
-            format!(r#"{{"operation_id":"{operation_id}","action":"{action}","model":"{model}","started_at_unix_ms":1,"finished_at_unix_ms":2,"outcome":"interrupted_unknown","old_digest":null,"new_digest":null,"error":{{"code":"interrupted_unknown","detail":"fixture"}}}}"#)
+            format!(
+                r#"{{"operation_id":"{operation_id}","action":"{action}","model":"{model}","started_at_unix_ms":1,"progress":{{"status":"downloading","completed":{completed},"total":10}},"cancellation_requested":false}}"#
+            )
+        } else {
+            "null".to_string()
+        };
+        let terminal = if readiness == "working" {
+            "null".to_string()
+        } else {
+            format!(
+                r#"{{"operation_id":"{operation_id}","action":"{action}","model":"{model}","started_at_unix_ms":1,"finished_at_unix_ms":2,"outcome":"interrupted_unknown","old_digest":null,"new_digest":null,"error":{{"code":"interrupted_unknown","detail":"fixture"}}}}"#
+            )
         };
         let readiness = if readiness == "ready" {
             r#"{"kind":"ready","verified_at_unix_ms":2}"#.to_string()
         } else if readiness == "working" {
-            format!(r#"{{"kind":"downloading","operation_id":"{operation_id}","completed":{completed},"total":10}}"#)
+            format!(
+                r#"{{"kind":"downloading","operation_id":"{operation_id}","completed":{completed},"total":10}}"#
+            )
         } else {
             format!(r#"{{"kind":"interrupted_unknown","operation_id":"{operation_id}"}}"#)
         };
-        let models = if operation_id == "op-pull-1" { "[]".to_string() } else {
-            format!(r#"[{{"model":"{model}","digest":"sha256:fixture","size_bytes":1,"loaded":null,"readiness":{readiness},"last_error":null}}]"#)
+        let models = if operation_id == "op-pull-1" {
+            "[]".to_string()
+        } else {
+            format!(
+                r#"[{{"model":"{model}","digest":"sha256:fixture","size_bytes":1,"loaded":null,"readiness":{readiness},"last_error":null}}]"#
+            )
         };
-        format!(r#"{{"schema_version":1,"observed_at_unix_ms":2,"endpoint":{{"kind":"reachable","detail":"fresh tags and ps"}},"host_resources":{{"ram_bytes":null,"vram_bytes":null,"gpu_name":null}},"models":{models},"active_operation":{active},"last_terminal_operation":{terminal}}"#)
+        format!(
+            r#"{{"schema_version":1,"observed_at_unix_ms":2,"endpoint":{{"kind":"reachable","detail":"fresh tags and ps"}},"host_resources":{{"ram_bytes":null,"vram_bytes":null,"gpu_name":null}},"models":{models},"active_operation":{active},"last_terminal_operation":{terminal}}"#
+        )
     }
 
     #[cfg(not(windows))]
     fn w185_ack(ok: bool, action: &str, operation_id: &str, snapshot: &str) -> String {
-        let error = if ok { "null".to_string() } else {
+        let error = if ok {
+            "null".to_string()
+        } else {
             r#"{"code":"conflict","detail":"fixture rejected action"}"#.to_string()
         };
-        format!(r#"{{"schema_version":1,"ok":{ok},"action":"{action}","operation_id":"{operation_id}","error":{error},"snapshot":{snapshot}}}"#)
+        format!(
+            r#"{{"schema_version":1,"ok":{ok},"action":"{action}","operation_id":"{operation_id}","error":{error},"snapshot":{snapshot}}}"#
+        )
     }
 
     #[cfg(not(windows))]
     fn w185_call_count(calls: &Path, expected: &str) -> usize {
-        w116_call_lines(calls).iter().filter(|line| line.as_str() == expected).count()
+        w116_call_lines(calls)
+            .iter()
+            .filter(|line| line.as_str() == expected)
+            .count()
     }
 
     #[cfg(not(windows))]
-    fn w185_pump_until(window: &MainWindow, calls: &Path, action: &str, action_calls: usize, status_calls: usize) {
+    fn w185_pump_until(
+        window: &MainWindow,
+        calls: &Path,
+        action: &str,
+        action_calls: usize,
+        status_calls: usize,
+    ) {
         let completed = Rc::new(Cell::new(false));
         let seen = Rc::clone(&completed);
         let weak = window.as_weak();
@@ -47262,17 +47449,26 @@ exit 0
         let ticks = Rc::new(Cell::new(0_u16));
         let observed_ticks = Rc::clone(&ticks);
         let timer = slint::Timer::default();
-        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
-            if weak.upgrade().is_some_and(|window| {
-                !window.get_local_model_in_flight()
-                    && w185_call_count(&calls, &action) == action_calls
-                    && w185_call_count(&calls, "models-status") == status_calls
-            }) {
-                seen.set(true); let _ = slint::quit_event_loop(); return;
-            }
-            if observed_ticks.get().saturating_add(1) >= 500 { let _ = slint::quit_event_loop(); }
-            else { observed_ticks.set(observed_ticks.get() + 1); }
-        });
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                if weak.upgrade().is_some_and(|window| {
+                    !window.get_local_model_in_flight()
+                        && w185_call_count(&calls, &action) == action_calls
+                        && w185_call_count(&calls, "models-status") == status_calls
+                }) {
+                    seen.set(true);
+                    let _ = slint::quit_event_loop();
+                    return;
+                }
+                if observed_ticks.get().saturating_add(1) >= 500 {
+                    let _ = slint::quit_event_loop();
+                } else {
+                    observed_ticks.set(observed_ticks.get() + 1);
+                }
+            },
+        );
         let _ = window.hide();
         slint::run_event_loop_until_quit().expect("run W185 callback fixture event loop");
         drop(timer);
@@ -47282,7 +47478,9 @@ exit 0
     #[cfg(not(windows))]
     #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w185_local_model_callbacks_require_typed_ack_and_fresh_readback() {
-        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("serial GUI fixture environment");
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial GUI fixture environment");
         let fixture = TempDir::new().expect("create W185 CLI fixture");
         let bin = w116_stage_fake_neoth(&fixture);
         let mode = fixture.path().join("mode");
@@ -47291,7 +47489,10 @@ exit 0
         let calls = fixture.path().join("calls");
         std::fs::write(&calls, b"").expect("initialize W185 calls");
         let _path = PathGuard::install(fixture.path());
-        assert_eq!(std::fs::canonicalize(which_neothd().expect("resolve staged W185 CLI")).unwrap(), std::fs::canonicalize(bin).unwrap());
+        assert_eq!(
+            std::fs::canonicalize(which_neothd().expect("resolve staged W185 CLI")).unwrap(),
+            std::fs::canonicalize(bin).unwrap()
+        );
         let window = MainWindow::new().expect("construct generated MainWindow");
         register_local_model_callbacks(&window);
 
@@ -47307,20 +47508,45 @@ exit 0
         window.invoke_local_model_pull("qwen".into());
         w151_wait_for_file(&window, &started, "W185 pull child did not start");
         window.invoke_local_model_pull("qwen".into());
-        assert_eq!(w185_call_count(&calls, "models-pull:qwen"), 1, "duplicate local-model pull must not spawn another child");
+        assert_eq!(
+            w185_call_count(&calls, "models-pull:qwen"),
+            1,
+            "duplicate local-model pull must not spawn another child"
+        );
         assert!(window.get_local_model_in_flight());
-        assert_eq!(w185_call_count(&calls, "models-status"), 0, "no success/readback before the action acknowledgement returns");
+        assert_eq!(
+            w185_call_count(&calls, "models-status"),
+            0,
+            "no success/readback before the action acknowledgement returns"
+        );
         std::fs::write(&release, b"release").unwrap();
         w185_pump_until(&window, &calls, "models-pull:qwen", 1, 1);
         assert_eq!(window.get_local_model_rows().row_count(), 1);
-        assert!(!window.get_local_model_rows().row_data(0).unwrap().readiness.to_string().contains("Ready"));
+        assert!(
+            !window
+                .get_local_model_rows()
+                .row_data(0)
+                .unwrap()
+                .readiness
+                .to_string()
+                .contains("Ready")
+        );
 
         // The periodic status projection carries real progress but never
         // upgrades it to Ready; only the daemon's ready variant can do that.
         let progressed = w185_snapshot(op, "pull", "qwen", "working", 7);
-        let (presentation, _) = parse_local_models_status(&progressed).expect("typed progress status");
+        let (presentation, _) =
+            parse_local_models_status(&progressed).expect("typed progress status");
         apply_local_models(&window, presentation);
-        assert_eq!(window.get_local_model_rows().row_data(0).unwrap().progress.to_string(), "7/10");
+        assert_eq!(
+            window
+                .get_local_model_rows()
+                .row_data(0)
+                .unwrap()
+                .progress
+                .to_string(),
+            "7/10"
+        );
 
         // A false acknowledgement is a failure and must release the guard so
         // the operator can retry; no status read is allowed for it.
@@ -47333,7 +47559,16 @@ exit 0
         // A success-looking acknowledgement whose embedded snapshot carries a
         // different operation is stale/foreign and is rejected before readback.
         std::fs::write(&mode, b"w185_mismatched_ack").unwrap();
-        std::fs::write(&action, w185_ack(true, "pull", "op-claimed", &w185_snapshot("op-other", "pull", "qwen", "working", 1))).unwrap();
+        std::fs::write(
+            &action,
+            w185_ack(
+                true,
+                "pull",
+                "op-claimed",
+                &w185_snapshot("op-other", "pull", "qwen", "working", 1),
+            ),
+        )
+        .unwrap();
         window.invoke_local_model_pull("qwen".into());
         w185_pump_until(&window, &calls, "models-pull:qwen", 3, 1);
         assert!(!window.get_local_model_status_valid());

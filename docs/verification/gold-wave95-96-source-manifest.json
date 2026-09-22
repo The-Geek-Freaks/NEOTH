@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W185-local-model-operations",
-  "base": "f091d5fe9eab773ba4593a1abb7ebd6c3a36f332",
-  "capturedUtc": "2026-09-22T06:04:53.8900618Z",
-  "validationStatus": "W185_HOSTED_FIXTURE_DELIMITER_REPAIRED",
-  "scopeNote": "15 W185 implementation paths with final hash-bound review; native/GUI execution pending. Narrow A130 lint repairs included; W186 source excluded.",
+  "base": "2e7de3f618b588934799d0015e40e3b026d061f0",
+  "capturedUtc": "2026-09-22T06:21:36.125713Z",
+  "validationStatus": "W185_HOSTED_FORMAT_AND_CORE_REPAIRS_PENDING_RECHECK",
+  "scopeNote": "150 unique Hosted formatting hunks plus four core compiler repairs; native/GUI behavior still pending. Historical freeze objects preserved; W186 product code excluded.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -453,8 +453,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/gui_action.rs",
-      "bytes": 340132,
-      "sha256": "7E122F3C220D173E18E88A795CE293EB46619C47426103327251470E440A4015"
+      "bytes": 340535,
+      "sha256": "655F367BD6DDC5E1405285E1BA4B92E4F428523A02F36B1CC91D5B1224C00A84"
     },
     {
       "path": "SRC/neothd-gui/src/gui_action/ouro_q8.rs",
@@ -473,8 +473,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2067123,
-      "sha256": "7169B074221554D05FB465882CD86C4CE7DCEED35564A4EBB334314BDADF2ED9"
+      "bytes": 2070592,
+      "sha256": "5CAF78DEE710E8930D200300BCB907572DCB12F95DB73F7F0514DE232803418A"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -483,8 +483,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 575693,
-      "sha256": "90C1857D1E96BA7774B821529E5349A1FD16CB954BD4A90005805A2E734FD234"
+      "bytes": 578031,
+      "sha256": "C51A8B967C2F70AAF18740249DD8516340C40DD14418D5A54763519809736DC5"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
@@ -898,8 +898,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/models.rs",
-      "bytes": 64209,
-      "sha256": "55C1C13700EC71616B3AFF567308343AB9E9A7DAD5F075FB08EB023806A44632"
+      "bytes": 64481,
+      "sha256": "4BC2D70C456C5BEE0F3967FF946EF3919637E2D29956B64A0A5DC6DC7EF60171"
     },
     {
       "path": "SRC/neothd/src/cli/ouro.rs",
@@ -953,13 +953,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
-      "bytes": 526525,
-      "sha256": "03C422103992BD96C73378F8107A657B0A1BB44326A66285B984450DF2A078E0"
+      "bytes": 526518,
+      "sha256": "A462454DDEF90A457D14204EB59F3865D24B4C49C31230A6B351871E8FA58125"
     },
     {
       "path": "SRC/neothd/src/cli/serve.rs",
-      "bytes": 171257,
-      "sha256": "1C4EB4B60685673A27C561D3ED408BF42D5017D08A9223D90E94A77C42532142"
+      "bytes": 171246,
+      "sha256": "83E49752CFB5947B5BB70956CC42CC361BB11C4E6475C981056171FDA6ECEF88"
     },
     {
       "path": "SRC/neothd/src/cli/updater.rs",
@@ -1303,18 +1303,18 @@
     },
     {
       "path": "SRC/neothd/src/daemon/local_models_ipc.rs",
-      "bytes": 36741,
-      "sha256": "496318E3A6006C4668B7DD5D06DEDE3873B0C0EDAE09B8910612EF67782B984D"
+      "bytes": 38715,
+      "sha256": "4900385578F2BE072086089A5CD1DC64290B186043ECB4F47F55966ADF7DDF78"
     },
     {
       "path": "SRC/neothd/src/daemon/local_models.rs",
-      "bytes": 53463,
-      "sha256": "47C1E01CE27421205998C9DA128887F421060F12FD55206EA5EEAEC5FB0EC652"
+      "bytes": 67627,
+      "sha256": "B3E788F9D141B7572F06B8AEB3D413C338182B55635FE7C89D6F4DE849335BA0"
     },
     {
       "path": "SRC/neothd/src/daemon/local_models/tests.rs",
-      "bytes": 33717,
-      "sha256": "6D1686D399D102EB946ED8FD6B4E8F27C542645524AC8998BE931254D0DFDB50"
+      "bytes": 34758,
+      "sha256": "617634B87D699C14A7429EED602FA50622C01641928A57094AFE068428D63863"
     },
     {
       "path": "SRC/neothd/src/daemon/metering.rs",
@@ -1324,7 +1324,7 @@
     {
       "path": "SRC/neothd/src/daemon/mod.rs",
       "bytes": 18199,
-      "sha256": "B366E5A88EB01DC9C744A63C7950A84EC47F987BBD42644A93EA7018621D101A"
+      "sha256": "FB61A12970BD92F9A5858C655EFC9B01303C7FD1DBE79A3622DF626C260C311F"
     },
     {
       "path": "SRC/neothd/src/daemon/omi_native_ingest.rs",

@@ -89,24 +89,25 @@ jobs:
           manifest.write_text(text, encoding="utf-8")
           PY
 
-          # Cargo's ordinary resolver preserves a valid existing lock and adds
-          # only entries demanded by the temporary direct dependencies. It does
-          # not compile targets. Do not use `cargo generate-lockfile`, which
-          # would broadly refresh pins.
+          # Cargo's ordinary resolver adds only entries demanded by the
+          # temporary direct dependencies.  It does not compile targets. Do
+          # not use `cargo generate-lockfile`, which would broadly refresh pins.
           cargo metadata --manifest-path "$work_src/Cargo.toml" --format-version 1 > "$evidence/cargo-metadata.json"
           capture_workspace_state "$work_src" "$evidence/normal-resolution"
 
-          # Hosted run 35679007670 showed normal metadata resolution upgrading
-          # the pre-existing borsh 1.6.1 lock entry to 1.8.1. Restore only that
-          # pin before the strict identity gate. A conflict remains fatal.
-          cargo update --manifest-path "$work_src/Cargo.toml" -p borsh --precise 1.6.1
-          cargo metadata --manifest-path "$work_src/Cargo.toml" --locked --format-version 1 > "$evidence/cargo-metadata-after-borsh-restore.json"
-          capture_workspace_state "$work_src" "$evidence/restored-resolution"
+          # tract-core 0.23.8's bit-set/bit-vec closure requires borsh ^1.7.
+          # Replace precisely the old unifiable borsh 1.6.1 lock identity with
+          # the reviewed 1.8.1 release; every other old identity remains
+          # fail-closed below.  This does not broadly unlock the workspace.
+          cargo update --manifest-path "$work_src/Cargo.toml" -p borsh --precise 1.8.1
+          cargo metadata --manifest-path "$work_src/Cargo.toml" --locked --format-version 1 > "$evidence/cargo-metadata-after-borsh-transition.json"
+          capture_workspace_state "$work_src" "$evidence/bounded-borsh-transition"
 
           # A resolver downgrade or changed pre-existing registry identity is
-          # a hard failure. New entries are allowed. Package dependency lists
-          # are not compared: neothd gains direct edges and Cargo can
-          # disambiguate dependency display strings without pin churn.
+          # a hard failure except for the reviewed borsh transition below.
+          # New closure entries are allowed. Package dependency lists are not
+          # compared: neothd gains direct edges and Cargo can disambiguate
+          # dependency display strings without pin churn.
           INPUT_LOCK="$evidence/input/Cargo.lock" OUTPUT_LOCK="$work_src/Cargo.lock" NEW_LOCK="$evidence/new-lock-packages.json" python3 - <<'PY'
           import json
           import os
@@ -122,12 +123,28 @@ jobs:
 
           before = entries(os.environ["INPUT_LOCK"])
           after = entries(os.environ["OUTPUT_LOCK"])
+          borsh_source = "registry+https://github.com/rust-lang/crates.io-index"
+          allowed_transition = {
+              ("borsh", "1.6.1", borsh_source): ("borsh", "1.8.1", borsh_source),
+          }
+          reviewed_checksums = {
+              ("borsh", "1.8.1", borsh_source): "553c5d846a6ba5150c65e3b1b8ec073bcf1abc20f9b7220de384a4443ea4e20a",
+              ("borsh-derive", "1.8.1", borsh_source): "12cdfe656708a01f89b451a7d36466e6fe6c414de0aa18fc54f864f6f9ca9f56",
+          }
           missing = sorted(set(before) - set(after))
-          changed = sorted(key for key, checksum in before.items() if after.get(key) != checksum)
-          if missing or changed:
-              detail = missing + changed
+          changed = sorted(
+              key for key, checksum in before.items()
+              if key in after and after[key] != checksum
+          )
+          unexpected_missing = sorted(set(missing) - set(allowed_transition))
+          invalid_transition_targets = sorted(
+              target for old, target in allowed_transition.items()
+              if old not in missing or after.get(target) != reviewed_checksums[target]
+          )
+          if unexpected_missing or changed or invalid_transition_targets:
+              detail = unexpected_missing + changed + invalid_transition_targets
               raise SystemExit(
-                  "pre-existing Cargo.lock registry identity/checksum changed: "
+                  "unexpected Cargo.lock registry identity/checksum change: "
                   + ", ".join(f"{name} {version} ({source})" for name, version, source in detail)
               )
 
@@ -136,6 +153,17 @@ jobs:
           absent = sorted(required - resolved)
           if absent:
               raise SystemExit("required direct package versions absent from Cargo.lock: " + repr(absent))
+
+          borsh_derive_additions = sorted(
+              key for key in set(after) - set(before) if key[0] == "borsh-derive"
+          )
+          if any(
+              version != "1.8.1"
+              or source != borsh_source
+              or after[(name, version, source)] != reviewed_checksums[(name, version, source)]
+              for name, version, source in borsh_derive_additions
+          ):
+              raise SystemExit("new borsh-derive identity is not the reviewed 1.8.1 companion")
 
           new_packages = [
               {"name": name, "version": version, "source": source}
@@ -151,7 +179,7 @@ jobs:
           # can target newer release channels outside this dependency closure.
           # A native selected-target build remains the full proof.
           cargo metadata --manifest-path "$work_src/Cargo.toml" --locked --format-version 1 > "$evidence/cargo-metadata-locked.json"
-          METADATA="$evidence/cargo-metadata-after-borsh-restore.json" NEW_LOCK="$evidence/new-lock-packages.json" \
+          METADATA="$evidence/cargo-metadata-after-borsh-transition.json" NEW_LOCK="$evidence/new-lock-packages.json" \
             MSRV_EVIDENCE="$evidence/new-dependency-msrv.json" python3 - <<'PY'
           import json
           import os

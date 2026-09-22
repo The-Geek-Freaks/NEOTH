@@ -26,7 +26,7 @@ use tokio::{
 };
 
 use super::local_models::{
-    LocalEndpointStatus, LocalHostResources, LocalModelAction, LocalModelActionAck, LocalModelActionKind, LocalModelController, LocalModelsSnapshot,
+    LocalModelAction, LocalModelActionAck, LocalModelController, LocalModelsSnapshot,
 };
 
 const SERVICE: &str = "neoth-local-models-v1";
@@ -55,7 +55,9 @@ trait LocalModelsService: Send + Sync {
 
 #[async_trait]
 impl LocalModelsService for LocalModelController {
-    async fn status(&self) -> LocalModelsSnapshot { self.status().await }
+    async fn status(&self) -> LocalModelsSnapshot {
+        self.status().await
+    }
 
     async fn start(&self, action: LocalModelAction) -> LocalModelActionAck {
         self.start(action).await
@@ -345,7 +347,9 @@ where
             };
             if operation_id.is_empty()
                 || operation_id.len() > 256
-                || !operation_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                || !operation_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
                 || !request.body.is_empty()
             {
                 write_error(&mut stream, 400, "invalid_cancel_request").await?;
@@ -431,7 +435,12 @@ where
             return None;
         }
     }
-    (body.len() == length).then_some(ParsedRequest { method, path, bearer, body })
+    (body.len() == length).then_some(ParsedRequest {
+        method,
+        path,
+        bearer,
+        body,
+    })
 }
 
 async fn write_json<S, T>(stream: &mut S, status: u16, value: &T) -> Result<()>
@@ -440,7 +449,10 @@ where
     T: Serialize,
 {
     let body = serde_json::to_vec(value).context("encode local-model IPC response")?;
-    ensure!(body.len() <= MAX_RESPONSE_BYTES, "local-model IPC response exceeds cap");
+    ensure!(
+        body.len() <= MAX_RESPONSE_BYTES,
+        "local-model IPC response exceeds cap"
+    );
     write_response(stream, status, &body).await
 }
 
@@ -448,7 +460,12 @@ async fn write_error<S>(stream: &mut S, status: u16, code: &str) -> Result<()>
 where
     S: AsyncWrite + Unpin,
 {
-    write_response(stream, status, format!(r#"{{"ok":false,"code":"{code}"}}"#).as_bytes()).await
+    write_response(
+        stream,
+        status,
+        format!(r#"{{"ok":false,"code":"{code}"}}"#).as_bytes(),
+    )
+    .await
 }
 
 async fn write_response<S>(stream: &mut S, status: u16, body: &[u8]) -> Result<()>
@@ -482,7 +499,9 @@ fn status_line(status: u16) -> &'static str {
 }
 
 fn constant_time_eq(candidate: Option<&str>, expected: &str) -> bool {
-    let Some(candidate) = candidate else { return false };
+    let Some(candidate) = candidate else {
+        return false;
+    };
     if candidate.len() != expected.len() {
         return false;
     }
@@ -518,12 +537,26 @@ fn prepare_unix(home: &Path) -> Result<(String, UnixEndpoint)> {
     let home_sha256 = hex::encode(Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
     let nonce = random_nonce()?;
     let runtime = Path::new("/tmp").join(format!(".neoth-local-models-{}", &nonce[..16]));
-    use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
+    use std::os::unix::fs::DirBuilderExt as _;
     std::fs::DirBuilder::new().mode(0o700).create(&runtime)?;
     let path = runtime.join("local-models.sock");
-    ensure!(path.as_os_str().as_encoded_bytes().len() < 100, "local-model IPC socket path exceeds AF_UNIX cap");
-    let endpoint = UnixEndpoint { path, endpoint_nonce: nonce, home_sha256 };
-    write_private_json(home, SIDECAR_FILE, &UnixSidecar { schema_version: SCHEMA_VERSION, endpoint: endpoint.clone() })?;
+    ensure!(
+        path.as_os_str().as_encoded_bytes().len() < 100,
+        "local-model IPC socket path exceeds AF_UNIX cap"
+    );
+    let endpoint = UnixEndpoint {
+        path,
+        endpoint_nonce: nonce,
+        home_sha256,
+    };
+    write_private_json(
+        home,
+        SIDECAR_FILE,
+        &UnixSidecar {
+            schema_version: SCHEMA_VERSION,
+            endpoint: endpoint.clone(),
+        },
+    )?;
     Ok((token, endpoint))
 }
 
@@ -537,14 +570,28 @@ struct WindowsSidecar {
 }
 
 #[cfg(windows)]
-fn prepare_windows(home: &Path) -> Result<(String, crate::windows_private_ipc::PrivatePipeEndpoint)> {
+fn prepare_windows(
+    home: &Path,
+) -> Result<(String, crate::windows_private_ipc::PrivatePipeEndpoint)> {
     let token = init_token(home)?;
     let canonical = std::fs::canonicalize(home)
         .with_context(|| format!("canonicalize NEOTH home {}", home.display()))?;
     let home_sha256 = hex::encode(Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
     let endpoint_nonce = random_nonce()?;
-    let endpoint = crate::windows_private_ipc::PrivatePipeEndpoint::derive(SERVICE, &home_sha256, &endpoint_nonce)?;
-    write_private_json(home, SIDECAR_FILE, &WindowsSidecar { schema_version: SCHEMA_VERSION, endpoint_nonce, home_sha256 })?;
+    let endpoint = crate::windows_private_ipc::PrivatePipeEndpoint::derive(
+        SERVICE,
+        &home_sha256,
+        &endpoint_nonce,
+    )?;
+    write_private_json(
+        home,
+        SIDECAR_FILE,
+        &WindowsSidecar {
+            schema_version: SCHEMA_VERSION,
+            endpoint_nonce,
+            home_sha256,
+        },
+    )?;
     Ok((token, endpoint))
 }
 
@@ -566,10 +613,16 @@ fn random_nonce() -> Result<String> {
 
 fn write_private_json<T: Serialize>(home: &Path, name: &str, value: &T) -> Result<()> {
     let body = serde_json::to_vec(value)?;
-    ensure!(body.len() <= MAX_RESPONSE_BYTES, "local-model IPC sidecar exceeds cap");
+    ensure!(
+        body.len() <= MAX_RESPONSE_BYTES,
+        "local-model IPC sidecar exceeds cap"
+    );
     let trusted_anchor = home.parent().unwrap_or(home);
     let bound = crate::skills::store::open_bound_directory_from_trusted_anchor(
-        trusted_anchor, home, true, "local-model IPC home directory",
+        trusted_anchor,
+        home,
+        true,
+        "local-model IPC home directory",
     )?
     .context("local-model IPC home was not created")?;
     let path = bound.display_path.join(name);
@@ -578,7 +631,9 @@ fn write_private_json<T: Serialize>(home: &Path, name: &str, value: &T) -> Resul
 }
 
 fn remove_private_child(home: &Path, name: &str) -> Result<()> {
-    let Some(bound) = crate::skills::store::open_bound_directory(home, false, "local-model IPC home directory")? else {
+    let Some(bound) =
+        crate::skills::store::open_bound_directory(home, false, "local-model IPC home directory")?
+    else {
         return Ok(());
     };
     let path = bound.display_path.join(name);
@@ -599,24 +654,44 @@ impl LocalModelsIpcClient {
     #[cfg(unix)]
     pub(crate) fn discover(home: &Path) -> Result<Self> {
         let sidecar: UnixSidecar = read_private_json(home, SIDECAR_FILE)?;
-        ensure!(sidecar.schema_version == SCHEMA_VERSION, "local-model IPC sidecar schema mismatch");
+        ensure!(
+            sidecar.schema_version == SCHEMA_VERSION,
+            "local-model IPC sidecar schema mismatch"
+        );
         let canonical = std::fs::canonicalize(home)?;
         let expected_home = hex::encode(Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
-        ensure!(sidecar.endpoint.home_sha256 == expected_home, "local-model IPC sidecar home mismatch");
-        Ok(Self { endpoint: sidecar.endpoint, token: read_token(home)? })
+        ensure!(
+            sidecar.endpoint.home_sha256 == expected_home,
+            "local-model IPC sidecar home mismatch"
+        );
+        Ok(Self {
+            endpoint: sidecar.endpoint,
+            token: read_token(home)?,
+        })
     }
 
     #[cfg(windows)]
     pub(crate) fn discover(home: &Path) -> Result<Self> {
         let sidecar: WindowsSidecar = read_private_json(home, SIDECAR_FILE)?;
-        ensure!(sidecar.schema_version == SCHEMA_VERSION, "local-model IPC sidecar schema mismatch");
+        ensure!(
+            sidecar.schema_version == SCHEMA_VERSION,
+            "local-model IPC sidecar schema mismatch"
+        );
         let canonical = std::fs::canonicalize(home)?;
         let expected_home = hex::encode(Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
-        ensure!(sidecar.home_sha256 == expected_home, "local-model IPC sidecar home mismatch");
+        ensure!(
+            sidecar.home_sha256 == expected_home,
+            "local-model IPC sidecar home mismatch"
+        );
         let endpoint = crate::windows_private_ipc::PrivatePipeEndpoint::derive(
-            SERVICE, &sidecar.home_sha256, &sidecar.endpoint_nonce,
+            SERVICE,
+            &sidecar.home_sha256,
+            &sidecar.endpoint_nonce,
         )?;
-        Ok(Self { endpoint, token: read_token(home)? })
+        Ok(Self {
+            endpoint,
+            token: read_token(home)?,
+        })
     }
 
     pub(crate) async fn status(&self) -> Result<LocalModelsSnapshot> {
@@ -624,19 +699,41 @@ impl LocalModelsIpcClient {
     }
 
     pub(crate) async fn start(&self, action: LocalModelAction) -> Result<LocalModelActionAck> {
-        self.request("POST", "/local-models/v1/operations", &serde_json::to_vec(&StartRequestRef { action: &action })?).await
+        self.request(
+            "POST",
+            "/local-models/v1/operations",
+            &serde_json::to_vec(&StartRequestRef { action: &action })?,
+        )
+        .await
     }
 
     pub(crate) async fn cancel(&self, operation_id: &str) -> Result<LocalModelActionAck> {
-        ensure!(!operation_id.is_empty() && operation_id.len() <= 256, "invalid local-model operation id");
-        self.request("POST", &format!("/local-models/v1/operations/{operation_id}/cancel"), &[]).await
+        ensure!(
+            !operation_id.is_empty() && operation_id.len() <= 256,
+            "invalid local-model operation id"
+        );
+        self.request(
+            "POST",
+            &format!("/local-models/v1/operations/{operation_id}/cancel"),
+            &[],
+        )
+        .await
     }
 
-    async fn request<T: for<'de> Deserialize<'de>>(&self, method: &str, route: &str, body: &[u8]) -> Result<T> {
-        ensure!(body.len() <= MAX_BODY_BYTES, "local-model IPC client body exceeds cap");
+    async fn request<T: for<'de> Deserialize<'de>>(
+        &self,
+        method: &str,
+        route: &str,
+        body: &[u8],
+    ) -> Result<T> {
+        ensure!(
+            body.len() <= MAX_BODY_BYTES,
+            "local-model IPC client body exceeds cap"
+        );
         let request = format!(
             "{method} {route} HTTP/1.1\r\nAuthorization: Bearer {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            self.token, body.len()
+            self.token,
+            body.len()
         );
         #[cfg(unix)]
         let response = {
@@ -666,8 +763,14 @@ where
         stream.write_all(body).await?;
         stream.shutdown().await?;
         let mut response = Vec::new();
-        stream.take((MAX_RESPONSE_ENVELOPE_BYTES + 1) as u64).read_to_end(&mut response).await?;
-        ensure!(response.len() <= MAX_RESPONSE_ENVELOPE_BYTES, "local-model IPC response exceeds cap");
+        stream
+            .take((MAX_RESPONSE_ENVELOPE_BYTES + 1) as u64)
+            .read_to_end(&mut response)
+            .await?;
+        ensure!(
+            response.len() <= MAX_RESPONSE_ENVELOPE_BYTES,
+            "local-model IPC response exceeds cap"
+        );
         Ok::<_, anyhow::Error>(response)
     })
     .await
@@ -675,21 +778,33 @@ where
 }
 
 fn parse_success_response<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T> {
-    let Some((head, body)) = bytes.windows(4).position(|window| window == b"\r\n\r\n")
-        .map(|index| (&bytes[..index], &bytes[index + 4..])) else {
+    let Some((head, body)) = bytes
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| (&bytes[..index], &bytes[index + 4..]))
+    else {
         bail!("local-model IPC response is malformed");
     };
     let head = std::str::from_utf8(head)?;
-    ensure!(head.starts_with("HTTP/1.1 200 "), "local-model IPC daemon rejected request");
-    ensure!(body.len() <= MAX_RESPONSE_BYTES, "local-model IPC response body exceeds cap");
+    ensure!(
+        head.starts_with("HTTP/1.1 200 "),
+        "local-model IPC daemon rejected request"
+    );
+    ensure!(
+        body.len() <= MAX_RESPONSE_BYTES,
+        "local-model IPC response body exceeds cap"
+    );
     serde_json::from_slice(body).context("decode local-model IPC response")
 }
 
 fn read_token(home: &Path) -> Result<String> {
     let bytes = read_private_child(home, TOKEN_FILE, MAX_RESPONSE_BYTES)?;
-    let token = String::from_utf8(crate::wal::compaction::maybe_unwrap_dpapi(&bytes, &home.join(TOKEN_FILE))?)?
-        .trim()
-        .to_owned();
+    let token = String::from_utf8(crate::wal::compaction::maybe_unwrap_dpapi(
+        &bytes,
+        &home.join(TOKEN_FILE),
+    )?)?
+    .trim()
+    .to_owned();
     ensure!(!token.is_empty(), "local-model IPC token is empty");
     Ok(token)
 }
@@ -700,12 +815,9 @@ fn read_private_json<T: for<'de> Deserialize<'de>>(home: &Path, name: &str) -> R
 }
 
 fn read_private_child(home: &Path, name: &str, max_bytes: usize) -> Result<Vec<u8>> {
-    let bound = crate::skills::store::open_bound_directory(
-        home,
-        false,
-        "local-model IPC home directory",
-    )?
-    .context("local-model IPC home is absent")?;
+    let bound =
+        crate::skills::store::open_bound_directory(home, false, "local-model IPC home directory")?
+            .context("local-model IPC home is absent")?;
     let path = bound.display_path.join(name);
     crate::skills::store::read_regular_file_bounded(&bound.dir, OsStr::new(name), &path, max_bytes)
         .with_context(|| format!("read private local-model IPC artifact {}", path.display()))
@@ -719,33 +831,63 @@ fn same_effective_uid(stream: &tokio::net::UnixStream) -> bool {
     // SAFETY: stream owns a live Unix socket for this call. The writable
     // buffer is exactly ucred-sized and length points to initialized storage.
     let result = unsafe {
-        libc::getsockopt(stream.as_raw_fd(), libc::SOL_SOCKET, libc::SO_PEERCRED,
-            credential.as_mut_ptr().cast(), &mut length)
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            credential.as_mut_ptr().cast(),
+            &mut length,
+        )
     };
-    if result != 0 || length as usize != std::mem::size_of::<libc::ucred>() { return false; }
+    if result != 0 || length as usize != std::mem::size_of::<libc::ucred>() {
+        return false;
+    }
     // SAFETY: successful SO_PEERCRED with the checked exact length initialized
     // every field of ucred. geteuid has no pointer or lifetime preconditions.
     unsafe { credential.assume_init().uid == libc::geteuid() }
 }
 
-#[cfg(any(target_os = "macos", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+))]
 fn same_effective_uid(stream: &tokio::net::UnixStream) -> bool {
     use std::os::fd::AsRawFd as _;
     let mut uid = 0;
     let mut gid = 0;
     // SAFETY: stream owns a live Unix socket; uid/gid are valid exclusive
     // out-pointers for the call. Read them only on success. geteuid is pointer-free.
-    unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) == 0
-        && uid == libc::geteuid() }
+    unsafe {
+        libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) == 0 && uid == libc::geteuid()
+    }
 }
 
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))))]
-fn same_effective_uid(_: &tokio::net::UnixStream) -> bool { false }
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    ))
+))]
+fn same_effective_uid(_: &tokio::net::UnixStream) -> bool {
+    false
+}
 
 #[cfg(test)]
 mod tests {
+    use super::super::local_models::{
+        LocalEndpointStatus, LocalHostResources, LocalModelActionKind,
+    };
     use super::*;
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, duplex};
+    use tokio::io::duplex;
 
     fn request(method: &str, path: &str, bearer: &str, body: &[u8]) -> Vec<u8> {
         [format!("{method} {path} HTTP/1.1\r\nAuthorization: Bearer {bearer}\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes(), body.to_vec()].concat()
@@ -755,7 +897,10 @@ mod tests {
     async fn fixture_request_parses_exact_status_route() {
         let (mut client, mut server) = duplex(MAX_REQUEST_BYTES);
         let fixture = request("GET", "/local-models/v1/status", "fixture", b"");
-        tokio::spawn(async move { client.write_all(&fixture).await.unwrap(); client.shutdown().await.unwrap(); });
+        tokio::spawn(async move {
+            client.write_all(&fixture).await.unwrap();
+            client.shutdown().await.unwrap();
+        });
         let parsed = read_request(&mut server).await.unwrap();
         assert_eq!(parsed.method, "GET");
         assert_eq!(parsed.path, "/local-models/v1/status");
@@ -765,7 +910,10 @@ mod tests {
     #[tokio::test]
     async fn malformed_request_is_rejected() {
         let (mut client, mut server) = duplex(128);
-        tokio::spawn(async move { client.write_all(b"GET / HTTP/1.0\r\n\r\n").await.unwrap(); client.shutdown().await.unwrap(); });
+        tokio::spawn(async move {
+            client.write_all(b"GET / HTTP/1.0\r\n\r\n").await.unwrap();
+            client.shutdown().await.unwrap();
+        });
         assert!(read_request(&mut server).await.is_none());
     }
 
@@ -773,7 +921,10 @@ mod tests {
     async fn request_size_bound_is_rejected() {
         let (mut client, mut server) = duplex(MAX_REQUEST_BYTES + 64);
         let payload = vec![b'x'; MAX_REQUEST_BYTES];
-        tokio::spawn(async move { client.write_all(&payload).await.unwrap(); client.shutdown().await.unwrap(); });
+        tokio::spawn(async move {
+            client.write_all(&payload).await.unwrap();
+            client.shutdown().await.unwrap();
+        });
         assert!(read_request(&mut server).await.is_none());
     }
 
@@ -787,9 +938,16 @@ mod tests {
     #[test]
     fn cancel_route_requires_exact_bounded_operation_id() {
         let route = "/local-models/v1/operations/op-0123/cancel";
-        let id = route.strip_prefix("/local-models/v1/operations/").unwrap().strip_suffix("/cancel").unwrap();
+        let id = route
+            .strip_prefix("/local-models/v1/operations/")
+            .unwrap()
+            .strip_suffix("/cancel")
+            .unwrap();
         assert_eq!(id, "op-0123");
-        assert!(id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'));
+        assert!(
+            id.bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        );
     }
 
     #[derive(Default)]
@@ -804,7 +962,9 @@ mod tests {
         LocalModelsSnapshot {
             schema_version: 1,
             observed_at_unix_ms: 1,
-            endpoint: LocalEndpointStatus::Unavailable { detail: "fixture".to_owned() },
+            endpoint: LocalEndpointStatus::Unavailable {
+                detail: "fixture".to_owned(),
+            },
             host_resources: LocalHostResources::default(),
             models: Vec::new(),
             active_operation: None,
@@ -814,7 +974,9 @@ mod tests {
 
     #[async_trait]
     impl LocalModelsService for FixtureService {
-        async fn status(&self) -> LocalModelsSnapshot { fixture_snapshot() }
+        async fn status(&self) -> LocalModelsSnapshot {
+            fixture_snapshot()
+        }
 
         async fn start(&self, action: LocalModelAction) -> LocalModelActionAck {
             let action_kind = match &action {
@@ -830,7 +992,9 @@ mod tests {
                     *self.started.lock().unwrap() = Some(format!("prune:{model}"));
                     LocalModelActionKind::Prune
                 }
-                LocalModelAction::Retry { terminal_operation_id } => {
+                LocalModelAction::Retry {
+                    terminal_operation_id,
+                } => {
                     *self.started.lock().unwrap() = Some(format!("retry:{terminal_operation_id}"));
                     LocalModelActionKind::Retry
                 }
@@ -875,29 +1039,50 @@ mod tests {
     #[tokio::test]
     async fn status_and_exact_cancel_route_while_start_is_pending() {
         let service = Arc::new(FixtureService::default());
-        let state = State { token: "fixture".to_owned(), service: service.clone() };
-        let (mut long_client, long_server) = duplex(MAX_REQUEST_BYTES + MAX_RESPONSE_ENVELOPE_BYTES);
+        let state = State {
+            token: "fixture".to_owned(),
+            service: service.clone(),
+        };
+        let (mut long_client, long_server) =
+            duplex(MAX_REQUEST_BYTES + MAX_RESPONSE_ENVELOPE_BYTES);
         let long_handler = tokio::spawn(handle_connection(
             long_server,
             state.clone(),
             Arc::new(Shutdown::new()),
         ));
-        long_client.write_all(&request(
-            "POST", "/local-models/v1/operations", "fixture",
-            br#"{"action":{"kind":"pull","model":"tiny"}}"#,
-        )).await.unwrap();
+        long_client
+            .write_all(&request(
+                "POST",
+                "/local-models/v1/operations",
+                "fixture",
+                br#"{"action":{"kind":"pull","model":"tiny"}}"#,
+            ))
+            .await
+            .unwrap();
         long_client.shutdown().await.unwrap();
         service.entered_start.notified().await;
 
         let status = fixture_exchange(
-            state.clone(), request("GET", "/local-models/v1/status", "fixture", b""),
-        ).await;
+            state.clone(),
+            request("GET", "/local-models/v1/status", "fixture", b""),
+        )
+        .await;
         assert!(status.starts_with(b"HTTP/1.1 200"));
         let cancel = fixture_exchange(
-            state, request("POST", "/local-models/v1/operations/op-long/cancel", "fixture", b""),
-        ).await;
+            state,
+            request(
+                "POST",
+                "/local-models/v1/operations/op-long/cancel",
+                "fixture",
+                b"",
+            ),
+        )
+        .await;
         assert!(cancel.starts_with(b"HTTP/1.1 200"));
-        assert_eq!(service.cancelled.lock().unwrap().as_deref(), Some("op-long"));
+        assert_eq!(
+            service.cancelled.lock().unwrap().as_deref(),
+            Some("op-long")
+        );
 
         service.release_start.notify_one();
         let mut long_response = Vec::new();
@@ -920,26 +1105,35 @@ mod tests {
         let start_client = Arc::clone(&client);
         let start = tokio::spawn(async move {
             start_client
-                .start(LocalModelAction::Pull { model: "tiny".to_owned() })
+                .start(LocalModelAction::Pull {
+                    model: "tiny".to_owned(),
+                })
                 .await
         });
         service.entered_start.notified().await;
-        assert_eq!(service.started.lock().unwrap().as_deref(), Some("pull:tiny"));
+        assert_eq!(
+            service.started.lock().unwrap().as_deref(),
+            Some("pull:tiny")
+        );
 
         // The long start owns its connection, while independent native-client
         // status and exact cancel routes remain available over fresh streams.
         let status_client = Arc::clone(&client);
         let cancel_client = Arc::clone(&client);
-        let (status, cancel) = tokio::join!(
-            status_client.status(),
-            cancel_client.cancel("op-long"),
-        );
+        let (status, cancel) =
+            tokio::join!(status_client.status(), cancel_client.cancel("op-long"),);
         assert_eq!(status.unwrap().schema_version, 1);
         assert!(cancel.unwrap().ok);
-        assert_eq!(service.cancelled.lock().unwrap().as_deref(), Some("op-long"));
+        assert_eq!(
+            service.cancelled.lock().unwrap().as_deref(),
+            Some("op-long")
+        );
 
         service.release_start.notify_one();
-        assert_eq!(start.await.unwrap().unwrap().operation_id.as_deref(), Some("op-long"));
+        assert_eq!(
+            start.await.unwrap().unwrap().operation_id.as_deref(),
+            Some("op-long")
+        );
 
         guard.stop();
         drop(guard);
@@ -951,7 +1145,10 @@ mod tests {
         let shutdown = Arc::new(Shutdown::new());
         let waiter = {
             let shutdown = Arc::clone(&shutdown);
-            tokio::spawn(async move { shutdown.cancelled().await; shutdown.stopped() })
+            tokio::spawn(async move {
+                shutdown.cancelled().await;
+                shutdown.stopped()
+            })
         };
         tokio::task::yield_now().await;
         shutdown.stop();
@@ -960,8 +1157,12 @@ mod tests {
     #[test]
     fn response_fixture_requires_success_status_and_json_body() {
         #[derive(Deserialize, PartialEq, Debug)]
-        struct Fixture { value: u8 }
-        let value: Fixture = parse_success_response(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n{\"value\":1}").unwrap();
+        struct Fixture {
+            value: u8,
+        }
+        let value: Fixture =
+            parse_success_response(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n{\"value\":1}")
+                .unwrap();
         assert_eq!(value, Fixture { value: 1 });
         assert!(parse_success_response::<Fixture>(b"HTTP/1.1 401 Unauthorized\r\n\r\n{}").is_err());
     }

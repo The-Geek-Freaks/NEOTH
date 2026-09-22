@@ -49,3 +49,16 @@ two common GUI parser tests and one Linux/macOS callback fixture are registered.
 Custom CLI instances use the config-parent IPC home via "--config"; GUI children
 inherit the selected NEOTH_HOME. The publication also includes the five narrow
 A130 headless-harness/unused-receipt Clippy repairs. No runtime pass is claimed.
+
+## Hosted follow-up on 2e7de3f6
+
+Code Quality35693421727 passed. Preflight35693422094 requested 150 unique
+formatting hunks in ten files (168 with native GUI aliases). The exact Hosted
+changes are imported; one masked Authorization format-string context was kept
+verbatim from the frozen input. No local formatter or parser was executed.
+Core check35693435347 failed with four compiler errors: a mutable IPC guard,
+two reqwest-to-anyhow conversions, and a shadowed fixture constructor. The
+repairs preserve operation outcomes, shutdown ownership and test assertions.
+The format and compiler receipts are retained in the W185 working directory.
+Fresh Hosted checks and native/GUI behavior are still required; no Gold item
+is closed by this repair publication.

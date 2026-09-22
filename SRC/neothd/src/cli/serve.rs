@@ -552,13 +552,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // W185: only an accepted native-Ollama provider owns this controller. The
     // reload controller rejects provider kind/endpoint/model changes, so this
     // endpoint cannot continue serving a stale configuration generation.
-    let local_models_runtime = crate::cli::serve_tasks::spawn_local_models_runtime(
-        &config,
-        &neoth_home,
-    )?;
+    let local_models_runtime =
+        crate::cli::serve_tasks::spawn_local_models_runtime(&config, &neoth_home)?;
     let (
         local_models_ipc_task,
-        local_models_ipc_guard,
+        mut local_models_ipc_guard,
         local_models_refresh_task,
         local_models_controller,
     ) = match local_models_runtime {

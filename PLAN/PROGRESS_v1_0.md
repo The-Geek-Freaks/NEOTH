@@ -2,27 +2,34 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
-**Current batch status (2026-09-22):** W185 adds daemon-owned Ollama inventory,
-model-specific readiness, pull/update/prune/cancel/explicit retry, private IPC,
-CLI/Buddy and Resources UI. The assembled source review passed after worker
-ownership/persistence, exact instance-home and peer-credential repairs. Thirty
-new native test identities and three GUI identities are registered; executable
-First Hosted Preflight/core runs (35679412294/35679420073) found a missing fixture delimiter; its exact source repair is applied, formatting and fresh compilation remain pending. GOLD-LF-P1-19 stays open. See [W185](../docs/gold-wave185-verification.md).
-W186 live capture/Silero is a separate working batch, not part of W185 admission.
+**Current batch status (2026-09-22):** W185 daemon-owned Ollama operations are
+published in `f091d5fe`, with the first fixture parse repair in `2e7de3f6`.
+Code Quality `35693421727` passed. Preflight `35693422094` exposed formatting;
+150 unique Hosted hunks across ten frozen files are imported. Core test check
+`35693435347` exposed four compiler errors (mutable guard, two error conversions,
+fixture-name shadowing); their narrow source repairs are applied. Fresh Hosted
+formatting, compilation and behavior remain pending. Thirty native and three
+GUI test identities are registered; GOLD-LF-P1-19 stays open. See
+[W185](../docs/gold-wave185-verification.md).
+W186 live capture/Silero remains a separate, unadmitted working batch. Its
+supply-input run `35693437183` failed because the Tract dependency closure
+requires `borsh >=1.7`. The Hosted resolver now permits only the reviewed
+`borsh 1.6.1 -> 1.8.1` transition and preserves every other existing identity
+and checksum. No dependency or model artifact has been imported.
 
-**W184 validation boundary:** published source `a130526e` repairs the seven
-strict-Clippy diagnostics and the Slint property/callback collision from
-`35676411709`. Preflight `35677728357` and Code Quality `35677727666` passed.
-Full CI `35677727994` found five more Linux headless-harness/unused-field lint errors; the narrow source repairs are included here. Windows/macOS jobs still run on that original source. Core test
-checking and CLI compilation previously passed on `eabc22a5` in `35675458308`;
-its generated reference and 127 unique formatting hunks are imported. These
-are separate source boundaries, not W185 behavior acceptance. P2-03 stays open.
-See [W184](../docs/gold-wave184-verification.md).
+**W184 validation boundary:** full CI `35677727994` on `a130526e` completed
+with failures: five Linux lint diagnostics (source-repaired in W185), 20 distinct
+Windows test failures and 21 macOS test failures. The test failures are grouped
+for targeted repair; they are not acceptance. Earlier core checking and CLI
+compilation on `eabc22a5` passed in `35675458308`. P2-03 stays open. See
+[W184](../docs/gold-wave184-verification.md).
 
-**W180 portable acceptance:** Windows preview `35671504968` retains source
-`850aad7e`; CLI, migration and relay builds passed, GUI build is in progress.
-Lifecycle/diff-impact acceptance and exact caller diagnostics remain pending.
-No local validation workloads are allowed under the BSOD hold.
+**W180 portable acceptance:** Windows preview `35671504968` on `850aad7e`
+completed native CLI, migration, relay and desktop-GUI builds and portable
+lifecycle acceptance successfully. Portable diff-impact acceptance failed:
+its diagnostic contains one impacted test function and no required caller edge.
+This remains an unresolved behavior failure. No local validation workloads are
+allowed under the BSOD hold.
 
 **W183 yearly period synthesis (2026-09-22):** the independently reviewed CLI
 and cron paths now share a strict Daily-archive composer, source/config hashes,

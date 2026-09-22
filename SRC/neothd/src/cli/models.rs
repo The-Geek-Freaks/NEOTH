@@ -332,7 +332,10 @@ async fn run_ollama(
 
     match action {
         OllamaModelsAction::Status => {
-            let snapshot = client.status().await.context("read local-model daemon status")?;
+            let snapshot = client
+                .status()
+                .await
+                .context("read local-model daemon status")?;
             render_ollama_snapshot(&snapshot, output)
         }
         action => {
@@ -366,14 +369,24 @@ enum OllamaIpcRequest {
 
 fn ollama_ipc_action(action: OllamaModelsAction) -> OllamaIpcRequest {
     match action {
-        OllamaModelsAction::Pull { model } => OllamaIpcRequest::Start(LocalModelAction::Pull { model }),
-        OllamaModelsAction::Update { model } => OllamaIpcRequest::Start(LocalModelAction::Update { model }),
-        OllamaModelsAction::Prune { model } => OllamaIpcRequest::Start(LocalModelAction::Prune { model }),
+        OllamaModelsAction::Pull { model } => {
+            OllamaIpcRequest::Start(LocalModelAction::Pull { model })
+        }
+        OllamaModelsAction::Update { model } => {
+            OllamaIpcRequest::Start(LocalModelAction::Update { model })
+        }
+        OllamaModelsAction::Prune { model } => {
+            OllamaIpcRequest::Start(LocalModelAction::Prune { model })
+        }
         OllamaModelsAction::Retry { operation_id } => {
-            OllamaIpcRequest::Start(LocalModelAction::Retry { terminal_operation_id: operation_id })
+            OllamaIpcRequest::Start(LocalModelAction::Retry {
+                terminal_operation_id: operation_id,
+            })
         }
         OllamaModelsAction::Cancel { operation_id } => OllamaIpcRequest::Cancel(operation_id),
-        OllamaModelsAction::Status => unreachable!("status is handled before IPC action conversion"),
+        OllamaModelsAction::Status => {
+            unreachable!("status is handled before IPC action conversion")
+        }
     }
 }
 
@@ -391,7 +404,10 @@ fn render_ollama_snapshot(snapshot: &LocalModelsSnapshot, output: OutputFormat) 
             println!("observed_at_unix_ms: {}", wire["observed_at_unix_ms"]);
             println!("models: {}", wire["models"].as_array().map_or(0, Vec::len));
             if let Some(operation) = wire["active_operation"].as_object() {
-                println!("active operation: {} ({})", operation["operation_id"], operation["action"]);
+                println!(
+                    "active operation: {} ({})",
+                    operation["operation_id"], operation["action"]
+                );
             }
             for model in wire["models"].as_array().into_iter().flatten() {
                 println!(
@@ -1262,10 +1278,9 @@ mod tests {
 
     #[test]
     fn ollama_nested_commands_preserve_exact_selectors_and_operation_ids() {
-        let pull = ModelsCli::try_parse_from([
-            "models", "ollama", "pull", "qwen2.5:7b-instruct-q4_K_M",
-        ])
-        .expect("ollama pull parses");
+        let pull =
+            ModelsCli::try_parse_from(["models", "ollama", "pull", "qwen2.5:7b-instruct-q4_K_M"])
+                .expect("ollama pull parses");
         assert!(matches!(
             ollama_ipc_action(match pull.args.action {
                 ModelsAction::Ollama { action, .. } => action,
@@ -1295,7 +1310,10 @@ mod tests {
         ])
         .expect("ollama custom config parses");
         let config = match cli.args.action {
-            ModelsAction::Ollama { config, action: OllamaModelsAction::Status } => config,
+            ModelsAction::Ollama {
+                config,
+                action: OllamaModelsAction::Status,
+            } => config,
             _ => unreachable!("expected Ollama status with a config override"),
         };
         assert_eq!(

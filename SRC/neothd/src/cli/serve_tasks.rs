@@ -4351,11 +4351,9 @@ pub(crate) fn spawn_local_models_runtime(
         crate::daemon::local_models::LocalModelController::new(home.to_path_buf(), endpoint)
             .context("initialize local-model controller")?,
     );
-    let (ipc_task, ipc_guard) = crate::daemon::local_models_ipc::bind_and_serve(
-        home,
-        Arc::clone(&controller),
-    )
-    .context("bind private local-model IPC")?;
+    let (ipc_task, ipc_guard) =
+        crate::daemon::local_models_ipc::bind_and_serve(home, Arc::clone(&controller))
+            .context("bind private local-model IPC")?;
     let refresh_controller = Arc::clone(&controller);
     let refresh_task = tokio::spawn(async move {
         let mut cadence = tokio::time::interval(std::time::Duration::from_secs(30));
