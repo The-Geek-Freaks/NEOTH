@@ -62,3 +62,7 @@ repairs preserve operation outcomes, shutdown ownership and test assertions.
 The format and compiler receipts are retained in the W185 working directory.
 Fresh Hosted checks and native/GUI behavior are still required; no Gold item
 is closed by this repair publication.
+
+Repair source87c18246 passed Code Quality35694661630. One final formatting
+hunk from Preflight35694662282 is imported without a semantic change. Its core
+check35694693234 remains in progress; native behavior is not accepted.

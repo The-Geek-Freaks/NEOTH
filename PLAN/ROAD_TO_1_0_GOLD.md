@@ -17,11 +17,14 @@ fixture-name shadowing); their narrow source repairs are applied. Fresh Hosted
 formatting, compilation and behavior remain pending. Thirty native and three
 GUI test identities are registered; GOLD-LF-P1-19 stays open. See
 [W185](../docs/gold-wave185-verification.md).
-W186 live capture/Silero remains a separate, unadmitted working batch. Its
-supply-input run `35693437183` failed because the Tract dependency closure
-requires `borsh >=1.7`. The Hosted resolver now permits only the reviewed
-`borsh 1.6.1 -> 1.8.1` transition and preserves every other existing identity
-and checksum. No dependency or model artifact has been imported.
+W185 repair `87c18246` is published. Code Quality `35694661630` passed;
+one final format hunk from Preflight `35694662282` is imported. Core check
+`35694693234` is still running on that source; no behavior acceptance is claimed.
+W186 live capture/Silero remains a separate, unadmitted working batch. Hosted
+supply-input run `35694695810` on `87c18246` succeeded with the exact reviewed
+`borsh 1.6.1 -> 1.8.1` transition. Its artifact is retained and all 85 checksums,
+source commit and three local dependency inputs match. Native dependency/model
+integration, desktop feature selection and audio behavior remain pending.
 
 **W184 validation boundary:** full CI `35677727994` on `a130526e` completed
 with failures: five Linux lint diagnostics (source-repaired in W185), 20 distinct

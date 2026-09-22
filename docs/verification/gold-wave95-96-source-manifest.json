@@ -1,8 +1,8 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W185-local-model-operations",
-  "base": "2e7de3f618b588934799d0015e40e3b026d061f0",
-  "capturedUtc": "2026-09-22T06:21:36.125713Z",
+  "base": "87c182466b9f3cd0c96fa77062a69c036b8d96b5",
+  "capturedUtc": "2026-09-22T06:26:52.0532576Z",
   "validationStatus": "W185_HOSTED_FORMAT_AND_CORE_REPAIRS_PENDING_RECHECK",
   "scopeNote": "150 unique Hosted formatting hunks plus four core compiler repairs; native/GUI behavior still pending. Historical freeze objects preserved; W186 product code excluded.",
   "files": [
@@ -1313,8 +1313,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/local_models/tests.rs",
-      "bytes": 34758,
-      "sha256": "617634B87D699C14A7429EED602FA50622C01641928A57094AFE068428D63863"
+      "bytes": 34845,
+      "sha256": "ACECB61545DF4B29A4CA53F2093D0F9D94584BD8E4DF51BF34B2BE3C982016A2"
     },
     {
       "path": "SRC/neothd/src/daemon/metering.rs",

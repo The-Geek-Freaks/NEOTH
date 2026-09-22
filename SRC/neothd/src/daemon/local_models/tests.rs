@@ -648,7 +648,15 @@ async fn pull_requires_terminal_success_and_fresh_target_inventory() {
         snapshot.last_terminal_operation.expect("receipt").outcome,
         LocalModelTerminalOutcome::InterruptedUnknown
     ));
-    assert_eq!(missing_target_harness.fixture.state.lock().await.pulls_started, 1);
+    assert_eq!(
+        missing_target_harness
+            .fixture
+            .state
+            .lock()
+            .await
+            .pulls_started,
+        1
+    );
     missing_target_harness.stop().await;
 
     let mut eof = FixtureState::default();
