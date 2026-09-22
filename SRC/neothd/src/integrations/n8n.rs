@@ -23,9 +23,9 @@ use super::catalog::{
 };
 use super::jobs::EnqueueIntegrationJob;
 use super::state::{
-    CancellationEvidence, IntegrationJob, JobEvidenceContract, JobFailure, JobId, JobOperation, JobProgress, JobRequester,
-    JobState, ProgressEvidence, ProgressEvidenceClaim, ReadyEvidence, RecoveryDispositionEvidence,
-    RestartDecision, Sha256Digest,
+    CancellationEvidence, IntegrationJob, JobEvidenceContract, JobFailure, JobId, JobOperation,
+    JobProgress, JobRequester, JobState, ProgressEvidence, ProgressEvidenceClaim, ReadyEvidence,
+    RecoveryDispositionEvidence, RestartDecision, Sha256Digest,
 };
 use super::{EnqueueResult, IntegrationJobService, JobServiceError, RestartValidator};
 
@@ -98,11 +98,19 @@ impl N8nProbeError {
 
     pub fn redacted_message(self) -> &'static str {
         match self {
-            Self::Unauthorized => "The n8n API key was rejected by the configured loopback instance.",
-            Self::Timeout => "The configured loopback n8n API did not respond before the bounded timeout.",
-            Self::Redirect => "The configured loopback n8n API returned a redirect, which adoption rejects.",
+            Self::Unauthorized => {
+                "The n8n API key was rejected by the configured loopback instance."
+            }
+            Self::Timeout => {
+                "The configured loopback n8n API did not respond before the bounded timeout."
+            }
+            Self::Redirect => {
+                "The configured loopback n8n API returned a redirect, which adoption rejects."
+            }
             Self::ResponseTooLarge => "The n8n API response exceeded the adoption body limit.",
-            Self::InvalidResponse => "The configured endpoint did not return the documented n8n workflows response.",
+            Self::InvalidResponse => {
+                "The configured endpoint did not return the documented n8n workflows response."
+            }
             Self::Transport => "The configured loopback n8n API could not be reached.",
         }
     }
@@ -128,11 +136,25 @@ pub(in crate::integrations) struct HttpN8nApiProbe;
 impl N8nApiProbe for HttpN8nApiProbe {
     async fn negative_control(&self, endpoint: &LoopbackHttpEndpoint) -> Result<(), N8nProbeError> {
         let client = bounded_n8n_client()?;
-        let response = client.get(format!("{}{}", endpoint.origin(), N8N_WORKFLOWS_PATH))
-            .query(&[("limit", "1")]).send().await
-            .map_err(|error| if error.is_timeout() { N8nProbeError::Timeout } else { N8nProbeError::Transport })?;
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED || response.status() == reqwest::StatusCode::FORBIDDEN { Ok(()) }
-        else { Err(N8nProbeError::InvalidResponse) }
+        let response = client
+            .get(format!("{}{}", endpoint.origin(), N8N_WORKFLOWS_PATH))
+            .query(&[("limit", "1")])
+            .send()
+            .await
+            .map_err(|error| {
+                if error.is_timeout() {
+                    N8nProbeError::Timeout
+                } else {
+                    N8nProbeError::Transport
+                }
+            })?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+            || response.status() == reqwest::StatusCode::FORBIDDEN
+        {
+            Ok(())
+        } else {
+            Err(N8nProbeError::InvalidResponse)
+        }
     }
 
     async fn authenticated_probe(
@@ -148,21 +170,44 @@ impl N8nApiProbe for HttpN8nApiProbe {
             .header("X-N8N-API-KEY", api_key.expose())
             .send()
             .await
-            .map_err(|error| if error.is_timeout() { N8nProbeError::Timeout } else { N8nProbeError::Transport })?;
-        if response.status().is_redirection() { return Err(N8nProbeError::Redirect); }
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED || response.status() == reqwest::StatusCode::FORBIDDEN {
+            .map_err(|error| {
+                if error.is_timeout() {
+                    N8nProbeError::Timeout
+                } else {
+                    N8nProbeError::Transport
+                }
+            })?;
+        if response.status().is_redirection() {
+            return Err(N8nProbeError::Redirect);
+        }
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+            || response.status() == reqwest::StatusCode::FORBIDDEN
+        {
             return Err(N8nProbeError::Unauthorized);
         }
-        if !response.status().is_success() { return Err(N8nProbeError::InvalidResponse); }
-        if response.content_length().is_some_and(|len| len > N8N_PROBE_BODY_MAX as u64) {
+        if !response.status().is_success() {
+            return Err(N8nProbeError::InvalidResponse);
+        }
+        if response
+            .content_length()
+            .is_some_and(|len| len > N8N_PROBE_BODY_MAX as u64)
+        {
             return Err(N8nProbeError::ResponseTooLarge);
         }
         let status = response.status().as_u16();
         let mut body = Vec::new();
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|error| if error.is_timeout() { N8nProbeError::Timeout } else { N8nProbeError::Transport })?;
-            if body.len().saturating_add(chunk.len()) > N8N_PROBE_BODY_MAX { return Err(N8nProbeError::ResponseTooLarge); }
+            let chunk = chunk.map_err(|error| {
+                if error.is_timeout() {
+                    N8nProbeError::Timeout
+                } else {
+                    N8nProbeError::Transport
+                }
+            })?;
+            if body.len().saturating_add(chunk.len()) > N8N_PROBE_BODY_MAX {
+                return Err(N8nProbeError::ResponseTooLarge);
+            }
             body.extend_from_slice(&chunk);
         }
         parse_workflows_response(endpoint.clone(), status, &body)
@@ -185,16 +230,31 @@ fn parse_workflows_response(
     http_status: u16,
     body: &[u8],
 ) -> Result<N8nProbeReceipt, N8nProbeError> {
-    let value: serde_json::Value = serde_json::from_slice(body).map_err(|_| N8nProbeError::InvalidResponse)?;
+    let value: serde_json::Value =
+        serde_json::from_slice(body).map_err(|_| N8nProbeError::InvalidResponse)?;
     let object = value.as_object().ok_or(N8nProbeError::InvalidResponse)?;
-    let rows = object.get("data").and_then(serde_json::Value::as_array).ok_or(N8nProbeError::InvalidResponse)?;
+    let rows = object
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(N8nProbeError::InvalidResponse)?;
     let has_next_cursor = match object.get("nextCursor") {
         None | Some(serde_json::Value::Null) => false,
-        Some(serde_json::Value::String(cursor)) if !cursor.is_empty() && cursor.len() <= 1024 && !cursor.chars().any(char::is_control) => true,
+        Some(serde_json::Value::String(cursor))
+            if !cursor.is_empty()
+                && cursor.len() <= 1024
+                && !cursor.chars().any(char::is_control) =>
+        {
+            true
+        }
         _ => return Err(N8nProbeError::InvalidResponse),
     };
     let workflow_rows = u32::try_from(rows.len()).map_err(|_| N8nProbeError::InvalidResponse)?;
-    Ok(N8nProbeReceipt { endpoint, http_status, workflow_rows, has_next_cursor })
+    Ok(N8nProbeReceipt {
+        endpoint,
+        http_status,
+        workflow_rows,
+        has_next_cursor,
+    })
 }
 
 /// Public, persisted-safe CLI projection. It intentionally has no live probe,
@@ -219,8 +279,11 @@ pub struct N8nJobStatusView {
 impl From<&IntegrationJob> for N8nJobStatusView {
     fn from(job: &IntegrationJob) -> Self {
         Self {
-            id: job.job_id.clone(), state: job.state, current_step: job.current_step.clone(),
-            completed_steps: job.progress.completed_steps, total_steps: job.progress.total_steps,
+            id: job.job_id.clone(),
+            state: job.state,
+            current_step: job.current_step.clone(),
+            completed_steps: job.progress.completed_steps,
+            total_steps: job.progress.total_steps,
             failure_code: job.failure.as_ref().map(|failure| failure.code.clone()),
         }
     }
@@ -258,9 +321,16 @@ pub(in crate::integrations) fn enqueue_adoption(
     requester: JobRequester,
 ) -> Result<EnqueueResult, JobServiceError> {
     let artifact = sha256_parts(&[N8N_CAPABILITY_ID, ADAPTER_REVISION, endpoint.origin()]);
-    let config = sha256_parts(&[N8N_CAPABILITY_ID, endpoint.origin(), "credentials.n8n_api_key"]);
+    let config = sha256_parts(&[
+        N8N_CAPABILITY_ID,
+        endpoint.origin(),
+        "credentials.n8n_api_key",
+    ]);
     let contract = JobEvidenceContract::verified(
-        artifact.clone(), config, expected_authenticated_probe_sha256(endpoint), step_plan_sha256(),
+        artifact.clone(),
+        config,
+        expected_authenticated_probe_sha256(endpoint),
+        step_plan_sha256(),
     );
     service.enqueue(EnqueueIntegrationJob {
         capability_id: CapabilityId::parse(N8N_CAPABILITY_ID).expect("static id is valid"),
@@ -280,7 +350,10 @@ pub(crate) fn enqueue_required_input_failure(
     requester: JobRequester,
 ) -> Result<IntegrationJob, JobServiceError> {
     enqueue_terminal_failure(
-        service, endpoint, requester, "required_input",
+        service,
+        endpoint,
+        requester,
+        "required_input",
         "Provide the n8n API key through standard input and retry the adopt command.",
     )
 }
@@ -295,22 +368,31 @@ fn enqueue_terminal_failure(
     let artifact = sha256_parts(&[N8N_CAPABILITY_ID, ADAPTER_REVISION, endpoint.origin()]);
     let contract = JobEvidenceContract::verified(
         artifact.clone(),
-        sha256_parts(&[N8N_CAPABILITY_ID, endpoint.origin(), "credentials.n8n_api_key"]),
+        sha256_parts(&[
+            N8N_CAPABILITY_ID,
+            endpoint.origin(),
+            "credentials.n8n_api_key",
+        ]),
         sha256_parts(&["n8n-probe-not-run"]),
         step_plan_sha256(),
     );
-    let queued = service.enqueue(EnqueueIntegrationJob {
-        capability_id: CapabilityId::parse(N8N_CAPABILITY_ID).expect("static id is valid"),
-        operation: JobOperation::Install,
-        release_version: ADAPTER_REVISION.into(),
-        manifest_sha256: artifact,
-        evidence_contract: contract,
-        requested_by: requester,
-        total_steps: N8N_ADOPTION_STEPS.len() as u32,
-        bytes_total: None,
-    })?.job;
-    service.fail(&queued.job_id, queued.state_revision,
-        JobFailure::new(code, message).expect("fixed n8n terminal failure is valid"))
+    let queued = service
+        .enqueue(EnqueueIntegrationJob {
+            capability_id: CapabilityId::parse(N8N_CAPABILITY_ID).expect("static id is valid"),
+            operation: JobOperation::Install,
+            release_version: ADAPTER_REVISION.into(),
+            manifest_sha256: artifact,
+            evidence_contract: contract,
+            requested_by: requester,
+            total_steps: N8N_ADOPTION_STEPS.len() as u32,
+            bytes_total: None,
+        })?
+        .job;
+    service.fail(
+        &queued.job_id,
+        queued.state_revision,
+        JobFailure::new(code, message).expect("fixed n8n terminal failure is valid"),
+    )
 }
 
 /// Owns the only durable n8n consumer and proves restart disposition against
@@ -323,7 +405,10 @@ pub(in crate::integrations) struct N8nRestartValidator {
 
 impl N8nRestartValidator {
     pub fn new(home: &Path) -> Self {
-        Self { freedom_path: home.join("freedom.yaml"), credentials_path: home.join("credentials.yaml") }
+        Self {
+            freedom_path: home.join("freedom.yaml"),
+            credentials_path: home.join("credentials.yaml"),
+        }
     }
 }
 
@@ -349,16 +434,22 @@ impl RestartValidator for N8nRestartValidator {
                 ),
             };
         };
-        let disposition = |custody| RecoveryDispositionEvidence::verified(
-            job.job_id.clone(), job.manifest_sha256.clone(),
-            contract.step_plan_sha256().clone(),
-            job.state_revision, sha256_parts(&["n8n-no-owned-process"]),
-            sha256_parts(&[custody]),
-        );
-        let reject = |code: &str| RestartDecision::Reject {
+        let disposition = |custody| {
+            RecoveryDispositionEvidence::verified(
+                job.job_id.clone(),
+                job.manifest_sha256.clone(),
+                contract.step_plan_sha256().clone(),
+                job.state_revision,
+                sha256_parts(&["n8n-no-owned-process"]),
+                sha256_parts(&[custody]),
+            )
+        };
+        let reject = |code: &str| {
+            RestartDecision::Reject {
             failure: JobFailure::new(code, "The interrupted n8n adoption could not prove its exact durable binding; retry adoption.")
                 .expect("static failure is valid"),
             disposition: disposition("n8n-custody-rolled-back"),
+        }
         };
         // There is no daemon worker to resume after this process exits. An
         // active adoption must therefore compensate its exact custody record
@@ -384,7 +475,8 @@ impl RestartValidator for N8nRestartValidator {
 }
 
 pub(crate) fn open_n8n_job_service(home: &Path) -> Result<IntegrationJobService, JobServiceError> {
-    let service = IntegrationJobService::open(home, n8n_catalog(), &N8nRestartValidator::new(home))?;
+    let service =
+        IntegrationJobService::open(home, n8n_catalog(), &N8nRestartValidator::new(home))?;
     // A Ready row is immutable evidence of a completed publication. If the
     // best-effort custody-file removal was interrupted after Ready, retry only
     // that removal on the next owned adapter open. Failure intentionally leaves
@@ -396,8 +488,12 @@ pub(crate) fn open_n8n_job_service(home: &Path) -> Result<IntegrationJobService,
         // retained for status/open repair; it must not turn a completed
         // adoption into an unredacted open error or touch another capability.
         if crate::config::credentials::Credentials::finish_n8n_adoption_at(
-            &home.join("freedom.yaml"), &home.join("credentials.yaml"), job.job_id.as_str(),
-        ).is_err() { }
+            &home.join("freedom.yaml"),
+            &home.join("credentials.yaml"),
+            job.job_id.as_str(),
+        )
+        .is_err()
+        {}
     }
     Ok(service)
 }
@@ -433,17 +529,30 @@ pub(crate) async fn adopt_at_with_cancel(
         return Ok(service.request_cancel(&queued.job_id, queued.state_revision)?);
     }
     let running = service.start(&queued.job_id, queued.state_revision, N8N_ADOPTION_STEPS[0])?;
-    let running = checkpoint(&service, &running, 1, N8N_ADOPTION_STEPS[0], "n8n-endpoint-validated")?;
-    let validating = service.begin_validation(&running.job_id, running.state_revision, N8N_ADOPTION_STEPS[1])?;
+    let running = checkpoint(
+        &service,
+        &running,
+        1,
+        N8N_ADOPTION_STEPS[0],
+        "n8n-endpoint-validated",
+    )?;
+    let validating = service.begin_validation(
+        &running.job_id,
+        running.state_revision,
+        N8N_ADOPTION_STEPS[1],
+    )?;
     let negative = tokio::select! {
         biased;
         _ = &mut *cancel_rx => return cancel_without_binding(&service, &validating),
         result = probe.negative_control(&endpoint) => result,
     };
     if let Err(error) = negative {
-        return Ok(service.fail(&validating.job_id, validating.state_revision, JobFailure::new(
-            error.code(), error.redacted_message(),
-        ).expect("fixed n8n terminal failure is valid"))?);
+        return Ok(service.fail(
+            &validating.job_id,
+            validating.state_revision,
+            JobFailure::new(error.code(), error.redacted_message())
+                .expect("fixed n8n terminal failure is valid"),
+        )?);
     }
     let precommit = tokio::select! {
         biased;
@@ -452,39 +561,87 @@ pub(crate) async fn adopt_at_with_cancel(
     };
     let precommit = match precommit {
         Ok(receipt) => receipt,
-        Err(error) => return Ok(service.fail(&validating.job_id, validating.state_revision, JobFailure::new(
-            error.code(), error.redacted_message(),
-        ).expect("fixed n8n terminal failure is valid"))?),
+        Err(error) => {
+            return Ok(service.fail(
+                &validating.job_id,
+                validating.state_revision,
+                JobFailure::new(error.code(), error.redacted_message())
+                    .expect("fixed n8n terminal failure is valid"),
+            )?);
+        }
     };
-    let validating = checkpoint(&service, &validating, 2, N8N_ADOPTION_STEPS[1], "n8n-precommit-probed")?;
+    let validating = checkpoint(
+        &service,
+        &validating,
+        2,
+        N8N_ADOPTION_STEPS[1],
+        "n8n-precommit-probed",
+    )?;
     let prepared = match crate::config::credentials::Credentials::prepare_n8n_adoption_at(
-        &home.join("freedom.yaml"), &home.join("credentials.yaml"), validating.job_id.as_str(),
-        crate::config::N8nInstanceConfig { endpoint: endpoint.clone(), api_version: None }, api_key,
+        &home.join("freedom.yaml"),
+        &home.join("credentials.yaml"),
+        validating.job_id.as_str(),
+        crate::config::N8nInstanceConfig {
+            endpoint: endpoint.clone(),
+            api_version: None,
+        },
+        api_key,
     ) {
         Ok(prepared) => prepared,
-        Err(_) => return Ok(service.fail(&validating.job_id, validating.state_revision, JobFailure::new(
-            "adoption_prepare_failed", "The n8n endpoint and credential binding could not be prepared.",
-        ).expect("static failure is valid"))?),
+        Err(_) => {
+            return Ok(service.fail(
+                &validating.job_id,
+                validating.state_revision,
+                JobFailure::new(
+                    "adoption_prepare_failed",
+                    "The n8n endpoint and credential binding could not be prepared.",
+                )
+                .expect("static failure is valid"),
+            )?);
+        }
     };
-    let configuring = match service.begin_configuration(&validating.job_id, validating.state_revision, N8N_ADOPTION_STEPS[2]) {
+    let configuring = match service.begin_configuration(
+        &validating.job_id,
+        validating.state_revision,
+        N8N_ADOPTION_STEPS[2],
+    ) {
         Ok(job) => job,
-        Err(_) => return rollback_and_fail(&service, &validating, home, "adoption_prepare_failed").await,
+        Err(_) => {
+            return rollback_and_fail(&service, &validating, home, "adoption_prepare_failed").await;
+        }
     };
-    if let Some(cancelled) = cancel_if_requested(&service, &configuring, home)? { return Ok(cancelled); }
+    if let Some(cancelled) = cancel_if_requested(&service, &configuring, home)? {
+        return Ok(cancelled);
+    }
     if crate::config::credentials::Credentials::commit_prepared_n8n_adoption_at(prepared).is_err() {
         return rollback_and_fail(&service, &configuring, home, "adoption_publish_failed").await;
     }
-    let configuring = match checkpoint(&service, &configuring, 3, N8N_ADOPTION_STEPS[2], "n8n-binding-published") {
-        Ok(job) => job,
-        Err(_) => return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed").await,
-    };
-    if let Some(cancelled) = cancel_if_requested(&service, &configuring, home)? { return Ok(cancelled); }
-    let (stored_instance, stored_key) = match crate::config::credentials::Credentials::read_n8n_adoption_binding_at(
-        &home.join("freedom.yaml"), &home.join("credentials.yaml"),
+    let configuring = match checkpoint(
+        &service,
+        &configuring,
+        3,
+        N8N_ADOPTION_STEPS[2],
+        "n8n-binding-published",
     ) {
-        Ok(binding) => binding,
-        Err(_) => return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed").await,
+        Ok(job) => job,
+        Err(_) => {
+            return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed").await;
+        }
     };
+    if let Some(cancelled) = cancel_if_requested(&service, &configuring, home)? {
+        return Ok(cancelled);
+    }
+    let (stored_instance, stored_key) =
+        match crate::config::credentials::Credentials::read_n8n_adoption_binding_at(
+            &home.join("freedom.yaml"),
+            &home.join("credentials.yaml"),
+        ) {
+            Ok(binding) => binding,
+            Err(_) => {
+                return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed")
+                    .await;
+            }
+        };
     let stored_endpoint = stored_instance.endpoint;
     let postcommit = tokio::select! {
         biased;
@@ -495,28 +652,56 @@ pub(crate) async fn adopt_at_with_cancel(
         probe_result = probe.authenticated_probe(&stored_endpoint, &stored_key) => probe_result,
     };
     let postcommit = match postcommit {
-        Ok(receipt) if receipt.authenticated_probe_sha256() == precommit.authenticated_probe_sha256() => receipt,
-        _ => return rollback_and_fail(&service, &configuring, home, "n8n_postcommit_probe_failed").await,
+        Ok(receipt)
+            if receipt.authenticated_probe_sha256() == precommit.authenticated_probe_sha256() =>
+        {
+            receipt
+        }
+        _ => {
+            return rollback_and_fail(&service, &configuring, home, "n8n_postcommit_probe_failed")
+                .await;
+        }
     };
-    let configuring = match checkpoint(&service, &configuring, 4, N8N_ADOPTION_STEPS[3], "n8n-postcommit-probed") {
+    let configuring = match checkpoint(
+        &service,
+        &configuring,
+        4,
+        N8N_ADOPTION_STEPS[3],
+        "n8n-postcommit-probed",
+    ) {
         Ok(job) => job,
-        Err(_) => return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed").await,
+        Err(_) => {
+            return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed").await;
+        }
     };
-    if let Some(cancelled) = cancel_if_requested(&service, &configuring, home)? { return Ok(cancelled); }
-    let contract = configuring.evidence_contract.as_ref().expect("enqueued n8n job has evidence contract");
+    if let Some(cancelled) = cancel_if_requested(&service, &configuring, home)? {
+        return Ok(cancelled);
+    }
+    let contract = configuring
+        .evidence_contract
+        .as_ref()
+        .expect("enqueued n8n job has evidence contract");
     let ready = ReadyEvidence::verified(
-        configuring.job_id.clone(), configuring.manifest_sha256.clone(),
-        contract.artifact_binding_sha256().clone(), contract.config_binding_sha256().clone(),
-        postcommit.authenticated_probe_sha256(), contract.step_plan_sha256().clone(),
+        configuring.job_id.clone(),
+        configuring.manifest_sha256.clone(),
+        contract.artifact_binding_sha256().clone(),
+        contract.config_binding_sha256().clone(),
+        postcommit.authenticated_probe_sha256(),
+        contract.step_plan_sha256().clone(),
     );
-    let ready_job = match service.mark_ready(&configuring.job_id, configuring.state_revision, ready) {
+    let ready_job = match service.mark_ready(&configuring.job_id, configuring.state_revision, ready)
+    {
         Ok(job) => job,
-        Err(_) => return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed").await,
+        Err(_) => {
+            return rollback_and_fail(&service, &configuring, home, "adoption_cleanup_failed").await;
+        }
     };
     // Ready is the durable user-visible completion boundary. Cleanup failure
     // only retains the private custody record for the next adapter open.
     let _ = crate::config::credentials::Credentials::finish_n8n_adoption_at(
-        &home.join("freedom.yaml"), &home.join("credentials.yaml"), ready_job.job_id.as_str(),
+        &home.join("freedom.yaml"),
+        &home.join("credentials.yaml"),
+        ready_job.job_id.as_str(),
     );
     Ok(ready_job)
 }
@@ -529,28 +714,45 @@ fn cancel_without_binding(
     if requested.state == JobState::Cancelled {
         return Ok(requested);
     }
-    let contract = requested.evidence_contract.as_ref().expect("active n8n job has immutable evidence contract");
+    let contract = requested
+        .evidence_contract
+        .as_ref()
+        .expect("active n8n job has immutable evidence contract");
     let evidence = CancellationEvidence::verified(
-        requested.job_id.clone(), requested.manifest_sha256.clone(), contract.step_plan_sha256().clone(),
-        requested.state_revision, sha256_parts(&["n8n-no-owned-process"]),
+        requested.job_id.clone(),
+        requested.manifest_sha256.clone(),
+        contract.step_plan_sha256().clone(),
+        requested.state_revision,
+        sha256_parts(&["n8n-no-owned-process"]),
         sha256_parts(&["n8n-no-binding-published"]),
     );
     Ok(service.acknowledge_cancel(&requested.job_id, requested.state_revision, evidence)?)
 }
 
-pub(crate) fn status_at(home: &Path, selected_job: Option<&JobId>) -> anyhow::Result<N8nStatusView> {
-    let (configured_endpoint, api_key_present) = crate::config::credentials::Credentials::read_n8n_adoption_status_at(
-        &home.join("freedom.yaml"), &home.join("credentials.yaml"),
-    )?;
+pub(crate) fn status_at(
+    home: &Path,
+    selected_job: Option<&JobId>,
+) -> anyhow::Result<N8nStatusView> {
+    let (configured_endpoint, api_key_present) =
+        crate::config::credentials::Credentials::read_n8n_adoption_status_at(
+            &home.join("freedom.yaml"),
+            &home.join("credentials.yaml"),
+        )?;
     let jobs: Vec<_> = IntegrationJobService::read_only_snapshot(home)?
         .into_iter()
         .filter(|candidate| candidate.capability_id.as_str() == N8N_CAPABILITY_ID)
         .collect();
     let job = match selected_job {
         Some(id) => jobs.into_iter().find(|candidate| &candidate.job_id == id),
-        None => jobs.into_iter().max_by_key(|candidate| (candidate.updated_at, candidate.job_id.clone())),
+        None => jobs
+            .into_iter()
+            .max_by_key(|candidate| (candidate.updated_at, candidate.job_id.clone())),
     };
-    Ok(N8nStatusView { configured_endpoint, api_key_present, job: job.as_ref().map(N8nJobStatusView::from) })
+    Ok(N8nStatusView {
+        configured_endpoint,
+        api_key_present,
+        job: job.as_ref().map(N8nJobStatusView::from),
+    })
 }
 
 fn checkpoint(
@@ -560,15 +762,35 @@ fn checkpoint(
     step: &str,
     staging: &str,
 ) -> Result<IntegrationJob, JobServiceError> {
-    let contract = job.evidence_contract.as_ref().expect("n8n job has immutable evidence contract");
-    let progress = JobProgress { completed_steps, total_steps: N8N_ADOPTION_STEPS.len() as u32, bytes_done: 0, bytes_total: None };
+    let contract = job
+        .evidence_contract
+        .as_ref()
+        .expect("n8n job has immutable evidence contract");
+    let progress = JobProgress {
+        completed_steps,
+        total_steps: N8N_ADOPTION_STEPS.len() as u32,
+        bytes_done: 0,
+        bytes_total: None,
+    };
     let evidence = ProgressEvidence::claimed(ProgressEvidenceClaim {
-        job_id: job.job_id.clone(), manifest_sha256: job.manifest_sha256.clone(),
-        step_plan_sha256: contract.step_plan_sha256().clone(), staging_binding_sha256: sha256_parts(&[staging]),
-        expected_revision: job.state_revision, expected_state: job.state,
-        current_phase: step.into(), completed_steps, bytes_done: 0,
+        job_id: job.job_id.clone(),
+        manifest_sha256: job.manifest_sha256.clone(),
+        step_plan_sha256: contract.step_plan_sha256().clone(),
+        staging_binding_sha256: sha256_parts(&[staging]),
+        expected_revision: job.state_revision,
+        expected_state: job.state,
+        current_phase: step.into(),
+        completed_steps,
+        bytes_done: 0,
     });
-    service.update_progress(&job.job_id, job.state_revision, job.state, progress, Some(step.into()), evidence)
+    service.update_progress(
+        &job.job_id,
+        job.state_revision,
+        job.state,
+        progress,
+        Some(step.into()),
+        evidence,
+    )
 }
 
 async fn rollback_and_fail(
@@ -578,14 +800,26 @@ async fn rollback_and_fail(
     requested_code: &str,
 ) -> anyhow::Result<IntegrationJob> {
     let rollback = crate::config::credentials::Credentials::rollback_n8n_adoption_at(
-        &home.join("freedom.yaml"), &home.join("credentials.yaml"), job.job_id.as_str(),
+        &home.join("freedom.yaml"),
+        &home.join("credentials.yaml"),
+        job.job_id.as_str(),
     );
     let (code, message) = if rollback.is_ok() {
-        (requested_code, "The post-publication n8n probe failed; the endpoint and credential binding were rolled back.")
+        (
+            requested_code,
+            "The post-publication n8n probe failed; the endpoint and credential binding were rolled back.",
+        )
     } else {
-        ("adoption_cleanup_failed", "The n8n binding could not be verified and automatic cleanup needs operator repair.")
+        (
+            "adoption_cleanup_failed",
+            "The n8n binding could not be verified and automatic cleanup needs operator repair.",
+        )
     };
-    let failed = service.fail(&job.job_id, job.state_revision, JobFailure::new(code, message).expect("static failure is valid"))?;
+    let failed = service.fail(
+        &job.job_id,
+        job.state_revision,
+        JobFailure::new(code, message).expect("static failure is valid"),
+    )?;
     Ok(failed)
 }
 
@@ -597,22 +831,47 @@ fn cancel_if_requested(
     known: &IntegrationJob,
     home: &Path,
 ) -> anyhow::Result<Option<IntegrationJob>> {
-    let Some(job) = service.get(&known.job_id)? else { return Ok(None); };
-    if !job.cancel_requested { return Ok(None); }
+    let Some(job) = service.get(&known.job_id)? else {
+        return Ok(None);
+    };
+    if !job.cancel_requested {
+        return Ok(None);
+    }
     let rollback = crate::config::credentials::Credentials::rollback_n8n_adoption_at(
-        &home.join("freedom.yaml"), &home.join("credentials.yaml"), job.job_id.as_str(),
+        &home.join("freedom.yaml"),
+        &home.join("credentials.yaml"),
+        job.job_id.as_str(),
     );
     if rollback.is_err() {
-        return Ok(Some(service.fail(&job.job_id, job.state_revision, JobFailure::new(
-            "adoption_cleanup_failed", "The n8n adoption was cancelled but automatic cleanup needs operator repair.",
-        ).expect("static failure is valid"))?));
+        return Ok(Some(
+            service.fail(
+                &job.job_id,
+                job.state_revision,
+                JobFailure::new(
+                    "adoption_cleanup_failed",
+                    "The n8n adoption was cancelled but automatic cleanup needs operator repair.",
+                )
+                .expect("static failure is valid"),
+            )?,
+        ));
     }
-    let contract = job.evidence_contract.as_ref().expect("active n8n job has evidence contract");
+    let contract = job
+        .evidence_contract
+        .as_ref()
+        .expect("active n8n job has evidence contract");
     let evidence = CancellationEvidence::verified(
-        job.job_id.clone(), job.manifest_sha256.clone(), contract.step_plan_sha256().clone(),
-        job.state_revision, sha256_parts(&["n8n-no-owned-process"]), sha256_parts(&["n8n-custody-rolled-back"]),
+        job.job_id.clone(),
+        job.manifest_sha256.clone(),
+        contract.step_plan_sha256().clone(),
+        job.state_revision,
+        sha256_parts(&["n8n-no-owned-process"]),
+        sha256_parts(&["n8n-custody-rolled-back"]),
     );
-    Ok(Some(service.acknowledge_cancel(&job.job_id, job.state_revision, evidence)?))
+    Ok(Some(service.acknowledge_cancel(
+        &job.job_id,
+        job.state_revision,
+        evidence,
+    )?))
 }
 
 pub(in crate::integrations) fn step_plan_sha256() -> Sha256Digest {
@@ -625,7 +884,8 @@ fn sha256_parts(parts: &[&str]) -> Sha256Digest {
         digest.update((part.len() as u64).to_be_bytes());
         digest.update(part.as_bytes());
     }
-    Sha256Digest::parse(format!("{:x}", digest.finalize())).expect("SHA-256 formatting is canonical")
+    Sha256Digest::parse(format!("{:x}", digest.finalize()))
+        .expect("SHA-256 formatting is canonical")
 }
 
 #[cfg(test)]

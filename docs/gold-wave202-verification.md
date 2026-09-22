@@ -25,3 +25,18 @@ No Rust parser, formatter, compiler, test, runtime, HTTP, or live-n8n command wa
 - `integrations::n8n::tests::read_only_status_of_absent_state_creates_no_config_or_job_database`
 
 The configuration transaction tests supplied by the configuration slice also remain unexecuted under the same hold. A later authorized verification pass must run the narrow integrations/configuration/CLI test sets and a hermetic loopback mock before any claim of compiled or runtime validation.
+
+
+**W203 durable Cron link / W202 format follow-up (2026-09-22):** Hosted
+Grouped60 `35733913541` on `7f1070d9` executed all sixty exact identities;
+59 passed. Its remaining failure exposed a production mismatch: the WAL
+append receipt is a byte offset, while Cron persisted it as `fired_event_id`.
+The shared event helper now preserves the generated header identity and returns
+it only after durable append succeeds. Normal, failure and delivery consumers
+share the corrected identity. The unchanged strict WAL-link test remains in
+the selection, and independent source review passed. All sixty actual names
+and source bindings were admitted from downloaded evidence. W202's first
+Hosted Preflight exported formatting corrections for eight source files; the
+exact patch, source HEAD and before/after Git blobs were verified on import.
+No local formatter/test/compiler ran. Grouped83 and Core/CLI on `b704284d`
+are still separate pending runs; Road checkboxes remain unchanged.

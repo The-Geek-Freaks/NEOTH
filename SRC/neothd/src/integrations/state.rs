@@ -506,10 +506,15 @@ impl ProgressEvidence {
     #[cfg(test)]
     pub(in crate::integrations) fn verified(fixture: ProgressEvidenceFixture) -> Self {
         Self::claimed(ProgressEvidenceClaim {
-            job_id: fixture.job_id, manifest_sha256: fixture.manifest_sha256,
-            step_plan_sha256: fixture.step_plan_sha256, staging_binding_sha256: fixture.staging_binding_sha256,
-            expected_revision: fixture.expected_revision, expected_state: fixture.expected_state,
-            current_phase: fixture.current_phase, completed_steps: fixture.completed_steps, bytes_done: fixture.bytes_done,
+            job_id: fixture.job_id,
+            manifest_sha256: fixture.manifest_sha256,
+            step_plan_sha256: fixture.step_plan_sha256,
+            staging_binding_sha256: fixture.staging_binding_sha256,
+            expected_revision: fixture.expected_revision,
+            expected_state: fixture.expected_state,
+            current_phase: fixture.current_phase,
+            completed_steps: fixture.completed_steps,
+            bytes_done: fixture.bytes_done,
         })
     }
 

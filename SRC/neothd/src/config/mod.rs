@@ -1124,11 +1124,11 @@ pub use automation::{
     DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS, DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS,
     DEFAULT_VAULT_MIRROR_INTERVAL_SECS, DEFAULT_VAULT_MIRROR_RETAIN_VERIFIED_RUNS,
     DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig, EmailIngestCronConfig, GuidanceCronConfig,
-    KanbanSseConfig, LoopbackHttpEndpoint, MonitorConfig, N8nApiConfig, N8nInstanceConfig, OaiServeConfig, PatternCronConfig,
-    ProactiveConfig, ProfileAdaptConfig, RecallLatencyConfig, RecursiveMasConfig,
-    RegressionAnchorConfig, ResourceWatchConfig, SelfActivationConfig, SelfWikiConfig,
-    SessionHealthConfig, SkillCuratorConfig, SynthesisCronConfig, TokenAnomalyConfig,
-    VaultMirrorConfig, WatchdogConfig,
+    KanbanSseConfig, LoopbackHttpEndpoint, MonitorConfig, N8nApiConfig, N8nInstanceConfig,
+    OaiServeConfig, PatternCronConfig, ProactiveConfig, ProfileAdaptConfig, RecallLatencyConfig,
+    RecursiveMasConfig, RegressionAnchorConfig, ResourceWatchConfig, SelfActivationConfig,
+    SelfWikiConfig, SessionHealthConfig, SkillCuratorConfig, SynthesisCronConfig,
+    TokenAnomalyConfig, VaultMirrorConfig, WatchdogConfig,
 };
 pub use features::{
     ArxivIngestConfig, ArxivSkillScanConfig, CalendarConfig, ChannelLearnScope,

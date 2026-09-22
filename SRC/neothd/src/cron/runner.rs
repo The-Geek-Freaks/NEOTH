@@ -1441,7 +1441,13 @@ async fn write_event(writer: &WalWriterHandle, event_type: u8, payload: &[u8]) -
     let header = crate::wal::HeaderBuilder::new(event_type, payload)
         .flags(EventFlags::SYNTHETIC)
         .build();
-    Ok(writer.append(header, payload.to_vec()).await?)
+    // `WalWriterHandle::append` acknowledges the durable *byte offset* of the
+    // frame, not its header identity. Cron's outcome and delivery records use
+    // `fired_event_id` as an EventHeaderV2 link, so preserve it before moving
+    // the header into the writer rather than confusing offset with event id.
+    let event_id = header.event_id.0;
+    writer.append(header, payload.to_vec()).await?;
+    Ok(event_id)
 }
 
 /// P-08 cron consumer (Workstream C, Session 22) — `run_job` wrapper

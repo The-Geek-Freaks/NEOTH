@@ -43,7 +43,10 @@ pub enum N8nAction {
 
 pub async fn run_n8n(args: N8nArgs, output: OutputFormat) -> Result<()> {
     match args.action {
-        N8nAction::Adopt { endpoint, api_key_stdin } => run_adopt(&endpoint, api_key_stdin, output).await,
+        N8nAction::Adopt {
+            endpoint,
+            api_key_stdin,
+        } => run_adopt(&endpoint, api_key_stdin, output).await,
         N8nAction::Status { job } => run_status(job.as_deref(), output),
         N8nAction::Workflows => run_workflows(output),
     }
@@ -55,11 +58,15 @@ async fn run_adopt(endpoint: &str, api_key_stdin: bool, output: OutputFormat) ->
     if !api_key_stdin {
         let service = crate::integrations::n8n::open_n8n_job_service(&home)?;
         let job = crate::integrations::n8n::enqueue_required_input_failure(
-            &service, &endpoint, crate::integrations::JobRequester::Cli,
+            &service,
+            &endpoint,
+            crate::integrations::JobRequester::Cli,
         )?;
         return render_adopt_job(&job, output);
     }
-    if std::io::stdin().is_terminal() { return Err(anyhow!("--api-key-stdin requires piped standard input")); }
+    if std::io::stdin().is_terminal() {
+        return Err(anyhow!("--api-key-stdin requires piped standard input"));
+    }
     let api_key = read_api_key_from_stdin().await?;
     let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
     let cancellation_task = tokio::spawn(async move {
@@ -67,9 +74,9 @@ async fn run_adopt(endpoint: &str, api_key_stdin: bool, output: OutputFormat) ->
             let _ = cancel_tx.send(());
         }
     });
-    let result = crate::integrations::n8n::adopt_at_with_cancel(
-        &home, endpoint, api_key, &mut cancel_rx,
-    ).await;
+    let result =
+        crate::integrations::n8n::adopt_at_with_cancel(&home, endpoint, api_key, &mut cancel_rx)
+            .await;
     cancellation_task.abort();
     let job = result?;
     render_adopt_job(&job, output)
@@ -91,11 +98,19 @@ async fn read_api_key_from_stdin() -> Result<crate::secret::SecretString> {
 
 fn read_api_key_line(mut reader: impl BufRead) -> Result<crate::secret::SecretString> {
     let mut input = zeroize::Zeroizing::new(Vec::new());
-    reader.take(MAX_N8N_API_KEY_BYTES + 2)
+    reader
+        .take(MAX_N8N_API_KEY_BYTES + 2)
         .read_until(b'\n', &mut input)
         .context("read bounded n8n API key from standard input")?;
-    if input.last() == Some(&b'\n') { input.pop(); if input.last() == Some(&b'\r') { input.pop(); } }
-    if input.len() > MAX_N8N_API_KEY_BYTES as usize { return Err(anyhow!("n8n API key input exceeds the bounded line length")); }
+    if input.last() == Some(&b'\n') {
+        input.pop();
+        if input.last() == Some(&b'\r') {
+            input.pop();
+        }
+    }
+    if input.len() > MAX_N8N_API_KEY_BYTES as usize {
+        return Err(anyhow!("n8n API key input exceeds the bounded line length"));
+    }
     let key = match String::from_utf8(std::mem::take(&mut *input)) {
         Ok(value) => crate::secret::SecretString::from(value),
         Err(error) => {
@@ -106,42 +121,76 @@ fn read_api_key_line(mut reader: impl BufRead) -> Result<crate::secret::SecretSt
         }
     };
     if key.expose().is_empty() || key.expose().chars().any(char::is_control) {
-        return Err(anyhow!("n8n API key input must be nonempty and contain no control characters"));
+        return Err(anyhow!(
+            "n8n API key input must be nonempty and contain no control characters"
+        ));
     }
     Ok(key)
 }
 
 fn render_adopt_job(job: &crate::integrations::IntegrationJob, output: OutputFormat) -> Result<()> {
     match output {
-        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::json!({
-            "job_id": job.job_id, "state": job.state, "failure_code": job.failure.as_ref().map(|failure| &failure.code),
-        })),
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "job_id": job.job_id, "state": job.state, "failure_code": job.failure.as_ref().map(|failure| &failure.code),
+            })
+        ),
         OutputFormat::Table => {
             println!("n8n adoption job: {}", job.job_id);
             println!("state: {}", job.state);
-            if let Some(failure) = &job.failure { println!("failure: {} — {}", failure.code, failure.redacted_message); }
+            if let Some(failure) = &job.failure {
+                println!("failure: {} — {}", failure.code, failure.redacted_message);
+            }
         }
     }
     if let Some(failure) = &job.failure {
-        return Err(anyhow!("n8n adoption job {} failed: {}", job.job_id, failure.code));
+        return Err(anyhow!(
+            "n8n adoption job {} failed: {}",
+            job.job_id,
+            failure.code
+        ));
     }
     Ok(())
 }
 
 fn run_status(selected_job: Option<&str>, output: OutputFormat) -> Result<()> {
-    let selected_job = selected_job.map(JobId::parse).transpose().map_err(anyhow::Error::msg)?;
-    let view = crate::integrations::n8n::status_at(&crate::config::FreedomConfig::default_neoth_home(), selected_job.as_ref())?;
+    let selected_job = selected_job
+        .map(JobId::parse)
+        .transpose()
+        .map_err(anyhow::Error::msg)?;
+    let view = crate::integrations::n8n::status_at(
+        &crate::config::FreedomConfig::default_neoth_home(),
+        selected_job.as_ref(),
+    )?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_string(&view)?),
         OutputFormat::Table => {
-            println!("configured endpoint: {}", view.configured_endpoint.as_ref().map(LoopbackHttpEndpoint::as_str).unwrap_or("unconfigured"));
-            println!("API key: {}", if view.api_key_present { "present" } else { "absent" });
+            println!(
+                "configured endpoint: {}",
+                view.configured_endpoint
+                    .as_ref()
+                    .map(LoopbackHttpEndpoint::as_str)
+                    .unwrap_or("unconfigured")
+            );
+            println!(
+                "API key: {}",
+                if view.api_key_present {
+                    "present"
+                } else {
+                    "absent"
+                }
+            );
             match &view.job {
                 Some(job) => {
                     println!("job: {} ({})", job.id, job.state);
                     println!("progress: {}/{}", job.completed_steps, job.total_steps);
-                    if let Some(step) = &job.current_step { println!("current step: {step}"); }
-                    if let Some(code) = &job.failure_code { println!("failure: {code}"); }
+                    if let Some(step) = &job.current_step {
+                        println!("current step: {step}");
+                    }
+                    if let Some(code) = &job.failure_code {
+                        println!("failure: {code}");
+                    }
                 }
                 None => println!("job: none"),
             }
@@ -158,8 +207,16 @@ fn run_workflows(output: OutputFormat) -> Result<()> {
             println!("{}", serde_json::json!({ "workflows": rows }));
         }
         OutputFormat::Table => {
-            for workflow in &workflows { println!("• {}  [{}]\n    {}", workflow.name, workflow.slug, workflow.description); }
-            println!("\n{} workflow(s). Import into n8n; they POST to {NEOTH_HTTP_BASE}.", workflows.len());
+            for workflow in &workflows {
+                println!(
+                    "• {}  [{}]\n    {}",
+                    workflow.name, workflow.slug, workflow.description
+                );
+            }
+            println!(
+                "\n{} workflow(s). Import into n8n; they POST to {NEOTH_HTTP_BASE}.",
+                workflows.len()
+            );
         }
     }
     Ok(())

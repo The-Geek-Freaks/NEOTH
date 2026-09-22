@@ -13,7 +13,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior, params};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior, params,
+};
 
 use super::catalog::{CapabilityCatalog, CapabilityId};
 use super::events::{
@@ -279,7 +281,10 @@ impl IntegrationJobService {
         validate_schema(&connection)?;
         let sql = format!("SELECT {JOB_COLUMNS} FROM integration_jobs ORDER BY created_at, job_id");
         let mut statement = connection.prepare(&sql)?;
-        statement.query_map([], row_to_job)?.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+        statement
+            .query_map([], row_to_job)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     /// Subscribe before taking the snapshot. The subscription drops overlap,
@@ -1095,8 +1100,11 @@ fn open_connection(path: &Path, initialize: bool) -> Result<Connection, JobServi
 }
 
 fn open_read_only_connection(path: &Path) -> Result<Connection, JobServiceError> {
-    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
-        .with_context(|| format!("open integration setup DB read-only {}", path.display()))?;
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .with_context(|| format!("open integration setup DB read-only {}", path.display()))?;
     connection.busy_timeout(Duration::from_secs(5))?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
     connection.pragma_update(None, "trusted_schema", "OFF")?;
