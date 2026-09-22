@@ -880,7 +880,8 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
         BootId, CarrierKind, EnrollmentInvite, EnrollmentReceipt, LocalNodeIdentity,
         MembershipConfirmRequest, MembershipController, MembershipInviteRequest,
         MembershipRevokeBinding, MembershipRevokeRequest, MembershipState, MembershipStore,
-        RevocationIntentState, RevocationIntentStatus, RevokeReceipt, TransportIdentity,
+        RevocationIntentState, RevocationIntentStatus, RevokeReceipt,
+        TaskDelegateAssignmentCommitReceipt, TaskDelegateAssignmentRequest, TransportIdentity,
     };
 
     let home = tempdir().unwrap();
@@ -964,7 +965,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
         invite_id: invite.invite_id.clone(),
         attestation,
         carrier: CarrierKind::Peeroxide,
-        authenticated_transport: transport,
+        authenticated_transport: transport.clone(),
         endpoint: "127.0.0.1:31337".into(),
     })
     .unwrap();
@@ -1002,6 +1003,69 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
         invite.issued_at_membership_epoch
     );
     assert_eq!(store.snapshot().unwrap()[0].state, MembershipState::Active);
+
+    let assignment_request = TaskDelegateAssignmentRequest {
+        peer_key: transport.as_str().to_string(),
+        allowed: true,
+        expected_revision: 0,
+    };
+    let assignment_body = serde_json::to_string(&assignment_request).unwrap();
+    assert_eq!(
+        raw_post_path(&addr, "/membership/task-delegate", None, &assignment_body)
+            .await
+            .0,
+        401
+    );
+    assert_eq!(
+        store.task_delegate_assignment(transport.as_str()).unwrap(),
+        None,
+        "unauthenticated assignment must not mutate the authority"
+    );
+    let (status, body) = raw_post_path(
+        &addr,
+        "/membership/task-delegate",
+        Some("membership-token"),
+        &assignment_body,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let allowed: TaskDelegateAssignmentCommitReceipt =
+        serde_json::from_str(&body).expect("typed assignment commit receipt");
+    assert!(allowed.committed.allowed);
+    assert_eq!(allowed.committed.revision, 1);
+    assert_eq!(allowed.committed.peer_key, transport.as_str());
+
+    let (status, _) = raw_post_path(
+        &addr,
+        "/membership/task-delegate",
+        Some("membership-token"),
+        &assignment_body,
+    )
+    .await;
+    assert_eq!(status, 422, "stale assignment CAS must be refused");
+    assert_eq!(
+        store.task_delegate_assignment(transport.as_str()).unwrap(),
+        Some(allowed.committed.clone()),
+        "stale request must preserve the committed assignment"
+    );
+
+    let revoke_assignment = TaskDelegateAssignmentRequest {
+        peer_key: transport.as_str().to_string(),
+        allowed: false,
+        expected_revision: allowed.committed.revision,
+    };
+    let (status, body) = raw_post_path(
+        &addr,
+        "/membership/task-delegate",
+        Some("membership-token"),
+        &serde_json::to_string(&revoke_assignment).unwrap(),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let denied: TaskDelegateAssignmentCommitReceipt =
+        serde_json::from_str(&body).expect("typed assignment revoke receipt");
+    assert!(!denied.committed.allowed);
+    assert_eq!(denied.committed.revision, 2);
 
     let envelope = controller.snapshot().unwrap().into_envelope().unwrap();
     let member = envelope.snapshot.members.first().unwrap();

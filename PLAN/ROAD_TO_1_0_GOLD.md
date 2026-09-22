@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W229 live cluster delegation assignments (2026-09-23):** the existing
+same-user/bearer Audit RPC now commits strict TaskDelegate CAS mutations while
+the daemon runs. Setter and final provider admission share a short authority
+gate, so revoke-first denies a waiting start before any provider call. Receipts
+report their own committed revision; later writers cannot create false commit
+failures. Independent source and delta reviews passed. The strengthened real
+controller race and authenticated RPC roundtrip require Hosted execution.
+Inventory:535sources/**842native**/94GUI, unchanged platform extras; focused
+selection **Grouped341**. P2-18 remains open for skill/channel/failover/surface
+scope. Road stays1016checked/306open/2partial. See
+`docs/gold-wave229-live-cluster-assignments.md`. No local executable validation.
 **W230 selection / W226-W227 verified (2026-09-23):** Grouped328
 `35790281385` on `aca578a0` is admitted at **328/328**, with all68 source
 hashes, matrix, lock and each actual result terminal verified. This confirms

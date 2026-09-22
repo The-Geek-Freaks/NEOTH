@@ -566,32 +566,31 @@ async fn run_one_task_execution_inner(
         hook();
     }
 
-    // The external permit is the final process-local linearization point.
-    // Revoke-first makes this fail before provider bytes can leave. Dispatch-
-    // first makes revoke wait until we durably classify the provider outcome.
-    if !job
-        .membership_grant
-        .task_delegate_authorized()
-        .unwrap_or(false)
-    {
-        tracing::warn!(
-            task_id = %job.task_id,
-            stable_node_id = %job.membership_grant.stable_node_id(),
-            "cluster executor: operator task-delegate assignment denied at final provider boundary"
-        );
-        return TaskResultBody {
-            task_id: job.task_id.clone(),
-            status: TaskResultStatus::Rejected {
-                reason: "operator_assignment_denied".to_string(),
-            },
-            result: None,
-            provider_name: Some(provider_name),
-        }
-        .into();
-    }
-    let mut external_permit = match effect_guard.begin_external((now_unix_ms() / 1_000) as i64) {
+    // The delegation CAS and external permit use one short authority gate.
+    // A setter that commits first therefore wins before the provider-start
+    // linearization; the gate is released before any provider future is run.
+    let mut external_permit = match job.membership_grant.begin_task_delegate_external(
+        &mut effect_guard,
+        (now_unix_ms() / 1_000) as i64,
+    ) {
         Ok(permit) => permit,
-        Err(error) => {
+        Err(crate::cluster::membership::TaskDelegateExternalAdmissionError::AssignmentDenied) => {
+                tracing::warn!(
+                    task_id = %job.task_id,
+                    stable_node_id = %job.membership_grant.stable_node_id(),
+                    "cluster executor: operator task-delegate assignment denied at final provider boundary"
+                );
+                return TaskResultBody {
+                    task_id: job.task_id.clone(),
+                    status: TaskResultStatus::Rejected {
+                        reason: "operator_assignment_denied".to_string(),
+                    },
+                    result: None,
+                    provider_name: Some(provider_name),
+                }
+                .into();
+        }
+        Err(crate::cluster::membership::TaskDelegateExternalAdmissionError::Authority(error)) => {
             tracing::warn!(
                 task_id = %job.task_id,
                 stable_node_id = %job.membership_grant.stable_node_id(),
@@ -839,6 +838,67 @@ mod tests {
         .unwrap()
     }
 
+    fn job_with_live_controller(
+        home: &std::path::Path,
+        prompt: &str,
+    ) -> (ClusterTaskJob, Arc<crate::cluster::membership::MembershipController>) {
+        let now = (now_unix_ms() / 1_000) as i64;
+        let identity = crate::cluster::membership::LocalNodeIdentity::load_or_create(home).unwrap();
+        let transport = crate::cluster::membership::TransportIdentity::peeroxide(
+            &identity.peeroxide_key_pair().public_key,
+        );
+        let attestation = identity
+            .attest_endpoint(
+                crate::cluster::membership::CarrierKind::Peeroxide,
+                transport.clone(),
+                crate::cluster::membership::BootId::new(),
+                "executor-live-controller-test".into(),
+                "test".into(),
+                crate::cluster::membership::AuthEpoch::INITIAL,
+                crate::cluster::membership::MembershipEpoch::new(2).unwrap(),
+                Some("test".into()),
+                now + 3_600,
+            )
+            .unwrap();
+        let live_sessions = Arc::new(crate::cluster::membership::LiveSessionRegistry::new());
+        let controller = Arc::new(crate::cluster::membership::MembershipController::new(
+            crate::cluster::membership::MembershipStore::open(home).unwrap(),
+            live_sessions,
+        ));
+        controller
+            .store()
+            .confirm_attestation(
+                &attestation,
+                crate::cluster::membership::CarrierKind::Peeroxide,
+                &transport,
+                "test",
+                "executor-live-controller-test",
+                now,
+            )
+            .unwrap();
+        controller
+            .set_task_delegate_assignment(
+                &crate::cluster::membership::TaskDelegateAssignmentRequest {
+                    peer_key: transport.as_str().to_string(),
+                    allowed: true,
+                    expected_revision: 0,
+                },
+            )
+            .unwrap();
+        let grant = controller
+            .store()
+            .admit(
+                crate::cluster::membership::CarrierKind::Peeroxide,
+                &transport,
+                now,
+            )
+            .unwrap();
+        (
+            ClusterTaskJob::authorized("t-1".into(), prompt.into(), "aa".into(), grant).unwrap(),
+            controller,
+        )
+    }
+
     #[tokio::test]
     async fn no_provider_yields_honest_failure_not_fake_ok() {
         let home = tempfile::tempdir().unwrap();
@@ -988,10 +1048,11 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn assignment_revoked_at_final_provider_boundary_makes_zero_provider_calls() {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn assignment_revoke_holding_authority_gate_blocks_start_then_makes_zero_provider_calls() {
         use crate::providers::Completion;
         use async_trait::async_trait;
+        use std::sync::Barrier;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         struct CountingProvider(Arc<AtomicUsize>);
@@ -1009,19 +1070,40 @@ mod tests {
         }
 
         let home = tempfile::tempdir().unwrap();
-        let queued = job(home.path(), "final assignment revoke");
-        let assignment_home = home.path().to_path_buf();
+        let (queued, controller) = job_with_live_controller(home.path(), "final assignment revoke");
         let assignment_peer = queued
             .membership_grant
             .transport_identity()
             .as_str()
             .to_string();
-        let revoke_before_external = move || {
-            crate::cluster::membership::MembershipStore::open(&assignment_home)
-                .unwrap()
-                .set_task_delegate_assignment(&assignment_peer, false, 1)
+        let setter_entered = Arc::new(Barrier::new(2));
+        let setter_release = Arc::new(Barrier::new(2));
+        let start_attempted = Arc::new(Barrier::new(2));
+        let setter_entered_observer = Arc::clone(&setter_entered);
+        let setter_release_observer = Arc::clone(&setter_release);
+        let start_attempted_observer = Arc::clone(&start_attempted);
+        controller.store().set_task_delegate_gate_observers(
+            Some(Arc::new(move || {
+                setter_entered_observer.wait();
+                setter_release_observer.wait();
+            })),
+            Some(Arc::new(move || {
+                start_attempted_observer.wait();
+            })),
+        );
+        let setter_controller = Arc::clone(&controller);
+        let setter = std::thread::spawn(move || {
+            setter_controller
+                .set_task_delegate_assignment(
+                    &crate::cluster::membership::TaskDelegateAssignmentRequest {
+                        peer_key: assignment_peer,
+                        allowed: false,
+                        expected_revision: 1,
+                    },
+                )
                 .unwrap();
-        };
+        });
+        setter_entered.wait();
         let calls = Arc::new(AtomicUsize::new(0));
         let provider = crate::providers::cost_authorization::AuthorizedProvider::from_arc(
             Arc::new(CountingProvider(Arc::clone(&calls))),
@@ -1031,13 +1113,16 @@ mod tests {
             None,
             "cluster.test.assignment-final-boundary",
         );
-        let result = run_one_task_execution_inner(
+        let execution = tokio::spawn(run_one_task_execution_inner(
             Some(Arc::new(provider)),
             queued,
             execution_context(home.path(), crate::config::FreedomConfig::default()),
-            Some(&revoke_before_external),
-        )
-        .await;
+            None,
+        ));
+        start_attempted.wait();
+        setter_release.wait();
+        setter.join().expect("assignment setter panicked");
+        let result = execution.await.expect("executor task panicked");
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert!(matches!(
             result.body.status,

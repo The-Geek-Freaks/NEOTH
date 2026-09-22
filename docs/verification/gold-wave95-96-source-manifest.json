@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T22:19:09.8391849Z",
-  "validationStatus": "W230 selects12 existing live throughput cases inGroup340; W226/W227 exactGroup328 admitted; GUI pending",
+  "capturedUtc": "2026-09-22T22:24:09.6479562Z",
+  "validationStatus": "W229 live authenticated assignmentCAS and provider-start serialization source-reviewed; Hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -68,8 +68,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 11825,
-      "sha256": "7793ACE7C6C87BEB15A63A2878F60E094973652A6443048F617751B82D23E38D"
+      "bytes": 11877,
+      "sha256": "29E6350E9EC99A9C0ED0EFF67DCB5E4455EF8544E769DEA883C977076EE8AFCA"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -433,18 +433,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 75936,
-      "sha256": "F1AF6577AAFD03BDFFB2AB38B305FDB19914954B40203E6B07747F505F5E7708"
+      "bytes": 76762,
+      "sha256": "3503B4E9DA237FABC66B2B86CC64B3253CA016E101EAB769434A77458F69192A"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1078871,
-      "sha256": "4973A38DF1709E0E7B74F9781CF9FC1C8C59CDA42BCECF239A6C5BB3A949C13E"
+      "bytes": 1079697,
+      "sha256": "880D4B3A2275DA5CCDD17E5C6F2238190B91210F214A655055ABE92A04C2F658"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1674439,
-      "sha256": "B98011D4AE468C41D8D49C0A5E0D73A00767D44FDBB35F346C6F0E6A352D3439"
+      "bytes": 1675265,
+      "sha256": "621E181FA69A94EF886335655FDE58031D474B8879AE9CE6BCAF0CEA381B6EA8"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1283,8 +1283,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/executor.rs",
-      "bytes": 66542,
-      "sha256": "75779FF2D3817509FD80DAC18647867B201D8060CDE2D495BFDC71C60615D142"
+      "bytes": 70337,
+      "sha256": "EC77313C20CC708099EC32CE28B27F7B4670AD1EB0C1C15C10026A7650879131"
     },
     {
       "path": "SRC/neothd/src/cluster/hyperswarm.rs",
@@ -1548,23 +1548,23 @@
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/client.rs",
-      "bytes": 49924,
-      "sha256": "4CE39155B8D09905AB1562A4926E9F2B30B1A6A498802E521EA6B98273BC8467"
+      "bytes": 50474,
+      "sha256": "64DC78F90192F7C9DD7A1A8F8EFA832223DBFE212555DA867AF44111068CA623"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/mod.rs",
-      "bytes": 19960,
-      "sha256": "F206651AA782CF98985E6F7A26A0BA8DD1F1763FD1F40678C753BB59397D4183"
+      "bytes": 20005,
+      "sha256": "10CB7E414145B6C00F9FBF2334B29AE6DF0F81D9F004877FA02FB91D98212238"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/server.rs",
-      "bytes": 68550,
-      "sha256": "5C0A72CFDBCED99FD36FADEB3F05BA58D0F840275FE29E13BFE9141CBC19F989"
+      "bytes": 68945,
+      "sha256": "B331C6464D210CB7A54BB02F0979AD901977003D0F9C997F86F08E1D4FEFFF3E"
     },
     {
       "path": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
-      "bytes": 99822,
-      "sha256": "273E0C9AD20C1FDC13221D4E8A5A11DE9EB110A1BB05335B49C5C7E1DCFECFC9"
+      "bytes": 102049,
+      "sha256": "FB50AC2FD7E3D2284C1C8F5004089EDA2AD528CB0302DBD66AD67E93EF4D5111"
     },
     {
       "path": "SRC/neothd/src/daemon/auto_update.rs",
@@ -2668,13 +2668,13 @@
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",
-      "bytes": 261141,
-      "sha256": "0FCDE1ADE53372732470CCAF4BA0E6F9930E7CCED768DEFF8F1F436E87D2811D"
+      "bytes": 266726,
+      "sha256": "6A8DFC7CCB757B4E327505077C3B422EE2ED52922AC5AB30C12AEE46A82D40C2"
     },
     {
       "path": "SRC/neothd/src/cli/cluster.rs",
-      "bytes": 246189,
-      "sha256": "131039EF4B6D5C083AA0C49ABDBDEBEAF7760E26A019F0EE6A04CA84B5FDCFA9"
+      "bytes": 246781,
+      "sha256": "0297A409C86D4727CCC848C709EA9281104BBAB00B48755D1CAC97DC2F33FE4D"
     },
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",

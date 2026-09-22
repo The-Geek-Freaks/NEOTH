@@ -1346,6 +1346,15 @@ struct GenerationEffectState {
 pub(crate) struct GenerationEffectRegistry {
     state: Mutex<GenerationEffectState>,
     quiesced: Condvar,
+    /// Serializes the durable delegation CAS with the final provider-start
+    /// linearization. This is deliberately separate from `state`: it is held
+    /// only for the authority read/write and `begin_external`, never across a
+    /// provider future.
+    task_delegate_start: Mutex<()>,
+    #[cfg(test)]
+    task_delegate_setter_gate_observer: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    #[cfg(test)]
+    task_delegate_start_gate_observer: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl std::fmt::Debug for GenerationEffectRegistry {
@@ -1363,6 +1372,48 @@ impl std::fmt::Debug for GenerationEffectRegistry {
 }
 
 impl GenerationEffectRegistry {
+    #[cfg(test)]
+    fn set_task_delegate_gate_observers(
+        &self,
+        setter: Option<Arc<dyn Fn() + Send + Sync>>,
+        start: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) {
+        *self
+            .task_delegate_setter_gate_observer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = setter;
+        *self
+            .task_delegate_start_gate_observer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = start;
+    }
+
+    #[cfg(test)]
+    fn observe_task_delegate_setter_gate(&self) {
+        if let Some(observer) = self
+            .task_delegate_setter_gate_observer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .cloned()
+        {
+            observer();
+        }
+    }
+
+    #[cfg(test)]
+    fn observe_task_delegate_start_gate(&self) {
+        if let Some(observer) = self
+            .task_delegate_start_gate_observer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .cloned()
+        {
+            observer();
+        }
+    }
+
     fn register(
         self: &Arc<Self>,
         generation: MembershipGeneration,
@@ -1849,6 +1900,30 @@ pub struct MembershipGrant {
     effects: Arc<GenerationEffectRegistry>,
 }
 
+#[derive(Debug)]
+pub enum TaskDelegateExternalAdmissionError {
+    AssignmentDenied,
+    Authority(anyhow::Error),
+}
+
+impl std::fmt::Display for TaskDelegateExternalAdmissionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AssignmentDenied => formatter.write_str("operator task-delegate assignment denied"),
+            Self::Authority(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for TaskDelegateExternalAdmissionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::AssignmentDenied => None,
+            Self::Authority(error) => Some(error.as_ref()),
+        }
+    }
+}
+
 impl MembershipGrant {
     pub fn stable_node_id(&self) -> &StableNodeId {
         &self.stable_node_id
@@ -1882,6 +1957,36 @@ impl MembershipGrant {
     pub fn task_delegate_authorized(&self) -> Result<bool> {
         MembershipStore::open_path(self.authority_path.clone(), false)?
             .task_delegate_authorized(self.carrier, &self.transport_identity)
+    }
+
+    /// Atomically compare the current delegation ceiling with the final
+    /// provider-start linearization. A completed revoke that acquires this
+    /// authority gate first therefore prevents `begin_external`; a start that
+    /// acquires it first is already classified as potentially external by the
+    /// membership permit before the setter can proceed.
+    pub fn begin_task_delegate_external<'a>(
+        &self,
+        effect_guard: &'a mut MembershipEffectGuard,
+        now_unix: i64,
+    ) -> std::result::Result<
+        MembershipExternalEffectPermit<'a>,
+        TaskDelegateExternalAdmissionError,
+    > {
+        #[cfg(test)]
+        self.effects.observe_task_delegate_start_gate();
+        let _authority_gate = self
+            .effects
+            .task_delegate_start
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match self.task_delegate_authorized() {
+            Ok(true) => {}
+            Ok(false) => return Err(TaskDelegateExternalAdmissionError::AssignmentDenied),
+            Err(error) => return Err(TaskDelegateExternalAdmissionError::Authority(error)),
+        }
+        effect_guard
+            .begin_external(now_unix)
+            .map_err(TaskDelegateExternalAdmissionError::Authority)
     }
 
     /// Start a membership-linearized effect. This read transaction remains
@@ -2242,6 +2347,25 @@ impl MembershipController {
         &self.store
     }
 
+    /// Commit one delegation assignment through the daemon-owned authority.
+    /// The returned value is the committed CAS receipt, not a later readback.
+    pub fn set_task_delegate_assignment(
+        &self,
+        request: &TaskDelegateAssignmentRequest,
+    ) -> Result<TaskDelegateAssignmentCommitReceipt> {
+        let _operation = self
+            .operations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Ok(TaskDelegateAssignmentCommitReceipt {
+            committed: self.store.set_task_delegate_assignment(
+                &request.peer_key,
+                request.allowed,
+                request.expected_revision,
+            )?,
+        })
+    }
+
     pub fn snapshot(&self) -> Result<MembershipSnapshot> {
         self.store.full_snapshot()
     }
@@ -2558,6 +2682,24 @@ pub struct TaskDelegateAssignment {
     pub revision: u64,
 }
 
+/// Strict authenticated daemon request for one operator-owned delegation CAS.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDelegateAssignmentRequest {
+    pub peer_key: String,
+    pub allowed: bool,
+    pub expected_revision: u64,
+}
+
+/// Stable receipt of the CAS that this request committed. It is intentionally
+/// not a post-commit readback: a later writer may advance the live assignment
+/// immediately after this receipt is produced.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDelegateAssignmentCommitReceipt {
+    pub committed: TaskDelegateAssignment,
+}
+
 #[derive(Clone, Debug)]
 struct PendingOutboxEvent {
     id: i64,
@@ -2679,6 +2821,15 @@ impl MembershipStore {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_task_delegate_gate_observers(
+        &self,
+        setter: Option<Arc<dyn Fn() + Send + Sync>>,
+        start: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) {
+        self.effects.set_task_delegate_gate_observers(setter, start);
+    }
+
     fn connection(&self) -> Result<Connection> {
         let conn = Connection::open(&self.path)
             .with_context(|| format!("open membership DB {}", self.path.display()))?;
@@ -2761,6 +2912,13 @@ impl MembershipStore {
         expected_revision: u64,
     ) -> Result<TaskDelegateAssignment> {
         validate_peeroxide_transport_key(peer_key)?;
+        let _authority_gate = self
+            .effects
+            .task_delegate_start
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        #[cfg(test)]
+        self.effects.observe_task_delegate_setter_gate();
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let is_active: i64 = tx.query_row(

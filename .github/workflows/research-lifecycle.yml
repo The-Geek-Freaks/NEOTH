@@ -111,6 +111,7 @@ jobs:
               "wave226": 21,
               "wave227AutonomyAcceptance": 25,
               "wave230LiveThroughputAcceptance": 12,
+              "wave229LiveAssignmentAcceptance": 1,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

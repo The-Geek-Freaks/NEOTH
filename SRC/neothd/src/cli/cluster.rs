@@ -426,7 +426,7 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
             run_revoke_status(&request_id, &args.output).await
         }
         ClusterAction::TaskDelegate { action } => {
-            run_task_delegate_assignment(action, &args.output)
+            run_task_delegate_assignment(action, &args.output).await
         }
         ClusterAction::Configure {
             enabled,
@@ -1628,7 +1628,7 @@ async fn run_revoke_status(request_id: &str, output: &OutputFormat) -> Result<()
     Ok(())
 }
 
-fn run_task_delegate_assignment(
+async fn run_task_delegate_assignment(
     action: ClusterTaskDelegateAction,
     output: &OutputFormat,
 ) -> Result<()> {
@@ -1656,14 +1656,19 @@ fn run_task_delegate_assignment(
             allowed,
             expected_revision,
         } => {
-            let readback =
-                task_delegate_assignment_set_at(&home, &peer_key, allowed, expected_revision)?;
+            let committed = task_delegate_assignment_set_live_or_offline_at(
+                &home,
+                &peer_key,
+                allowed,
+                expected_revision,
+            )
+            .await?;
             match output {
-                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&readback)?),
-                OutputFormat::Jsonl => println!("{}", serde_json::to_string(&readback)?),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&committed)?),
+                OutputFormat::Jsonl => println!("{}", serde_json::to_string(&committed)?),
                 OutputFormat::Table => println!(
-                    "peer_key={} task_delegate={} revision={} (committed and read back)",
-                    readback.peer_key, readback.allowed, readback.revision
+                    "peer_key={} task_delegate={} revision={} (committed)",
+                    committed.peer_key, committed.allowed, committed.revision
                 ),
             }
         }
@@ -1692,15 +1697,30 @@ fn task_delegate_assignment_set_at(
     );
     let _offline_authority_lock = acquire_offline_membership_guard(home)?;
     let store = crate::cluster::membership::MembershipStore::open(home)?;
-    let committed = store.set_task_delegate_assignment(peer_key, allowed, expected_revision)?;
-    let readback = store
-        .task_delegate_assignment(peer_key)?
-        .context("task delegate assignment disappeared after commit")?;
-    anyhow::ensure!(
-        readback == committed,
-        "task delegate assignment readback differs from committed value"
-    );
-    Ok(readback)
+    store.set_task_delegate_assignment(peer_key, allowed, expected_revision)
+}
+
+async fn task_delegate_assignment_set_live_or_offline_at(
+    home: &Path,
+    peer_key: &str,
+    allowed: bool,
+    expected_revision: u64,
+) -> Result<crate::cluster::membership::TaskDelegateAssignment> {
+    validate_pub_key_hex(peer_key)?;
+    if live_daemon_owner_pid(home)?.is_some() {
+        let receipt = crate::daemon::audit_rpc::membership_set_task_delegate_assignment(
+            home,
+            &crate::cluster::membership::TaskDelegateAssignmentRequest {
+                peer_key: peer_key.to_string(),
+                allowed,
+                expected_revision,
+            },
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(error))?;
+        return Ok(receipt.committed);
+    }
+    task_delegate_assignment_set_at(home, peer_key, allowed, expected_revision)
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
