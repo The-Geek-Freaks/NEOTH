@@ -145,6 +145,7 @@ pub mod providers;
 pub mod quota;
 pub mod recall;
 pub mod recall_score;
+pub mod research;
 pub mod recipe;
 pub mod recon;
 pub mod recover;
@@ -731,6 +732,9 @@ pub enum Commands {
     /// the model keep working every turn until the iteration cap — clear it when
     /// the objective is done.
     Goal(goal::GoalArgs),
+
+    /// Create, approve, execute and control an operator-owned deep-research run.
+    Research(research::ResearchArgs),
 
     /// Multimodal asset ingest pipeline.
     ///
@@ -1850,6 +1854,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Goal(mut args) => {
             args.output = global_output;
             goal::run_goal(args).await?;
+        }
+        Commands::Research(mut args) => {
+            args.output = global_output;
+            research::run_research(args).await?;
         }
         Commands::Ingest(mut args) => {
             args.output = global_output;

@@ -58,6 +58,11 @@ source SHA bindings before running them (W188: 8, W189: 8, Doctor: 2). It is a
 focused behavioral lane, not a replacement for full CI, preview, GUI, audio or
 release validation. The lane grants no local execution permission.
 
+W190 adds a separate main-only `research-lifecycle.yml` Hosted lane for ten
+source-SHA-bound lifecycle tests. It retains Rust 1.91, one Cargo worker,
+serial exact discovery/execution, bounded runtime and retained receipts.
+No local execution permission or Road/release acceptance is implied.
+
 ## Unreleased Windows preview
 
 W182 adds a 15-minute default-feature `cargo check -p neoth --tests --locked --keep-going`

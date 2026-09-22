@@ -838,8 +838,10 @@ mod tests {
         let token = scope.snapshot().unwrap();
         let capture = tokio::spawn(async { Ok(()) });
         let (drop_sender, drop_signal) = tokio::sync::oneshot::channel();
+        let (started_sender, started_signal) = tokio::sync::oneshot::channel();
         let transcription = tokio::spawn(async move {
             let _signal = DropSignal(Some(drop_sender));
+            started_sender.send(()).expect("test still awaits active task");
             std::future::pending::<(u64, Option<Result<String, DictationError>>)>().await
         });
         let owned = LiveDictateOwnedTasks {
@@ -848,6 +850,12 @@ mod tests {
             transcription: Some(transcription),
         };
 
+        // Prove the task has entered and installed its cleanup guard before
+        // aborting it; an unpolled future only drops the captured sender.
+        tokio::time::timeout(Duration::from_secs(10), started_signal)
+            .await
+            .expect("foreground task must enter its pending state")
+            .expect("foreground task must publish its started signal");
         drop(owned);
 
         assert!(

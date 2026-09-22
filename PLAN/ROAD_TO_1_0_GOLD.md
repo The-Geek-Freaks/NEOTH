@@ -8,6 +8,26 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W190 research lifecycle (2026-09-22):** the operator now creates, approves,
+executes and inspects a persisted research run through `neoth research`.
+The actual deep-research producer receives fixed round/page/result/call/time
+budgets and stores its query/evidence checkpoint. Resume skips completed rounds;
+pause waits for a safe completed-round boundary, while cancel prevents the next
+effect. Private bounded storage, revision and executor-attempt fences, required
+WAL writes and explicit unknown-interruption states preserve control and evidence.
+A completed synthesis with a late control is persisted and audited without replay.
+Ten new real store/CLI/producer regressions and the exact-source Hosted lane are
+admitted after independent review and root fixes; executable gates remain pending.
+P2-09 and all release/visual/provider-live acceptance remain open. See
+[W190](../docs/gold-wave190-verification.md).
+
+**W186 Tract result (2026-09-22):** new graph run `35714955362` on `3ded02b7`
+passes all three Silero runtime cases on Linux, along with the first 18 of 19
+live-audio identities. The final active-task-drop fixture failed because its
+spawned future could be aborted before installing the Drop guard. Its setup now
+waits for an explicit entered signal before the unchanged 250-ms abort assertion.
+No product cancellation rule was relaxed. Windows/macOS results are still pending.
+
 **W186 graph import (2026-09-22):** specialization `35714444646` passed on
 `b2d0ec2b`. The downloaded candidate copies and receipt agree on SHA-256
 `0042e699f5b6cd356a28174f7bdb1b777a8f956e8ab07a3bac6e3baa41048e77`.
@@ -48,7 +68,7 @@ Linux/macOS audio reach the original Tract If blocker. Windows compiled but
 CRLF in its fixture-name transport yielded zero tests; the Hosted lane now
 writes LF and normalizes terminal CR while still requiring one exact match.
 
-The admitted inventory contains 455 source paths and 555 universal
+The admitted inventory contains 460 source paths and 565 universal
 native identities; platform, GUI and audio counts remain unchanged. Road counts
 remain **1015 checked / 307 open / 2 partial**. This status update changes no
 checkbox or runtime/release acceptance boundary.

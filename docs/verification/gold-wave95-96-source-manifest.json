@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W189-capability-history",
-  "base": "b2d0ec2b3613eab450aa222fdc61de33a00cf9ac",
-  "capturedUtc": "2026-09-22T10:13:20.2849922Z",
-  "validationStatus": "W186_VERIFIED_GRAPH_IMPORTED_TRACT_GATES_PENDING",
+  "base": "3ded02b7709dc7f99930c5798f88f5a81df103b4",
+  "capturedUtc": "2026-09-22T10:26:01.3243216Z",
+  "validationStatus": "W190_RESEARCH_LIFECYCLE_REVIEWED_HOSTED_PENDING",
   "scopeNote": "W189 bounded authenticated snapshot/history plus ED0 Clippy/Slint repair and strict Silero numerical diagnosis. No roadmap closure; prior waves remain historical.",
   "files": [
     {
@@ -60,6 +60,11 @@
       "path": ".github/workflows/release.yml",
       "bytes": 136438,
       "sha256": "18AACBA0DB319341E1A59F00F867E8FEAAF37B3B778B7B79AD8F6E621CECD5B8"
+    },
+    {
+      "path": ".github/workflows/research-lifecycle.yml",
+      "bytes": 9239,
+      "sha256": "378D0A98324CCDE8E9ADF8A87FBFC881B2B0672C4B973A9DB4667D69C7E5251E"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -212,6 +217,11 @@
       "sha256": "7FF9CBA2FEC7AF36A8284251B929E8802D7C6CBD7CC626C0817C9224C3225BB7"
     },
     {
+      "path": "docs/gold-wave190-verification.md",
+      "bytes": 2161,
+      "sha256": "55C305D7AB763AB4D399D5773D38DD72E628221ACF312634EF54814A024E7622"
+    },
+    {
       "path": "docs/install.md",
       "bytes": 13637,
       "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
@@ -249,7 +259,7 @@
     {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
-      "sha256": "E8E2CA48EE66DDC8A17FCC8DF876CB678088F40B0965351C7D1B51DBA76B2FD8"
+      "sha256": "B5F0352F4B0A529BA53D73D63F3E950EE6FCCE5E9C87E912AED3BCB532930D20"
     },
     {
       "path": "docs/verification/gold-wave186-silero-specialization.json",
@@ -318,18 +328,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 26823,
-      "sha256": "4147B5B089392555E17A26CE764EF74EF383354360DD7F1D1BA014177E9C5E99"
+      "bytes": 27116,
+      "sha256": "2D760F725D951F5832BAA82088CFE8E42DE2DE26ACA48E62207E7AB0FE13E5A6"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1028799,
-      "sha256": "4154452BE9171E23EA026047856392D1CC7FF61C1DC94EE53102D6388694AE40"
+      "bytes": 1030195,
+      "sha256": "603942EE248F09AA135E432F1978EC058099B539C710BC3530610AB33B7708DA"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1624246,
-      "sha256": "10B9CF8B57DAD5DD0D60B2044F1D0F567DCF0FE320CEBDDE9781611B3B802583"
+      "bytes": 1625642,
+      "sha256": "8448B0A8D2A2395B7FA9E8E2CD3ECFB5ED69CEDD03DF3EB842E278589AB22E1B"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -888,8 +898,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/dictate.rs",
-      "bytes": 32827,
-      "sha256": "4D13D191DB11358FEBF9B89C2057599459F03111D4BC167843CF0B1E5DAF3FDA"
+      "bytes": 33365,
+      "sha256": "0C901DBB6E2D6596D93FA51DCC52B2F7A0D7172758DB76155840AE31BFC6E63A"
     },
     {
       "path": "SRC/neothd/src/cli/docgen.rs",
@@ -983,8 +993,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
-      "bytes": 114238,
-      "sha256": "BDDE46D807410957E98E3B38CA385ACB5230BF1CF554A76C67B3AF0C74425AEB"
+      "bytes": 114519,
+      "sha256": "212BEB51CCFCED53A3792700023EB7639085CFD04491CE7454D9805392EF3445"
     },
     {
       "path": "SRC/neothd/src/cli/models.rs",
@@ -1025,6 +1035,11 @@
       "path": "SRC/neothd/src/cli/reflect.rs",
       "bytes": 85138,
       "sha256": "529A28C9C03D2ADDF69EFBFEEF755CA7412208F9ECC430780DD6FFABE507AB17"
+    },
+    {
+      "path": "SRC/neothd/src/cli/research.rs",
+      "bytes": 15408,
+      "sha256": "D65548DB8C496430A8FA9A0FB268063613AC335ED7EA03F47A127E6937802855"
     },
     {
       "path": "SRC/neothd/src/cli/review.rs",
@@ -1423,8 +1438,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/mod.rs",
-      "bytes": 18385,
-      "sha256": "EE7C0B5E8D3A511C3C18535818F0D8AF15248DA5114B73952B68E6E55F520337"
+      "bytes": 18477,
+      "sha256": "EFD04B044E6E041596550763831589FE8EF762A98B86F57E43DB0FAE6B20FEFB"
     },
     {
       "path": "SRC/neothd/src/daemon/omi_native_ingest.rs",
@@ -1460,6 +1475,11 @@
       "path": "SRC/neothd/src/daemon/reflection_cron.rs",
       "bytes": 81763,
       "sha256": "7EDA65610AAF4CCBD243D4B1B74A7DEF7E6D6EDA5DEAD394111EA7A2956F2196"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/research_runs.rs",
+      "bytes": 30420,
+      "sha256": "DBF1AD16811B33B6B8CE5C97B5A092B7882BF76A1B16C22BB38EDC05E407A7A2"
     },
     {
       "path": "SRC/neothd/src/daemon/session_sort_cron.rs",
@@ -2040,6 +2060,11 @@
       "path": "SRC/neothd/src/tools/citation_lookup.rs",
       "bytes": 58244,
       "sha256": "E9F5ABFBEE074BF53A58913D35EB06554FE0F5BD004AE715178164F770EF4226"
+    },
+    {
+      "path": "SRC/neothd/src/tools/deep_research.rs",
+      "bytes": 54653,
+      "sha256": "7C424AAA5DB9094CC4F60DDCFD517F9D246424EB83A304A954DC13FBA66CC1AF"
     },
     {
       "path": "SRC/neothd/src/tools/external_http.rs",
