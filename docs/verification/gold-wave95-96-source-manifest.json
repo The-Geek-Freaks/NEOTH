@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T21:29:47.6619347Z",
-  "validationStatus": "W224 P2-10 ACCEPTED Group281; W225 effect-start retry denial statically reviewed, Hosted pending",
+  "capturedUtc": "2026-09-22T21:32:02.9329679Z",
+  "validationStatus": "W225 exact Hosted formatter patch imported; Group282 running; no local executable validation",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2233,8 +2233,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "bytes": 15502,
-      "sha256": "312A68292D555FAABCE66C498045D5CE146D5F662A75648C3E793FFCAF02E98E"
+      "bytes": 15605,
+      "sha256": "D63347981454B39C6E04BA654FD95D2176E214E5AF643263BD4374002CF9388D"
     },
     {
       "path": "SRC/neothd/src/providers/tmux_session.rs",

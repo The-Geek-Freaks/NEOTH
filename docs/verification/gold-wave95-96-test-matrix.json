@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W224 P2-10 ACCEPTED Group281; W225 effect-start retry denial statically reviewed, Hosted pending",
+  "status": "W225 exact Hosted formatter patch imported; Group282 running; no local executable validation",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92022,
-    "sha256": "A103CA1CE915ABBEAD74B38974BB87B7C6B0D7A4F608DBB7EA65F1BFC21CB930"
+    "bytes": 92018,
+    "sha256": "030702F8AF2574B2EB00DBECEF991D9E7AF83519DABA1C42CB35D92A726925C9"
   },
   "sourceInputs": 532,
   "requiredNativeTests": [
@@ -4752,31 +4752,31 @@
     {
       "test": "providers::cost_authorization::role_dispatch_tests::configured_role_denial_blocks_raw_transport",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "312A68292D555FAABCE66C498045D5CE146D5F662A75648C3E793FFCAF02E98E",
+      "sourceSha256": "D63347981454B39C6E04BA654FD95D2176E214E5AF643263BD4374002CF9388D",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::allowed_council_leaf_returns_response_and_audits_typed_role_identity",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "312A68292D555FAABCE66C498045D5CE146D5F662A75648C3E793FFCAF02E98E",
+      "sourceSha256": "D63347981454B39C6E04BA654FD95D2176E214E5AF643263BD4374002CF9388D",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::resolved_leaf_model_outside_role_policy_is_denied_before_raw_transport",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "312A68292D555FAABCE66C498045D5CE146D5F662A75648C3E793FFCAF02E98E",
+      "sourceSha256": "D63347981454B39C6E04BA654FD95D2176E214E5AF643263BD4374002CF9388D",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::accepted_role_policy_reload_between_authorization_and_raw_send_is_blocked",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "312A68292D555FAABCE66C498045D5CE146D5F662A75648C3E793FFCAF02E98E",
+      "sourceSha256": "D63347981454B39C6E04BA654FD95D2176E214E5AF643263BD4374002CF9388D",
       "junitClass": "neoth"
     },
     {
       "test": "providers::cost_authorization::role_dispatch_tests::non_council_leaf_ignores_a_closed_policy_without_role_binding",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "312A68292D555FAABCE66C498045D5CE146D5F662A75648C3E793FFCAF02E98E",
+      "sourceSha256": "D63347981454B39C6E04BA654FD95D2176E214E5AF643263BD4374002CF9388D",
       "junitClass": "neoth"
     },
     {
@@ -4926,7 +4926,7 @@
     {
       "test": "providers::cost_authorization::role_dispatch_tests::w225_effect_start_role_rejection_closes_admitted_retry_with_denial_receipt",
       "sourcePath": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "sourceSha256": "312A68292D555FAABCE66C498045D5CE146D5F662A75648C3E793FFCAF02E98E",
+      "sourceSha256": "D63347981454B39C6E04BA654FD95D2176E214E5AF643263BD4374002CF9388D",
       "junitClass": "neoth"
     }
   ],
@@ -15099,6 +15099,20 @@
       }
     ],
     "note": "Actual effect-start role-reload denial receipt; production-bound regression. W224 acceptance281/281; W221 core passed. No local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave225HostedFormat": {
+    "base": "1129c61b23171993fe0c0043da16933ccd28f557",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/providers/role_dispatch_tests.rs",
+        "bytes": 15605,
+        "sha256": "D63347981454B39C6E04BA654FD95D2176E214E5AF643263BD4374002CF9388D",
+        "blob": "c07b09010812a246c58989d6b34bd333a3828c87"
+      }
+    ],
+    "note": "Preflight35787183568 patch source1129; SHA256SUMS plus Git preimage/local preimage/check/postimage verified.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

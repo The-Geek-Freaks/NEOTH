@@ -296,11 +296,9 @@ async fn w225_effect_start_role_rejection_closes_admitted_retry_with_denial_rece
     let wal = home.path().join("wal");
     std::fs::create_dir_all(&wal).expect("create home WAL directory");
     let segment = wal.join("000001.wal");
-    let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
-        segment.clone(),
-        home.path().to_path_buf(),
-    )
-    .expect("start authenticated WAL writer");
+    let (writer, join, ready) =
+        crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
+            .expect("start authenticated WAL writer");
     ready.wait().await.expect("ready authenticated WAL writer");
     let gate = Arc::new(
         crate::providers::effect_test_support::RecordingEffectGate::new(Duration::from_secs(5)),
@@ -330,7 +328,10 @@ async fn w225_effect_start_role_rejection_closes_admitted_retry_with_denial_rece
     let role_dispatch = authorized.take_role_dispatch();
     let provider_subject = authorized.take_provider_subject();
     let effect = authorized.effect_context();
-    let audit = authorized.begin_dispatch().await.expect("write initial lifecycle");
+    let audit = authorized
+        .begin_dispatch()
+        .await
+        .expect("write initial lifecycle");
     let permit = ProviderDispatchPermit::authorized(
         audit,
         authorizer,
@@ -396,7 +397,10 @@ async fn w225_effect_start_role_rejection_closes_admitted_retry_with_denial_rece
     join.await.expect("authenticated WAL writer drained");
     let lifecycle = lifecycle_frames(&segment);
     assert_eq!(
-        lifecycle.iter().map(|(event, _)| *event).collect::<Vec<_>>(),
+        lifecycle
+            .iter()
+            .map(|(event, _)| *event)
+            .collect::<Vec<_>>(),
         [
             crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
             crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
@@ -404,9 +408,15 @@ async fn w225_effect_start_role_rejection_closes_admitted_retry_with_denial_rece
             crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
         ]
     );
-    assert_eq!(lifecycle[1].1["retry_receipt"]["disposition"], "retry_intent_closed");
+    assert_eq!(
+        lifecycle[1].1["retry_receipt"]["disposition"],
+        "retry_intent_closed"
+    );
     assert_eq!(lifecycle[3].1["error_kind"], "role_dispatch_policy_changed");
-    assert_eq!(lifecycle[3].1["retry_receipt"]["disposition"], "authorization_denied");
+    assert_eq!(
+        lifecycle[3].1["retry_receipt"]["disposition"],
+        "authorization_denied"
+    );
     assert_eq!(lifecycle[3].1["retry_receipt"]["class"], "transient");
     assert_eq!(lifecycle[3].1["retry_receipt"]["attempt"], 2);
 }
