@@ -14,7 +14,11 @@ This catches the shared cfg(test) type errors seen in the previous adapter/SSH/
 beta jobs before another expensive native dispatch. One worker remains; 15-minute
 check, 25-minute build and one-minute export fit in the reviewed 50-minute job.
 This is compilation only; native, GUI, optional-feature and release behavior
-gates remain. First Hosted result is pending. W177/W180 Preflight35670551761 and
+gates remain. First Hosted run35670885967 found three missing prompt_tax_source
+fields in the Council budget test. The fixtures now explicitly use None; their
+assertions are unchanged and fresh Hosted compilation remains required.
+Preflight35671020802 and Quality35671019947 passed on fbca7750.
+W177/W180 Preflight35670551761 and
 Quality35670550997 passed on97e2137a. See [W182](../docs/gold-wave182-verification.md).
 
 W177/W180 CLI build/reference35670551411 passed on97e2137a, together with

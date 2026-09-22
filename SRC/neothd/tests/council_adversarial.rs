@@ -198,6 +198,7 @@ fn test_token_budget_exhaustion() {
     let mut items = vec![
         BlockItem {
             block: Block::A,
+            prompt_tax_source: None,
             atomic_group: None,
             retention: PromptRetention::Degradable,
             importance: 0.5,
@@ -207,6 +208,7 @@ fn test_token_budget_exhaustion() {
         },
         BlockItem {
             block: Block::B,
+            prompt_tax_source: None,
             atomic_group: None,
             retention: PromptRetention::Degradable,
             importance: 0.5,
@@ -216,6 +218,7 @@ fn test_token_budget_exhaustion() {
         },
         BlockItem {
             block: Block::E,
+            prompt_tax_source: None,
             atomic_group: None,
             retention: PromptRetention::Degradable,
             importance: 0.5,

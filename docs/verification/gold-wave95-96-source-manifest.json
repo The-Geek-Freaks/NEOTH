@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W182-early-hosted-core-test-check",
-  "base": "1e8beb99eb0a303b74115478264d2f7ba3d862d4",
-  "capturedUtc": "2026-09-22T00:11:15.8592619Z",
-  "validationStatus": "W177_CLI_REFERENCE_COMPILED_NATIVE_AND_W182_CHECK_PENDING",
-  "scopeNote": "Fourexplicitdocs: exactW177CLIreference97e2137a artifact imported; no source changes. W182earlytestcheck and fullbehavior remain pending.",
+  "base": "fbca7750a67488277a2affad48529c65a4c936b5",
+  "capturedUtc": "2026-09-22T00:17:25.4468219Z",
+  "validationStatus": "W182_COUNCIL_TEST_COMPILE_REPAIR_HOSTED_PENDING",
+  "scopeNote": "Four explicit paths: Council budget fixture field repair plus current Road/Progress/evidence. W183 reflection work remains unadmitted.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -147,6 +147,11 @@
       "sha256": "88FA429D61B6EC508E577E6EB61B39817A208A4606F16B83089DB69A373F9B7D"
     },
     {
+      "path": "docs/gold-wave182-verification.md",
+      "bytes": 2198,
+      "sha256": "0B39486238E6376005F93230F65EC3E3C5A3FE659D224630D97B36E4DBC24AA9"
+    },
+    {
       "path": "docs/install.md",
       "bytes": 13637,
       "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
@@ -228,13 +233,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1017879,
-      "sha256": "C01FB3322D3EDDF10749747D86C9A82FA0104F2E2B464C0857D1E875BCA265EC"
+      "bytes": 1018128,
+      "sha256": "4EB05EB769AA85D00E89F0FEF4894982C7873913663A31D3D3D1250E3C916FDF"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1613326,
-      "sha256": "FEFB72A374D6B2F8793622D757985B3BCD38B8846F3651F7795D19A1710E4B99"
+      "bytes": 1613575,
+      "sha256": "15499994B121700FF47C3285D8173275728476066A47323739C30DAF59BA7828"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1997,6 +2002,11 @@
       "sha256": "CFB28F587E9AD82342257B1251C674740342A4AAC2EAB9ECCA76625265B2C6EA"
     },
     {
+      "path": "SRC/neothd/tests/council_adversarial.rs",
+      "bytes": 17723,
+      "sha256": "DF54DB4808ABB58715EDB86C1E84D41DB456D51851CC4EF1A31F37DB81CF21B8"
+    },
+    {
       "path": "SRC/neothd/tests/council_factual_check_prompt_framing_contract.rs",
       "bytes": 12579,
       "sha256": "E9091FBD3145459919B990EE991A2DCFE7D3856BBB630AD58BE2A4E994EA4A65"
@@ -2065,11 +2075,6 @@
       "path": "THIRD_PARTY_LICENSES",
       "bytes": 2271741,
       "sha256": "4E77A7CC896F8B5EEDCEFB458199A0939522B9191F22939BE3EFD78C575D9CF7"
-    },
-    {
-      "path": "docs/gold-wave182-verification.md",
-      "bytes": 1387,
-      "sha256": "6036FA7161283562F0DC40715DCB5D25C39AF25DD76A863333C75E0F2F9D396E"
     }
   ]
 }
