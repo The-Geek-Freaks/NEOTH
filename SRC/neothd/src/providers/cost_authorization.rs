@@ -1554,7 +1554,7 @@ impl ProviderCallAuditGuard {
     pub(crate) fn wrap_event_stream_cancellable(
         self,
         mut inner: ProviderEventStream,
-        cancellation: crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        cancellation: std::sync::Arc<dyn crate::security::mirror_refusal_pipeline::MirrorCancellation>,
     ) -> ProviderEventStream {
         Box::pin(async_stream::try_stream! {
             let mut audit = self;
@@ -2941,7 +2941,7 @@ impl<'a> CostAuthorizingProvider<'a> {
                 &self.authorizer,
                 self.call_scope,
                 reasoning_display,
-                cancellation,
+                std::sync::Arc::new(cancellation.clone()),
             )
             .await
     }
@@ -3030,7 +3030,7 @@ impl Provider for CostAuthorizingProvider<'_> {
         req: Request,
         _outer_authorizer: &ProviderCallAuthorizer,
         _outer_call_scope: &'static str,
-        _cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        _cancellation: std::sync::Arc<dyn crate::security::mirror_refusal_pipeline::MirrorCancellation>,
     ) -> Result<Completion> {
         let _ = req;
         anyhow::bail!(
@@ -3256,7 +3256,7 @@ impl Provider for AuthorizedProvider {
         req: Request,
         _outer_authorizer: &ProviderCallAuthorizer,
         _outer_call_scope: &'static str,
-        _cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        _cancellation: std::sync::Arc<dyn crate::security::mirror_refusal_pipeline::MirrorCancellation>,
     ) -> Result<Completion> {
         let _ = req;
         anyhow::bail!(

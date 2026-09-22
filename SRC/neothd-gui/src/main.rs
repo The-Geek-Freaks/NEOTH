@@ -43,6 +43,7 @@ static CLUSTER_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 // Buddy and Mesh render one shared membership authority snapshot. Older probes
 // and pre-mutation reads must never replace a newer receipt-verified readback.
 static MEMBERSHIP_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static TASK_DELEGATE_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 // OMI status reads are asynchronous. A read started before an accepted
 // mutation must never publish its now-stale snapshot after the mutation's
@@ -7996,6 +7997,7 @@ fn main() -> Result<()> {
         });
 
         register_buddy_vault_mirror_callback(&window);
+        register_buddy_task_delegate_callbacks(&window);
         register_local_model_callbacks(&window);
         register_embedding_model_callbacks(&window);
         register_buddy_embedding_callbacks(&window);
@@ -22309,6 +22311,117 @@ fn start_vault_mirror_repair(weak: slint::Weak<MainWindow>) {
             );
         }
     }
+}
+
+
+fn fetch_task_delegate_assignment(peer_key: &str) -> std::result::Result<panel_logic::TaskDelegateAssignmentSnap, String> {
+    let assignment = run_neothd_json_action::<Option<gui_action::TaskDelegateAssignmentAck>>(
+        &["cluster", "task-delegate", "show", peer_key],
+        "Inspect TaskDelegate assignment",
+    )?;
+    panel_logic::project_task_delegate_assignment(peer_key, assignment)
+}
+fn apply_buddy_task_delegate_result(window: &MainWindow, result: std::result::Result<panel_logic::TaskDelegateAssignmentSnap, String>) {
+    match result {
+        Ok(snapshot) => {
+            window.set_bc_task_delegate_bound_key(snapshot.peer_key.into());
+            window.set_bc_task_delegate_allowed(snapshot.allowed);
+            window.set_bc_task_delegate_revision(snapshot.revision.to_string().into());
+            window.set_bc_task_delegate_default_deny(snapshot.default_deny);
+            window.set_bc_task_delegate_status_valid(true);
+            window.set_bc_task_delegate_status_error("".into());
+        }
+        Err(error) => {
+            window.set_bc_task_delegate_status_valid(false);
+            window.set_bc_task_delegate_status_error(error.into());
+        }
+    }
+}
+fn register_buddy_task_delegate_callbacks(window: &MainWindow) {
+    let weak_edit = window.as_weak();
+    window.on_bc_task_delegate_peer_key_edited(move |_| {
+        TASK_DELEGATE_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        let Some(window) = weak_edit.upgrade() else { return };
+        window.set_bc_task_delegate_bound_key("".into());
+        window.set_bc_task_delegate_revision("".into());
+        window.set_bc_task_delegate_default_deny(false);
+        window.set_bc_task_delegate_status_valid(false);
+        window.set_bc_task_delegate_status_error("".into());
+    });
+    let weak_inspect = window.as_weak();
+    window.on_bc_task_delegate_inspect(move || {
+        let Some(window) = weak_inspect.upgrade() else { return };
+        if window.get_bc_task_delegate_in_flight() || window.get_bc_cluster_revocation_unresolved() { return; }
+        let peer_key = window.get_bc_task_delegate_peer_key().to_string();
+        let ui_revision = TASK_DELEGATE_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel).wrapping_add(1);
+        window.set_bc_task_delegate_in_flight(true);
+        let weak = weak_inspect.clone();
+        let worker = std::thread::Builder::new().name("task-delegate-inspect".into()).spawn(move || {
+            let result = fetch_task_delegate_assignment(&peer_key);
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(window) = weak.upgrade() else { return };
+                if TASK_DELEGATE_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) == ui_revision && window.get_bc_task_delegate_peer_key().as_str() == peer_key { apply_buddy_task_delegate_result(&window, result); }
+                window.set_bc_task_delegate_in_flight(false);
+            });
+        });
+        if let Err(error) = worker {
+            window.set_bc_task_delegate_in_flight(false);
+            apply_buddy_task_delegate_result(&window, Err(format!("Could not start assignment inspection: {error}")));
+        }
+    });
+    let weak_set = window.as_weak();
+    window.on_bc_task_delegate_set(move |allowed| {
+        let Some(window) = weak_set.upgrade() else { return };
+        if window.get_bc_task_delegate_in_flight() { return; }
+        let peer_key = window.get_bc_task_delegate_peer_key().to_string();
+        let bound_key = window.get_bc_task_delegate_bound_key().to_string();
+        let revision = match window.get_bc_task_delegate_revision().as_str().parse::<u64>() { Ok(revision) => revision, Err(_) => return };
+        let ui_revision = TASK_DELEGATE_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel).wrapping_add(1);
+        if !window.get_bc_task_delegate_status_valid() || window.get_bc_cluster_revocation_unresolved() || peer_key != bound_key { return; }
+        window.set_bc_task_delegate_in_flight(true);
+        let weak = weak_set.clone();
+        let worker = std::thread::Builder::new().name("task-delegate-set".into()).spawn(move || {
+            let revision_text = revision.to_string();
+            let allowed_text = if allowed { "true" } else { "false" };
+            let result: std::result::Result<_, String> = (|| {
+                let receipt = run_neothd_json_action::<gui_action::TaskDelegateAssignmentAck>(
+                    &["cluster", "task-delegate", "set", bound_key.as_str(), "--allowed", allowed_text, "--expected-revision", revision_text.as_str()],
+                    "Set TaskDelegate assignment",
+                )?;
+                receipt.verify_commit(&bound_key, allowed, revision)?;
+                // The receipt is the local commit proof. A later inspect may
+                // fail independently and must never retroactively fail it.
+                Ok((receipt, fetch_task_delegate_assignment(&bound_key)))
+            })();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(window) = weak.upgrade() else { return };
+                if TASK_DELEGATE_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) == ui_revision && window.get_bc_task_delegate_peer_key().as_str() == bound_key {
+                    match result {
+                        Ok((receipt, Ok(fresh))) => {
+                            let fresh = match panel_logic::task_delegate_fresh_readback(&receipt, fresh) { Ok(fresh) => fresh, Err(error) => { apply_buddy_task_delegate_result(&window, Ok(panel_logic::TaskDelegateAssignmentSnap { peer_key: receipt.peer_key.clone(), allowed: receipt.allowed, revision: receipt.revision, default_deny: false })); window.set_bc_task_delegate_status_valid(false); window.set_bc_task_delegate_status_error(format!("TaskDelegate commit succeeded, but fresh inspect was invalid: {error}").into()); push_toast(&weak, "success", "TaskDelegate committed", "The durable commit receipt was accepted; refresh inspection later to confirm current state."); window.set_bc_task_delegate_in_flight(false); return; } };
+                            let later = fresh.revision > receipt.revision;
+                            apply_buddy_task_delegate_result(&window, Ok(fresh));
+                            push_toast(&weak, "success", "TaskDelegate committed", if later { "The commit succeeded; a later assignment was observed on fresh readback." } else { "The durable assignment was committed and confirmed by fresh readback." });
+                        }
+                        Ok((receipt, Err(readback_error))) => {
+                            apply_buddy_task_delegate_result(&window, Ok(panel_logic::TaskDelegateAssignmentSnap {
+                                peer_key: receipt.peer_key, allowed: receipt.allowed, revision: receipt.revision, default_deny: false,
+                            }));
+                            window.set_bc_task_delegate_status_valid(false);
+                            window.set_bc_task_delegate_status_error(format!("TaskDelegate commit succeeded, but fresh inspect failed: {readback_error}").into());
+                            push_toast(&weak, "success", "TaskDelegate committed", "The durable commit receipt was accepted; refresh inspection later to confirm current state.");
+                        }
+                        Err(error) => { apply_buddy_task_delegate_result(&window, Err(error.clone())); push_toast(&weak, "error", "TaskDelegate update failed", &error); }
+                    }
+                }
+                window.set_bc_task_delegate_in_flight(false);
+            });
+        });
+        if let Err(error) = worker {
+            window.set_bc_task_delegate_in_flight(false);
+            apply_buddy_task_delegate_result(&window, Err(format!("Could not start assignment update: {error}")));
+        }
+    });
 }
 
 fn fetch_buddy_cluster_status() -> std::result::Result<panel_logic::BuddyClusterStatusSnap, String>
@@ -43315,7 +43428,7 @@ mod w58_gui_callback_runtime_tests {
         publish_code_map_enrichment_readiness, refresh_buddyconfig, refresh_selfimprove,
         register_buddy_code_map_impact_callback, register_buddy_code_map_status_callback,
         register_buddy_embedding_callbacks, register_buddy_native_coding_callbacks,
-        register_buddy_quality_handoff_callback, register_buddy_vault_mirror_callback,
+        register_buddy_quality_handoff_callback, register_buddy_vault_mirror_callback, register_buddy_task_delegate_callbacks,
         register_channel_account_dm_pairing_callback, register_channel_account_retirement_callback,
         register_channel_legacy_migration_callback, register_channel_pairing_approval_callback,
         register_channel_pairing_request_callbacks,
@@ -45277,6 +45390,42 @@ if [ "$1" = autonomy ] && [ "$2" = skill ] && [ "$3" = show ] && [ "$4" = web-re
     while [ ! -f "$base/w138-release" ] && [ "$remaining" -gt 0 ]; do /bin/sleep 0.01; remaining=$((remaining - 1)); done
   fi
   /bin/cat "$base/autonomy-show.json"
+  exit 0
+fi
+if [ "$1" = cluster ] && [ "$2" = task-delegate ] && [ "$3" = set ] && [ "$4" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]; then
+  [ "$5" = --allowed ] && [ "$7" = --expected-revision ] && [ "$9" = --output ] && [ "${10}" = json ] && [ "$#" -eq 10 ] || exit 93
+  if [ "$mode" = w233_reset ]; then [ "$6" = false ] || exit 97; else [ "$6" = true ] || exit 98; fi
+  if [ "$mode" = w233_initial_set ]; then [ "$8" = 0 ] || exit 94; else [ "$8" = 1 ] || exit 95; fi
+  printf 'task-delegate-set\n' >> "$base/calls"
+  /usr/bin/touch "$base/w233-set-started"
+  if [ "$mode" = w233_blocked_set ]; then
+    remaining=500
+    while [ ! -f "$base/w233-release" ] && [ "$remaining" -gt 0 ]; do /bin/sleep 0.01; remaining=$((remaining - 1)); done
+  fi
+  case "$mode" in
+    w233_blocked_set|w233_success|w233_lower|w233_conflict|w233_newer) printf '{"peer_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","allowed":true,"revision":2}\n' ;;
+    w233_initial_set) printf '{"peer_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","allowed":true,"revision":1}\n' ;;
+    w233_reset) printf '{"peer_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","allowed":false,"revision":2}\n' ;;
+    w233_wrong_bool) printf '{"peer_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","allowed":false,"revision":2}\n' ;;
+    w233_wrong_revision) printf '{"peer_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","allowed":true,"revision":9}\n' ;;
+    w233_readback_failure) printf '{"peer_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","allowed":true,"revision":2}\n' ;;
+    *) printf 'unexpected W233 set mode: %s\n' "$mode" >&2; exit 91 ;;
+  esac
+  exit 0
+fi
+if [ "$1" = cluster ] && [ "$2" = task-delegate ] && [ "$3" = show ] && [ "$4" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]; then
+  [ "$5" = --output ] && [ "$6" = json ] && [ "$#" -eq 6 ] || exit 96
+  printf 'task-delegate-show\n' >> "$base/calls"
+  case "$mode" in
+    w233_null) printf 'null\n' ;;
+    w233_initial_set) printf '{"peer_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","allowed":true,"revision":1}\n' ;;
+    w233_reset) printf '{"peer_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","allowed":false,"revision":2}\n' ;;
+    w233_readback_failure) printf 'controlled readback failure\n' >&2; exit 92 ;;
+    w233_newer) printf '{"peer_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","allowed":false,"revision":3}\n' ;;
+    w233_lower) printf '{"peer_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","allowed":true,"revision":1}\n' ;;
+    w233_conflict) printf '{"peer_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","allowed":false,"revision":2}\n' ;;
+    *) printf '{"peer_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","allowed":true,"revision":2}\n' ;;
+  esac
   exit 0
 fi
 if [ "$1" = skills ] && [ "$2" = --list ] && [ "$3" = --output ] && [ "$4" = json ] && [ "$#" -eq 4 ]; then
@@ -49681,8 +49830,156 @@ exit 7
         );
     }
 
+    #[cfg(not(windows))]
+    fn w233_pump_until_task_delegate_settles(window: &MainWindow, calls: &Path, expected_sets: usize) {
+        let completed = Rc::new(Cell::new(false));
+        let seen = Rc::clone(&completed);
+        let weak = window.as_weak();
+        let calls = calls.to_path_buf();
+        let ticks = Rc::new(Cell::new(0_u16));
+        let observed_ticks = Rc::clone(&ticks);
+        let timer = slint::Timer::default();
+        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
+            if weak.upgrade().is_some_and(|window| !window.get_bc_task_delegate_in_flight()
+                && w184_call_count(&calls, "task-delegate-set") == expected_sets) {
+                seen.set(true); let _ = slint::quit_event_loop(); return;
+            }
+            if observed_ticks.get().saturating_add(1) >= 500 { let _ = slint::quit_event_loop(); }
+            else { observed_ticks.set(observed_ticks.get() + 1); }
+        });
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("run W233 callback fixture event loop");
+        drop(timer);
+        assert!(completed.get(), "W233 TaskDelegate callback did not settle");
+    }
+
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w233_task_delegate_set_owns_busy_across_edits_and_fences_stale_completion() {
+        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("serial W233 GUI fixture environment");
+        let fixture = TempDir::new().expect("create W233 CLI fixture");
+        let bin = w116_stage_fake_neoth(&fixture);
+        let mode = fixture.path().join("mode");
+        let calls = fixture.path().join("calls");
+        let release = fixture.path().join("w233-release");
+        std::fs::write(&calls, b"").unwrap();
+        std::fs::write(&mode, b"w233_blocked_set").unwrap();
+        let _path = PathGuard::install(fixture.path());
+        assert_eq!(std::fs::canonicalize(which_neothd().unwrap()).unwrap(), std::fs::canonicalize(bin).unwrap());
+        let window = MainWindow::new().unwrap();
+        register_buddy_task_delegate_callbacks(&window);
+        let a = "a".repeat(64);
+        window.set_bc_cluster_revocation_unresolved(false);
+        window.set_bc_task_delegate_peer_key(a.clone().into());
+        window.set_bc_task_delegate_bound_key(a.clone().into());
+        window.set_bc_task_delegate_revision("1".into());
+        window.set_bc_task_delegate_status_valid(true);
+        window.invoke_bc_task_delegate_set(true);
+        w151_wait_for_file(&window, &fixture.path().join("w233-set-started"), "W233 set should start");
+        window.set_bc_task_delegate_peer_key("b".repeat(64).into());
+        window.invoke_bc_task_delegate_peer_key_edited("b".repeat(64).into());
+        window.set_bc_task_delegate_peer_key(a.clone().into());
+        window.invoke_bc_task_delegate_peer_key_edited(a.clone().into());
+        window.invoke_bc_task_delegate_set(true);
+        assert!(window.get_bc_task_delegate_in_flight(), "editing must not clear an owned operation");
+        assert_eq!(w184_call_count(&calls, "task-delegate-set"), 1, "stale UI must not dispatch a second mutation");
+        std::fs::write(&release, b"release").unwrap();
+        w233_pump_until_task_delegate_settles(&window, &calls, 1);
+        assert!(window.get_bc_task_delegate_bound_key().is_empty(), "stale A completion must not rebind after A-B-A edits");
+        assert!(!window.get_bc_task_delegate_status_valid());
+    }
+
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation() {
+        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("serial W233 receipt fixture environment");
+        let fixture = TempDir::new().unwrap();
+        let _bin = w116_stage_fake_neoth(&fixture);
+        let mode = fixture.path().join("mode");
+        let calls = fixture.path().join("calls");
+        std::fs::write(&calls, b"").unwrap();
+        std::fs::write(&mode, b"w233_lower").unwrap();
+        let _path = PathGuard::install(fixture.path());
+        let window = MainWindow::new().unwrap();
+        register_buddy_task_delegate_callbacks(&window);
+        let a = "a".repeat(64);
+        window.set_bc_cluster_revocation_unresolved(false);
+        window.set_bc_task_delegate_peer_key(a.clone().into());
+        window.set_bc_task_delegate_bound_key(a.into());
+        window.set_bc_task_delegate_revision("1".into());
+        window.set_bc_task_delegate_status_valid(true);
+        window.invoke_bc_task_delegate_set(true);
+        w233_pump_until_task_delegate_settles(&window, &calls, 1);
+        assert_eq!(window.get_bc_task_delegate_revision().to_string(), "2");
+        assert!(window.get_bc_task_delegate_allowed(), "the verified receipt remains displayed");
+        assert!(!window.get_bc_task_delegate_status_valid(), "invalid fresh readback fences further mutation");
+        assert!(window.get_bc_task_delegate_status_error().to_string().contains("commit succeeded"));
+    }
+
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w233_task_delegate_callback_fixture_covers_conflict_receipt_and_newer_readback() {
+        let _environment = GUI_CALLBACK_ENV_LOCK.lock().unwrap();
+        for (mode_name, expect_valid, expected_revision) in [
+            ("w233_conflict", false, "2"), ("w233_readback_failure", false, "2"),
+            ("w233_newer", true, "3"), ("w233_wrong_bool", false, "1"),
+            ("w233_wrong_revision", false, "1"),
+        ] {
+            let fixture = TempDir::new().unwrap();
+            let _bin = w116_stage_fake_neoth(&fixture);
+            let mode = fixture.path().join("mode"); let calls = fixture.path().join("calls");
+            std::fs::write(&calls, b"").unwrap(); std::fs::write(&mode, mode_name).unwrap();
+            let _path = PathGuard::install(fixture.path());
+            let window = MainWindow::new().unwrap(); register_buddy_task_delegate_callbacks(&window);
+            let a = "a".repeat(64);
+            window.set_bc_cluster_revocation_unresolved(false); window.set_bc_task_delegate_peer_key(a.clone().into());
+            window.set_bc_task_delegate_bound_key(a.into()); window.set_bc_task_delegate_revision("1".into());
+            window.set_bc_task_delegate_status_valid(true); window.invoke_bc_task_delegate_set(true);
+            w233_pump_until_task_delegate_settles(&window, &calls, 1);
+            assert_eq!(window.get_bc_task_delegate_revision().to_string(), expected_revision, "{mode_name}");
+            assert_eq!(window.get_bc_task_delegate_status_valid(), expect_valid, "{mode_name}");
+        }
+    }
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w233_task_delegate_inspect_null_projects_effective_default_deny() {
+        let _environment = GUI_CALLBACK_ENV_LOCK.lock().unwrap();
+        let fixture = TempDir::new().unwrap(); let _bin = w116_stage_fake_neoth(&fixture);
+        let mode = fixture.path().join("mode"); let calls = fixture.path().join("calls");
+        std::fs::write(&calls, b"").unwrap(); std::fs::write(&mode, b"w233_null").unwrap();
+        let _path = PathGuard::install(fixture.path());
+        let window = MainWindow::new().unwrap(); register_buddy_task_delegate_callbacks(&window);
+        window.set_bc_cluster_revocation_unresolved(false);
+        window.set_bc_task_delegate_peer_key("a".repeat(64).into());
+        window.invoke_bc_task_delegate_inspect();
+        let weak = window.as_weak(); let calls_for_timer = calls.clone(); let ticks = Rc::new(Cell::new(0_u16)); let observed = Rc::clone(&ticks);
+        let timer = slint::Timer::default();
+        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
+            if weak.upgrade().is_some_and(|w| w184_call_count(&calls_for_timer, "task-delegate-show") == 1 && !w.get_bc_task_delegate_in_flight()) { let _ = slint::quit_event_loop(); }
+            else if observed.get().saturating_add(1) >= 500 { let _ = slint::quit_event_loop(); } else { observed.set(observed.get()+1); }
+        });
+        let _ = window.hide(); slint::run_event_loop_until_quit().unwrap(); drop(timer);
+        assert!(window.get_bc_task_delegate_default_deny());
+        assert!(window.get_bc_task_delegate_status_valid());
+        assert_eq!(window.get_bc_task_delegate_revision().as_str(), "0");
+        std::fs::write(&mode, b"w233_initial_set").unwrap();
+        window.invoke_bc_task_delegate_set(true);
+        w233_pump_until_task_delegate_settles(&window, &calls, 1);
+        assert_eq!(window.get_bc_task_delegate_revision().as_str(), "1");
+        assert!(window.get_bc_task_delegate_allowed());
+        assert!(window.get_bc_task_delegate_status_valid());
+        assert!(!window.get_bc_task_delegate_default_deny());
+        std::fs::write(&mode, b"w233_reset").unwrap();
+        window.invoke_bc_task_delegate_set(false);
+        w233_pump_until_task_delegate_settles(&window, &calls, 2);
+        assert_eq!(window.get_bc_task_delegate_revision().as_str(), "2");
+        assert!(!window.get_bc_task_delegate_allowed());
+        assert!(window.get_bc_task_delegate_status_valid());
+        assert!(!window.get_bc_task_delegate_default_deny());
+    }
+
     #[cfg(target_os = "macos")]
-    const MACOS_NATIVE_HARNESS_TESTS: [&str; 26] = [
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 30] = [
         "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
         "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
@@ -49709,6 +50006,10 @@ exit 7
         "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback",
         "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe",
         "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good",
+        "w58_gui_callback_runtime_tests::w233_task_delegate_set_owns_busy_across_edits_and_fences_stale_completion",
+        "w58_gui_callback_runtime_tests::w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation",
+        "w58_gui_callback_runtime_tests::w233_task_delegate_callback_fixture_covers_conflict_receipt_and_newer_readback",
+        "w58_gui_callback_runtime_tests::w233_task_delegate_inspect_null_projects_effective_default_deny",
     ];
 
     /// Native macOS Nextest bridge. Keep its stdout restricted to the libtest
@@ -49843,6 +50144,10 @@ exit 7
                     "w58_gui_callback_runtime_tests::w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good" => {
                         w219_provider_retry_status_callback_projects_only_safe_rows_and_retains_last_known_good()
                     }
+                    "w58_gui_callback_runtime_tests::w233_task_delegate_set_owns_busy_across_edits_and_fences_stale_completion" => { w233_task_delegate_set_owns_busy_across_edits_and_fences_stale_completion() }
+                    "w58_gui_callback_runtime_tests::w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation" => { w233_invalid_fresh_readback_keeps_committed_receipt_and_fences_mutation() }
+                    "w58_gui_callback_runtime_tests::w233_task_delegate_callback_fixture_covers_conflict_receipt_and_newer_readback" => { w233_task_delegate_callback_fixture_covers_conflict_receipt_and_newer_readback() }
+                    "w58_gui_callback_runtime_tests::w233_task_delegate_inspect_null_projects_effective_default_deny" => { w233_task_delegate_inspect_null_projects_effective_default_deny() }
                     _ => return Err(format!("unknown macOS native GUI test {test_name:?}")),
                 }
                 Ok(())

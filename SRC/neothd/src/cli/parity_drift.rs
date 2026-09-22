@@ -762,6 +762,33 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
     },
     #[cfg(feature = "cluster")]
     OperationParity {
+        id: "cluster.task-delegate.inspect",
+        capability: "cluster",
+        cli_path: "cluster task-delegate show <PEER_PK>",
+        gui_nav: "buddyconfig",
+        gui_surface: "Buddy Config > Cluster membership > TaskDelegate assignment",
+        ui_callback: Some("bc-task-delegate-inspect"),
+        rust_handler: Some("fn fetch_task_delegate_assignment"),
+        dispatch_token: Some("[\"cluster\", \"task-delegate\", \"show\", peer_key]"),
+        receipt: Evidence::Typed("fn fetch_task_delegate_assignment", "TaskDelegateAssignmentAck"),
+        readback: Evidence::Typed("fn fetch_task_delegate_assignment", "panel_logic::project_task_delegate_assignment"),
+        state: OperationState::Verified,
+    },
+    #[cfg(feature = "cluster")]
+    OperationParity {
+        id: "cluster.task-delegate.set",
+        capability: "cluster",
+        cli_path: "cluster task-delegate set <PEER_PK> --allowed <BOOL> --expected-revision <N>",
+        gui_nav: "buddyconfig",
+        gui_surface: "Buddy Config > Cluster membership > TaskDelegate assignment",
+        ui_callback: Some("bc-task-delegate-set"),
+        rust_handler: Some("fn register_buddy_task_delegate_callbacks"),
+        dispatch_token: Some("[\"cluster\", \"task-delegate\", \"set\", bound_key.as_str()"),
+        receipt: Evidence::Typed("fn register_buddy_task_delegate_callbacks", "verify_commit"),
+        readback: Evidence::Typed("fn register_buddy_task_delegate_callbacks", "panel_logic::task_delegate_fresh_readback"),
+        state: OperationState::Verified,
+    },    #[cfg(feature = "cluster")]
+    OperationParity {
         id: "buddy.cluster.status",
         capability: "buddy",
         cli_path: "buddy cluster status",

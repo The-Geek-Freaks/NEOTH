@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W233 Buddy TaskDelegate and W235 API repair (2026-09-23):** Buddy now inspects
+and mutates exact peer assignments through existing CLI/RPC CAS. Full u64
+revisions, bound receipts, busy ownership across A→B→A and truthful committed/
+unconfirmed readback are enforced. Three reducer/receipt cases plus four actual
+callback fixtures are selected; the macOS native dispatcher/discovery has30cases.
+GUI selection becomes **123 = 97 universal + 26 Linux** (also26 macOS extras).
+W235's11 Hosted private-interface diagnostics are repaired with the existing
+public cancellation observer; the concrete chat close authority stays private.
+Source/delta review is complete; Hosted execution remains required. Inventory
+535sources/845native/97GUI; Group402 unchanged. Road remains1016checked/306open/
+2partial. See `docs/gold-wave233-task-delegate-gui.md` and W235 report. No local
+compiler, formatter, parser, test or runtime was executed.
+
 **W237/W238 and W235 compile repair (2026-09-23):** Group39835795048502
 executed398 cases on480ff458: **397 passed / 1 failed**. All83 source hashes,
 matrix, lock and actual terminals match. The sole yearly-concurrency failure

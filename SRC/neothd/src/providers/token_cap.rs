@@ -132,7 +132,7 @@ impl Provider for TokenCappedProvider<'_> {
         req: Request,
         authorizer: &ProviderCallAuthorizer,
         call_scope: &'static str,
-        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        cancellation: std::sync::Arc<dyn crate::security::mirror_refusal_pipeline::MirrorCancellation>,
     ) -> Result<Completion> {
         ensure_request_fits(&req, self.cap)?;
         self.inner
@@ -185,7 +185,7 @@ impl Provider for TokenCappedProvider<'_> {
         authorizer: &ProviderCallAuthorizer,
         call_scope: &'static str,
         reasoning_display: ReasoningDisplayGrant,
-        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        cancellation: std::sync::Arc<dyn crate::security::mirror_refusal_pipeline::MirrorCancellation>,
     ) -> Result<ProviderEventStream> {
         ensure_request_fits(&req, self.cap)?;
         self.inner

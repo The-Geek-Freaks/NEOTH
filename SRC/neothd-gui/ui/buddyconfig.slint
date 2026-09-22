@@ -95,7 +95,7 @@ component ToggleRow inherits Rectangle {
 
     HorizontalLayout {
         alignment: start;
-        spacing: 8px;
+        spacing: Theme.space-2;
         Text {
             text: root.label;
             overflow: elide;
@@ -205,6 +205,14 @@ export component BuddyConfigView inherits Rectangle {
     in property <string> bc-cluster-revocation-state: "checking";
     in property <string> bc-cluster-revocation-detail: "Checking the authoritative durable revocation state.";
     in property <bool> bc-cluster-revocation-unresolved: true;
+    in-out property <string> bc-task-delegate-peer-key: "";
+    in property <string> bc-task-delegate-bound-key: "";
+    in property <bool> bc-task-delegate-allowed: false;
+    in property <string> bc-task-delegate-revision: "";
+    in property <bool> bc-task-delegate-default-deny: false;
+    in property <bool> bc-task-delegate-status-valid: false;
+    in property <string> bc-task-delegate-status-error: "";
+    in property <bool> bc-task-delegate-in-flight: false;
 
     /// W184 vault-mirror projection. Remote identity and raw Git diagnostics
     /// intentionally never enter the GUI model.
@@ -253,6 +261,9 @@ export component BuddyConfigView inherits Rectangle {
     callback bc-refresh-clicked();
     callback bc-cluster-continue-pairing();
     callback bc-cluster-revoke(string);
+    callback bc-task-delegate-inspect();
+    callback bc-task-delegate-set(bool);
+    callback bc-task-delegate-peer-key-edited(string);
     callback bc-vault-mirror-repair();
     callback bc-embedding-model-changed(string);
     callback bc-embedding-probe(string);
@@ -489,7 +500,7 @@ export component BuddyConfigView inherits Rectangle {
                             alignment: start;
 
                             HorizontalLayout {
-                                spacing: 8px;
+                                spacing: Theme.space-2;
                                 alignment: start;
                                 height: 18px;
                                 Kicker { label: "VAULT MIRROR"; }
@@ -538,7 +549,7 @@ export component BuddyConfigView inherits Rectangle {
                             alignment: start;
 
                             HorizontalLayout {
-                                spacing: 8px;
+                                spacing: Theme.space-2;
                                 alignment: start;
                                 height: 18px;
                                 Kicker { label: "CLUSTER MEMBERSHIP"; }
@@ -635,8 +646,39 @@ export component BuddyConfigView inherits Rectangle {
                                 }
                             }
 
+                            Divider {}
+                            Kicker { label: "TASKDELEGATE ASSIGNMENT"; }
+                            Note { body: "Allow or deny task delegation for an authenticated peer using its exact 64-character lowercase Peeroxide key. Without a saved assignment, delegation is denied. Deny/reset is saved as a new revision."; }
+                            NeothLineEdit {
+                                text <=> root.bc-task-delegate-peer-key;
+                                placeholder-text: "Exact authenticated Peeroxide key (64 lowercase hex)";
+                                enabled: !root.bc-task-delegate-in-flight;
+                                edited(value) => { root.bc-task-delegate-peer-key-edited(value); }
+                                accepted(value) => { root.bc-task-delegate-inspect(); }
+                            }
                             HorizontalLayout {
-                                spacing: 8px;
+                                spacing: Theme.space-2;
+                                NeothButton { label: root.bc-task-delegate-in-flight ? "Working…" : "Inspect assignment"; size: "sm"; loading: root.bc-task-delegate-in-flight; enabled: !root.bc-task-delegate-in-flight && !root.bc-cluster-revocation-unresolved; clicked => { root.bc-task-delegate-inspect(); } }
+                                Text {
+                                    text: root.bc-task-delegate-bound-key == "" ? "Inspect an exact key before changing TaskDelegate." :
+                                        (root.bc-task-delegate-status-valid ? "" : "Last known: ") +
+                                        (root.bc-task-delegate-default-deny ? "No saved assignment · default deny" :
+                                            (root.bc-task-delegate-allowed ? "Allowed · revision " : "Denied · revision ") + root.bc-task-delegate-revision);
+                                    color: root.bc-task-delegate-status-valid ? Theme.text-secondary : Theme.text-tertiary;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    vertical-alignment: center;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            if root.bc-task-delegate-status-error != "": Text { text: root.bc-task-delegate-status-error + " Last known assignment is retained."; color: Theme.accent-pink; font-family: Theme.font-mono; font-size: Theme.font-size-xs; wrap: word-wrap; }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                NeothButton { label: "Allow TaskDelegate"; size: "sm"; primary: true; loading: root.bc-task-delegate-in-flight; enabled: root.bc-task-delegate-status-valid && root.bc-task-delegate-bound-key == root.bc-task-delegate-peer-key && !root.bc-task-delegate-in-flight && !root.bc-cluster-revocation-unresolved; clicked => { root.bc-task-delegate-set(true); } }
+                                NeothButton { label: "Deny / reset TaskDelegate"; size: "sm"; danger: true; loading: root.bc-task-delegate-in-flight; enabled: root.bc-task-delegate-status-valid && root.bc-task-delegate-bound-key == root.bc-task-delegate-peer-key && !root.bc-task-delegate-in-flight && !root.bc-cluster-revocation-unresolved; clicked => { root.bc-task-delegate-set(false); } }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
                                 alignment: end;
                                 NeothButton {
                                     label: "Continue pairing";
@@ -853,7 +895,7 @@ export component BuddyConfigView inherits Rectangle {
 
                             // Card header: kicker + consent LED
                             HorizontalLayout {
-                                spacing: 8px;
+                                spacing: Theme.space-2;
                                 alignment: start;
                                 height: 18px;
                                 Kicker { label: "SOVEREIGN"; }
@@ -878,7 +920,7 @@ export component BuddyConfigView inherits Rectangle {
                                     padding-left: 12px;
                                     padding-right: 12px;
                                     alignment: start;
-                                    spacing: 8px;
+                                    spacing: Theme.space-2;
                                     Text {
                                         text: "⚠";
                                         color: Theme.consent;
@@ -904,7 +946,7 @@ export component BuddyConfigView inherits Rectangle {
 
                             // Enable / Disable buttons
                             HorizontalLayout {
-                                spacing: 8px;
+                                spacing: Theme.space-2;
                                 alignment: end;
                                 NeothButton {
                                     label: "Enable in CLI";
@@ -937,7 +979,7 @@ export component BuddyConfigView inherits Rectangle {
 
                             // Header
                             HorizontalLayout {
-                                spacing: 8px;
+                                spacing: Theme.space-2;
                                 alignment: start;
                                 height: 18px;
                                 Kicker { label: "SELF-ACTIVATION"; }
@@ -1006,7 +1048,7 @@ export component BuddyConfigView inherits Rectangle {
                             alignment: start;
 
                             HorizontalLayout {
-                                spacing: 8px;
+                                spacing: Theme.space-2;
                                 alignment: start;
                                 height: 18px;
                                 Kicker { label: "SMART-APPROVE"; }
@@ -1050,7 +1092,7 @@ export component BuddyConfigView inherits Rectangle {
                             alignment: start;
 
                             HorizontalLayout {
-                                spacing: 8px;
+                                spacing: Theme.space-2;
                                 alignment: start;
                                 height: 18px;
                                 Kicker { label: "AUTONOMY"; }
@@ -1107,7 +1149,7 @@ export component BuddyConfigView inherits Rectangle {
                             alignment: start;
 
                             HorizontalLayout {
-                                spacing: 8px;
+                                spacing: Theme.space-2;
                                 alignment: start;
                                 height: 18px;
                                 Kicker { label: "PROACTIVE MESSAGING"; }

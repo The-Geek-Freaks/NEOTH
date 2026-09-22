@@ -965,6 +965,17 @@ export component MainWindow inherits Window {
     in property <string>          bc-cluster-revocation-state: "checking";
     in property <string>          bc-cluster-revocation-detail: "Checking the authoritative durable revocation state.";
     in property <bool>            bc-cluster-revocation-unresolved: true;
+    in-out property <string>       bc-task-delegate-peer-key: "";
+    in property <string>           bc-task-delegate-bound-key: "";
+    in property <bool>             bc-task-delegate-allowed: false;
+    in property <string>          bc-task-delegate-revision: "";
+    in property <bool>             bc-task-delegate-default-deny: false;
+    in property <bool>             bc-task-delegate-status-valid: false;
+    in property <string>           bc-task-delegate-status-error: "";
+    in property <bool>             bc-task-delegate-in-flight: false;
+    callback bc-task-delegate-inspect();
+    callback bc-task-delegate-set(bool);
+    callback bc-task-delegate-peer-key-edited(string);
     callback bc-sovereign-enable-cli();
     callback bc-sovereign-disable();
     callback bc-selfact-toggle(bool);
@@ -5046,6 +5057,14 @@ export component MainWindow inherits Window {
                     bc-cluster-revocation-state: root.bc-cluster-revocation-state;
                     bc-cluster-revocation-detail: root.bc-cluster-revocation-detail;
                     bc-cluster-revocation-unresolved: root.bc-cluster-revocation-unresolved;
+                    bc-task-delegate-peer-key <=> root.bc-task-delegate-peer-key;
+                    bc-task-delegate-bound-key: root.bc-task-delegate-bound-key;
+                    bc-task-delegate-allowed: root.bc-task-delegate-allowed;
+                    bc-task-delegate-revision: root.bc-task-delegate-revision;
+                    bc-task-delegate-default-deny: root.bc-task-delegate-default-deny;
+                    bc-task-delegate-status-valid: root.bc-task-delegate-status-valid;
+                    bc-task-delegate-status-error: root.bc-task-delegate-status-error;
+                    bc-task-delegate-in-flight: root.bc-task-delegate-in-flight;
                     bc-sovereign-enable-cli => { root.bc-sovereign-enable-cli(); }
                     bc-sovereign-disable => { root.bc-sovereign-disable(); }
                     bc-selfact-toggle(v) => { root.bc-selfact-toggle(v); }
@@ -5053,6 +5072,9 @@ export component MainWindow inherits Window {
                     bc-proactive-toggle(v) => { root.bc-proactive-toggle(v); }
                     bc-refresh-clicked => { root.bc-refresh-clicked(); }
                     bc-cluster-continue-pairing => { root.nav-active = "mesh"; }
+                    bc-task-delegate-inspect => { root.bc-task-delegate-inspect(); }
+                    bc-task-delegate-set(allowed) => { root.bc-task-delegate-set(allowed); }
+                    bc-task-delegate-peer-key-edited(key) => { root.bc-task-delegate-peer-key-edited(key); }
                     bc-cluster-revoke(id) => {
                         if (root.bc-cluster-status-valid
                             && !root.bc-cluster-revocation-unresolved
@@ -5602,7 +5624,7 @@ export component MainWindow inherits Window {
             drop-shadow-color: Theme.bg-void.with-alpha(0.65);
             TouchArea { }
             sc-col := VerticalLayout {
-                padding: 22px; spacing: 8px;
+                padding: 22px; spacing: Theme.space-2;
                 Text {
                     text: "KEYBOARD SHORTCUTS";
                     color: Theme.text-tertiary;

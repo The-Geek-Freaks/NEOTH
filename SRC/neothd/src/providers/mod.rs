@@ -2557,9 +2557,9 @@ pub trait Provider: Send + Sync {
         mut req: Request,
         authorizer: &cost_authorization::ProviderCallAuthorizer,
         call_scope: &'static str,
-        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        cancellation: Arc<dyn crate::security::mirror_refusal_pipeline::MirrorCancellation>,
     ) -> Result<Completion> {
-        if cancellation.is_closed() {
+        if cancellation.is_cancelled() {
             anyhow::bail!("chat turn cancelled before provider completion authorization");
         }
         self.validate_request_controls(&req)?;
@@ -2599,7 +2599,7 @@ pub trait Provider: Send + Sync {
             }
             return Err(error);
         }
-        if cancellation.is_closed() {
+        if cancellation.is_cancelled() {
             permit.failure("stream_cancelled").await?;
             anyhow::bail!("chat turn cancelled before provider completion started");
         }
@@ -2746,14 +2746,14 @@ pub trait Provider: Send + Sync {
         authorizer: &cost_authorization::ProviderCallAuthorizer,
         call_scope: &'static str,
         reasoning_display: ReasoningDisplayGrant,
-        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        cancellation: Arc<dyn crate::security::mirror_refusal_pipeline::MirrorCancellation>,
     ) -> Result<ProviderEventStream> {
         self.stream_events_authorized_inner(
             req,
             authorizer,
             call_scope,
             reasoning_display,
-            Some(cancellation.clone()),
+            Some(cancellation),
         )
         .await
     }
@@ -2765,11 +2765,11 @@ pub trait Provider: Send + Sync {
         authorizer: &cost_authorization::ProviderCallAuthorizer,
         call_scope: &'static str,
         reasoning_display: ReasoningDisplayGrant,
-        cancellation: Option<crate::cli::chat_turn_pipeline::ChatTurnCancellation>,
+        cancellation: Option<Arc<dyn crate::security::mirror_refusal_pipeline::MirrorCancellation>>,
     ) -> Result<ProviderEventStream> {
         if cancellation
             .as_ref()
-            .is_some_and(|cancellation| cancellation.is_closed())
+            .is_some_and(|cancellation| cancellation.is_cancelled())
         {
             anyhow::bail!("chat turn cancelled before provider event-stream authorization");
         }
@@ -2835,7 +2835,7 @@ pub trait Provider: Send + Sync {
         tokio::pin!(stream_open);
         let stream_open = match cancellation.as_ref() {
             Some(cancellation) => {
-                if cancellation.is_closed() {
+                if cancellation.is_cancelled() {
                     audit.failure("stream_cancelled").await?;
                     return Err(anyhow::anyhow!(
                         "chat turn cancelled before provider event stream opened"

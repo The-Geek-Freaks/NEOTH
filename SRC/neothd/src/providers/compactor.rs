@@ -39,6 +39,7 @@ use sha2::{Digest, Sha256};
 
 use crate::config::policy::TokensConfig;
 use crate::context::compress::content_detector::{ContentType, detect_content_type};
+use crate::security::mirror_refusal_pipeline::MirrorCancellation;
 use crate::providers::{
     ChunkStream, Completion, Provider, ProviderDispatchPermit, ProviderEventStream,
     ProviderRequestControls, ReasoningDisplayGrant, Request,
@@ -414,9 +415,12 @@ impl CompactingProvider {
             &'static str,
         )>,
         raw_permit: Option<&ProviderDispatchPermit>,
-        cancellation: Option<&crate::cli::chat_turn_pipeline::ChatTurnCancellation>,
+        cancellation: Option<std::sync::Arc<dyn MirrorCancellation>>,
     ) -> Result<Request> {
-        if cancellation.is_some_and(|cancellation| cancellation.is_closed()) {
+        if cancellation
+            .as_ref()
+            .is_some_and(|cancellation| cancellation.is_cancelled())
+        {
             anyhow::bail!("chat turn cancelled before history compaction");
         }
         let system_text = req.system.as_deref().unwrap_or("");
@@ -475,13 +479,13 @@ impl CompactingProvider {
                 max_output_tokens,
             };
             let summary_result = match authorization {
-                Some((authorizer, _)) => match cancellation {
+                Some((authorizer, _)) => match cancellation.as_ref() {
                     Some(cancellation) => {
                         util.complete_authorized_cancellable(
                             summary_req,
                             authorizer,
                             "history_compaction.summary",
-                            cancellation,
+                            std::sync::Arc::clone(cancellation),
                         )
                         .await
                     }
@@ -707,9 +711,9 @@ impl Provider for CompactingProvider {
         req: Request,
         authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
         call_scope: &'static str,
-        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        cancellation: std::sync::Arc<dyn MirrorCancellation>,
     ) -> Result<Completion> {
-        if cancellation.is_closed() {
+        if cancellation.is_cancelled() {
             anyhow::bail!("chat turn cancelled before history compaction");
         }
         let req = self
@@ -717,7 +721,7 @@ impl Provider for CompactingProvider {
                 req,
                 Some((authorizer, call_scope)),
                 None,
-                Some(cancellation),
+                Some(std::sync::Arc::clone(&cancellation)),
             )
             .await?;
         self.inner
@@ -775,9 +779,9 @@ impl Provider for CompactingProvider {
         authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
         call_scope: &'static str,
         reasoning_display: ReasoningDisplayGrant,
-        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        cancellation: std::sync::Arc<dyn MirrorCancellation>,
     ) -> Result<ProviderEventStream> {
-        if cancellation.is_closed() {
+        if cancellation.is_cancelled() {
             anyhow::bail!("chat turn cancelled before history compaction");
         }
         let req = self
@@ -785,7 +789,7 @@ impl Provider for CompactingProvider {
                 req,
                 Some((authorizer, call_scope)),
                 None,
-                Some(cancellation),
+                Some(std::sync::Arc::clone(&cancellation)),
             )
             .await?;
         self.inner
@@ -882,7 +886,7 @@ pub fn arc_from_config(
             req: Request,
             authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
             call_scope: &'static str,
-            cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+            cancellation: std::sync::Arc<dyn MirrorCancellation>,
         ) -> Result<Completion> {
             self.0
                 .complete_authorized_cancellable(req, authorizer, call_scope, cancellation)
@@ -924,7 +928,7 @@ pub fn arc_from_config(
             authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
             call_scope: &'static str,
             reasoning_display: ReasoningDisplayGrant,
-            cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+            cancellation: std::sync::Arc<dyn MirrorCancellation>,
         ) -> Result<ProviderEventStream> {
             self.0
                 .stream_events_authorized_cancellable(
@@ -1212,7 +1216,7 @@ mod tests {
                 },
                 &authorizer,
                 "compactor.cancelled_utility",
-                &cancellation,
+                std::sync::Arc::new(cancellation.clone()),
             );
             tokio::pin!(dispatch);
             tokio::time::timeout(Duration::from_secs(10), async {

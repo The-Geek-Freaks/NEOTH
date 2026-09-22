@@ -8702,6 +8702,59 @@ struct BuddyVaultMirrorRetentionWire {
     phase: Option<BuddyVaultMirrorPhaseWire>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskDelegateAssignmentSnap {
+    pub peer_key: String,
+    pub allowed: bool,
+    pub revision: u64,
+    pub default_deny: bool,
+}
+
+pub fn project_task_delegate_assignment(
+    expected_peer_key: &str,
+    assignment: Option<crate::gui_action::TaskDelegateAssignmentAck>,
+) -> Result<TaskDelegateAssignmentSnap, String> {
+    match assignment {
+        Some(assignment) => {
+            assignment.verify_for_peer(expected_peer_key)?;
+            Ok(TaskDelegateAssignmentSnap {
+                peer_key: assignment.peer_key,
+                allowed: assignment.allowed,
+                revision: assignment.revision,
+                default_deny: false,
+            })
+        }
+        None => {
+            let synthetic = crate::gui_action::TaskDelegateAssignmentAck {
+                peer_key: expected_peer_key.to_owned(),
+                allowed: false,
+                revision: 1,
+            };
+            synthetic.verify_for_peer(expected_peer_key)?;
+            Ok(TaskDelegateAssignmentSnap {
+                peer_key: expected_peer_key.to_owned(),
+                allowed: false,
+                revision: 0,
+                default_deny: true,
+            })
+        }
+    }
+}
+pub fn task_delegate_fresh_readback(
+    receipt: &crate::gui_action::TaskDelegateAssignmentAck,
+    fresh: TaskDelegateAssignmentSnap,
+) -> Result<TaskDelegateAssignmentSnap, String> {
+    if fresh.peer_key != receipt.peer_key {
+        return Err("fresh TaskDelegate assignment is bound to a different peer key".into());
+    }
+    if fresh.revision < receipt.revision {
+        return Err("fresh TaskDelegate revision moved backwards after commit".into());
+    }
+    if fresh.revision == receipt.revision && fresh.allowed != receipt.allowed {
+        return Err("fresh TaskDelegate assignment conflicts with the commit receipt".into());
+    }
+    Ok(fresh)
+}
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BuddyClusterStatusSnap {
     pub summary: String,
@@ -15523,5 +15576,29 @@ mod tests {
                 .chars()
                 .any(|character| character.is_control())
         );
+    }
+}
+
+#[cfg(test)]
+mod task_delegate_projection_tests {
+    use super::*;
+
+    #[test]
+    fn task_delegate_null_projects_absence_as_effective_default_deny() {
+        let key = "a".repeat(64);
+        let snap = project_task_delegate_assignment(&key, None).unwrap();
+        assert_eq!(snap.peer_key, key);
+        assert!(!snap.allowed);
+        assert_eq!(snap.revision, 0);
+        assert!(snap.default_deny);
+    }
+
+    #[test]
+    fn task_delegate_projection_rejects_mismatched_or_zero_revision_object() {
+        let key = "a".repeat(64);
+        let mismatch = crate::gui_action::TaskDelegateAssignmentAck { peer_key: "b".repeat(64), allowed: true, revision: 1 };
+        assert!(project_task_delegate_assignment(&key, Some(mismatch)).is_err());
+        let zero = crate::gui_action::TaskDelegateAssignmentAck { peer_key: key.clone(), allowed: true, revision: 0 };
+        assert!(project_task_delegate_assignment(&key, Some(zero)).is_err());
     }
 }

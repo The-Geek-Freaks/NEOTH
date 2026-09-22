@@ -41,6 +41,7 @@ use super::{
     ChunkStream, Completion, Provider, ProviderDispatchPermit, ProviderEventStream,
     ProviderRequestControls, ProviderStreamPayload, ReasoningDisplayGrant, Request,
 };
+use crate::security::mirror_refusal_pipeline::MirrorCancellation;
 
 /// Ordered primary + fallbacks. See module docs.
 pub struct FallbackProvider {
@@ -294,7 +295,7 @@ impl FallbackProvider {
             &'static str,
         )>,
         raw_permit: Option<&ProviderDispatchPermit>,
-        cancellation: Option<&crate::cli::chat_turn_pipeline::ChatTurnCancellation>,
+        cancellation: Option<std::sync::Arc<dyn MirrorCancellation>>,
     ) -> Result<Completion> {
         let mut tracker = QuotaTracker::load_from(&self.quota_path)
             .with_context(|| format!("load fallback quota state {}", self.quota_path.display()))?;
@@ -365,14 +366,14 @@ impl FallbackProvider {
 
             let candidate_req = self.request_for_candidate(i, candidate.as_ref(), &req)?;
             let result = match authorization {
-                Some((authorizer, call_scope)) => match cancellation {
+                Some((authorizer, call_scope)) => match cancellation.as_ref() {
                     Some(cancellation) => {
                         candidate
                             .complete_authorized_cancellable(
                                 candidate_req,
                                 authorizer,
                                 call_scope,
-                                cancellation,
+                                std::sync::Arc::clone(cancellation),
                             )
                             .await
                     }
@@ -530,9 +531,9 @@ impl Provider for FallbackProvider {
         req: Request,
         authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
         call_scope: &'static str,
-        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        cancellation: std::sync::Arc<dyn MirrorCancellation>,
     ) -> Result<Completion> {
-        if cancellation.is_closed() {
+        if cancellation.is_cancelled() {
             anyhow::bail!("chat turn cancelled before fallback completion dispatch");
         }
         self.complete_with_authorization(
@@ -702,7 +703,7 @@ impl Provider for FallbackProvider {
         authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
         call_scope: &'static str,
         reasoning_display: ReasoningDisplayGrant,
-        cancellation: &crate::cli::chat_turn_pipeline::ChatTurnCancellation,
+        cancellation: std::sync::Arc<dyn MirrorCancellation>,
     ) -> Result<ProviderEventStream> {
         let primary = self
             .chain
@@ -839,7 +840,7 @@ mod tests {
                 Request::default(),
                 &authorizer,
                 "fallback.cancelled_completion",
-                &cancellation,
+                std::sync::Arc::new(cancellation.clone()),
             );
             tokio::pin!(dispatch);
             tokio::time::timeout(Duration::from_secs(10), async {

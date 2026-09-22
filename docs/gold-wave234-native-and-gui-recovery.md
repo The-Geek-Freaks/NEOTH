@@ -97,3 +97,13 @@ Preflight35795043931 on480ff458 supplied the exact GUI fixture formatting.
 Source-head/SHA256SUMS, Git/local preimages, apply-check and postimage match;
 the patch is imported without running a local formatter. Hosted behavior
 continues on the pre-format source, and no release acceptance is inferred.
+
+## Corrected Group398 outcome
+
+Run35795048502 on480ff458 executed all398 cases:397 passed and the yearly
+concurrency case failed. Both canonical sealed-response names and both provider
+scanners now actually executed and passed. Migration, retained child CWD and
+the read-only missing-cache case passed on Linux. All83 source hashes, matrix,
+lock and actual terminals were verified. W238 repairs the remaining typed Unix
+errno mismatch. Citation process integration and native macOS/Windows behavior
+still require their separately named full CI checks.

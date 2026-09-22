@@ -3373,6 +3373,34 @@ impl OmiConfigureAck {
 }
 
 pub type ClusterStatusAck = neothd::cluster::status_wire::ClusterStatusEnvelope;
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDelegateAssignmentAck {
+    pub peer_key: String,
+    pub allowed: bool,
+    pub revision: u64,
+}
+impl TaskDelegateAssignmentAck {
+    pub fn verify_for_peer(&self, expected_peer_key: &str) -> Result<(), String> {
+        require_lower_hex(expected_peer_key, 64, "TaskDelegate peer key")?;
+        require_lower_hex(&self.peer_key, 64, "TaskDelegate receipt peer key")?;
+        if self.peer_key != expected_peer_key { return Err("TaskDelegate receipt is bound to a different peer key".into()); }
+        if self.revision == 0 { return Err("TaskDelegate receipt has zero revision".into()); }
+        Ok(())
+    }
+    pub fn verify_commit(&self, expected_peer_key: &str, expected_allowed: bool, expected_revision: u64) -> Result<(), String> {
+        self.verify_for_peer(expected_peer_key)?;
+        if self.allowed != expected_allowed {
+            return Err("TaskDelegate receipt allowed value does not match submitted mutation".into());
+        }
+        let next = expected_revision.checked_add(1)
+            .ok_or_else(|| "TaskDelegate expected revision overflow".to_string())?;
+        if self.revision != next {
+            return Err("TaskDelegate receipt revision is not the expected next revision".into());
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -9126,5 +9154,27 @@ mod tests {
         )
         .unwrap();
         assert!(no_reload.verify(true).is_err());
+    }
+}
+
+#[cfg(test)]
+mod task_delegate_assignment_tests {
+    use super::*;
+
+    #[test]
+    fn task_delegate_assignment_rejects_unknown_zero_and_mismatched_receipts() {
+        let key = "a".repeat(64);
+        let valid = TaskDelegateAssignmentAck { peer_key: key.clone(), allowed: true, revision: 1 };
+        assert!(valid.verify_for_peer(&key).is_ok());
+        assert!(valid.verify_commit(&key, true, 0).is_ok());
+        assert!(valid.verify_commit(&key, false, 0).is_err());
+        assert!(valid.verify_commit(&key, true, 1).is_err());
+        assert!(valid.verify_commit(&key, true, u64::MAX).is_err());
+        let large = TaskDelegateAssignmentAck { peer_key: key.clone(), allowed: false, revision: (1_u64 << 40) + 1 };
+        assert!(large.verify_commit(&key, false, 1_u64 << 40).is_ok());
+        assert!(TaskDelegateAssignmentAck { peer_key: key.clone(), allowed: false, revision: 0 }.verify_for_peer(&key).is_err());
+        assert!(TaskDelegateAssignmentAck { peer_key: "b".repeat(64), allowed: false, revision:1 }.verify_for_peer(&key).is_err());
+        let unknown = format!(r#"{{"peer_key":"{key}","allowed":true,"revision":1,"extra":true}}"#);
+        assert!(serde_json::from_str::<TaskDelegateAssignmentAck>(&unknown).is_err());
     }
 }

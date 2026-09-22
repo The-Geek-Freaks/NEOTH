@@ -60,3 +60,12 @@ an unused mut. The select now returns a cancellation marker; the acknowledged
 audit and terminal error run afterward in the try_stream context. EOF remains
 separately stream_truncated. The unnecessary mut is removed. These are narrow
 compile repairs awaiting a new Hosted gate. Preflight35796468330 passed on76aca236.
+
+Core35796830810 exposed11 private-interface diagnostics after the syntax repair.
+Public Provider methods now receive the existing public MirrorCancellation
+observer in an Arc. The concrete ChatTurnCancellation stays private; conversion
+occurs at the existing crate-private authorized chat seam. Every wrapper retains
+and forwards the observer to its concrete leaf. A utility summary clones the Arc
+without consuming the later compaction cancellation fence. No lint is suppressed,
+private chat ownership is not widened, and the original request-local close
+handle remains with its caller. New Hosted verification is still required.

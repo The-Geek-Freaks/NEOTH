@@ -47,3 +47,14 @@ This commit also imports the exact Hosted formatter patch from Preflight
 source-head, Git preimages, unchanged local preimages, apply-check and exact
 postimages were verified. No local formatter, parser, compiler, test or GUI ran.
 W229 behavior still requires its actual Hosted result; Road counts are unchanged.
+
+## Full native selection executed
+
+Grouped398 run35795048502 on480ff458 executed every selected case. All25 recall
+and all26 response-feedback cases passed, including the two corrected sealed
+response module identities. The run as a whole is397 passed/1 failed; its sole
+failure is the separate yearly-receipt concurrency case. All83 source paths,
+matrix, lock and exact per-test terminals were verified in the retained receipt
+at work/gold-20260906/wave234-native-gui/grouped398-480/ADMISSION.json.
+GUI116 and literal product acceptance remain independent requirements. These
+native passes do not close P2-27/P2-28 or cover subsequent source changes.

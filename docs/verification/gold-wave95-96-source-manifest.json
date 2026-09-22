@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T23:17:13.9646394Z",
-  "validationStatus": "W237/W238 and W235 compile repairs source reviewed; Hosted pending",
+  "capturedUtc": "2026-09-22T23:36:58.2688796Z",
+  "validationStatus": "W233 GUI123 + W235 publicobserver source reviewed; Hosted pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -423,8 +423,8 @@
     },
     {
       "path": "packaging/tests/verify_macos_native_gui_fixture_discovery.py",
-      "bytes": 5965,
-      "sha256": "1D23714E395A02486181C328951FDBA9761C587E216E495AB947FDC0B28F1E8F"
+      "bytes": 6426,
+      "sha256": "692D0D2F83F16D479AE5090E68FF8600739F3FAB26FB89542BBD4D3E417C8EDF"
     },
     {
       "path": "packaging/windows/smoke-installer.ps1",
@@ -433,18 +433,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 81642,
-      "sha256": "9F27073CBE52FC666E4C1A38BE93CEB82A1633B87A769C60C95386DE22773AF8"
+      "bytes": 82577,
+      "sha256": "332D448C7EAE9153C9591AC2086ABB43DF28E8687B07C889BAFAD86459100D53"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1084577,
-      "sha256": "8F3E0B503A0D058AF6134D81BBA5081236CC3D740BB6A5232E02F5C740216F75"
+      "bytes": 1085512,
+      "sha256": "F4FD3A1D2F7002CC9902D211756AB6BD126D67FDD9F6CBAA2E49573CA8EA75BA"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1680145,
-      "sha256": "476B75BA3186101A1CBB0DB884CE3E3E2807FD655FF256699D5D50457E3E22D1"
+      "bytes": 1681080,
+      "sha256": "952ADC0123AFBFC678C50ED29467D48E548369CEF7FCA049B6BAD8325425D09D"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -628,8 +628,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/gui_action.rs",
-      "bytes": 340535,
-      "sha256": "655F367BD6DDC5E1405285E1BA4B92E4F428523A02F36B1CC91D5B1224C00A84"
+      "bytes": 343140,
+      "sha256": "E17ED27494A056A10A7BDAF1D153A401ED2F0B4F3F8FB19443AB54E908F32093"
     },
     {
       "path": "SRC/neothd-gui/src/gui_action/ouro_q8.rs",
@@ -648,8 +648,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2140582,
-      "sha256": "8FEA6A829BEF57CA354F4486C27D7EB60D1D76ED1E491885FD333DF99EB24DFA"
+      "bytes": 2162391,
+      "sha256": "7D29C0A1F670EEACB18A36EE0D8A2CF57C91A5D1ABCC8C30916E35CD97919DC2"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -658,8 +658,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 604436,
-      "sha256": "7BB3F8F69692FF5D213F3D8F79F712B4168A5CAE0F45375E0EC58B69F40FBA07"
+      "bytes": 607294,
+      "sha256": "3DC3FBB25E6F54792BC3F9FC5E353CCF1ABB1148F24664A3F5F06F151C5068E7"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
@@ -718,8 +718,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/buddyconfig.slint",
-      "bytes": 62461,
-      "sha256": "CEE8A6EB50F57AC20E3EC004974D59C7E8F8F00EF4244CB4B76D6B8C019838BD"
+      "bytes": 66639,
+      "sha256": "B82D3579BB8264FB07C7D8581263669CF7DAD8F245149C07B4BFF6125F97AAF2"
     },
     {
       "path": "SRC/neothd-gui/ui/calendar.slint",
@@ -763,8 +763,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/main.slint",
-      "bytes": 322871,
-      "sha256": "EA45AD27120D4FCC532AC0FE4755E8A417C115A8C8B50C01A0DC6DC4541796B6"
+      "bytes": 324518,
+      "sha256": "BF507E76100283D4FB210E1599E4197230974F068538F863A6256251F192C3F1"
     },
     {
       "path": "SRC/neothd-gui/ui/memory_graph.slint",
@@ -1203,8 +1203,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/parity_drift.rs",
-      "bytes": 67375,
-      "sha256": "9B13B42451F2062D6A68E54658255A13DCE2434D0680F445548D9C538734CC8D"
+      "bytes": 68980,
+      "sha256": "863793D8DEAB445731F2552D7D195A2C5CD1CF262B8A420B3C3FFCC39909A3E1"
     },
     {
       "path": "SRC/neothd/src/cli/proactive.rs",
@@ -2168,8 +2168,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/compactor.rs",
-      "bytes": 86998,
-      "sha256": "331BD54805F6D388E490A5FCD9AE0B0E21B8CDE7479CA7EBB326B3827251A22A"
+      "bytes": 87149,
+      "sha256": "1275C7372E8820D706E8E61B0B541B0881B330B571434544CECBEEAFF3367485"
     },
     {
       "path": "SRC/neothd/src/providers/copilot.rs",
@@ -2178,13 +2178,13 @@
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",
-      "bytes": 317538,
-      "sha256": "02EB679D15E332153D53FE7D18AF488A489861EA64817754C161B36CB570D1E6"
+      "bytes": 317649,
+      "sha256": "00E19346A580F2B62EB6381A4DEFA5242E479B7756C4740C55494EE461A88DF5"
     },
     {
       "path": "SRC/neothd/src/providers/fallback.rs",
-      "bytes": 83618,
-      "sha256": "6224D3589F590E45AEC9156B8D1A51F7E78CEA97D002AB715B0ACA6878570341"
+      "bytes": 83702,
+      "sha256": "EA817710F8A84B66D704C565FEBF192F1A3D1B1F36D568FEE1C43F22EBF8E431"
     },
     {
       "path": "SRC/neothd/src/providers/gemini_api.rs",
@@ -2203,8 +2203,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/mod.rs",
-      "bytes": 260245,
-      "sha256": "129C0E0A72CD6EBEBAB32E605CEEA71C2E8201B99948A7DAAFBB6E3D7963181D"
+      "bytes": 260298,
+      "sha256": "45B1C138F168A28A2F11F3E38280C85128F58E8AB1AA5266F23BE70DA5B5FB92"
     },
     {
       "path": "SRC/neothd/src/providers/ollama_api.rs",
@@ -2243,8 +2243,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/token_cap.rs",
-      "bytes": 10507,
-      "sha256": "13BF83D36F8FBF76B1AD7686FDCBEA467C9878274546BD8D7C8DCDB2FE23FF63"
+      "bytes": 10561,
+      "sha256": "356D72334274FE981A5D678BF071BF39ECA91642E3106FFA0BC9499008D32284"
     },
     {
       "path": "SRC/neothd/src/reflection/hygiene_store.rs",
@@ -2679,7 +2679,7 @@
     {
       "path": ".github/workflows/gui-linux-fixtures.yml",
       "bytes": 28125,
-      "sha256": "E3693880AF0B28CA38354A6457EF3EA11E1EEBD201E6AAA5550C8A803865FB7B"
+      "sha256": "20C7730CC94B9AC3AE50ACD9F691CD556171A41D706D34E85EC7E9EC086E35DC"
     }
   ]
 }
