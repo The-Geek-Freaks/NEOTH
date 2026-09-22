@@ -535,7 +535,8 @@ mod tests {
         tx.execute(
             "INSERT INTO idx_counterparty_clustering_consent_v1 \
              (channel_id,account_id,scoped_sender_hash,state,proof_kind,proof_sha256,proof_verified_at_ns,revision,revoked_at_ns) \
-             VALUES(?1,?2,?3,'verified_granted','test_verified_custody_v1',X'0000000000000000000000000000000000000000000000000000000000000000',1,1,NULL)",
+              VALUES(?1,?2,?3,'verified_granted','test_verified_custody_v1',X'0000000000000000000000000000000000000000000000000000000000000000',1,1,NULL) \
+              ON CONFLICT(channel_id,account_id,scoped_sender_hash) DO NOTHING",
             params![key.channel_id(), key.account_id(), key.scoped_sender_hash()],
         )
         .unwrap();

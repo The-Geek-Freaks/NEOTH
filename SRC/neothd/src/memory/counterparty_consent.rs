@@ -821,8 +821,8 @@ mod tests {
         }
         drop(conn);
 
-        // Normal open observes the v42 stamp and remains idempotent while
-        // preserving the legacy recall/vector state unchanged.
+        // Normal open advances this proven v42 fixture to the current schema
+        // while preserving the legacy recall/vector state unchanged.
         let reopened = store::open(&database).unwrap();
         let version: String = reopened
             .query_row(
@@ -838,7 +838,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!((version, retained_count), ("42".to_owned(), 1));
+        assert_eq!((version, retained_count), (store::SCHEMA_VERSION.to_string(), 1));
     }
 
     #[test]

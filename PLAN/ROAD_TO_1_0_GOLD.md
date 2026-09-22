@@ -8,21 +8,20 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
-**Hosted checkpoint (2026-09-22, W205-W208):** W208 origin/consumer source is
-published at `0cf1a0ef`, with exact-source Hosted formatting at `e06f9763`.
-Preflight `35752755982` and Code Quality `35752756146` passed. Earlier source
-`df9d9d22` passed Core test-target checks, public CLI build and export in
-`35751196645`. Its Grouped141 `35751191741` executed all exact identities:
-132 passed, three assertions failed and six processes aborted with stack
-overflow. The original assertions remain intact. The focused repair binds the
-unavailable code-map receipt to the channel WAL session, makes the mirror test
-provider declare and enforce its real request controls/output ceiling, and
-heap-pins Send futures at the watchdog boundary without increasing stack limits.
-These repairs require fresh Hosted execution. W208 Grouped171 `35752386943`
-and Core/CLI `35752390598` on `0cf1a0ef` are still running; the latter has passed
-its core test-target step. Inventory: 516 sources, 718 universal native
-identities and 87 GUI identities, with unchanged platform extras. W209's
-sender-verified consent ceremony is isolated uncommitted work under review.
+**Hosted checkpoint (2026-09-22, W205-W208):** the turn/channel repairs are
+published at `76769a27`, with exact-source Hosted formatting at `d6939d2e`.
+Preflight `35754236442`, Code Quality `35754235347` and Core test-target checks,
+public CLI build and export `35753813179` passed. Grouped171 `35752386943` on
+the earlier W208 source `0cf1a0ef` executed all 171 exact identities: 160 passed,
+five assertions failed and six processes aborted with stack overflow. Its W208
+slice passed 28/30: the real 41-to-42 migration lost SQL token spacing at a Rust
+line continuation, and a positive fixture inserted duplicate consent for one
+counterparty. Both are repaired without weakening migration or consent gates;
+independent staged review passed. The fresh Grouped171 `35753809069` has
+completed and its evidence is being evaluated. Inventory remains 516 sources,
+718 universal native identities and 87 GUI identities, with unchanged platform
+extras. The prior df9d CLI export was hash-verified byte-identical to the tracked
+reference. W209 sender-verified consent and recovery are uncommitted work.
 The Windows preview passed on `a68442cb` only. Road remains 1324 total /
 1015 checked / 307 open / 2 partial. No local executable validation ran.
 

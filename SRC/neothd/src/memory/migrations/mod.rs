@@ -333,8 +333,8 @@ pub(crate) fn migration_v41_to_v42(conn: &Connection) -> Result<()> {
              CHECK((origin_kind='local_attested' AND channel_id IS NULL AND account_id IS NULL AND scoped_sender_hash IS NULL)\
                 OR (origin_kind='channel_bound' AND channel_id IS NOT NULL AND account_id IS NOT NULL AND scoped_sender_hash IS NOT NULL))\
          ) STRICT;\
-         CREATE INDEX IF NOT EXISTS idx_episode_origin_counterparty\
-             ON idx_episode_origin_v2(channel_id, account_id, scoped_sender_hash, raw_event_id)\
+         CREATE INDEX IF NOT EXISTS idx_episode_origin_counterparty \
+             ON idx_episode_origin_v2(channel_id, account_id, scoped_sender_hash, raw_event_id) \
              WHERE origin_kind='channel_bound';\
          CREATE TABLE IF NOT EXISTS idx_episode_origin_conflict_v1 (\
              raw_event_id INTEGER PRIMARY KEY,\

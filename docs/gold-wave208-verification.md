@@ -1,5 +1,14 @@
 # Wave 208 origin-bound memory clustering admission
 
+**Hosted W208 execution:** Grouped171 35752386943 on 0cf1a0ef passed 28 of
+its 30 W208 fixtures. Verified artifacts bind all 171 names and 37 source blobs
+plus the matrix and Cargo.lock. The two failures exposed a real migration SQL
+token-boundary error and duplicate synthetic consent in the same-channel fixture.
+The migration now preserves both separators at its Rust string continuations.
+The fixture inserts custody idempotently only for its exact composite key;
+each episode still gets its own real origin projection. The 41-to-42 fixture
+retains its explicit migration assertion and expects the current schema after
+normal reopen. Independent scoped static review passed; hosted retest is pending.
 W208 adds a positive origin and consent boundary for episode vectors and
 consolidation. Normal local chat and authenticated channel ingress emit a
 metadata-only RawTextOrigin extended event (0x2E) after the actual RAW_TEXT
