@@ -2153,11 +2153,12 @@ pub fn settle_yearly_synthesis(
 
 /// The create-new primitive preserves the pre-commit error so a second
 /// settler can only inspect the winner after the kernel rejected its rename.
-/// Unix retains the `AlreadyExists` I/O cause. Windows' handle-relative
-/// `NtSetInformationFile` adapter reports the equivalent ERROR_FILE_EXISTS
-/// (183) in its native diagnostic, so recognize that precise no-replace
-/// result as well. Both branches re-read through the retained yearly
-/// capability before accepting an existing receipt.
+/// Unix `renameat_with(RENAME_NOREPLACE)` retains its `rustix::io::Errno`
+/// cause, while other create-new paths retain `AlreadyExists`. Windows'
+/// handle-relative `NtSetInformationFile` adapter reports the equivalent
+/// ERROR_FILE_EXISTS (183) in its native diagnostic. Every recognized branch
+/// still re-reads through the retained yearly capability before accepting an
+/// existing receipt.
 fn yearly_receipt_create_new_conflicted(
     error: &crate::skills::store::PrivateChildPreCommitError,
 ) -> bool {
@@ -2165,6 +2166,15 @@ fn yearly_receipt_create_new_conflicted(
         .root_cause()
         .downcast_ref::<std::io::Error>()
         .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists)
+    {
+        return true;
+    }
+
+    #[cfg(unix)]
+    if error
+        .root_cause()
+        .downcast_ref::<rustix::io::Errno>()
+        .is_some_and(|errno| *errno == rustix::io::Errno::EXIST)
     {
         return true;
     }

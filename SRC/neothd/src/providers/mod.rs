@@ -2573,7 +2573,7 @@ pub trait Provider: Send + Sync {
         let effect = authorized.effect_context();
         let gated_effect = effect.is_some();
         let audit = authorized.begin_dispatch().await?;
-        let mut permit = ProviderDispatchPermit::authorized(
+        let permit = ProviderDispatchPermit::authorized(
             audit,
             authorizer.clone(),
             self.name(),

@@ -53,3 +53,10 @@ source repair. No local compiler, formatter, parser, test or product runtime ran
 Preflight35796229434 supplied exact formatting for three provider files. The source
 head, artifact digests, Git/local preimages and resulting postimages were verified
 before import. No local formatter ran. Behavioral gates remain on5661e7d2.
+
+Core35796242352 failed before tests: async_stream could not transform two
+question-mark operators nested inside tokio::select (E0277), and Clippy rejected
+an unused mut. The select now returns a cancellation marker; the acknowledged
+audit and terminal error run afterward in the try_stream context. EOF remains
+separately stream_truncated. The unnecessary mut is removed. These are narrow
+compile repairs awaiting a new Hosted gate. Preflight35796468330 passed on76aca236.

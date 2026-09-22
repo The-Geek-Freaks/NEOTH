@@ -1569,21 +1569,22 @@ impl ProviderCallAuditGuard {
             loop {
                 let item = tokio::select! {
                     biased;
-                    () = cancellation.cancelled() => {
-                        audit.failure("stream_cancelled").await?;
-                        Err(anyhow::anyhow!("chat turn cancelled while provider event stream was active"))?
-                    }
-                    item = inner.next() => item,
+                    () = cancellation.cancelled() => None,
+                    item = inner.next() => Some(item),
                 };
                 let item = match item {
-                    Some(item) => item,
-                    None => {
+                    Some(Some(item)) => item,
+                    Some(None) => {
                         if let Err(audit_error) = audit.failure("stream_truncated").await {
                             Err(anyhow::anyhow!(
                                 "provider event stream ended before Done and terminal audit failed: {audit_error}"
                             ))?;
                         }
                         Err(anyhow::anyhow!("provider event stream ended before Done"))?
+                    }
+                    None => {
+                        audit.failure("stream_cancelled").await?;
+                        Err(anyhow::anyhow!("chat turn cancelled while provider event stream was active"))?
                     }
                 };
                 match item {

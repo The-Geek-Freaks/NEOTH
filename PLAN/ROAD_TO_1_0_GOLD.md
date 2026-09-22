@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W237/W238 and W235 compile repair (2026-09-23):** Group39835795048502
+executed398 cases on480ff458: **397 passed / 1 failed**. All83 source hashes,
+matrix, lock and actual terminals match. The sole yearly-concurrency failure
+uses Unix rustix::Errno::EXIST, now recognized before the unchanged bounded,
+exact-content readback. W235's Hosted E0277 and unused-mut diagnostics are
+repaired without changing cancellation settlement. Recall labels now expose
+the actual reduced summary to accessibility in both Chat and Buddy; platform
+screen-reader behavior remains unverified. See W235, W237 and W238 reports.
+Inventory535/845/94 and Group402 remain. Road stays1016checked/306open/2partial;
+these source repairs do not close release requirements. Local BSOD hold remains.
+
 **W235 cancellation settlement (2026-09-23):** explicit authorized cancellation
 now awaits the provider terminal WAL acknowledgement across stream opening,
 stream consumption and history-compaction utility completion. Concrete-leaf
