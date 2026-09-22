@@ -1598,9 +1598,22 @@ mod tests {
         let (contention_ready, contention_observed) = std::sync::mpsc::channel();
         let release =
             std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
-        let skill_path = home_path
-            .join("bundled-skill-resources")
-            .join("drawio_diagram");
+        // `materialize_skill` derives its namespace from the capability walk's
+        // physical path. Use that same authority here: Windows may render an
+        // equivalent temporary directory through a different lexical path.
+        let skill_path = {
+            let bound_home = super::super::store::open_bound_directory(
+                &home_path,
+                false,
+                "W192 concurrent materializer fixture home",
+            )
+            .unwrap()
+            .expect("existing temporary fixture home");
+            bound_home
+                .physical_display_path
+                .join("bundled-skill-resources")
+                .join("drawio_diagram")
+        };
         super::super::bundled_resources::set_stage_hook_for_test(Some((
             skill_path.clone(),
             stage_ready,

@@ -640,6 +640,7 @@ const INVENTORY: &[(&str, Surface)] = &[
     ("cost", Gui("quota")),
     ("fetch", CliOnly("url fetch pipe")),
     ("arxiv", CliOnly("arxiv ingest pipe")),
+    ("research", CliOnly("operator-owned deep-research lifecycle pipe")),
     ("babel", Gui("babel")),
     ("search", Gui("memory")),
     ("github", CliOnly("github integration pipe")),

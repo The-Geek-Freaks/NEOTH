@@ -6594,6 +6594,14 @@ mod tests {
                 "4e4e83c7c286da5c06ce3fc9a822c01d067f86aaf5190d91aff8fe477277eec6",
             ),
             (
+                // `research run` creates CostAuthorizingProvider before the
+                // call-budget decorator; its inner `complete` therefore
+                // remains inside the canonical cost/WAL/permission boundary.
+                "cli/research.rs",
+                1,
+                "1ef464459a4d865fa22f4a84b7d5532994035ddd34fc53493f906e69d038a95c",
+            ),
+            (
                 "cli/serve_pipeline.rs",
                 5,
                 "e40ddccb850086dfeccf3805c24fea8a70242c05ad2adfb0314920c639d656f1",

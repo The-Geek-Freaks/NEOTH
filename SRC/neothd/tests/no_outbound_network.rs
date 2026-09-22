@@ -339,6 +339,7 @@ fn no_direct_pre_expansion_network_construction_outside_reviewed_boundaries() {
         .expect("module graph requires a canonical source root");
     let test_only_external_modules = module_graph.exempt_files();
     let mut violations = Vec::new();
+    let mut public_rendezvous_callers = Vec::new();
     let graphify_launch_contract = match graphify_module_and_binary_contract(&src_root) {
         Ok(()) => true,
         Err(error) => {
@@ -348,14 +349,6 @@ fn no_direct_pre_expansion_network_construction_outside_reviewed_boundaries() {
             false
         }
     };
-    match production_public_rendezvous_callers(&src_root) {
-        Ok(callers) if callers == ["src/daemon/companion.rs"] => {}
-        Ok(callers) => violations.push(format!(
-            "spawn_public_rendezvous must have exactly one production caller, src/daemon/companion.rs; found {}",
-            callers.join(", ")
-        )),
-        Err(error) => violations.push(format!("spawn_public_rendezvous caller audit failed: {error}")),
-    }
     for target in module_graph.production_outside_targets() {
         violations.push(format!(
             "{}: production external module target escapes canonical src_root",
@@ -376,6 +369,27 @@ fn no_direct_pre_expansion_network_construction_outside_reviewed_boundaries() {
         // raw value only for the self-test path below; every policy decision and
         // emitted finding must use one canonical spelling.
         let repo_rel = format!("src/{rel}");
+        // One normalized parse supplies both the public-rendezvous caller
+        // audit and the construction gate. The old independent caller walk
+        // reparsed every source file (and then reparsed it again to compute
+        // test-only ranges), which exceeds the Windows CI slow-test budget on
+        // this 1,000+ file source tree.
+        let normalized_content = content.replace("\r\n", "\n");
+        let Ok(file) = syn::parse_file(&normalized_content) else {
+            violations.push(format!("unparseable caller-audit source {repo_rel}"));
+            return;
+        };
+        let test_only_ranges =
+            test_only_item_ranges_from_file(&normalized_content, &file);
+        let mut caller_visitor = PublicRendezvousCallerVisitor {
+            test_only_ranges: &test_only_ranges,
+            scopes: vec![Scope::crate_root()],
+            calls: 0,
+        };
+        caller_visitor.visit_file(&file);
+        for _ in 0..caller_visitor.calls {
+            public_rendezvous_callers.push(repo_rel.clone());
+        }
         if is_allowed(&repo_rel) {
             return;
         }
@@ -386,16 +400,26 @@ fn no_direct_pre_expansion_network_construction_outside_reviewed_boundaries() {
         if test_only_external_modules.contains(&canonical_path) {
             return;
         }
-        collect_network_violations(
+        collect_network_violations_from_parsed(
             &mut violations,
             &repo_rel,
-            &content,
+            &normalized_content,
+            &file,
+            &test_only_ranges,
             repo_rel == "src/daemon/audit_rpc/transport/unix.rs",
             repo_rel == "src/media/stt_provider.rs",
             repo_rel == "src/graphify_runner.rs" && graphify_launch_contract,
         );
     })
     .expect("source traversal and reads must succeed");
+
+    public_rendezvous_callers.sort();
+    if public_rendezvous_callers != ["src/daemon/companion.rs"] {
+        violations.push(format!(
+            "spawn_public_rendezvous must have exactly one production caller, src/daemon/companion.rs; found {}",
+            public_rendezvous_callers.join(", ")
+        ));
+    }
 
     assert!(
         violations.is_empty(),
@@ -506,7 +530,7 @@ fn production_public_rendezvous_callers(src_root: &Path) -> Result<Vec<String>, 
             parse_errors.push(format!("unparseable caller-audit source src/{rel}"));
             return;
         };
-        let test_only_ranges = test_only_item_ranges(&content).unwrap_or_default();
+        let test_only_ranges = test_only_item_ranges_from_file(&content, &file);
         let mut visitor = PublicRendezvousCallerVisitor {
             test_only_ranges: &test_only_ranges,
             scopes: vec![Scope::crate_root()],
@@ -734,16 +758,20 @@ fn is_public_rendezvous_path(path: Vec<String>) -> bool {
     )
 }
 
-fn collect_network_violations(
+fn collect_network_violations_from_parsed(
     violations: &mut Vec<String>,
     rel: &str,
     content: &str,
+    file: &syn::File,
+    test_only_ranges: &[Range<usize>],
     allows_audit_rpc_af_unix: bool,
     allows_stt_pidfd_syscalls: bool,
     allows_graphify_denial_probe: bool,
 ) {
-    for (line_no, pattern) in forbidden_network_constructions_with_boundaries(
+    for (line_no, pattern) in forbidden_network_constructions_in_parsed_source(
         content,
+        file,
+        test_only_ranges,
         allows_audit_rpc_af_unix,
         allows_stt_pidfd_syscalls,
         allows_graphify_denial_probe,
@@ -783,15 +811,33 @@ fn forbidden_network_constructions_with_boundaries(
         // file must not turn this source-boundary check into a fail-open gate.
         return vec![(0, "unparseable Rust source")];
     };
-    let test_only_ranges = test_only_item_ranges(content).unwrap_or_default();
+    let test_only_ranges = test_only_item_ranges_from_file(content, &file);
+    forbidden_network_constructions_in_parsed_source(
+        content,
+        &file,
+        &test_only_ranges,
+        allows_audit_rpc_af_unix,
+        allows_stt_pidfd_syscalls,
+        allows_graphify_denial_probe,
+    )
+}
+
+fn forbidden_network_constructions_in_parsed_source(
+    content: &str,
+    file: &syn::File,
+    test_only_ranges: &[Range<usize>],
+    allows_audit_rpc_af_unix: bool,
+    allows_stt_pidfd_syscalls: bool,
+    allows_graphify_denial_probe: bool,
+) -> Vec<(usize, &'static str)> {
     let reviewed_graphify_socket_call = if allows_graphify_denial_probe {
-        reviewed_graphify_libc_probe_contract(&file)
+        reviewed_graphify_libc_probe_contract(file)
     } else {
         None
     };
     let mut visitor = ProductionNetworkVisitor {
         content,
-        test_only_ranges: &test_only_ranges,
+        test_only_ranges,
         scopes: vec![Scope::crate_root()],
         socket_bindings: vec![HashMap::new()],
         macro_rule_scopes: vec![HashMap::new()],
@@ -802,7 +848,7 @@ fn forbidden_network_constructions_with_boundaries(
         function_names: Vec::new(),
         violations: Vec::new(),
     };
-    visitor.visit_file(&file);
+    visitor.visit_file(file);
     if allows_graphify_denial_probe && reviewed_graphify_socket_call.is_none() {
         visitor
             .violations
@@ -2925,12 +2971,16 @@ fn is_libc_af_unix(argument: &Expr, scopes: &[Scope]) -> bool {
 /// atoms remain in scope: only a false proof earns an exemption.
 fn test_only_item_ranges(content: &str) -> Option<Vec<Range<usize>>> {
     let file = syn::parse_file(content).ok()?;
+    Some(test_only_item_ranges_from_file(content, &file))
+}
+
+fn test_only_item_ranges_from_file(content: &str, file: &syn::File) -> Vec<Range<usize>> {
     let mut visitor = TestOnlySpanVisitor {
         content,
         ranges: Vec::new(),
     };
-    visitor.visit_file(&file);
-    Some(visitor.ranges)
+    visitor.visit_file(file);
+    visitor.ranges
 }
 
 struct TestOnlySpanVisitor<'source> {

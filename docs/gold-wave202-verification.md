@@ -6,7 +6,7 @@ The source implements `neoth n8n adopt --endpoint http://127.0.0.1:5678 --api-ke
 
 `Ready` means that the post-commit authenticated n8n-compatible API contract succeeded and all four durable evidence bindings matched. It does not prove the n8n binary provenance, a product version, process ownership, workflow execution, or a persistent live-health guarantee. If custody cleanup after a durable Ready transition is interrupted, Ready remains valid and the retained private custody record is the repair boundary retried by the next owned adapter open; cleanup failure does not leak a raw filesystem or keychain error through the CLI.
 
-No Rust parser, formatter, compiler, test, runtime, HTTP, or live-n8n command was run for this wave because the active BSOD hold prohibits those operations. The source was inspected with bounded text reads only. Therefore the following focused tests are present but **not executed**:
+No Rust parser, formatter, compiler, test, runtime, HTTP, or live-n8n command was run for this wave because the active BSOD hold prohibits those operations. The source was inspected with bounded text reads only. The initial publication listed the following focused tests. Their subsequent hosted results and remaining repairs are recorded below:
 
 - `integrations::n8n::tests::parses_documented_workflows_shape_without_invented_identity_fields`
 - `integrations::n8n::tests::rejects_non_documented_or_unbounded_workflows_shapes`
@@ -24,7 +24,7 @@ No Rust parser, formatter, compiler, test, runtime, HTTP, or live-n8n command wa
 - `integrations::n8n::tests::restart_of_unowned_active_job_is_terminal_and_releases_the_capability_lock`
 - `integrations::n8n::tests::read_only_status_of_absent_state_creates_no_config_or_job_database`
 
-The configuration transaction tests supplied by the configuration slice also remain unexecuted under the same hold. A later authorized verification pass must run the narrow integrations/configuration/CLI test sets and a hermetic loopback mock before any claim of compiled or runtime validation.
+The local execution hold remains active. Hosted run 35737278608 subsequently executed all 23 W202 identities: 21 passed and two mock HTTP framing failures are repaired below. Fresh hosted execution must confirm those two repairs.
 
 
 **W203 durable Cron link / W202 format follow-up (2026-09-22):** Hosted
@@ -57,3 +57,25 @@ and export `35735316615` passed; the hash-bound generated reference is imported
 Three residual rustfmt hunks from Hosted `35736102874` are imported. Fresh
 Hosted behavior/Preflight remain required; W204 remains uncommitted WIP and
 Road counts remain unchanged. No local executable validation ran.
+
+**W205 Windows fixture contracts / W202 HTTP framing repair (2026-09-22):**
+Hosted Grouped83 `35737278608` on `9024b7db` executed all 83 identities: 81
+passed, including the strict Cron WAL event-link regression. The two remaining
+n8n failures share a mock HTTP framing error: a 29-byte documented JSON body
+advertised 28 bytes. Only five fixture headers are corrected; production
+validation stays strict. All actual names, source bindings, matrix and lockfile
+hashes were checked against the downloaded evidence. The same source passed
+Preflight `35737276826` and Code Quality `35737276710`.
+
+The completed older full matrix `35726117022` recorded nine Windows failures
+among 17,334 cases and an active macOS compile timeout. W205 fixes four distinct
+fixture/inventory contracts: canonical physical materializer path, WAL HMAC
+initialization before authenticated installation, explicit Research CLI parity
+triage, and the reviewed authorized Research provider-call digest. Independent
+static review passed; hosted behavior is pending. Three exact identities join
+the grouped selection (86 total); the materializer identity was already selected.
+The outbound-source scan now shares each parsed source between both existing audits instead of reparsing the tree repeatedly; its 120-second Windows limit and every check remain unchanged. This performance repair still requires hosted confirmation. Previously repaired
+local-model uncertainty, Research budget presence, Drawio routing and WAL-join
+issues remain subject to fresh full CI. W204 wizard work remains uncommitted.
+Road remains 1324 total / 1015 checked / 307 open / 2 partial. No local compiler,
+parser, formatter, tests or product runtime ran.

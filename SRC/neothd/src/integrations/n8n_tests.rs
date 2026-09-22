@@ -64,7 +64,7 @@ fn descriptor_and_step_plan_are_stable_and_local_only() {
 #[tokio::test]
 async fn generic_200_workflows_envelope_without_key_rejection_is_not_adoption_evidence() {
     let endpoint = scripted_loopback(vec![
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 28\r\n\r\n{\"data\":[],\"nextCursor\":null}",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 29\r\n\r\n{\"data\":[],\"nextCursor\":null}",
     ]).await;
     assert_eq!(
         HttpN8nApiProbe.negative_control(&endpoint).await,
@@ -78,8 +78,8 @@ async fn adoption_requires_unauthenticated_rejection_then_persists_and_reports_r
     initialize_home(home.path());
     let endpoint = scripted_loopback(vec![
         "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n",
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 28\r\n\r\n{\"data\":[],\"nextCursor\":null}",
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 28\r\n\r\n{\"data\":[],\"nextCursor\":null}",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 29\r\n\r\n{\"data\":[],\"nextCursor\":null}",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 29\r\n\r\n{\"data\":[],\"nextCursor\":null}",
     ]).await;
     let job = adopt_at(
         home.path(),
@@ -132,7 +132,7 @@ async fn postcommit_failure_restores_exact_preimage_and_never_reaches_ready() {
     let freedom_before = std::fs::read(home.path().join("freedom.yaml")).unwrap();
     let endpoint = scripted_loopback(vec![
         "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n",
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 28\r\n\r\n{\"data\":[],\"nextCursor\":null}",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 29\r\n\r\n{\"data\":[],\"nextCursor\":null}",
         "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n",
     ]).await;
     let job = adopt_at(home.path(), endpoint, SecretString::from("test-n8n-key"))
@@ -157,7 +157,7 @@ async fn injected_cancellation_is_durable_and_never_publishes_a_binding() {
     let freedom_before = std::fs::read(home.path().join("freedom.yaml")).unwrap();
     let endpoint = scripted_loopback(vec![
         "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n",
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 28\r\n\r\n{\"data\":[],\"nextCursor\":null}",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 29\r\n\r\n{\"data\":[],\"nextCursor\":null}",
     ]).await;
     let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
     cancel_tx.send(()).unwrap();

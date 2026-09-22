@@ -9626,13 +9626,17 @@ mod tests {
                 ));
                 crate::skills::authority::initialize_authority_key_for_test(home.path())
                     .expect("initialize W137 channel Skill authority key");
+                let wal_dir = home.path().join("wal");
+                std::fs::create_dir_all(&wal_dir).expect("create W137 delegated WAL directory");
+                // The authenticated install-incarnation record is WAL-backed.
+                // Seed its exact verification key before recording it; replacing
+                // this key afterward makes runtime reconciliation reject the
+                // installed Skill and hides the delegated route.
+                std::fs::write(wal_dir.join("hmac.key"), [7_u8; 32])
+                    .expect("seed W137 delegated SmartApprove HMAC identity");
                 w137_record_channel_install_incarnation(home.path(), SKILL_ID);
                 w137_publish_channel_authority(home.path(), SKILL_ID, reload.as_ref());
 
-                let wal_dir = home.path().join("wal");
-                std::fs::create_dir_all(&wal_dir).expect("create W137 delegated WAL directory");
-                std::fs::write(wal_dir.join("hmac.key"), [7_u8; 32])
-                    .expect("seed W137 delegated SmartApprove HMAC identity");
                 let wal_path = wal_dir.join("000001.wal");
                 let (writer, writer_join) = crate::wal::spawn_for_home(
                     wal_path.clone(),
