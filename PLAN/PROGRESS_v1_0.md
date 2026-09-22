@@ -2,6 +2,14 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W213/W214 Hosted compile repair (2026-09-22):** Grouped248 `35771699017`
+on `889d3df8` stopped before test execution with three E0061 diagnostics in
+existing Copilot token fixtures. Their transport-only permit constructors now
+supply explicit `None` for the added role decision. All constructor call sites
+were textually checked; post-fix Hosted compile/behavior remains required.
+W214 is published at `36802b32`, with exact Hosted formatting in `3184126e`.
+W212 remains admitted at 236/236. Road counts and the local BSOD hold are unchanged.
+
 **W214 Buddy embedding parity (2026-09-22):** `neoth buddy embedding --config
 PATH list|status|select|probe|pull|repair|prune` now delegates to the existing
 typed model lifecycle, retaining exact instance scope, updater/audit policy,

@@ -50,6 +50,9 @@ per-command configuration.
 
 ## Verification boundary
 
+Grouped248 `35771699017` on `889d3df8` failed before execution: three existing Copilot token tests still called the extended transport-only permit constructor with four arguments. The fixtures now explicitly pass no role decision as the fifth argument. No W213 test result is claimed; a fresh Hosted run is required.
+
+
 Twelve source regressions cover strict configuration, compatibility, complete
 policy digests, allowed and denied raw calls, persisted audit identity, final
 model rejection, accepted reload after durable authorization, direct request

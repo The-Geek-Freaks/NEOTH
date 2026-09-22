@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T19:11:23.1131722Z",
-  "validationStatus": "W214 Grouped251/Core pending; source-bound Hosted formatter applied; W212236/236 admitted",
+  "capturedUtc": "2026-09-22T19:13:19.0044630Z",
+  "validationStatus": "W213/W214 blocked at three Copilot fixture constructors; corrected source awaiting hosted execution",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -433,18 +433,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 57360,
-      "sha256": "B71779536D49634C98A5F35527172771B459756A52D5984BC6A6A9B00BDB375F"
+      "bytes": 57906,
+      "sha256": "844C4FEA429F684CC0BE6A764576701BE4C3B4EB7917B5EFDA5A19810F4C4C19"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1060242,
-      "sha256": "F98069A217B628AB599FC4E298FE4178CBB28B9D93973CAF17E910BB602307CE"
+      "bytes": 1060788,
+      "sha256": "902E46654B663B1C3D678FD9218BAE86406C6D3A3CA332D81126C20B89D3B3E5"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1655689,
-      "sha256": "5A8E79AEBB433A32C71FECB6E321531CAE0C18B655DE767704734A74EA0163A4"
+      "bytes": 1656235,
+      "sha256": "140048CBC90CEB1DE6C10D30A0733E8AD60FD64747220A45537B22DBC6B4880B"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -2163,8 +2163,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/copilot.rs",
-      "bytes": 22627,
-      "sha256": "5C2A88BA99152C85EF2A6088B47611689449EDB6B35809C9761692A1C2A8C27C"
+      "bytes": 22645,
+      "sha256": "350FC37287487911427F39E25F94E02148B9EBC64B54CCD12BA5EAA755ECAA13"
     },
     {
       "path": "SRC/neothd/src/providers/cost_authorization.rs",

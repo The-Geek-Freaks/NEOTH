@@ -523,7 +523,7 @@ mod tests {
 
         let token = build_adapter_against(&token_url(&mock))
             .fetch_or_refresh_token(&ProviderDispatchPermit::transport_only(
-                None, None, None, false,
+                None, None, None, false, None,
             ))
             .await
             .expect("token refresh must succeed");
@@ -546,7 +546,7 @@ mod tests {
 
         let message = build_adapter_against(&token_url(&mock))
             .fetch_or_refresh_token(&ProviderDispatchPermit::transport_only(
-                None, None, None, false,
+                None, None, None, false, None,
             ))
             .await
             .expect_err("oversized token body must fail before JSON parsing")
@@ -570,7 +570,7 @@ mod tests {
 
         let message = build_adapter_against(&token_url(&mock))
             .fetch_or_refresh_token(&ProviderDispatchPermit::transport_only(
-                None, None, None, false,
+                None, None, None, false, None,
             ))
             .await
             .expect_err("403 must fail")

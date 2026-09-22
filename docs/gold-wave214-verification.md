@@ -31,3 +31,5 @@ on `889d3df8` is imported alongside this batch. Core/CLI `35771703379` and
 Grouped248 `35771699017` are separate W213 runs. W212 Grouped236 remains
 admitted at 236/236. These results do not establish W214 behavior or release
 acceptance. GOLD-LF-P2-24 and cross-platform/GUI/release gates remain open.
+
+Hosted W213 compile failed before behavior execution on three legacy Copilot test constructor calls. Their missing optional role argument is corrected separately; W214 must run against that corrected source. The exact W214 formatting receipt from run `35772118501` is imported at `3184126e`.
