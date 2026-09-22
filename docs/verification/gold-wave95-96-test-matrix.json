@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W189_HOSTED_18_TESTS_PASSED_REFERENCE_IMPORTED",
-  "base": "2888e87e1a88461f8516a956fd207a34703184de",
+  "status": "W186_PREPACKING_DIAGNOSTIC_PENDING_HOSTED",
+  "base": "8b654ebd25041bc84b72e273d081629ac53b75be",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 78131,
-    "sha256": "D72697C14D4AD5C253CA501F30DAEBE0BA925CC478B254142673A0E364883989"
+    "bytes": 78126,
+    "sha256": "EEFAFE32F471FE499A37AC662AB7C98A4B4F94D6ED4D76ECC3E1896D69A6C85C"
   },
   "sourceInputs": 453,
   "requiredNativeTests": [
@@ -8804,5 +8804,17 @@
       }
     ],
     "note": "Capability18 run35712523037 and core/CLI/reference35712525811 passed2cef8239. Exact receipt/custody verified. Format-only changes0e0fa6a0; Preflight/Quality passed2888e87e. Windows audio CRLF transport repaired; fresh CI/GUI/audio required."
+  },
+  "wave186PrepackingDiagnostic": {
+    "status": "W186_PREPACKING_DIAGNOSTIC_PENDING_HOSTED",
+    "sourceBase": "8b654ebd25041bc84b72e273d081629ac53b75be",
+    "sources": [
+      {
+        "path": "packaging/specialize_silero.py",
+        "bytes": 24701,
+        "sha256": "83C83E42E73AC8420EA87B208EAD9B9F922E750BC6A54D83BAF1B3836F5A0641"
+      }
+    ],
+    "note": "Pinned ORT prepacking profiles, recurrent vs same-reference-state single-step metrics; actual normalized violations, explicit unchanged1e-6 tolerances. Default-profile selection unchanged; no candidate imported."
   }
 }

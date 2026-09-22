@@ -213,11 +213,14 @@ def frames(np: Any) -> dict[str, list[Any]]:
     return {"silence": with_carried_context(silence), "speechlike": with_carried_context(speechlike), "noise": with_carried_context(noise), "clipped": with_carried_context(clipped), "mixed_recurrent": with_carried_context(mixed)}
 
 
-def session(path: Path, ort: Any) -> Any:
+def session(path: Path, ort: Any, disable_prepacking: bool = False) -> Any:
     options = ort.SessionOptions()
     options.intra_op_num_threads = 1
     options.inter_op_num_threads = 1
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+    if disable_prepacking:
+        # ORT 1.19.2: kOrtSessionOptionsConfigDisablePrepacking.
+        options.add_session_config_entry("session.disable_prepacking", "1")
     result = ort.InferenceSession(str(path), sess_options=options, providers=["CPUExecutionProvider"])
     if result.get_providers() != ["CPUExecutionProvider"]:
         raise ValueError("parity requires CPUExecutionProvider as the only provider")
@@ -235,72 +238,88 @@ def assert_model_contract(original: Any, candidate: Any) -> None:
         raise ValueError("models must expose probability plus recurrent-state outputs")
 
 
+def output_specs() -> list[dict[str, Any]]:
+    return [{"label": "probability", "atol": PROBABILITY_ATOL, "rtol": PROBABILITY_RTOL}, {"label": "state", "atol": STATE_ATOL, "rtol": STATE_RTOL}]
+
+
+def validate_outputs(outputs: list[Any], np: Any, label: str, scenario: str, step: int) -> None:
+    if len(outputs) != 2 or tuple(outputs[0].shape) != (1, 1) or tuple(outputs[1].shape) != STATE_SHAPE:
+        raise ValueError(f"{scenario}[{step}] {label} output shape is invalid")
+    if outputs[0].dtype != np.float32 or outputs[1].dtype != np.float32 or not np.isfinite(outputs[0]).all() or not np.isfinite(outputs[1]).all():
+        raise ValueError(f"{scenario}[{step}] {label} returned invalid output")
+    if not ((outputs[0] >= 0.0).all() and (outputs[0] <= 1.0).all()):
+        raise ValueError(f"{scenario}[{step}] {label} probability is outside [0, 1]")
+
+
+def metric_set() -> dict[str, dict[str, Any]]:
+    return {spec["label"]: {"atol": spec["atol"], "rtol": spec["rtol"], "maxAbsError": 0.0, "maxRelError": 0.0, "overToleranceElements": 0, "worstCase": None, "worstViolation": None} for spec in output_specs()}
+
+
+def record_metrics(metrics: dict[str, dict[str, Any]], source: list[Any], derived: list[Any], np: Any, scenario: str, step: int, audio: Any, reference_state: Any, compared_state: Any) -> None:
+    for output_index, spec in enumerate(output_specs()):
+        before, after = source[output_index], derived[output_index]
+        delta = np.abs(before - after)
+        rel = delta / np.maximum(np.abs(before), 1e-12)
+        tolerance = spec["atol"] + spec["rtol"] * np.abs(after)
+        normalized = delta / np.maximum(tolerance, 1e-30)
+        metric = metrics[spec["label"]]
+        maximum = float(np.max(delta))
+        metric["maxRelError"] = max(metric["maxRelError"], float(np.max(rel)))
+        metric["overToleranceElements"] += int(np.count_nonzero(delta > tolerance))
+        flat_index = int(np.argmax(delta))
+        context = {"scenario": scenario, "step": step, "outputIndex": [int(index) for index in np.unravel_index(flat_index, delta.shape)], "before": float(before.flat[flat_index]), "after": float(after.flat[flat_index]), "absError": maximum, "relError": float(rel.flat[flat_index]), "inputContext": audio.reshape(-1)[:64].tolist(), "inputFrameSha256": hashlib.sha256(audio.tobytes()).hexdigest(), "referenceStateInputSha256": hashlib.sha256(reference_state.tobytes()).hexdigest(), "comparedStateInputSha256": hashlib.sha256(compared_state.tobytes()).hexdigest()}
+        if maximum > metric["maxAbsError"]:
+            metric["maxAbsError"] = maximum
+            metric["worstCase"] = context
+        violation_index = int(np.argmax(normalized))
+        violation = float(normalized.flat[violation_index])
+        if violation > 1.0 and (metric["worstViolation"] is None or violation > metric["worstViolation"]["normalizedTolerance"]):
+            metric["worstViolation"] = {**context, "outputIndex": [int(index) for index in np.unravel_index(violation_index, delta.shape)], "before": float(before.flat[violation_index]), "after": float(after.flat[violation_index]), "absError": float(delta.flat[violation_index]), "relError": float(rel.flat[violation_index]), "normalizedTolerance": violation, "tolerance": float(tolerance.flat[violation_index])}
+
+
 def parity(original_path: Path, bound_path: Path, candidate_paths: dict[str, Path], np: Any, ort: Any) -> dict[str, Any]:
-    original, bound = session(original_path, ort), session(bound_path, ort)
-    assert_model_contract(original, bound)
-    pairs = {
-        "originalVsBound": {"session": bound, "outputs": [{"label": "probability", "atol": PROBABILITY_ATOL, "rtol": PROBABILITY_RTOL}, {"label": "state", "atol": STATE_ATOL, "rtol": STATE_RTOL}]},
-    }
-    for name, path in candidate_paths.items():
-        candidate = session(path, ort)
-        assert_model_contract(original, candidate)
-        pairs[f"originalVs{name}"] = {"session": candidate, "outputs": [{"label": "probability", "atol": PROBABILITY_ATOL, "rtol": PROBABILITY_RTOL}, {"label": "state", "atol": STATE_ATOL, "rtol": STATE_RTOL}]}
-    for pair in pairs.values():
-        pair["metrics"] = {output["label"]: {"maxAbsError": 0.0, "maxRelError": 0.0, "overToleranceElements": 0, "worstCase": None} for output in pair["outputs"]}
+    execution_profiles = {"default": False, "noPrepacking": True}
+    profiles: dict[str, dict[str, Any]] = {}
+    all_paths = {"Bound": bound_path, **candidate_paths}
+    for profile_name, disable_prepacking in execution_profiles.items():
+        original = session(original_path, ort, disable_prepacking)
+        pairs: dict[str, dict[str, Any]] = {}
+        for name, path in all_paths.items():
+            candidate = session(path, ort, disable_prepacking)
+            assert_model_contract(original, candidate)
+            pairs[f"originalVs{name}"] = {"reference": original, "candidate": candidate, "recurrent": metric_set(), "sameStateOneStep": metric_set()}
+        profiles[profile_name] = {"disablePrepacking": disable_prepacking, "pairs": pairs}
     comparisons: list[dict[str, Any]] = []
     for scenario, sequence in frames(np).items():
         nonzero = scenario == "mixed_recurrent"
         initial = np.linspace(-0.25, 0.25, int(np.prod(STATE_SHAPE)), dtype=np.float32).reshape(STATE_SHAPE) if nonzero else np.zeros(STATE_SHAPE, dtype=np.float32)
-        original_state = initial.copy()
-        pair_states = {name: initial.copy() for name in pairs}
+        states = {profile_name: {pair_name: {"reference": initial.copy(), "candidate": initial.copy()} for pair_name in profile["pairs"]} for profile_name, profile in profiles.items()}
         for step, audio in enumerate(sequence):
-            source = original.run(None, {INPUT: audio, STATE: original_state, SR: np.asarray(SAMPLE_RATE, dtype=np.int64)})
-            for label, outputs in (("original", source),):
-                if len(outputs) != 2 or tuple(outputs[0].shape) != (1, 1) or tuple(outputs[1].shape) != STATE_SHAPE:
-                    raise ValueError(f"{scenario}[{step}] {label} output shape is invalid")
-                if outputs[0].dtype != np.float32 or outputs[1].dtype != np.float32:
-                    raise ValueError(f"{scenario}[{step}] {label} output dtype is invalid")
-                if not np.isfinite(outputs[0]).all() or not np.isfinite(outputs[1]).all():
-                    raise ValueError(f"{scenario}[{step}] {label} returned non-finite output")
-                if not ((outputs[0] >= 0.0).all() and (outputs[0] <= 1.0).all()):
-                    raise ValueError(f"{scenario}[{step}] {label} probability is outside [0, 1]")
-            for pair_name, pair in pairs.items():
-                derived = pair["session"].run(None, {INPUT: audio, STATE: pair_states[pair_name]})
-                for label, outputs in ((pair_name, derived),):
-                    if len(outputs) != 2 or tuple(outputs[0].shape) != (1, 1) or tuple(outputs[1].shape) != STATE_SHAPE:
-                        raise ValueError(f"{scenario}[{step}] {label} output shape is invalid")
-                    if outputs[0].dtype != np.float32 or outputs[1].dtype != np.float32 or not np.isfinite(outputs[0]).all() or not np.isfinite(outputs[1]).all():
-                        raise ValueError(f"{scenario}[{step}] {label} returned invalid output")
-                    if not ((outputs[0] >= 0.0).all() and (outputs[0] <= 1.0).all()):
-                        raise ValueError(f"{scenario}[{step}] {label} probability is outside [0, 1]")
-                for output_index, output in enumerate(pair["outputs"]):
-                    before, after = source[output_index], derived[output_index]
-                    delta = np.abs(before - after)
-                    rel = delta / np.maximum(np.abs(before), 1e-12)
-                    metric = pair["metrics"][output["label"]]
-                    maximum = float(np.max(delta))
-                    metric["maxRelError"] = max(metric["maxRelError"], float(np.max(rel)))
-                    # Preserve assert_allclose(before, after): its desired operand is after.
-                    tolerance = output["atol"] + output["rtol"] * np.abs(after)
-                    metric["overToleranceElements"] += int(np.count_nonzero(delta > tolerance))
-                    if maximum > metric["maxAbsError"]:
-                        flat_index = int(np.argmax(delta))
-                        metric["maxAbsError"] = maximum
-                        metric["worstCase"] = {"scenario": scenario, "step": step, "outputIndex": [int(index) for index in np.unravel_index(flat_index, delta.shape)], "before": float(before.flat[flat_index]), "after": float(after.flat[flat_index]), "absError": maximum, "relError": float(rel.flat[flat_index]), "inputContext": audio.reshape(-1)[:64].tolist(), "inputFrameSha256": hashlib.sha256(audio.tobytes()).hexdigest(), "referenceStateInputSha256": hashlib.sha256(original_state.tobytes()).hexdigest(), "comparedStateInputSha256": hashlib.sha256(pair_states[pair_name].tobytes()).hexdigest()}
-                pair_states[pair_name] = derived[1]
+            for profile_name, profile in profiles.items():
+                for pair_name, pair in profile["pairs"].items():
+                    pair_state = states[profile_name][pair_name]
+                    source = pair["reference"].run(None, {INPUT: audio, STATE: pair_state["reference"], SR: np.asarray(SAMPLE_RATE, dtype=np.int64)})
+                    derived = pair["candidate"].run(None, {INPUT: audio, STATE: pair_state["candidate"]})
+                    one_step = pair["candidate"].run(None, {INPUT: audio, STATE: pair_state["reference"]})
+                    validate_outputs(source, np, f"{profile_name}:{pair_name}:original", scenario, step)
+                    validate_outputs(derived, np, f"{profile_name}:{pair_name}:recurrent", scenario, step)
+                    validate_outputs(one_step, np, f"{profile_name}:{pair_name}:one-step", scenario, step)
+                    record_metrics(pair["recurrent"], source, derived, np, scenario, step, audio, pair_state["reference"], pair_state["candidate"])
+                    record_metrics(pair["sameStateOneStep"], source, one_step, np, scenario, step, audio, pair_state["reference"], pair_state["reference"])
+                    pair_state["reference"], pair_state["candidate"] = source[1], derived[1]
             comparisons.append({"scenario": scenario, "step": step, "initialState": "nonzero" if nonzero else "zero"})
-            original_state = source[1]
-    result = {"provider": "CPUExecutionProvider", "intraOpThreads": 1, "interOpThreads": 1, "framesPerScenario": 256, "comparisons": comparisons, "pairs": {name: {"probability": {"rtol": PROBABILITY_RTOL, "atol": PROBABILITY_ATOL, **pair["metrics"]["probability"]}, "state": {"rtol": STATE_RTOL, "atol": STATE_ATOL, **pair["metrics"]["state"]}} for name, pair in pairs.items()}}
-    return result
+    receipt_profiles = {profile_name: {"disablePrepacking": profile["disablePrepacking"], "pairs": {pair_name: {"recurrent": pair["recurrent"], "sameStateOneStep": pair["sameStateOneStep"]} for pair_name, pair in profile["pairs"].items()}} for profile_name, profile in profiles.items()}
+    return {"provider": "CPUExecutionProvider", "intraOpThreads": 1, "interOpThreads": 1, "framesPerScenario": 256, "comparisons": comparisons, "executionProfiles": {"default": {"sessionDisablePrepacking": False}, "noPrepacking": {"sessionDisablePrepacking": True, "configEntry": {"key": "session.disable_prepacking", "value": "1"}, "source": "https://github.com/microsoft/onnxruntime/blob/v1.19.2/include/onnxruntime/core/session/onnxruntime_session_options_config_keys.h"}}, "profiles": receipt_profiles}
 
 
 def select_strict_variant(result: dict[str, Any], preference: tuple[str, ...]) -> str | None:
     """Choose deterministically only from fully evaluated, strict-passing variants."""
-    binding = result["pairs"]["originalVsBound"]
+    default_pairs = result["profiles"]["default"]["pairs"]
+    binding = default_pairs["originalVsBound"]["recurrent"]
     if binding["probability"]["overToleranceElements"] or binding["state"]["overToleranceElements"]:
         return None
     for variant in preference:
-        pair = result["pairs"][f"originalVs{variant}"]
+        pair = default_pairs[f"originalVs{variant}"]["recurrent"]
         if not pair["probability"]["overToleranceElements"] and not pair["state"]["overToleranceElements"]:
             return variant
     return None
@@ -362,7 +381,7 @@ def main() -> int:
             selected = select_strict_variant(receipt["parity"], preference)
             receipt["candidateSelection"] = {"preference": list(preference), "selected": selected, "reason": "first fully evaluated variant with zero strict-tolerance violations for probability and recurrent state"}
             if selected is None:
-                failures = [f"{pair_name}.{label}" for pair_name, pair in receipt["parity"]["pairs"].items() for label, metric in pair.items() if metric["overToleranceElements"]]
+                failures = [f"{profile_name}.{pair_name}.{label}" for profile_name, profile in receipt["parity"]["profiles"].items() for pair_name, pair in profile["pairs"].items() for label, metric in pair["recurrent"].items() if metric["overToleranceElements"]]
                 raise AssertionError(f"no specialization variant passed strict parity after complete diagnostic run: {', '.join(failures)}")
             args.output.parent.mkdir(parents=True, exist_ok=True)
             os.replace(candidate_paths[selected], args.output)
