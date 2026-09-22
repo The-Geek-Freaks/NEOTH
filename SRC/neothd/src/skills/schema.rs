@@ -1,7 +1,7 @@
 //! Skill manifest types.
 
 use std::ops::Deref;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::ser::SerializeStruct;
@@ -355,6 +355,10 @@ impl Deref for SkillBody {
 pub struct RuntimeSkill {
     body: Arc<SkillBody>,
     origin: RuntimeSkillOrigin,
+    // This is presentation-only metadata for an immutable embedded package.
+    // It is intentionally not serialized: a cache location is neither Skill
+    // authority nor part of the replayable bundled identity.
+    bundled_resource_path: Option<PathBuf>,
 }
 
 impl Serialize for RuntimeSkill {
@@ -403,7 +407,27 @@ impl RuntimeSkill {
                 embedded_content_hash: skill.content_hash.clone(),
             },
             body: Arc::new(SkillBody::new(skill)),
+            bundled_resource_path: None,
         })
+    }
+
+    /// Attach the independently verified on-disk sibling package to compiled
+    /// bytes without changing their synthetic bundled identity.  This is kept
+    /// module-private so an installed package cannot manufacture this lane.
+    pub(super) fn with_verified_bundled_resource_path(
+        mut self,
+        resource_path: PathBuf,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            self.is_trusted_bundled(),
+            "only a trusted bundled Skill may carry bundled resource metadata"
+        );
+        anyhow::ensure!(
+            resource_path.is_absolute(),
+            "bundled resource metadata must be an absolute verified path"
+        );
+        self.bundled_resource_path = Some(resource_path);
+        Ok(self)
     }
 
     /// Consume exact installed-package authority and freeze its effective
@@ -441,11 +465,18 @@ impl RuntimeSkill {
                 content_hash,
             })),
             origin,
+            bundled_resource_path: None,
         })
     }
 
     pub fn is_trusted_bundled(&self) -> bool {
         matches!(&self.origin, RuntimeSkillOrigin::TrustedBundled { .. })
+    }
+
+    /// A materialized sibling package is data for selected-prompt rendering;
+    /// it never changes installed/bundled admission or content identity.
+    pub(crate) fn verified_bundled_resource_path(&self) -> Option<&Path> {
+        self.bundled_resource_path.as_deref()
     }
 
     pub fn authority_record_sha256(&self) -> Option<&str> {

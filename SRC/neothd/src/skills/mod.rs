@@ -25,6 +25,7 @@ pub mod authority;
 /// are staged in the proactive review queue for operator review.
 pub mod auto_extract;
 pub mod bundled;
+pub mod bundled_resources;
 pub mod creator;
 /// ADOPT31-B1 — bounded document/book extraction to an operator-only,
 /// sanitized review draft. It cannot install, activate, route, or dispatch a

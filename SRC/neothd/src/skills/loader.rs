@@ -152,6 +152,7 @@ async fn load_authorized_with_mode_and_budget_override(
     authority_budget_override: Option<(usize, u64)>,
     installed_store_mode: InstalledStoreMode,
 ) -> Result<AuthorizedRuntimeSkillSnapshot> {
+    let materialize_bundled_resources = matches!(installed_store_mode, InstalledStoreMode::ReconcileForRuntime);
     let installed_store_ready = match installed_store_mode {
         InstalledStoreMode::ReconcileForRuntime => {
             match super::mutation_lifecycle::reconcile_for_runtime(skills_dir).await {
@@ -212,7 +213,10 @@ async fn load_authorized_with_mode_and_budget_override(
     let policy = SkillPolicy::from_config(&accepted_config.skills);
 
     tokio::task::spawn_blocking(move || {
-        let bundled_only = load_trusted_bundled_with_policy(&policy)?;
+        let bundled_only = load_trusted_bundled_with_policy(
+            &policy,
+            materialize_bundled_resources.then(|| home.as_deref()).flatten(),
+        )?;
         let mut by_id: HashMap<String, RuntimeSkill> = bundled_only
             .iter()
             .cloned()
@@ -370,7 +374,7 @@ pub(crate) async fn load_trusted_bundled_from_reload_controller(
         let accepted_epoch = accepted.epoch();
         let policy = SkillPolicy::from_config(&accepted.config().skills);
         let bundled =
-            tokio::task::spawn_blocking(move || load_trusted_bundled_with_policy(&policy))
+            tokio::task::spawn_blocking(move || load_trusted_bundled_with_policy(&policy, None))
                 .await
                 .context("trusted bundled Skill fallback worker failed")??;
         if reload.accepted_snapshot().epoch() == accepted_epoch {
@@ -391,15 +395,44 @@ pub(crate) async fn load_trusted_bundled_from_reload_controller(
     )
 }
 
-fn load_trusted_bundled_with_policy(policy: &SkillPolicy) -> Result<Vec<RuntimeSkill>> {
+fn load_trusted_bundled_with_policy(
+    policy: &SkillPolicy,
+    materialize_home: Option<&Path>,
+) -> Result<Vec<RuntimeSkill>> {
     let mut bundled = parse_bundled_skills()?;
+    // The embedded Drawio manifest refers to sibling scripts and indexes. A
+    // read-only fallback is forbidden from creating that package, so it must
+    // not advertise Drawio as an enabled usable skill with a fictional path.
+    if materialize_home.is_none() {
+        bundled.remove("drawio_diagram");
+    }
     for skill in bundled.values_mut() {
         policy.apply_to_bundled_manifest(&mut skill.manifest);
     }
-    let mut runtime = bundled
-        .into_values()
-        .map(RuntimeSkill::from_trusted_bundled)
-        .collect::<Result<Vec<_>>>()?;
+    // Materialization only produces verified sibling data for prompt rendering.
+    // It never replaces the synthetic `<bundled>` Skill path used to prove
+    // embedded provenance and it never contributes to the content hash.
+    let drawio_resource_path = match materialize_home {
+        Some(home) => super::bundled_resources::materialize_skill(home, "drawio_diagram")?
+            .map(|skill_yaml| {
+                skill_yaml
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .context("materialized drawio package has no root")
+            })
+            .transpose()?,
+        None => None,
+    };
+    let mut runtime = Vec::with_capacity(bundled.len());
+    for skill in bundled.into_values() {
+        let is_drawio = skill.id() == "drawio_diagram";
+        let runtime_skill = RuntimeSkill::from_trusted_bundled(skill)?;
+        runtime.push(match (is_drawio, drawio_resource_path.as_ref()) {
+            (true, Some(path)) => runtime_skill
+                .with_verified_bundled_resource_path(path.clone())?,
+            _ => runtime_skill,
+        });
+    }
     runtime.sort_by(|left, right| left.id().cmp(right.id()));
     super::mode_registry::ModeRegistry::from_skills(&runtime)
         .context("validate trusted bundled Skill modes")?;
@@ -1133,8 +1166,8 @@ pub(crate) fn parse_bundled_skills() -> Result<HashMap<String, Skill>> {
             .map(|s| s.trim().to_lowercase())
             .filter(|s| !s.is_empty())
             .collect();
-        // ARCH-07 — bundled skill content_hash uses the
-        // already-in-memory yaml body (no re-read needed).
+        // ARCH-07 — the content hash is an identity of immutable bundled bytes.
+        // It must never include the per-home materialized cache location.
         let content_hash =
             crate::skills::versioning::skill_content_hash_hex(yaml_body, &manifest.system_prompt);
         out.insert(
@@ -1224,6 +1257,193 @@ mod tests {
         write(sd.join("skill.yaml"), body).await.unwrap();
     }
 
+    #[tokio::test]
+    async fn w192_runtime_bundled_drawio_has_verified_materialized_siblings() {
+        let home = tempdir().unwrap();
+        let policy = SkillPolicy::from_config(&crate::config::SkillsConfig::default());
+        let skills = load_trusted_bundled_with_policy(&policy, Some(home.path()))
+            .expect("materialize bundled runtime resources");
+        let drawio = skills
+            .iter()
+            .find(|skill| skill.id() == "drawio_diagram")
+            .expect("bundled drawio skill");
+        assert!(drawio.is_trusted_bundled());
+        assert!(drawio.path.starts_with(Path::new("<bundled>")));
+        let root = drawio
+            .verified_bundled_resource_path()
+            .expect("verified materialized resource root")
+            .to_path_buf();
+        assert!(root.join("scripts/validate.py").is_file());
+        assert!(root.join("data/shape-index.json.gz").is_file());
+        assert!(root.join("styles/built-in/default.json").is_file());
+        assert!(
+            !drawio.system_prompt().contains(&root.display().to_string()),
+            "stable embedded prompt must not contain a per-home cache location"
+        );
+        assert!(!drawio.content_hash.is_empty());
+
+        let resolver = super::super::resolver::SkillRouteResolver::new(
+            super::super::registry::SkillSnapshot::from_test_skills(skills),
+        );
+        let super::super::resolver::SkillRouteDecision::Match(route) = resolver
+            .resolve(
+                super::super::resolver::SkillRouteRequest::automatic("drawio", 1, &[]),
+                None,
+            )
+            .await
+        else { panic!("runtime-produced Drawio must resolve") };
+        let prompt = route.system_prompt_layer().expect("selected Drawio prompt");
+        let escaped: String = root.to_string_lossy().escape_default().collect();
+        assert!(prompt.contains(&escaped), "selected prompt omitted actual resource root: {prompt}");
+    }
+
+    #[test]
+    fn w192_bundled_drawio_hash_is_stable_across_materialized_homes() {
+        let first_home = tempdir().unwrap();
+        let second_home = tempdir().unwrap();
+        let policy = SkillPolicy::from_config(&crate::config::SkillsConfig::default());
+        let drawio = |home: &Path| {
+            load_trusted_bundled_with_policy(&policy, Some(home))
+                .expect("materialize trusted bundled drawio")
+                .into_iter()
+                .find(|skill| skill.id() == "drawio_diagram")
+                .expect("drawio in bundled registry")
+        };
+        let first = drawio(first_home.path());
+        let second = drawio(second_home.path());
+        assert!(first.is_trusted_bundled() && second.is_trusted_bundled());
+        assert!(first.path.starts_with(Path::new("<bundled>")));
+        assert!(second.path.starts_with(Path::new("<bundled>")));
+        assert_eq!(first.content_hash, second.content_hash);
+        assert_ne!(
+            first.verified_bundled_resource_path(),
+            second.verified_bundled_resource_path()
+        );
+    }
+
+    #[test]
+    fn w192_read_only_bundled_fallback_never_materializes_resources() {
+        let home = tempdir().unwrap();
+        let policy = SkillPolicy::from_config(&crate::config::SkillsConfig::default());
+        let skills = load_trusted_bundled_with_policy(&policy, None)
+            .expect("read-only trusted bundled fallback");
+        assert!(
+            skills.iter().all(|skill| skill.id() != "drawio_diagram"),
+            "read-only fallback must not advertise resource-dependent Drawio"
+        );
+        assert!(
+            !home.path().join("bundled-skill-resources").exists(),
+            "read-only fallback must not create a cache namespace"
+        );
+    }
+
+    #[test]
+    fn w192_corrupt_materialized_cache_is_refused_without_overwrite() {
+        let home = tempdir().unwrap();
+        let path = super::super::bundled_resources::materialize_skill(home.path(), "drawio_diagram")
+            .expect("first materialization")
+            .expect("drawio has resources");
+        std::fs::write(&path, b"corrupt operator-visible cache bytes").unwrap();
+        let error = super::super::bundled_resources::materialize_skill(home.path(), "drawio_diagram")
+            .expect_err("corrupt cache must fail closed");
+        assert!(error.to_string().contains("cache"));
+        assert_eq!(std::fs::read(&path).unwrap(), b"corrupt operator-visible cache bytes");
+    }
+
+    #[test]
+    fn w192_symlinked_resource_cache_namespace_is_refused() {
+        let home = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let sentinel = outside.path().join("outside-sentinel");
+        std::fs::write(&sentinel, b"outside remains untouched").unwrap();
+        let cache_parent = home.path().join("bundled-skill-resources");
+        std::fs::create_dir_all(&cache_parent).unwrap();
+        let linked = cache_parent.join("drawio_diagram");
+        try_symlink_dir(outside.path(), &linked)
+            .expect("the platform test setup must create a link-like namespace entry");
+        let error = super::super::bundled_resources::materialize_skill(home.path(), "drawio_diagram")
+            .expect_err("link-like cache namespace must fail closed");
+        assert!(!error.to_string().is_empty(), "link-like namespace must produce a refusal");
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"outside remains untouched");
+    }
+
+    #[test]
+    fn w192_interrupted_resource_stage_is_refused_without_cleanup_or_reuse() {
+        let home = tempdir().unwrap();
+        let digest = super::super::bundled_resources::drawio_package_digest_for_test();
+        let stage = home
+            .path()
+            .join("bundled-skill-resources")
+            .join("drawio_diagram")
+            .join(format!(".{digest}.staging-interrupted-test"));
+        std::fs::create_dir_all(&stage).unwrap();
+        let sentinel = stage.join("untrusted-partial");
+        std::fs::write(&sentinel, b"interrupted bytes").unwrap();
+
+        let error = super::super::bundled_resources::materialize_skill(home.path(), "drawio_diagram")
+            .expect_err("interrupted stage must be refused before a new package is created");
+        assert!(error.to_string().contains("interrupted bundled resource stage"));
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"interrupted bytes");
+        assert!(
+            !stage.parent().unwrap().join(&digest).exists(),
+            "a suspect stage must never be promoted to the final package"
+        );
+    }
+
+    #[test]
+    fn w192_concurrent_materializers_wait_then_reuse_one_verified_package() {
+        let home = tempdir().unwrap();
+        let home_path = home.path().to_path_buf();
+        let (stage_ready, stage_observed) = std::sync::mpsc::channel();
+        let (contention_ready, contention_observed) = std::sync::mpsc::channel();
+        let release = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let skill_path = home_path.join("bundled-skill-resources").join("drawio_diagram");
+        super::super::bundled_resources::set_stage_hook_for_test(Some((
+            skill_path.clone(),
+            stage_ready,
+            std::sync::Arc::clone(&release),
+        )));
+        super::super::bundled_resources::set_lock_contention_hook_for_test(Some((
+            skill_path,
+            contention_ready,
+        )));
+        let first_home = home_path.clone();
+        let first = std::thread::spawn(move || {
+            super::super::bundled_resources::materialize_skill(&first_home, "drawio_diagram")
+        });
+        if stage_observed.recv_timeout(std::time::Duration::from_secs(10)).is_err() {
+            super::super::bundled_resources::release_stage_hook_for_test(&release);
+            let _ = first.join();
+            super::super::bundled_resources::set_stage_hook_for_test(None);
+            super::super::bundled_resources::set_lock_contention_hook_for_test(None);
+            panic!("first materializer did not create its stage before timeout");
+        }
+        let second_home = home_path.clone();
+        let second = std::thread::spawn(move || {
+            super::super::bundled_resources::materialize_skill(&second_home, "drawio_diagram")
+        });
+        if contention_observed.recv_timeout(std::time::Duration::from_secs(10)).is_err() {
+            super::super::bundled_resources::release_stage_hook_for_test(&release);
+            let _ = first.join();
+            let _ = second.join();
+            super::super::bundled_resources::set_stage_hook_for_test(None);
+            super::super::bundled_resources::set_lock_contention_hook_for_test(None);
+            panic!("second materializer did not observe the held package lock before timeout");
+        }
+        super::super::bundled_resources::release_stage_hook_for_test(&release);
+        let paths = vec![
+            first.join().expect("first materializer panic").expect("first locked materialization").expect("first Drawio root"),
+            second.join().expect("second materializer panic").expect("second waits and reuses").expect("second Drawio root"),
+        ];
+        super::super::bundled_resources::set_stage_hook_for_test(None);
+        super::super::bundled_resources::set_lock_contention_hook_for_test(None);
+        assert_eq!(paths[0], paths[1]);
+        let package_parent = paths[0].parent().expect("package root").parent().expect("package parent");
+        assert!(std::fs::read_dir(package_parent).unwrap().all(|entry| {
+            !entry.unwrap().file_name().to_string_lossy().contains(".staging-")
+        }));
+    }
+
     fn install_test_wal_key(home: &Path) {
         let wal_dir = home.join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();
@@ -1254,6 +1474,45 @@ mod tests {
         let config_path = home.join("freedom.yaml");
         std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
         crate::config::reload::ReloadController::new(config, config_path)
+    }
+
+    #[tokio::test]
+    async fn w192_read_only_loader_does_not_create_bundled_resource_cache() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        let cache = home.path().join("bundled-skill-resources");
+        let reload = test_reload_controller(home.path());
+        assert!(!cache.exists());
+
+        let snapshot = load_authorized_read_only_from_reload_controller(&skills_dir, &reload)
+            .await
+            .expect("read-only bundled registry");
+
+        assert!(!cache.exists(), "read-only loader created resource cache");
+        assert!(
+            snapshot.skills.iter().all(|skill| skill.id() != "drawio_diagram"),
+            "read-only registry must not expose Drawio without its resources"
+        );
+    }
+
+    #[tokio::test]
+    async fn w192_runtime_loader_preserves_bundled_drawio_provenance_and_resources() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        let reload = test_reload_controller(home.path());
+        let snapshot = load_authorized_initial_from_reload_controller(&skills_dir, &reload)
+            .await
+            .expect("runtime bundled registry");
+        let drawio = snapshot
+            .skills
+            .iter()
+            .find(|skill| skill.id() == "drawio_diagram")
+            .expect("runtime registry must carry materialized Drawio");
+        assert!(drawio.is_trusted_bundled());
+        assert!(drawio.path.starts_with(Path::new("<bundled>")));
+        assert!(drawio
+            .verified_bundled_resource_path()
+            .is_some_and(|path| path.join("scripts/validate.py").is_file()));
     }
 
     #[tokio::test]

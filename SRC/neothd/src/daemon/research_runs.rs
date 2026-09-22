@@ -197,8 +197,21 @@ pub fn approve(home: &Path, id: &str, expected: u64) -> Result<ResearchRun> {
 
 /// Atomically reserve one provider call for the current attempt. A rejected
 /// reservation never reaches the wrapped provider and survives pause/resume.
-pub fn reserve_provider_call(home:&Path,id:&str,attempt:&str)->Result<()> {
-    mutate_unchecked(home,id,|run| { require_attempt(run,attempt)?; anyhow::ensure!(run.provider_calls_used < run.budget.max_provider_calls,"immutable research provider-call budget exhausted"); run.provider_calls_used=run.provider_calls_used.checked_add(1).context("research provider call counter overflow")?; run.audit.push(audit("provider_call_reserved",None)); Ok(()) }).map(|_|())
+pub fn reserve_provider_call(home: &Path, id: &str, attempt: &str) -> Result<()> {
+    mutate_unchecked(home, id, |run| {
+        require_attempt(run, attempt)?;
+        anyhow::ensure!(
+            run.provider_calls_used < run.budget.max_provider_calls,
+            "immutable research provider-call budget exhausted"
+        );
+        run.provider_calls_used = run
+            .provider_calls_used
+            .checked_add(1)
+            .context("research provider call counter overflow")?;
+        run.audit.push(audit("provider_call_reserved", None));
+        Ok(())
+    })
+    .map(|_| ())
 }
 pub fn request_control(home: &Path, id: &str, expected: u64, request: &str) -> Result<ResearchRun> {
     if request != "pause" && request != "cancel" {
@@ -616,7 +629,12 @@ fn validate_run(run: &ResearchRun) -> Result<()> {
         run.revision > 0 && run.created_unix >= 0 && run.updated_unix >= run.created_unix,
         "invalid research run revision or clock"
     );
-    anyhow::ensure!(run.provider_calls_used <= run.budget.max_provider_calls && run.wall_elapsed_ms <= run.budget.max_wall_secs.saturating_mul(1000) && (run.state == ResearchRunState::Running) == run.attempt_started_unix_ms.is_some(), "invalid durable research budget consumption");
+    anyhow::ensure!(
+        run.provider_calls_used <= run.budget.max_provider_calls
+            && run.wall_elapsed_ms <= run.budget.max_wall_secs.saturating_mul(1000)
+            && (run.state == ResearchRunState::Running) == run.attempt_started_unix_ms.is_some(),
+        "invalid durable research budget consumption"
+    );
     validate_text("topic", &run.topic, MAX_TOPIC_BYTES)?;
     validate_text("scope", &run.scope, MAX_SCOPE_BYTES)?;
     anyhow::ensure!(
@@ -780,8 +798,10 @@ fn settle_wall_time(run: &mut ResearchRun) -> Result<()> {
 }
 
 fn settle_wall_time_at(run: &mut ResearchRun, now: i64) -> Result<()> {
-    let Some(started) = run.attempt_started_unix_ms.take() else { return Ok(()) };
-    anyhow::ensure!(now >= started,"research active clock moved backwards");
+    let Some(started) = run.attempt_started_unix_ms.take() else {
+        return Ok(());
+    };
+    anyhow::ensure!(now >= started, "research active clock moved backwards");
     let cap = run.budget.max_wall_secs.saturating_mul(1000);
     let elapsed = (now - started) as u64;
     run.wall_elapsed_ms = run
@@ -901,22 +921,42 @@ mod tests {
 
     #[test]
     fn provider_call_reservations_persist_across_pause_reopen_and_resume() {
-        let home=tempfile::tempdir().unwrap();
-        let mut capped=budget(); capped.max_provider_calls=2;
-        let draft=create(home.path(),"topic".into(),"scope".into(),capped).unwrap();
-        let approved=approve(home.path(),&draft.id,draft.revision).unwrap();
-        let first=claim_run(home.path(),&approved.id,approved.revision).unwrap();
-        let first_attempt=first.attempt_token.as_deref().unwrap();
-        reserve_provider_call(home.path(),&first.id,first_attempt).unwrap();
-        checkpoint(home.path(),&first.id,first_attempt,crate::tools::deep_research::ResearchCheckpoint{queries:vec!["one".into()],completed_rounds:1,evidence:Vec::new()}).unwrap();
-        let current=load(home.path(),&first.id).unwrap();
-        let requested=request_control(home.path(),&current.id,current.revision,"pause").unwrap();
-        let paused=pause_at_boundary(home.path(),&requested.id,first_attempt).unwrap();
-        let reopened=load(home.path(),&paused.id).unwrap(); assert_eq!(reopened.provider_calls_used,1);
-        let resumed=claim_run(home.path(),&reopened.id,reopened.revision).unwrap(); let second_attempt=resumed.attempt_token.as_deref().unwrap();
-        reserve_provider_call(home.path(),&resumed.id,second_attempt).unwrap();
-        assert!(reserve_provider_call(home.path(),&resumed.id,second_attempt).is_err(),"resume must not replenish provider-call budget");
-        assert_eq!(load(home.path(),&resumed.id).unwrap().provider_calls_used,2);
+        let home = tempfile::tempdir().unwrap();
+        let mut capped = budget();
+        capped.max_provider_calls = 2;
+        let draft = create(home.path(), "topic".into(), "scope".into(), capped).unwrap();
+        let approved = approve(home.path(), &draft.id, draft.revision).unwrap();
+        let first = claim_run(home.path(), &approved.id, approved.revision).unwrap();
+        let first_attempt = first.attempt_token.as_deref().unwrap();
+        reserve_provider_call(home.path(), &first.id, first_attempt).unwrap();
+        checkpoint(
+            home.path(),
+            &first.id,
+            first_attempt,
+            crate::tools::deep_research::ResearchCheckpoint {
+                queries: vec!["one".into()],
+                completed_rounds: 1,
+                evidence: Vec::new(),
+            },
+        )
+        .unwrap();
+        let current = load(home.path(), &first.id).unwrap();
+        let requested =
+            request_control(home.path(), &current.id, current.revision, "pause").unwrap();
+        let paused = pause_at_boundary(home.path(), &requested.id, first_attempt).unwrap();
+        let reopened = load(home.path(), &paused.id).unwrap();
+        assert_eq!(reopened.provider_calls_used, 1);
+        let resumed = claim_run(home.path(), &reopened.id, reopened.revision).unwrap();
+        let second_attempt = resumed.attempt_token.as_deref().unwrap();
+        reserve_provider_call(home.path(), &resumed.id, second_attempt).unwrap();
+        assert!(
+            reserve_provider_call(home.path(), &resumed.id, second_attempt).is_err(),
+            "resume must not replenish provider-call budget"
+        );
+        assert_eq!(
+            load(home.path(), &resumed.id).unwrap().provider_calls_used,
+            2
+        );
     }
 
     #[test]
@@ -967,7 +1007,10 @@ mod tests {
             value.as_object_mut().unwrap().remove(field);
             std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
             let before = std::fs::read(&path).unwrap();
-            assert!(load(home.path(), &run.id).is_err(), "missing {field} must fail closed");
+            assert!(
+                load(home.path(), &run.id).is_err(),
+                "missing {field} must fail closed"
+            );
             assert_eq!(std::fs::read(&path).unwrap(), before);
         }
     }

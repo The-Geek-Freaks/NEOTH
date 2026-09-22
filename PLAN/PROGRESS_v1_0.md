@@ -2,40 +2,27 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
-**W193 durable research budgets (2026-09-22):** reviewed source now reserves
-provider dispatches durably for the current attempt and carries active elapsed
-milliseconds across pause/resume; paused dwell is excluded. The v2 record format
-refuses v1 without rewriting unknown consumption. WAL finalization failures remain
-errors after a paused/cancelled settlement. Five new regressions join the existing
-15 in the exact-source Hosted lane; runtime verification is pending. W192 resource
-materialization remains unadmitted pending its normal-concurrency repair.
+**Current W192/W194 publication boundary (2026-09-22):** W192 and W194 passed
+final static review. The planned focused lane has 34 exact identities: W190 10,
+W191 5, W192 10, W193 5 and W194 4. W193 imported all 15 exact Hosted Rustfmt
+hunks from Preflight `35719894133` on `98c`; Code Quality on `98c` passed.
+Run `35719894902` compiled and passed W190's 10 plus W191's first four, then
+the last fallback fixture failed because its required WAL writer was absent; a
+narrow fixture repair now attaches the real WAL writer and verifies its audit; W193 was not reached. Runtime acceptance remains
+pending for every unrun identity.
 
-**W191 fixture follow-up:** run `35718608647` again passed the ten W190 tests.
-Its next failure was the pin-rejection assertion searching all rendered system
-text, where a Skill name can occur in another description. Assertions now compare
-exact ids from the decoded registry array. This test-only correction awaits rerun.
+**Current audio/native boundary (2026-09-22):** all 19 audio identities passed
+on Linux `35717299461` (`8fa6`), Windows `35718376823` (`71e`) and macOS
+`35718379383` (`71e`); all source/input/name/log custody is verified. Full CI `35713920675`
+on `8b` completed failed. A separate Windows 17k-test run has real failures
+under triage; the old macOS GUI compile errors are repaired. Preview `35713923652`
+on `8b` is rechecking read-only after cache saving. These facts establish no
+full-CI, preview, microphone/device or release acceptance.
 
-**Current Hosted boundary (2026-09-22):** published `71e621fb` passed Preflight
-`35717760949` and Code Quality `35717760377`. W190/W191 `35717294010` compiles;
-the first ten W190 identities passed, then W191's first helper failed because
-`first_registry_skill_id` searched the JSON-escaped envelope. Its two-layer JSON
-decode repair awaits rerun. Core `35717296684` passed core test-target checking
-and the public CLI build/reference export. The exact generated reference is imported.
-
-**W186 active Hosted boundary (2026-09-22):** Linux audio `35717299461` on
-`8fa6` passed all 19/19 identities, including actual Tract execution. Root
-verified downloaded identities, names, log and hash custody in
-`work/gold-20260906/wave186-silero-specialization/HOSTED-8FA6-LINUX-ADMISSION.json`. The
-final Drop setup is fixed in `e176`, but audio `35716228725` is blocked by the
-same W190 compile failure. Fresh Windows `35718376823` and macOS `35718379383`
-audio runs target `71e621fb`. The old `8b` native macOS compile failed on the
-same four GUI test defects already repaired in `8fa6`; Windows is saving cache.
-Preview remains active. This is not microphone/device or release acceptance.
-
-W192 bundled-resource repair remains unadmitted and excluded. W193 is admitted
-as reviewed source with fresh Hosted behavior gates pending. Road counts remain **1015 checked / 307
-open / 2 partial**; combined source/test inventory is 462/575. No checkbox
-changes.
+Admitted inventory is 478 source paths and 589 universal native
+identities; platform additions (6 Windows, 8 Linux, 7 macOS), 80 GUI, 19 Unix-GUI,
+19 audio and 24 macOS custom identities remain unchanged. Road remains
+**1015 checked / 307 open / 2 partial** (1324 total). No checkbox changes.
 
 **W186 Tract result (2026-09-22):** new graph run `35714955362` on `3ded02b7`
 passes all three Silero runtime cases on Linux, along with the first 18 of 19
@@ -56,19 +43,6 @@ The Tract adapter now uses the two-input graph; fresh live-audio runtime tests
 remain required. Full CI `35713920675` and preview `35713923652` on `8b654ebd`
 continue independently. The new Linux Clippy private-interface finding is fixed
 by retaining `classify` as module-private; no behavior rule is changed.
-
-**W193 durable research budgets (2026-09-22):** reviewed source now reserves
-provider dispatches durably for the current attempt and carries active elapsed
-milliseconds across pause/resume; paused dwell is excluded. The v2 record format
-refuses v1 without rewriting unknown consumption. WAL finalization failures remain
-errors after a paused/cancelled settlement. Five new regressions join the existing
-15 in the exact-source Hosted lane; runtime verification is pending. W192 resource
-materialization remains unadmitted pending its normal-concurrency repair.
-
-**W191 fixture follow-up:** run `35718608647` again passed the ten W190 tests.
-Its next failure was the pin-rejection assertion searching all rendered system
-text, where a Skill name can occur in another description. Assertions now compare
-exact ids from the decoded registry array. This test-only correction awaits rerun.
 
 **Current Hosted boundary (2026-09-22):** W189 behavior lane `35712523037`
 passed all 18 exact source-bound identities on `2cef8239`. The downloaded

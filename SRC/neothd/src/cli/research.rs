@@ -31,7 +31,7 @@ impl crate::providers::Provider for RunCallBudget<'_> {
         &self,
         req: crate::providers::Request,
     ) -> Result<crate::providers::Completion> {
-        research_runs::reserve_provider_call(self.home,self.id,self.attempt)?;
+        research_runs::reserve_provider_call(self.home, self.id, self.attempt)?;
         self.inner.complete(req).await
     }
 }
@@ -222,7 +222,12 @@ async fn run(home: &std::path::Path, id: &str, revision: u64, output: &OutputFor
         crate::providers::utility_model_for_config(&cfg),
         "deep_research_run",
     );
-    let budgeted = RunCallBudget { inner: &wrapped, home, id, attempt };
+    let budgeted = RunCallBudget {
+        inner: &wrapped,
+        home,
+        id,
+        attempt,
+    };
     let http = match crate::tools::external_http::ExternalHttpAuthorizer::interactive(
         cfg.autonomy_policy(),
     ) {
@@ -282,8 +287,22 @@ async fn run(home: &std::path::Path, id: &str, revision: u64, output: &OutputFor
                     drop(writer);
                     let wal = join.await.context("join research lifecycle WAL writer");
                     return match wal {
-                        Ok(()) => Err(interrupted_failure(home, id, attempt, anyhow::anyhow!("immutable research wall-time budget exhausted before resume"))),
-                        Err(wal_error) => Err(interrupted_failure(home, id, attempt, anyhow::anyhow!("research budget exhausted before resume; WAL finalization failed: {wal_error:#}"))),
+                        Ok(()) => Err(interrupted_failure(
+                            home,
+                            id,
+                            attempt,
+                            anyhow::anyhow!(
+                                "immutable research wall-time budget exhausted before resume"
+                            ),
+                        )),
+                        Err(wal_error) => Err(interrupted_failure(
+                            home,
+                            id,
+                            attempt,
+                            anyhow::anyhow!(
+                                "research budget exhausted before resume; WAL finalization failed: {wal_error:#}"
+                            ),
+                        )),
                     };
                 }
                 None => {
@@ -293,8 +312,22 @@ async fn run(home: &std::path::Path, id: &str, revision: u64, output: &OutputFor
                     drop(writer);
                     let wal = join.await.context("join research lifecycle WAL writer");
                     return match wal {
-                        Ok(()) => Err(pre_effect_failure(home, id, attempt, anyhow::anyhow!("immutable research wall-time budget exhausted before first effect"))),
-                        Err(wal_error) => Err(pre_effect_failure(home, id, attempt, anyhow::anyhow!("research budget exhausted before first effect; WAL finalization failed: {wal_error:#}"))),
+                        Ok(()) => Err(pre_effect_failure(
+                            home,
+                            id,
+                            attempt,
+                            anyhow::anyhow!(
+                                "immutable research wall-time budget exhausted before first effect"
+                            ),
+                        )),
+                        Err(wal_error) => Err(pre_effect_failure(
+                            home,
+                            id,
+                            attempt,
+                            anyhow::anyhow!(
+                                "research budget exhausted before first effect; WAL finalization failed: {wal_error:#}"
+                            ),
+                        )),
                     };
                 }
             }
@@ -307,7 +340,9 @@ async fn run(home: &std::path::Path, id: &str, revision: u64, output: &OutputFor
             let wal = join.await.context("join research lifecycle WAL writer");
             return match wal {
                 Ok(()) => Err(error),
-                Err(wal_error) => Err(anyhow::anyhow!("research setup failed: {error:#}; WAL finalization failed: {wal_error:#}")),
+                Err(wal_error) => Err(anyhow::anyhow!(
+                    "research setup failed: {error:#}; WAL finalization failed: {wal_error:#}"
+                )),
             };
         }
     };
@@ -502,15 +537,26 @@ mod tests {
     async fn provider_call_cap_rejects_next_call_without_inner_invocation() {
         let calls = Arc::new(AtomicUsize::new(0));
         let provider = CountingProvider(Arc::clone(&calls));
-        let home=tempfile::tempdir().unwrap();
-        let budget=ResearchRunBudget { max_rounds:1, results_per_query:1, pages_per_round:1, max_provider_tokens:1, max_wall_secs:60, max_provider_calls:1 };
-        let draft=research_runs::create(home.path(),"topic".into(),"scope".into(),budget).unwrap();
-        let approved=research_runs::approve(home.path(),&draft.id,draft.revision).unwrap();
-        let claimed=research_runs::claim_run(home.path(),&approved.id,approved.revision).unwrap();
-        let attempt=claimed.attempt_token.as_deref().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let budget = ResearchRunBudget {
+            max_rounds: 1,
+            results_per_query: 1,
+            pages_per_round: 1,
+            max_provider_tokens: 1,
+            max_wall_secs: 60,
+            max_provider_calls: 1,
+        };
+        let draft =
+            research_runs::create(home.path(), "topic".into(), "scope".into(), budget).unwrap();
+        let approved = research_runs::approve(home.path(), &draft.id, draft.revision).unwrap();
+        let claimed =
+            research_runs::claim_run(home.path(), &approved.id, approved.revision).unwrap();
+        let attempt = claimed.attempt_token.as_deref().unwrap();
         let capped = RunCallBudget {
             inner: &provider,
-            home: home.path(), id: &claimed.id, attempt,
+            home: home.path(),
+            id: &claimed.id,
+            attempt,
         };
         capped
             .complete(crate::providers::Request::default())
@@ -540,9 +586,11 @@ mod tests {
             max_wall_secs: 60,
             max_provider_calls: 1,
         };
-        let draft = research_runs::create(home.path(), "topic".into(), "scope".into(), budget).unwrap();
+        let draft =
+            research_runs::create(home.path(), "topic".into(), "scope".into(), budget).unwrap();
         let approved = research_runs::approve(home.path(), &draft.id, draft.revision).unwrap();
-        let running = research_runs::claim_run(home.path(), &approved.id, approved.revision).unwrap();
+        let running =
+            research_runs::claim_run(home.path(), &approved.id, approved.revision).unwrap();
         let attempt = running.attempt_token.as_deref().unwrap();
         research_runs::checkpoint(
             home.path(),
@@ -554,16 +602,20 @@ mod tests {
         let requested = research_runs::request_control(
             home.path(),
             &running.id,
-            research_runs::load(home.path(), &running.id).unwrap().revision,
+            research_runs::load(home.path(), &running.id)
+                .unwrap()
+                .revision,
             "pause",
         )
         .unwrap();
         let paused = research_runs::pause_at_boundary(home.path(), &requested.id, attempt).unwrap();
-        assert!(controlled_terminal_wal_result(
-            &paused,
-            Some(&anyhow::anyhow!("injected WAL join failure")),
-        )
-        .is_err());
+        assert!(
+            controlled_terminal_wal_result(
+                &paused,
+                Some(&anyhow::anyhow!("injected WAL join failure")),
+            )
+            .is_err()
+        );
         let persisted = research_runs::load(home.path(), &paused.id).unwrap();
         assert_eq!(persisted.state, research_runs::ResearchRunState::Paused);
         assert_eq!(persisted.wall_elapsed_ms, paused.wall_elapsed_ms);
@@ -577,13 +629,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cancelled.state, research_runs::ResearchRunState::Cancelled);
-        assert!(controlled_terminal_wal_result(
-            &cancelled,
-            Some(&anyhow::anyhow!("injected WAL join failure")),
-        )
-        .is_err());
+        assert!(
+            controlled_terminal_wal_result(
+                &cancelled,
+                Some(&anyhow::anyhow!("injected WAL join failure")),
+            )
+            .is_err()
+        );
         assert_eq!(
-            research_runs::load(home.path(), &cancelled.id).unwrap().state,
+            research_runs::load(home.path(), &cancelled.id)
+                .unwrap()
+                .state,
             research_runs::ResearchRunState::Cancelled
         );
     }

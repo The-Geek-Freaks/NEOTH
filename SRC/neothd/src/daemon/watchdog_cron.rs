@@ -302,17 +302,17 @@ pub async fn run_watchdog_tick(
     Ok(())
 }
 
-/// Probe one service. Reuses the existing installer probe primitives. A
-/// `PortOpenNoHttp` n8n result counts as healthy — the port is bound, so the
-/// process is up; the watchdog's job is "is the service alive", not "is it
-/// fully HTTP-ready" (the latter is `neoth status`'s richer check).
+/// Probe one service. Reuses the existing installer probe primitives. For n8n
+/// this is an HTTP health/liveness probe: a bound TCP port by itself is not a
+/// healthy n8n service and must not suppress watchdog recovery. It does not
+/// establish authenticated readiness or any broader application guarantee.
 async fn probe_service(svc: WatchedService, port: u16) -> bool {
     match svc {
         WatchedService::N8n => {
             use crate::installers::n8n::N8nProbeOutcome;
             matches!(
                 crate::installers::n8n::probe_n8n_endpoint(port).await,
-                N8nProbeOutcome::Reachable | N8nProbeOutcome::PortOpenNoHttp
+                N8nProbeOutcome::Reachable
             )
         }
         WatchedService::Ollama => {
@@ -421,6 +421,52 @@ fn now_unix_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn n8n_probe_with_response(response: Option<&'static [u8]>) -> bool {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 512];
+            let _ = stream.read(&mut request).await;
+            if let Some(response) = response {
+                stream.write_all(response).await.unwrap();
+            }
+        });
+        let healthy = probe_service(WatchedService::N8n, port).await;
+        server.await.unwrap();
+        healthy
+    }
+
+    #[tokio::test]
+    async fn n8n_tcp_only_listener_is_not_healthy() {
+        assert!(!n8n_probe_with_response(None).await);
+    }
+
+    #[tokio::test]
+    async fn n8n_malformed_http_response_is_not_healthy() {
+        assert!(!n8n_probe_with_response(Some(b"not http")).await);
+    }
+
+    #[tokio::test]
+    async fn n8n_http_503_is_not_healthy() {
+        assert!(!n8n_probe_with_response(Some(
+            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
+        ))
+        .await);
+    }
+
+    #[tokio::test]
+    async fn n8n_successful_http_health_is_healthy() {
+        assert!(n8n_probe_with_response(Some(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK",
+        ))
+        .await);
+    }
 
     // Policy knobs reused across the cases.
     const THRESHOLD: u32 = 3;

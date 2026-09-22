@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W193-durable-research-budgets",
-  "base": "1fda1d337b2883fe2f70419a685a34850f8b2479",
-  "capturedUtc": "2026-09-22T11:07:19.9765403Z",
-  "validationStatus": "W193_REVIEWED_HOSTED_PENDING",
-  "scopeNote": "W193 durable per-run provider reservations and active-time consumption across resume, schema v2 fail-closed legacy handling and WAL error propagation. W191 fixture exact decoded IDs repair. W192 unadmitted source excluded; all previous wave receipt bindings remain historical.",
+  "item": "GOLD-W95-W194-bundled-resources-http-health",
+  "base": "432a7981bdeca156fd57a2ceb58389cb51572c44",
+  "capturedUtc": "2026-09-22T11:27:44.0195321Z",
+  "validationStatus": "W192_W194_REVIEWED_HOSTED_PENDING",
+  "scopeNote": "W192 bundled resources, W194 HTTP health, W193 Hosted format, W191 fallback WAL fixture. W195 source excluded. Historical wave sources unchanged.",
   "files": [
     {
       "path": ".gitattributes",
@@ -63,8 +63,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 10323,
-      "sha256": "D476436E85BEF62FB97FFB82A419F69ED1E80F59A63DFBB989FF5CFC7B9102C3"
+      "bytes": 11275,
+      "sha256": "A149702667082C533972CB5BF7B0AF521ECAE2ED681D39F1C3B37279ECF8839E"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -227,6 +227,21 @@
       "sha256": "A7D70E4722B90691F986F91D3697E12DCF1D28A43B2BBCA120E5FF3591970D43"
     },
     {
+      "path": "docs/gold-wave192-verification.md",
+      "bytes": 2676,
+      "sha256": "A795A888D4018C890A2D98033B180CD1B23726811CDDD39309BDE6C610F289C5"
+    },
+    {
+      "path": "docs/gold-wave193-verification.md",
+      "bytes": 1669,
+      "sha256": "6ED9FB5D807096CF1F699AC38EA5BF7E8082024365C33AFB46C64DCDF70B4BC3"
+    },
+    {
+      "path": "docs/gold-wave194-verification.md",
+      "bytes": 820,
+      "sha256": "8D8BE009A29A943DACD6F5CEFF72D293B2BB706E3B488B19DC9BD9E6E5EA84E7"
+    },
+    {
       "path": "docs/install.md",
       "bytes": 13637,
       "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
@@ -333,18 +348,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 27916,
-      "sha256": "69BACFF707D662F5E1A5D19E9179DE96BB7F13B199473A0A276536D3A444F4CF"
+      "bytes": 27905,
+      "sha256": "89442ACFDB672C1D7F8ECA2286434603D88DEA3226B5897DB327C1AD77B73221"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1032495,
-      "sha256": "2432BAE26A2BA7918D21AE76B918FA70A8325979D99E571ECDA4EB170E53ACC3"
+      "bytes": 1030742,
+      "sha256": "B8BC1FF6648265C8FC2A3CDF1A37847072D63272F08B4E37A631F93B7B01B18A"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1627942,
-      "sha256": "323E7456B5C9BC29D99172991193836BE6091A9AC70308C5FB732D280BD90395"
+      "bytes": 1626189,
+      "sha256": "05BCFF65A431EAFA4BBF9211A16185D9C7E08A1F3DB983B81B1D057B8E532715"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -752,6 +767,61 @@
       "sha256": "7ED98DDBAD84CCAC4CD0AEB3099049280713DF825C610A8ED34543318F1B2C49"
     },
     {
+      "path": "SRC/neothd/assets/skills/drawio_diagram/data/lobe-icons.json",
+      "bytes": 13796,
+      "sha256": "C163180DA403DB1B063B9944AF6908995E59C1C42391242F31FA28E8F7A33825"
+    },
+    {
+      "path": "SRC/neothd/assets/skills/drawio_diagram/data/SHAPE-INDEX-NOTICE.md",
+      "bytes": 880,
+      "sha256": "DC6E070B9FD905C6A574614DD0C4403253AD8B7111E2F2F3892996B2729E26AB"
+    },
+    {
+      "path": "SRC/neothd/assets/skills/drawio_diagram/data/shape-index.json.gz",
+      "bytes": 436148,
+      "sha256": "F19D9F794775D91E196B0A8D1FCE32D6DBBF9828F094BEDC53E843C8131EE8EA"
+    },
+    {
+      "path": "SRC/neothd/assets/skills/drawio_diagram/scripts/aiicons.py",
+      "bytes": 7822,
+      "sha256": "FE49A3408BFD23E8AB08A43C2E7B4C09DBB9C090280F7E71714FC7AD1F5BE713"
+    },
+    {
+      "path": "SRC/neothd/assets/skills/drawio_diagram/scripts/autolayout.py",
+      "bytes": 15118,
+      "sha256": "59C4391F402E4FD628A688A13FA6022F54DDEA38D585E1251E66DFBD03EE7CE8"
+    },
+    {
+      "path": "SRC/neothd/assets/skills/drawio_diagram/scripts/encode_drawio_url.py",
+      "bytes": 2308,
+      "sha256": "2AE53594D94119F96EC936AB4E8A131D4EAA32115523C9CA2D3230A4716CF2F1"
+    },
+    {
+      "path": "SRC/neothd/assets/skills/drawio_diagram/scripts/rustimports.py",
+      "bytes": 7813,
+      "sha256": "DF2A089D2025EA52371098DC958890ECA96FC41E2584CFE2FCE535B3D3BE4CF4"
+    },
+    {
+      "path": "SRC/neothd/assets/skills/drawio_diagram/scripts/shapesearch.py",
+      "bytes": 6129,
+      "sha256": "3EB768EBDD3C38968222EF73C06C62BA456E191957D414A2341688BAFFC1E151"
+    },
+    {
+      "path": "SRC/neothd/assets/skills/drawio_diagram/scripts/validate.py",
+      "bytes": 5423,
+      "sha256": "BA5DEC6F220806C0F72CED8A493CE5BBC3F0DECDA1C6800D1A590A656099414D"
+    },
+    {
+      "path": "SRC/neothd/assets/skills/drawio_diagram/skill.yaml",
+      "bytes": 10549,
+      "sha256": "923D91C7AA00B42F4E5B5DB479867EAB1226CA3A797F02EF457C37F9C72EBC2C"
+    },
+    {
+      "path": "SRC/neothd/assets/skills/drawio_diagram/styles/built-in/default.json",
+      "bytes": 1503,
+      "sha256": "90C66BFE2BB3AF6DEF5586B5507000E5D1780B1D07F47AB1B2B0200C6730ECD0"
+    },
+    {
       "path": "SRC/neothd/Cargo.toml",
       "bytes": 46126,
       "sha256": "2FA57EBF40B8588734BC563D84ACA3877FEFC3D9FD8F13A9D6E47EF111DA98B6"
@@ -1043,8 +1113,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/research.rs",
-      "bytes": 25533,
-      "sha256": "38B5B2510AD58B0A65F73BF991EC4FC11420BDE7EACD76B625044DF53C2902F0"
+      "bytes": 26736,
+      "sha256": "647F8AF351B00529A44AB2C1FE44F700A66CF4A9BE2EF0A22E89D7CF54304A88"
     },
     {
       "path": "SRC/neothd/src/cli/review.rs",
@@ -1483,8 +1553,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/research_runs.rs",
-      "bytes": 43038,
-      "sha256": "E2A8CF67F26AFC0AAFEE3FB118018E73B9766B2533CFB5F10E38AF8455CA7FDE"
+      "bytes": 43577,
+      "sha256": "970E98AAF124539FDA3D72E59EBDA79346CA310E25412EA7ED2B4AA6DD44B5C8"
     },
     {
       "path": "SRC/neothd/src/daemon/session_sort_cron.rs",
@@ -1510,6 +1580,11 @@
       "path": "SRC/neothd/src/daemon/vault_mirror.rs",
       "bytes": 75965,
       "sha256": "DE96C20D83761E9FDA0D4658773A4FBC106686A7A8DA7749E68CBD7168F57777"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/watchdog_cron.rs",
+      "bytes": 26437,
+      "sha256": "BD2520E6AF0200B18651AE2C94B2A6C5ACFCBCBE29623088C99842B37A7115D5"
     },
     {
       "path": "SRC/neothd/src/daemon/worker_watch.rs",
@@ -1573,8 +1648,8 @@
     },
     {
       "path": "SRC/neothd/src/loop_engine/engine.rs",
-      "bytes": 78162,
-      "sha256": "7C743AC41B664B7B4B8D4DE63F085F44B6BE100633AC4D374C22185B4D8F770A"
+      "bytes": 79016,
+      "sha256": "956B5AF591EF1C37D664A1746180E55B8C491CDB1E33C644FD4BB21DE64A4716"
     },
     {
       "path": "SRC/neothd/src/mcp/catalogue.rs",
@@ -1987,6 +2062,11 @@
       "sha256": "10AB359E3AC1DCB7436AE0D68AF0DC5F66271C9CA8DB40FA9FDFEF042BAAD0CC"
     },
     {
+      "path": "SRC/neothd/src/skills/bundled_resources.rs",
+      "bytes": 14204,
+      "sha256": "12C00BE08078A7AA65D87B50D1D67E739785F8A2B01FEF18E491DACC6FAA5CE9"
+    },
+    {
       "path": "SRC/neothd/src/skills/creator.rs",
       "bytes": 58892,
       "sha256": "4748692CAB76269CE9DC3525B032D3F21DE6E66B549D501B59D19124865057E2"
@@ -1998,8 +2078,13 @@
     },
     {
       "path": "SRC/neothd/src/skills/loader.rs",
-      "bytes": 98735,
-      "sha256": "F7196812D42526F76674B36C1125548A1BF85BF8140E1A8BC0A7AEF76CDCBD68"
+      "bytes": 111608,
+      "sha256": "749D260F2BF6382714093001D83E99B9C36AEF30F1CF6C166AE25E1DB2399D07"
+    },
+    {
+      "path": "SRC/neothd/src/skills/mod.rs",
+      "bytes": 4984,
+      "sha256": "9DE032D6EF8C9800D69E693C1B8134B99C38EECA7AF96ED1A3592FA2F4DEB756"
     },
     {
       "path": "SRC/neothd/src/skills/mutation_lifecycle.rs",
@@ -2013,13 +2098,13 @@
     },
     {
       "path": "SRC/neothd/src/skills/resolver.rs",
-      "bytes": 61593,
-      "sha256": "80BDC96F978ED5FCB4E6F69498B98559FAFC90E2E1B1B422D76B9F3C98E1BAA7"
+      "bytes": 63523,
+      "sha256": "94853D3D78FB3336E95023BFDE3E1FD3D2D480EE46B9F61AC6E313438F8DF853"
     },
     {
       "path": "SRC/neothd/src/skills/schema.rs",
-      "bytes": 34945,
-      "sha256": "44677AE29E41C7869294F05CF51FC3C5EDA34A585B3EEF349E07FFF4FA4A4EB5"
+      "bytes": 36333,
+      "sha256": "AD0104A7FB69D5651B43ED93DF939702F1E405B62A708803CA14BF962DD90F92"
     },
     {
       "path": "SRC/neothd/src/skills/store.rs",
@@ -2310,11 +2395,6 @@
       "path": "THIRD_PARTY_LICENSES",
       "bytes": 2299156,
       "sha256": "A2F73733618DE347F4876EDD4325391DB8C2F11D853614CC4D8EDC2A82CA497D"
-    },
-    {
-      "path": "docs/gold-wave193-verification.md",
-      "bytes": 1669,
-      "sha256": "6ED9FB5D807096CF1F699AC38EA5BF7E8082024365C33AFB46C64DCDF70B4BC3"
     }
   ]
 }
