@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T22:30:57.6952188Z",
-  "validationStatus": "W232 actualWindows3failures reviewed fixture repairs; Group394 and GUI116 pending",
+  "capturedUtc": "2026-09-22T22:33:22.5442322Z",
+  "validationStatus": "W232 exact Hosted GUI formatter imported; actual native behavior still pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -648,8 +648,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2135400,
-      "sha256": "1E4713EFC515CD0C15090E0CB48BE6955C670C8F840A5A79E0CB3107E16574C7"
+      "bytes": 2135453,
+      "sha256": "261E15D8B47EE5D06F2A5360D8AF1DCC828E76DDE0E026D8D6E296E30871F97C"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",

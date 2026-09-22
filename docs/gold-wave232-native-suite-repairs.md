@@ -44,3 +44,7 @@ focused native cases. No local compiler, formatter, parser, test or GUI ran.
 The same full CI's macOS build completed and its native test step failed;
 macOS failure details are being inspected separately. A green full native
 matrix is still required. No Road checkbox closes from these source repairs.
+
+Exact Hosted formatting from Preflight35792959236 on1927280f is imported for
+the single GUI source path. Source-head/SHA256SUMS, exact Git/local preimages,
+apply-check and exact postimage match. No local formatter ran.

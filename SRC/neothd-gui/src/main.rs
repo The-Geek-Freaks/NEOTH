@@ -42446,7 +42446,10 @@ mod buddy_wiring_tests {
         let buddy_probe_callback = source
             .split("window.on_bc_embedding_probe(move |model| {")
             .nth(1)
-            .and_then(|tail| tail.split("window.on_bc_embedding_pull(move |model| {").next())
+            .and_then(|tail| {
+                tail.split("window.on_bc_embedding_pull(move |model| {")
+                    .next()
+            })
             .expect("Buddy embedding probe callback");
         let buddy_probe_callback_without_whitespace: String = buddy_probe_callback
             .chars()
