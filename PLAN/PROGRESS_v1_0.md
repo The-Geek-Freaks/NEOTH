@@ -2,21 +2,28 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
-**Current W190/W191 Hosted boundary (2026-09-22):** W190's first Hosted lane
-failed compilation in its optional checkpoint layer; this batch includes the
-narrow source repair. Code Quality `35716223195` passed, but it is not a
-compilation result. All 72 exact Hosted Rustfmt hunks are imported. W191's
-production loop-registry integration is reviewed with five actual behavior
-tests; its grouped W190/W191 Hosted lane now selects 15 identities. Reviewed
-source may be published before these gates, but runtime acceptance remains
-pending. P2-09 and all release, visual and provider-live acceptance stay open.
+**Current Hosted boundary (2026-09-22):** published `71e621fb` passed Preflight
+`35717760949` and Code Quality `35717760377`. W190/W191 `35717294010` compiles;
+the first ten W190 identities passed, then W191's first helper failed because
+`first_registry_skill_id` searched the JSON-escaped envelope. Its two-layer JSON
+decode repair awaits rerun. Core `35717296684` passed core test-target checking
+and the public CLI build/reference export. The exact generated reference is imported.
 
-**W186 active Hosted boundary (2026-09-22):** Linux and Windows `3ded02b7`
-reached 18 of 19 live-audio identities, including actual Tract execution. The
-final Drop-guard fixture setup is fixed in `e176`, but audio `35716228725` is
-blocked by the same W190 compilation failure. macOS `3ded02b7` remains active;
-the full `8b` native Windows/macOS run and preview remain active. None is a
-platform, preview or runtime-success claim.
+**W186 active Hosted boundary (2026-09-22):** Linux audio `35717299461` on
+`8fa6` passed all 19/19 identities, including actual Tract execution. Root
+verified downloaded identities, names, log and hash custody in
+`work/gold-20260906/wave186-silero-specialization/HOSTED-8FA6-LINUX-ADMISSION.json`. The
+final Drop setup is fixed in `e176`, but audio `35716228725` is blocked by the
+same W190 compile failure. Fresh Windows `35718376823` and macOS `35718379383`
+audio runs target `71e621fb`. The old `8b` native macOS compile failed on the
+same four GUI test defects already repaired in `8fa6`; Windows is saving cache.
+Preview remains active. This is not microphone/device or release acceptance.
+
+W192 bundled-resource boundary repair and W193 cumulative research-budget/WAL
+failure repair remain unadmitted and are excluded from the imminent Loop-test
+fix plus documentation publication. Road counts remain **1015 checked / 307
+open / 2 partial**; combined source/test inventory is 461/570. No checkbox
+changes.
 
 **W186 Tract result (2026-09-22):** new graph run `35714955362` on `3ded02b7`
 passes all three Silero runtime cases on Linux, along with the first 18 of 19

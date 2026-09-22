@@ -39,3 +39,8 @@ command ran during the BSOD hold. Reviewed source may be published while Hosted
 formatting, compilation and targeted regression execution remain pending;
 runtime acceptance still requires those gates. Road-plan, manifest, and count
 changes are outside this batch.
+
+Grouped Hosted run `35717294010` compiled and passed all first ten W190
+identities. It stopped at W191's first helper because `first_registry_skill_id`
+searched the JSON-escaped envelope instead of decoded inner registry JSON. The
+narrow helper repair decodes both layers; its exact rerun remains pending.

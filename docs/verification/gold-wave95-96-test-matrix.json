@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W191_HOSTED_FORMAT_IMPORTED_BEHAVIOR_RUNNING",
-  "base": "8fa6dc103928ff4246bcccea4d574834357f1edb",
+  "status": "W191_FIXTURE_DECODE_REPAIR_RETEST_PENDING",
+  "base": "71e621fbd2a6c71f639f7734677549aa84468568",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 79613,
-    "sha256": "E34E13F35469EE585CC08030D70FFC2EDE5988ACFE610D0C02C41DAF5517FCC2"
+    "bytes": 79610,
+    "sha256": "6F63D01DB71A36C360A81070839C2CDE7990089178030D067D2C13CD8B3C70CD"
   },
   "sourceInputs": 461,
   "requiredNativeTests": [
@@ -3402,19 +3402,19 @@
     {
       "test": "cli::loop_cmd::tests::w191_loop_request_excludes_pin_rejected_and_eval_suppressed_registry_entries",
       "sourcePath": "SRC/neothd/src/cli/loop_cmd.rs",
-      "sourceSha256": "8C8C45F913887AF1689BD998AAEAF6B663C87D8CE36BBDDFF3E0F55CD98DB01C",
+      "sourceSha256": "2CAD60DDE423DA10D2192DC4DA0B18AFC67DAE97FB0EFC0E15268B812C35140D",
       "junitClass": "neoth"
     },
     {
       "test": "cli::loop_cmd::tests::w191_later_standalone_loop_rebuilds_its_registry_from_fresh_config",
       "sourcePath": "SRC/neothd/src/cli/loop_cmd.rs",
-      "sourceSha256": "8C8C45F913887AF1689BD998AAEAF6B663C87D8CE36BBDDFF3E0F55CD98DB01C",
+      "sourceSha256": "2CAD60DDE423DA10D2192DC4DA0B18AFC67DAE97FB0EFC0E15268B812C35140D",
       "junitClass": "neoth"
     },
     {
       "test": "cli::loop_cmd::tests::w191_actual_standalone_request_retains_loaded_registry_through_two_rounds",
       "sourcePath": "SRC/neothd/src/cli/loop_cmd.rs",
-      "sourceSha256": "8C8C45F913887AF1689BD998AAEAF6B663C87D8CE36BBDDFF3E0F55CD98DB01C",
+      "sourceSha256": "2CAD60DDE423DA10D2192DC4DA0B18AFC67DAE97FB0EFC0E15268B812C35140D",
       "junitClass": "neoth"
     },
     {
@@ -9162,5 +9162,56 @@
       }
     ],
     "note": "Exact text-only Hosted rustfmt import; no W192 WIP admitted. Research15/core/audioLinux remain source8fa6 runs."
+  },
+  "wave191ExecutionFollowup": {
+    "sourceBase": "71e621fbd2a6c71f639f7734677549aa84468568",
+    "hostedRun": 35717294010,
+    "researchPassed": 10,
+    "w191Failure": "Test-only helper scanned unescaped id text instead of decoding canonical envelope data",
+    "repairSources": [
+      {
+        "path": "SRC/neothd/src/cli/loop_cmd.rs",
+        "bytes": 29095,
+        "sha256": "2CAD60DDE423DA10D2192DC4DA0B18AFC67DAE97FB0EFC0E15268B812C35140D"
+      },
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 235418,
+        "sha256": "75F0C99D5E32CFBB4D673A97DED91A207A5469BBF1296708349CE0E10A8CAE1B"
+      },
+      {
+        "path": "docs/gold-wave191-verification.md",
+        "bytes": 2945,
+        "sha256": "A7D70E4722B90691F986F91D3697E12DCF1D28A43B2BBCA120E5FF3591970D43"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1626224,
+        "sha256": "4CF615874842A4AA7DB000A3E231E2C78143390FBD4F53A4D168B6C132ABFA71"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1030777,
+        "sha256": "C96E87928FA79513532C44D2DBBAA60CC6263D51A2ED093AFF2BC03971BE173A"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 27676,
+        "sha256": "699B47BF78A734879403AD274B97C783EED0C25FA0484D0FCBAE2244E6F2697B"
+      }
+    ],
+    "audioLinux": {
+      "run": 35717299461,
+      "source": "8fa6dc103928ff4246bcccea4d574834357f1edb",
+      "required": 19,
+      "passed": 19
+    },
+    "coreReference": {
+      "run": 35717296684,
+      "source": "8fa6dc103928ff4246bcccea4d574834357f1edb",
+      "sha256": "75F0C99D5E32CFBB4D673A97DED91A207A5469BBF1296708349CE0E10A8CAE1B",
+      "status": "testtargets_check_and_cli_build_success_generated_reference_imported"
+    },
+    "note": "Only test-helper decode and documentation admitted. W192/W193 WIP excluded; no Road checkbox changes."
   }
 }

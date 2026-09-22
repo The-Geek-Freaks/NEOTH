@@ -3598,6 +3598,46 @@ Pick #37 (Session 14, Agent #4 design-consensus): trigger the running `neoth ser
 
 - `--home <DIR>` — Override `~/.neoth/` (mostly for tests)
 
+## `neoth research`
+
+Create, approve, execute and control an operator-owned deep-research run
+
+### `neoth research approve`
+
+- `<ID>`
+- `--revision <REVISION>`
+
+### `neoth research cancel`
+
+- `<ID>`
+- `--revision <REVISION>`
+
+### `neoth research create`
+
+- `<TOPIC>`
+- `--scope <SCOPE>`
+
+### `neoth research list`
+
+### `neoth research pause`
+
+- `<ID>`
+- `--revision <REVISION>`
+
+### `neoth research resume`
+
+- `<ID>`
+- `--revision <REVISION>`
+
+### `neoth research run`
+
+- `<ID>`
+- `--revision <REVISION>`
+
+### `neoth research show`
+
+- `<ID>`
+
 ## `neoth restore`
 
 Restore a previously-written backup into `~/.neoth/`

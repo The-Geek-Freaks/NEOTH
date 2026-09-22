@@ -536,10 +536,26 @@ mod tests {
 
     fn first_registry_skill_id(request: &crate::providers::Request) -> String {
         let system = request.system.as_deref().expect("registry system layer");
-        let marker = "\"id\":\"";
-        let start = system.find(marker).expect("at least one admitted Skill") + marker.len();
-        let end = system[start..].find('\"').expect("Skill id closing quote") + start;
-        system[start..end].to_owned()
+        let envelopes: Vec<serde_json::Value> = system
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|value| {
+                value["source_id"]
+                    .as_str()
+                    .is_some_and(|source| source.starts_with("skills:registry:"))
+            })
+            .collect();
+        assert_eq!(envelopes.len(), 1, "exactly one registry envelope");
+        // Registry JSON is data inside the canonical envelope's JSON string.
+        // Decode both layers rather than searching its escaped wire bytes.
+        let payload: serde_json::Value = serde_json::from_str(
+            envelopes[0]["data"].as_str().expect("registry data string"),
+        )
+        .expect("registry payload JSON");
+        payload["skills"][0]["id"]
+            .as_str()
+            .expect("at least one admitted Skill")
+            .to_owned()
     }
 
     fn record(id: &str, ts_start: i64) -> LoopRunRecord {

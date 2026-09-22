@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W191-research-loop",
-  "base": "8fa6dc103928ff4246bcccea4d574834357f1edb",
-  "capturedUtc": "2026-09-22T10:43:55.3183779Z",
-  "validationStatus": "W191_HOSTED_FORMAT_IMPORTED_BEHAVIOR_RUNNING",
+  "base": "71e621fbd2a6c71f639f7734677549aa84468568",
+  "capturedUtc": "2026-09-22T10:53:28.4353656Z",
+  "validationStatus": "W191_FIXTURE_DECODE_REPAIR_RETEST_PENDING",
   "scopeNote": "W190 optional checkpoint compile repair and exact Hosted format import; W191 actual standalone registry producer and five regressions; observed Beta GUI test compile repairs. Prior evidence remains source-specific; no Road closure.",
   "files": [
     {
@@ -88,8 +88,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 234875,
-      "sha256": "D682A38D27E5934DFB8C4AE0BA742A2C2DF46498D2DD3A248B037221FF416C9F"
+      "bytes": 235418,
+      "sha256": "75F0C99D5E32CFBB4D673A97DED91A207A5469BBF1296708349CE0E10A8CAE1B"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -328,18 +328,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 27454,
-      "sha256": "6E0635B0B866D6508D43F9D34ADC8C3C7DAF5E8C8EE285A05B563751DAE08E87"
+      "bytes": 27676,
+      "sha256": "699B47BF78A734879403AD274B97C783EED0C25FA0484D0FCBAE2244E6F2697B"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1030318,
-      "sha256": "C11E3CC9DD5E0ABB3B2229273CAF3B0ED0F3B6AE22EC7780310CBA1664DD720F"
+      "bytes": 1030777,
+      "sha256": "C96E87928FA79513532C44D2DBBAA60CC6263D51A2ED093AFF2BC03971BE173A"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1625765,
-      "sha256": "F2EA60AA2701CCC066037990528778503F569FEA9BFFC13923F9184991C419CF"
+      "bytes": 1626224,
+      "sha256": "4CF615874842A4AA7DB000A3E231E2C78143390FBD4F53A4D168B6C132ABFA71"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -968,8 +968,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/loop_cmd.rs",
-      "bytes": 28423,
-      "sha256": "8C8C45F913887AF1689BD998AAEAF6B663C87D8CE36BBDDFF3E0F55CD98DB01C"
+      "bytes": 29095,
+      "sha256": "2CAD60DDE423DA10D2192DC4DA0B18AFC67DAE97FB0EFC0E15268B812C35140D"
     },
     {
       "path": "SRC/neothd/src/cli/mcp.rs",
@@ -2308,8 +2308,8 @@
     },
     {
       "path": "docs/gold-wave191-verification.md",
-      "bytes": 2638,
-      "sha256": "F8E4BEDDC4ADD3C7F3F71F0829C5FDB6568154D8808096C06A7534ECBB8C55A7"
+      "bytes": 2945,
+      "sha256": "A7D70E4722B90691F986F91D3697E12DCF1D28A43B2BBCA120E5FF3591970D43"
     }
   ]
 }

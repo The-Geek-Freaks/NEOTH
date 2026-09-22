@@ -64,6 +64,10 @@ checkpoint layer compiles, preserves the one-worker bound, and is evidence only
 for its selected identities; it neither replaces native/preview/full-CI gates
 nor authorizes local execution.
 
+Run `35717294010` compiled and passed all ten W190 identities before the first
+W191 helper exposed a two-layer JSON-envelope lookup defect. The focused rerun
+keeps the same exact-source discovery and one-worker boundary.
+
 W190 adds a separate main-only `research-lifecycle.yml` Hosted lane for ten
 source-SHA-bound lifecycle tests. It retains Rust 1.91, one Cargo worker,
 serial exact discovery/execution, bounded runtime and retained receipts.
