@@ -27,11 +27,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check --no-cache-dir 'numpy==1.26.4' 'onnx==1.16.2' 'onnxruntime==1.19.2' 'onnxsim==0.4.36'
+          python -m pip install --disable-pip-version-check --no-cache-dir 'numpy==1.26.4' 'onnx==1.16.2' 'onnxruntime==1.19.2'
           python - <<'PY'
           import importlib.metadata, json
           from pathlib import Path
-          packages = ('numpy', 'onnx', 'onnxruntime', 'onnxsim')
+          packages = ('numpy', 'onnx', 'onnxruntime')
           Path('tool-versions.json').write_text(json.dumps({'schema': 'w186-silero-specialization-tools/v1', 'packages': {name: importlib.metadata.version(name) for name in packages}}, indent=2) + '\n', encoding='utf-8')
           PY
 

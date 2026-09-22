@@ -2,9 +2,10 @@
 """Hosted-only, fail-closed specialization of the W186 Silero ONNX model.
 
 No branch is manually removed. The only graph mutation binds the production
-`sr` input to scalar int64 16000 and fixes the two production input schemas;
-onnxsim performs any standard constant-control-flow reduction. A candidate is
-written only after CPU ORT proves probability and recurrent-state parity.
+`sr` input to scalar int64 16000 and fixes the two production input schemas.
+ORT_ENABLE_BASIC performs the standard hosted control-flow reduction; a
+candidate is written only after CPU ORT proves probability and recurrent-state
+parity.
 """
 
 from __future__ import annotations
@@ -116,7 +117,21 @@ def canonicalize(value: Any, element_type: int, dimensions: tuple[int, ...]) -> 
         tensor.shape.dim.add().dim_value = dimension
 
 
-def specialize(model: Any, onnx: Any, simplify: Any) -> Any:
+def reject_nonstandard_nodes(model: Any, onnx: Any) -> None:
+    def walk(graph: Any, path: str) -> None:
+        for node in graph.node:
+            if node.domain not in {"", "ai.onnx"}:
+                raise ValueError(f"nonstandard/custom-domain node is forbidden: {path}{node.name or node.op_type} ({node.domain})")
+            for attribute in node.attribute:
+                if attribute.type == onnx.AttributeProto.GRAPH:
+                    walk(attribute.g, f"{path}{node.name or node.op_type}/")
+                elif attribute.type == onnx.AttributeProto.GRAPHS:
+                    for index, child in enumerate(attribute.graphs):
+                        walk(child, f"{path}{node.name or node.op_type}/{attribute.name}[{index}]/")
+    walk(model.graph, "")
+
+
+def specialize(model: Any, onnx: Any) -> Any:
     from onnx import helper
 
     graph = model.graph
@@ -136,11 +151,22 @@ def specialize(model: Any, onnx: Any, simplify: Any) -> Any:
     graph.initializer.extend(retained_tensors)
     graph.initializer.append(helper.make_tensor(SR, onnx.TensorProto.INT64, [], [SAMPLE_RATE]))
     onnx.checker.check_model(model)
-    simplified, checked = simplify(model)
-    if not checked:
-        raise ValueError("onnxsim reported a failed model check")
-    onnx.checker.check_model(simplified)
-    return simplified
+    reject_nonstandard_nodes(model, onnx)
+    return model
+
+
+def optimize_basic(bound_path: Path, optimized_path: Path, ort: Any) -> None:
+    """Use one standard ORT basic pass; never manually rewrite a branch."""
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 1
+    options.inter_op_num_threads = 1
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+    options.optimized_model_filepath = str(optimized_path)
+    session = ort.InferenceSession(str(bound_path), sess_options=options, providers=["CPUExecutionProvider"])
+    if session.get_providers() != ["CPUExecutionProvider"]:
+        raise ValueError("basic specialization requires CPUExecutionProvider as the only provider")
+    if not optimized_path.is_file():
+        raise ValueError("ORT basic optimization did not emit a serialized ONNX model")
 
 
 def frames(np: Any) -> dict[str, list[Any]]:
@@ -230,7 +256,6 @@ def main() -> int:
         import numpy as np
         import onnx
         import onnxruntime as ort
-        from onnxsim import simplify
 
         receipt["packages"] = {distribution.metadata["Name"]: distribution.version for distribution in importlib.metadata.distributions() if distribution.metadata.get("Name")}
         if len(args.source_blob_sha) != 40 or any(character not in "0123456789abcdef" for character in args.source_blob_sha.lower()):
@@ -247,15 +272,21 @@ def main() -> int:
         receipt["original"] = {"path": str(args.input), "sha256": original_sha256}
         original = onnx.load_model(str(args.input), load_external_data=False)
         reject_external_data(original, onnx)
+        reject_nonstandard_nodes(original, onnx)
         receipt["before"] = {"io": graph_io(original.graph, onnx), "ifNodes": if_nodes(original.graph, onnx)}
-        derived = specialize(original, onnx, simplify)
-        reject_external_data(derived, onnx)
-        receipt["after"] = {"io": graph_io(derived.graph, onnx), "ifNodes": if_nodes(derived.graph, onnx)}
-        if receipt["after"]["ifNodes"]:
-            raise ValueError("specialization left If control flow; candidate is unsafe for tract 0.23.8")
         with tempfile.TemporaryDirectory(prefix="w186-silero-") as directory:
+            bound = Path(directory) / "bound-16k.onnx"
             temporary = Path(directory) / "candidate.onnx"
-            onnx.save_model(derived, str(temporary))
+            onnx.save_model(specialize(original, onnx), str(bound))
+            optimize_basic(bound, temporary, ort)
+            derived = onnx.load_model(str(temporary), load_external_data=False)
+            onnx.checker.check_model(derived)
+            reject_external_data(derived, onnx)
+            reject_nonstandard_nodes(derived, onnx)
+            receipt["optimizer"] = {"engine": "onnxruntime", "graphOptimizationLevel": "ORT_ENABLE_BASIC", "provider": "CPUExecutionProvider", "intraOpThreads": 1, "interOpThreads": 1}
+            receipt["after"] = {"io": graph_io(derived.graph, onnx), "ifNodes": if_nodes(derived.graph, onnx)}
+            if receipt["after"]["ifNodes"]:
+                raise ValueError("basic specialization left If control flow; candidate is unsafe for tract 0.23.8")
             receipt["parity"] = parity(args.input, temporary, np, ort)
             args.output.parent.mkdir(parents=True, exist_ok=True)
             os.replace(temporary, args.output)

@@ -426,7 +426,7 @@ Native compilation and behavior require rerun; no Road checkbox closes.
 
 W186 adds the manual `silero-specialize.yml` Hosted lane: a 15-minute Ubuntu
 job pins the ONNX tools, verifies the original model SHA-256 and Git blob, fixes
-the production 16-kHz input contract through standard ONNX simplification, and
+the production 16-kHz input contract through standard ORT basic optimization, and
 compares probability plus recurrent state over 80 deterministic CPU windows.
 Candidate publication requires finite outputs, valid probabilities, no remaining
 If nodes and 1e-6 absolute/relative parity. It only exports a candidate and receipt;

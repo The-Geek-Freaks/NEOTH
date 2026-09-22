@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W186_STANDARD_MODEL_SPECIALIZATION_LANE_PENDING_HOSTED_PARITY",
-  "base": "86a77ac8d3de7da81dbd7f25bd1bebd18fda55f5",
+  "status": "W186_ORT_BASIC_SPECIALIZATION_PENDING_HOSTED_PARITY",
+  "base": "ed0d76c9db700abe64fbac20e8b582761ca95f19",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 77470,
-    "sha256": "C0BB84A2025D80BDC281D775AB53701AD48FF62281C7604DDBD472292F62C67A"
+    "bytes": 77460,
+    "sha256": "1CFACDD5AFFDB3BD4EE4ADB580D9D2A4B47186BDEB05F8EC36F68D65F59DD386"
   },
   "sourceInputs": 449,
   "requiredNativeTests": [
@@ -8532,5 +8532,40 @@
       }
     ],
     "validation": "No asset replacement. Standard simplifier plus strict finite original-derived parity. No local executable validation."
+  },
+  "wave186SpecializationRepair": {
+    "failedRun": 35709566194,
+    "source": "ed0d76c9db700abe64fbac20e8b582761ca95f19",
+    "cause": "onnxsim invalid nested If output capture",
+    "replacement": "Explicit standard ORT basic optimizer; no fallback or manual branch pruning; final checker and original-derived parity mandatory",
+    "files": [
+      {
+        "path": ".github/workflows/silero-specialize.yml",
+        "bytes": 2721,
+        "sha256": "431F995729421456C46ED6F72E7592B0351E1F9B1D710FE1F0AA8D5F5BCBAF26"
+      },
+      {
+        "path": "packaging/specialize_silero.py",
+        "bytes": 16799,
+        "sha256": "B720F9C78CD5E7EAFCFD5AD6CBDAB3AF7C9640442526D2220F93B5692AA6C627"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1623240,
+        "sha256": "ADB3825252B74223F514D29422B90A2B04DC637E62E152A49AFD45F2E194CD2F"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1027793,
+        "sha256": "7442EAEBDE6BAA953352D4C52C488639EE1798FC8B47F7C262277F002A9A031E"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 26442,
+        "sha256": "97AF1C0EA96179111E773993E747B47F6DA751F1CF24E3C34FB0E99DAE21A26E"
+      }
+    ],
+    "fullCi": 35710220706,
+    "preview": 35710224167
   }
 }

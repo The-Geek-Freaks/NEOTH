@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W188-capability-observation",
-  "base": "86a77ac8d3de7da81dbd7f25bd1bebd18fda55f5",
-  "capturedUtc": "2026-09-22T09:15:17.2425928Z",
-  "validationStatus": "W186_STANDARD_MODEL_SPECIALIZATION_LANE_PENDING_HOSTED_PARITY",
+  "base": "ed0d76c9db700abe64fbac20e8b582761ca95f19",
+  "capturedUtc": "2026-09-22T09:26:09.8698334Z",
+  "validationStatus": "W186_ORT_BASIC_SPECIALIZATION_PENDING_HOSTED_PARITY",
   "scopeNote": "W188 bounded authenticated operational diagnostic plus exact Hosted dependency licenses and public CLI reference; no roadmap closure. Earlier source/test freezes remain historical.",
   "files": [
     {
@@ -63,8 +63,8 @@
     },
     {
       "path": ".github/workflows/silero-specialize.yml",
-      "bytes": 2750,
-      "sha256": "A1ABB26B978F5522DF6EBACF497DE97D0825ACC01572FE9272E8DB84912B987A"
+      "bytes": 2721,
+      "sha256": "431F995729421456C46ED6F72E7592B0351E1F9B1D710FE1F0AA8D5F5BCBAF26"
     },
     {
       "path": "docs/architecture.md",
@@ -258,8 +258,8 @@
     },
     {
       "path": "packaging/specialize_silero.py",
-      "bytes": 14903,
-      "sha256": "4471648E7E2C437E10AAAB7B0F37D905EB2F7A771F93F56CDD22EE69ADF70CE4"
+      "bytes": 16799,
+      "sha256": "B720F9C78CD5E7EAFCFD5AD6CBDAB3AF7C9640442526D2220F93B5692AA6C627"
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
@@ -303,18 +303,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 26439,
-      "sha256": "937D650FAD5930A6E435F309F9C8664E7F09C7BBF048791CF3576DACE2355A24"
+      "bytes": 26442,
+      "sha256": "97AF1C0EA96179111E773993E747B47F6DA751F1CF24E3C34FB0E99DAE21A26E"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1026970,
-      "sha256": "BF0D94D78F9D3D206278B901404FA6D568C05CC3ADD6C13C32FA29404110D5B2"
+      "bytes": 1027793,
+      "sha256": "7442EAEBDE6BAA953352D4C52C488639EE1798FC8B47F7C262277F002A9A031E"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1622417,
-      "sha256": "5E71592FEB0A6143AFA5B9F16EEB53E86C70F33345567CEF8353ABEFD048E85A"
+      "bytes": 1623240,
+      "sha256": "ADB3825252B74223F514D29422B90A2B04DC637E62E152A49AFD45F2E194CD2F"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
