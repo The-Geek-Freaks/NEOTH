@@ -4,7 +4,8 @@
 
 **Latest verified gates (2026-09-22):** Preflight `35695206750` passed on
 `4e9c0718` (format, locked metadata and offline contracts). Core test-target
-typecheck in `35694693234` passed on `87c18246`; its CLI build remains running.
+typecheck, public CLI build and reference export in `35694693234` passed on
+`87c18246`. Its exact generated reference is imported (40 new Ollama help lines).
 W186 supply inputs `35694695810` passed on `87c18246`; all 85 artifact checksums
 and the recorded dependency inputs are verified. These are separate source
 boundaries; native/GUI/audio behavior and release acceptance remain open.

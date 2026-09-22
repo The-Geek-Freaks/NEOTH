@@ -2,7 +2,8 @@
 
 GOLD-LF-P1-19 is implemented across the Ollama controller, private same-user
 IPC, daemon lifecycle, `models ollama`, Buddy status and Resources UI. This is
-an independently reviewed implementation; Hosted validation remains pending.
+an independently reviewed implementation with passing Hosted core compilation;
+native and GUI behavior acceptance remains pending.
 It does not close the Road item.
 
 The active native LocalOllama provider supplies the endpoint and selected
@@ -66,3 +67,10 @@ is closed by this repair publication.
 Repair source87c18246 passed Code Quality35694661630. One final formatting
 hunk from Preflight35694662282 is imported without a semantic change. Its core
 check35694693234 remains in progress; native behavior is not accepted.
+
+Hosted35694693234 on87c18246 completed SUCCESS: core test-target typecheck,
+public CLI build and generated reference export. The exact reference is imported
+with40 new Ollama help lines; SHA256
+A7D8E0BA60CF9909AC2DC9250D2463E0C76DF14BCA06668CD4243AF4D8759A07.
+Preflight35695206750 passed on4e9c0718. These do not prove native model operations
+or GUI callbacks; GOLD-LF-P1-19 stays open.

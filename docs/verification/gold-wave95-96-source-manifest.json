@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W185-local-model-operations",
-  "base": "66685f0fdd38e1d6aa8bfee4280f8ef76fc67b6e",
-  "capturedUtc": "2026-09-22T06:29:27.4643734Z",
-  "validationStatus": "W185_HOSTED_MACOS_HARNESS_COUNT_REPAIRED_PENDING_RECHECK",
+  "base": "7997bb511fdca274d183a048c8902c12b6e71a78",
+  "capturedUtc": "2026-09-22T06:35:31.2278118Z",
+  "validationStatus": "W185_HOSTED_CORE_PASSED_NATIVE_GUI_BEHAVIOR_PENDING",
   "scopeNote": "150 unique Hosted formatting hunks plus four core compiler repairs; native/GUI behavior still pending. Historical freeze objects preserved; W186 product code excluded.",
   "files": [
     {
@@ -58,8 +58,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 233238,
-      "sha256": "444E520F2BC25B8789ED8B46C3C6B6DE06A2F27FCB99C5B2C6B5CCAABC1B1E89"
+      "bytes": 234181,
+      "sha256": "A7D8E0BA60CF9909AC2DC9250D2463E0C76DF14BCA06668CD4243AF4D8759A07"
     },
     {
       "path": "docs/code-map-lifecycle.md",

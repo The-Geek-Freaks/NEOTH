@@ -2368,6 +2368,46 @@ GOLD-ADAPT-ODY-13 — estimate decode throughput (tok/s) for a ladder of quantiz
 
 Print every known model + whether its artifacts are cached
 
+### `neoth models ollama`
+
+Daemon-owned local Ollama inventory and operation controls. This uses the private local-model IPC service; it never creates a CLI controller
+
+- `--config <PATH>` — Select the daemon instance by its freedom.yaml path. The parent directory is the private IPC home, matching `neoth serve --config`
+
+#### `neoth models ollama cancel`
+
+Request cancellation of the daemon-owned exact operation id
+
+- `<OPERATION_ID>`
+
+#### `neoth models ollama prune`
+
+Request a verified prune for this exact Ollama tag selector
+
+- `<MODEL>`
+
+#### `neoth models ollama pull`
+
+Start a pull for this exact Ollama tag selector
+
+- `<MODEL>`
+
+#### `neoth models ollama retry`
+
+Retry the retained failed exact operation id
+
+- `<OPERATION_ID>`
+
+#### `neoth models ollama status`
+
+Read the daemon's current typed local-model snapshot
+
+#### `neoth models ollama update`
+
+Start an update for this exact installed Ollama tag selector
+
+- `<MODEL>`
+
 ### `neoth models prune`
 
 Delete a model's cache directory. No-op when the directory is absent

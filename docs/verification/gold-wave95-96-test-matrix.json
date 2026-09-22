@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W185_HOSTED_MACOS_HARNESS_COUNT_REPAIRED_PENDING_RECHECK",
-  "base": "66685f0fdd38e1d6aa8bfee4280f8ef76fc67b6e",
+  "status": "W185_HOSTED_CORE_PASSED_NATIVE_GUI_BEHAVIOR_PENDING",
+  "base": "7997bb511fdca274d183a048c8902c12b6e71a78",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 74527,
-    "sha256": "610365C08E697F1EF0825AA87AA72402B127A28FFDB0C730114753612D2DA236"
+    "bytes": 74522,
+    "sha256": "053B44D25A3E54CEE5F39F867A86B084E76053DE1D2B58AD867FCBE5EC456547"
   },
   "sourceInputs": 432,
   "requiredNativeTests": [
@@ -7871,5 +7871,16 @@
     "path": "SRC/neothd-gui/src/main.rs",
     "sha256": "3C970F2AD60F6D195F789DBAA013F9BB071F82704CB827949C01F140E007BB03",
     "status": "Fresh Hosted contract check pending"
+  },
+  "wave185CorePass": {
+    "source": "87c182466b9f3cd0c96fa77062a69c036b8d96b5",
+    "run": 35694693234,
+    "result": "SUCCESS: core test typecheck, CLI build, reference export",
+    "referencePath": "docs/cli-commands.md",
+    "referenceSha256": "A7D8E0BA60CF9909AC2DC9250D2463E0C76DF14BCA06668CD4243AF4D8759A07",
+    "referenceBytes": 234181,
+    "preflightRun": 35695206750,
+    "preflightSource": "4e9c07189aa211cfdcb837047a6ec64ef77afb9a",
+    "nativeGuiBehavior": "pending"
   }
 }
