@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W190_W191_REVIEWED_HOSTED_REPAIR_PENDING",
-  "base": "e176008bf5fb992203e4e3548772a5253dc790de",
+  "status": "W191_HOSTED_FORMAT_IMPORTED_BEHAVIOR_RUNNING",
+  "base": "8fa6dc103928ff4246bcccea4d574834357f1edb",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 79609,
-    "sha256": "E8E49D6EC0C0A43560A18DA2B61BF7F6A2359E5FCFDF9BE659C326EB0322AC1A"
+    "bytes": 79613,
+    "sha256": "E34E13F35469EE585CC08030D70FFC2EDE5988ACFE610D0C02C41DAF5517FCC2"
   },
   "sourceInputs": 461,
   "requiredNativeTests": [
@@ -1008,7 +1008,7 @@
     {
       "test": "loop_engine::engine::tests::w145_loop_forwards_retained_skill_mcp_deny_before_stdio_transport",
       "sourcePath": "SRC/neothd/src/loop_engine/engine.rs",
-      "sourceSha256": "64E3F5BB08543E04A930FF64E38E737FB54705A0CF20FF649C9908878D2199E0",
+      "sourceSha256": "7C743AC41B664B7B4B8D4DE63F085F44B6BE100633AC4D374C22185B4D8F770A",
       "junitClass": "neoth"
     },
     {
@@ -1776,7 +1776,7 @@
     {
       "test": "loop_engine::engine::tests::w159_loop_refined_emitter_stamps_context_and_none_as_zero",
       "sourcePath": "SRC/neothd/src/loop_engine/engine.rs",
-      "sourceSha256": "64E3F5BB08543E04A930FF64E38E737FB54705A0CF20FF649C9908878D2199E0",
+      "sourceSha256": "7C743AC41B664B7B4B8D4DE63F085F44B6BE100633AC4D374C22185B4D8F770A",
       "junitClass": "neoth"
     },
     {
@@ -3402,31 +3402,31 @@
     {
       "test": "cli::loop_cmd::tests::w191_loop_request_excludes_pin_rejected_and_eval_suppressed_registry_entries",
       "sourcePath": "SRC/neothd/src/cli/loop_cmd.rs",
-      "sourceSha256": "5FD9C14FCDADA39DF521404E9ADEB58935399702D63AA079C21DC5B245570A58",
+      "sourceSha256": "8C8C45F913887AF1689BD998AAEAF6B663C87D8CE36BBDDFF3E0F55CD98DB01C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::loop_cmd::tests::w191_later_standalone_loop_rebuilds_its_registry_from_fresh_config",
       "sourcePath": "SRC/neothd/src/cli/loop_cmd.rs",
-      "sourceSha256": "5FD9C14FCDADA39DF521404E9ADEB58935399702D63AA079C21DC5B245570A58",
+      "sourceSha256": "8C8C45F913887AF1689BD998AAEAF6B663C87D8CE36BBDDFF3E0F55CD98DB01C",
       "junitClass": "neoth"
     },
     {
       "test": "cli::loop_cmd::tests::w191_actual_standalone_request_retains_loaded_registry_through_two_rounds",
       "sourcePath": "SRC/neothd/src/cli/loop_cmd.rs",
-      "sourceSha256": "5FD9C14FCDADA39DF521404E9ADEB58935399702D63AA079C21DC5B245570A58",
+      "sourceSha256": "8C8C45F913887AF1689BD998AAEAF6B663C87D8CE36BBDDFF3E0F55CD98DB01C",
       "junitClass": "neoth"
     },
     {
       "test": "loop_engine::engine::tests::w191_loop_retains_one_registry_envelope_byte_identically_across_rounds",
       "sourcePath": "SRC/neothd/src/loop_engine/engine.rs",
-      "sourceSha256": "64E3F5BB08543E04A930FF64E38E737FB54705A0CF20FF649C9908878D2199E0",
+      "sourceSha256": "7C743AC41B664B7B4B8D4DE63F085F44B6BE100633AC4D374C22185B4D8F770A",
       "junitClass": "neoth"
     },
     {
       "test": "loop_engine::engine::tests::w191_loop_fallback_recovery_keeps_the_same_registry_envelope",
       "sourcePath": "SRC/neothd/src/loop_engine/engine.rs",
-      "sourceSha256": "64E3F5BB08543E04A930FF64E38E737FB54705A0CF20FF649C9908878D2199E0",
+      "sourceSha256": "7C743AC41B664B7B4B8D4DE63F085F44B6BE100633AC4D374C22185B4D8F770A",
       "junitClass": "neoth"
     }
   ],
@@ -4005,8 +4005,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2070688,
-      "sha256": "EC3A929033119AF17F5DBD2DCCC59F03649EFB506696CEF9BC7AEAD530A97C24"
+      "bytes": 2070672,
+      "sha256": "3D2EFC21735E08052B34C0155AE5B576D99D3863584B2D9FF0782EC9B9791C52"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -9139,5 +9139,28 @@
     ],
     "note": "Actual standalone loader -> authority snapshot -> registry composer -> loop rounds/fallback. Five fixtures independently reviewed. W190 controlled checkpoint Option flattened preserving errors. Four observed Beta GUI test errors repaired. Exact W190/W191 hosted selection is 15. No runtime or Road closure.",
     "hostedFormatReceipt": "work/gold-20260906/wave190-research-lifecycle/FORMAT-HOSTED-E176.json"
+  },
+  "wave191FormatFollowup": {
+    "sourceBase": "8fa6dc103928ff4246bcccea4d574834357f1edb",
+    "hostedRun": 35717269023,
+    "uniqueHunks": 4,
+    "source": [
+      {
+        "path": "SRC/neothd/src/cli/loop_cmd.rs",
+        "bytes": 28423,
+        "sha256": "8C8C45F913887AF1689BD998AAEAF6B663C87D8CE36BBDDFF3E0F55CD98DB01C"
+      },
+      {
+        "path": "SRC/neothd/src/loop_engine/engine.rs",
+        "bytes": 78162,
+        "sha256": "7C743AC41B664B7B4B8D4DE63F085F44B6BE100633AC4D374C22185B4D8F770A"
+      },
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2070672,
+        "sha256": "3D2EFC21735E08052B34C0155AE5B576D99D3863584B2D9FF0782EC9B9791C52"
+      }
+    ],
+    "note": "Exact text-only Hosted rustfmt import; no W192 WIP admitted. Research15/core/audioLinux remain source8fa6 runs."
   }
 }

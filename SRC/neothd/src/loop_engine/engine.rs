@@ -1310,11 +1310,13 @@ mod tests {
             primary[0].system, recovery[0].system,
             "fallback recovery must receive the exact accepted registry envelope"
         );
-        assert!(primary[0]
-            .system
-            .as_deref()
-            .expect("registry system")
-            .contains(registry_envelope));
+        assert!(
+            primary[0]
+                .system
+                .as_deref()
+                .expect("registry system")
+                .contains(registry_envelope)
+        );
     }
 
     #[tokio::test]

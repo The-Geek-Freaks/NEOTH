@@ -640,7 +640,11 @@ mod tests {
             .insert(admitted_id.clone(), "0".repeat(64));
         let pin_request = loop_request_for_test(home.path(), &pin_rejected).await;
         assert!(
-            !pin_request.system.as_deref().unwrap().contains(&admitted_id),
+            !pin_request
+                .system
+                .as_deref()
+                .unwrap()
+                .contains(&admitted_id),
             "a pinned-hash mismatch must stay out of the standalone loop registry"
         );
 
@@ -649,7 +653,11 @@ mod tests {
         eval_suppressed.skills.eval_session_active = true;
         let eval_request = loop_request_for_test(home.path(), &eval_suppressed).await;
         assert!(
-            !eval_request.system.as_deref().unwrap().contains(&admitted_id),
+            !eval_request
+                .system
+                .as_deref()
+                .unwrap()
+                .contains(&admitted_id),
             "an eval-suppressed session must expose no Skill registry entry"
         );
     }

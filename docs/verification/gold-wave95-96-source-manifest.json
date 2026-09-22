@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W191-research-loop",
-  "base": "e176008bf5fb992203e4e3548772a5253dc790de",
-  "capturedUtc": "2026-09-22T10:37:58.1811494Z",
-  "validationStatus": "W190_W191_REVIEWED_HOSTED_REPAIR_PENDING",
+  "base": "8fa6dc103928ff4246bcccea4d574834357f1edb",
+  "capturedUtc": "2026-09-22T10:43:55.3183779Z",
+  "validationStatus": "W191_HOSTED_FORMAT_IMPORTED_BEHAVIOR_RUNNING",
   "scopeNote": "W190 optional checkpoint compile repair and exact Hosted format import; W191 actual standalone registry producer and five regressions; observed Beta GUI test compile repairs. Prior evidence remains source-specific; no Road closure.",
   "files": [
     {
@@ -543,8 +543,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2070688,
-      "sha256": "EC3A929033119AF17F5DBD2DCCC59F03649EFB506696CEF9BC7AEAD530A97C24"
+      "bytes": 2070672,
+      "sha256": "3D2EFC21735E08052B34C0155AE5B576D99D3863584B2D9FF0782EC9B9791C52"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -968,8 +968,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/loop_cmd.rs",
-      "bytes": 28287,
-      "sha256": "5FD9C14FCDADA39DF521404E9ADEB58935399702D63AA079C21DC5B245570A58"
+      "bytes": 28423,
+      "sha256": "8C8C45F913887AF1689BD998AAEAF6B663C87D8CE36BBDDFF3E0F55CD98DB01C"
     },
     {
       "path": "SRC/neothd/src/cli/mcp.rs",
@@ -1568,8 +1568,8 @@
     },
     {
       "path": "SRC/neothd/src/loop_engine/engine.rs",
-      "bytes": 78124,
-      "sha256": "64E3F5BB08543E04A930FF64E38E737FB54705A0CF20FF649C9908878D2199E0"
+      "bytes": 78162,
+      "sha256": "7C743AC41B664B7B4B8D4DE63F085F44B6BE100633AC4D374C22185B4D8F770A"
     },
     {
       "path": "SRC/neothd/src/mcp/catalogue.rs",
