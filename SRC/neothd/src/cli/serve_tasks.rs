@@ -4564,9 +4564,9 @@ pub(crate) fn spawn_indexer(
     home: &std::path::Path,
     segment_path: &std::path::Path,
     writer: Option<crate::wal::writer::WalWriterHandle>,
-    // MEMGRAPH-01: threaded into the tail loop so the continuous ingest
-    // auto-embeds new episodes when an embed provider is configured.
-    embed_provider: Option<std::sync::Arc<dyn crate::providers::embed::EmbedProvider>>,
+    // W208: only the opaque concrete-local capability can dispatch episode
+    // text to embeddings; an erased provider object has no such authority.
+    embed_provider: Option<crate::providers::LocalEmbeddingProvider>,
     // GOLD-ADAPT-TRAIL-02: when `Some`, the indexer fires this sender
     // after every pass that indexes ≥1 new frame, so in-process consumers
     // (kanban_sse relay) can push updates without polling.

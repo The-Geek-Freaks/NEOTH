@@ -35,6 +35,10 @@ pub mod consolidate;
 /// `idx_groundtruth`. Pure sync, no WAL; cron wrapper in
 /// `daemon::consolidation_sweep_cron` emits `0x9D`/`0x9E`.
 pub mod consolidation_sweep;
+/// W208 — immutable raw-origin receipts and default-deny counterparty
+/// clustering eligibility.  This module owns the consent boundary; callers
+/// must not reconstruct it from legacy episode metadata.
+pub mod counterparty_consent;
 /// GOLD-ADAPT-MEM-06 — `[RELEVANT FACTS]` block builder from graph neighbours.
 pub mod context_inject;
 /// GOLD-ADAPT-MEM-02 — contradiction detection + ledger over ground-truth facts.

@@ -1712,7 +1712,7 @@ async fn run_memory_embed_backfill(args: &MemoryArgs) -> Result<()> {
     // Resolve the embed provider from the operator's freedom.yaml.
     let config =
         FreedomConfig::load_from_default_path().context("load freedom.yaml for embed-backfill")?;
-    let provider = match crate::providers::embed_provider_from_config(&config).await {
+    let provider = match crate::providers::local_embedding_provider_from_config(&config).await {
         Some(p) => p,
         None => {
             println!(
@@ -1722,22 +1722,37 @@ async fn run_memory_embed_backfill(args: &MemoryArgs) -> Result<()> {
         }
     };
 
-    // Fetch un-embedded episodes: hot-tier rows with no matching idx_embedding row.
-    let candidates = unembedded_episode_ids(&conn, args.limit)?;
+    // W208 returns only receipt/consent-eligible episodes. Historical bare RAW
+    // rows remain ordinary text recall, but are not dispatched for embeddings.
+    let candidate_cap = if args.limit == 0 {
+        i64::MAX as usize
+    } else {
+        args.limit
+    };
+    let candidates = crate::memory::counterparty_consent::claim_local_embedding_candidates(
+        &conn,
+        candidate_cap,
+    )
+    .context("select W208-eligible unembedded episodes for embed-backfill")?;
     let total_candidates = candidates.len();
     if total_candidates == 0 {
-        println!("all episodes already embedded; nothing to backfill.");
+        println!("no eligible unembedded episodes to backfill.");
         return Ok(());
     }
 
     // Embed each candidate best-effort (failures are warned inside embed_episode_text).
+    let mut newly_embedded = 0usize;
     for (event_id, text) in &candidates {
-        conn = embeddings::embed_episode_text(conn, *event_id, text, provider.as_ref()).await;
+        conn = embeddings::embed_episode_text(conn, *event_id, text, &provider).await;
+        let stored: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM idx_embedding WHERE source_kind='episode' AND source_ref=?1)",
+            [event_id.to_string()],
+            |row| row.get(0),
+        )?;
+        if stored {
+            newly_embedded += 1;
+        }
     }
-
-    // Count how many were actually written vs already present (second-run idempotence).
-    let remaining = unembedded_episode_ids(&conn, 0)?.len();
-    let newly_embedded = total_candidates.saturating_sub(remaining);
 
     match args.output {
         crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
@@ -1765,6 +1780,7 @@ async fn run_memory_embed_backfill(args: &MemoryArgs) -> Result<()> {
 ///
 /// Extracted as a named helper so tests can verify the shrink-after-embed behaviour
 /// directly without wiring the full `run_memory` dispatch.
+#[cfg(test)]
 pub(crate) fn unembedded_episode_ids(
     conn: &rusqlite::Connection,
     limit: usize,
@@ -2636,6 +2652,22 @@ mod tests {
         }
     }
 
+    fn local_test_provider(
+        provider: impl crate::providers::embed::EmbedProvider + 'static,
+    ) -> crate::providers::LocalEmbeddingProvider {
+        crate::providers::LocalEmbeddingProvider::for_test(std::sync::Arc::new(provider))
+    }
+
+    fn attest_local(conn: &rusqlite::Connection, event_id: i64) {
+        conn.execute(
+            "INSERT INTO idx_episode_origin_v2 \
+             (raw_event_id,origin_kind,origin_event_id,raw_payload_hash,channel_id,account_id,scoped_sender_hash) \
+             VALUES (?1,'local_attested',?2,'0000000000000000',NULL,NULL,NULL)",
+            rusqlite::params![event_id, event_id + 20_000],
+        )
+        .unwrap();
+    }
+
     fn insert_episode(conn: &rusqlite::Connection, event_id: i64, text: &str) {
         conn.execute(
             "INSERT INTO idx_episode \
@@ -2656,12 +2688,14 @@ mod tests {
         let mut conn = store::open(&db_path).unwrap();
         insert_episode(&conn, 1, "first episode text");
         insert_episode(&conn, 2, "second episode text");
+        attest_local(&conn, 1);
+        attest_local(&conn, 2);
 
         // Both episodes start un-embedded.
         let before = unembedded_episode_ids(&conn, 0).unwrap();
         assert_eq!(before.len(), 2, "both episodes unembedded before backfill");
 
-        let provider = FixedEmbed2d { x: 1.0, y: 0.0 };
+        let provider = local_test_provider(FixedEmbed2d { x: 1.0, y: 0.0 });
         for (event_id, text) in &before {
             conn = embeddings::embed_episode_text(conn, *event_id, text, &provider).await;
         }
@@ -2693,8 +2727,9 @@ mod tests {
         let db_path = dir.path().join("views.db");
         let mut conn = store::open(&db_path).unwrap();
         insert_episode(&conn, 10, "some memory");
+        attest_local(&conn, 10);
 
-        let provider = FixedEmbed2d { x: 0.0, y: 1.0 };
+        let provider = local_test_provider(FixedEmbed2d { x: 0.0, y: 1.0 });
 
         // First pass: embeds the episode.
         let pass1 = unembedded_episode_ids(&conn, 0).unwrap();

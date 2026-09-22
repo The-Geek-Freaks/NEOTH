@@ -27,7 +27,9 @@ use super::chat::{
 };
 use crate::config::{FreedomConfig, InstancePaths};
 use crate::providers::Request;
-use crate::wal::events::{EVENT_TYPE_INCOGNITO_TURN, EVENT_TYPE_RAW_TEXT};
+use crate::wal::events::{
+    EVENT_TYPE_EXTENDED, EVENT_TYPE_INCOGNITO_TURN, EVENT_TYPE_RAW_TEXT, ExtendedSubtype,
+};
 
 /// Request-local admission gate. Closing this gate prevents the next effect
 /// boundary from starting; it never implies a durable cross-client cancel.
@@ -625,10 +627,24 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         // post-reply profile-learning pipeline (B-Konsens 2026-05-17 below)
         // uses this as the trigger anchor for `extract_window`.
         let raw_event_id = raw_header.event_id.0 as i64;
+        let raw_session_id = raw_header.session_id;
+        let origin_payload = crate::memory::counterparty_consent::serialize_local_origin_receipt(
+            &raw_header,
+        )
+        .context("serialize local RAW_TEXT origin receipt")?;
         writer
             .append(raw_header, prompt.as_bytes().to_vec())
             .await
             .context("write RAW_TEXT WAL frame")?;
+        let origin_header = crate::wal::HeaderBuilder::new(EVENT_TYPE_EXTENDED, &origin_payload)
+            .event_subtype(ExtendedSubtype::RawTextOrigin as u8)
+            .session(raw_session_id)
+            .build();
+        if let Err(error) = writer.append(origin_header, origin_payload).await {
+            // The raw frame is durable but deliberately remains unknown when
+            // this independent metadata receipt cannot be appended.
+            tracing::warn!(error = %error, raw_event_id, "W208 RAW_TEXT origin receipt append failed; raw remains unknown");
+        }
         raw_event_id
     };
 

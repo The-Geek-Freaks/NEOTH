@@ -277,6 +277,11 @@ pub enum ExtendedSubtype {
     /// ephemeral reasoning stream. The codec deliberately excludes reasoning
     /// text, content hashes, prompts, sessions, and replay handles.
     ReasoningStreamAuditV1 = 0x2D,
+    /// W208 — metadata-only binding from one exact RAW_TEXT frame to either a
+    /// local attestation or an authenticated channel scope.  The projector
+    /// verifies the referenced RAW header separately; missing or malformed
+    /// receipts deliberately leave the raw episode unknown.
+    RawTextOrigin = 0x2E,
     // NOTE: ADR-009 also named a `SelfUpdateIntent`. It is deliberately absent:
     // R3-18's `UpdaterLeafIntent`/`UpdaterLeafResult` (0x1A/0x1B) already bind
     // every updater HTTP, process, and verified-stage leaf to a durable
@@ -376,6 +381,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::CouncilAgreementEvaluated => "council_agreement_evaluated",
             ExtendedSubtype::GuiChatLifecycle => "gui_chat_lifecycle",
             ExtendedSubtype::ReasoningStreamAuditV1 => "reasoning_stream_audit_v1",
+            ExtendedSubtype::RawTextOrigin => "raw_text_origin",
         }
     }
 
@@ -427,6 +433,7 @@ impl ExtendedSubtype {
             0x2B => Some(ExtendedSubtype::CouncilAgreementEvaluated),
             0x2C => Some(ExtendedSubtype::GuiChatLifecycle),
             0x2D => Some(ExtendedSubtype::ReasoningStreamAuditV1),
+            0x2E => Some(ExtendedSubtype::RawTextOrigin),
             _ => None,
         }
     }
@@ -480,6 +487,7 @@ impl ExtendedSubtype {
             Self::CouncilAgreementEvaluated,
             Self::GuiChatLifecycle,
             Self::ReasoningStreamAuditV1,
+            Self::RawTextOrigin,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -4095,6 +4103,7 @@ mod tests {
             ExtendedSubtype::CouncilAgreementEvaluated,
             ExtendedSubtype::GuiChatLifecycle,
             ExtendedSubtype::ReasoningStreamAuditV1,
+            ExtendedSubtype::RawTextOrigin,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

@@ -16,6 +16,15 @@ universal native identities, 87 GUI identities, with unchanged platform extras.
 W208 provenance/consent work remains separately uncommitted. The older Windows
 preview passed on `a68442cb` only. Road remains 1324 total / 1015 checked / 307
 open / 2 partial. No local executable validation ran under the BSOD hold.
+**W208 origin/consumer source (2026-09-22):** local chat and authenticated
+channel RAW now have exact header/session-bound origin receipts. Unknown data
+is denied for episode vectors and clustering; local-only construction and
+transactional rechecks fence dispatch/storage, revoke and stale HNSW recall.
+Projection rejects malformed links without pinning replay, while database errors
+roll back the cursor. Independent static review passed. This source slice needs
+fresh Hosted execution; the sender-verified consent ceremony is the following
+slice, so channel grants remain unavailable and P2-22 stays open. See
+`docs/gold-wave208-verification.md`.
 **W207 source batch (2026-09-22):** one 120-second meaningful-progress
 watchdog now spans provider dispatch and post-reply work. The typed timeout
 crosses plain daemon RPC and GUI attach without a competing shorter deadline;

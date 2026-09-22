@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W206_BUDGET_REPAIR_W207_SOURCE_REVIEWED_HOSTED_PENDING",
-  "base": "7e80402a58f277abcedf07df2bc3ff20c1f72ee2",
+  "status": "W208_ORIGIN_CONSUMERS_SOURCE_REVIEWED_HOSTED_PENDING",
+  "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 88487,
-    "sha256": "18F05C52E5351738237ED4F6E9AD59B459F7CF9A0AF5F90E211521B03D4CCE2B"
+    "bytes": 89185,
+    "sha256": "3F6F09FF1E50F9581699DBA1F2934E8A6AE4095C1B5619475D05DB7C701CC364"
   },
-  "sourceInputs": 512,
+  "sourceInputs": 516,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -150,7 +150,7 @@
     {
       "test": "cli::chat::tests::council_leaf_wraps_role_recall_as_single_canonical_memory_context",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
@@ -240,25 +240,25 @@
     {
       "test": "cli::chat_turn_pipeline::tests::prepared_turn_retains_seeded_context_through_truthful_retry_before_final_receipt_and_terminal",
       "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "sourceSha256": "AD3462CE7374623743ED94A578B37B361FC98CC02934CD63AEF0C1FFF85EC7D5",
+      "sourceSha256": "B99FFF9CC17002C166498FD727D903FD7D82E849F6F87296C3BC9E9259D38ED4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::build_pipeline_handler_retains_selected_generation_through_truthful_retry_before_final_channel_result",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "4A7759BE4FCA40FAA6F9793CCE3650C07DDB84D09B9FF4EEAE66D14CB18146F4",
+      "sourceSha256": "28CF39693041DC4ABC89E6F8D30753311E909A318485AD00DFD9045E6DCBA201",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat_turn_pipeline::tests::prepared_turn_retains_context_through_truthful_refusal_then_local_shadow_final_result",
       "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "sourceSha256": "AD3462CE7374623743ED94A578B37B361FC98CC02934CD63AEF0C1FFF85EC7D5",
+      "sourceSha256": "B99FFF9CC17002C166498FD727D903FD7D82E849F6F87296C3BC9E9259D38ED4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::build_pipeline_handler_retains_context_through_direct_local_shadow_cloud_fallback_final_result",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "4A7759BE4FCA40FAA6F9793CCE3650C07DDB84D09B9FF4EEAE66D14CB18146F4",
+      "sourceSha256": "28CF39693041DC4ABC89E6F8D30753311E909A318485AD00DFD9045E6DCBA201",
       "junitClass": "neoth"
     },
     {
@@ -552,7 +552,7 @@
     {
       "test": "cli::serve_tasks::channel_reconcile_tests::paired_reply_binding_releases_a_retired_telegram_adapter",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "D367A1069AC0C12216BD0FE29CDE3755F1E79899D10EE8FB06050841C24F43BE",
+      "sourceSha256": "A774382D062AE0EE25B37F205C7F07806E7DFAE7AA9CD5C9FEE5B4808D563DC3",
       "junitClass": "neoth"
     },
     {
@@ -618,7 +618,7 @@
     {
       "test": "cli::serve_tasks::tests::readiness_publisher_revokes_on_false_and_cannot_republish_a_replaced_lease",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "D367A1069AC0C12216BD0FE29CDE3755F1E79899D10EE8FB06050841C24F43BE",
+      "sourceSha256": "A774382D062AE0EE25B37F205C7F07806E7DFAE7AA9CD5C9FEE5B4808D563DC3",
       "junitClass": "neoth"
     },
     {
@@ -834,31 +834,31 @@
     {
       "test": "cli::chat::tests::auto_recall_is_canonical_untrusted_memory_for_primary_and_agent_prompts",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat_turn_pipeline::tests::prepared_turn_retains_authorized_selected_skill_snapshot_across_reload_retry_and_local_shadow",
       "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "sourceSha256": "AD3462CE7374623743ED94A578B37B361FC98CC02934CD63AEF0C1FFF85EC7D5",
+      "sourceSha256": "B99FFF9CC17002C166498FD727D903FD7D82E849F6F87296C3BC9E9259D38ED4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::authenticated_channel_policy_cannot_inject_a_disabled_subject_skill",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "4A7759BE4FCA40FAA6F9793CCE3650C07DDB84D09B9FF4EEAE66D14CB18146F4",
+      "sourceSha256": "28CF39693041DC4ABC89E6F8D30753311E909A318485AD00DFD9045E6DCBA201",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::channel_delegate_to_uses_authorized_installed_skill_real_agent_loader_and_child_scope",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "4A7759BE4FCA40FAA6F9793CCE3650C07DDB84D09B9FF4EEAE66D14CB18146F4",
+      "sourceSha256": "28CF39693041DC4ABC89E6F8D30753311E909A318485AD00DFD9045E6DCBA201",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::delegated_bundle_preserves_required_attachment_data",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "4A7759BE4FCA40FAA6F9793CCE3650C07DDB84D09B9FF4EEAE66D14CB18146F4",
+      "sourceSha256": "28CF39693041DC4ABC89E6F8D30753311E909A318485AD00DFD9045E6DCBA201",
       "junitClass": "neoth"
     },
     {
@@ -1128,19 +1128,19 @@
     {
       "test": "providers::tests::legacy_chunk_event_adapter_preserves_usage_and_terminal_delta_once",
       "sourcePath": "SRC/neothd/src/providers/mod.rs",
-      "sourceSha256": "FB82D2C55AC1695D8757A9520861F23D69ED1EB70FB1871EB550D175E08EA38C",
+      "sourceSha256": "383E4D3AF292AA562332578668042013B16731FA1E049CE6A9479143F60D795C",
       "junitClass": "neoth"
     },
     {
       "test": "providers::tests::event_normalizer_requires_reasoning_terminal_before_done",
       "sourcePath": "SRC/neothd/src/providers/mod.rs",
-      "sourceSha256": "FB82D2C55AC1695D8757A9520861F23D69ED1EB70FB1871EB550D175E08EA38C",
+      "sourceSha256": "383E4D3AF292AA562332578668042013B16731FA1E049CE6A9479143F60D795C",
       "junitClass": "neoth"
     },
     {
       "test": "providers::tests::reasoning_contract_is_redacted_and_wire_closed",
       "sourcePath": "SRC/neothd/src/providers/mod.rs",
-      "sourceSha256": "FB82D2C55AC1695D8757A9520861F23D69ED1EB70FB1871EB550D175E08EA38C",
+      "sourceSha256": "383E4D3AF292AA562332578668042013B16731FA1E049CE6A9479143F60D795C",
       "junitClass": "neoth"
     },
     {
@@ -1212,37 +1212,37 @@
     {
       "test": "cli::chat::tests::reasoning_control_frames_are_v3_bound_and_keep_visible_hashes_separate",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::reasoning_lifecycle_closes_native_terminal_then_error_once_without_raw_audit_text",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::dispatch_native_reasoning_terminal_then_item_error_closes_redacted_once",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::dispatch_pending_stream_open_cancellation_closes_unobserved_once",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::dispatch_pending_stream_next_cancellation_keeps_bound_leaf_and_closes_once",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat_turn_pipeline::tests::cancellation_wakes_a_pending_stream_wait_without_polling",
       "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "sourceSha256": "AD3462CE7374623743ED94A578B37B361FC98CC02934CD63AEF0C1FFF85EC7D5",
+      "sourceSha256": "B99FFF9CC17002C166498FD727D903FD7D82E849F6F87296C3BC9E9259D38ED4",
       "junitClass": "neoth"
     },
     {
@@ -1644,109 +1644,109 @@
     {
       "test": "cli::chat_turn_pipeline::tests::admitted_local_chat_identity_is_domain_separated_and_length_delimited",
       "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "sourceSha256": "AD3462CE7374623743ED94A578B37B361FC98CC02934CD63AEF0C1FFF85EC7D5",
+      "sourceSha256": "B99FFF9CC17002C166498FD727D903FD7D82E849F6F87296C3BC9E9259D38ED4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat_turn_pipeline::tests::incognito_never_mints_a_wal_session_or_changes_its_zero_anchor",
       "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "sourceSha256": "AD3462CE7374623743ED94A578B37B361FC98CC02934CD63AEF0C1FFF85EC7D5",
+      "sourceSha256": "B99FFF9CC17002C166498FD727D903FD7D82E849F6F87296C3BC9E9259D38ED4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat_turn_pipeline::tests::neutral_engine_runs_a_caller_borrowed_provider_before_caller_drain_and_terminal",
       "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "sourceSha256": "AD3462CE7374623743ED94A578B37B361FC98CC02934CD63AEF0C1FFF85EC7D5",
+      "sourceSha256": "B99FFF9CC17002C166498FD727D903FD7D82E849F6F87296C3BC9E9259D38ED4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::admitted_hook_stream_and_quota_frames_keep_one_wal_session",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::ccparity_once_false_fires_on_every_turn",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::ccparity_once_fires_exactly_once_across_two_stages_in_one_session",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::council_agreement_audit_wal_is_one_metadata_frame_without_declarations_or_body",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::final_code_map_binding_records_final_replaced_body_once",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::incognito_council_dispatch_audit_emits_no_frames",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::transcript_mining_chat_default_stays_legacy_unbound",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::transcript_mining_chat_incognito_overrides_configured_opt_in",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::transcript_mining_chat_opt_in_binds_one_operator_row_without_post_reply_duplicate",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::admitted_channel_wal_identity_is_bound_conversation_only_and_length_delimited",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "4A7759BE4FCA40FAA6F9793CCE3650C07DDB84D09B9FF4EEAE66D14CB18146F4",
+      "sourceSha256": "28CF39693041DC4ABC89E6F8D30753311E909A318485AD00DFD9045E6DCBA201",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::admitted_channel_wal_identity_rejects_oversize_native_ids_before_context_mint",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "4A7759BE4FCA40FAA6F9793CCE3650C07DDB84D09B9FF4EEAE66D14CB18146F4",
+      "sourceSha256": "28CF39693041DC4ABC89E6F8D30753311E909A318485AD00DFD9045E6DCBA201",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::configured_a_and_b_remain_isolated_from_pipeline_ingress_through_live_wal",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "4A7759BE4FCA40FAA6F9793CCE3650C07DDB84D09B9FF4EEAE66D14CB18146F4",
+      "sourceSha256": "28CF39693041DC4ABC89E6F8D30753311E909A318485AD00DFD9045E6DCBA201",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::rate_limit_allows_first_then_drops_with_audit_frame",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "4A7759BE4FCA40FAA6F9793CCE3650C07DDB84D09B9FF4EEAE66D14CB18146F4",
+      "sourceSha256": "28CF39693041DC4ABC89E6F8D30753311E909A318485AD00DFD9045E6DCBA201",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::release_channel_reply_allows_at_standard_and_emits_recall_egress",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "4A7759BE4FCA40FAA6F9793CCE3650C07DDB84D09B9FF4EEAE66D14CB18146F4",
+      "sourceSha256": "28CF39693041DC4ABC89E6F8D30753311E909A318485AD00DFD9045E6DCBA201",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::w60_prepared_binding_precedes_actual_channel_release_without_claiming_delivery",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "4A7759BE4FCA40FAA6F9793CCE3650C07DDB84D09B9FF4EEAE66D14CB18146F4",
+      "sourceSha256": "28CF39693041DC4ABC89E6F8D30753311E909A318485AD00DFD9045E6DCBA201",
       "junitClass": "neoth"
     },
     {
@@ -1812,13 +1812,13 @@
     {
       "test": "memory::indexer::tests::replay_indexes_raw_text_frames",
       "sourcePath": "SRC/neothd/src/memory/indexer.rs",
-      "sourceSha256": "E87C818D8DC984811F794934EDF3FFF787A9ED515212873C40B57DF1573AB7C0",
+      "sourceSha256": "F3E1CC7A7E3269A3DAB26BD95A4B6455F800FA7D05F9FA0BA0C1AD4D1976082F",
       "junitClass": "neoth"
     },
     {
       "test": "memory::migrations::tests::v39_to_v40_preserves_rows_as_unattributed_and_creates_session_indexes",
       "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
-      "sourceSha256": "26489483393FE841C79A65F4EB9308577F1FBA831B13C1E78D269A852B49C3DC",
+      "sourceSha256": "E02EAD680481601CA0C6125845EAC276E15E2281715DB8C21DFB1B35BA978537",
       "junitClass": "neoth"
     },
     {
@@ -1944,19 +1944,19 @@
     {
       "test": "cli::chat::tests::live_throughput_wire_is_exact_private_and_content_free",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::live_throughput_producer_sequences_transitions_before_provider_done",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::live_throughput_idle_interval_is_not_starved_by_ready_nonvisible_events",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
@@ -2088,25 +2088,25 @@
     {
       "test": "cli::chat::tests::w163_final_dedup_discards_the_matching_episode_evidence",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::w163_recall_chip_wire_is_private_bounded_and_has_exact_schema",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::w163_recall_chip_score_is_null_except_available_valid_warm_hit",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::w163_recall_chip_empty_statuses_are_explicit_and_token_bound",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
@@ -2124,7 +2124,7 @@
     {
       "test": "memory::migrations::tests::migrate_full_chain_preserves_data_and_adds_columns",
       "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
-      "sourceSha256": "26489483393FE841C79A65F4EB9308577F1FBA831B13C1E78D269A852B49C3DC",
+      "sourceSha256": "E02EAD680481601CA0C6125845EAC276E15E2281715DB8C21DFB1B35BA978537",
       "junitClass": "neoth"
     },
     {
@@ -2184,25 +2184,25 @@
     {
       "test": "cli::chat::wave35_adapter_lifecycle_tests::w164_ready_and_unavailable_target_frames_have_the_exact_content_free_v3_schema",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::wave35_adapter_lifecycle_tests::w164_incognito_finalizer_skips_target_registration_and_presentation",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::wave35_adapter_lifecycle_tests::w164_daemon_renderer_forwards_ready_unavailable_and_absent_terminal_feedback_once",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::wave35_adapter_lifecycle_tests::w164_finalizer_registers_and_presents_only_after_a_clean_drain",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
@@ -2532,7 +2532,7 @@
     {
       "test": "cli::serve_tasks::tests::write_usage_snapshot_roundtrips_json",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "D367A1069AC0C12216BD0FE29CDE3755F1E79899D10EE8FB06050841C24F43BE",
+      "sourceSha256": "A774382D062AE0EE25B37F205C7F07806E7DFAE7AA9CD5C9FEE5B4808D563DC3",
       "junitClass": "neoth"
     },
     {
@@ -2574,13 +2574,13 @@
     {
       "test": "cli::chat::tests::agent_dispatch_system_is_unattributed_prompt_tax",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::final_budget_boundary_keeps_only_retained_memory_in_prompt_tax",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
@@ -2640,7 +2640,7 @@
     {
       "test": "cli::chat::tests::prompt_tax_bundle_reaches_terminal_usage_and_clears_on_changed_leaf_bytes",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
@@ -2670,13 +2670,13 @@
     {
       "test": "memory::migrations::tests::v40_to_v41_adds_membership_without_rewriting_existing_importance",
       "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
-      "sourceSha256": "26489483393FE841C79A65F4EB9308577F1FBA831B13C1E78D269A852B49C3DC",
+      "sourceSha256": "E02EAD680481601CA0C6125845EAC276E15E2281715DB8C21DFB1B35BA978537",
       "junitClass": "neoth"
     },
     {
       "test": "memory::migrations::tests::v40_to_v41_rolls_back_when_an_incompatible_existing_table_blocks_the_index",
       "sourcePath": "SRC/neothd/src/memory/migrations/mod.rs",
-      "sourceSha256": "26489483393FE841C79A65F4EB9308577F1FBA831B13C1E78D269A852B49C3DC",
+      "sourceSha256": "E02EAD680481601CA0C6125845EAC276E15E2281715DB8C21DFB1B35BA978537",
       "junitClass": "neoth"
     },
     {
@@ -2706,7 +2706,7 @@
     {
       "test": "cli::memory::tests::hippocampus_flag_accepts_an_omitted_or_explicit_query",
       "sourcePath": "SRC/neothd/src/cli/memory.rs",
-      "sourceSha256": "B2D30BE006B2482ED1B52520DBFD448F32964EDCA9C143F830783B8F835D44D4",
+      "sourceSha256": "5DE168D3D5DAB9B92593CB8E29B813B9D0CDDCE3CD287A8CB10B4B28A9D2A062",
       "junitClass": "neoth"
     },
     {
@@ -2796,7 +2796,7 @@
     {
       "test": "cli::chat::wave35_adapter_lifecycle_tests::w177_finalizer_marks_missing_or_foreign_receipts_unavailable",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
@@ -2916,13 +2916,13 @@
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::vault_mirror_scheduler_requires_both_nightly_gates",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "D367A1069AC0C12216BD0FE29CDE3755F1E79899D10EE8FB06050841C24F43BE",
+      "sourceSha256": "A774382D062AE0EE25B37F205C7F07806E7DFAE7AA9CD5C9FEE5B4808D563DC3",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_tasks::vault_mirror_scheduler_tests::accepted_reload_revoking_nightly_push_stops_scheduler",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "D367A1069AC0C12216BD0FE29CDE3755F1E79899D10EE8FB06050841C24F43BE",
+      "sourceSha256": "A774382D062AE0EE25B37F205C7F07806E7DFAE7AA9CD5C9FEE5B4808D563DC3",
       "junitClass": "neoth"
     },
     {
@@ -3180,7 +3180,7 @@
     {
       "test": "cli::serve_tasks::local_models_lifecycle_tests::local_models_runtime_requires_active_native_ollama_provider",
       "sourcePath": "SRC/neothd/src/cli/serve_tasks.rs",
-      "sourceSha256": "D367A1069AC0C12216BD0FE29CDE3755F1E79899D10EE8FB06050841C24F43BE",
+      "sourceSha256": "A774382D062AE0EE25B37F205C7F07806E7DFAE7AA9CD5C9FEE5B4808D563DC3",
       "junitClass": "neoth"
     },
     {
@@ -4002,19 +4002,19 @@
     {
       "test": "cli::chat::tests::chat_hard_block_is_terminal_when_recovery_is_disabled",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat::tests::chat_budget_exhausted_refusal_is_terminally_mirrored",
       "sourcePath": "SRC/neothd/src/cli/chat.rs",
-      "sourceSha256": "F9FD4AF9F8EB6B3FE15F8D70BBF57B859E0E393382B7C2D685F38AC462C1E477",
+      "sourceSha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB",
       "junitClass": "neoth"
     },
     {
       "test": "cli::serve_pipeline::tests::delegated_bundle_preserves_admitted_repo_context_for_its_receipt",
       "sourcePath": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "sourceSha256": "4A7759BE4FCA40FAA6F9793CCE3650C07DDB84D09B9FF4EEAE66D14CB18146F4",
+      "sourceSha256": "28CF39693041DC4ABC89E6F8D30753311E909A318485AD00DFD9045E6DCBA201",
       "junitClass": "neoth"
     },
     {
@@ -4098,25 +4098,25 @@
     {
       "test": "cli::chat_turn_pipeline::tests::w207_nonempty_stream_deltas_keep_the_actual_prepared_turn_alive_past_120_seconds",
       "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "sourceSha256": "AD3462CE7374623743ED94A578B37B361FC98CC02934CD63AEF0C1FFF85EC7D5",
+      "sourceSha256": "B99FFF9CC17002C166498FD727D903FD7D82E849F6F87296C3BC9E9259D38ED4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat_turn_pipeline::tests::w207_silent_or_metadata_only_events_expire_once_without_done_terminal_or_retry",
       "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "sourceSha256": "AD3462CE7374623743ED94A578B37B361FC98CC02934CD63AEF0C1FFF85EC7D5",
+      "sourceSha256": "B99FFF9CC17002C166498FD727D903FD7D82E849F6F87296C3BC9E9259D38ED4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat_turn_pipeline::tests::w207_cancellation_terminates_the_admitted_stream_without_a_lingering_effect",
       "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "sourceSha256": "AD3462CE7374623743ED94A578B37B361FC98CC02934CD63AEF0C1FFF85EC7D5",
+      "sourceSha256": "B99FFF9CC17002C166498FD727D903FD7D82E849F6F87296C3BC9E9259D38ED4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::chat_turn_pipeline::tests::w207_post_reply_review_stall_times_out_before_done_or_terminal_success",
       "sourcePath": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "sourceSha256": "AD3462CE7374623743ED94A578B37B361FC98CC02934CD63AEF0C1FFF85EC7D5",
+      "sourceSha256": "B99FFF9CC17002C166498FD727D903FD7D82E849F6F87296C3BC9E9259D38ED4",
       "junitClass": "neoth"
     },
     {
@@ -4135,6 +4135,186 @@
       "test": "daemon::audit_rpc::tests::gui_attach_accepts_late_progress_then_typed_silence_timeout",
       "sourcePath": "SRC/neothd/src/daemon/audit_rpc/tests.rs",
       "sourceSha256": "273E0C9AD20C1FDC13221D4E8A5A11DE9EB110A1BB05335B49C5C7E1DCFECFC9",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::counterparty_consent::tests::v42_registry_and_fresh_schema_have_only_additive_default_deny_state",
+      "sourcePath": "SRC/neothd/src/memory/counterparty_consent.rs",
+      "sourceSha256": "4AB01CC056D439C98D64CA8DFE5DC6EFC62EA26AC91AEC8059C0B1BAB17A1438",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::counterparty_consent::tests::v41_to_v42_migration_preserves_history_and_default_denies_without_backfill",
+      "sourcePath": "SRC/neothd/src/memory/counterparty_consent.rs",
+      "sourceSha256": "4AB01CC056D439C98D64CA8DFE5DC6EFC62EA26AC91AEC8059C0B1BAB17A1438",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::counterparty_consent::tests::legacy_raw_is_default_denied_but_valid_local_receipt_is_eligible",
+      "sourcePath": "SRC/neothd/src/memory/counterparty_consent.rs",
+      "sourceSha256": "4AB01CC056D439C98D64CA8DFE5DC6EFC62EA26AC91AEC8059C0B1BAB17A1438",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::counterparty_consent::tests::conflicting_or_wrong_session_origin_never_retargets_raw",
+      "sourcePath": "SRC/neothd/src/memory/counterparty_consent.rs",
+      "sourceSha256": "4AB01CC056D439C98D64CA8DFE5DC6EFC62EA26AC91AEC8059C0B1BAB17A1438",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::counterparty_consent::tests::exact_revoke_deletes_only_bound_vectors_and_synthesis_facts",
+      "sourcePath": "SRC/neothd/src/memory/counterparty_consent.rs",
+      "sourceSha256": "4AB01CC056D439C98D64CA8DFE5DC6EFC62EA26AC91AEC8059C0B1BAB17A1438",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::indexer::tests::w208_origin_projection_is_fail_closed_and_replay_tolerant",
+      "sourcePath": "SRC/neothd/src/memory/indexer.rs",
+      "sourceSha256": "F3E1CC7A7E3269A3DAB26BD95A4B6455F800FA7D05F9FA0BA0C1AD4D1976082F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::indexer::tests::w208_database_projection_failure_rolls_back_replay_and_cursor",
+      "sourcePath": "SRC/neothd/src/memory/indexer.rs",
+      "sourceSha256": "F3E1CC7A7E3269A3DAB26BD95A4B6455F800FA7D05F9FA0BA0C1AD4D1976082F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::indexer::tests::w208_semantic_rejection_advances_replay_cursor",
+      "sourcePath": "SRC/neothd/src/memory/indexer.rs",
+      "sourceSha256": "F3E1CC7A7E3269A3DAB26BD95A4B6455F800FA7D05F9FA0BA0C1AD4D1976082F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::embeddings::tests::embed_episode_text_inserts_row_for_event_id",
+      "sourcePath": "SRC/neothd/src/memory/embeddings.rs",
+      "sourceSha256": "FECC40B0E1A077C3B9B549B7C7D9815455E358D94DBCD02BC6A3605E6E571423",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::embeddings::tests::embed_pending_episodes_only_embeds_unembedded_rows",
+      "sourcePath": "SRC/neothd/src/memory/embeddings.rs",
+      "sourceSha256": "FECC40B0E1A077C3B9B549B7C7D9815455E358D94DBCD02BC6A3605E6E571423",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::embeddings::tests::legacy_episode_without_origin_receipt_is_never_dispatched_for_embedding",
+      "sourcePath": "SRC/neothd/src/memory/embeddings.rs",
+      "sourceSha256": "FECC40B0E1A077C3B9B549B7C7D9815455E358D94DBCD02BC6A3605E6E571423",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::embeddings::tests::revoke_fences_late_store_and_stale_hnsw_episode_recall",
+      "sourcePath": "SRC/neothd/src/memory/embeddings.rs",
+      "sourceSha256": "FECC40B0E1A077C3B9B549B7C7D9815455E358D94DBCD02BC6A3605E6E571423",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::embeddings::tests::embed_episode_text_skips_empty_text",
+      "sourcePath": "SRC/neothd/src/memory/embeddings.rs",
+      "sourceSha256": "FECC40B0E1A077C3B9B549B7C7D9815455E358D94DBCD02BC6A3605E6E571423",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::embeddings::tests::embed_episode_text_tolerates_provider_failure",
+      "sourcePath": "SRC/neothd/src/memory/embeddings.rs",
+      "sourceSha256": "FECC40B0E1A077C3B9B549B7C7D9815455E358D94DBCD02BC6A3605E6E571423",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::embeddings::tests::embed_episode_text_upserts_not_duplicates",
+      "sourcePath": "SRC/neothd/src/memory/embeddings.rs",
+      "sourceSha256": "FECC40B0E1A077C3B9B549B7C7D9815455E358D94DBCD02BC6A3605E6E571423",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::empty_db_returns_default_report",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "33CEEB93481A6ABCB0980420D275C63638E11B4C6C2311E92BF316333E7DC59D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::single_episode_no_cluster_formed",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "33CEEB93481A6ABCB0980420D275C63638E11B4C6C2311E92BF316333E7DC59D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::legacy_unreceipted_episodes_are_denied_before_clustering",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "33CEEB93481A6ABCB0980420D275C63638E11B4C6C2311E92BF316333E7DC59D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::two_similar_episodes_cluster_and_boost",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "33CEEB93481A6ABCB0980420D275C63638E11B4C6C2311E92BF316333E7DC59D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::importance_cap_respected",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "33CEEB93481A6ABCB0980420D275C63638E11B4C6C2311E92BF316333E7DC59D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::dissimilar_episodes_no_cluster",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "33CEEB93481A6ABCB0980420D275C63638E11B4C6C2311E92BF316333E7DC59D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::mature_cluster_writes_groundtruth",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "33CEEB93481A6ABCB0980420D275C63638E11B4C6C2311E92BF316333E7DC59D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::immature_cluster_does_not_write_groundtruth",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "33CEEB93481A6ABCB0980420D275C63638E11B4C6C2311E92BF316333E7DC59D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::cross_channel_episodes_do_not_cluster",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "33CEEB93481A6ABCB0980420D275C63638E11B4C6C2311E92BF316333E7DC59D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::channel_scope_isolates_account_and_sender_even_when_display_channel_matches",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "33CEEB93481A6ABCB0980420D275C63638E11B4C6C2311E92BF316333E7DC59D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::same_channel_episodes_do_cluster",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "33CEEB93481A6ABCB0980420D275C63638E11B4C6C2311E92BF316333E7DC59D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::null_channel_episodes_cluster_as_same_domain",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "33CEEB93481A6ABCB0980420D275C63638E11B4C6C2311E92BF316333E7DC59D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "memory::consolidation_sweep::tests::named_channel_vs_null_channel_does_not_cluster",
+      "sourcePath": "SRC/neothd/src/memory/consolidation_sweep.rs",
+      "sourceSha256": "33CEEB93481A6ABCB0980420D275C63638E11B4C6C2311E92BF316333E7DC59D",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::memory::tests::embed_backfill_embeds_all_unembedded_episodes",
+      "sourcePath": "SRC/neothd/src/cli/memory.rs",
+      "sourceSha256": "5DE168D3D5DAB9B92593CB8E29B813B9D0CDDCE3CD287A8CB10B4B28A9D2A062",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::memory::tests::embed_backfill_is_idempotent",
+      "sourcePath": "SRC/neothd/src/cli/memory.rs",
+      "sourceSha256": "5DE168D3D5DAB9B92593CB8E29B813B9D0CDDCE3CD287A8CB10B4B28A9D2A062",
       "junitClass": "neoth"
     }
   ],
@@ -12209,5 +12389,147 @@
       }
     ],
     "localValidationRan": false
+  },
+  "wave208": {
+    "sourceBase": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
+    "requiredTests": [
+      "memory::counterparty_consent::tests::v42_registry_and_fresh_schema_have_only_additive_default_deny_state",
+      "memory::counterparty_consent::tests::v41_to_v42_migration_preserves_history_and_default_denies_without_backfill",
+      "memory::counterparty_consent::tests::legacy_raw_is_default_denied_but_valid_local_receipt_is_eligible",
+      "memory::counterparty_consent::tests::conflicting_or_wrong_session_origin_never_retargets_raw",
+      "memory::counterparty_consent::tests::exact_revoke_deletes_only_bound_vectors_and_synthesis_facts",
+      "memory::indexer::tests::w208_origin_projection_is_fail_closed_and_replay_tolerant",
+      "memory::indexer::tests::w208_database_projection_failure_rolls_back_replay_and_cursor",
+      "memory::indexer::tests::w208_semantic_rejection_advances_replay_cursor",
+      "memory::embeddings::tests::embed_episode_text_inserts_row_for_event_id",
+      "memory::embeddings::tests::embed_pending_episodes_only_embeds_unembedded_rows",
+      "memory::embeddings::tests::legacy_episode_without_origin_receipt_is_never_dispatched_for_embedding",
+      "memory::embeddings::tests::revoke_fences_late_store_and_stale_hnsw_episode_recall",
+      "memory::embeddings::tests::embed_episode_text_skips_empty_text",
+      "memory::embeddings::tests::embed_episode_text_tolerates_provider_failure",
+      "memory::embeddings::tests::embed_episode_text_upserts_not_duplicates",
+      "memory::consolidation_sweep::tests::empty_db_returns_default_report",
+      "memory::consolidation_sweep::tests::single_episode_no_cluster_formed",
+      "memory::consolidation_sweep::tests::legacy_unreceipted_episodes_are_denied_before_clustering",
+      "memory::consolidation_sweep::tests::two_similar_episodes_cluster_and_boost",
+      "memory::consolidation_sweep::tests::importance_cap_respected",
+      "memory::consolidation_sweep::tests::dissimilar_episodes_no_cluster",
+      "memory::consolidation_sweep::tests::mature_cluster_writes_groundtruth",
+      "memory::consolidation_sweep::tests::immature_cluster_does_not_write_groundtruth",
+      "memory::consolidation_sweep::tests::cross_channel_episodes_do_not_cluster",
+      "memory::consolidation_sweep::tests::channel_scope_isolates_account_and_sender_even_when_display_channel_matches",
+      "memory::consolidation_sweep::tests::same_channel_episodes_do_cluster",
+      "memory::consolidation_sweep::tests::null_channel_episodes_cluster_as_same_domain",
+      "memory::consolidation_sweep::tests::named_channel_vs_null_channel_does_not_cluster",
+      "cli::memory::tests::embed_backfill_embeds_all_unembedded_episodes",
+      "cli::memory::tests::embed_backfill_is_idempotent"
+    ],
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 11165,
+        "sha256": "E1E1624353D39B87FDC625725D1FCCCD417B53E41D100A3D8ACD36FA8600F35F"
+      },
+      {
+        "path": "docs/gold-wave208-verification.md",
+        "bytes": 3085,
+        "sha256": "C5AD2E8C62FE81CAE0461027060F95D2B1A7C5AC7EFC6300C44DA567C0AF5D34"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 45911,
+        "sha256": "11FCAEBA72E45E4A1C66943EC925FC18564E530EFA3433A32CD39B42BC11DE3C"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1048793,
+        "sha256": "7CE0D4F82CA986D6A3C01E3A193D25597350750B41991D97F484DD6F35B837B9"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1644240,
+        "sha256": "FB839EFE90ADF9CF7AE7231829371F52047BB9FDA869D161C9B1E13BA6CA100B"
+      },
+      {
+        "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
+        "bytes": 163328,
+        "sha256": "B99FFF9CC17002C166498FD727D903FD7D82E849F6F87296C3BC9E9259D38ED4"
+      },
+      {
+        "path": "SRC/neothd/src/cli/chat.rs",
+        "bytes": 1083805,
+        "sha256": "90D81031C0A4855A59011620D58FFB0424FC749E7C7C8014A7AB5F629FEDFCCB"
+      },
+      {
+        "path": "SRC/neothd/src/cli/memory.rs",
+        "bytes": 110964,
+        "sha256": "5DE168D3D5DAB9B92593CB8E29B813B9D0CDDCE3CD287A8CB10B4B28A9D2A062"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_pipeline.rs",
+        "bytes": 462462,
+        "sha256": "28CF39693041DC4ABC89E6F8D30753311E909A318485AD00DFD9045E6DCBA201"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve_tasks.rs",
+        "bytes": 526657,
+        "sha256": "A774382D062AE0EE25B37F205C7F07806E7DFAE7AA9CD5C9FEE5B4808D563DC3"
+      },
+      {
+        "path": "SRC/neothd/src/cli/serve.rs",
+        "bytes": 173353,
+        "sha256": "1936F613BC8C84384F15C14DBA8ED1B9D2BC22CDE70101BC8220C29522B5EA8D"
+      },
+      {
+        "path": "SRC/neothd/src/memory/consolidation_sweep.rs",
+        "bytes": 34459,
+        "sha256": "33CEEB93481A6ABCB0980420D275C63638E11B4C6C2311E92BF316333E7DC59D"
+      },
+      {
+        "path": "SRC/neothd/src/memory/counterparty_consent.rs",
+        "bytes": 36570,
+        "sha256": "4AB01CC056D439C98D64CA8DFE5DC6EFC62EA26AC91AEC8059C0B1BAB17A1438"
+      },
+      {
+        "path": "SRC/neothd/src/memory/embeddings.rs",
+        "bytes": 87142,
+        "sha256": "FECC40B0E1A077C3B9B549B7C7D9815455E358D94DBCD02BC6A3605E6E571423"
+      },
+      {
+        "path": "SRC/neothd/src/memory/indexer.rs",
+        "bytes": 53821,
+        "sha256": "F3E1CC7A7E3269A3DAB26BD95A4B6455F800FA7D05F9FA0BA0C1AD4D1976082F"
+      },
+      {
+        "path": "SRC/neothd/src/memory/migrations/mod.rs",
+        "bytes": 226777,
+        "sha256": "E02EAD680481601CA0C6125845EAC276E15E2281715DB8C21DFB1B35BA978537"
+      },
+      {
+        "path": "SRC/neothd/src/memory/mod.rs",
+        "bytes": 7066,
+        "sha256": "AD4B14860AD95F57F8341489AFD0200373B585FF8BFF92B988EE9C3F7650B322"
+      },
+      {
+        "path": "SRC/neothd/src/memory/store.rs",
+        "bytes": 198585,
+        "sha256": "A33DD813BEE01C2C1AB7DC489656185221F604181527022D2A001C790FDFDB3D"
+      },
+      {
+        "path": "SRC/neothd/src/providers/mod.rs",
+        "bytes": 216798,
+        "sha256": "383E4D3AF292AA562332578668042013B16731FA1E049CE6A9479143F60D795C"
+      },
+      {
+        "path": "SRC/neothd/src/wal/events.rs",
+        "bytes": 269351,
+        "sha256": "97D142E81665B840E1896D7CBB9A6AB0E127F61482457E4464F6ADFC0E467337"
+      }
+    ],
+    "report": "docs/gold-wave208-verification.md",
+    "review": "Independent integrated static PASS after typed reject-vs-DB error split, quarantine cleanup/order and HNSW fixes; actual migration regression added",
+    "localValidationRan": false,
+    "grantCeremonyImplemented": false,
+    "releaseReady": false
   }
 }

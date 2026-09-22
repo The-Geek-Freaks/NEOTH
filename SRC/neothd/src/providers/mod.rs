@@ -3596,9 +3596,38 @@ async fn from_config_with_optional_home(
 /// when no provider is available. The L-07 `allow_cloud_fallback:
 /// false` safe-default lives on the consumer side — this function
 /// just reports availability honestly.
-pub async fn embed_provider_from_config(
+/// An embedding provider whose concrete construction was locally hosted.
+///
+/// This capability is deliberately opaque: consumers that process episode text
+/// must receive it from [`local_embedding_provider_from_config`] rather than
+/// infer locality from a provider display name.  It prevents a future remote
+/// `EmbedProvider` implementation from being accidentally admitted to the
+/// W208 counterparty-vector path.
+pub struct LocalEmbeddingProvider(std::sync::Arc<dyn crate::providers::embed::EmbedProvider>);
+
+impl LocalEmbeddingProvider {
+    pub(crate) fn as_embed_provider(&self) -> &dyn crate::providers::embed::EmbedProvider {
+        self.0.as_ref()
+    }
+
+    fn into_embed_provider(self) -> std::sync::Arc<dyn crate::providers::embed::EmbedProvider> {
+        self.0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        provider: std::sync::Arc<dyn crate::providers::embed::EmbedProvider>,
+    ) -> Self {
+        Self(provider)
+    }
+}
+
+/// Build the W208-capable local embedding provider.  The locality proof comes
+/// from this exhaustive concrete-config match, before the adapter is erased to
+/// `dyn EmbedProvider`; `EmbedProvider::name()` is never used as proof.
+pub async fn local_embedding_provider_from_config(
     config: &FreedomConfig,
-) -> Option<std::sync::Arc<dyn crate::providers::embed::EmbedProvider>> {
+) -> Option<LocalEmbeddingProvider> {
     let provider_kind = config.inference.embedding_provider?;
     match provider_kind {
         crate::config::inference::InferenceProvider::LocalOuro => {
@@ -3618,9 +3647,9 @@ pub async fn embed_provider_from_config(
             )
             .await
             {
-                Ok(adapter) => Some(std::sync::Arc::new(
+                Ok(adapter) => Some(LocalEmbeddingProvider(std::sync::Arc::new(
                     adapter.with_quant_mode(config.inference.ouro_quant_mode),
-                )),
+                ))),
                 Err(e) => {
                     tracing::warn!(
                         error = %e,
@@ -3647,7 +3676,7 @@ pub async fn embed_provider_from_config(
             )
             .await
             {
-                Ok(adapter) => Some(std::sync::Arc::new(adapter)),
+                Ok(adapter) => Some(LocalEmbeddingProvider(std::sync::Arc::new(adapter))),
                 Err(e) => {
                     tracing::warn!(
                         error = %e,
@@ -3665,6 +3694,19 @@ pub async fn embed_provider_from_config(
             None
         }
     }
+}
+
+/// Day-14b Phase 2 — build an embedding provider for consumers that do not
+/// process W208 episode text.  The only currently constructed adapters are
+/// local, but this erased return type intentionally carries no locality
+/// authority; episode-vector admission must use
+/// [`local_embedding_provider_from_config`] instead.
+pub async fn embed_provider_from_config(
+    config: &FreedomConfig,
+) -> Option<std::sync::Arc<dyn crate::providers::embed::EmbedProvider>> {
+    local_embedding_provider_from_config(config)
+        .await
+        .map(LocalEmbeddingProvider::into_embed_provider)
 }
 
 fn require_provider_key(config: &FreedomConfig, name: &str) -> Result<SecretString> {

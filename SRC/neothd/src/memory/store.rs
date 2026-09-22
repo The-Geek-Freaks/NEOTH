@@ -129,7 +129,8 @@ impl std::ops::DerefMut for PrivateHistoryConnection {
 /// v39: account-qualified aliases and exact legacy operator claims.
 /// v40: exact 16-byte WAL session projections for episode/provider views.
 /// v41: secondary, threshold-selected Hippocampus event-id membership.
-pub const SCHEMA_VERSION: i64 = 41;
+/// v42: immutable raw-origin receipts and exact counterparty clustering state.
+pub const SCHEMA_VERSION: i64 = 42;
 
 /// Current P1-08 metadata schema, split so the v36→v37 migration can rebuild
 /// the altered strict tables before the final trigger set is installed.  The
@@ -1998,6 +1999,56 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_episode_importance  ON idx_episode (importance DESC);
         CREATE INDEX IF NOT EXISTS idx_episode_wal_session_ts
             ON idx_episode (wal_session_id, ts_ns DESC, event_id);
+
+        -- v42: W208 origin receipts are an additive, immutable projection.
+        -- Existing RAW_TEXT rows deliberately receive no backfill: bare and
+        -- legacy raw material is unknown, never implicitly local.
+        CREATE TABLE IF NOT EXISTS idx_episode_origin_v2 (
+            raw_event_id       INTEGER PRIMARY KEY,
+            origin_kind        TEXT NOT NULL
+                CHECK(origin_kind IN ('local_attested', 'channel_bound')),
+            origin_event_id    INTEGER NOT NULL UNIQUE,
+            raw_payload_hash   TEXT NOT NULL,
+            channel_id         TEXT,
+            account_id         TEXT,
+            scoped_sender_hash TEXT,
+            CHECK((origin_kind='local_attested'
+                   AND channel_id IS NULL AND account_id IS NULL AND scoped_sender_hash IS NULL)
+               OR (origin_kind='channel_bound'
+                   AND channel_id IS NOT NULL AND account_id IS NOT NULL
+                   AND scoped_sender_hash IS NOT NULL))
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_episode_origin_counterparty
+            ON idx_episode_origin_v2(channel_id, account_id, scoped_sender_hash, raw_event_id)
+            WHERE origin_kind='channel_bound';
+        -- A second incompatible receipt permanently quarantines this raw id.
+        -- Kept separate so the origin table retains only positive origins.
+        CREATE TABLE IF NOT EXISTS idx_episode_origin_conflict_v1 (
+            raw_event_id INTEGER PRIMARY KEY,
+            first_origin_event_id INTEGER NOT NULL,
+            conflicting_origin_event_id INTEGER NOT NULL,
+            raw_payload_hash TEXT NOT NULL,
+            detected_at_ns INTEGER NOT NULL
+        ) STRICT;
+
+        -- A grant may only be created by a future verified-proof ceremony.
+        -- W208 itself writes revocation state only; absence remains denied.
+        CREATE TABLE IF NOT EXISTS idx_counterparty_clustering_consent_v1 (
+            channel_id         TEXT NOT NULL,
+            account_id         TEXT NOT NULL,
+            scoped_sender_hash TEXT NOT NULL,
+            state              TEXT NOT NULL
+                CHECK(state IN ('verified_granted', 'revoked')),
+            proof_kind         TEXT NOT NULL,
+            proof_sha256       BLOB NOT NULL
+                CHECK(typeof(proof_sha256)='blob' AND length(proof_sha256)=32),
+            proof_verified_at_ns INTEGER NOT NULL,
+            revision           INTEGER NOT NULL CHECK(revision >= 1),
+            revoked_at_ns      INTEGER,
+            PRIMARY KEY(channel_id, account_id, scoped_sender_hash),
+            CHECK((state='verified_granted' AND revoked_at_ns IS NULL)
+               OR (state='revoked' AND revoked_at_ns IS NOT NULL))
+        ) STRICT;
 
         -- idx_provider — every PROVIDER_REQUEST + PROVIDER_RESPONSE pair.
         -- Joined by request_event_id so `recall --provider` can show

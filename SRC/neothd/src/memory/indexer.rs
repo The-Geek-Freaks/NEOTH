@@ -27,6 +27,7 @@ use crate::wal::error::HeaderParseError;
 use crate::wal::events::{
     EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS, EVENT_TYPE_INDEXER_TAMPER_SUSPECT,
     EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_PROVIDER_RESPONSE, EVENT_TYPE_RAW_TEXT,
+    EVENT_TYPE_EXTENDED, ExtendedSubtype,
 };
 use crate::wal::frame::decode_frame;
 use crate::wal::writer::WalWriterHandle;
@@ -175,9 +176,9 @@ pub async fn tail(
     interval: Duration,
     // GR-164: when `Some`, a tamper-suspect segment emits a 0x5E alert frame.
     writer: Option<WalWriterHandle>,
-    // MEMGRAPH-01: when `Some`, episodes indexed this pass are auto-embedded into
-    // the vector recall lane (incremental — no manual `--embed-backfill`).
-    embed_provider: Option<std::sync::Arc<dyn crate::providers::embed::EmbedProvider>>,
+    // W208: this opaque capability is constructed only from a concrete local
+    // backend. A generic provider name/object cannot authorize episode text.
+    embed_provider: Option<crate::providers::LocalEmbeddingProvider>,
     // GOLD-ADAPT-TRAIL-02: when `Some`, fires `()` on every pass that indexes
     // at least one new frame so in-process consumers (kanban_sse relay) can
     // push updates without polling. Silently discarded when no receiver exists.
@@ -205,20 +206,25 @@ pub async fn tail(
                     let pending = crate::memory::embeddings::pending_episode_texts(&conn, 64);
                     let mut vectors = Vec::with_capacity(pending.len());
                     for (event_id, text) in pending {
-                        if let Some((model, vec)) =
-                            crate::memory::embeddings::embed_one(&text, p.as_ref()).await
+                        if let Some((model, vec)) = crate::memory::embeddings::embed_one(
+                            &text,
+                            p.as_embed_provider(),
+                        )
+                        .await
                         {
                             vectors.push((event_id, model, vec));
                         }
                     }
-                    let embedded = vectors.len();
+                    let mut stored = 0;
                     for (event_id, model, vec) in vectors {
-                        crate::memory::embeddings::store_episode_vector(
-                            &conn, event_id, &model, &vec,
-                        );
+                        if crate::memory::embeddings::store_episode_vector(
+                            &conn, event_id, &model, &vec, p,
+                        ) {
+                            stored += 1;
+                        }
                     }
-                    if embedded > 0 {
-                        debug!(embedded, "indexer auto-embedded new episodes (MEMGRAPH-01)");
+                    if stored > 0 {
+                        debug!(stored, "indexer auto-embedded eligible episodes (W208)");
                     }
                 }
             }
@@ -492,6 +498,14 @@ fn index_frame(
                 )?;
             }
         }
+        EVENT_TYPE_EXTENDED if header.event_subtype == ExtendedSubtype::RawTextOrigin as u8 => {
+            // W208 receipt failure is intentionally non-fatal.  A stale,
+            // malformed, noisy, or conflicting link leaves its raw episode
+            // unknown; semantic rejection must never pin the cursor. A real
+            // SQLite mutation failure still propagates and rolls back the
+            // replay transaction plus cursor.
+            project_w208_origin_receipt(tx, dec)?;
+        }
         _ => {
             // Unknown / lifecycle event — skip silently (BOOT, etc.).
         }
@@ -500,14 +514,62 @@ fn index_frame(
     Ok(())
 }
 
+/// Project a W208 raw-origin receipt without letting untrusted receipt content
+/// stall WAL replay.  The parser binds JSON to the decoded frame header and
+/// `project_origin` validates the referenced indexed RAW row. Receipt/header
+/// rejection is a fail-closed unknown result; database mutation failures are
+/// returned so the surrounding replay transaction and cursor roll back.
+fn project_w208_origin_receipt(
+    tx: &rusqlite::Transaction,
+    dec: &crate::wal::frame::DecodedFrame<'_>,
+) -> Result<()> {
+    use crate::memory::counterparty_consent::{
+        OriginFrameWitness, OriginProjection, parse_origin_receipt, project_origin,
+    };
+
+    let event_id = dec.header.event_id.0;
+    let witness = match OriginFrameWitness::from_header(&dec.header) {
+        Ok(witness) => witness,
+        Err(error) => {
+            warn!(event_id, error = %error, "W208 origin header rejected; raw remains unknown");
+            return Ok(());
+        }
+    };
+    let receipt = match parse_origin_receipt(dec.payload, witness) {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            warn!(event_id, error = %error, "W208 origin receipt rejected; raw remains unknown");
+            return Ok(());
+        }
+    };
+    match project_origin(tx, &receipt) {
+        Ok(OriginProjection::Inserted | OriginProjection::AlreadyProjected) => Ok(()),
+        Ok(OriginProjection::Rejected) => {
+            warn!(event_id, "W208 origin cannot establish positive provenance; raw remains unknown");
+            Ok(())
+        }
+        Ok(OriginProjection::Conflicted) => {
+            warn!(event_id, "W208 conflicting origin quarantined; raw remains unknown");
+            Ok(())
+        }
+        Err(error) => {
+            // This branch is deliberately not a semantic receipt rejection:
+            // `project_origin` has already entered database mutation work.
+            // Returning it makes replay roll back its transaction and cursor
+            // rather than commit a partial quarantine as if it succeeded.
+            Err(error).context("W208 origin database projection failed")
+        }
+    }
+}
+
 // Required for `.optional()` on rusqlite query_row.
 use rusqlite::OptionalExtension;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wal::events::{EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_RAW_TEXT};
-    use crate::wal::frame::encode_frame;
+    use crate::wal::events::{EVENT_TYPE_EXTENDED, EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_RAW_TEXT, ExtendedSubtype};
+    use crate::wal::frame::{decode_frame, encode_frame};
     use crate::wal::header::{CRC_LEN, HEADER_BODY_LEN, PREAMBLE_LEN};
     use crate::wal::segment_header::SegmentHeader;
     use crate::wal::{EventFlags, EventHeaderV2, EventId, Hlc, Importance, NodeId, SessionId};
@@ -535,6 +597,184 @@ mod tests {
             node_id: NodeId([0u8; 16]),
             payload_hash: xxhash_rust::xxh3::xxh3_64(b""),
         }
+    }
+
+    fn index_one(conn: &mut Connection, mut header: EventHeaderV2, payload: &[u8]) {
+        header.payload_hash = xxhash_rust::xxh3::xxh3_64(payload);
+        let frame = encode_frame(&header, payload);
+        let decoded = decode_frame(&frame).unwrap();
+        let tx = conn.transaction().unwrap();
+        index_frame(&tx, &decoded, "w208-test").unwrap();
+        tx.commit().unwrap();
+    }
+
+    fn origin_header(event_id: u64, payload: &[u8], session: [u8; 16]) -> EventHeaderV2 {
+        let mut header = header_for(EVENT_TYPE_EXTENDED, payload.len() as u32, event_id, 100 + event_id);
+        header.event_subtype = ExtendedSubtype::RawTextOrigin as u8;
+        header.session_id = SessionId(session);
+        header
+    }
+
+    #[test]
+    fn w208_origin_projection_is_fail_closed_and_replay_tolerant() {
+        let dir = tempdir().unwrap();
+        let mut conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        let session = [0x55; 16];
+        let raw = b"ordinary raw text";
+        let mut raw_header = header_for(EVENT_TYPE_RAW_TEXT, raw.len() as u32, 1, 101);
+        raw_header.session_id = SessionId(session);
+        raw_header.payload_hash = xxhash_rust::xxh3::xxh3_64(raw);
+        let local = crate::memory::counterparty_consent::serialize_local_origin_receipt(&raw_header)
+            .unwrap();
+
+        // A receipt before its raw is deliberately not buffered or guessed.
+        index_one(&mut conn, origin_header(2, &local, session), &local);
+        index_one(&mut conn, raw_header, raw);
+        let early_origin_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_episode_origin_v2 WHERE raw_event_id=1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(early_origin_count, 0);
+
+        // A post-raw valid local receipt creates exactly one positive origin.
+        index_one(&mut conn, origin_header(3, &local, session), &local);
+        let valid_origin_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_episode_origin_v2 WHERE raw_event_id=1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(valid_origin_count, 1);
+
+        // Bad hash, wrong session, and a conflicting later receipt all advance
+        // normally while leaving no eligible origin behind after the conflict.
+        let bad_hash = r#"{"version":1,"raw_event_id":1,"raw_payload_hash":"0000000000000000","origin":"local_attested"}"#;
+        index_one(&mut conn, origin_header(4, bad_hash.as_bytes(), session), bad_hash.as_bytes());
+        index_one(&mut conn, origin_header(5, &local, [0x56; 16]), &local);
+        index_one(&mut conn, origin_header(6, &local, session), &local);
+        let post_conflict_origin_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_episode_origin_v2 WHERE raw_event_id=1", [], |row| row.get(0))
+            .unwrap();
+        let conflict_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_episode_origin_conflict_v1 WHERE raw_event_id=1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!((post_conflict_origin_count, conflict_count), (0, 1));
+
+        // Sanitizer-rejected raw text has no indexed target, so a syntactically
+        // valid receipt remains a non-fatal unknown rather than stopping replay.
+        let noise = b"<thinking></thinking>";
+        let noise_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(noise));
+        let noise_origin = format!(
+            r#"{{"version":1,"raw_event_id":7,"raw_payload_hash":"{noise_hash}","origin":"local_attested"}}"#
+        );
+        let mut noise_header = header_for(EVENT_TYPE_RAW_TEXT, noise.len() as u32, 7, 107);
+        noise_header.session_id = SessionId(session);
+        index_one(&mut conn, noise_header, noise);
+        index_one(&mut conn, origin_header(8, noise_origin.as_bytes(), session), noise_origin.as_bytes());
+        let noise_origin_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_episode_origin_v2 WHERE raw_event_id=7", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(noise_origin_count, 0);
+
+        // Channel scope comes only from the serialized typed ChannelRef plus
+        // the already-scoped sender digest; display channel fields are absent.
+        let channel_raw = b"authenticated channel raw";
+        let mut channel_raw_header = header_for(EVENT_TYPE_RAW_TEXT, channel_raw.len() as u32, 9, 109);
+        channel_raw_header.session_id = SessionId(session);
+        channel_raw_header.payload_hash = xxhash_rust::xxh3::xxh3_64(channel_raw);
+        let channel_ref = crate::channels::registry::ChannelRef::default_account(
+            crate::channels::registry::ChannelId::Telegram,
+        );
+        let channel_origin = crate::memory::counterparty_consent::serialize_channel_origin_receipt(
+            &channel_raw_header,
+            &channel_ref,
+            "0123456789abcdef",
+        )
+        .unwrap();
+        index_one(&mut conn, channel_raw_header, channel_raw);
+        index_one(&mut conn, origin_header(10, &channel_origin, session), &channel_origin);
+        let scope: (String, String, String) = conn
+            .query_row(
+                "SELECT channel_id,account_id,scoped_sender_hash FROM idx_episode_origin_v2 WHERE raw_event_id=9",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(scope, ("telegram".to_owned(), "default".to_owned(), "0123456789abcdef".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn w208_database_projection_failure_rolls_back_replay_and_cursor() {
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let db = dir.path().join("views.db");
+        let session = [0x91; 16];
+        let raw = b"rollback me";
+        let mut raw_header = header_for(EVENT_TYPE_RAW_TEXT, raw.len() as u32, 1, 101);
+        raw_header.session_id = SessionId(session);
+        raw_header.payload_hash = xxhash_rust::xxh3::xxh3_64(raw);
+        let origin = crate::memory::counterparty_consent::serialize_local_origin_receipt(&raw_header)
+            .unwrap();
+        let mut receipt_header = origin_header(2, &origin, session);
+        receipt_header.payload_hash = xxhash_rust::xxh3::xxh3_64(&origin);
+
+        let segment_header = SegmentHeader::new(0, 1, 0, 100, [0u8; 16]);
+        let mut bytes = segment_header.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&encode_frame(&raw_header, raw));
+        bytes.extend_from_slice(&encode_frame(&receipt_header, &origin));
+        write(&seg, bytes).await.unwrap();
+
+        let mut conn = crate::memory::store::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER w208_force_origin_failure BEFORE INSERT ON idx_episode_origin_v2 \
+             BEGIN SELECT RAISE(ABORT, 'forced W208 origin insert failure'); END;",
+        )
+        .unwrap();
+        assert!(replay_once(&mut conn, &seg).await.is_err());
+
+        let episode_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_episode", [], |row| row.get(0))
+            .unwrap();
+        let cursor: Option<i64> = conn
+            .query_row(
+                "SELECT next_offset FROM wal_cursor WHERE segment_path=?1",
+                [seg.to_string_lossy().to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap();
+        assert_eq!(episode_count, 0, "raw projection must roll back with failed receipt mutation");
+        assert_eq!(cursor, None, "failed replay must not advance its durable cursor");
+    }
+
+    #[tokio::test]
+    async fn w208_semantic_rejection_advances_replay_cursor() {
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let db = dir.path().join("views.db");
+        let session = [0x92; 16];
+        // This canonical receipt names a prior raw id, but the segment has no
+        // such RAW_TEXT frame. It is an expected default-deny outcome, not a
+        // database failure and therefore must not pin replay.
+        let payload = br#"{"version":1,"raw_event_id":1,"raw_payload_hash":"0000000000000001","origin":"local_attested"}"#;
+        let mut receipt_header = origin_header(2, payload, session);
+        receipt_header.payload_hash = xxhash_rust::xxh3::xxh3_64(payload);
+        let segment_header = SegmentHeader::new(0, 1, 0, 100, [0u8; 16]);
+        let mut bytes = segment_header.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&encode_frame(&receipt_header, payload));
+        write(&seg, bytes).await.unwrap();
+
+        let mut conn = crate::memory::store::open(&db).unwrap();
+        assert_eq!(replay_once(&mut conn, &seg).await.unwrap(), 1);
+        let cursor: Option<i64> = conn
+            .query_row(
+                "SELECT next_offset FROM wal_cursor WHERE segment_path=?1",
+                [seg.to_string_lossy().to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap();
+        assert!(cursor.is_some_and(|offset| offset > 0));
+        let origins: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_episode_origin_v2", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(origins, 0);
     }
 
     #[tokio::test]

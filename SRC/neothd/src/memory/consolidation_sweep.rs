@@ -111,11 +111,19 @@ struct EmbRow {
     event_id_str: String,
     /// L2-normalised f32 embedding. May be None if the blob is corrupt.
     vec: Vec<f32>,
-    /// Channel (domain) this episode belongs to, from `idx_episode.channel`.
-    /// `None` means the episode has no channel tag (e.g. RAW_TEXT events).
-    /// Two episodes with `None` channels are treated as the **same** domain
-    /// (conservative: unclassified episodes cluster together).
-    channel: Option<String>,
+    /// Provenance domain derived only from the positive W208 receipt.  Display
+    /// metadata in `idx_episode.channel` is deliberately not an authority.
+    domain: EmbeddingDomain,
+}
+
+#[derive(PartialEq, Eq)]
+enum EmbeddingDomain {
+    LocalAttested,
+    ChannelBound {
+        channel_id: String,
+        account_id: String,
+        scoped_sender_hash: String,
+    },
 }
 
 /// Dot product of two L2-normalised vectors (= cosine similarity).
@@ -153,23 +161,40 @@ pub fn run_sweep(
     now_ns: i64,
     cfg: &ConsolidationSweepConfig,
 ) -> Result<SweepReport> {
-    // ── 1. Load embeddings (with channel for same-domain guard) ────────────
+    // The eligibility snapshot, clustering and derived writes share one
+    // writer transaction. A concurrent revoke therefore either commits first
+    // and is absent here, or commits after this sweep and quarantines its
+    // vectors/derived facts.
+    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)
+        .context("begin immediate consolidation sweep transaction")?;
+
+    // ── 1. Load positively eligible embeddings and receipt domains ─────────
     let rows: Vec<EmbRow> = {
-        let mut stmt = conn.prepare(
-            "SELECT ie.source_ref, ie.embedding, ep.channel \
+        let mut stmt = tx.prepare(
+            "SELECT ie.source_ref, ie.embedding, o.origin_kind, \
+                    o.channel_id, o.account_id, o.scoped_sender_hash \
              FROM idx_embedding ie \
-             LEFT JOIN idx_episode ep \
+             JOIN idx_episode ep \
                  ON ep.event_id = CAST(ie.source_ref AS INTEGER) \
-             WHERE ie.source_kind = 'episode'",
+             JOIN idx_episode_origin_v2 o ON o.raw_event_id=ep.event_id \
+             LEFT JOIN idx_counterparty_clustering_consent_v1 c \
+               ON c.channel_id=o.channel_id AND c.account_id=o.account_id \
+              AND c.scoped_sender_hash=o.scoped_sender_hash \
+             WHERE ie.source_kind = 'episode' AND ( \
+                o.origin_kind='local_attested' OR \
+                (o.origin_kind='channel_bound' AND c.state='verified_granted'))",
         )?;
         stmt.query_map([], |r| {
             let source_ref: String = r.get(0)?;
             let blob: Vec<u8> = r.get(1)?;
-            let channel: Option<String> = r.get(2)?;
-            Ok((source_ref, blob, channel))
+            let origin_kind: String = r.get(2)?;
+            let channel_id: Option<String> = r.get(3)?;
+            let account_id: Option<String> = r.get(4)?;
+            let scoped_sender_hash: Option<String> = r.get(5)?;
+            Ok((source_ref, blob, origin_kind, channel_id, account_id, scoped_sender_hash))
         })?
         .filter_map(|res| {
-            res.ok().and_then(|(source_ref, blob, channel)| {
+            res.ok().and_then(|(source_ref, blob, origin_kind, channel_id, account_id, scoped_sender_hash)| {
                 let vec = blob_to_floats(&blob);
                 if vec.is_empty() {
                     warn!(
@@ -178,10 +203,19 @@ pub fn run_sweep(
                     );
                     return None;
                 }
+                let domain = match origin_kind.as_str() {
+                    "local_attested" => EmbeddingDomain::LocalAttested,
+                    "channel_bound" => EmbeddingDomain::ChannelBound {
+                        channel_id: channel_id?,
+                        account_id: account_id?,
+                        scoped_sender_hash: scoped_sender_hash?,
+                    },
+                    _ => return None,
+                };
                 Some(EmbRow {
                     event_id_str: source_ref,
                     vec,
-                    channel,
+                    domain,
                 })
             })
         })
@@ -209,13 +243,10 @@ pub fn run_sweep(
 
     for i in 0..n {
         for j in (i + 1)..n {
-            // Same-domain guard: only cluster episodes on the same channel.
-            // `None == None` → both unclassified → treated as same domain
-            // (conservative: preserves existing behaviour for RAW_TEXT events
-            // which have no channel tag).
-            // `Some(a) == Some(b)` only when the channel strings match.
-            // `Some(_) vs None` → different domains → skip.
-            if rows[i].channel != rows[j].channel {
+            // Same-domain guard uses the positive receipt's exact scope. It
+            // never derives authority from display channel strings or lets
+            // unknown legacy RAW rows cluster through `None == None`.
+            if rows[i].domain != rows[j].domain {
                 continue;
             }
             if dot(&rows[i].vec, &rows[j].vec) >= threshold {
@@ -252,12 +283,6 @@ pub fn run_sweep(
         .flatten()
         .map(|&i| rows[i].event_id_str.as_str())
         .collect();
-
-    // Reserve the writer slot before loading mutable episode metadata. Keeping
-    // the read and the relative boosts in the same IMMEDIATE transaction stops
-    // a concurrent reinforcement from being overwritten by a stale sweep.
-    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)
-        .context("begin immediate consolidation sweep transaction")?;
 
     // Load idx_episode metadata via a loop (rusqlite doesn't support IN with
     // dynamic bind params easily — use repeated queries with caching).
@@ -386,7 +411,13 @@ pub fn run_sweep(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory::counterparty_consent::{
+        OriginFrameWitness, parse_channel_origin_receipt, parse_local_origin_receipt, project_origin,
+        serialize_channel_origin_receipt, serialize_local_origin_receipt,
+    };
     use crate::memory::store;
+    use crate::wal::events::{EVENT_TYPE_EXTENDED, EVENT_TYPE_RAW_TEXT, ExtendedSubtype};
+    use crate::wal::types::{EventId, SessionId};
 
     fn default_cfg() -> ConsolidationSweepConfig {
         ConsolidationSweepConfig::default()
@@ -420,15 +451,85 @@ mod tests {
         ts_ns: i64,
         channel: Option<&str>,
     ) {
-        // event_type=1 (RAW_TEXT), text_hash derived from event_id for uniqueness.
-        let text_hash = format!("hash-{event_id}");
+        let raw_header = raw_header(event_id, text);
         conn.execute(
             "INSERT OR REPLACE INTO idx_episode \
-             (event_id, event_type, text, text_hash, importance, trust, ts_ns, pinned, channel) \
-             VALUES (?1, 1, ?2, ?3, ?4, 1, ?5, 0, ?6)",
-            params![event_id, text, text_hash, importance, ts_ns, channel],
+             (event_id, event_type, text, text_hash, wal_session_id, importance, trust, ts_ns, pinned, channel) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, 0, ?8)",
+            params![
+                event_id,
+                EVENT_TYPE_RAW_TEXT as i64,
+                text,
+                format!("{:016x}", raw_header.payload_hash),
+                raw_header.session_id.as_bytes().as_slice(),
+                importance,
+                ts_ns,
+                channel,
+            ],
         )
         .unwrap();
+    }
+
+    fn raw_header(event_id: i64, text: &str) -> crate::wal::header::EventHeaderV2 {
+        let mut header = crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, text.as_bytes())
+            .session(SessionId::ZERO)
+            .build();
+        header.event_id = EventId(event_id as u64);
+        header
+    }
+
+    fn receipt_header(event_id: i64, payload: &[u8]) -> crate::wal::header::EventHeaderV2 {
+        let mut header = crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_EXTENDED, payload)
+            .event_subtype(ExtendedSubtype::RawTextOrigin as u8)
+            .session(SessionId::ZERO)
+            .build();
+        header.event_id = EventId(event_id as u64);
+        header
+    }
+
+    fn attest_local(conn: &Connection, event_id: i64, text: &str) {
+        let raw = raw_header(event_id, text);
+        let payload = serialize_local_origin_receipt(&raw).unwrap();
+        let receipt = parse_local_origin_receipt(
+            &payload,
+            OriginFrameWitness::from_header(&receipt_header(event_id + 10_000, &payload)).unwrap(),
+        )
+        .unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        project_origin(&tx, &receipt).unwrap();
+        tx.commit().unwrap();
+    }
+
+    fn attest_channel_verified(
+        conn: &Connection,
+        event_id: i64,
+        text: &str,
+        channel_ref: &crate::channels::registry::ChannelRef,
+        sender_hash: &str,
+    ) {
+        let raw = raw_header(event_id, text);
+        let payload = serialize_channel_origin_receipt(&raw, channel_ref, sender_hash).unwrap();
+        let receipt = parse_channel_origin_receipt(
+            &payload,
+            OriginFrameWitness::from_header(&receipt_header(event_id + 20_000, &payload)).unwrap(),
+        )
+        .unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        project_origin(&tx, &receipt).unwrap();
+        let key = crate::memory::counterparty_consent::CounterpartyKey::from_authenticated(
+            channel_ref,
+            sender_hash,
+        )
+        .unwrap();
+        // Synthetic test custody only: production has no grant constructor.
+        tx.execute(
+            "INSERT INTO idx_counterparty_clustering_consent_v1 \
+             (channel_id,account_id,scoped_sender_hash,state,proof_kind,proof_sha256,proof_verified_at_ns,revision,revoked_at_ns) \
+             VALUES(?1,?2,?3,'verified_granted','test_verified_custody_v1',X'0000000000000000000000000000000000000000000000000000000000000000',1,1,NULL)",
+            params![key.channel_id(), key.account_id(), key.scoped_sender_hash()],
+        )
+        .unwrap();
+        tx.commit().unwrap();
     }
 
     #[test]
@@ -455,6 +556,22 @@ mod tests {
     }
 
     #[test]
+    fn legacy_unreceipted_episodes_are_denied_before_clustering() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+
+        // Deliberately no origin receipt: display fields and RAW type must not
+        // recover local authority for a legacy vector.
+        insert_episode(&conn, 1, "legacy a", 0.5, 1_000_000_000);
+        insert_episode(&conn, 2, "legacy b", 0.5, 2_000_000_000);
+        insert_embedding(&conn, 1, &[1.0f32, 0.0]);
+        insert_embedding(&conn, 2, &[1.0f32, 0.0]);
+
+        let report = run_sweep(&conn, 3_000_000_000_000, &default_cfg()).unwrap();
+        assert_eq!(report, SweepReport::default());
+    }
+
+    #[test]
     fn two_similar_episodes_cluster_and_boost() {
         let dir = tempfile::tempdir().unwrap();
         let conn = store::open(&dir.path().join("views.db")).unwrap();
@@ -462,6 +579,8 @@ mod tests {
         // Two identical unit vectors → cosine = 1.0 ≥ 0.75 threshold.
         insert_episode(&conn, 1, "rust is fast", 0.4, 1_000_000_000);
         insert_episode(&conn, 2, "rust is fast too", 0.4, 2_000_000_000);
+        attest_local(&conn, 1, "rust is fast");
+        attest_local(&conn, 2, "rust is fast too");
         insert_embedding(&conn, 1, &[1.0f32, 0.0, 0.0]);
         insert_embedding(&conn, 2, &[1.0f32, 0.0, 0.0]);
 
@@ -489,6 +608,8 @@ mod tests {
         // Start at the cap — boost must not push above it.
         insert_episode(&conn, 1, "capped", 0.85, 1_000_000_000);
         insert_episode(&conn, 2, "capped too", 0.85, 2_000_000_000);
+        attest_local(&conn, 1, "capped");
+        attest_local(&conn, 2, "capped too");
         insert_embedding(&conn, 1, &[0.0f32, 1.0, 0.0]);
         insert_embedding(&conn, 2, &[0.0f32, 1.0, 0.0]);
 
@@ -516,6 +637,8 @@ mod tests {
         // Orthogonal vectors → cosine = 0.0 < 0.75 threshold.
         insert_episode(&conn, 1, "apples", 0.5, 1_000_000_000);
         insert_episode(&conn, 2, "oranges", 0.5, 2_000_000_000);
+        attest_local(&conn, 1, "apples");
+        attest_local(&conn, 2, "oranges");
         insert_embedding(&conn, 1, &[1.0f32, 0.0]);
         insert_embedding(&conn, 2, &[0.0f32, 1.0]);
 
@@ -536,6 +659,8 @@ mod tests {
 
         insert_episode(&conn, 1, "neoth is powerful", 0.7, ts0);
         insert_episode(&conn, 2, "neoth is very powerful", 0.7, ts1);
+        attest_local(&conn, 1, "neoth is powerful");
+        attest_local(&conn, 2, "neoth is very powerful");
         insert_embedding(&conn, 1, &[1.0f32, 0.0, 0.0]);
         insert_embedding(&conn, 2, &[1.0f32, 0.0, 0.0]);
 
@@ -581,6 +706,8 @@ mod tests {
         let ts: i64 = 1_000_000_000;
         insert_episode(&conn, 1, "immature a", 0.7, ts);
         insert_episode(&conn, 2, "immature b", 0.7, ts);
+        attest_local(&conn, 1, "immature a");
+        attest_local(&conn, 2, "immature b");
         insert_embedding(&conn, 1, &[1.0f32, 0.0]);
         insert_embedding(&conn, 2, &[1.0f32, 0.0]);
 
@@ -615,6 +742,14 @@ mod tests {
             2_000_000_000,
             Some("discord"),
         );
+        let telegram = crate::channels::registry::ChannelRef::default_account(
+            crate::channels::registry::ChannelId::Telegram,
+        );
+        let discord = crate::channels::registry::ChannelRef::default_account(
+            crate::channels::registry::ChannelId::Discord,
+        );
+        attest_channel_verified(&conn, 1, "rust is fast", &telegram, "0123456789abcdef");
+        attest_channel_verified(&conn, 2, "rust is fast too", &discord, "0123456789abcdef");
         insert_embedding(&conn, 1, &[1.0f32, 0.0, 0.0]);
         insert_embedding(&conn, 2, &[1.0f32, 0.0, 0.0]);
 
@@ -623,6 +758,28 @@ mod tests {
             report.clusters_found, 0,
             "cross-channel episodes must not form a cluster even with cosine=1.0"
         );
+        assert_eq!(report.members_boosted, 0);
+    }
+
+    #[test]
+    fn channel_scope_isolates_account_and_sender_even_when_display_channel_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        insert_episode_with_channel(&conn, 1, "scope a", 0.5, 1_000_000_000, Some("telegram"));
+        insert_episode_with_channel(&conn, 2, "scope b", 0.5, 2_000_000_000, Some("telegram"));
+        let telegram = crate::channels::registry::ChannelId::Telegram;
+        let work = crate::channels::registry::ChannelRef::new(
+            telegram.clone(),
+            crate::channels::registry::ChannelAccountId::new("work").unwrap(),
+        );
+        let personal = crate::channels::registry::ChannelRef::default_account(telegram);
+        attest_channel_verified(&conn, 1, "scope a", &work, "0123456789abcdef");
+        attest_channel_verified(&conn, 2, "scope b", &personal, "fedcba9876543210");
+        insert_embedding(&conn, 1, &[1.0f32, 0.0]);
+        insert_embedding(&conn, 2, &[1.0f32, 0.0]);
+
+        let report = run_sweep(&conn, 3_000_000_000_000, &default_cfg()).unwrap();
+        assert_eq!(report.clusters_found, 0);
         assert_eq!(report.members_boosted, 0);
     }
 
@@ -648,6 +805,11 @@ mod tests {
             2_000_000_000,
             Some("telegram"),
         );
+        let telegram = crate::channels::registry::ChannelRef::default_account(
+            crate::channels::registry::ChannelId::Telegram,
+        );
+        attest_channel_verified(&conn, 1, "neoth rocks", &telegram, "0123456789abcdef");
+        attest_channel_verified(&conn, 2, "neoth rocks indeed", &telegram, "0123456789abcdef");
         insert_embedding(&conn, 1, &[1.0f32, 0.0, 0.0]);
         insert_embedding(&conn, 2, &[1.0f32, 0.0, 0.0]);
 
@@ -659,8 +821,8 @@ mod tests {
         assert_eq!(report.members_boosted, 2);
     }
 
-    /// Two identical vectors with NULL channel (unclassified / RAW_TEXT)
-    /// must cluster together — None==None same-domain conservative rule.
+    /// Two local-attested vectors with NULL display channel still cluster;
+    /// authority comes from their receipts, never `None == None`.
     #[test]
     fn null_channel_episodes_cluster_as_same_domain() {
         let dir = tempfile::tempdir().unwrap();
@@ -669,13 +831,15 @@ mod tests {
         // No channel — both None → treated as same domain.
         insert_episode(&conn, 1, "anon a", 0.4, 1_000_000_000);
         insert_episode(&conn, 2, "anon b", 0.4, 2_000_000_000);
+        attest_local(&conn, 1, "anon a");
+        attest_local(&conn, 2, "anon b");
         insert_embedding(&conn, 1, &[0.0f32, 1.0, 0.0]);
         insert_embedding(&conn, 2, &[0.0f32, 1.0, 0.0]);
 
         let report = run_sweep(&conn, 3_000_000_000_000, &default_cfg()).unwrap();
         assert_eq!(
             report.clusters_found, 1,
-            "NULL-channel episodes must cluster (None==None same-domain)"
+            "local-attested episodes may cluster despite absent display channels"
         );
         assert_eq!(report.members_boosted, 2);
     }
@@ -689,6 +853,11 @@ mod tests {
 
         insert_episode_with_channel(&conn, 1, "tagged", 0.5, 1_000_000_000, Some("telegram"));
         insert_episode(&conn, 2, "untagged", 0.5, 2_000_000_000); // channel=None
+        let telegram = crate::channels::registry::ChannelRef::default_account(
+            crate::channels::registry::ChannelId::Telegram,
+        );
+        attest_channel_verified(&conn, 1, "tagged", &telegram, "0123456789abcdef");
+        attest_local(&conn, 2, "untagged");
         insert_embedding(&conn, 1, &[1.0f32, 0.0, 0.0]);
         insert_embedding(&conn, 2, &[1.0f32, 0.0, 0.0]);
 

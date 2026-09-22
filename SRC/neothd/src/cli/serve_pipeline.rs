@@ -27,7 +27,7 @@ use crate::memory::store;
 use crate::providers::{Provider, Request};
 use crate::wal::events::{
     EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS, EVENT_TYPE_MODE_CHECKPOINT,
-    EVENT_TYPE_RAW_TEXT,
+    EVENT_TYPE_EXTENDED, EVENT_TYPE_RAW_TEXT, ExtendedSubtype,
 };
 use crate::wal::writer::WalWriterHandle;
 
@@ -1003,10 +1003,27 @@ pub(crate) async fn emit_inbound_ingress_in(
     if !report.text.is_empty() {
         let raw_header =
             crate::wal::make_header_in(EVENT_TYPE_RAW_TEXT, report.text.as_bytes(), wal_session);
+        let raw_event_id = raw_header.event_id.0 as i64;
+        let raw_session_id = raw_header.session_id;
+        let origin_payload = crate::memory::counterparty_consent::serialize_channel_origin_receipt(
+            &raw_header,
+            &binding.channel_ref,
+            sender_hash,
+        )
+        .context("serialize authenticated channel RAW_TEXT origin receipt")?;
         writer
             .append(raw_header, report.text.as_bytes().to_vec())
             .await
             .context("write RAW_TEXT WAL frame for inbound")?;
+        let origin_header = crate::wal::HeaderBuilder::new(EVENT_TYPE_EXTENDED, &origin_payload)
+            .event_subtype(ExtendedSubtype::RawTextOrigin as u8)
+            .session(raw_session_id)
+            .build();
+        if let Err(error) = writer.append(origin_header, origin_payload).await {
+            // The inbound raw remains durable, but no origin is invented when
+            // its authenticated metadata companion fails to append.
+            warn!(error = %error, raw_event_id, "W208 inbound RAW_TEXT origin receipt append failed; raw remains unknown");
+        }
     }
 
     // P-08 briefing-gate marker. Channel ingress is the operator engaging via a

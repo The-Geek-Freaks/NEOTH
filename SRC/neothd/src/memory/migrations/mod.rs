@@ -309,7 +309,57 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "GOLD-LF-P2-02: add secondary Hippocampus event-id membership",
         run: migration_v40_to_v41,
     },
+    Migration {
+        from: 41,
+        to: 42,
+        description: "W208: immutable raw-origin receipts and default-deny counterparty clustering consent",
+        run: migration_v41_to_v42,
+    },
 ];
+
+/// W208 is additive only.  In particular it intentionally does not backfill
+/// historic episodes: no legacy RAW_TEXT record proves a local or channel
+/// origin, so it must remain ineligible for embedding and consolidation.
+pub(crate) fn migration_v41_to_v42(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS idx_episode_origin_v2 (\
+             raw_event_id INTEGER PRIMARY KEY,\
+             origin_kind TEXT NOT NULL CHECK(origin_kind IN ('local_attested','channel_bound')),\
+             origin_event_id INTEGER NOT NULL UNIQUE,\
+             raw_payload_hash TEXT NOT NULL,\
+             channel_id TEXT,\
+             account_id TEXT,\
+             scoped_sender_hash TEXT,\
+             CHECK((origin_kind='local_attested' AND channel_id IS NULL AND account_id IS NULL AND scoped_sender_hash IS NULL)\
+                OR (origin_kind='channel_bound' AND channel_id IS NOT NULL AND account_id IS NOT NULL AND scoped_sender_hash IS NOT NULL))\
+         ) STRICT;\
+         CREATE INDEX IF NOT EXISTS idx_episode_origin_counterparty\
+             ON idx_episode_origin_v2(channel_id, account_id, scoped_sender_hash, raw_event_id)\
+             WHERE origin_kind='channel_bound';\
+         CREATE TABLE IF NOT EXISTS idx_episode_origin_conflict_v1 (\
+             raw_event_id INTEGER PRIMARY KEY,\
+             first_origin_event_id INTEGER NOT NULL,\
+             conflicting_origin_event_id INTEGER NOT NULL,\
+             raw_payload_hash TEXT NOT NULL,\
+             detected_at_ns INTEGER NOT NULL\
+         ) STRICT;\
+         CREATE TABLE IF NOT EXISTS idx_counterparty_clustering_consent_v1 (\
+             channel_id TEXT NOT NULL,\
+             account_id TEXT NOT NULL,\
+             scoped_sender_hash TEXT NOT NULL,\
+             state TEXT NOT NULL CHECK(state IN ('verified_granted','revoked')),\
+             proof_kind TEXT NOT NULL,\
+             proof_sha256 BLOB NOT NULL CHECK(typeof(proof_sha256)='blob' AND length(proof_sha256)=32),\
+             proof_verified_at_ns INTEGER NOT NULL,\
+             revision INTEGER NOT NULL CHECK(revision>=1),\
+             revoked_at_ns INTEGER,\
+             PRIMARY KEY(channel_id,account_id,scoped_sender_hash),\
+             CHECK((state='verified_granted' AND revoked_at_ns IS NULL) OR (state='revoked' AND revoked_at_ns IS NOT NULL))\
+         ) STRICT;",
+    )
+    .context("v41→v42: create default-deny counterparty origin and consent state")?;
+    Ok(())
+}
 
 /// Add an additive secondary membership view. The table deliberately holds no
 /// text or importance copy, so upgrading cannot rewrite WAL-indexed scores.

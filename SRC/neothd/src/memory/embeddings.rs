@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use hnsw_rs::anndists::dist::distances::DistCosine;
 use hnsw_rs::hnsw::Hnsw;
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 
 /// Insert (or replace) one embedding row. `embedding` MUST already be
@@ -193,8 +193,9 @@ pub fn find_similar(
             .then(b.created_at.cmp(&a.created_at))
             .then_with(|| a.id.cmp(&b.id))
     });
-    sorted.truncate(top_k);
-    Ok(sorted)
+    let mut eligible = filter_revoked_episode_hits(conn, sorted);
+    eligible.truncate(top_k);
+    Ok(eligible)
 }
 
 /// GOLD-WIRE-07 — the canonical on-disk path for the HNSW snapshot,
@@ -239,10 +240,15 @@ pub fn find_similar_dispatch(
             match EmbeddingIndex::load(path) {
                 Ok(Some(idx)) if !idx.is_empty() => {
                     let hits = idx.find_similar_hnsw(query, top_k);
-                    if !hits.is_empty() {
+                    let hits = filter_revoked_episode_hits(conn, hits);
+                    if hits.len() == top_k {
                         return Ok(hits);
                     }
-                    tracing::debug!("GOLD-WIRE-07: HNSW returned 0 hits; brute-force fallback");
+                    tracing::debug!(
+                        returned = hits.len(),
+                        requested = top_k,
+                        "GOLD-WIRE-07: HNSW hit(s) denied by current eligibility; brute-force fallback"
+                    );
                 }
                 Ok(None) => {
                     tracing::warn!(
@@ -796,6 +802,17 @@ impl EmbeddingIndex {
         let mut skipped = 0usize;
 
         for (id, source_kind, source_ref, model, blob, dim_col, created_at) in rows {
+            if source_kind == "episode" {
+                let Ok(event_id) = source_ref.parse::<i64>() else {
+                    tracing::warn!(id, source_ref, "W208 deny malformed episode vector from HNSW snapshot");
+                    skipped += 1;
+                    continue;
+                };
+                if !episode_vector_eligible(conn, event_id) {
+                    skipped += 1;
+                    continue;
+                }
+            }
             let dim = dim_col as usize;
             // Infer dimension from first row; skip mismatches.
             match inferred_dim {
@@ -912,48 +929,13 @@ pub async fn embed_episode_text(
     conn: Connection,
     event_id: i64,
     text: &str,
-    embed_provider: &dyn crate::providers::embed::EmbedProvider,
+    embed_provider: &crate::providers::LocalEmbeddingProvider,
 ) -> Connection {
-    use crate::providers::embed::{EmbedRequest, l2_normalize};
-
-    if text.is_empty() {
+    if text.is_empty() || !episode_vector_eligible(&conn, event_id) {
         return conn;
     }
-
-    let req = EmbedRequest::new(text);
-    let resp = match embed_provider.embed(req).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(
-                event_id,
-                error = %e,
-                "embed_episode_text: provider failed; skipping vector lane"
-            );
-            return conn;
-        }
-    };
-
-    let mut vec = resp.vector;
-    if vec.is_empty() {
-        tracing::warn!(
-            event_id,
-            "embed_episode_text: provider returned empty vector"
-        );
-        return conn;
-    }
-
-    // Defensive normalise — the trait contract requires unit-length output,
-    // but a buggy impl could slip through in production. Normalising here
-    // prevents the debug_assert! in `upsert` from aborting in debug builds.
-    l2_normalize(&mut vec);
-
-    let source_ref = event_id.to_string();
-    if let Err(e) = upsert(&conn, "episode", &source_ref, &resp.model, &vec) {
-        tracing::warn!(
-            event_id,
-            error = %e,
-            "embed_episode_text: upsert into idx_embedding failed"
-        );
+    if let Some((model, vec)) = embed_one(text, embed_provider.as_embed_provider()).await {
+        store_episode_vector(&conn, event_id, &model, &vec, embed_provider);
     }
     conn
 }
@@ -968,14 +950,15 @@ pub async fn embed_episode_text(
 /// as [`embed_episode_text`].
 pub async fn embed_pending_episodes(
     conn: Connection,
-    embed_provider: &dyn crate::providers::embed::EmbedProvider,
+    embed_provider: &crate::providers::LocalEmbeddingProvider,
     cap: usize,
 ) -> (Connection, usize) {
     let pending = pending_episode_texts(&conn, cap);
     let mut processed = 0;
     for (event_id, text) in pending {
-        if let Some((model, vec)) = embed_one(&text, embed_provider).await {
-            store_episode_vector(&conn, event_id, &model, &vec);
+        if let Some((model, vec)) = embed_one(&text, embed_provider.as_embed_provider()).await
+            && store_episode_vector(&conn, event_id, &model, &vec, embed_provider)
+        {
             processed += 1;
         }
     }
@@ -988,33 +971,11 @@ pub async fn embed_pending_episodes(
 /// embeds WITHOUT holding a `&Connection` across the await (which would make the
 /// future non-`Send`, since `rusqlite::Connection` is `Send` but not `Sync`).
 pub(crate) fn pending_episode_texts(conn: &Connection, cap: usize) -> Vec<(i64, String)> {
-    if cap == 0 {
-        return Vec::new();
-    }
-    let mut stmt = match conn.prepare(
-        "SELECT e.event_id, e.text FROM idx_episode e \
-         WHERE e.text IS NOT NULL AND e.text <> '' \
-           AND NOT EXISTS ( \
-               SELECT 1 FROM idx_embedding x \
-               WHERE x.source_kind = 'episode' \
-                 AND x.source_ref = CAST(e.event_id AS TEXT)) \
-         ORDER BY e.event_id DESC LIMIT ?1",
-    ) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!(error = %e, "pending_episode_texts: prepare failed");
-            return Vec::new();
-        }
-    };
-    match stmt.query_map(rusqlite::params![cap as i64], |r| {
-        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
-    }) {
-        Ok(it) => it.filter_map(|r| r.ok()).collect(),
-        Err(e) => {
-            tracing::warn!(error = %e, "pending_episode_texts: query failed");
+    crate::memory::counterparty_consent::claim_local_embedding_candidates(conn, cap)
+        .unwrap_or_else(|error| {
+            tracing::warn!(error = %error, "pending_episode_texts: W208 eligibility query failed");
             Vec::new()
-        }
-    }
+        })
 }
 
 /// Embed one text → `(model, unit-normalised vector)`. Async, touches NO DB
@@ -1047,10 +1008,68 @@ pub(crate) async fn embed_one(
 /// Upsert one episode's vector into `idx_embedding` (sync). Pairs with
 /// [`embed_one`] so the embed (`.await`) and the DB write stay on separate sides
 /// of the connection borrow.
-pub(crate) fn store_episode_vector(conn: &Connection, event_id: i64, model: &str, vector: &[f32]) {
-    if let Err(e) = upsert(conn, "episode", &event_id.to_string(), model, vector) {
-        tracing::warn!(event_id, error = %e, "store_episode_vector: upsert failed");
+pub(crate) fn store_episode_vector(
+    conn: &Connection,
+    event_id: i64,
+    model: &str,
+    vector: &[f32],
+    _local_backend: &crate::providers::LocalEmbeddingProvider,
+) -> bool {
+    let result = (|| -> Result<bool> {
+        let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)
+            .context("begin immediate W208 episode-vector transaction")?;
+        let stored = crate::memory::counterparty_consent::store_local_episode_vector_if_eligible(
+            &tx, event_id, model, vector,
+        )?;
+        tx.commit()
+            .context("commit W208 episode-vector transaction")?;
+        Ok(stored)
+    })();
+    match result {
+        Ok(stored) => stored,
+        Err(error) => {
+            tracing::warn!(event_id, error = %error, "store_episode_vector: W208 store failed");
+            false
+        }
     }
+}
+
+/// W208 recall fence for durable SQLite rows and stale HNSW snapshots.  Only
+/// episode vectors are provenance-gated; all other embedding kinds retain their
+/// historical recall behaviour.  A malformed episode reference or failed
+/// eligibility read is denied rather than returned.
+fn filter_revoked_episode_hits(conn: &Connection, hits: Vec<SimilarHit>) -> Vec<SimilarHit> {
+    hits.into_iter()
+        .filter(|hit| {
+            if hit.source_kind != "episode" {
+                return true;
+            }
+            let Ok(event_id) = hit.source_ref.parse::<i64>() else {
+                tracing::warn!(source_ref = %hit.source_ref, "W208 deny malformed episode vector reference");
+                return false;
+            };
+            episode_vector_eligible(conn, event_id)
+        })
+        .collect()
+}
+
+/// Positive provenance/consent predicate for recall and pre-dispatch gating.
+/// The transaction-bound store repeats the same decision through the core API
+/// after provider I/O, closing the revoke race.
+fn episode_vector_eligible(conn: &Connection, event_id: i64) -> bool {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM idx_episode_origin_v2 o WHERE o.raw_event_id=?1 AND o.origin_kind='local_attested') \
+         OR EXISTS(SELECT 1 FROM idx_episode_origin_v2 o \
+                   JOIN idx_counterparty_clustering_consent_v1 c \
+                     ON c.channel_id=o.channel_id AND c.account_id=o.account_id AND c.scoped_sender_hash=o.scoped_sender_hash \
+                   WHERE o.raw_event_id=?1 AND o.origin_kind='channel_bound' AND c.state='verified_granted')",
+        [event_id],
+        |row| row.get::<_, bool>(0),
+    )
+    .unwrap_or_else(|error| {
+        tracing::warn!(event_id, error = %error, "W208 eligibility read failed; deny episode vector");
+        false
+    })
 }
 
 fn floats_to_blob(v: &[f32]) -> Vec<u8> {
@@ -1770,6 +1789,7 @@ mod tests {
     /// without a real inference backend.
     struct FixedEmbed {
         vector: Vec<f32>,
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     }
 
     impl FixedEmbed {
@@ -1777,8 +1797,135 @@ mod tests {
             let n = (x * x + y * y).sqrt();
             Self {
                 vector: vec![x / n, y / n],
+                calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             }
         }
+
+        fn call_counter(&self) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+            std::sync::Arc::clone(&self.calls)
+        }
+    }
+
+    fn local_test_provider(
+        provider: impl crate::providers::embed::EmbedProvider + 'static,
+    ) -> crate::providers::LocalEmbeddingProvider {
+        crate::providers::LocalEmbeddingProvider::for_test(std::sync::Arc::new(provider))
+    }
+
+    /// Test-only receipt fixture through the production serializer, parser and
+    /// projector. It never inserts a positive origin table row directly.
+    fn attest_local(conn: &Connection, event_id: i64) {
+        use crate::memory::counterparty_consent::{
+            OriginFrameWitness, parse_local_origin_receipt, project_origin,
+            serialize_local_origin_receipt,
+        };
+        use crate::wal::events::{EVENT_TYPE_EXTENDED, EVENT_TYPE_RAW_TEXT, ExtendedSubtype};
+        use crate::wal::types::{EventId, SessionId};
+
+        let text = conn
+            .query_row(
+                "SELECT text FROM idx_episode WHERE event_id=?1",
+                [event_id],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_or_else(|_| {
+                conn.execute(
+                    "INSERT INTO idx_episode(event_id,event_type,ts_ns,text,text_hash,wal_session_id) \
+                     VALUES(?1,?2,1,'fixture raw','',X'00000000000000000000000000000000')",
+                    rusqlite::params![event_id, EVENT_TYPE_RAW_TEXT as i64],
+                )
+                .unwrap();
+                "fixture raw".to_owned()
+            });
+        let mut raw_header = crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, text.as_bytes())
+            .session(SessionId::ZERO)
+            .build();
+        raw_header.event_id = EventId(event_id as u64);
+        conn.execute(
+            "UPDATE idx_episode SET event_type=?1,text_hash=?2,wal_session_id=?3 WHERE event_id=?4",
+            rusqlite::params![
+                EVENT_TYPE_RAW_TEXT as i64,
+                format!("{:016x}", raw_header.payload_hash),
+                raw_header.session_id.as_bytes().as_slice(),
+                event_id,
+            ],
+        )
+        .unwrap();
+        let payload = serialize_local_origin_receipt(&raw_header).unwrap();
+        let mut receipt_header = crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
+            .event_subtype(ExtendedSubtype::RawTextOrigin as u8)
+            .session(SessionId::ZERO)
+            .build();
+        receipt_header.event_id = EventId((event_id + 10_000) as u64);
+        let receipt = parse_local_origin_receipt(
+            &payload,
+            OriginFrameWitness::from_header(&receipt_header).unwrap(),
+        )
+        .unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        project_origin(&tx, &receipt).unwrap();
+        tx.commit().unwrap();
+    }
+
+    /// A channel receipt still requires the absent-in-production verified proof
+    /// transition. This fixture writes an explicitly synthetic custody record
+    /// only after the production serializer/parser/projector accepts the
+    /// channel receipt, so revoke tests never fabricate a local origin.
+    fn insert_verified_channel_episode(
+        conn: &Connection,
+        event_id: i64,
+        text: &str,
+        sender_hash: &str,
+    ) -> crate::memory::counterparty_consent::CounterpartyKey {
+        use crate::memory::counterparty_consent::{
+            CounterpartyKey, OriginFrameWitness, parse_channel_origin_receipt, project_origin,
+            serialize_channel_origin_receipt,
+        };
+        use crate::wal::events::{EVENT_TYPE_EXTENDED, EVENT_TYPE_RAW_TEXT, ExtendedSubtype};
+        use crate::wal::types::{EventId, SessionId};
+
+        let channel_ref = crate::channels::registry::ChannelRef::default_account(
+            crate::channels::registry::ChannelId::Telegram,
+        );
+        let key = CounterpartyKey::from_authenticated(&channel_ref, sender_hash).unwrap();
+        let mut raw_header = crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, text.as_bytes())
+            .session(SessionId::ZERO)
+            .build();
+        raw_header.event_id = EventId(event_id as u64);
+        conn.execute(
+            "INSERT INTO idx_episode(event_id,event_type,ts_ns,text,text_hash,wal_session_id) \
+             VALUES(?1,?2,1,?3,?4,?5)",
+            rusqlite::params![
+                event_id,
+                EVENT_TYPE_RAW_TEXT as i64,
+                text,
+                format!("{:016x}", raw_header.payload_hash),
+                raw_header.session_id.as_bytes().as_slice(),
+            ],
+        )
+        .unwrap();
+        let payload = serialize_channel_origin_receipt(&raw_header, &channel_ref, sender_hash).unwrap();
+        let mut receipt_header = crate::wal::builder::HeaderBuilder::new(EVENT_TYPE_EXTENDED, &payload)
+            .event_subtype(ExtendedSubtype::RawTextOrigin as u8)
+            .session(SessionId::ZERO)
+            .build();
+        receipt_header.event_id = EventId((event_id + 20_000) as u64);
+        let receipt = parse_channel_origin_receipt(
+            &payload,
+            OriginFrameWitness::from_header(&receipt_header).unwrap(),
+        )
+        .unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        project_origin(&tx, &receipt).unwrap();
+        tx.execute(
+            "INSERT INTO idx_counterparty_clustering_consent_v1 \
+             (channel_id,account_id,scoped_sender_hash,state,proof_kind,proof_sha256,proof_verified_at_ns,revision,revoked_at_ns) \
+             VALUES(?1,?2,?3,'verified_granted','test_verified_custody_v1',X'0000000000000000000000000000000000000000000000000000000000000000',1,1,NULL)",
+            rusqlite::params![key.channel_id(), key.account_id(), key.scoped_sender_hash()],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        key
     }
 
     #[async_trait::async_trait]
@@ -1794,6 +1941,7 @@ mod tests {
             _req: crate::providers::embed::EmbedRequest,
         ) -> anyhow::Result<crate::providers::embed::EmbedResponse> {
             use std::time::Duration;
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(crate::providers::embed::EmbedResponse {
                 vector: self.vector.clone(),
                 model: "fixed-test".to_string(),
@@ -1828,7 +1976,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let conn = crate::memory::store::open(&dir.path().join("v.db")).unwrap();
 
-        let provider = FixedEmbed::new_unit_2d(1.0, 0.0);
+        attest_local(&conn, 42);
+        let provider = local_test_provider(FixedEmbed::new_unit_2d(1.0, 0.0));
         let conn = embed_episode_text(conn, 42, "hello world", &provider).await;
 
         let row: Option<(String, String)> = conn
@@ -1859,8 +2008,9 @@ mod tests {
                 rusqlite::params![id, text],
             )
             .unwrap();
+            attest_local(&conn, id);
         }
-        let provider = FixedEmbed::new_unit_2d(1.0, 0.0);
+        let provider = local_test_provider(FixedEmbed::new_unit_2d(1.0, 0.0));
         // Pre-embed episode 1, leaving episode 2 pending.
         let conn = embed_episode_text(conn, 1, "first episode", &provider).await;
 
@@ -1881,6 +2031,65 @@ mod tests {
         assert_eq!(n, 0);
     }
 
+    #[tokio::test]
+    async fn legacy_episode_without_origin_receipt_is_never_dispatched_for_embedding() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("v.db")).unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode(event_id,event_type,ts_ns,text,text_hash,wal_session_id) \
+             VALUES(88,1,1,'legacy raw','0000000000000001',X'00000000000000000000000000000000')",
+            [],
+        )
+        .unwrap();
+        let implementation = FixedEmbed::new_unit_2d(1.0, 0.0);
+        let calls = implementation.call_counter();
+        let provider = local_test_provider(implementation);
+
+        let (conn, processed) = embed_pending_episodes(conn, &provider, 10).await;
+        assert_eq!(processed, 0, "bare historical RAW has no positive origin receipt");
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a bare historical RAW must be rejected before provider dispatch"
+        );
+        let vectors: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_embedding WHERE source_kind='episode'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(vectors, 0);
+    }
+
+    #[test]
+    fn revoke_fences_late_store_and_stale_hnsw_episode_recall() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("v.db");
+        let snapshot_path = dir.path().join("embeddings.hnsw");
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        let key = insert_verified_channel_episode(&conn, 91, "channel text", "0123456789abcdef");
+        upsert(&conn, "episode", "91", "fixture-local", &[1.0, 0.0]).unwrap();
+        attest_local(&conn, 92);
+        upsert(&conn, "episode", "92", "fixture-local", &[0.8, 0.6]).unwrap();
+        attest_local(&conn, 93);
+        upsert(&conn, "episode", "93", "fixture-local", &[0.6, 0.8]).unwrap();
+        rebuild_index(&conn, &snapshot_path).unwrap();
+
+        let tx = conn.unchecked_transaction().unwrap();
+        crate::memory::counterparty_consent::revoke_and_quarantine(&tx, &key, 9).unwrap();
+        tx.commit().unwrap();
+
+        let hits = find_similar_dispatch(&conn, &[1.0, 0.0], None, 2, Some(&snapshot_path)).unwrap();
+        assert_eq!(
+            hits.iter().map(|hit| hit.source_ref.as_str()).collect::<Vec<_>>(),
+            vec!["92", "93"],
+            "a filtered stale HNSW top-2 must fall back and retain deeper eligible SQLite hits"
+        );
+
+        let provider = local_test_provider(FixedEmbed::new_unit_2d(1.0, 0.0));
+        assert!(
+            !store_episode_vector(&conn, 91, "fixture-local", &[1.0, 0.0], &provider),
+            "the writer transaction must reject a result that arrives after revoke"
+        );
+    }
+
     /// With a None/skip provider equivalent: calling embed_episode_text on empty
     /// text must not insert any row (early return guard).
     #[tokio::test]
@@ -1888,7 +2097,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let conn = crate::memory::store::open(&dir.path().join("v.db")).unwrap();
 
-        let provider = FixedEmbed::new_unit_2d(1.0, 0.0);
+        let provider = local_test_provider(FixedEmbed::new_unit_2d(1.0, 0.0));
         let conn = embed_episode_text(conn, 99, "", &provider).await;
 
         let n: i64 = conn
@@ -1903,7 +2112,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let conn = crate::memory::store::open(&dir.path().join("v.db")).unwrap();
 
-        let provider = FailEmbed;
+        attest_local(&conn, 7);
+        let provider = local_test_provider(FailEmbed);
         // Must not panic or propagate an error.
         let conn = embed_episode_text(conn, 7, "some text", &provider).await;
 
@@ -1919,7 +2129,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let conn = crate::memory::store::open(&dir.path().join("v.db")).unwrap();
 
-        let provider = FixedEmbed::new_unit_2d(1.0, 0.0);
+        attest_local(&conn, 5);
+        let provider = local_test_provider(FixedEmbed::new_unit_2d(1.0, 0.0));
         let conn = embed_episode_text(conn, 5, "first call", &provider).await;
         let conn = embed_episode_text(conn, 5, "second call", &provider).await;
 
