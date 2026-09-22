@@ -54,7 +54,7 @@ Windows/macOS video behavior or a paid provider call.
 
 ## Unreleased Windows preview
 
-W182 adds a 15-minute default-feature `cargo check -p neoth --tests --locked`
+W182 adds a 15-minute default-feature `cargo check -p neoth --tests --locked --keep-going`
 step to the existing Hosted CLI-reference job before its 25-minute public CLI
 build. The job bound is 50 minutes, retaining nine minutes beyond the check,
 build and one-minute reference export for setup and artifact upload. It keeps
@@ -63,7 +63,11 @@ linking or execution before expensive native dispatch. The a72 source produced
 the same three library-test compiler errors in adapter, SSH and beta jobs,
 demonstrating this gap in the previous binary-only check. This step is not native
 behavior, optional-feature, GUI or release acceptance; those gates remain.
-It grants no local execution permission. Its first Hosted result is pending.
+It grants no local execution permission. The first two Hosted checks exposed
+three missing Council fixture fields and three missing database-path borrows in
+W177 tests. These are repaired without changing assertions. `--keep-going` now
+collects independent target failures within the same single-worker/time bounds;
+it preserves the failing exit status and does not retry tests or compile jobs.
 
 `.github/workflows/preview-windows.yml` is a manual GitHub-hosted x64 build for
 portable CLI/GUI acceptance while local compilation is suspended. It uses one

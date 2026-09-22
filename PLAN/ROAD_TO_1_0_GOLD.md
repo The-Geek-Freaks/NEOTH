@@ -8,6 +8,14 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W182 follow-up (2026-09-22):** the Council fixture repair passed Preflight
+35671482151 and Code Quality35671481978. Core check35671482575 then exposed
+three missing Path borrows in W177 chat/export tests; all are repaired with
+assertions unchanged. The early check now collects independent target failures
+with --keep-going under the same worker/time limits. Native behavior remains
+pending. Windows preview35671504968 retains source850aad7e. W183 yearly
+reflection implementation is under independent review and is not admitted yet.
+
 **W182 early Hosted core-test check (2026-09-22):** the existing CLI-reference
 job now checks default-feature core test targets before building the public CLI.
 This catches the shared cfg(test) type errors seen in the previous adapter/SSH/

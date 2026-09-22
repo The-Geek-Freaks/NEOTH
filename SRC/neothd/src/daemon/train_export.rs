@@ -506,7 +506,7 @@ mod tests {
 
         let root = tempfile::tempdir().unwrap();
         let home = root.path();
-        let conn = crate::memory::store::open(home.join("views.db")).unwrap();
+        let conn = crate::memory::store::open(&home.join("views.db")).unwrap();
         let (accepted, _) = register_target(
             home,
             &conn,
@@ -600,7 +600,7 @@ mod tests {
 
         let root = tempfile::tempdir().unwrap();
         let home = root.path();
-        let conn = crate::memory::store::open(home.join("views.db")).unwrap();
+        let conn = crate::memory::store::open(&home.join("views.db")).unwrap();
         for (session, timestamp) in [("one", 1), ("two", 2)] {
             let (target, _) =
                 register_target(home, &conn, session, timestamp, "question", "same reply");

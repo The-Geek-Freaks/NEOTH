@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W182-early-hosted-core-test-check",
-  "base": "fbca7750a67488277a2affad48529c65a4c936b5",
-  "capturedUtc": "2026-09-22T00:17:25.4468219Z",
-  "validationStatus": "W182_COUNCIL_TEST_COMPILE_REPAIR_HOSTED_PENDING",
-  "scopeNote": "Four explicit paths: Council budget fixture field repair plus current Road/Progress/evidence. W183 reflection work remains unadmitted.",
+  "base": "850aad7e70667cf24b52d80f8cf15b66d70f7b07",
+  "capturedUtc": "2026-09-22T00:28:41.5409881Z",
+  "validationStatus": "W182_W177_TEST_PATH_BORROW_REPAIR_HOSTED_PENDING",
+  "scopeNote": "Seven explicit source/workflow/doc paths. Three test-only Path borrows repaired; early check keeps going across independent targets. W183/W184 sources excluded.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -18,8 +18,8 @@
     },
     {
       "path": ".github/workflows/cli-reference.yml",
-      "bytes": 2576,
-      "sha256": "85CA0ABBEB811DEF4BBA927747AE78414A7DA9A36032286FD94CE94ADB0F238E"
+      "bytes": 2589,
+      "sha256": "C5C2D698388AC6FE9579176399A1B13A33911EAC72C7CC580A86C83A32BD10EA"
     },
     {
       "path": ".github/workflows/openclaw-schema-inventory.yml",
@@ -148,8 +148,8 @@
     },
     {
       "path": "docs/gold-wave182-verification.md",
-      "bytes": 2198,
-      "sha256": "0B39486238E6376005F93230F65EC3E3C5A3FE659D224630D97B36E4DBC24AA9"
+      "bytes": 2831,
+      "sha256": "4B1D184B85368078BE423A8ADDC8C3105E551F67A27CD48FD114F9268E18F1A3"
     },
     {
       "path": "docs/install.md",
@@ -228,18 +228,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 22166,
-      "sha256": "D4AE88BB71CEF595560AF057E251D94472A26A7093342FFB7A574C05C78056B8"
+      "bytes": 22497,
+      "sha256": "ECB18EA32EE05B58C7B67017ABCF72DA2BB3A665E8979755E17152875968EDD7"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1018128,
-      "sha256": "4EB05EB769AA85D00E89F0FEF4894982C7873913663A31D3D3D1250E3C916FDF"
+      "bytes": 1018665,
+      "sha256": "9CFC7798A056DCCE4E696A818D270741B884692F4D41D26B07790E07547FD8C0"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1613575,
-      "sha256": "15499994B121700FF47C3285D8173275728476066A47323739C30DAF59BA7828"
+      "bytes": 1614112,
+      "sha256": "49B8AD3D68EF07B42CEAE905866303532641AF19E996A16C3A120D7A282B4001"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -718,8 +718,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1067343,
-      "sha256": "2EC5077FD3C0FC5698B58858D638F0EC406A3A47950053ED0EA4AD037F3DEE4C"
+      "bytes": 1067344,
+      "sha256": "7FD1914F325A2963983F8A4FE1DCF989168422B50E92B898B548C9C5BB824C7F"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -1293,8 +1293,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/train_export.rs",
-      "bytes": 24592,
-      "sha256": "FEFA25BC8C93C91B25DB0A021A6FEF5259C1F14901C6ABE0A3ABF5AFA5EBFC76"
+      "bytes": 24594,
+      "sha256": "0CD30B667E6C69065C43952EFADCA988B4B73A0374096CD20CC218FC929A17F3"
     },
     {
       "path": "SRC/neothd/src/daemon/updater_cron.rs",

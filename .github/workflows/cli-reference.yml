@@ -49,7 +49,7 @@ jobs:
       - name: Type-check core test targets before native validation
         timeout-minutes: 15
         working-directory: SRC
-        run: cargo check -p neoth --tests --locked
+        run: cargo check -p neoth --tests --locked --keep-going
 
       - name: Build current public CLI
         timeout-minutes: 25

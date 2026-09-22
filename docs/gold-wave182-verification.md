@@ -5,7 +5,7 @@ in optional-adapter, SSH and beta jobs while native builds were still compiling.
 The binary-only CLI-reference build did not cover those `cfg(test)` paths.
 
 The existing CLI-reference job now first runs
-`cargo check -p neoth --tests --locked` with a 15-minute bound and its existing
+`cargo check -p neoth --tests --locked --keep-going` with a 15-minute bound and its existing
 single Cargo worker. It checks the default-feature core test targets without
 test-binary linking or execution. The existing 25-minute CLI build, one-minute
 reference export and source/hash-bound artifact remain. A 50-minute outer bound
@@ -30,6 +30,16 @@ Repair receipt: `work/gold-20260906/wave182-core-test-preflight/CORE-TEST-REPAIR
 SHA-256 `140398FBD8DBF7793E82F5B35A7CA1257E894D58099A573F22610548C5E5BCAB`.
 The following documentation-only head `fbca7750` passed Preflight
 `35671020802` and Code Quality `35671019947`; neither proves test compilation.
+
+The second run `35671482575` on `850aad7e` reached the library-test target and
+found three E0308 diagnostics: one missing `&Path` borrow in the chat feedback
+fixture and two in the training-export fixtures. All three now borrow the
+existing `home.join("views.db")`; their assertions and product code are unchanged.
+The retained log SHA-256 is
+`3345C5B82907209475C68E4C6B8B84CDA2D061C52EE9FDED3493C750C3DDB706`.
+The check now uses `--keep-going` to report independent target errors together
+within the unchanged one-worker/15-minute limits. It still fails if any target
+fails. Fresh Hosted compilation remains required.
 
 The preceding W177/W180 formatting and W179 alias-scope repair passed Preflight
 `35670551761` and Code Quality `35670550997` on `97e2137a`. Its CLI build remains
