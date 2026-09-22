@@ -8,6 +8,16 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W231 recall/feedback selections (2026-09-23):** two independent contracts now
+share the focused Hosted run:25 existing recall-chip cases and26 existing
+response-feedback cases. All51 were absent the actual prior341 selection;
+the resulting **Grouped392** union is unique and bound to native identities.
+Their separate GUI116 selections contain10 recall and5 feedback cases. P2-27
+and P2-28 remain open pending actual execution and literal acceptance. W229's
+exact Hosted formatting receipt from35792353017/c20ed504 is imported for2files.
+Inventory stays535sources/842native/94GUI with unchanged platform extras. Road
+stays1016checked/306open/2partial. See
+`docs/gold-wave231-recall-feedback-acceptance.md`. Local BSOD hold remains.
 **W229 live cluster delegation assignments (2026-09-23):** the existing
 same-user/bearer Audit RPC now commits strict TaskDelegate CAS mutations while
 the daemon runs. Setter and final provider admission share a short authority

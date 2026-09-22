@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W229 live authenticated assignmentCAS and provider-start serialization source-reviewed; Hosted pending",
+  "status": "W231 separateRecall25/Feedback26 selection Group392; W229 Hosted formatting imported, behavior pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
     "bytes": 92544,
-    "sha256": "C93E2767F852C710D87E638857544D415ED551E1DD59272695B8B3C5296FBFF9"
+    "sha256": "A4A182786BEBA4F5CEF32C64D49B38FC1DCD1DB37D7D188CC4EFFED62C8824A1"
   },
   "sourceInputs": 535,
   "requiredNativeTests": [
@@ -4932,13 +4932,13 @@
     {
       "test": "cluster::membership::tests::v4_migration_preserves_membership_rows_and_introduces_default_deny_assignment",
       "sourcePath": "SRC/neothd/src/cluster/membership.rs",
-      "sourceSha256": "6A8DFC7CCB757B4E327505077C3B422EE2ED52922AC5AB30C12AEE46A82D40C2",
+      "sourceSha256": "ADB97D6D1E51C77845BC2D0A5E8064FC1286787BD61DE69FBA54C28EE0CC839B",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::membership::tests::task_delegate_assignment_is_default_deny_exact_key_and_revisioned",
       "sourcePath": "SRC/neothd/src/cluster/membership.rs",
-      "sourceSha256": "6A8DFC7CCB757B4E327505077C3B422EE2ED52922AC5AB30C12AEE46A82D40C2",
+      "sourceSha256": "ADB97D6D1E51C77845BC2D0A5E8064FC1286787BD61DE69FBA54C28EE0CC839B",
       "junitClass": "neoth"
     },
     {
@@ -4986,73 +4986,73 @@
     {
       "test": "cluster::executor::tests::no_provider_yields_honest_failure_not_fake_ok",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "EC77313C20CC708099EC32CE28B27F7B4670AD1EB0C1C15C10026A7650879131",
+      "sourceSha256": "FAA20034576931DFE5ADFEB601AEC0F30052E391B57FDB8BDA315403D15A210E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::revoke_after_queue_before_dispatch_makes_zero_provider_calls",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "EC77313C20CC708099EC32CE28B27F7B4670AD1EB0C1C15C10026A7650879131",
+      "sourceSha256": "FAA20034576931DFE5ADFEB601AEC0F30052E391B57FDB8BDA315403D15A210E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::assignment_revoked_after_queue_before_dispatch_makes_zero_provider_calls",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "EC77313C20CC708099EC32CE28B27F7B4670AD1EB0C1C15C10026A7650879131",
+      "sourceSha256": "FAA20034576931DFE5ADFEB601AEC0F30052E391B57FDB8BDA315403D15A210E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::assignment_revoke_holding_authority_gate_blocks_start_then_makes_zero_provider_calls",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "EC77313C20CC708099EC32CE28B27F7B4670AD1EB0C1C15C10026A7650879131",
+      "sourceSha256": "FAA20034576931DFE5ADFEB601AEC0F30052E391B57FDB8BDA315403D15A210E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::revoke_classifies_locally_aborted_provider_as_indeterminate",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "EC77313C20CC708099EC32CE28B27F7B4670AD1EB0C1C15C10026A7650879131",
+      "sourceSha256": "FAA20034576931DFE5ADFEB601AEC0F30052E391B57FDB8BDA315403D15A210E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::provider_error_is_redacted_failure",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "EC77313C20CC708099EC32CE28B27F7B4670AD1EB0C1C15C10026A7650879131",
+      "sourceSha256": "FAA20034576931DFE5ADFEB601AEC0F30052E391B57FDB8BDA315403D15A210E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::completion_is_returned_as_completed",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "EC77313C20CC708099EC32CE28B27F7B4670AD1EB0C1C15C10026A7650879131",
+      "sourceSha256": "FAA20034576931DFE5ADFEB601AEC0F30052E391B57FDB8BDA315403D15A210E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::delegated_remote_ollama_rechecks_live_consent_before_dispatch",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "EC77313C20CC708099EC32CE28B27F7B4670AD1EB0C1C15C10026A7650879131",
+      "sourceSha256": "FAA20034576931DFE5ADFEB601AEC0F30052E391B57FDB8BDA315403D15A210E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::delegated_task_blocks_when_built_cloud_fallback_consent_was_revoked",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "EC77313C20CC708099EC32CE28B27F7B4670AD1EB0C1C15C10026A7650879131",
+      "sourceSha256": "FAA20034576931DFE5ADFEB601AEC0F30052E391B57FDB8BDA315403D15A210E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::delegated_request_uses_protected_layers_without_private_node_context",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "EC77313C20CC708099EC32CE28B27F7B4670AD1EB0C1C15C10026A7650879131",
+      "sourceSha256": "FAA20034576931DFE5ADFEB601AEC0F30052E391B57FDB8BDA315403D15A210E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::protected_cluster_request_fails_closed_when_fixed_layers_exceed_leaf_cap",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "EC77313C20CC708099EC32CE28B27F7B4670AD1EB0C1C15C10026A7650879131",
+      "sourceSha256": "FAA20034576931DFE5ADFEB601AEC0F30052E391B57FDB8BDA315403D15A210E",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::executor_shutdown_cancels_inference_and_releases_wal_sender",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "EC77313C20CC708099EC32CE28B27F7B4670AD1EB0C1C15C10026A7650879131",
+      "sourceSha256": "FAA20034576931DFE5ADFEB601AEC0F30052E391B57FDB8BDA315403D15A210E",
       "junitClass": "neoth"
     },
     {
@@ -15529,6 +15529,91 @@
       }
     ],
     "note": "Independent review passed7sourcefiles; strengthened actual controller race replaces oldname; RPC real401/CAS/receipts now selected; no local executable validation.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave231RecallChipAcceptance": {
+    "requiredTests": [
+      "memory::recall_lanes::tests::scored_stage_three_retains_the_community_adjusted_value",
+      "memory::recall_presentation::tests::warm_retained_snapshot_preserves_the_existing_final_score_without_using_importance",
+      "memory::recall_presentation::tests::warm_summary_uses_a_snapshot_identity_not_the_negative_event_sentinel",
+      "memory::recall_presentation::tests::a_different_positive_snapshot_id_is_untrusted",
+      "memory::recall_presentation::tests::retained_snapshot_rejects_a_forged_positive_event_binding",
+      "memory::recall_presentation::tests::unknown_tier_is_never_relabelled_as_canonical",
+      "memory::recall_presentation::tests::negative_warm_sentinel_cannot_be_reinterpreted_as_an_event",
+      "memory::recall_presentation::tests::batch_is_capped_and_never_carries_hit_content",
+      "memory::recall_presentation::tests::missing_stale_and_incognito_are_explicit_zero_row_batches",
+      "memory::region_router::tests::typed_warm_mapper_keeps_the_exact_summary_snapshot_and_escapes_wildcards",
+      "memory::region_router::tests::enriched_router_admits_a_warm_summary_only_for_hippocampus_or_salience",
+      "memory::region_router::tests::typed_warm_mapper_fails_closed_for_an_unknown_snapshot_shape",
+      "memory::region_router::tests::routed_recall_returns_only_matching_primary_region_rows",
+      "memory::region_router::tests::routed_recall_with_salience_boost_merges_primary_and_amygdala",
+      "memory::region_router::tests::merge_collapses_duplicates_keeping_higher_importance",
+      "memory::region_router::tests::routed_recall_sorts_merged_results_by_importance_desc_then_ts_desc",
+      "memory::region_router::tests::routed_recall_respects_limit_after_merge",
+      "cli::recall::tests::recall_warm_like_surfaces_warm_tier_rows_with_correct_tier_label",
+      "cli::recall::tests::enriched_hippocampal_summary_keeps_the_exact_stage_three_score",
+      "memory::session_start_recall::tests::source_cap_is_utf8_safe_and_matches_token_upper_bound",
+      "memory::session_start_recall::tests::w163_preload_uses_one_enriched_query_and_retains_its_pair",
+      "cli::chat::tests::w163_final_dedup_discards_the_matching_episode_evidence",
+      "cli::chat::tests::w163_recall_chip_wire_is_private_bounded_and_has_exact_schema",
+      "cli::chat::tests::w163_recall_chip_score_is_null_except_available_valid_warm_hit",
+      "cli::chat::tests::w163_recall_chip_empty_statuses_are_explicit_and_token_bound"
+    ],
+    "report": "docs/gold-wave231-recall-feedback-acceptance.md",
+    "guiRequiredSeparately": 10,
+    "localValidationRan": false
+  },
+  "wave231ResponseFeedbackAcceptance": {
+    "requiredTests": [
+      "feedback::response::tests::incognito_registration_is_zero_io",
+      "feedback::response::tests::fresh_home_registration_creates_the_private_projection_namespace",
+      "feedback::response::tests::set_replace_remove_is_revision_cas",
+      "feedback::response::tests::foreign_and_missing_pairs_reject_before_write",
+      "feedback::response::tests::inactive_eviction_never_recreates_evicted_target",
+      "feedback::response::tests::full_active_projection_refuses_new_issuance",
+      "feedback::response::tests::projection_is_content_free_and_invalid_loaded_projection_fails_closed",
+      "feedback::response::tests::same_revision_concurrent_apply_has_one_winner",
+      "feedback::consume::tests::active_response_feedback_proposes_review_only",
+      "cli::chat::wave35_adapter_lifecycle_tests::w164_ready_and_unavailable_target_frames_have_the_exact_content_free_v3_schema",
+      "cli::chat::wave35_adapter_lifecycle_tests::w164_incognito_finalizer_skips_target_registration_and_presentation",
+      "cli::chat::wave35_adapter_lifecycle_tests::w164_daemon_renderer_forwards_ready_unavailable_and_absent_terminal_feedback_once",
+      "cli::chat::wave35_adapter_lifecycle_tests::w164_finalizer_registers_and_presents_only_after_a_clean_drain",
+      "cli::chat_turn_pipeline::tests::neutral_engine_runs_a_caller_borrowed_provider_before_caller_drain_and_terminal",
+      "cli::feedback::tests::response_set_requires_explicit_terminal_receipt_and_revision",
+      "cli::feedback::tests::response_command_accepts_only_fixed_signal_and_no_freeform_or_implicit_session",
+      "cli::feedback::tests::response_status_requires_the_same_explicit_terminal_pair",
+      "cli::feedback::tests::response_outcome_rendering_covers_successes_and_typed_rejections",
+      "daemon::audit_rpc::tests::sealed_response_rejects_unknown_shape_and_declared_bounds",
+      "daemon::audit_rpc::tests::sealed_response_feedback_target_requires_exact_terminal_session",
+      "daemon::gui_chat_protocol::tests::terminal_response_feedback_target_is_strict_and_complete_only",
+      "daemon::audit_rpc::tests::gui_attach_delivers_ndjson_incrementally_before_terminal",
+      "wal::writer::tests::writer_drain_flushes_batchable_only_writes_on_shutdown",
+      "wal::writer::tests::flush_pending_syncs_batchable_tail_and_writer_remains_usable",
+      "wal::writer::tests::flush_pending_after_closed_writer_returns_writer_closed",
+      "wal::writer::tests::flush_pending_after_writer_failure_never_acknowledges_success"
+    ],
+    "report": "docs/gold-wave231-recall-feedback-acceptance.md",
+    "guiRequiredSeparately": 5,
+    "localValidationRan": false
+  },
+  "wave231SelectionAndW229Format": {
+    "base": "c20ed504f76a31e3fcee6b6e85970bc81776429b",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cluster/executor.rs",
+        "bytes": 70307,
+        "sha256": "FAA20034576931DFE5ADFEB601AEC0F30052E391B57FDB8BDA315403D15A210E",
+        "blob": "87e1165a1ac5ffae6f37af2504991bdb3b74246c"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/membership.rs",
+        "bytes": 266738,
+        "sha256": "ADB97D6D1E51C77845BC2D0A5E8064FC1286787BD61DE69FBA54C28EE0CC839B",
+        "blob": "e721daa6b046d1bacedcf2cb96a8482e65bf8090"
+      }
+    ],
+    "note": "Exact formatter35792353017 sourcec20 pre/postimage SHA verified2paths. No W232repair sources staged. No local executable validation.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T22:24:09.6479562Z",
-  "validationStatus": "W229 live authenticated assignmentCAS and provider-start serialization source-reviewed; Hosted pending",
+  "capturedUtc": "2026-09-22T22:28:26.7511804Z",
+  "validationStatus": "W231 separateRecall25/Feedback26 selection Group392; W229 Hosted formatting imported, behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -68,8 +68,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 11877,
-      "sha256": "29E6350E9EC99A9C0ED0EFF67DCB5E4455EF8544E769DEA883C977076EE8AFCA"
+      "bytes": 11981,
+      "sha256": "D759F8F2192002597E15931582544A63226F568E4A3D30D56F5FD67734506313"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -433,18 +433,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 76762,
-      "sha256": "3503B4E9DA237FABC66B2B86CC64B3253CA016E101EAB769434A77458F69192A"
+      "bytes": 77496,
+      "sha256": "5705EB7CFEFEBA6C38969A7C7C2192650DF1C3732C09540196DFB1135EA253E5"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1079697,
-      "sha256": "880D4B3A2275DA5CCDD17E5C6F2238190B91210F214A655055ABE92A04C2F658"
+      "bytes": 1080431,
+      "sha256": "7E63CD54024CBA1CE9ABEBE32D76F63A74C717B5276B31EEAD81074ED2DD68C8"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1675265,
-      "sha256": "621E181FA69A94EF886335655FDE58031D474B8879AE9CE6BCAF0CEA381B6EA8"
+      "bytes": 1675999,
+      "sha256": "55CB5132D59D64DCB7F1F1D2FDC93CADAA88D9F645103D62A261E7D55ACD3890"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1283,8 +1283,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/executor.rs",
-      "bytes": 70337,
-      "sha256": "EC77313C20CC708099EC32CE28B27F7B4670AD1EB0C1C15C10026A7650879131"
+      "bytes": 70307,
+      "sha256": "FAA20034576931DFE5ADFEB601AEC0F30052E391B57FDB8BDA315403D15A210E"
     },
     {
       "path": "SRC/neothd/src/cluster/hyperswarm.rs",
@@ -2668,8 +2668,8 @@
     },
     {
       "path": "SRC/neothd/src/cluster/membership.rs",
-      "bytes": 266726,
-      "sha256": "6A8DFC7CCB757B4E327505077C3B422EE2ED52922AC5AB30C12AEE46A82D40C2"
+      "bytes": 266738,
+      "sha256": "ADB97D6D1E51C77845BC2D0A5E8064FC1286787BD61DE69FBA54C28EE0CC839B"
     },
     {
       "path": "SRC/neothd/src/cli/cluster.rs",

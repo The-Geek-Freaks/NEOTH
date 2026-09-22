@@ -569,26 +569,26 @@ async fn run_one_task_execution_inner(
     // The delegation CAS and external permit use one short authority gate.
     // A setter that commits first therefore wins before the provider-start
     // linearization; the gate is released before any provider future is run.
-    let mut external_permit = match job.membership_grant.begin_task_delegate_external(
-        &mut effect_guard,
-        (now_unix_ms() / 1_000) as i64,
-    ) {
+    let mut external_permit = match job
+        .membership_grant
+        .begin_task_delegate_external(&mut effect_guard, (now_unix_ms() / 1_000) as i64)
+    {
         Ok(permit) => permit,
         Err(crate::cluster::membership::TaskDelegateExternalAdmissionError::AssignmentDenied) => {
-                tracing::warn!(
-                    task_id = %job.task_id,
-                    stable_node_id = %job.membership_grant.stable_node_id(),
-                    "cluster executor: operator task-delegate assignment denied at final provider boundary"
-                );
-                return TaskResultBody {
-                    task_id: job.task_id.clone(),
-                    status: TaskResultStatus::Rejected {
-                        reason: "operator_assignment_denied".to_string(),
-                    },
-                    result: None,
-                    provider_name: Some(provider_name),
-                }
-                .into();
+            tracing::warn!(
+                task_id = %job.task_id,
+                stable_node_id = %job.membership_grant.stable_node_id(),
+                "cluster executor: operator task-delegate assignment denied at final provider boundary"
+            );
+            return TaskResultBody {
+                task_id: job.task_id.clone(),
+                status: TaskResultStatus::Rejected {
+                    reason: "operator_assignment_denied".to_string(),
+                },
+                result: None,
+                provider_name: Some(provider_name),
+            }
+            .into();
         }
         Err(crate::cluster::membership::TaskDelegateExternalAdmissionError::Authority(error)) => {
             tracing::warn!(
@@ -841,7 +841,10 @@ mod tests {
     fn job_with_live_controller(
         home: &std::path::Path,
         prompt: &str,
-    ) -> (ClusterTaskJob, Arc<crate::cluster::membership::MembershipController>) {
+    ) -> (
+        ClusterTaskJob,
+        Arc<crate::cluster::membership::MembershipController>,
+    ) {
         let now = (now_unix_ms() / 1_000) as i64;
         let identity = crate::cluster::membership::LocalNodeIdentity::load_or_create(home).unwrap();
         let transport = crate::cluster::membership::TransportIdentity::peeroxide(
@@ -1049,7 +1052,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn assignment_revoke_holding_authority_gate_blocks_start_then_makes_zero_provider_calls() {
+    async fn assignment_revoke_holding_authority_gate_blocks_start_then_makes_zero_provider_calls()
+    {
         use crate::providers::Completion;
         use async_trait::async_trait;
         use std::sync::Barrier;

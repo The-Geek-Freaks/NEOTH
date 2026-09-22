@@ -1909,7 +1909,9 @@ pub enum TaskDelegateExternalAdmissionError {
 impl std::fmt::Display for TaskDelegateExternalAdmissionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::AssignmentDenied => formatter.write_str("operator task-delegate assignment denied"),
+            Self::AssignmentDenied => {
+                formatter.write_str("operator task-delegate assignment denied")
+            }
             Self::Authority(error) => error.fmt(formatter),
         }
     }
@@ -1968,10 +1970,8 @@ impl MembershipGrant {
         &self,
         effect_guard: &'a mut MembershipEffectGuard,
         now_unix: i64,
-    ) -> std::result::Result<
-        MembershipExternalEffectPermit<'a>,
-        TaskDelegateExternalAdmissionError,
-    > {
+    ) -> std::result::Result<MembershipExternalEffectPermit<'a>, TaskDelegateExternalAdmissionError>
+    {
         #[cfg(test)]
         self.effects.observe_task_delegate_start_gate();
         let _authority_gate = self
