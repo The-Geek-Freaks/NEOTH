@@ -545,6 +545,7 @@ async fn load_trusted_bundled_from_reload_controller_with_probe(
     )
 }
 
+#[cfg(test)]
 fn load_trusted_bundled_with_policy(
     policy: &SkillPolicy,
     materialize_home: Option<&Path>,

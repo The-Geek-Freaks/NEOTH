@@ -42,6 +42,14 @@ unchanged. Test-only construction helpers do not widen runtime authority APIs.
 The old full matrix's audio jobs now passed 19/19 on all three platforms with
 source/input/log custody; preserve its native jobs for their independent results.
 
+W201 follow-up source `737b9835` passed Preflight `35729768850`, Code Quality
+`35729767980` and the core test-target check in `35729831467`; the grouped
+behavior run and CLI build are still pending. The formerly production-visible
+bundled-policy test helper now has `cfg(test)` instead of a lint suppression.
+The old `8b654ebd` Windows preview `35713923652` hit the 90-minute GUI build
+bound and saved its interrupted cache; no portable acceptance was reached.
+Investigate that Hosted limit separately; local validation remains suspended.
+
 ## Workstation stability constraint — 2026-09-16
 
 All local validation workloads on Shadow-PC are suspended after another reported

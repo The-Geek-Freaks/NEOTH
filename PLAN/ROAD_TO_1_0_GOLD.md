@@ -8,6 +8,21 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W201 recovery follow-up (2026-09-22):** published source `737b9835` passed
+Hosted Preflight `35729768850` and Code Quality `35729767980`. Core test-target
+compilation in `35729831467` also passed; its public CLI build and Grouped60
+`35729827037` are still running. The four fixture compiler corrections are
+therefore type-checked, while behavior acceptance remains pending. The loader's
+legacy bundled-policy helper is now explicitly test-only, matching all four
+remaining callers and removing the observed production dead-code warning
+without a lint suppression. No test identity or Road checkbox changed.
+
+Windows preview `35713923652` on `8b654ebd` reached its 90-minute GUI compile
+limit; no preview or portable acceptance result was produced. Its compiler
+cache was saved. This is a Hosted build timeout, not a workstation run.
+W202 authenticated loopback n8n adoption is being implemented; its config and
+credential transaction, durable job consumer and CLI are not yet admitted.
+
 **W201 Hosted follow-up (2026-09-22):** W197-W200 is published in `b7c9de56`.
 Grouped60 `35728169263` and Core/CLI `35728172230` found the same four fixture
 compile errors: private constructors in the Cron fixture, wrong snapshot API

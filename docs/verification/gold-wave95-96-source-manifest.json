@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W201-hosted-fixture-repair",
-  "base": "b7c9de56171b8db079557804a3c29d8d990da91e",
-  "capturedUtc": "2026-09-22T12:49:14.7023006Z",
-  "validationStatus": "W201_REVIEWED_HOSTED_PENDING",
-  "scopeNote": "W20127 exact Hosted format hunks plus4 fixture compile fixes; test-only rawSkill snapshot factory and Windows hidden prerequisite probes. Historical wave sources retained.",
+  "base": "737b9835b36af5b2e09c3c356138f5489a265802",
+  "capturedUtc": "2026-09-22T12:59:51.5367578Z",
+  "validationStatus": "W201_HOSTED_CORE_CHECK_PASSED_BEHAVIOR_PENDING",
+  "scopeNote": "W201 follow-up: explicit cfg(test) helper and current Hosted receipts. Historical wave source bindings retained.",
   "files": [
     {
       "path": ".gitattributes",
@@ -358,18 +358,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 30236,
-      "sha256": "D4013BA072DE2222C0ABC457DDD263A12FF6F7A81AB5460FE6B79CBA6F73A744"
+      "bytes": 30776,
+      "sha256": "3C3E1DC6FB4DD9A3F5160E80B8F082862F3A2D99ACFB0AA5EB524319A0202B4F"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1032575,
-      "sha256": "3D6912A88CA2983C1D1580B216ECB7488842B431FFA2A865C1D18ED9A9927CD2"
+      "bytes": 1033564,
+      "sha256": "46C0549DF5F0CCC7A28780513DB6BB89A5DDDB7FD8F0F6FE668723B5FDE010BB"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1628022,
-      "sha256": "11574D3A329DB486F0AC682BB2AE7C5F84601F6BB24F20B20AFCD66843F22490"
+      "bytes": 1629011,
+      "sha256": "829983217E49916A15EDA2C07E0BEF87AA751233A626D305A688E77C1F620929"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -2098,8 +2098,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/loader.rs",
-      "bytes": 126897,
-      "sha256": "ED337B527C997B496089B165AC35A4335005B9BD4097D728D86995656597E0F1"
+      "bytes": 126910,
+      "sha256": "ED2A0E351546E8C678382E314180CA4B3349CDF9D8E8A5F03D4CDF1CD17A0A10"
     },
     {
       "path": "SRC/neothd/src/skills/mod.rs",
@@ -2448,8 +2448,8 @@
     },
     {
       "path": "docs/gold-wave201-verification.md",
-      "bytes": 1870,
-      "sha256": "388A6291CA63857F5EB3645CA6EA7402168CF9FE4BC16F8208E8FB5397A992A3"
+      "bytes": 2554,
+      "sha256": "3911A7BB16F99299CE843FE58E4698705C9BF4D1B7A96050A51E2F21AA9C5D71"
     }
   ]
 }

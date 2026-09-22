@@ -28,3 +28,16 @@ fixtures on Linux, Windows and macOS, including the W195 fallible-resampler
 source. Downloaded names, actual pass records, source hashes, catalog and lockfile
 were verified on all three platforms. This is exact audio-fixture evidence;
 physical microphone/device, live-provider and release qualification remain open.
+
+## Hosted recovery follow-up
+
+On published `737b9835`, Preflight `35729768850` and Code Quality
+`35729767980` passed. The core test-target check in `35729831467` passed;
+its CLI build and Grouped60 `35729827037` remain pending. These are separate
+checks: no complete behavior or release claim follows from compilation.
+
+The observed warning in the b7c9 core log identifies
+`load_trusted_bundled_with_policy` as unused in production. Its four current
+callers are test fixtures. Applying `#[cfg(test)]` removes the production-only
+warning while retaining all test behavior. This one-line correction still
+needs Hosted production compilation/lint verification; no local executable ran.
