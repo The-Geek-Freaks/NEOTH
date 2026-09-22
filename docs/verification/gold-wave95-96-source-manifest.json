@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T19:09:08.3931305Z",
-  "validationStatus": "W214 Buddy alias reviewed; Grouped251 pending; W213 Core/Grouped running; W212236/236 admitted",
+  "capturedUtc": "2026-09-22T19:11:23.1131722Z",
+  "validationStatus": "W214 Grouped251/Core pending; source-bound Hosted formatter applied; W212236/236 admitted",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -993,8 +993,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/buddy.rs",
-      "bytes": 43470,
-      "sha256": "45619192ECD11B0801A0E5F329509EB6EA0CE830A7FCD5C986BE26D467A6229A"
+      "bytes": 43483,
+      "sha256": "4CFF6FEF713FCE1546360984A50914BA8B846A4F5C130F44AEABBF954AD87619"
     },
     {
       "path": "SRC/neothd/src/cli/capabilities.rs",

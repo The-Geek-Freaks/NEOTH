@@ -217,8 +217,7 @@ pub async fn run_buddy(args: BuddyArgs) -> Result<()> {
     match args.action {
         BuddyAction::Status => run_status(args.output).await,
         BuddyAction::Embedding { config, action } => {
-            crate::cli::models::run_embedding_models(action, config.as_deref(), &args.output)
-                .await
+            crate::cli::models::run_embedding_models(action, config.as_deref(), &args.output).await
         }
         BuddyAction::SelfActivation { enable, disable } => {
             run_self_activation(enable, disable, args.output)
@@ -823,9 +822,11 @@ mod tests {
             readback.embed.model,
             crate::config::embedding::EmbeddingModel::BgeM3
         );
-        assert!(std::fs::read_to_string(&path)
-            .expect("read custom config")
-            .contains("buddy_extension: retain-me"));
+        assert!(
+            std::fs::read_to_string(&path)
+                .expect("read custom config")
+                .contains("buddy_extension: retain-me")
+        );
         assert!(
             !home.path().join("freedom.yaml").exists(),
             "selection must not create or mutate a sibling default config"

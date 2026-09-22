@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W214 Buddy alias reviewed; Grouped251 pending; W213 Core/Grouped running; W212236/236 admitted",
+  "status": "W214 Grouped251/Core pending; source-bound Hosted formatter applied; W212236/236 admitted",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 91511,
-    "sha256": "6A3CB45FA38A8CE1529AE81390211E2AAFEF1C7E785EBA0CB8D676917D65266F"
+    "bytes": 91506,
+    "sha256": "FCAB7870E4B018AFBC4EC00AC3D2D4BD9B3DEF35F34099B20C92AE5FD22DB2CC"
   },
   "sourceInputs": 529,
   "requiredNativeTests": [
@@ -1110,7 +1110,7 @@
     {
       "test": "cli::buddy::tests::status_json_shape_has_all_seven_keys",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "45619192ECD11B0801A0E5F329509EB6EA0CE830A7FCD5C986BE26D467A6229A",
+      "sourceSha256": "4CFF6FEF713FCE1546360984A50914BA8B846A4F5C130F44AEABBF954AD87619",
       "junitClass": "neoth"
     },
     {
@@ -2946,13 +2946,13 @@
     {
       "test": "cli::buddy::tests::vault_mirror_surface_parses_status_and_repair_without_a_bypass_flag",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "45619192ECD11B0801A0E5F329509EB6EA0CE830A7FCD5C986BE26D467A6229A",
+      "sourceSha256": "4CFF6FEF713FCE1546360984A50914BA8B846A4F5C130F44AEABBF954AD87619",
       "junitClass": "neoth"
     },
     {
       "test": "cli::buddy::tests::unresolved_vault_mirror_repair_ack_is_not_success",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "45619192ECD11B0801A0E5F329509EB6EA0CE830A7FCD5C986BE26D467A6229A",
+      "sourceSha256": "4CFF6FEF713FCE1546360984A50914BA8B846A4F5C130F44AEABBF954AD87619",
       "junitClass": "neoth"
     },
     {
@@ -4782,19 +4782,19 @@
     {
       "test": "cli::buddy::tests::buddy_embedding_parses_all_actions_and_rejects_unknown_action",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "45619192ECD11B0801A0E5F329509EB6EA0CE830A7FCD5C986BE26D467A6229A",
+      "sourceSha256": "4CFF6FEF713FCE1546360984A50914BA8B846A4F5C130F44AEABBF954AD87619",
       "junitClass": "neoth"
     },
     {
       "test": "cli::buddy::tests::buddy_embedding_select_mutates_only_supplied_config_and_preserves_unknown_fields",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "45619192ECD11B0801A0E5F329509EB6EA0CE830A7FCD5C986BE26D467A6229A",
+      "sourceSha256": "4CFF6FEF713FCE1546360984A50914BA8B846A4F5C130F44AEABBF954AD87619",
       "junitClass": "neoth"
     },
     {
       "test": "cli::buddy::tests::buddy_embedding_qwen_actions_fail_before_lifecycle_side_effects",
       "sourcePath": "SRC/neothd/src/cli/buddy.rs",
-      "sourceSha256": "45619192ECD11B0801A0E5F329509EB6EA0CE830A7FCD5C986BE26D467A6229A",
+      "sourceSha256": "4CFF6FEF713FCE1546360984A50914BA8B846A4F5C130F44AEABBF954AD87619",
       "junitClass": "neoth"
     }
   ],
@@ -14197,6 +14197,20 @@
       }
     ],
     "note": "Buddy embedding delegates canonical lifecycle;3 behavior/grammar tests; includes source/SHA-bound GitHub formatting35771681385 for W213889d",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave214HostedFormat": {
+    "base": "36802b32ef06d6919defc7c77c20c12cfa82c712",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/buddy.rs",
+        "bytes": 43483,
+        "sha256": "4CFF6FEF713FCE1546360984A50914BA8B846A4F5C130F44AEABBF954AD87619",
+        "blob": "927dda1b70fe5383dae8fb94a026e6a4ba35a417"
+      }
+    ],
+    "note": "Exact SHA/source-bound formatter receipt35772118501 on36802b32; no local formatter executed",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
