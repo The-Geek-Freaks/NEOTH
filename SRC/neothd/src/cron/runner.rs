@@ -210,12 +210,10 @@ async fn cron_session_skill_registry_context(
         home.join("freedom.yaml"),
     ));
     let config_epoch = reload.accepted_snapshot().epoch();
-    let registry = crate::skills::SkillRegistry::load_with_reload_controller(
-        &skills_dir,
-        Arc::clone(&reload),
-    )
-    .await
-    .with_context(|| format!("load Cron Skill registry from {}", skills_dir.display()))?;
+    let registry =
+        crate::skills::SkillRegistry::load_with_reload_controller(&skills_dir, Arc::clone(&reload))
+            .await
+            .with_context(|| format!("load Cron Skill registry from {}", skills_dir.display()))?;
     let snapshot = registry
         .authority_bound_snapshot_for_epoch(config_epoch)
         .context("acquire authority-bound Cron Skill snapshot")?;
@@ -2045,10 +2043,7 @@ channel_accounts:
         }
     }
 
-    fn cron_registry_fixture_skill(
-        id: &str,
-        enabled: bool,
-    ) -> crate::skills::schema::RuntimeSkill {
+    fn cron_registry_fixture_skill(id: &str, enabled: bool) -> crate::skills::schema::Skill {
         let manifest = crate::skills::schema::SkillManifest {
             id: id.to_owned(),
             description: format!("{id} Cron registry fixture"),
@@ -2069,14 +2064,11 @@ channel_accounts:
             loop_trigger: false,
             visibility: crate::config::SkillVisibility::On,
         };
-        crate::skills::schema::RuntimeSkill::from_trusted_bundled(
-            crate::skills::schema::Skill::from_trusted_bundled(
-                manifest,
-                std::path::PathBuf::from(format!("<bundled>/{id}/skill.yaml")),
-                format!("hash-{id}"),
-            ),
-        )
-        .expect("build trusted Cron registry fixture")
+        crate::skills::schema::Skill {
+            manifest,
+            path: std::path::PathBuf::from(format!("<bundled>/{id}/skill.yaml")),
+            content_hash: format!("hash-{id}"),
+        }
     }
 
     struct DelayedQualityProvider {
@@ -2122,7 +2114,7 @@ channel_accounts:
 
     #[test]
     fn cron_registry_filters_disabled_pinned_and_eval_skills() {
-        let snapshot = crate::skills::registry::SkillSnapshot::from_test_skills(vec![
+        let snapshot = crate::skills::registry::SkillSnapshot::from_test_raw_skills(vec![
             cron_registry_fixture_skill("enabled", true),
             cron_registry_fixture_skill("disabled", false),
             cron_registry_fixture_skill("pinned", true),
@@ -2184,7 +2176,9 @@ channel_accounts:
             .unwrap()
             .pop()
             .expect("one provider request");
-        let system = request.system.expect("Cron registry is Block D system context");
+        let system = request
+            .system
+            .expect("Cron registry is Block D system context");
         assert_eq!(system.matches("\"skills\":").count(), 1);
         assert!(system.contains("UNTRUSTED data"));
         assert!(!system.contains("\"system_prompt\""));
@@ -2282,7 +2276,7 @@ channel_accounts:
         )
         .expect("write malformed Skill fixture");
         let segment = home.path().join("cron-registry-failure.wal");
-        let (writer, join) = wal_spawn(segment).unwrap();
+        let (writer, join) = wal_spawn(segment.clone()).unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
         let provider = authorized(CountingProvider {
             calls: Arc::clone(&calls),
@@ -2292,10 +2286,12 @@ channel_accounts:
             .await
             .expect("registry failure must become a terminal Cron outcome");
         assert!(!outcome.success);
-        assert!(outcome
-            .error
-            .as_deref()
-            .is_some_and(|error| error.contains("Cron Skill registry")));
+        assert!(
+            outcome
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("Cron Skill registry"))
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         drop(writer);
         let _ = join.await;
@@ -2343,11 +2339,7 @@ channel_accounts:
             let frame = decode_frame(cursor).expect("decode WAL frame");
             if frame.header.event_type != crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
                 let payload = serde_json::from_slice(frame.payload).expect("JSON cron payload");
-                events.push((
-                    frame.header.event_type,
-                    frame.header.event_id.0,
-                    payload,
-                ));
+                events.push((frame.header.event_type, frame.header.event_id.0, payload));
             }
             cursor = &cursor[frame.header.total_len as usize..];
         }

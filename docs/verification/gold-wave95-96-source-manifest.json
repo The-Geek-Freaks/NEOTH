@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W200-skill-session-admission",
-  "base": "0d18bb17d2f6adda0a1d176ef3ef63ffa6316eb9",
-  "capturedUtc": "2026-09-22T12:32:43.5264521Z",
-  "validationStatus": "W197_W200_REVIEWED_HOSTED_PENDING",
-  "scopeNote": "W197 bounded prerequisite admission; W198 exact-controller n8n registry; W199 per-job Cron registry+terminal failure; W200 observed Linux8 lint and W191 fixture shutdown repair. Historical wave sources retained.",
+  "item": "GOLD-W95-W201-hosted-fixture-repair",
+  "base": "b7c9de56171b8db079557804a3c29d8d990da91e",
+  "capturedUtc": "2026-09-22T12:49:14.7023006Z",
+  "validationStatus": "W201_REVIEWED_HOSTED_PENDING",
+  "scopeNote": "W20127 exact Hosted format hunks plus4 fixture compile fixes; test-only rawSkill snapshot factory and Windows hidden prerequisite probes. Historical wave sources retained.",
   "files": [
     {
       "path": ".gitattributes",
@@ -358,18 +358,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 29839,
-      "sha256": "5BBB07E76974688817E021FD9FF7601290AC379F8B116BBCD07B8A64D949D602"
+      "bytes": 30236,
+      "sha256": "D4013BA072DE2222C0ABC457DDD263A12FF6F7A81AB5460FE6B79CBA6F73A744"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1031620,
-      "sha256": "3E96C78B0073683C0813A96B3BF1B273754FF6514ABE47C4C9F07205D403DD2F"
+      "bytes": 1032575,
+      "sha256": "3D6912A88CA2983C1D1580B216ECB7488842B431FFA2A865C1D18ED9A9927CD2"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1627067,
-      "sha256": "4CD26278BD131D15157680A6B66C3CE2D2ADAF8B3934F07C42B7941C3025F29B"
+      "bytes": 1628022,
+      "sha256": "11574D3A329DB486F0AC682BB2AE7C5F84601F6BB24F20B20AFCD66843F22490"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1413,8 +1413,8 @@
     },
     {
       "path": "SRC/neothd/src/cron/runner.rs",
-      "bytes": 137720,
-      "sha256": "B617EF236B1B75A6A893098C6A2D2EAC3DA84702B0C06A154A148B7EF88FBC4B"
+      "bytes": 137530,
+      "sha256": "A8CEBEDCC3A87036705848BE632CC7E8563B2F23B754049F459CD6FED5A8CB5E"
     },
     {
       "path": "SRC/neothd/src/cron/state.rs",
@@ -1873,8 +1873,8 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers.rs",
-      "bytes": 52004,
-      "sha256": "4B8D0F6E0853AB28207566B5FE974CADCB7309487AF66EAE90C6232797630EF0"
+      "bytes": 52295,
+      "sha256": "385A797904377DEEAFB58F593A599AD5B2F7121D271B52E3D8F2D563A5C21DA0"
     },
     {
       "path": "SRC/neothd/src/permissions/gate.rs",
@@ -2098,8 +2098,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/loader.rs",
-      "bytes": 126520,
-      "sha256": "FF8318E7CB10AC11F9203DB294D62D3A7D4AFA76DF35E2C2B089F5CE377C1916"
+      "bytes": 126897,
+      "sha256": "ED337B527C997B496089B165AC35A4335005B9BD4097D728D86995656597E0F1"
     },
     {
       "path": "SRC/neothd/src/skills/mod.rs",
@@ -2113,8 +2113,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/registry.rs",
-      "bytes": 133379,
-      "sha256": "E973EDE0003F6AA15B1244C02889A3CBD20C97E80834CB3F74F5AC72B261CED1"
+      "bytes": 133784,
+      "sha256": "0DE02D8C0F43437CAE8864B3A779AC6160B9B66B0A398BD56D7E44D9A98B4242"
     },
     {
       "path": "SRC/neothd/src/skills/resolver.rs",
@@ -2423,8 +2423,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/prerequisites.rs",
-      "bytes": 9682,
-      "sha256": "23FD42AF6295A3C04B91AF8B701F88ED2D26349A20813CB96BBE8B3AF32D50A4"
+      "bytes": 10228,
+      "sha256": "6259BDCD6F7F1447AC968C03738423D5664B81D1A040693C7CEBCD79D7E89267"
     },
     {
       "path": "docs/gold-wave197-verification.md",
@@ -2445,6 +2445,11 @@
       "path": "docs/gold-wave200-verification.md",
       "bytes": 1840,
       "sha256": "E6286E598CF6097E7ADB494C98717E35290A1A413A041050BF30196C3CCA6164"
+    },
+    {
+      "path": "docs/gold-wave201-verification.md",
+      "bytes": 1870,
+      "sha256": "388A6291CA63857F5EB3645CA6EA7402168CF9FE4BC16F8208E8FB5397A992A3"
     }
   ]
 }

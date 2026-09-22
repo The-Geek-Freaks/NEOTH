@@ -8,6 +8,21 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W201 Hosted follow-up (2026-09-22):** W197-W200 is published in `b7c9de56`.
+Grouped60 `35728169263` and Core/CLI `35728172230` found the same four fixture
+compile errors: private constructors in the Cron fixture, wrong snapshot API
+in n8n, and a moved WAL path. The targeted corrections preserve production
+constructor privacy, actual pin filtering and linked failure-WAL assertions.
+Preflight `35728147190` supplied 27 exact format hunks; all were imported with
+source/blob custody. Code Quality `35728147007` passed. Fresh Hosted gates
+remain required with the same sixty selected identities. See
+`docs/gold-wave201-verification.md`.
+
+Audio qualification from full-CI `35726117022` on `0d18bb17` now passed all
+19 selected tests on Linux, Windows and macOS. Actual pass names, fixture source
+hashes, catalog and lockfile were verified for all three, including the W195
+fallible-resampler change. This does not claim physical-device or release proof.
+
 **W197-W200 publication (2026-09-22):** the authorized Skill loader now
 checks the exact Drawio/PPT/Graphify/OfficeCLI prerequisite families before
 RuntimeSkill construction. One bounded readiness result is shared by primary
@@ -37,7 +52,7 @@ and new-source audio results. These earlier-source results do not admit the
 W197-W200 changes. Details: `docs/gold-wave197-verification.md` through
 `docs/gold-wave200-verification.md`.
 
-Current inventory: 488 source paths / 620 universal native identities; existing
+Current inventory: 489 source paths / 620 universal native identities; existing
 platform/GUI/audio/custom selections are unchanged. Road remains **1015 checked
 / 307 open / 2 partial**, 1324 total. P2-10, managed installation, authenticated
 readiness, live-device and release qualification remain open until their actual

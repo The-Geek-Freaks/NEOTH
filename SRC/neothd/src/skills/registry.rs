@@ -188,6 +188,19 @@ impl SkillSnapshot {
             inner: published_skill_snapshot(0, 0, Arc::new(skills)),
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn from_test_raw_skills(skills: Vec<Skill>) -> Self {
+        Self::from_test_skills(
+            skills
+                .into_iter()
+                .map(|skill| {
+                    RuntimeSkill::from_trusted_bundled(skill)
+                        .expect("test Skill must use the synthetic bundled path")
+                })
+                .collect(),
+        )
+    }
 }
 
 fn published_skill_snapshot(

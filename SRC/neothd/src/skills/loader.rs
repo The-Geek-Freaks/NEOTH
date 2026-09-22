@@ -117,8 +117,15 @@ async fn inspect_runtime_prerequisites<'a>(
 ) -> super::prerequisites::SkillPrerequisiteSnapshot {
     let candidates = candidates.map(|skill| (skill.id(), skill.is_enabled()));
     match probe {
-        Some(probe) => super::prerequisites::SkillPrerequisiteSnapshot::inspect_enabled_candidates(candidates, probe).await,
-        None => super::prerequisites::SkillPrerequisiteSnapshot::inspect_production(candidates).await,
+        Some(probe) => {
+            super::prerequisites::SkillPrerequisiteSnapshot::inspect_enabled_candidates(
+                candidates, probe,
+            )
+            .await
+        }
+        None => {
+            super::prerequisites::SkillPrerequisiteSnapshot::inspect_production(candidates).await
+        }
     }
 }
 
@@ -471,15 +478,17 @@ async fn load_authorized_with_mode_budget_and_probe(
         prerequisite_probe,
     )
     .await;
-    let skills = construct_runtime_skills(filter_runtime_prerequisites(snapshot.skills, &readiness))?;
+    let skills =
+        construct_runtime_skills(filter_runtime_prerequisites(snapshot.skills, &readiness))?;
     if let Err(error) = super::mode_registry::ModeRegistry::from_skills(&skills) {
         tracing::warn!(
             error = %error,
             "authorized installed Skill modes conflict; publishing trusted bundled-only runtime snapshot"
         );
-        let fallback = construct_runtime_skills(
-            filter_runtime_prerequisites(snapshot.bundled_only, &readiness),
-        )?;
+        let fallback = construct_runtime_skills(filter_runtime_prerequisites(
+            snapshot.bundled_only,
+            &readiness,
+        ))?;
         return finish_authorized_snapshot(&reload, snapshot.accepted_config_epoch, fallback);
     }
     finish_authorized_snapshot(&reload, snapshot.accepted_config_epoch, skills)
@@ -506,13 +515,15 @@ async fn load_trusted_bundled_from_reload_controller_with_probe(
         let accepted = reload.accepted_snapshot();
         let accepted_epoch = accepted.epoch();
         let policy = SkillPolicy::from_config(&accepted.config().skills);
-        let bundled =
-            tokio::task::spawn_blocking(move || load_pending_trusted_bundled_with_policy(&policy, None))
-                .await
-                .context("trusted bundled Skill fallback worker failed")??;
+        let bundled = tokio::task::spawn_blocking(move || {
+            load_pending_trusted_bundled_with_policy(&policy, None)
+        })
+        .await
+        .context("trusted bundled Skill fallback worker failed")??;
         if reload.accepted_snapshot().epoch() == accepted_epoch {
             let readiness = inspect_runtime_prerequisites(bundled.iter(), prerequisite_probe).await;
-            let skills = construct_runtime_skills(filter_runtime_prerequisites(bundled, &readiness))?;
+            let skills =
+                construct_runtime_skills(filter_runtime_prerequisites(bundled, &readiness))?;
             super::mode_registry::ModeRegistry::from_skills(&skills)
                 .context("validate trusted bundled Skill modes")?;
             if reload.accepted_snapshot().epoch() == accepted_epoch {
@@ -1711,7 +1722,13 @@ mod tests {
         fn inspect(
             &self,
             prerequisite: super::super::prerequisites::BundledSkillPrerequisite,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = super::super::prerequisites::PrerequisiteStatus> + Send + '_>> {
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = super::super::prerequisites::PrerequisiteStatus>
+                    + Send
+                    + '_,
+            >,
+        > {
             self.calls.lock().unwrap().push(prerequisite);
             Box::pin(async move {
                 self.statuses
@@ -1845,10 +1862,12 @@ mod tests {
         assert!(snapshot.skills.iter().all(|skill| skill.id() != "graphify"));
         assert_eq!(
             *probe.calls.lock().unwrap(),
-            vec![super::super::prerequisites::BundledSkillPrerequisite::DrawioPython,
-                 super::super::prerequisites::BundledSkillPrerequisite::PptMasterPythonPptx,
-                 super::super::prerequisites::BundledSkillPrerequisite::GraphifyRuntime,
-                 super::super::prerequisites::BundledSkillPrerequisite::OfficeCli]
+            vec![
+                super::super::prerequisites::BundledSkillPrerequisite::DrawioPython,
+                super::super::prerequisites::BundledSkillPrerequisite::PptMasterPythonPptx,
+                super::super::prerequisites::BundledSkillPrerequisite::GraphifyRuntime,
+                super::super::prerequisites::BundledSkillPrerequisite::OfficeCli
+            ]
         );
     }
 
@@ -1868,9 +1887,10 @@ mod tests {
             .collect(),
             ..Default::default()
         };
-        let snapshot = load_trusted_bundled_from_reload_controller_with_probe(&reload, Some(&probe))
-            .await
-            .unwrap();
+        let snapshot =
+            load_trusted_bundled_from_reload_controller_with_probe(&reload, Some(&probe))
+                .await
+                .unwrap();
         assert!(snapshot.skills.iter().all(|skill| skill.id() != "graphify"));
     }
 
@@ -1912,7 +1932,8 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|kind| **kind == super::super::prerequisites::BundledSkillPrerequisite::GraphifyRuntime)
+                .filter(|kind| **kind
+                    == super::super::prerequisites::BundledSkillPrerequisite::GraphifyRuntime)
                 .count(),
             1,
         );
@@ -1938,8 +1959,7 @@ mod tests {
         .unwrap();
         assert!(snapshot.skills.iter().all(|skill| skill.id() != "graphify"));
         assert_eq!(
-            snapshot.accepted_config_epoch,
-            ready_snapshot.accepted_config_epoch,
+            snapshot.accepted_config_epoch, ready_snapshot.accepted_config_epoch,
             "the deterministic Ready then NotReady builds use one accepted policy epoch"
         );
         assert_eq!(
@@ -1965,7 +1985,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let graphify = snapshot.skills.iter().find(|skill| skill.id() == "graphify").unwrap();
+        let graphify = snapshot
+            .skills
+            .iter()
+            .find(|skill| skill.id() == "graphify")
+            .unwrap();
         let expected = load_trusted_bundled_with_policy(
             &SkillPolicy::from_config(&crate::config::SkillsConfig::default()),
             Some(home.path()),
@@ -1976,14 +2000,18 @@ mod tests {
         .unwrap();
         assert!(graphify.is_trusted_bundled());
         assert_eq!(graphify.content_hash, expected.content_hash);
-        assert_eq!(serde_json::to_vec(graphify).unwrap(), serde_json::to_vec(&expected).unwrap());
+        assert_eq!(
+            serde_json::to_vec(graphify).unwrap(),
+            serde_json::to_vec(&expected).unwrap()
+        );
         assert_eq!(
             probe
                 .calls
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|kind| **kind == super::super::prerequisites::BundledSkillPrerequisite::GraphifyRuntime)
+                .filter(|kind| **kind
+                    == super::super::prerequisites::BundledSkillPrerequisite::GraphifyRuntime)
                 .count(),
             1,
         );

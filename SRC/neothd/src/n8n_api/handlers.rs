@@ -762,7 +762,10 @@ mod tests {
         Arc<crate::skills::registry::SkillRegistry>,
     ) {
         let config_path = home.join("freedom.yaml");
-        let controller = Arc::new(crate::config::reload::ReloadController::new(config, config_path));
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            config,
+            config_path,
+        ));
         let registry = crate::skills::registry::SkillRegistry::load_with_reload_controller(
             home.join("skills"),
             Arc::clone(&controller),
@@ -848,14 +851,9 @@ mod tests {
             incognito: false,
         };
 
-        let request = build_provider_request(
-            home.path(),
-            &config,
-            &req,
-            Some("wire-model".into()),
-            None,
-        )
-            .expect("compose provider request");
+        let request =
+            build_provider_request(home.path(), &config, &req, Some("wire-model".into()), None)
+                .expect("compose provider request");
         let system = request.system.expect("communication + explicit system");
         let communication_pos = system.find("Be direct.").expect("compiled accommodation");
         let explicit_pos = system
@@ -1034,7 +1032,13 @@ mod tests {
         assert!(eval_context.as_str().contains("\"skills\":[]"));
 
         let mut pinned_config = crate::config::FreedomConfig::default();
-        let pinned_skill = registry.snapshot().skills()[0].id().to_owned();
+        let pinned_skill = registry
+            .snapshot()
+            .iter()
+            .find(|skill| skill.is_enabled())
+            .expect("pin fixture needs an enabled Skill")
+            .id()
+            .to_owned();
         pinned_config
             .skills
             .pinned_hashes
@@ -1061,55 +1065,59 @@ mod tests {
         let config = crate::config::FreedomConfig::default();
         let (controller, registry) = n8n_test_registry(home.path(), config.clone()).await;
         let epoch = controller.accepted_snapshot().epoch();
-        assert!(n8n_session_skill_registry_context(
-            home.path(),
-            &config,
-            &controller,
-            epoch,
-            None,
-        )
-        .is_err());
+        assert!(
+            n8n_session_skill_registry_context(home.path(), &config, &controller, epoch, None,)
+                .is_err()
+        );
         let foreign_home = tempfile::tempdir().expect("foreign tempdir");
-        assert!(n8n_session_skill_registry_context(
-            foreign_home.path(),
-            &config,
-            &controller,
-            epoch,
-            Some(Arc::clone(&registry)),
-        )
-        .is_err());
+        assert!(
+            n8n_session_skill_registry_context(
+                foreign_home.path(),
+                &config,
+                &controller,
+                epoch,
+                Some(Arc::clone(&registry)),
+            )
+            .is_err()
+        );
         let same_path_controller = Arc::new(crate::config::reload::ReloadController::new(
             config.clone(),
             home.path().join("freedom.yaml"),
         ));
-        assert!(n8n_session_skill_registry_context(
-            home.path(),
-            &config,
-            &same_path_controller,
-            epoch,
-            Some(Arc::clone(&registry)),
-        )
-        .is_err());
+        assert!(
+            n8n_session_skill_registry_context(
+                home.path(),
+                &config,
+                &same_path_controller,
+                epoch,
+                Some(Arc::clone(&registry)),
+            )
+            .is_err()
+        );
         let different_path_controller = Arc::new(crate::config::reload::ReloadController::new(
             config.clone(),
             home.path().join("other-freedom.yaml"),
         ));
-        assert!(n8n_session_skill_registry_context(
-            home.path(),
-            &config,
-            &different_path_controller,
-            epoch,
-            Some(Arc::clone(&registry)),
-        )
-        .is_err());
-        assert!(n8n_session_skill_registry_context(
-            home.path(),
-            &config,
-            &controller,
-            epoch.saturating_add(1),
-            Some(registry),
-        )
-        .is_err());
+        assert!(
+            n8n_session_skill_registry_context(
+                home.path(),
+                &config,
+                &different_path_controller,
+                epoch,
+                Some(Arc::clone(&registry)),
+            )
+            .is_err()
+        );
+        assert!(
+            n8n_session_skill_registry_context(
+                home.path(),
+                &config,
+                &controller,
+                epoch.saturating_add(1),
+                Some(registry),
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test]

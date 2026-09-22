@@ -112,6 +112,12 @@ async fn fixed_command_ready(binary: &str, args: &[&str]) -> PrerequisiteStatus 
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+    }
     let Ok(mut child) = command.spawn() else {
         return PrerequisiteStatus::NotReady;
     };
@@ -155,9 +161,7 @@ impl SkillPrerequisiteSnapshot {
         Self {
             by_id: candidates
                 .into_iter()
-                .map(|(id, prerequisite)| {
-                    (id.to_owned(), statuses[&prerequisite])
-                })
+                .map(|(id, prerequisite)| (id.to_owned(), statuses[&prerequisite]))
                 .collect(),
         }
     }
@@ -206,11 +210,29 @@ mod tests {
 
     #[test]
     fn w197_closed_exact_id_map_rejects_near_matches() {
-        assert_eq!(for_effective_skill_id("drawio_diagram"), Some(BundledSkillPrerequisite::DrawioPython));
-        assert_eq!(for_effective_skill_id("ppt_master"), Some(BundledSkillPrerequisite::PptMasterPythonPptx));
-        assert_eq!(for_effective_skill_id("graphify"), Some(BundledSkillPrerequisite::GraphifyRuntime));
-        assert_eq!(for_effective_skill_id("officecli_xlsx_edit"), Some(BundledSkillPrerequisite::OfficeCli));
-        for id in ["officecli_extra", "officecli_", "graphify-extra", "drawio_diagram_extra", "ordinary"] {
+        assert_eq!(
+            for_effective_skill_id("drawio_diagram"),
+            Some(BundledSkillPrerequisite::DrawioPython)
+        );
+        assert_eq!(
+            for_effective_skill_id("ppt_master"),
+            Some(BundledSkillPrerequisite::PptMasterPythonPptx)
+        );
+        assert_eq!(
+            for_effective_skill_id("graphify"),
+            Some(BundledSkillPrerequisite::GraphifyRuntime)
+        );
+        assert_eq!(
+            for_effective_skill_id("officecli_xlsx_edit"),
+            Some(BundledSkillPrerequisite::OfficeCli)
+        );
+        for id in [
+            "officecli_extra",
+            "officecli_",
+            "graphify-extra",
+            "drawio_diagram_extra",
+            "ordinary",
+        ] {
             assert_eq!(for_effective_skill_id(id), None, "{id}");
         }
     }
@@ -232,16 +254,22 @@ mod tests {
         assert!(snapshot.permits("officecli_xlsx_edit"));
         assert_eq!(
             *probe.calls.lock().unwrap(),
-            vec![BundledSkillPrerequisite::GraphifyRuntime, BundledSkillPrerequisite::OfficeCli]
+            vec![
+                BundledSkillPrerequisite::GraphifyRuntime,
+                BundledSkillPrerequisite::OfficeCli
+            ]
         );
     }
 
     #[tokio::test]
     async fn w197_not_ready_disables_only_its_closed_family() {
         let probe = FixtureProbe {
-            statuses: [(BundledSkillPrerequisite::OfficeCli, PrerequisiteStatus::NotReady)]
-                .into_iter()
-                .collect(),
+            statuses: [(
+                BundledSkillPrerequisite::OfficeCli,
+                PrerequisiteStatus::NotReady,
+            )]
+            .into_iter()
+            .collect(),
             ..Default::default()
         };
         let snapshot = SkillPrerequisiteSnapshot::inspect_enabled_candidates(
@@ -257,7 +285,13 @@ mod tests {
     async fn w197_all_disabled_candidates_request_zero_probes() {
         let probe = FixtureProbe::default();
         let _ = SkillPrerequisiteSnapshot::inspect_enabled_candidates(
-            [("drawio_diagram", false), ("ppt_master", false), ("graphify", false), ("officecli_xlsx_edit", false)].into_iter(),
+            [
+                ("drawio_diagram", false),
+                ("ppt_master", false),
+                ("graphify", false),
+                ("officecli_xlsx_edit", false),
+            ]
+            .into_iter(),
             &probe,
         )
         .await;

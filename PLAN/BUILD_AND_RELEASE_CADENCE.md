@@ -36,6 +36,12 @@ its cancelled fourteen-pass receipt is partial evidence only. The release pass
 condition remains all exact selected tests completed successfully. W200 also
 repairs the eight observed Linux lint findings without suppressing diagnostics.
 
+W201 corrects four test-compile errors observed in both b7c9 Hosted lanes and
+imports twenty-seven exact Hosted format hunks. The sixty-fixture selection is
+unchanged. Test-only construction helpers do not widen runtime authority APIs.
+The old full matrix's audio jobs now passed 19/19 on all three platforms with
+source/input/log custody; preserve its native jobs for their independent results.
+
 ## Workstation stability constraint — 2026-09-16
 
 All local validation workloads on Shadow-PC are suspended after another reported
