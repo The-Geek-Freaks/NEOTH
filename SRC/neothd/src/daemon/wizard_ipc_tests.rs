@@ -468,7 +468,10 @@ async fn read_only_waiters_do_not_wake_each_other() {
     let first_observed = snapshot(first_waiter.await.unwrap().unwrap());
     let second_observed = snapshot(second_waiter.await.unwrap().unwrap());
     assert_eq!(first_observed.accepted_sequence, accepted.accepted_sequence);
-    assert_eq!(second_observed.accepted_sequence, accepted.accepted_sequence);
+    assert_eq!(
+        second_observed.accepted_sequence,
+        accepted.accepted_sequence
+    );
 
     guard.stop();
     listener_task.await.unwrap().unwrap();

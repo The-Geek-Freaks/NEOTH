@@ -3,6 +3,8 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**Hosted checkpoint (2026-09-22):** repairs are on main at `0e6ca107`; Grouped121 `35745827466` and Core/CLI `35745831818` are active. Preflight `35745808249` found only one formatting hunk in the new two-waiter test; its exact source-bound postimage is imported. No local formatter ran.
+
 **W204/W205 behavior repair and W206 Hosted format (2026-09-22):** the
 Grouped101 failure exposed an unchanged wizard snapshot waking its own and
 other read-only long-polls. The owner now publishes only changed snapshots;
