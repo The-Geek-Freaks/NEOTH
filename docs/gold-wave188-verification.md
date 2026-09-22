@@ -60,3 +60,13 @@ quality-history contract is complete.
 
 Integrated source review is complete; the terminal timestamp is sampled by the
 existing producer during append. No provider authorization code changes were needed.
+
+## Hosted repair follow-up
+
+W188 adds a read-only Doctor observation over authenticated provider terminal WAL. It keeps provider, wire model and closed workflow separate, compares a bounded 24-hour observation window with a preceding seven-day baseline, and requires independent minimum samples. Scan bytes, retained identities/samples and shown labels remain bounded. Eight source regression identities cover signed WAL writer/reader/Doctor operation and incomplete-tail refusal.
+
+The current published source is `ebe2763529003dfdd80ca03fbdcd326519e18c4d`. Code Quality `35707548027` passed. Preflight `35707549093` failed only formatting; its 21 exact Rustfmt hunks across `cli/doctor/checks/capabilities.rs`, `daemon/capability_decay.rs` and `daemon/mod.rs` are imported with receipt `work/gold-20260906/wave188-next-batch/FORMAT-HOSTED-EBE.json`.
+
+Core `35707601954` reached W188 tests and found exactly two test-compilation errors. The end-to-end fixture now uses public `cli::doctor::run_all_checks(home)` rather than widening private visibility; the unsafe-model test uses `payload.clone()` only for its mutated label, leaving the original payload for later negative assertions. Receipt: `work/gold-20260906/wave188-next-batch/COMPILE-EBE-REPAIR.md`.
+
+The repair has not yet been pushed or rerun. No local compiler, Cargo, formatter, parser, fixture, product or test executable ran under the BSOD hold. No semantic response-quality, persisted-metric, provider-disable, release, full-CI, preview or Road-completion claim is made.

@@ -170,15 +170,19 @@ pub(crate) fn check_wal_audit_health(home: &Path) -> CheckOutcome {
 /// authenticated terminal-WAL prefix. This is intentionally advisory only.
 pub(crate) fn check_capability_quality(home: &Path) -> CheckOutcome {
     let now = crate::time::now_unix_i64();
-    let report = match crate::daemon::capability_decay::inspect_authenticated_terminal_history(home, now) {
+    let report = match crate::daemon::capability_decay::inspect_authenticated_terminal_history(
+        home, now,
+    ) {
         Ok(report) => report,
-        Err(error) => return CheckOutcome {
-            name: "capability quality",
-            status: CheckStatus::Warn,
-            detail: format!(
-                "unavailable: authenticated terminal history could not be read completely ({error:#}); no quality conclusion"
-            ),
-        },
+        Err(error) => {
+            return CheckOutcome {
+                name: "capability quality",
+                status: CheckStatus::Warn,
+                detail: format!(
+                    "unavailable: authenticated terminal history could not be read completely ({error:#}); no quality conclusion"
+                ),
+            };
+        }
     };
     let degrading: Vec<_> = report
         .observations
@@ -197,7 +201,10 @@ pub(crate) fn check_capability_quality(home: &Path) -> CheckOutcome {
             row.trend != crate::daemon::capability_decay::CapabilityTrend::InsufficientSamples
         })
         .count();
-    let attribution = match (report.unattributed_terminal_rows, report.legacy_terminal_rows) {
+    let attribution = match (
+        report.unattributed_terminal_rows,
+        report.legacy_terminal_rows,
+    ) {
         (0, 0) => String::new(),
         (unattributed, legacy) => {
             format!("; {unattributed} unattributed and {legacy} legacy terminal row(s) excluded")
@@ -388,7 +395,9 @@ pub(crate) const DOCS: &[CheckDoc] = &[
 mod tests {
     use super::*;
 
-    fn degrading_observation(index: usize) -> crate::daemon::capability_decay::CapabilityObservation {
+    fn degrading_observation(
+        index: usize,
+    ) -> crate::daemon::capability_decay::CapabilityObservation {
         crate::daemon::capability_decay::CapabilityObservation {
             identity: crate::daemon::capability_decay::CapabilityIdentity {
                 provider: format!("provider-{index}"),
@@ -440,7 +449,10 @@ mod tests {
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
-        assert!(matches!(outcome.status, CheckStatus::Pass | CheckStatus::Warn));
+        assert!(matches!(
+            outcome.status,
+            CheckStatus::Pass | CheckStatus::Warn
+        ));
         assert_eq!(
             before, after,
             "Doctor capability observation must not create or repair home state"

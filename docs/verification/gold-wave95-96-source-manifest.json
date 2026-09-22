@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W188-capability-observation",
-  "base": "88946b64d0655cee3372b6137a88da04e3cf212b",
-  "capturedUtc": "2026-09-22T08:54:31.3904072Z",
-  "validationStatus": "W188_REVIEWED_SOURCE_HOSTED_GATES_PENDING",
+  "base": "ebe2763529003dfdd80ca03fbdcd326519e18c4d",
+  "capturedUtc": "2026-09-22T09:08:15.0712576Z",
+  "validationStatus": "W188_HOSTED_FORMAT_AND_TEST_COMPILE_REPAIR_PENDING_RERUN",
   "scopeNote": "W188 bounded authenticated operational diagnostic plus exact Hosted dependency licenses and public CLI reference; no roadmap closure. Earlier source/test freezes remain historical.",
   "files": [
     {
@@ -183,8 +183,8 @@
     },
     {
       "path": "docs/gold-wave186-verification.md",
-      "bytes": 3925,
-      "sha256": "96F09C86FC0E69731C5612D3926DAD56E61FF83ADC59DB4C386CA0DE785354E4"
+      "bytes": 4301,
+      "sha256": "7BA9DFC09E9A922DDC325E775B2772D30281F0743E41806B7BC7249D9E6E3A70"
     },
     {
       "path": "docs/gold-wave187-verification.md",
@@ -193,8 +193,8 @@
     },
     {
       "path": "docs/gold-wave188-verification.md",
-      "bytes": 3769,
-      "sha256": "F8D671187F1785CB8ADB6E8D2929586960989B21D1E483B1D8D3F07933915C99"
+      "bytes": 5306,
+      "sha256": "04509BD2065CAADB3435025CE26173F2DA69F8C472D3BA63BA86A90B7521B317"
     },
     {
       "path": "docs/install.md",
@@ -298,13 +298,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1025792,
-      "sha256": "BBB0FCC5834659B95F775F39C9426248855F6846DA8F430E48D6CE5A7F102B14"
+      "bytes": 1027140,
+      "sha256": "4BB3C926444878D4447B387B17E75531509660EC94C946DEC6FDD98CDBCEAEC5"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1621239,
-      "sha256": "0E231CF93E317BFAA6C7A2D648E0717372B4DA6EB40D22C339EDE66E3FD8D2E8"
+      "bytes": 1622587,
+      "sha256": "7BF400E3776012E2A9F24626C28D3D3200444480A2590391A26BB7DA432B7FEB"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -868,8 +868,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/capabilities.rs",
-      "bytes": 18403,
-      "sha256": "F2EB18CDFF047733E600FD24C62F1BD97865332AC73AC86C63E3763BBA30E05E"
+      "bytes": 18538,
+      "sha256": "1E0D6B8D6285A6D0336A4F4E2F12B57F3948DF7A8BF2179658ED6D58A05EC83F"
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/integrations.rs",
@@ -1313,8 +1313,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/capability_decay.rs",
-      "bytes": 24543,
-      "sha256": "047400A98930BDCF31926546992FD6727AD77D319C3320193002FE3515E22D78"
+      "bytes": 25040,
+      "sha256": "7EB47E5E7659D269D6959C266F76372E5280FC87EAAC9FD58AA7BEACE490998B"
     },
     {
       "path": "SRC/neothd/src/daemon/channel_live_registry.rs",
@@ -1384,7 +1384,7 @@
     {
       "path": "SRC/neothd/src/daemon/mod.rs",
       "bytes": 18385,
-      "sha256": "C1D7F0ECA29C729306CA443B0189CB4BDF1AF8A0A33A16255B93878317F2C3CC"
+      "sha256": "EE7C0B5E8D3A511C3C18535818F0D8AF15248DA5114B73952B68E6E55F520337"
     },
     {
       "path": "SRC/neothd/src/daemon/omi_native_ingest.rs",

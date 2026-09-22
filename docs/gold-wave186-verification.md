@@ -61,4 +61,4 @@ were verified;147 old snapshot records are unchanged, with exactly one new
 dasp_sample0.11.0 snapshot from upstream97c3bb9b2363c0b46ac1633858bf1054fd02a980.
 Generated THIRD_PARTY_LICENSES and CLI reference35705705773/7683e79f are imported
 byte-for-byte. Preflight35706905274 and Quality35706903957 passed on88946b64.
-Live-audio35706936164 is still running; no audio behavior acceptance is claimed.
+Live-audio35706936164 on88946b64 compiled and passed six capture tests. The seventh test, the first Silero inference case, failed inside Tract `If` because its condition branches disagree on tensor shape `[1,128]` versus `[1,128,1]`. The remaining identities were not run. No model asset was replaced; Hosted graph specialization/parity work is in development. This is not microphone, VAD, transcription, latency, GUI, native-release or runtime acceptance.

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W188_REVIEWED_SOURCE_HOSTED_GATES_PENDING",
-  "base": "88946b64d0655cee3372b6137a88da04e3cf212b",
+  "status": "W188_HOSTED_FORMAT_AND_TEST_COMPILE_REPAIR_PENDING_RERUN",
+  "base": "ebe2763529003dfdd80ca03fbdcd326519e18c4d",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 77110,
-    "sha256": "2D1BC2885C7844149CBAB78CA8226A5F607E740D138468A1CB4F04D31E5F26C5"
+    "bytes": 77125,
+    "sha256": "F0F68FB7935978DB7323E19E0D39D1378087884F382304ED1557A45DB99F6C5E"
   },
   "sourceInputs": 447,
   "requiredNativeTests": [
@@ -3234,49 +3234,49 @@
     {
       "test": "daemon::capability_decay::tests::min_samples_keep_each_identity_inconclusive",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "047400A98930BDCF31926546992FD6727AD77D319C3320193002FE3515E22D78",
+      "sourceSha256": "7EB47E5E7659D269D6959C266F76372E5280FC87EAAC9FD58AA7BEACE490998B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::regression_and_recovery_require_separate_conservative_windows",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "047400A98930BDCF31926546992FD6727AD77D319C3320193002FE3515E22D78",
+      "sourceSha256": "7EB47E5E7659D269D6959C266F76372E5280FC87EAAC9FD58AA7BEACE490998B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::provider_and_capability_never_share_a_window",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "047400A98930BDCF31926546992FD6727AD77D319C3320193002FE3515E22D78",
+      "sourceSha256": "7EB47E5E7659D269D6959C266F76372E5280FC87EAAC9FD58AA7BEACE490998B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::malformed_or_unattributed_terminal_payload_never_becomes_quality_evidence",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "047400A98930BDCF31926546992FD6727AD77D319C3320193002FE3515E22D78",
+      "sourceSha256": "7EB47E5E7659D269D6959C266F76372E5280FC87EAAC9FD58AA7BEACE490998B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::authenticated_provider_terminal_producer_reaches_scanner_and_doctor",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "047400A98930BDCF31926546992FD6727AD77D319C3320193002FE3515E22D78",
+      "sourceSha256": "7EB47E5E7659D269D6959C266F76372E5280FC87EAAC9FD58AA7BEACE490998B",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::capability_decay::tests::authenticated_terminal_history_refuses_a_later_incomplete_prefix",
       "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
-      "sourceSha256": "047400A98930BDCF31926546992FD6727AD77D319C3320193002FE3515E22D78",
+      "sourceSha256": "7EB47E5E7659D269D6959C266F76372E5280FC87EAAC9FD58AA7BEACE490998B",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::checks::capabilities::tests::capability_quality_doctor_home_is_read_only_when_history_is_absent",
       "sourcePath": "SRC/neothd/src/cli/doctor/checks/capabilities.rs",
-      "sourceSha256": "F2EB18CDFF047733E600FD24C62F1BD97865332AC73AC86C63E3763BBA30E05E",
+      "sourceSha256": "1E0D6B8D6285A6D0336A4F4E2F12B57F3948DF7A8BF2179658ED6D58A05EC83F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::doctor::checks::capabilities::tests::capability_quality_limits_rendered_degradation_labels",
       "sourcePath": "SRC/neothd/src/cli/doctor/checks/capabilities.rs",
-      "sourceSha256": "F2EB18CDFF047733E600FD24C62F1BD97865332AC73AC86C63E3763BBA30E05E",
+      "sourceSha256": "1E0D6B8D6285A6D0336A4F4E2F12B57F3948DF7A8BF2179658ED6D58A05EC83F",
       "junitClass": "neoth"
     }
   ],
@@ -8431,5 +8431,57 @@
     "referenceSource": "7683e79fb29954f06b0e4791af6e52c14e7a7ef9",
     "referenceSha256": "D6E7E5E0D70434142BE32FF985C14F8359236ED863128F0F5B9EDE980B4CF3AE",
     "status": "Imported exact successful hosted artifacts, no local executable validation"
+  },
+  "wave188HostedRepair": {
+    "source": "ebe2763529003dfdd80ca03fbdcd326519e18c4d",
+    "formatRun": 35707549093,
+    "exactHunks": 21,
+    "coreRun": 35707601954,
+    "coreErrors": [
+      "E0603 private Doctor checks reached from test",
+      "E0382 moved payload in negative test"
+    ],
+    "repairs": [
+      "public run_all_checks surface without widened visibility",
+      "clone negative fixture payload"
+    ],
+    "files": [
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1622587,
+        "sha256": "7BF400E3776012E2A9F24626C28D3D3200444480A2590391A26BB7DA432B7FEB"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1027140,
+        "sha256": "4BB3C926444878D4447B387B17E75531509660EC94C946DEC6FDD98CDBCEAEC5"
+      },
+      {
+        "path": "docs/gold-wave186-verification.md",
+        "bytes": 4301,
+        "sha256": "7BA9DFC09E9A922DDC325E775B2772D30281F0743E41806B7BC7249D9E6E3A70"
+      },
+      {
+        "path": "docs/gold-wave188-verification.md",
+        "bytes": 5306,
+        "sha256": "04509BD2065CAADB3435025CE26173F2DA69F8C472D3BA63BA86A90B7521B317"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/capability_decay.rs",
+        "bytes": 25040,
+        "sha256": "7EB47E5E7659D269D6959C266F76372E5280FC87EAAC9FD58AA7BEACE490998B"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/mod.rs",
+        "bytes": 18385,
+        "sha256": "EE7C0B5E8D3A511C3C18535818F0D8AF15248DA5114B73952B68E6E55F520337"
+      },
+      {
+        "path": "SRC/neothd/src/cli/doctor/checks/capabilities.rs",
+        "bytes": 18538,
+        "sha256": "1E0D6B8D6285A6D0336A4F4E2F12B57F3948DF7A8BF2179658ED6D58A05EC83F"
+      }
+    ],
+    "status": "SOURCE_REPAIR_HOSTED_RERUN_REQUIRED"
   }
 }

@@ -122,11 +122,13 @@ pub(crate) fn inspect_authenticated_terminal_history(
             }
             match terminal_sample_from_payload(frame.header.event_type, frame.payload)? {
                 TerminalPayload::Legacy => {
-                    legacy_terminal_rows = legacy_terminal_rows.checked_add(1)
+                    legacy_terminal_rows = legacy_terminal_rows
+                        .checked_add(1)
                         .context("capability legacy terminal counter overflow")?;
                 }
                 TerminalPayload::Unattributed => {
-                    unattributed_terminal_rows = unattributed_terminal_rows.checked_add(1)
+                    unattributed_terminal_rows = unattributed_terminal_rows
+                        .checked_add(1)
                         .context("capability unattributed terminal counter overflow")?;
                 }
                 TerminalPayload::Sample(sample) => {
@@ -177,12 +179,13 @@ enum TerminalPayload {
 }
 
 fn terminal_sample_from_payload(event_type: u8, payload: &[u8]) -> Result<TerminalPayload> {
-    let value: serde_json::Value = serde_json::from_slice(payload)
-        .context("decode provider terminal observation payload")?;
+    let value: serde_json::Value =
+        serde_json::from_slice(payload).context("decode provider terminal observation payload")?;
     if value
         .get("usage_projection_schema")
         .and_then(serde_json::Value::as_str)
-        != Some("neoth.provider-usage.v2") {
+        != Some("neoth.provider-usage.v2")
+    {
         return Ok(TerminalPayload::Legacy);
     }
     let invocation_id = required_string(&value, "invocation_id")?;
@@ -287,7 +290,11 @@ fn derive_report(
             continue;
         };
         let entry = by_identity.entry(sample.identity).or_default();
-        let target = if window == 0 { &mut entry.0 } else { &mut entry.1 };
+        let target = if window == 0 {
+            &mut entry.0
+        } else {
+            &mut entry.1
+        };
         target.completed = target
             .completed
             .checked_add(1)
@@ -303,22 +310,22 @@ fn derive_report(
     let observations = by_identity
         .into_iter()
         .map(|(identity, (recent, baseline))| {
-        let recent_p90_latency_ms = p90(&recent.latencies);
-        let baseline_p90_latency_ms = p90(&baseline.latencies);
-        CapabilityObservation {
-            identity,
-            trend: classify(
-                &recent,
-                &baseline,
+            let recent_p90_latency_ms = p90(&recent.latencies);
+            let baseline_p90_latency_ms = p90(&baseline.latencies);
+            CapabilityObservation {
+                identity,
+                trend: classify(
+                    &recent,
+                    &baseline,
+                    recent_p90_latency_ms,
+                    baseline_p90_latency_ms,
+                ),
+                recent_samples: recent.completed,
+                baseline_samples: baseline.completed,
+                recent_failures: recent.failed,
+                baseline_failures: baseline.failed,
                 recent_p90_latency_ms,
                 baseline_p90_latency_ms,
-            ),
-            recent_samples: recent.completed,
-            baseline_samples: baseline.completed,
-            recent_failures: recent.failed,
-            baseline_failures: baseline.failed,
-            recent_p90_latency_ms,
-            baseline_p90_latency_ms,
             }
         })
         .collect();
@@ -335,8 +342,7 @@ fn p90(samples: &[u64]) -> u64 {
     }
     let mut sorted = samples.to_vec();
     sorted.sort_unstable();
-    let p90_index = (sorted.len().saturating_mul(90).saturating_add(99) / 100)
-        .saturating_sub(1);
+    let p90_index = (sorted.len().saturating_mul(90).saturating_add(99) / 100).saturating_sub(1);
     sorted[p90_index]
 }
 
@@ -361,8 +367,8 @@ fn classify(
     let failure_recovering = baseline_failure_ppm >= 200_000
         && recent_failure_ppm <= 50_000
         && recent_failure_ppm.saturating_add(150_000) <= baseline_failure_ppm;
-    let latency_recovering = baseline_p90 >= 500
-        && recent_p90.saturating_mul(100) <= baseline_p90.saturating_mul(60);
+    let latency_recovering =
+        baseline_p90 >= 500 && recent_p90.saturating_mul(100) <= baseline_p90.saturating_mul(60);
     if failure_recovering || latency_recovering {
         CapabilityTrend::Recovering
     } else {
@@ -423,8 +429,7 @@ mod tests {
         } else {
             object.insert("error_kind".into(), "transport".into());
         }
-        serde_json::to_vec(&payload)
-        .expect("encode current provider terminal payload")
+        serde_json::to_vec(&payload).expect("encode current provider terminal payload")
     }
 
     async fn append_provider_terminal(
@@ -553,7 +558,14 @@ mod tests {
             ));
         }
         for id in 60..68 {
-            rows.push(sample("a", WorkflowKind::ChatTurn, now - 10, false, 900, id));
+            rows.push(sample(
+                "a",
+                WorkflowKind::ChatTurn,
+                now - 10,
+                false,
+                900,
+                id,
+            ));
             rows.push(sample(
                 "b",
                 WorkflowKind::DeepResearch,
@@ -568,9 +580,11 @@ mod tests {
         assert!(report.observations.iter().any(|row| {
             row.identity.provider == "a" && row.trend == CapabilityTrend::Degrading
         }));
-        assert!(report.observations.iter().any(|row| {
-            row.identity.provider == "b" && row.trend == CapabilityTrend::Stable
-        }));
+        assert!(
+            report.observations.iter().any(|row| {
+                row.identity.provider == "b" && row.trend == CapabilityTrend::Stable
+            })
+        );
     }
 
     #[test]
@@ -595,12 +609,14 @@ mod tests {
             .unwrap(),
             TerminalPayload::Unattributed
         ));
-        assert!(terminal_sample_from_payload(
-            EVENT_TYPE_PROVIDER_RESPONSE,
-            br#"{"usage_projection_schema":"neoth.provider-usage.v2"}"#
-        )
-        .is_err());
-        let mut unsafe_model = payload;
+        assert!(
+            terminal_sample_from_payload(
+                EVENT_TYPE_PROVIDER_RESPONSE,
+                br#"{"usage_projection_schema":"neoth.provider-usage.v2"}"#
+            )
+            .is_err()
+        );
+        let mut unsafe_model = payload.clone();
         unsafe_model["wire_model"] = serde_json::Value::String("model\nspoof".into());
         assert!(matches!(
             terminal_sample_from_payload(
@@ -610,18 +626,22 @@ mod tests {
             .unwrap(),
             TerminalPayload::Unattributed
         ));
-        assert!(terminal_sample_from_payload(
-            EVENT_TYPE_PROVIDER_ERROR,
-            &serde_json::to_vec(&payload).unwrap()
-        )
-        .is_err());
+        assert!(
+            terminal_sample_from_payload(
+                EVENT_TYPE_PROVIDER_ERROR,
+                &serde_json::to_vec(&payload).unwrap()
+            )
+            .is_err()
+        );
         let mut uppercase_invocation = payload;
         uppercase_invocation["invocation_id"] = serde_json::Value::String("A".repeat(64));
-        assert!(terminal_sample_from_payload(
-            EVENT_TYPE_PROVIDER_RESPONSE,
-            &serde_json::to_vec(&uppercase_invocation).unwrap()
-        )
-        .is_err());
+        assert!(
+            terminal_sample_from_payload(
+                EVENT_TYPE_PROVIDER_RESPONSE,
+                &serde_json::to_vec(&uppercase_invocation).unwrap()
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test]
@@ -630,13 +650,8 @@ mod tests {
         let now = crate::time::now_unix_i64();
         let (_, writer, join) = ready_authenticated_writer(home.path()).await;
         for invocation in 0..12 {
-            append_provider_terminal(
-                &writer,
-                invocation,
-                now - RECENT_WINDOW_SECONDS - 10,
-                true,
-            )
-            .await;
+            append_provider_terminal(&writer, invocation, now - RECENT_WINDOW_SECONDS - 10, true)
+                .await;
         }
         for invocation in 20..28 {
             append_provider_terminal(&writer, invocation, now - 10, true).await;
@@ -650,9 +665,15 @@ mod tests {
         assert_eq!(report.observations.len(), 1);
         assert_eq!(report.observations[0].identity.provider, "openai_api");
         assert_eq!(report.observations[0].identity.model, "gpt-5");
-        assert_eq!(report.observations[0].identity.workflow.as_str(), "chat_turn");
+        assert_eq!(
+            report.observations[0].identity.workflow.as_str(),
+            "chat_turn"
+        );
         assert_eq!(report.observations[0].trend, CapabilityTrend::Stable);
-        let outcome = crate::cli::doctor::checks::capabilities::check_capability_quality(home.path());
+        let outcome = crate::cli::doctor::run_all_checks(home.path())
+            .into_iter()
+            .find(|outcome| outcome.name == "capability quality")
+            .expect("public Doctor surface must include capability quality");
         assert_eq!(outcome.name, "capability quality");
         assert!(outcome.detail.contains("operational evidence"));
     }

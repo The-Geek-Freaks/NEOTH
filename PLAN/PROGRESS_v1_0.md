@@ -2,6 +2,12 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**Current published/Hosted boundary (2026-09-22):** GitHub `main` is `ebe2763529003dfdd80ca03fbdcd326519e18c4d`. Code Quality `35707548027` passed there. Preflight `35707549093` failed only formatting; all 21 exact Hosted hunks across three Rust files are imported with receipt `work/gold-20260906/wave188-next-batch/FORMAT-HOSTED-EBE.json`. Core `35707601954` then found exactly two test-compilation errors, now repaired through public `run_all_checks` and a narrow `payload.clone` change; see `COMPILE-EBE-REPAIR.md`. A new push and Hosted rerun are pending.
+
+W186 live-audio `35706936164` on `88946b64` compiled and passed six capture tests, then failed the seventh, first Silero test on a Tract `If` tensor-shape mismatch (`[1,128]` versus `[1,128,1]`). Its remaining tests did not run. The asset is unchanged; graph specialization/parity work is in development. This is neither audio-runtime acceptance nor a full CI/preview success claim.
+
+The current source/test inventory is 447 source paths, 545 universal native identities, 6 Windows, 8 Linux, 7 macOS, 80 GUI, 19 Unix-GUI and 19 live-audio identities. The Road inventory remains **1015 checked / 307 open / 2 partial**; this update changes no checkbox. The historic entries below retain their original source identities and are superseded as current status by this block.
+
 **Prior verified gates (2026-09-22):** GitHub `main` was confirmed at
 `1eb93f14f35b3631f3b3fbc155dad1dd2abbeef9`. Preflight `35695668011` and
 Code Quality `35695667625` passed on that source. Core test-target typecheck,
@@ -25,7 +31,7 @@ and reference export `35705705773` passed on `7683e79f`. Its exact generated
 reference is imported. Notice export `35706938770` passed on `88946b64`; all ten
 artifact/input hashes match, 147 old license snapshots are unchanged and exactly
 one VCS-bound `dasp_sample 0.11.0` snapshot is added. Native/GUI/audio acceptance
-remains separate. W186 live-audio `35706936164` is still running.
+remains separate. The later live-audio result is recorded in the current block.
 
 **W186 Hosted follow-up (2026-09-22):** the default-feature core test typecheck
 in `35705705773` passed on `7683e79f`; public CLI build/export is still running.

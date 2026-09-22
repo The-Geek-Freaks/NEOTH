@@ -28,6 +28,9 @@ pub(crate) mod auto_update;
 pub mod babel_cron;
 pub mod backup;
 pub mod backup_retention;
+/// P2-06 — read-only, authenticated terminal-WAL quality observation for the
+/// Doctor surface. It never changes provider selection or availability.
+pub(crate) mod capability_decay;
 /// HERMES-06 GAP-B — capability evolver: reads a [`CollectorReport`] from the
 /// self-improvement collector, applies an auto-safe gate (only `PromptEdit`
 /// signals qualify — `PatchSkill`, `ConfigChange`, and `Escalate` require
@@ -38,9 +41,6 @@ pub mod backup_retention;
 /// each collector tick inside `spawn_self_improvement_collector_loop`. Emits
 /// `0x0F CAPABILITY_EVOLVER_RAN`. Companion CLI surface: `neoth self-dev scan`.
 pub mod capability_evolver;
-/// P2-06 — read-only, authenticated terminal-WAL quality observation for the
-/// Doctor surface. It never changes provider selection or availability.
-pub(crate) mod capability_decay;
 /// Generation-bound registry for connection-owned proactive channel adapters.
 /// It hands durable egress a revocable lease, never a raw live transport.
 pub mod channel_live_registry;
