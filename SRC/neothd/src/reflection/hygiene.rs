@@ -1042,8 +1042,9 @@ mod tests {
             version: TOPIC_SYNONYM_MAP_VERSION,
             entries: BTreeMap::from([("k8s".into(), "kubernetes".into())]),
         };
-        let synthesis =
-            plan_yearly_synthesis(period_reflections, now, "2026", synonyms).unwrap().unwrap();
+        let synthesis = plan_yearly_synthesis(period_reflections, now, "2026", synonyms)
+            .unwrap()
+            .unwrap();
         assert_eq!(synthesis.year, "2026");
         assert_eq!(synthesis.source_tags, vec!["2026-01-01"]);
         assert_eq!(synthesis.canonical_topics, vec!["kubernetes"]);

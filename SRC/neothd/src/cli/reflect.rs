@@ -827,8 +827,8 @@ fn digest_yearly_from_period_archives(
     output: OutputFormat,
     now_unix: i64,
 ) -> Result<()> {
-    use crate::reflection::{
-        periodic::{self, PeriodKind, YearlySynthesisSettlement, year_tag_from_unix},
+    use crate::reflection::periodic::{
+        self, PeriodKind, YearlySynthesisSettlement, year_tag_from_unix,
     };
 
     let tag = year_tag_from_unix(now_unix);
@@ -867,9 +867,14 @@ fn digest_yearly_from_period_archives(
     let mut obsidian_path = None;
     if let Some(vault) = cfg.obsidian_vault.as_deref() {
         let subdir = cfg.obsidian_subdir.as_deref().unwrap_or("NEOTH");
-        let outcome =
-            periodic::sync_to_obsidian(home, std::path::Path::new(vault), subdir, PeriodKind::Yearly, &tag)
-                .context("Obsidian sync")?;
+        let outcome = periodic::sync_to_obsidian(
+            home,
+            std::path::Path::new(vault),
+            subdir,
+            PeriodKind::Yearly,
+            &tag,
+        )
+        .context("Obsidian sync")?;
         if outcome.written {
             obsidian_path = Some(outcome.target_path.display().to_string());
         }
@@ -890,7 +895,11 @@ fn digest_yearly_from_period_archives(
     } else if written {
         println!(
             "Yearly reflection {tag} written from {} canonical period reflection(s).",
-            reflection.tags.iter().filter(|tag| tag.starts_with("source:")).count()
+            reflection
+                .tags
+                .iter()
+                .filter(|tag| tag.starts_with("source:"))
+                .count()
         );
     } else {
         println!("Yearly reflection {tag}: matching source-attested receipt already exists.");
@@ -2125,8 +2134,7 @@ mod tests {
         let now = 1_787_788_800_i64;
         let daily_tag = date_tag_from_unix(now - 86_400);
         let daily =
-            build_reflection(PeriodKind::Daily, &daily_tag, &["k8s".into()], now - 86_400)
-                .unwrap();
+            build_reflection(PeriodKind::Daily, &daily_tag, &["k8s".into()], now - 86_400).unwrap();
         settle_daily_admission(home.path(), &daily, None, None).unwrap();
         assert!(!home.path().join("views.db").exists());
 
@@ -2139,14 +2147,18 @@ mod tests {
         .unwrap();
         assert_eq!(yearly.len(), 1);
         assert_eq!(yearly[0].topics, vec!["k8s"]);
-        assert!(yearly[0]
-            .tags
-            .iter()
-            .any(|tag| tag.starts_with(&format!("source:{daily_tag}:"))));
-        assert!(yearly[0]
-            .tags
-            .iter()
-            .any(|tag| tag.starts_with("synonyms:")));
+        assert!(
+            yearly[0]
+                .tags
+                .iter()
+                .any(|tag| tag.starts_with(&format!("source:{daily_tag}:")))
+        );
+        assert!(
+            yearly[0]
+                .tags
+                .iter()
+                .any(|tag| tag.starts_with("synonyms:"))
+        );
 
         digest_at(home.path(), DigestPeriod::Yearly, OutputFormat::Table, now).unwrap();
         assert_eq!(

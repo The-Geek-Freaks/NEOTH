@@ -37,3 +37,11 @@ This publication also imports the single exact formatting hunk reported by
 Preflight `35672248701` on `a2bd1b37`, in the W177 chat test's database-open call.
 It does not change that fixture's assertions or runtime behavior. The preceding
 core check `35672248518` is tracked separately from W183 acceptance.
+
+Hosted follow-up: Code Quality `35672664825` passed on `5ff3689b`.
+Preflight `35672664943` reported 23 formatting hunks across the four W183
+Rust sources. All 23 exact, uniquely matched hunks have been imported, with
+zero foreign paths. Receipt `FORMAT-HOSTED-5FF.json` has SHA-256
+`7E6AFEA3D6D73F861383CDB712BB37CED68CF194AB7B16E5236791AFE4AFCE92`.
+The preceding W182 core test typecheck on `a2bd1b37` passed; its CLI build and
+the queued W183 check remain separate gates. No behavioral completion is claimed.

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W183_STATIC_REVIEWED_HOSTED_PENDING",
-  "base": "a2bd1b372ab0a410018eec64ac031ffa55babe10",
+  "status": "W183_HOSTED_FORMAT_IMPORTED_CORE_AND_NATIVE_PENDING",
+  "base": "5ff3689b7f292125787d6759f44136a6acf807ba",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 72467,
-    "sha256": "A8ED905A1F023CAAA4ACE856153AC19341DF701C773487E27D65A386828BB177"
+    "bytes": 72437,
+    "sha256": "DADF0378D494D2A2495896C7CC9E537021C733E9C55C68EC7C2B4FBA96886922"
   },
   "sourceInputs": 420,
   "requiredNativeTests": [
@@ -2814,61 +2814,61 @@
     {
       "test": "reflection::hygiene::tests::yearly_synthesis_selects_only_the_requested_year_without_database_input",
       "sourcePath": "SRC/neothd/src/reflection/hygiene.rs",
-      "sourceSha256": "59503068A383798D58CF6B69FD4C0A6F00FDC1DB79E8562F7B31D7647C953C22",
+      "sourceSha256": "8F892FA7418E1EDCE3532899A565BE71EC77694A05CE04D54602A7EC214134D7",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::hygiene::tests::yearly_inputs_use_only_supplied_daily_period_data_inside_one_year",
       "sourcePath": "SRC/neothd/src/reflection/hygiene.rs",
-      "sourceSha256": "59503068A383798D58CF6B69FD4C0A6F00FDC1DB79E8562F7B31D7647C953C22",
+      "sourceSha256": "8F892FA7418E1EDCE3532899A565BE71EC77694A05CE04D54602A7EC214134D7",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::yearly_source_reader_uses_only_strict_daily_archive_records_in_tag_order",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "00B47FD54CD2A10877A0073EB65A995187241CB0C2EA99119D0B8B7389A753AC",
+      "sourceSha256": "F70A44363141FA10796E288B100B5514F962B6A03B2C10575A18767118D695F4",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::yearly_synthesis_receipt_is_exactly_once_and_refuses_changed_sources",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "00B47FD54CD2A10877A0073EB65A995187241CB0C2EA99119D0B8B7389A753AC",
+      "sourceSha256": "F70A44363141FA10796E288B100B5514F962B6A03B2C10575A18767118D695F4",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::concurrent_yearly_settlers_converge_to_one_atomic_receipt",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "00B47FD54CD2A10877A0073EB65A995187241CB0C2EA99119D0B8B7389A753AC",
+      "sourceSha256": "F70A44363141FA10796E288B100B5514F962B6A03B2C10575A18767118D695F4",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::daily_retention_uses_archive_tags_and_defers_the_inclusive_ninety_day_boundary",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "00B47FD54CD2A10877A0073EB65A995187241CB0C2EA99119D0B8B7389A753AC",
+      "sourceSha256": "F70A44363141FA10796E288B100B5514F962B6A03B2C10575A18767118D695F4",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::daily_retention_keeps_current_admission_archive_when_authority_is_absent",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "00B47FD54CD2A10877A0073EB65A995187241CB0C2EA99119D0B8B7389A753AC",
+      "sourceSha256": "F70A44363141FA10796E288B100B5514F962B6A03B2C10575A18767118D695F4",
       "junitClass": "neoth"
     },
     {
       "test": "reflection::periodic::tests::admission_state_revision_change_cannot_enable_an_unsigned_retention_effect",
       "sourcePath": "SRC/neothd/src/reflection/periodic.rs",
-      "sourceSha256": "00B47FD54CD2A10877A0073EB65A995187241CB0C2EA99119D0B8B7389A753AC",
+      "sourceSha256": "F70A44363141FA10796E288B100B5514F962B6A03B2C10575A18767118D695F4",
       "junitClass": "neoth"
     },
     {
       "test": "cli::reflect::tests::cli_yearly_digest_uses_daily_archive_without_views_db_and_is_idempotent",
       "sourcePath": "SRC/neothd/src/cli/reflect.rs",
-      "sourceSha256": "4C91E475B65569618E90A428E40C663145EC5E7B0A9A17D85B8E86BF5B2A2C1F",
+      "sourceSha256": "529A28C9C03D2ADDF69EFBFEEF755CA7412208F9ECC430780DD6FFABE507AB17",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::reflection_cron::tests::yearly_cron_uses_canonical_daily_archive_without_views_db_and_retries_idempotently",
       "sourcePath": "SRC/neothd/src/daemon/reflection_cron.rs",
-      "sourceSha256": "C9B9B99E0088F3771D210443AB9A8BF574199D54A1787E9821C174A1EB079BE1",
+      "sourceSha256": "7EDA65610AAF4CCBD243D4B1B74A7DEF7E6D6EDA5DEAD394111EA7A2956F2196",
       "junitClass": "neoth"
     }
   ],
@@ -7050,6 +7050,13 @@
         }
       ],
       "assertionsChanged": false
+    },
+    "repairedCoreTypecheck": {
+      "run": 35672248518,
+      "source": "a2bd1b372ab0a410018eec64ac031ffa55babe10",
+      "step": "Type-check core test targets before native validation",
+      "conclusion": "success",
+      "behaviorProof": false
     }
   },
   "wave183": {
@@ -7092,6 +7099,16 @@
     ],
     "behavior": "Yearly archive-only shared CLI/cron composer; immutable current-year snapshot; content-bound receipt; source-stable retries; validated auto cadence",
     "status": "static_approved_hosted_pending",
-    "roadClosure": false
+    "roadClosure": false,
+    "hostedFormat": {
+      "source": "5ff3689b7f292125787d6759f44136a6acf807ba",
+      "preflight": 35672664943,
+      "quality": 35672664825,
+      "hunks": 23,
+      "files": 4,
+      "receipt": "work/gold-20260906/wave183-next-batch/FORMAT-HOSTED-5FF.json",
+      "receiptSha256": "7E6AFEA3D6D73F861383CDB712BB37CED68CF194AB7B16E5236791AFE4AFCE92",
+      "status": "Exact hunks imported; core and behavior pending"
+    }
   }
 }

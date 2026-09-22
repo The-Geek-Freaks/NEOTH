@@ -607,9 +607,7 @@ fn run_yearly_reflection_tick_once(
     obsidian: Option<(&std::path::Path, &str)>,
     topic_synonyms: crate::reflection::hygiene::TopicSynonymMap,
 ) -> Result<bool, String> {
-    use crate::reflection::{
-        periodic::{self, PeriodKind, YearlySynthesisSettlement},
-    };
+    use crate::reflection::periodic::{self, PeriodKind, YearlySynthesisSettlement};
 
     let marker = home.join("reflections").join(marker_name);
     if marker_matches(&marker, tag)? {
@@ -620,9 +618,8 @@ fn run_yearly_reflection_tick_once(
         }
         return Err("yearly marker has no valid durable receipt".to_string());
     }
-    let Some(reflection) =
-        periodic::compose_yearly_synthesis(home, now_unix, tag, topic_synonyms)
-            .map_err(|_| "yearly period archive or hygiene plan is unavailable".to_string())?
+    let Some(reflection) = periodic::compose_yearly_synthesis(home, now_unix, tag, topic_synonyms)
+        .map_err(|_| "yearly period archive or hygiene plan is unavailable".to_string())?
     else {
         return Ok(false);
     };
@@ -2027,9 +2024,13 @@ mod tests {
         let home = TempDir::new().unwrap();
         let now = 1_787_788_800_i64;
         let daily_tag = date_tag_from_unix(now - 86_400);
-        let daily =
-            build_reflection(PeriodKind::Daily, &daily_tag, &["rust".into()], now - 86_400)
-                .unwrap();
+        let daily = build_reflection(
+            PeriodKind::Daily,
+            &daily_tag,
+            &["rust".into()],
+            now - 86_400,
+        )
+        .unwrap();
         settle_daily_admission(home.path(), &daily, None, None).unwrap();
         assert!(!home.path().join("views.db").exists());
         let yearly_tag = periodic::year_tag_from_unix(now);
@@ -2046,9 +2047,13 @@ mod tests {
             .unwrap()
         );
         let next_tag = date_tag_from_unix(now + 86_400);
-        let next =
-            build_reflection(PeriodKind::Daily, &next_tag, &["new-topic".into()], now + 86_400)
-                .unwrap();
+        let next = build_reflection(
+            PeriodKind::Daily,
+            &next_tag,
+            &["new-topic".into()],
+            now + 86_400,
+        )
+        .unwrap();
         settle_daily_admission(home.path(), &next, None, None).unwrap();
         assert!(
             !run_yearly_reflection_tick_once(
@@ -2069,16 +2074,19 @@ mod tests {
             now + 86_401,
         )
         .unwrap_err();
-        let yearly =
-            periodic::load_for_tag(home.path(), PeriodKind::Yearly, &yearly_tag).unwrap();
+        let yearly = periodic::load_for_tag(home.path(), PeriodKind::Yearly, &yearly_tag).unwrap();
         assert_eq!(yearly.len(), 1);
-        assert!(yearly[0]
-            .tags
-            .iter()
-            .any(|tag| tag.starts_with(&format!("source:{daily_tag}:"))));
-        assert!(yearly[0]
-            .tags
-            .iter()
-            .any(|tag| tag.starts_with("synonyms:")));
+        assert!(
+            yearly[0]
+                .tags
+                .iter()
+                .any(|tag| tag.starts_with(&format!("source:{daily_tag}:")))
+        );
+        assert!(
+            yearly[0]
+                .tags
+                .iter()
+                .any(|tag| tag.starts_with("synonyms:"))
+        );
     }
 }

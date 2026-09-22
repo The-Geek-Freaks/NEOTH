@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W183-yearly-period-synthesis",
-  "base": "a2bd1b372ab0a410018eec64ac031ffa55babe10",
-  "capturedUtc": "2026-09-22T00:34:44.6088019Z",
-  "validationStatus": "W183_STATIC_REVIEWED_HOSTED_PENDING",
-  "scopeNote": "Four reviewed yearly reflection sources, one exact Hosted W182 formatting hunk, and four docs. W184 source remains excluded. No Road closure.",
+  "base": "5ff3689b7f292125787d6759f44136a6acf807ba",
+  "capturedUtc": "2026-09-22T00:40:50.5497653Z",
+  "validationStatus": "W183_HOSTED_FORMAT_IMPORTED_CORE_AND_NATIVE_PENDING",
+  "scopeNote": "23 exact Hosted formatting hunks across four W183 files plus three docs; W184 remains excluded.",
   "files": [
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -153,8 +153,8 @@
     },
     {
       "path": "docs/gold-wave183-verification.md",
-      "bytes": 2257,
-      "sha256": "E36AEB5F00C687ECB7E7B4D1F52B6F472CE2B35AD24E036830736FCEEDB90BEC"
+      "bytes": 2769,
+      "sha256": "AC604A195A1CFAB919C7D424FC1EE363A823709834D2277DC295F5EE3E405273"
     },
     {
       "path": "docs/install.md",
@@ -243,13 +243,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1019374,
-      "sha256": "35B163F74957256EA4318F1E2E8A094286391D6F24CE9A6D7A87176C7C88DB89"
+      "bytes": 1019656,
+      "sha256": "60799FCCCA54E8426DA9D5450EF2D090965B85E9866C2A8ADACD80E1BBC64E54"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1614821,
-      "sha256": "38E648DEDEEF66BB79955CAB8D87B8D1EE09E57D84E97E6CE42ECD304110D0D6"
+      "bytes": 1615103,
+      "sha256": "868B7B87DC9918D42BC2B2D74E404C48F56788A7342B4AB74D3B63891847890A"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -903,8 +903,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/reflect.rs",
-      "bytes": 84970,
-      "sha256": "4C91E475B65569618E90A428E40C663145EC5E7B0A9A17D85B8E86BF5B2A2C1F"
+      "bytes": 85138,
+      "sha256": "529A28C9C03D2ADDF69EFBFEEF755CA7412208F9ECC430780DD6FFABE507AB17"
     },
     {
       "path": "SRC/neothd/src/cli/review.rs",
@@ -1303,8 +1303,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/reflection_cron.rs",
-      "bytes": 81658,
-      "sha256": "C9B9B99E0088F3771D210443AB9A8BF574199D54A1787E9821C174A1EB079BE1"
+      "bytes": 81763,
+      "sha256": "7EDA65610AAF4CCBD243D4B1B74A7DEF7E6D6EDA5DEAD394111EA7A2956F2196"
     },
     {
       "path": "SRC/neothd/src/daemon/session_sort_cron.rs",
@@ -1748,8 +1748,8 @@
     },
     {
       "path": "SRC/neothd/src/reflection/hygiene.rs",
-      "bytes": 42444,
-      "sha256": "59503068A383798D58CF6B69FD4C0A6F00FDC1DB79E8562F7B31D7647C953C22"
+      "bytes": 42458,
+      "sha256": "8F892FA7418E1EDCE3532899A565BE71EC77694A05CE04D54602A7EC214134D7"
     },
     {
       "path": "SRC/neothd/src/reflection/mod.rs",
@@ -1758,8 +1758,8 @@
     },
     {
       "path": "SRC/neothd/src/reflection/periodic.rs",
-      "bytes": 180485,
-      "sha256": "00B47FD54CD2A10877A0073EB65A995187241CB0C2EA99119D0B8B7389A753AC"
+      "bytes": 180737,
+      "sha256": "F70A44363141FA10796E288B100B5514F962B6A03B2C10575A18767118D695F4"
     },
     {
       "path": "SRC/neothd/src/security/prompt_envelope.rs",

@@ -1975,12 +1975,7 @@ pub fn compose_yearly_synthesis(
     let sources = load_daily_period_reflections_for_yearly(home, now_unix)?;
     let source_hashes: BTreeMap<_, _> = sources
         .iter()
-        .map(|source| {
-            (
-                source.reflection.tag.clone(),
-                source.archive_sha256.clone(),
-            )
-        })
+        .map(|source| (source.reflection.tag.clone(), source.archive_sha256.clone()))
         .collect();
     let generated_ts_unix = sources
         .iter()
@@ -2009,7 +2004,9 @@ pub fn compose_yearly_synthesis(
         &input.canonical_topics,
         generated_ts_unix,
     )
-    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "yearly plan had no topics"))?;
+    .ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "yearly plan had no topics")
+    })?;
     reflection.tags = input
         .source_tags
         .iter()
@@ -2017,7 +2014,12 @@ pub fn compose_yearly_synthesis(
             source_hashes
                 .get(source)
                 .map(|hash| format!("source:{source}:{hash}"))
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "yearly plan referenced an unknown source"))
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "yearly plan referenced an unknown source",
+                    )
+                })
         })
         .collect::<std::io::Result<Vec<_>>>()?;
     reflection.tags.push(format!("synonyms:{synonym_sha256}"));
@@ -2044,11 +2046,8 @@ pub fn has_valid_yearly_synthesis_receipt(home: &Path, year: &str) -> std::io::R
         return Ok(false);
     };
     let reflections_path = home.join("reflections");
-    let Some(reflections) = open_existing_read_only_child(
-        &home_dir.dir,
-        OsStr::new("reflections"),
-        &reflections_path,
-    )?
+    let Some(reflections) =
+        open_existing_read_only_child(&home_dir.dir, OsStr::new("reflections"), &reflections_path)?
     else {
         return Ok(false);
     };
@@ -2084,20 +2083,23 @@ pub fn settle_yearly_synthesis(
     home: &Path,
     expected: &PeriodReflection,
 ) -> std::io::Result<YearlySynthesisSettlement> {
-    if expected.kind != PeriodKind::Yearly.as_str() || !valid_yearly_synthesis_receipt_tags(&expected.tags)
+    if expected.kind != PeriodKind::Yearly.as_str()
+        || !valid_yearly_synthesis_receipt_tags(&expected.tags)
     {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "yearly synthesis record has invalid provenance",
         ));
     }
-    let home_dir = crate::skills::store::open_absolute_bound_directory(
-        home,
-        false,
-        "yearly synthesis home",
-    )
-    .map_err(std::io::Error::other)?
-    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "yearly synthesis home missing"))?;
+    let home_dir =
+        crate::skills::store::open_absolute_bound_directory(home, false, "yearly synthesis home")
+            .map_err(std::io::Error::other)?
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "yearly synthesis home missing",
+                )
+            })?;
     let reflections_path = home.join("reflections");
     let reflections = crate::skills::store::open_or_create_private_child_dir(
         &home_dir.dir,
@@ -4659,9 +4661,13 @@ mod tests {
         let now = 1_787_788_800_i64;
         let earlier_tag = date_tag_from_unix(now - 86_400);
         let current_tag = date_tag_from_unix(now);
-        let earlier =
-            build_reflection(PeriodKind::Daily, &earlier_tag, &["k8s".into()], now - 86_400)
-                .unwrap();
+        let earlier = build_reflection(
+            PeriodKind::Daily,
+            &earlier_tag,
+            &["k8s".into()],
+            now - 86_400,
+        )
+        .unwrap();
         let current =
             build_reflection(PeriodKind::Daily, &current_tag, &["rust".into()], now).unwrap();
         settle_daily_admission(home.path(), &current, None, None).unwrap();
@@ -4675,7 +4681,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![earlier, current]
         );
-        assert!(records.iter().all(|source| is_sha256_hex(&source.archive_sha256)));
+        assert!(
+            records
+                .iter()
+                .all(|source| is_sha256_hex(&source.archive_sha256))
+        );
 
         std::fs::write(
             periodic_dir(home.path(), PeriodKind::Daily).join("not-a-date.jsonl"),
@@ -4688,9 +4698,13 @@ mod tests {
     #[test]
     fn yearly_synthesis_receipt_is_exactly_once_and_refuses_changed_sources() {
         let home = tempfile::tempdir().unwrap();
-        let mut expected =
-            build_reflection(PeriodKind::Yearly, "2026", &["kubernetes".into()], 1_787_788_800)
-                .unwrap();
+        let mut expected = build_reflection(
+            PeriodKind::Yearly,
+            "2026",
+            &["kubernetes".into()],
+            1_787_788_800,
+        )
+        .unwrap();
         expected.tags = vec![
             format!("source:2026-01-01:{}", "a".repeat(64)),
             format!("synonyms:{}", "b".repeat(64)),
@@ -4722,30 +4736,33 @@ mod tests {
         #[cfg(windows)]
         crate::wal::win_native::create_private_directory_new(&root.join("private-home")).unwrap();
         let home = root.join("private-home");
-        let mut expected =
-            build_reflection(PeriodKind::Yearly, "2026", &["kubernetes".into()], 1_787_788_800)
-                .unwrap();
+        let mut expected = build_reflection(
+            PeriodKind::Yearly,
+            "2026",
+            &["kubernetes".into()],
+            1_787_788_800,
+        )
+        .unwrap();
         expected.tags = vec![
             format!("source:2026-01-01:{}", "a".repeat(64)),
             format!("synonyms:{}", "b".repeat(64)),
         ];
         let first_home = home.clone();
         let first_expected = expected.clone();
-        let first = std::thread::spawn(move || settle_yearly_synthesis(&first_home, &first_expected));
+        let first =
+            std::thread::spawn(move || settle_yearly_synthesis(&first_home, &first_expected));
         let second = settle_yearly_synthesis(&home, &expected);
         let first = first.join().unwrap().unwrap();
         let second = second.unwrap();
-        assert!(
-            matches!(
-                (first, second),
-                (
-                    YearlySynthesisSettlement::Written,
-                    YearlySynthesisSettlement::AlreadyMatching
-                ) | (
-                    YearlySynthesisSettlement::AlreadyMatching,
-                    YearlySynthesisSettlement::Written
-                )
+        assert!(matches!(
+            (first, second),
+            (
+                YearlySynthesisSettlement::Written,
+                YearlySynthesisSettlement::AlreadyMatching
+            ) | (
+                YearlySynthesisSettlement::AlreadyMatching,
+                YearlySynthesisSettlement::Written
             )
-        );
+        ));
     }
 }

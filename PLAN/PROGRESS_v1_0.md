@@ -13,6 +13,11 @@ and behavior remain pending; P2-04 stays open. See
 hunk from Preflight35672248701 is also imported. W184 vault-mirror work is
 separate and remains unadmitted.
 
+W183 Hosted follow-up: Code Quality35672664825 passed on5ff3689b. All 23 exact
+formatting hunks from Preflight35672664943 are imported in four files. W182's
+core test typecheck35672248518 on a2bd1b37 passed; W183 compilation and native
+behavior remain pending. No checkbox closes.
+
 **W182 follow-up (2026-09-22):** the Council fixture repair passed Preflight
 35671482151 and Code Quality35671481978. Core check35671482575 then exposed
 three missing Path borrows in W177 chat/export tests; all are repaired with
