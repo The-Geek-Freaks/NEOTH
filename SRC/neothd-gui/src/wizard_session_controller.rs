@@ -10,11 +10,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use neothd::daemon::wizard_ipc::WizardIpcClient;
 use neothd::wizard::ipc::{
-    WizardBootId, WizardIpcMessage, WizardResponse, WizardSequence, WizardSessionId, WizardSnapshot,
-    WizardTerminalState,
+    WizardBootId, WizardIpcMessage, WizardResponse, WizardSequence, WizardSessionId,
+    WizardSnapshot, WizardTerminalState,
 };
 use sha2::{Digest, Sha256};
 
@@ -84,7 +84,9 @@ impl WizardSessionController {
                 Ok(response) => return Self::bound(home, client, response),
                 Err(_) => {
                     if BOOTSTRAP_START_ATTEMPTED.swap(true, Ordering::AcqRel) {
-                        bail!("wizard daemon endpoint did not answer OpenOrResume after its single bootstrap retry");
+                        bail!(
+                            "wizard daemon endpoint did not answer OpenOrResume after its single bootstrap retry"
+                        );
                     }
                     spawn_bootstrap(neothd, home)?;
                     let (client, response) = discover_live_after_bootstrap(home)?;
@@ -149,7 +151,10 @@ impl WizardSessionController {
         }
     }
 
-    pub fn cancel(&mut self, from_step: neothd::wizard::ipc::WizardStepId) -> Result<WizardSnapshot> {
+    pub fn cancel(
+        &mut self,
+        from_step: neothd::wizard::ipc::WizardStepId,
+    ) -> Result<WizardSnapshot> {
         let response = wizard_runtime()?.block_on(self.client.cancel(
             self.binding.session_id.clone(),
             self.binding.boot_id.clone(),
@@ -194,7 +199,9 @@ impl WizardSessionController {
         let snapshot = accepted_snapshot(response)?;
         let next = WizardBinding::from_snapshot(&snapshot);
         if next.session_id != self.binding.session_id || next.boot_id != self.binding.boot_id {
-            bail!("wizard daemon boot or session changed; reopen the GUI to reconcile before another action");
+            bail!(
+                "wizard daemon boot or session changed; reopen the GUI to reconcile before another action"
+            );
         }
         self.client = client;
         self.binding = next;
@@ -205,7 +212,9 @@ impl WizardSessionController {
         let snapshot = accepted_snapshot(response)?;
         let next = WizardBinding::from_snapshot(&snapshot);
         if next.session_id != self.binding.session_id || next.boot_id != self.binding.boot_id {
-            bail!("wizard daemon changed session or boot; discard local in-flight state and reopen");
+            bail!(
+                "wizard daemon changed session or boot; discard local in-flight state and reopen"
+            );
         }
         if next.accepted_sequence < self.binding.accepted_sequence {
             bail!("wizard daemon returned a regressed accepted sequence");
@@ -236,7 +245,8 @@ impl WizardWatchHandle {
 }
 
 pub fn prepared_config_sha256(path: &Path) -> Result<[u8; 32]> {
-    let bytes = std::fs::read(path).with_context(|| format!("read prepared config {}", path.display()))?;
+    let bytes =
+        std::fs::read(path).with_context(|| format!("read prepared config {}", path.display()))?;
     Ok(Sha256::digest(bytes).into())
 }
 
@@ -271,7 +281,9 @@ fn accepted_snapshot(response: WizardResponse) -> Result<WizardSnapshot> {
         | WizardResponse::Progress { snapshot }
         | WizardResponse::CommitReady { snapshot }
         | WizardResponse::Completed { snapshot } => Ok(snapshot),
-        WizardResponse::Rejected { rejection } => bail!("wizard daemon rejected request: {rejection:?}"),
+        WizardResponse::Rejected { rejection } => {
+            bail!("wizard daemon rejected request: {rejection:?}")
+        }
     }
 }
 
@@ -338,7 +350,9 @@ mod tests {
                 let _ = server.await;
             });
         });
-        ready_recv.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        ready_recv
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
 
         let mut controller = WizardSessionController::open_or_start(
             home.path(),

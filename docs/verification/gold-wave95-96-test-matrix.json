@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W204_WIZARD_SOURCE_REVIEWED_HOSTED_PENDING",
-  "base": "aced377c5dd3d14dc5666891a5651ee4072a9d2a",
+  "status": "W204_HOSTED_COMPILE_REPAIR_PENDING",
+  "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 87475,
-    "sha256": "6FE7DAEC495684855E199BE613523F1C19FD2030E67252722DE7E965A637B86F"
+    "bytes": 87431,
+    "sha256": "701F778E0CCDF1C316E2848FFBA6E3A0242EED642F6C7E7AFF5435A196F25DC2"
   },
   "sourceInputs": 506,
   "requiredNativeTests": [
@@ -3870,19 +3870,19 @@
     {
       "test": "daemon::wizard_ipc::tests::prepared_hash_requires_exact_lowercase_sha256",
       "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-      "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+      "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::wizard_ipc::tests::terminal_response_write_failure_still_stops_admission",
       "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-      "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+      "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
       "junitClass": "neoth"
     },
     {
       "test": "daemon::wizard_ipc::tests::stalled_owner_bounds_command_admission_and_reply_waits",
       "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-      "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+      "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
       "junitClass": "neoth"
     },
     {
@@ -4485,8 +4485,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2086254,
-      "sha256": "ABADCFDA6262EC21AD0933BA1FACACC26546CDFAD42550305C3ACD9B5E084ECF"
+      "bytes": 2087006,
+      "sha256": "5424B20405D72CC597A73F31A9027016409A208B02E6CF3BF2372465BD30D637"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -4530,8 +4530,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/wizard_session_controller.rs",
-      "bytes": 15538,
-      "sha256": "7A9E5CE0F3B0C84C8A40A4AEB9013E23F55934FAEAFA82D32B52A25FEA70B2FC"
+      "bytes": 15732,
+      "sha256": "8C7A4C17C99B05F539D08903E86549A870F972C7B8A18D9F612BFE43CF54B20B"
     }
   ],
   "remoteFormatCorrection": {
@@ -5478,55 +5478,55 @@
       {
         "test": "daemon::wizard_ipc::tests::wrong_bearer_is_rejected_before_owner_mutation",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::fresh_home_open_or_resume_creates_only_pending_transaction",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::reopen_preserves_sequence_and_rejects_stale_identity_or_status_injection",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::cancellation_returns_terminal_snapshot_and_drains_listener",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::prepared_config_hash_commits_marker_then_returns_completed_and_drains",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::restart_resumes_pending_transaction_but_rejects_old_boot",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::second_bootstrap_bind_is_refused_while_the_first_owner_holds_the_pid_lease",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::idle_long_poll_returns_before_the_client_deadline",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::long_poll_receives_the_next_accepted_mutation",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       }
     ],
@@ -5582,55 +5582,55 @@
       {
         "test": "daemon::wizard_ipc::tests::wrong_bearer_is_rejected_before_owner_mutation",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::fresh_home_open_or_resume_creates_only_pending_transaction",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::reopen_preserves_sequence_and_rejects_stale_identity_or_status_injection",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::cancellation_returns_terminal_snapshot_and_drains_listener",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::prepared_config_hash_commits_marker_then_returns_completed_and_drains",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::restart_resumes_pending_transaction_but_rejects_old_boot",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::second_bootstrap_bind_is_refused_while_the_first_owner_holds_the_pid_lease",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::idle_long_poll_returns_before_the_client_deadline",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::long_poll_receives_the_next_accepted_mutation",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       }
     ],
@@ -5680,55 +5680,55 @@
       {
         "test": "daemon::wizard_ipc::tests::wrong_bearer_is_rejected_before_owner_mutation",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::fresh_home_open_or_resume_creates_only_pending_transaction",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::reopen_preserves_sequence_and_rejects_stale_identity_or_status_injection",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::cancellation_returns_terminal_snapshot_and_drains_listener",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::prepared_config_hash_commits_marker_then_returns_completed_and_drains",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::restart_resumes_pending_transaction_but_rejects_old_boot",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::second_bootstrap_bind_is_refused_while_the_first_owner_holds_the_pid_lease",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::idle_long_poll_returns_before_the_client_deadline",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       },
       {
         "test": "daemon::wizard_ipc::tests::long_poll_receives_the_next_accepted_mutation",
         "sourcePath": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-        "sourceSha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763",
+        "sourceSha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC",
         "junitClass": "neoth"
       }
     ]
@@ -11408,6 +11408,66 @@
       }
     ],
     "review": "Independent lifecycle/controller static PASS, root fixed latest owner-call signature and added strict nested-field regression",
+    "localValidationRan": false,
+    "releaseReady": false
+  },
+  "wave204CompileAndFormat": {
+    "sourceBase": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2087006,
+        "sha256": "5424B20405D72CC597A73F31A9027016409A208B02E6CF3BF2372465BD30D637"
+      },
+      {
+        "path": "SRC/neothd-gui/src/wizard_session_controller.rs",
+        "bytes": 15732,
+        "sha256": "8C7A4C17C99B05F539D08903E86549A870F972C7B8A18D9F612BFE43CF54B20B"
+      },
+      {
+        "path": "SRC/neothd/src/cli/init/io.rs",
+        "bytes": 73804,
+        "sha256": "CBF51FE4243D9F218D2EDF416630F435D0AB6532F8B7AC499A8C1E50FC17305B"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/mod.rs",
+        "bytes": 18634,
+        "sha256": "FC0DBDD7CD049B6E268D913298B2BA942CA63B0560B55CEDCB956F291A9E0683"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/wizard_ipc.rs",
+        "bytes": 37940,
+        "sha256": "D73600764F1EF03FEC2A7CD77F1BFB404A916A92CE258F33E5A24D99455B84DB"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
+        "bytes": 15404,
+        "sha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1639331,
+        "sha256": "BD978D844AA8D970A881B71231E8779691C1125C9ADD1124958333898808498B"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1043884,
+        "sha256": "0982913C27FB0D82D4D95360B32F3482582327397674C07A8B75E30652F08BAA"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 41002,
+        "sha256": "A9813C9C4F126B7253A397933C121F4F88494ECDC385CD38BF078EE59F941B5B"
+      },
+      {
+        "path": "docs/gold-wave204-verification.md",
+        "bytes": 2745,
+        "sha256": "F0693B56969A53A304EC80E84969D47E65DD3C1F7995E89599C5CF8488EE5646"
+      }
+    ],
+    "hostedFailedRun": 35741899027,
+    "hostedFormatRun": 35741875989,
+    "formatPatchSha256": "42865edecb074fd5ba821a5d24bb140a4c97aab0753e4c422afe7211fc340cd3",
     "localValidationRan": false,
     "releaseReady": false
   }

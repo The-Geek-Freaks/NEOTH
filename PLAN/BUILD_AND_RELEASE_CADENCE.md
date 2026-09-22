@@ -3,6 +3,17 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W204 first Hosted compile repair (2026-09-22):** source `40f2e46f` is
+published on main. Grouped101 `35741899027` stopped during compilation, before
+any selected behavior fixture ran: two missing generic annotations, a private
+remove helper returning bool instead of unit, and four test partial moves.
+The seven compiler diagnostics are repaired without changing assertions or
+session behavior. Preflight `35741875989` supplied formatting for six files;
+source HEAD, receipt hashes and exact Git pre/postimages were checked before
+import. Code Quality `35741874933` passed. The current source needs fresh
+Hosted compile, formatting and behavior checks. No local executable validation
+ran; W206 remains uncommitted and Road counts stay unchanged.
+
 **W204 daemon-owned GUI onboarding source (2026-09-22):** first-run setup now
 uses `serve --wizard-bootstrap` before ordinary daemon configuration/runtime
 startup. A private authenticated Unix socket or Windows pipe admits commands

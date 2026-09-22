@@ -1695,7 +1695,9 @@ pub(crate) fn complete_initialized_home_from_gui_with_prepared_hash(
                 || acknowledgement.transaction_id != pending.transaction_id
                 || !crate::n8n_api::constant_time_token_eq(&acknowledgement.token, &pending.token)
             {
-                anyhow::bail!("daemon GUI initialization acknowledgement does not authorize the active transaction");
+                anyhow::bail!(
+                    "daemon GUI initialization acknowledgement does not authorize the active transaction"
+                );
             }
             Ok(())
         },
@@ -1730,7 +1732,9 @@ fn complete_initialized_home_from_gui_authorized(
         if let Some(expected_config_sha256) = expected_config_sha256 {
             let expected_config_sha256 = hex::encode(expected_config_sha256);
             if !crate::n8n_api::constant_time_token_eq(&config.sha256, &expected_config_sha256) {
-                anyhow::bail!("prepared GUI configuration SHA-256 does not match the active commit request");
+                anyhow::bail!(
+                    "prepared GUI configuration SHA-256 does not match the active commit request"
+                );
             }
         }
         // The exact public bytes above own the transaction hash. Load the

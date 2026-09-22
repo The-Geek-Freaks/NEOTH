@@ -116,9 +116,6 @@ pub mod live_throughput;
 /// W185 — daemon-owned local model inventory and operations.
 pub(crate) mod local_models;
 pub(crate) mod local_models_ipc;
-/// W204 private first-run bootstrap endpoint. Public only because the separate
-/// desktop GUI crate is its authenticated local client.
-pub mod wizard_ipc;
 pub mod metering;
 pub mod model_download_audit;
 /// HO-07 — neoth-monitor alerting cron. Scans WAL integrity + crash.log +
@@ -253,6 +250,9 @@ pub mod watchdog_cron;
 /// PLAN corpus → Obsidian vault). Default OFF; tracing-audited (no WAL
 /// byte free).
 pub mod wiki_build_cron;
+/// W204 private first-run bootstrap endpoint. Public only because the separate
+/// desktop GUI crate is its authenticated local client.
+pub mod wizard_ipc;
 /// MONITOR-02 — real-time worker-task death detection. Polls the daemon's
 /// long-running cron/worker abort handles + emits `0x4D WORKER_DIED` (naming the
 /// task) the moment one panics/exits — lower latency + attribution than the

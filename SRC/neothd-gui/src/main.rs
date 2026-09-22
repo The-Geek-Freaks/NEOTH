@@ -1213,7 +1213,6 @@ mod citation_gui;
 mod code_map_controller;
 mod code_map_impact_controller;
 mod coding_controller;
-mod wizard_session_controller;
 mod gui_action;
 mod gui_chat_bridge_controller;
 mod gui_stream;
@@ -1222,6 +1221,7 @@ mod panel_logic;
 mod tray;
 mod trusted_probe_supervisor;
 mod wizard_logic;
+mod wizard_session_controller;
 
 use buddy_activity::GuiActivity;
 use chat_child_supervisor::{ChatWorkerBarrier, OwnedChatChild};
@@ -2911,10 +2911,14 @@ fn main() -> Result<()> {
                 .context("NEOTH daemon binary is missing beside the GUI")
                 .and_then(|bin| bind_wizard_daemon_session(&home, &bin));
             let _ = slint::invoke_from_event_loop(move || {
-                let Some(window) = weak_wizard_bind.upgrade() else { return };
+                let Some(window) = weak_wizard_bind.upgrade() else {
+                    return;
+                };
                 match result {
                     Ok(()) => {
-                        window.set_status_line("Setup daemon ready. Existing wizard screens remain available.".into());
+                        window.set_status_line(
+                            "Setup daemon ready. Existing wizard screens remain available.".into(),
+                        );
                         start_wizard_session_projection(window.as_weak());
                     }
                     Err(error) => {
@@ -19407,14 +19411,17 @@ fn spawn_neothd_plain(bin: &Path) -> std::process::Command {
     cmd
 }
 
-fn wizard_daemon_session() -> &'static std::sync::Mutex<Option<wizard_session_controller::WizardSessionController>> {
+fn wizard_daemon_session()
+-> &'static std::sync::Mutex<Option<wizard_session_controller::WizardSessionController>> {
     WIZARD_DAEMON_SESSION.get_or_init(|| std::sync::Mutex::new(None))
 }
 
 /// Bind once at real GUI-onboarding entry. Finish and Cancel only consume this
 /// stored binding; neither is permitted to start a fresh daemon session.
 fn bind_wizard_daemon_session(home: &Path, bin: &Path) -> Result<()> {
-    let mut slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut slot = wizard_daemon_session()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if slot.is_some() {
         return Ok(());
     }
@@ -19437,79 +19444,88 @@ fn bind_wizard_daemon_session(home: &Path, bin: &Path) -> Result<()> {
 }
 
 fn start_wizard_session_projection(weak: slint::Weak<MainWindow>) {
-    std::thread::spawn(move || loop {
-        // Copy a read-only observer under the lock, then poll using its own
-        // client. The mutable controller remains available to operator actions.
-        let watch = {
-            let slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let Some(session) = slot.as_ref() else { return };
-            session.watch_handle()
-        };
-        let result = watch.wait_for_change();
-        let (accepted, stale_observation) = match result {
-            Ok(snapshot) => {
-                let mut slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                let Some(session) = slot.as_mut() else { return };
-                match session.accept_watch_snapshot(snapshot.clone()) {
-                    Ok(true) => (Some(snapshot), false),
-                    // A concurrent mutation advanced the owner cursor. This
-                    // older observer result is intentionally ignored, not
-                    // treated as a reconnect failure.
-                    Ok(false) => (None, true),
-                    Err(_) => (None, false),
+    std::thread::spawn(move || {
+        loop {
+            // Copy a read-only observer under the lock, then poll using its own
+            // client. The mutable controller remains available to operator actions.
+            let watch = {
+                let slot = wizard_daemon_session()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let Some(session) = slot.as_ref() else { return };
+                session.watch_handle()
+            };
+            let result = watch.wait_for_change();
+            let (accepted, stale_observation) = match result {
+                Ok(snapshot) => {
+                    let mut slot = wizard_daemon_session()
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let Some(session) = slot.as_mut() else { return };
+                    match session.accept_watch_snapshot(snapshot.clone()) {
+                        Ok(true) => (Some(snapshot), false),
+                        // A concurrent mutation advanced the owner cursor. This
+                        // older observer result is intentionally ignored, not
+                        // treated as a reconnect failure.
+                        Ok(false) => (None, true),
+                        Err(_) => (None, false),
+                    }
                 }
-            }
-            Err(_) => (None, false),
-        };
-        if let Some(snapshot) = accepted {
-            let terminal = snapshot.terminal.clone();
-            if !matches!(terminal, neothd::wizard::ipc::WizardTerminalState::Active) {
-                WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
+                Err(_) => (None, false),
+            };
+            if let Some(snapshot) = accepted {
+                let terminal = snapshot.terminal.clone();
+                if !matches!(terminal, neothd::wizard::ipc::WizardTerminalState::Active) {
+                    WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
+                    let _ = slint::invoke_from_event_loop({
+                        let weak = weak.clone();
+                        move || {
+                            if let Some(window) = weak.upgrade() {
+                                window.set_wizard_daemon_available(false);
+                                window.set_status_line("Setup daemon reached a terminal state. Reopen NEOTH to reconcile setup.".into());
+                            }
+                        }
+                    });
+                    return;
+                }
+                if WIZARD_DAEMON_FROZEN.load(std::sync::atomic::Ordering::Acquire) {
+                    continue;
+                }
+                let last = snapshot
+                    .last_message
+                    .as_ref()
+                    .map(neothd::wizard::ipc::WizardIpcMessage::kind_tag)
+                    .unwrap_or("no operator choice yet");
+                let status = format!(
+                    "Setup daemon: step {}, sequence {}, {}.",
+                    snapshot.current_step.as_str(),
+                    snapshot.accepted_sequence.0,
+                    last
+                );
                 let _ = slint::invoke_from_event_loop({
                     let weak = weak.clone();
                     move || {
                         if let Some(window) = weak.upgrade() {
-                            window.set_wizard_daemon_available(false);
-                            window.set_status_line("Setup daemon reached a terminal state. Reopen NEOTH to reconcile setup.".into());
+                            window.set_wizard_daemon_available(true);
+                            window.set_status_line(status.into());
                         }
                     }
                 });
-                return;
-            }
-            if WIZARD_DAEMON_FROZEN.load(std::sync::atomic::Ordering::Acquire) {
                 continue;
             }
-            let last = snapshot
-                .last_message
-                .as_ref()
-                .map(neothd::wizard::ipc::WizardIpcMessage::kind_tag)
-                .unwrap_or("no operator choice yet");
-            let status = format!(
-                "Setup daemon: step {}, sequence {}, {}.",
-                snapshot.current_step.as_str(), snapshot.accepted_sequence.0, last
-            );
-            let _ = slint::invoke_from_event_loop({
-                let weak = weak.clone();
-                move || {
-                    if let Some(window) = weak.upgrade() {
-                        window.set_wizard_daemon_available(true);
-                        window.set_status_line(status.into());
-                    }
-                }
-            });
-            continue;
-        }
-        if stale_observation {
-            continue;
-        }
-        // Transport failure or changed observer identity: reconcile via the
-        // mutable owner briefly. A same boot may continue; a changed boot
-        // freezes actions and never replays an in-flight request.
-        let reconcile = {
-            let mut slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            slot.as_mut().map(|session| session.reconcile_same_boot())
-        };
-        if let Some(Ok(snapshot)) = reconcile {
+            if stale_observation {
+                continue;
+            }
+            // Transport failure or changed observer identity: reconcile via the
+            // mutable owner briefly. A same boot may continue; a changed boot
+            // freezes actions and never replays an in-flight request.
+            let reconcile = {
+                let mut slot = wizard_daemon_session()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                slot.as_mut().map(|session| session.reconcile_same_boot())
+            };
+            if let Some(Ok(snapshot)) = reconcile {
                 if !WIZARD_DAEMON_FROZEN.load(std::sync::atomic::Ordering::Acquire) {
                     let status = format!(
                         "Setup daemon reconnected at sequence {}; no action was replayed.",
@@ -19526,18 +19542,19 @@ fn start_wizard_session_projection(weak: slint::Weak<MainWindow>) {
                     });
                 }
                 continue;
-        }
-        WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
-        let _ = slint::invoke_from_event_loop({
-            let weak = weak.clone();
-            move || {
-                if let Some(window) = weak.upgrade() {
-                    window.set_wizard_daemon_available(false);
-                    window.set_status_line("Setup daemon identity changed or became unavailable. Reopen NEOTH to reconcile setup.".into());
-                }
             }
-        });
-        return;
+            WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
+            let _ = slint::invoke_from_event_loop({
+                let weak = weak.clone();
+                move || {
+                    if let Some(window) = weak.upgrade() {
+                        window.set_wizard_daemon_available(false);
+                        window.set_status_line("Setup daemon identity changed or became unavailable. Reopen NEOTH to reconcile setup.".into());
+                    }
+                }
+            });
+            return;
+        }
     });
 }
 
@@ -42341,8 +42358,12 @@ mod dream_cron_gui_tests {
             + start;
         let finish = &source[start..end];
         let revision = finish.find("DREAM_CRON_UI_REVISION.fetch_add").unwrap();
-        let dream = finish.find("persist_wizard_dream_cron(state.dream_cron_enabled)").unwrap();
-        let commit = finish.find("session.prepare_for_commit(config_sha256)").unwrap();
+        let dream = finish
+            .find("persist_wizard_dream_cron(state.dream_cron_enabled)")
+            .unwrap();
+        let commit = finish
+            .find("session.prepare_for_commit(config_sha256)")
+            .unwrap();
         assert!(revision < dream && dream < commit);
         assert!(finish.contains("DaemonFailure { error, dream_readback: Some(dream_readback) }"));
         assert!(finish.contains("if let Some(readback) = dream_readback"));
@@ -42391,9 +42412,14 @@ mod dream_cron_gui_tests {
             "guards and every failure path must stay on the retryable wizard screen"
         );
 
-        let acknowledgement = handler.find("session.prepare_for_commit(config_sha256)").unwrap();
+        let acknowledgement = handler
+            .find("session.prepare_for_commit(config_sha256)")
+            .unwrap();
         let chat = handler.find("w.set_step(WizardStep::Chat)").unwrap();
-        assert!(acknowledgement < chat, "Chat follows daemon completion acknowledgement");
+        assert!(
+            acknowledgement < chat,
+            "Chat follows daemon completion acknowledgement"
+        );
         assert!(handler[chat..].contains("set_wizard_daemon_available(false)"));
     }
 

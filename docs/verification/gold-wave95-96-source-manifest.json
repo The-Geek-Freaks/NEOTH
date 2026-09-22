@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
-  "base": "aced377c5dd3d14dc5666891a5651ee4072a9d2a",
-  "capturedUtc": "2026-09-22T14:37:16.3125332Z",
-  "validationStatus": "W204_WIZARD_SOURCE_REVIEWED_HOSTED_PENDING",
-  "scopeNote": "W204 reviewed private GUI bootstrap session and exact native/GUI tests; W205 catalogue fixture follow-up. W206 unreviewed WIP excluded.",
+  "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
+  "capturedUtc": "2026-09-22T14:46:59.0845299Z",
+  "validationStatus": "W204_HOSTED_COMPILE_REPAIR_PENDING",
+  "scopeNote": "Seven observed W204 compiler errors fixed; exact six-file Hosted rustfmt import. W206 WIP excluded.",
   "files": [
     {
       "path": ".gitattributes",
@@ -288,8 +288,8 @@
     },
     {
       "path": "docs/gold-wave204-verification.md",
-      "bytes": 1996,
-      "sha256": "EF3303CFEBBD9CA329196283DC9A7E3364D0D9786A3677BA5E70DD02508C82CE"
+      "bytes": 2745,
+      "sha256": "F0693B56969A53A304EC80E84969D47E65DD3C1F7995E89599C5CF8488EE5646"
     },
     {
       "path": "docs/gold-wave205-verification.md",
@@ -403,18 +403,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 40253,
-      "sha256": "790571667E21B451F935D08969B2B139F0A614170402A39FCFDE0C79192805E7"
+      "bytes": 41002,
+      "sha256": "A9813C9C4F126B7253A397933C121F4F88494ECDC385CD38BF078EE59F941B5B"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1043135,
-      "sha256": "5AAEA891F48934C55F69ADFA568BDA752485CD8A6AE834D32B5CE23DA2AEBF69"
+      "bytes": 1043884,
+      "sha256": "0982913C27FB0D82D4D95360B32F3482582327397674C07A8B75E30652F08BAA"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1638582,
-      "sha256": "468311D9F79CBAB7618D336D71A98F4BEF304E5CB3D0ACC7867E8FC2008BC3D8"
+      "bytes": 1639331,
+      "sha256": "BD978D844AA8D970A881B71231E8779691C1125C9ADD1124958333898808498B"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -618,8 +618,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2086254,
-      "sha256": "ABADCFDA6262EC21AD0933BA1FACACC26546CDFAD42550305C3ACD9B5E084ECF"
+      "bytes": 2087006,
+      "sha256": "5424B20405D72CC597A73F31A9027016409A208B02E6CF3BF2372465BD30D637"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -648,8 +648,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/wizard_session_controller.rs",
-      "bytes": 15538,
-      "sha256": "7A9E5CE0F3B0C84C8A40A4AEB9013E23F55934FAEAFA82D32B52A25FEA70B2FC"
+      "bytes": 15732,
+      "sha256": "8C7A4C17C99B05F539D08903E86549A870F972C7B8A18D9F612BFE43CF54B20B"
     },
     {
       "path": "SRC/neothd-gui/tests/gui_chat_bridge_public_api.rs",
@@ -1093,8 +1093,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/init/io.rs",
-      "bytes": 73728,
-      "sha256": "E97B6A4275A8A05D9600FAD617FA5E0DF8DC0F90679C58004F758DC06FE2047B"
+      "bytes": 73804,
+      "sha256": "CBF51FE4243D9F218D2EDF416630F435D0AB6532F8B7AC499A8C1E50FC17305B"
     },
     {
       "path": "SRC/neothd/src/cli/init/steps_channel.rs",
@@ -1599,7 +1599,7 @@
     {
       "path": "SRC/neothd/src/daemon/mod.rs",
       "bytes": 18634,
-      "sha256": "F3ED0ECC720FBEA5557CD9BDA9B40F53CB1972EE0817DD34A12A64BA039BCF87"
+      "sha256": "FC0DBDD7CD049B6E268D913298B2BA942CA63B0560B55CEDCB956F291A9E0683"
     },
     {
       "path": "SRC/neothd/src/daemon/omi_native_ingest.rs",
@@ -1673,13 +1673,13 @@
     },
     {
       "path": "SRC/neothd/src/daemon/wizard_ipc_tests.rs",
-      "bytes": 13479,
-      "sha256": "ADA4BA1C683D728DBB4ADE1569A19C72F0C58858FEAB14492A0B1C6649B80763"
+      "bytes": 15404,
+      "sha256": "6B03203D87674EA852D1EABBF68359D22B0411006FDB217D6B1AFFE6F929B5BC"
     },
     {
       "path": "SRC/neothd/src/daemon/wizard_ipc.rs",
-      "bytes": 30814,
-      "sha256": "3E96EB1B82D8D3CE73F5F5E393493EA4BC716824AEF06B7659151962CF55E64B"
+      "bytes": 37940,
+      "sha256": "D73600764F1EF03FEC2A7CD77F1BFB404A916A92CE258F33E5A24D99455B84DB"
     },
     {
       "path": "SRC/neothd/src/daemon/worker_watch.rs",

@@ -9,7 +9,9 @@ fn snapshot(response: WizardResponse) -> WizardSnapshot {
         | WizardResponse::Progress { snapshot }
         | WizardResponse::CommitReady { snapshot }
         | WizardResponse::Completed { snapshot } => snapshot,
-        WizardResponse::Rejected { rejection } => panic!("unexpected rejection: {:?}", rejection.code),
+        WizardResponse::Rejected { rejection } => {
+            panic!("unexpected rejection: {:?}", rejection.code)
+        }
     }
 }
 
@@ -24,7 +26,9 @@ fn next(snapshot: &WizardSnapshot) -> WizardSequence {
     WizardSequence(snapshot.accepted_sequence.0 + 1)
 }
 
-fn test_state_without_owner(home: &std::path::Path) -> (State, tokio::sync::mpsc::Receiver<WizardCommand>) {
+fn test_state_without_owner(
+    home: &std::path::Path,
+) -> (State, tokio::sync::mpsc::Receiver<WizardCommand>) {
     let service = WizardSessionService::new(home).unwrap();
     let (updates, _) = tokio::sync::watch::channel(service.snapshot.clone());
     let (commands, receiver) = tokio::sync::mpsc::channel(COMMAND_CAPACITY);
@@ -51,9 +55,13 @@ fn prepared_hash_requires_exact_lowercase_sha256() {
 async fn wrong_bearer_is_rejected_before_owner_mutation() {
     let home = tempfile::tempdir().unwrap();
     let (listener_task, guard) = bind_and_serve(home.path()).unwrap();
-    let error = request_for_test(home.path(), WizardRequest::OpenOrResume, Some("wrong-bearer"))
-        .await
-        .unwrap_err();
+    let error = request_for_test(
+        home.path(),
+        WizardRequest::OpenOrResume,
+        Some("wrong-bearer"),
+    )
+    .await
+    .unwrap_err();
     assert!(format!("{error:#}").contains("rejected request"));
 
     let client = WizardIpcClient::discover(home.path()).unwrap();
@@ -119,19 +127,25 @@ async fn stalled_owner_bounds_command_admission_and_reply_waits() {
             .await
             .unwrap();
     }
-    let admission = tokio::time::timeout(std::time::Duration::from_secs(6), dispatch(&state, WizardRequest::OpenOrResume))
-        .await
-        .expect("stalled owner admission must honor its five-second deadline")
-        .unwrap_err();
+    let admission = tokio::time::timeout(
+        std::time::Duration::from_secs(6),
+        dispatch(&state, WizardRequest::OpenOrResume),
+    )
+    .await
+    .expect("stalled owner admission must honor its five-second deadline")
+    .unwrap_err();
     assert!(format!("{admission:#}").contains("admission deadline"));
 
     for _ in 0..COMMAND_CAPACITY {
         let _ = receiver.recv().await;
     }
-    let reply = tokio::time::timeout(std::time::Duration::from_secs(6), dispatch(&state, WizardRequest::OpenOrResume))
-        .await
-        .expect("stalled owner reply must honor its five-second deadline")
-        .unwrap_err();
+    let reply = tokio::time::timeout(
+        std::time::Duration::from_secs(6),
+        dispatch(&state, WizardRequest::OpenOrResume),
+    )
+    .await
+    .expect("stalled owner reply must honor its five-second deadline")
+    .unwrap_err();
     assert!(format!("{reply:#}").contains("response deadline"));
 }
 
@@ -163,16 +177,88 @@ async fn reopen_preserves_sequence_and_rejects_stale_identity_or_status_injectio
     let (listener_task, guard) = bind_and_serve(home.path()).unwrap();
     let client = WizardIpcClient::discover(home.path()).unwrap();
     let opened = snapshot(client.open_or_resume().await.unwrap());
-    let accepted = snapshot(client.submit(opened.session_id.clone(), opened.boot_id.clone(), next(&opened), WizardIpcMessage::ChannelOverride { channel: ChannelRecommendation::Cli }).await.unwrap());
+    let accepted = snapshot(
+        client
+            .submit(
+                opened.session_id.clone(),
+                opened.boot_id.clone(),
+                next(&opened),
+                WizardIpcMessage::ChannelOverride {
+                    channel: ChannelRecommendation::Cli,
+                },
+            )
+            .await
+            .unwrap(),
+    );
     let reopened = snapshot(client.open_or_resume().await.unwrap());
     assert_eq!(reopened.session_id, opened.session_id);
     assert_eq!(reopened.boot_id, opened.boot_id);
     assert_eq!(reopened.accepted_sequence, accepted.accepted_sequence);
 
-    assert_eq!(rejection(client.submit(opened.session_id.clone(), WizardBootId(format!("{}-stale", opened.boot_id.0)), next(&accepted), WizardIpcMessage::ChannelOverride { channel: ChannelRecommendation::Cli }).await.unwrap()), WizardRejectionCode::StaleBoot);
-    assert_eq!(rejection(client.submit(WizardSessionId("wrong-session".to_owned()), opened.boot_id.clone(), next(&accepted), WizardIpcMessage::ChannelOverride { channel: ChannelRecommendation::Cli }).await.unwrap()), WizardRejectionCode::WrongSession);
-    assert_eq!(rejection(client.submit(opened.session_id.clone(), opened.boot_id.clone(), accepted.accepted_sequence, WizardIpcMessage::ChannelOverride { channel: ChannelRecommendation::Cli }).await.unwrap()), WizardRejectionCode::OutOfOrder);
-    assert_eq!(rejection(client.submit(opened.session_id, opened.boot_id, next(&accepted), WizardIpcMessage::StepStarted { step: WizardStepId::Provider }).await.unwrap()), WizardRejectionCode::NotReady);
+    assert_eq!(
+        rejection(
+            client
+                .submit(
+                    opened.session_id.clone(),
+                    WizardBootId(format!("{}-stale", opened.boot_id.0)),
+                    next(&accepted),
+                    WizardIpcMessage::ChannelOverride {
+                        channel: ChannelRecommendation::Cli
+                    }
+                )
+                .await
+                .unwrap()
+        ),
+        WizardRejectionCode::StaleBoot
+    );
+    assert_eq!(
+        rejection(
+            client
+                .submit(
+                    WizardSessionId("wrong-session".to_owned()),
+                    opened.boot_id.clone(),
+                    next(&accepted),
+                    WizardIpcMessage::ChannelOverride {
+                        channel: ChannelRecommendation::Cli
+                    }
+                )
+                .await
+                .unwrap()
+        ),
+        WizardRejectionCode::WrongSession
+    );
+    assert_eq!(
+        rejection(
+            client
+                .submit(
+                    opened.session_id.clone(),
+                    opened.boot_id.clone(),
+                    accepted.accepted_sequence,
+                    WizardIpcMessage::ChannelOverride {
+                        channel: ChannelRecommendation::Cli
+                    }
+                )
+                .await
+                .unwrap()
+        ),
+        WizardRejectionCode::OutOfOrder
+    );
+    assert_eq!(
+        rejection(
+            client
+                .submit(
+                    opened.session_id,
+                    opened.boot_id,
+                    next(&accepted),
+                    WizardIpcMessage::StepStarted {
+                        step: WizardStepId::Provider
+                    }
+                )
+                .await
+                .unwrap()
+        ),
+        WizardRejectionCode::NotReady
+    );
 
     guard.stop();
     listener_task.await.unwrap().unwrap();
@@ -186,7 +272,18 @@ async fn cancellation_returns_terminal_snapshot_and_drains_listener() {
     let (listener_task, guard) = bind_and_serve(home.path()).unwrap();
     let client = WizardIpcClient::discover(home.path()).unwrap();
     let opened = snapshot(client.open_or_resume().await.unwrap());
-    let cancelled = snapshot(client.cancel(opened.session_id, opened.boot_id, next(&opened), WizardStepId::Welcome).await.unwrap());
+    let next_sequence = next(&opened);
+    let cancelled = snapshot(
+        client
+            .cancel(
+                opened.session_id,
+                opened.boot_id,
+                next_sequence,
+                WizardStepId::Welcome,
+            )
+            .await
+            .unwrap(),
+    );
 
     assert_eq!(cancelled.terminal, WizardTerminalState::Cancelled);
     assert!(home.path().join(".gui-init").join("pending.json").is_file());
@@ -210,7 +307,13 @@ async fn prepared_config_hash_commits_marker_then_returns_completed_and_drains()
     let (listener_task, guard) = bind_and_serve(home.path()).unwrap();
     let client = WizardIpcClient::discover(home.path()).unwrap();
     let opened = snapshot(client.open_or_resume().await.unwrap());
-    let completed = snapshot(client.prepare_for_commit(opened.session_id, opened.boot_id, next(&opened), digest).await.unwrap());
+    let next_sequence = next(&opened);
+    let completed = snapshot(
+        client
+            .prepare_for_commit(opened.session_id, opened.boot_id, next_sequence, digest)
+            .await
+            .unwrap(),
+    );
 
     assert_eq!(completed.terminal, WizardTerminalState::Completed);
     assert!(home.path().join(".initialized").is_file());
@@ -239,9 +342,26 @@ async fn restart_resumes_pending_transaction_but_rejects_old_boot() {
     let second = snapshot(second_client.open_or_resume().await.unwrap());
     assert_eq!(second.session_id, first.session_id);
     assert_ne!(second.boot_id, first.boot_id);
-    assert_eq!(rejection(second_client.wait_for_change(first.session_id, first.boot_id, first.accepted_sequence).await.unwrap()), WizardRejectionCode::StaleBoot);
+    assert_eq!(
+        rejection(
+            second_client
+                .wait_for_change(first.session_id, first.boot_id, first.accepted_sequence)
+                .await
+                .unwrap()
+        ),
+        WizardRejectionCode::StaleBoot
+    );
 
-    let _ = second_client.cancel(second.session_id, second.boot_id, next(&second), WizardStepId::Welcome).await.unwrap();
+    let next_sequence = next(&second);
+    let _ = second_client
+        .cancel(
+            second.session_id,
+            second.boot_id,
+            next_sequence,
+            WizardStepId::Welcome,
+        )
+        .await
+        .unwrap();
     second_task.await.unwrap().unwrap();
     drop(second_guard);
 }
@@ -302,9 +422,26 @@ async fn long_poll_receives_the_next_accepted_mutation() {
     let wait_session = opened.session_id.clone();
     let wait_boot = opened.boot_id.clone();
     let after_sequence = opened.accepted_sequence;
-    let waiter = tokio::spawn(async move { wait_client.wait_for_change(wait_session, wait_boot, after_sequence).await });
+    let waiter = tokio::spawn(async move {
+        wait_client
+            .wait_for_change(wait_session, wait_boot, after_sequence)
+            .await
+    });
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    let accepted = snapshot(client.submit(opened.session_id, opened.boot_id, next(&opened), WizardIpcMessage::ChannelOverride { channel: ChannelRecommendation::Cli }).await.unwrap());
+    let next_sequence = next(&opened);
+    let accepted = snapshot(
+        client
+            .submit(
+                opened.session_id,
+                opened.boot_id,
+                next_sequence,
+                WizardIpcMessage::ChannelOverride {
+                    channel: ChannelRecommendation::Cli,
+                },
+            )
+            .await
+            .unwrap(),
+    );
     let observed = snapshot(waiter.await.unwrap().unwrap());
     assert_eq!(observed.accepted_sequence, accepted.accepted_sequence);
 
