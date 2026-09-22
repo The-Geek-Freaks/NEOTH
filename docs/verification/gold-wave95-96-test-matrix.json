@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W189_HOSTED_FORMAT_IMPORTED_PENDING_RERUN",
-  "base": "2cef823968db4ee7e20317315b7189d87895f761",
+  "status": "W186_OPTIMIZER_ABLATION_PENDING_HOSTED",
+  "base": "0e0fa6a0dcca113e265f96e10c58451cbcb56c5d",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 78126,
-    "sha256": "00F6A8B29568C23C38ABBF01F74B0774545C48797A6C43053C0A6BAE075CDC32"
+    "bytes": 78123,
+    "sha256": "4B24560C6D89F991C465AD6004A5B4AFA04A410FFA916CE8DAF11AA6FFC226C6"
   },
   "sourceInputs": 453,
   "requiredNativeTests": [
@@ -8760,5 +8760,17 @@
       }
     ],
     "note": "Exact 19 Hosted hunks from run35712519596 on2cef8239; no local Rust formatter or runtime. Code Quality35712519694 passed; Core and focused18 still running."
+  },
+  "wave186OptimizerAblation": {
+    "status": "W186_OPTIMIZER_ABLATION_PENDING_HOSTED",
+    "sourceBase": "0e0fa6a0dcca113e265f96e10c58451cbcb56c5d",
+    "sources": [
+      {
+        "path": "packaging/specialize_silero.py",
+        "bytes": 22830,
+        "sha256": "CD8B4E971CCE714C053662AF5862131B6336C71E717AE78D23A4FBA05B566AF6"
+      }
+    ],
+    "note": "Compare pinned ORT Basic default and disabled TransposeOptimizer. Both require standard checked If-free graphs; export only after binding control and selected probability/state strict1e-6 parity over1280frames. No model imported."
   }
 }

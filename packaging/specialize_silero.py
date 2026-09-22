@@ -29,6 +29,7 @@ PROBABILITY_ATOL = PROBABILITY_RTOL = 1e-6
 STATE_ATOL = STATE_RTOL = 1e-6
 EXPECTED_ORIGINAL_SHA256 = "7ed98ddbad84ccac4cd0aeb3099049280713df825c610a8ed34543318f1b2c49"
 EXPECTED_SOURCE_BLOB_SHA1 = "625ad8909b1abdba2292f3a9a10db6864fd5d561"
+NO_TRANSPOSE_OPTIMIZER = ("TransposeOptimizer",)
 
 
 def file_sha256(path: Path) -> str:
@@ -177,14 +178,14 @@ def specialize(model: Any, onnx: Any) -> Any:
     return model
 
 
-def optimize_basic(bound_path: Path, optimized_path: Path, ort: Any) -> None:
-    """Use one standard ORT basic pass; never manually rewrite a branch."""
+def optimize_basic(bound_path: Path, optimized_path: Path, ort: Any, disabled_optimizers: tuple[str, ...] = ()) -> None:
+    """Use the pinned ORT BASIC pass, optionally excluding exact named L1 transformers."""
     options = ort.SessionOptions()
     options.intra_op_num_threads = 1
     options.inter_op_num_threads = 1
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
     options.optimized_model_filepath = str(optimized_path)
-    session = ort.InferenceSession(str(bound_path), sess_options=options, providers=["CPUExecutionProvider"])
+    session = ort.InferenceSession(str(bound_path), sess_options=options, providers=["CPUExecutionProvider"], disabled_optimizers=set(disabled_optimizers))
     if session.get_providers() != ["CPUExecutionProvider"]:
         raise ValueError("basic specialization requires CPUExecutionProvider as the only provider")
     if not optimized_path.is_file():
@@ -234,14 +235,16 @@ def assert_model_contract(original: Any, candidate: Any) -> None:
         raise ValueError("models must expose probability plus recurrent-state outputs")
 
 
-def parity(original_path: Path, bound_path: Path, candidate_path: Path, np: Any, ort: Any) -> dict[str, Any]:
-    original, bound, candidate = session(original_path, ort), session(bound_path, ort), session(candidate_path, ort)
+def parity(original_path: Path, bound_path: Path, candidate_paths: dict[str, Path], np: Any, ort: Any) -> dict[str, Any]:
+    original, bound = session(original_path, ort), session(bound_path, ort)
     assert_model_contract(original, bound)
-    assert_model_contract(original, candidate)
     pairs = {
         "originalVsBound": {"session": bound, "outputs": [{"label": "probability", "atol": PROBABILITY_ATOL, "rtol": PROBABILITY_RTOL}, {"label": "state", "atol": STATE_ATOL, "rtol": STATE_RTOL}]},
-        "originalVsBasic": {"session": candidate, "outputs": [{"label": "probability", "atol": PROBABILITY_ATOL, "rtol": PROBABILITY_RTOL}, {"label": "state", "atol": STATE_ATOL, "rtol": STATE_RTOL}]},
     }
+    for name, path in candidate_paths.items():
+        candidate = session(path, ort)
+        assert_model_contract(original, candidate)
+        pairs[f"originalVs{name}"] = {"session": candidate, "outputs": [{"label": "probability", "atol": PROBABILITY_ATOL, "rtol": PROBABILITY_RTOL}, {"label": "state", "atol": STATE_ATOL, "rtol": STATE_RTOL}]}
     for pair in pairs.values():
         pair["metrics"] = {output["label"]: {"maxAbsError": 0.0, "maxRelError": 0.0, "overToleranceElements": 0, "worstCase": None} for output in pair["outputs"]}
     comparisons: list[dict[str, Any]] = []
@@ -291,11 +294,16 @@ def parity(original_path: Path, bound_path: Path, candidate_path: Path, np: Any,
     return result
 
 
-def assert_strict_parity(result: dict[str, Any]) -> None:
-    """Fail only after the complete receipt, including both diagnostic pairs, exists."""
-    failures = [f"{pair_name}.{label}" for pair_name, pair in result["pairs"].items() for label, metric in pair.items() if metric["overToleranceElements"]]
-    if failures:
-        raise AssertionError(f"parity exceeded strict tolerance after complete diagnostic run: {', '.join(failures)}")
+def select_strict_variant(result: dict[str, Any], preference: tuple[str, ...]) -> str | None:
+    """Choose deterministically only from fully evaluated, strict-passing variants."""
+    binding = result["pairs"]["originalVsBound"]
+    if binding["probability"]["overToleranceElements"] or binding["state"]["overToleranceElements"]:
+        return None
+    for variant in preference:
+        pair = result["pairs"][f"originalVs{variant}"]
+        if not pair["probability"]["overToleranceElements"] and not pair["state"]["overToleranceElements"]:
+            return variant
+    return None
 
 
 def main() -> int:
@@ -331,23 +339,33 @@ def main() -> int:
         receipt["before"] = {"io": graph_io(original.graph, onnx), "ifNodes": if_nodes(original.graph, onnx), "opTypeCounts": op_type_counts(original, onnx)}
         with tempfile.TemporaryDirectory(prefix="w186-silero-") as directory:
             bound = Path(directory) / "bound-16k.onnx"
-            temporary = Path(directory) / "candidate.onnx"
             onnx.save_model(specialize(original, onnx), str(bound))
             bound_model = onnx.load_model(str(bound), load_external_data=False)
             receipt["bound"] = {"io": graph_io(bound_model.graph, onnx), "ifNodes": if_nodes(bound_model.graph, onnx), "opTypeCounts": op_type_counts(bound_model, onnx)}
-            optimize_basic(bound, temporary, ort)
-            derived = onnx.load_model(str(temporary), load_external_data=False)
-            onnx.checker.check_model(derived)
-            reject_external_data(derived, onnx)
-            reject_nonstandard_nodes(derived, onnx)
-            receipt["optimizer"] = {"engine": "onnxruntime", "graphOptimizationLevel": "ORT_ENABLE_BASIC", "provider": "CPUExecutionProvider", "intraOpThreads": 1, "interOpThreads": 1}
-            receipt["after"] = {"io": graph_io(derived.graph, onnx), "ifNodes": if_nodes(derived.graph, onnx), "opTypeCounts": op_type_counts(derived, onnx)}
-            if receipt["after"]["ifNodes"]:
-                raise ValueError("basic specialization left If control flow; candidate is unsafe for tract 0.23.8")
-            receipt["parity"] = parity(args.input, bound, temporary, np, ort)
-            assert_strict_parity(receipt["parity"])
+            variants = (("BasicDefault", ()), ("BasicNoTranspose", NO_TRANSPOSE_OPTIMIZER))
+            candidate_paths: dict[str, Path] = {}
+            receipt["optimizerVariants"] = []
+            for name, disabled_optimizers in variants:
+                candidate_path = Path(directory) / f"{name}.onnx"
+                optimize_basic(bound, candidate_path, ort, disabled_optimizers)
+                derived = onnx.load_model(str(candidate_path), load_external_data=False)
+                onnx.checker.check_model(derived)
+                reject_external_data(derived, onnx)
+                reject_nonstandard_nodes(derived, onnx)
+                after = {"io": graph_io(derived.graph, onnx), "ifNodes": if_nodes(derived.graph, onnx), "opTypeCounts": op_type_counts(derived, onnx)}
+                receipt["optimizerVariants"].append({"name": name, "engine": "onnxruntime", "source": "https://github.com/microsoft/onnxruntime/tree/v1.19.2", "graphOptimizationLevel": "ORT_ENABLE_BASIC", "provider": "CPUExecutionProvider", "intraOpThreads": 1, "interOpThreads": 1, "disabledOptimizers": list(disabled_optimizers), "after": after})
+                if after["ifNodes"]:
+                    raise ValueError(f"{name} left If control flow; candidate is unsafe for tract 0.23.8")
+                candidate_paths[name] = candidate_path
+            receipt["parity"] = parity(args.input, bound, candidate_paths, np, ort)
+            preference = tuple(name for name, _ in variants)
+            selected = select_strict_variant(receipt["parity"], preference)
+            receipt["candidateSelection"] = {"preference": list(preference), "selected": selected, "reason": "first fully evaluated variant with zero strict-tolerance violations for probability and recurrent state"}
+            if selected is None:
+                failures = [f"{pair_name}.{label}" for pair_name, pair in receipt["parity"]["pairs"].items() for label, metric in pair.items() if metric["overToleranceElements"]]
+                raise AssertionError(f"no specialization variant passed strict parity after complete diagnostic run: {', '.join(failures)}")
             args.output.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(temporary, args.output)
+            os.replace(candidate_paths[selected], args.output)
         receipt["candidate"] = {"path": str(args.output), "sha256": file_sha256(args.output)}
         receipt["status"] = "passed"
     except BaseException as error:

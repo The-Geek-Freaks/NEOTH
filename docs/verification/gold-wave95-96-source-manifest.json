@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W189-capability-history",
-  "base": "2cef823968db4ee7e20317315b7189d87895f761",
-  "capturedUtc": "2026-09-22T09:52:04.6722290Z",
-  "validationStatus": "W189_HOSTED_FORMAT_IMPORTED_PENDING_RERUN",
+  "base": "0e0fa6a0dcca113e265f96e10c58451cbcb56c5d",
+  "capturedUtc": "2026-09-22T09:55:05.8761222Z",
+  "validationStatus": "W186_OPTIMIZER_ABLATION_PENDING_HOSTED",
   "scopeNote": "W189 bounded authenticated snapshot/history plus ED0 Clippy/Slint repair and strict Silero numerical diagnosis. No roadmap closure; prior waves remain historical.",
   "files": [
     {
@@ -268,8 +268,8 @@
     },
     {
       "path": "packaging/specialize_silero.py",
-      "bytes": 21285,
-      "sha256": "6374CF808303E3F67BD6EC43BB85E46D880E5D30794310D432F3C85325DE4600"
+      "bytes": 22830,
+      "sha256": "CD8B4E971CCE714C053662AF5862131B6336C71E717AE78D23A4FBA05B566AF6"
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
