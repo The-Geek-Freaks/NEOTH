@@ -331,6 +331,19 @@ GOLD-ADAPT-JV-MODE-03 — list NEOTH's own shipped capabilities (bundled skills,
 
 - `--kind <KIND>` — Filter to one kind: `skill` | `cron` | `cli` | `slash`. Omit for all
 - `--search <KEYWORD>` — Case-insensitive substring search across capability descriptions
+- `--home <DIR>` — Override the NEOTH home for `capabilities quality` only
+
+### `neoth capabilities quality`
+
+Inspect or explicitly persist content-free provider capability health
+
+#### `neoth capabilities quality history`
+
+Read bounded persisted snapshots without creating or repairing state
+
+#### `neoth capabilities quality snapshot`
+
+Capture a new authenticated-WAL-derived local snapshot
 
 ## `neoth catalog`
 

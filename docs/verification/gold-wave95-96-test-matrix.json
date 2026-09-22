@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W186_OPTIMIZER_ABLATION_PENDING_HOSTED",
-  "base": "0e0fa6a0dcca113e265f96e10c58451cbcb56c5d",
+  "status": "W189_HOSTED_18_TESTS_PASSED_REFERENCE_IMPORTED",
+  "base": "2888e87e1a88461f8516a956fd207a34703184de",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 78123,
-    "sha256": "4B24560C6D89F991C465AD6004A5B4AFA04A410FFA916CE8DAF11AA6FFC226C6"
+    "bytes": 78131,
+    "sha256": "D72697C14D4AD5C253CA501F30DAEBE0BA925CC478B254142673A0E364883989"
   },
   "sourceInputs": 453,
   "requiredNativeTests": [
@@ -8772,5 +8772,37 @@
       }
     ],
     "note": "Compare pinned ORT Basic default and disabled TransposeOptimizer. Both require standard checked If-free graphs; export only after binding control and selected probability/state strict1e-6 parity over1280frames. No model imported."
+  },
+  "wave189HostedAcceptance": {
+    "status": "W189_HOSTED_18_TESTS_PASSED_REFERENCE_IMPORTED",
+    "sourceBase": "2888e87e1a88461f8516a956fd207a34703184de",
+    "sources": [
+      {
+        "path": ".github/workflows/live-audio.yml",
+        "bytes": 9945,
+        "sha256": "9DCCE6D5819B08C1E3142E127CF9848C92623B0BDB59970842F472E633259180"
+      },
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 234875,
+        "sha256": "D682A38D27E5934DFB8C4AE0BA742A2C2DF46498D2DD3A248B037221FF416C9F"
+      },
+      {
+        "path": "docs/gold-wave189-verification.md",
+        "bytes": 3795,
+        "sha256": "7FF9CBA2FEC7AF36A8284251B929E8802D7C6CBD7CC626C0817C9224C3225BB7"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1027874,
+        "sha256": "A60E0BD9AE35D62C05F5FCCA6B09091CF2EBE3C9B024D6242432CF5567ED4549"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1623321,
+        "sha256": "CB894FC081548A46E224A6D815E207600BF564C4EC2C46356498C0B1E34D5A30"
+      }
+    ],
+    "note": "Capability18 run35712523037 and core/CLI/reference35712525811 passed2cef8239. Exact receipt/custody verified. Format-only changes0e0fa6a0; Preflight/Quality passed2888e87e. Windows audio CRLF transport repaired; fresh CI/GUI/audio required."
   }
 }

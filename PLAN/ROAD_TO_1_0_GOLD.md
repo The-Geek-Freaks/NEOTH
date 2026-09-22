@@ -8,15 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
-**Current Hosted boundary (2026-09-22):** W189 is published on GitHub
-`main` at `2cef8239`. Code Quality `35712519694` passed. Preflight
-`35712519596` supplied 19 exact rustfmt hunks, imported as text into the two
-reported files; a new Hosted check is required. Core/reference `35712525811`
-and the dedicated 18-test capability lane `35712523037` are running on that
-source. Earlier core `35708880438` passed on `86a77ac8`. The W189 source review
-and publication do not substitute for behavior or release acceptance.
+**Current Hosted boundary (2026-09-22):** W189 behavior lane `35712523037`
+passed all 18 exact source-bound identities on `2cef8239`. The downloaded
+selection, source and execution receipts agree: 18 required/selected/executed,
+18 distinct passing tests. The two subsequently formatted sources retain exact
+Hosted-hunk custody. Core test-target check, public CLI build and reference
+export `35712525811` also passed on `2cef8239`; its SHA-bound generated CLI
+reference is imported. Preflight `35713254534` and Code Quality `35713254483`
+passed on published `2888e87e`. These are focused Linux/code gates; native GUI,
+supported-platform and release acceptance remain separate.
 
-Full CI `35710220706` on `ed0d76c9` is partial: all feature jobs plus
+Full CI `35710220706` on `ed0d76c9` finished with failures: all feature jobs plus
 gold-smoke, notices, signer, Keet and WASM passed; Linux has six Clippy
 diagnostics and Windows/macOS stop at the same Slint failure. Narrow source
 repairs are admitted in this source batch. Preview `35710224167` was cancelled
@@ -26,8 +28,12 @@ Neither result is a full-CI or preview success claim.
 Silero diagnostic `35712528563` compared five scenarios of 256 recurrent
 frames. Input binding alone matches the original exactly; ORT Basic preserves
 probability within tolerance but 1970 state elements exceed the strict gate.
-The optimizer difference is under investigation; no candidate/asset was
-imported and the tolerance is unchanged. The original Tract If blocker remains.
+Run `35713254589` confirms disabling TransposeOptimizer leaves the same
+numerical difference. The next diagnosis separates ORT prepacking from graph
+arithmetic; no candidate/asset was imported and tolerance remains unchanged.
+Linux/macOS audio reach the original Tract If blocker. Windows compiled but
+CRLF in its fixture-name transport yielded zero tests; the Hosted lane now
+writes LF and normalizes terminal CR while still requiring one exact match.
 
 The admitted inventory contains 453 source paths and 555 universal
 native identities; platform, GUI and audio counts remain unchanged. Road counts

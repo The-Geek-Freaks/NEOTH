@@ -49,5 +49,13 @@ The manual `capability-quality.yml` lane binds eight W188, eight W189 and two
 Doctor tests (18 total) to the canonical source-SHA matrix. Ubuntu/Rust 1.91
 uses one Cargo worker and serial exact discovery/execution; an empty or
 ambiguous test filter cannot pass. Logs and selection/execute receipts are
-retained. Independent source review is complete; Hosted formatting, compile,
-behavior and generated CLI reference are pending. No Road checkbox closes.
+retained. Independent source review is complete.
+
+Hosted run `35712523037` passed all 18 selected tests on `2cef8239`. Downloaded
+source/name/selection/execution receipts agree, with 18 distinct passing rows.
+Core test-target check, public CLI build and reference export `35712525811`
+passed on that same source; the SHA-bound generated reference is imported.
+The 19 exact formatting hunks subsequently imported from Hosted Preflight
+are tracked separately from behavior evidence. Preflight `35713254534` and
+Code Quality `35713254483` passed on `2888e87e`. GUI, supported-platform and
+release gates remain separate; no Road checkbox closes.

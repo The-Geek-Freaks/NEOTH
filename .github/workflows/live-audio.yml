@@ -154,12 +154,16 @@ jobs:
           (evidence_dir / "fixture-identities.json").write_text(
               json.dumps({"schema": "gold-wave186-live-audio-hosted-evidence/v1", "fixtures": evidence}, indent=2) + "\n",
               encoding="utf-8",
+              newline="\n",
           )
-          (evidence_dir / "fixture-names.txt").write_text("\n".join(names) + "\n", encoding="utf-8")
+          (evidence_dir / "fixture-names.txt").write_text(
+              "\n".join(names) + "\n", encoding="utf-8", newline="\n"
+          )
           inputs = ("docs/verification/gold-wave186-live-audio-tests.json", "SRC/Cargo.lock")
           (evidence_dir / "declared-inputs.sha256").write_text(
               "".join(f"{hashlib.sha256((root / path).read_bytes()).hexdigest()}  {path}\n" for path in inputs),
               encoding="utf-8",
+              newline="\n",
           )
           PY
 
@@ -175,14 +179,26 @@ jobs:
           evidence_dir="$RUNNER_TEMP/w186-live-audio"
           : > "$evidence_dir/cargo-live-audio.log"
           while IFS= read -r test_name; do
+            test_name="${test_name%$'\r'}"
             [[ -n "$test_name" ]] || { echo "empty W186 live-audio fixture identity" >&2; exit 1; }
             {
               echo "=== list $test_name ==="
-              listed="$(cargo test -p neoth --lib --locked --features live-audio "$test_name" -- --exact --list)"
+              if ! listed="$(cargo test -p neoth --lib --locked --features live-audio "$test_name" -- --exact --list)"; then
+                echo "exact live-audio discovery failed: $test_name" >&2
+                exit 1
+              fi
+              listed="${listed//$'\r'/}"
               printf '%s\n' "$listed"
-              test "$(printf '%s\n' "$listed" | grep -Fxc "$test_name: test")" -eq 1
+              match_count="$(printf '%s\n' "$listed" | grep -Fxc "$test_name: test" || true)"
+              [[ "$match_count" == "1" ]] || {
+                echo "exact live-audio discovery must select one fixture: $test_name (got $match_count)" >&2
+                exit 1
+              }
               echo "=== run $test_name ==="
-              cargo test -p neoth --lib --locked --features live-audio "$test_name" -- --exact --test-threads=1
+              if ! cargo test -p neoth --lib --locked --features live-audio "$test_name" -- --exact --test-threads=1; then
+                echo "exact live-audio fixture failed: $test_name" >&2
+                exit 1
+              fi
             } 2>&1 | tee -a "$evidence_dir/cargo-live-audio.log"
           done < "$evidence_dir/fixture-names.txt"
 

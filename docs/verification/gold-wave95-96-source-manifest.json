@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W189-capability-history",
-  "base": "0e0fa6a0dcca113e265f96e10c58451cbcb56c5d",
-  "capturedUtc": "2026-09-22T09:55:05.8761222Z",
-  "validationStatus": "W186_OPTIMIZER_ABLATION_PENDING_HOSTED",
+  "base": "2888e87e1a88461f8516a956fd207a34703184de",
+  "capturedUtc": "2026-09-22T10:01:36.4270819Z",
+  "validationStatus": "W189_HOSTED_18_TESTS_PASSED_REFERENCE_IMPORTED",
   "scopeNote": "W189 bounded authenticated snapshot/history plus ED0 Clippy/Slint repair and strict Silero numerical diagnosis. No roadmap closure; prior waves remain historical.",
   "files": [
     {
@@ -33,8 +33,8 @@
     },
     {
       "path": ".github/workflows/live-audio.yml",
-      "bytes": 9315,
-      "sha256": "C4C6817693AF651BA3C8A7660328E72E3389E56269A7F4FDAD90F63240CF0C98"
+      "bytes": 9945,
+      "sha256": "9DCCE6D5819B08C1E3142E127CF9848C92623B0BDB59970842F472E633259180"
     },
     {
       "path": ".github/workflows/openclaw-schema-inventory.yml",
@@ -83,8 +83,8 @@
     },
     {
       "path": "docs/cli-commands.md",
-      "bytes": 234480,
-      "sha256": "D6E7E5E0D70434142BE32FF985C14F8359236ED863128F0F5B9EDE980B4CF3AE"
+      "bytes": 234875,
+      "sha256": "D682A38D27E5934DFB8C4AE0BA742A2C2DF46498D2DD3A248B037221FF416C9F"
     },
     {
       "path": "docs/code-map-lifecycle.md",
@@ -208,8 +208,8 @@
     },
     {
       "path": "docs/gold-wave189-verification.md",
-      "bytes": 3305,
-      "sha256": "34907BC3E0DBAA262B521BCEA85641E080298ACB3DA34D84637A8357FCA2AE26"
+      "bytes": 3795,
+      "sha256": "7FF9CBA2FEC7AF36A8284251B929E8802D7C6CBD7CC626C0817C9224C3225BB7"
     },
     {
       "path": "docs/install.md",
@@ -318,13 +318,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1027402,
-      "sha256": "A7708C1C6778AB5A44F35442AEA3FAC47EC9AEE4E30130585328FF5B6D1C8299"
+      "bytes": 1027874,
+      "sha256": "A60E0BD9AE35D62C05F5FCCA6B09091CF2EBE3C9B024D6242432CF5567ED4549"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1622849,
-      "sha256": "A6F661DFA298E56E4EDCA8592B74532E19CDC464FCC9D83DAA83D2139371A348"
+      "bytes": 1623321,
+      "sha256": "CB894FC081548A46E224A6D815E207600BF564C4EC2C46356498C0B1E34D5A30"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
