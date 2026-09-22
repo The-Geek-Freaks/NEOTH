@@ -8,6 +8,13 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**Latest verified gates (2026-09-22):** Preflight `35695206750` passed on
+`4e9c0718` (format, locked metadata and offline contracts). Core test-target
+typecheck in `35694693234` passed on `87c18246`; its CLI build remains running.
+W186 supply inputs `35694695810` passed on `87c18246`; all 85 artifact checksums
+and the recorded dependency inputs are verified. These are separate source
+boundaries; native/GUI/audio behavior and release acceptance remain open.
+
 **Current batch status (2026-09-22):** W185 daemon-owned Ollama operations are
 published in `f091d5fe`, with the first fixture parse repair in `2e7de3f6`.
 Code Quality `35693421727` passed. Preflight `35693422094` exposed formatting;
