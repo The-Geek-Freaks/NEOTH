@@ -390,7 +390,6 @@ pub struct JobEvidenceContract {
 }
 
 impl JobEvidenceContract {
-    #[cfg(test)]
     pub(in crate::integrations) fn verified(
         artifact_binding_sha256: Sha256Digest,
         config_binding_sha256: Sha256Digest,
@@ -464,6 +463,18 @@ pub struct ProgressEvidence {
     bytes_done: u64,
 }
 
+pub(in crate::integrations) struct ProgressEvidenceClaim {
+    pub job_id: JobId,
+    pub manifest_sha256: Sha256Digest,
+    pub step_plan_sha256: Sha256Digest,
+    pub staging_binding_sha256: Sha256Digest,
+    pub expected_revision: u64,
+    pub expected_state: JobState,
+    pub current_phase: String,
+    pub completed_steps: u32,
+    pub bytes_done: u64,
+}
+
 #[cfg(test)]
 pub(in crate::integrations) struct ProgressEvidenceFixture {
     pub job_id: JobId,
@@ -478,19 +489,28 @@ pub(in crate::integrations) struct ProgressEvidenceFixture {
 }
 
 impl ProgressEvidence {
+    pub(in crate::integrations) fn claimed(claim: ProgressEvidenceClaim) -> Self {
+        Self {
+            job_id: claim.job_id,
+            manifest_sha256: claim.manifest_sha256,
+            step_plan_sha256: claim.step_plan_sha256,
+            staging_binding_sha256: claim.staging_binding_sha256,
+            expected_revision: claim.expected_revision,
+            expected_state: claim.expected_state,
+            current_phase: claim.current_phase,
+            completed_steps: claim.completed_steps,
+            bytes_done: claim.bytes_done,
+        }
+    }
+
     #[cfg(test)]
     pub(in crate::integrations) fn verified(fixture: ProgressEvidenceFixture) -> Self {
-        Self {
-            job_id: fixture.job_id,
-            manifest_sha256: fixture.manifest_sha256,
-            step_plan_sha256: fixture.step_plan_sha256,
-            staging_binding_sha256: fixture.staging_binding_sha256,
-            expected_revision: fixture.expected_revision,
-            expected_state: fixture.expected_state,
-            current_phase: fixture.current_phase,
-            completed_steps: fixture.completed_steps,
-            bytes_done: fixture.bytes_done,
-        }
+        Self::claimed(ProgressEvidenceClaim {
+            job_id: fixture.job_id, manifest_sha256: fixture.manifest_sha256,
+            step_plan_sha256: fixture.step_plan_sha256, staging_binding_sha256: fixture.staging_binding_sha256,
+            expected_revision: fixture.expected_revision, expected_state: fixture.expected_state,
+            current_phase: fixture.current_phase, completed_steps: fixture.completed_steps, bytes_done: fixture.bytes_done,
+        })
     }
 
     pub(in crate::integrations) fn receipt_for(
@@ -540,7 +560,6 @@ pub struct ReadyEvidence {
 }
 
 impl ReadyEvidence {
-    #[cfg(test)]
     pub(in crate::integrations) fn verified(
         job_id: JobId,
         manifest_sha256: Sha256Digest,
@@ -598,7 +617,6 @@ pub struct CancellationEvidence {
 }
 
 impl CancellationEvidence {
-    #[cfg(test)]
     pub(in crate::integrations) fn verified(
         job_id: JobId,
         manifest_sha256: Sha256Digest,
@@ -703,7 +721,6 @@ pub struct RecoveryDispositionEvidence {
 }
 
 impl RecoveryDispositionEvidence {
-    #[cfg(test)]
     pub(in crate::integrations) fn verified(
         job_id: JobId,
         manifest_sha256: Sha256Digest,

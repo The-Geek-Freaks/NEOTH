@@ -8,6 +8,7 @@
 pub mod catalog;
 pub mod events;
 pub mod jobs;
+pub mod n8n;
 pub mod state;
 
 pub use catalog::{
@@ -22,6 +23,7 @@ pub use jobs::{
     EnqueueIntegrationJob, EnqueueResult, IntegrationJobService, JobServiceError, RestartValidator,
     StartupRecovery,
 };
+pub use n8n::{N8nJobStatusView, N8nStatusView};
 pub use state::{
     CancellationEvidence, IntegrationJob, JobEvidenceContract, JobFailure, JobId, JobOperation,
     JobProgress, JobRequester, JobState, ProgressEvidence, ProgressEvidenceReceipt, ReadyEvidence,

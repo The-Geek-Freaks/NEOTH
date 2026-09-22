@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
-use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
 use super::catalog::{CapabilityCatalog, CapabilityId};
 use super::events::{
@@ -263,6 +263,23 @@ impl IntegrationJobService {
 
     pub fn active_snapshot(&self) -> Result<Vec<IntegrationJob>, JobServiceError> {
         self.store.list(true)
+    }
+
+    /// Read the existing durable store without creating directories, applying a
+    /// schema, taking the owner lease, or attempting restart recovery. Public
+    /// status consumers must use this path so observation cannot steal an
+    /// active adapter's authority.
+    pub fn read_only_snapshot(home: &Path) -> Result<Vec<IntegrationJob>, JobServiceError> {
+        let path = home.join(DB_FILE_NAME);
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        reject_existing_nonregular_path(&path, "integration setup DB")?;
+        let connection = open_read_only_connection(&path)?;
+        validate_schema(&connection)?;
+        let sql = format!("SELECT {JOB_COLUMNS} FROM integration_jobs ORDER BY created_at, job_id");
+        let mut statement = connection.prepare(&sql)?;
+        statement.query_map([], row_to_job)?.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
     /// Subscribe before taking the snapshot. The subscription drops overlap,
@@ -1074,6 +1091,15 @@ fn open_connection(path: &Path, initialize: bool) -> Result<Connection, JobServi
         connection.pragma_update(None, "wal_autocheckpoint", 100i64)?;
         connection.pragma_update(None, "journal_size_limit", 16_777_216i64)?;
     }
+    Ok(connection)
+}
+
+fn open_read_only_connection(path: &Path) -> Result<Connection, JobServiceError> {
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
+        .with_context(|| format!("open integration setup DB read-only {}", path.display()))?;
+    connection.busy_timeout(Duration::from_secs(5))?;
+    connection.pragma_update(None, "foreign_keys", "ON")?;
+    connection.pragma_update(None, "trusted_schema", "OFF")?;
     Ok(connection)
 }
 

@@ -2,6 +2,86 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Canonical, literal-loopback HTTP origin for an adopted outbound n8n
+/// instance.  This deliberately is not the inbound [`N8nApiConfig`] server.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct LoopbackHttpEndpoint(String);
+
+impl LoopbackHttpEndpoint {
+    pub fn as_str(&self) -> &str { &self.0 }
+
+    pub fn origin(&self) -> &str { &self.0 }
+
+    pub fn parse(raw: impl AsRef<str>) -> Result<Self, String> {
+        // Do not parse this with a general URL parser: URL compatibility forms
+        // accept aliases such as `127.1` and can erase an explicit `:80`.
+        // Adoption has a deliberately closed raw grammar.
+        let raw = raw.as_ref();
+        let (host, rest) = if let Some(rest) = raw.strip_prefix("http://127.0.0.1:") {
+            ("127.0.0.1", rest)
+        } else if let Some(rest) = raw.strip_prefix("http://[::1]:") {
+            ("[::1]", rest)
+        } else {
+            return Err("n8n endpoint host must be literal 127.0.0.1 or ::1".to_string());
+        };
+        let port_text = rest.strip_suffix('/').unwrap_or(rest);
+        if port_text.is_empty() || !port_text.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err("n8n endpoint must be a literal loopback http origin with an explicit port".to_string());
+        }
+        let port = port_text.parse::<u16>().ok().filter(|port| *port != 0)
+            .ok_or_else(|| "n8n endpoint must be a literal loopback http origin with an explicit port".to_string())?;
+        Ok(Self(format!("http://{host}:{port}")))
+    }
+}
+
+impl<'de> Deserialize<'de> for LoopbackHttpEndpoint {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where D: serde::Deserializer<'de> {
+        let raw = String::deserialize(deserializer)?;
+        Self::parse(raw).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Public half of an adopted outbound n8n binding.  The API key is always in
+/// `Credentials`; `None` means no outbound n8n instance was adopted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct N8nInstanceConfig {
+    pub endpoint: LoopbackHttpEndpoint,
+    pub api_version: Option<String>,
+}
+
+impl N8nInstanceConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        let _ = LoopbackHttpEndpoint::parse(self.endpoint.as_str())?;
+        if self.api_version.as_deref().is_some_and(|version| version.is_empty() || version.chars().any(char::is_control)) {
+            return Err("n8n_instance.api_version must be nonempty and contain no control characters".to_string());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod n8n_instance_config_tests {
+    use super::LoopbackHttpEndpoint;
+
+    #[test]
+    fn endpoint_accepts_only_literal_loopback_origins_with_explicit_port() {
+        for accepted in ["http://127.0.0.1:5678", "http://127.0.0.1:80", "http://[::1]:5678/"] {
+            assert!(LoopbackHttpEndpoint::parse(accepted).is_ok(), "{accepted}");
+        }
+        for rejected in [
+            "http://localhost:5678", "https://127.0.0.1:5678", "http://127.0.0.1",
+            "http://127.0.0.1:0", "http://127.0.0.1:5678/api", "http://u@127.0.0.1:5678",
+            "http://127.0.0.1:5678/?x=1", "http://192.168.1.2:5678",
+            "http://127.0.0.2:5678", "http://127.1.2.3:5678", "http://127.1:5678",
+            "http://0177.0.0.1:5678", "http://127.0.0.1:5678//",
+        ] {
+            assert!(LoopbackHttpEndpoint::parse(rejected).is_err(), "{rejected}");
+        }
+    }
+}
+
 /// GOLD-LF-P2-03 — dedicated Git WAL archive mirror policy.
 ///
 /// The feature is inert by default. `enabled` permits the local mirror

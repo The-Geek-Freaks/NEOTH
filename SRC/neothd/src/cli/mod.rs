@@ -426,9 +426,8 @@ pub enum Commands {
     /// uses a prompt-free, single-use, verified local data plane.
     Credential(credential::CredentialArgs),
 
-    /// Inspect the n8n integration (READ-ONLY): `status` reports the webhook
-    /// base URL n8n POSTs to + whether the `n8n` binary is on PATH;
-    /// `workflows` lists the NEOTH starter workflows bundled in the binary.
+    /// Adopt an already-running loopback n8n instance, inspect its durable
+    /// binding, or list the NEOTH workflow templates bundled in the binary.
     N8n(n8n::N8nArgs),
     /// Manage NEOTH's desktop computer-use capability (trycua cua-driver,
     /// wired as a gated MCP server): status / enable / disable / install.
@@ -1710,7 +1709,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             cron::run_cron(args, global_output).await?;
         }
         Commands::N8n(args) => {
-            n8n::run_n8n(args, global_output)?;
+            n8n::run_n8n(args, global_output).await?;
         }
         Commands::ComputerUse(args) => {
             computer_use::run_computer_use(args, global_output).await?;

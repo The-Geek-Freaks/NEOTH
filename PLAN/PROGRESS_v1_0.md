@@ -2,6 +2,20 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W202 n8n adoption source publication (2026-09-22):** the new CLI adopts an
+explicit already-running literal-loopback instance through a durable job. The
+API key enters through bounded stdin and the existing credential backend;
+negative-control rejection and authenticated pre/post-publication API probes
+precede Ready. Every active request supports cancellation, failed publication
+compensates the exact prior config/secret generation, and restart terminates
+unowned work with custody recovery. Status reads stored state without a probe.
+Independent final source review passed after cancellation and input fixes.
+Twenty-three exact W202 identities join the existing sixty-test Hosted lane.
+Compilation, behavior, CLI reference and native acceptance remain pending;
+this is not an installer or a Gold/release completion claim. Road remains
+1324 total / 1015 checked / 307 open / 2 partial. Local execution stays suspended.
+Details: `docs/gold-wave202-verification.md`.
+
 **W203 second behavior follow-up (2026-09-22):** Grouped60 `35731968545` on
 `a68442cb` executed all sixty identities:58 passed, two failed. W190/W191/
 W192/W193/W194/W196/W197 now passed their complete selections. The remaining

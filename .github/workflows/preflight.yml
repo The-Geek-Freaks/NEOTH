@@ -61,8 +61,32 @@ jobs:
         run: cargo metadata --locked --no-deps --format-version 1 > /dev/null
 
       - name: Check Rust formatting without compiling
+        id: format-check
         working-directory: SRC
         run: cargo fmt --all -- --check
+
+      - name: Create exact rustfmt patch receipt
+        if: ${{ failure() && steps.format-check.outcome == 'failure' }}
+        shell: bash
+        run: |
+          receipt_dir="$RUNNER_TEMP/neoth-preflight-rustfmt-receipt"
+          mkdir -p "$receipt_dir"
+          git -C SRC rev-parse HEAD > "$receipt_dir/source-head.txt"
+          cargo fmt --manifest-path SRC/Cargo.toml --all
+          git diff --binary --full-index -- SRC > "$receipt_dir/rustfmt.patch"
+          (
+            cd "$receipt_dir"
+            sha256sum rustfmt.patch source-head.txt > SHA256SUMS
+          )
+
+      - name: Upload exact rustfmt patch receipt
+        if: ${{ failure() && steps.format-check.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: preflight-rustfmt-patch-receipt
+          path: ${{ runner.temp }}/neoth-preflight-rustfmt-receipt
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Deny transitive build tools in static contracts
         shell: bash

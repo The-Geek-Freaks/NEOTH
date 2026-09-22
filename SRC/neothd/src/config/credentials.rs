@@ -483,6 +483,10 @@ pub struct ChannelAccountCredentials {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Credentials {
+    /// API key for the separately configured adopted outbound n8n instance.
+    /// Never serialize this value into `freedom.yaml` or job evidence.
+    #[serde(default)]
+    pub n8n_api_key: Option<SecretString>,
     /// LLM provider API key — OpenAI, Gemini, or compat endpoint.
     pub provider_key: Option<SecretString>,
     /// ElevenLabs TTS API key. Dedicated so speech access never silently reuses
@@ -865,11 +869,470 @@ fn same_secret_snapshot(left: Option<&SecretString>, right: Option<&SecretString
     }
 }
 
+/// Durable, opaque compensation handle for one n8n adoption.  It intentionally
+/// has no `Debug`: both file snapshots and the keychain preimage can contain
+/// credentials.  The custody sidecar is private-permissioned and survives a
+/// crash between publication and the job service's Ready transition.
+pub(crate) struct PreparedN8nAdoptionUpdate {
+    freedom_path: PathBuf,
+    credentials_path: PathBuf,
+    custody_path: PathBuf,
+    keychain_mode: bool,
+    keychain_before_present: bool,
+    keychain_backup_key: Option<String>,
+    keychain_candidate_key: Option<String>,
+    freedom_before: FileSnapshot,
+    credentials_before: FileSnapshot,
+    freedom_after: FileSnapshot,
+    credentials_after: FileSnapshot,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum N8nAdoptionPhase { PreparingKeychain, Prepared, CanonicalUpdatedPairPending, Published, PairRestoredKeychainPending, CleanupPending, ReadyFinalizationPending }
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct N8nAdoptionCustody {
+    job_id: String,
+    phase: N8nAdoptionPhase,
+    keychain_mode: bool,
+    freedom_before: JournalFileSnapshot,
+    credentials_before: JournalFileSnapshot,
+    freedom_after: JournalFileSnapshot,
+    credentials_after: JournalFileSnapshot,
+    keychain_before_present: bool,
+    keychain_backup_key: Option<String>,
+    keychain_candidate_key: Option<String>,
+}
+
+/// State observed from a durable n8n custody sidecar.  The adapter must bind
+/// this to its authoritative job state: `Published` is never equivalent to
+/// Ready, and `Prepared` has not changed the config/credential generation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum N8nAdoptionCustodyState { Prepared, CanonicalUpdatedPairPending, Published, PairRestoredKeychainPending, RollbackCleanupPending, ReadyFinalizationPending }
+
+fn n8n_adoption_custody_path(freedom_path: &Path, job_id: &str) -> Result<PathBuf> {
+    let parsed = uuid::Uuid::parse_str(job_id).context("n8n adoption job id must be a UUID")?;
+    anyhow::ensure!(
+        parsed.hyphenated().to_string() == job_id,
+        "n8n adoption job id must be canonical lowercase hyphenated UUID"
+    );
+    Ok(transaction_directory(freedom_path).join(format!(".n8n-adoption-{job_id}.custody.yaml")))
+}
+
+fn n8n_adoption_keychain_key(job_id: &str, kind: &str) -> String {
+    format!("n8n_api_key.{kind}.{job_id}")
+}
+
+fn persist_n8n_adoption_custody(path: &Path, custody: &N8nAdoptionCustody) -> Result<()> {
+    let body = zeroize::Zeroizing::new(
+        serde_yaml::to_string(custody).context("serialize private n8n adoption custody")?,
+    );
+    crate::util::atomic_write::atomic_write_private(path, body.as_bytes())
+        .with_context(|| format!("persist private n8n adoption custody {}", path.display()))
+}
+
+fn load_n8n_adoption_custody(path: &Path) -> Result<N8nAdoptionCustody> {
+    let body = read_private_journal(path)?
+        .with_context(|| format!("n8n adoption custody {} is missing", path.display()))?;
+    serde_yaml::from_slice(&body).with_context(|| format!("parse n8n adoption custody {}", path.display()))
+}
+
+impl N8nAdoptionCustody {
+    fn from_prepared(job_id: String, prepared: &PreparedN8nAdoptionUpdate) -> Self {
+        Self {
+            job_id,
+            phase: N8nAdoptionPhase::PreparingKeychain,
+            keychain_mode: prepared.keychain_mode,
+            freedom_before: JournalFileSnapshot::from_file_snapshot(&prepared.freedom_before),
+            credentials_before: JournalFileSnapshot::from_file_snapshot(&prepared.credentials_before),
+            freedom_after: JournalFileSnapshot::from_file_snapshot(&prepared.freedom_after),
+            credentials_after: JournalFileSnapshot::from_file_snapshot(&prepared.credentials_after),
+            keychain_before_present: prepared.keychain_before_present,
+            keychain_backup_key: prepared.keychain_backup_key.clone(),
+            keychain_candidate_key: prepared.keychain_candidate_key.clone(),
+        }
+    }
+
+    fn snapshots(&self) -> Result<(FileSnapshot, FileSnapshot, FileSnapshot, FileSnapshot)> {
+        Ok((
+            self.freedom_before.decode("n8n freedom_before")?,
+            self.credentials_before.decode("n8n credentials_before")?,
+            self.freedom_after.decode("n8n freedom_after")?,
+            self.credentials_after.decode("n8n credentials_after")?,
+        ))
+    }
+}
+
+fn classify_n8n_adoption_custody(
+    phase: N8nAdoptionPhase, files_before: bool, files_after: bool, key_before: bool, key_after: bool,
+) -> Result<N8nAdoptionCustodyState> {
+    if matches!(phase, N8nAdoptionPhase::ReadyFinalizationPending) && files_after { Ok(N8nAdoptionCustodyState::ReadyFinalizationPending) }
+    else if matches!(phase, N8nAdoptionPhase::CleanupPending) && files_before && key_before { Ok(N8nAdoptionCustodyState::RollbackCleanupPending) }
+    else if files_after && key_after { Ok(N8nAdoptionCustodyState::Published) }
+    else if matches!(phase, N8nAdoptionPhase::CanonicalUpdatedPairPending) && files_before && key_after { Ok(N8nAdoptionCustodyState::CanonicalUpdatedPairPending) }
+    else if files_before && key_after { Ok(N8nAdoptionCustodyState::PairRestoredKeychainPending) }
+    else if files_before && key_before { Ok(N8nAdoptionCustodyState::Prepared) }
+    else { anyhow::bail!("n8n adoption custody does not match either exact source or target generation; manual repair required") }
+}
+
+/// The only keychain cleanup primitive used by finalization and rollback.
+/// Keeping the store as a private parameter makes partial-delete retry paths
+/// testable without serializing key material into the custody sidecar.
+fn cleanup_n8n_keychain_custody(
+    store: &dyn crate::config::keychain::SecretStore,
+    custody: &N8nAdoptionCustody,
+) -> Result<()> {
+    store.delete(custody.keychain_backup_key.as_deref().context("missing n8n keychain backup reference")?)?;
+    store.delete(custody.keychain_candidate_key.as_deref().context("missing n8n keychain candidate reference")?)?;
+    Ok(())
+}
+
 impl Credentials {
     /// Presence-only map guard for outbound rollout. It has no side effect on
     /// legacy Telegram fields or keychain material.
     pub fn telegram_account_map_active(&self) -> bool {
         !self.channel_accounts.telegram.is_empty()
+    }
+
+    /// Prepare an outbound n8n endpoint/key binding. Preparation captures the
+    /// exact raw pair and the one keychain entry, then persists a private
+    /// custody sidecar before any network probe or config publication. The
+    /// caller may safely probe `api_key` in memory before calling commit.
+    pub(crate) fn prepare_n8n_adoption_at(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        job_id: &str,
+        instance: crate::config::N8nInstanceConfig,
+        api_key: SecretString,
+    ) -> Result<PreparedN8nAdoptionUpdate> {
+        anyhow::ensure!(!api_key.expose().trim().is_empty(), "n8n API key must be non-blank");
+        instance.validate().map_err(anyhow::Error::msg)?;
+        let custody_path = n8n_adoption_custody_path(freedom_path, job_id)?;
+        let freedom_dir = transaction_directory(freedom_path);
+        anyhow::ensure!(freedom_dir == transaction_directory(credentials_path), "freedom.yaml and credentials.yaml must be sibling files for n8n adoption");
+        with_dual_file_transaction_lock(freedom_path, || {
+            with_config_writer_guard(freedom_path, || {
+                with_legacy_pair_locks(freedom_path, credentials_path, || {
+                    anyhow::ensure!(!custody_path.exists(), "n8n adoption custody already exists for job; recover it before retrying");
+                    let freedom_before = FileSnapshot::capture(freedom_path)?;
+                    let credentials_before = FileSnapshot::capture(credentials_path)?;
+                    let mut config = crate::config::FreedomConfig::load_public_from_path_unlocked(freedom_path)
+                        .with_context(|| format!("load {} for n8n adoption preparation", freedom_path.display()))?;
+                    let mut credentials = Self::load_or_default_unlocked(credentials_path)
+                        .with_context(|| format!("load {} for n8n adoption preparation", credentials_path.display()))?;
+                    let keychain_mode = config.secrets_backend == crate::config::SecretsBackend::Keychain;
+                    let opened_store = if keychain_mode {
+                        Some(crate::config::keychain::open_store().context("open OS keychain for n8n adoption preparation")?)
+                    } else { None };
+                    let keychain_before = if let Some(store) = opened_store.as_deref() {
+                        store.get("n8n_api_key").context("snapshot n8n API key from keychain")?
+                    } else { None };
+                    let keychain_backup_key = keychain_mode.then(|| n8n_adoption_keychain_key(job_id, "backup"));
+                    let keychain_candidate_key = keychain_mode.then(|| n8n_adoption_keychain_key(job_id, "candidate"));
+                    config.n8n_instance = Some(instance);
+                    credentials.n8n_api_key = (!keychain_mode).then(|| api_key.clone());
+                    let freedom_body = render_freedom_preserving_unknown_yaml(
+                        &config, &freedom_before, InlineTelegramTokenPolicy::Preserve,
+                    )?;
+                    let freedom_after = FileSnapshot::Present(zeroize::Zeroizing::new(freedom_body.as_bytes().to_vec()));
+                    let credentials_after = credentials.rendered_file_snapshot_preserving_unknown(credentials_path, &credentials_before)?;
+                    let prepared = PreparedN8nAdoptionUpdate {
+                        freedom_path: freedom_path.to_path_buf(), credentials_path: credentials_path.to_path_buf(),
+                        custody_path, keychain_mode, keychain_before_present: keychain_before.is_some(),
+                        keychain_backup_key, keychain_candidate_key, freedom_before, credentials_before,
+                        freedom_after, credentials_after,
+                    };
+                    persist_n8n_adoption_custody(&prepared.custody_path, &N8nAdoptionCustody::from_prepared(job_id.to_owned(), &prepared))?;
+                    if let Some(store) = opened_store.as_deref() {
+                        let backup = prepared.keychain_backup_key.as_deref().expect("keychain backup key");
+                        let candidate = prepared.keychain_candidate_key.as_deref().expect("keychain candidate key");
+                        anyhow::ensure!(store.get(backup)?.is_none() && store.get(candidate)?.is_none(),
+                            "n8n adoption keychain custody keys already exist; recover the job before retrying");
+                        if let Some(previous) = keychain_before.as_ref() {
+                            store.set(backup, previous).context("persist n8n API key backup in keychain")?;
+                        }
+                        if let Err(error) = store.set(candidate, &api_key) {
+                            let _ = store.delete(backup);
+                            return Err(error).context("persist n8n API key candidate in keychain");
+                        }
+                    }
+                    let mut custody = load_n8n_adoption_custody(&prepared.custody_path)?;
+                    custody.phase = N8nAdoptionPhase::Prepared;
+                    persist_n8n_adoption_custody(&prepared.custody_path, &custody)?;
+                    Ok(prepared)
+                })
+            })
+        })
+    }
+
+    /// Publish precisely the generation captured by preparation. Both raw
+    /// files and the configured keychain entry are CAS-checked first. A
+    /// recoverable early pair failure restores the keychain; a crossed
+    /// publication retains custody for deterministic recovery/rollback.
+    pub(crate) fn commit_prepared_n8n_adoption_at(prepared: PreparedN8nAdoptionUpdate) -> Result<()> {
+        let freedom_dir = transaction_directory(&prepared.freedom_path);
+        with_dual_file_transaction_lock(&prepared.freedom_path, || {
+            with_config_writer_guard(&prepared.freedom_path, || {
+                with_legacy_pair_locks(&prepared.freedom_path, &prepared.credentials_path, || {
+                    anyhow::ensure!(FileSnapshot::capture(&prepared.freedom_path)?.same_as(&prepared.freedom_before)
+                        && FileSnapshot::capture(&prepared.credentials_path)?.same_as(&prepared.credentials_before),
+                        "n8n adoption source configuration changed after preparation; retry the command");
+                    let mut opened_store = None;
+                    let store = if prepared.keychain_mode {
+                        opened_store = Some(crate::config::keychain::open_store().context("open OS keychain for n8n adoption commit")?);
+                        Some(opened_store.as_deref().expect("opened keychain store"))
+                    } else { None };
+                    if let Some(store) = store {
+                        let backup = prepared.keychain_backup_key.as_deref().context("missing n8n keychain backup reference")?;
+                        let candidate = prepared.keychain_candidate_key.as_deref().context("missing n8n keychain candidate reference")?;
+                        let before = store.get(backup)?;
+                        anyhow::ensure!(before.is_some() == prepared.keychain_before_present,
+                            "n8n keychain backup presence changed after preparation; retry the command");
+                        anyhow::ensure!(same_secret_snapshot(store.get("n8n_api_key")?.as_ref(), before.as_ref()),
+                            "n8n API key changed after preparation; retry the command");
+                        let candidate_value = store.get(candidate)?.context("n8n keychain candidate is missing")?;
+                        let mut custody = load_n8n_adoption_custody(&prepared.custody_path)?;
+                        custody.phase = N8nAdoptionPhase::CanonicalUpdatedPairPending;
+                        persist_n8n_adoption_custody(&prepared.custody_path, &custody)?;
+                        store.set("n8n_api_key", &candidate_value).context("write n8n API key before adoption publication")?;
+                    }
+                    let publication = publish_prepared_file_pair(
+                        &prepared.freedom_path, &prepared.credentials_path, &freedom_dir,
+                        &prepared.freedom_before, &prepared.freedom_after,
+                        &prepared.credentials_before, &prepared.credentials_after, (),
+                        Some(|path: &Path, body: &[u8]| crate::util::atomic_write::atomic_write_private(path, body)
+                            .with_context(|| format!("atomically write {}", path.display()))), |_| Ok(()),
+                    );
+                    if let Err(error) = publication {
+                        if let Some(store) = store.filter(|_| !dual_file_target_publication_crossed(&error)) {
+                            let backup = prepared.keychain_backup_key.as_deref().context("missing n8n keychain backup reference")?;
+                            match store.get(backup)? { Some(value) => store.set("n8n_api_key", &value), None => store.delete("n8n_api_key") }
+                                .context("restore n8n API key after uncommitted adoption failure")?;
+                            let mut custody = load_n8n_adoption_custody(&prepared.custody_path)?;
+                            custody.phase = N8nAdoptionPhase::Prepared;
+                            persist_n8n_adoption_custody(&prepared.custody_path, &custody)?;
+                        }
+                        return Err(error);
+                    }
+                    let mut custody = load_n8n_adoption_custody(&prepared.custody_path)?;
+                    custody.phase = N8nAdoptionPhase::Published;
+                    persist_n8n_adoption_custody(&prepared.custody_path, &custody)?;
+                    Ok(())
+                })
+            })
+        })
+    }
+
+    /// Returns the exact durable publication state. If a crash occurred after
+    /// the pair committed but before the sidecar phase flip, target equality
+    /// still reports `Published`; mixed generations fail closed.
+    pub(crate) fn inspect_n8n_adoption_custody_at(
+        freedom_path: &Path, credentials_path: &Path, job_id: &str,
+    ) -> Result<N8nAdoptionCustodyState> {
+        let custody_path = n8n_adoption_custody_path(freedom_path, job_id)?;
+        with_dual_file_transaction_lock(freedom_path, || with_config_writer_guard(freedom_path, || with_legacy_pair_locks(freedom_path, credentials_path, || {
+            let custody = load_n8n_adoption_custody(&custody_path)?;
+            let (fb, cb, fa, ca) = custody.snapshots()?;
+            let files_before = FileSnapshot::capture(freedom_path)?.same_as(&fb) && FileSnapshot::capture(credentials_path)?.same_as(&cb);
+            let files_after = FileSnapshot::capture(freedom_path)?.same_as(&fa) && FileSnapshot::capture(credentials_path)?.same_as(&ca);
+            let mut opened_store = None;
+            let key_state = if custody.keychain_mode {
+                opened_store = Some(crate::config::keychain::open_store().context("open OS keychain for n8n adoption recovery")?);
+                opened_store.as_deref().expect("opened keychain store").get("n8n_api_key")?
+            } else { None };
+            let store = opened_store.as_deref();
+            let backup = store.map(|store| custody.keychain_backup_key.as_deref().context("missing n8n keychain backup reference").and_then(|key| store.get(key))).transpose()?;
+            let candidate = store.map(|store| custody.keychain_candidate_key.as_deref().context("missing n8n keychain candidate reference").and_then(|key| store.get(key))).transpose()?;
+            let backup_value = backup.as_ref().and_then(Option::as_ref);
+            let candidate_value = candidate.as_ref().and_then(Option::as_ref);
+            let key_before = !custody.keychain_mode || (backup_value.is_some() == custody.keychain_before_present
+                && same_secret_snapshot(key_state.as_ref(), backup_value));
+            let key_after = !custody.keychain_mode || same_secret_snapshot(key_state.as_ref(), candidate_value);
+            classify_n8n_adoption_custody(custody.phase, files_before, files_after, key_before, key_after)
+        })))
+    }
+
+    fn ensure_n8n_status_snapshot_is_safe(freedom_path: &Path) -> Result<()> {
+        let directory = transaction_directory(freedom_path);
+        let has_n8n_custody = match std::fs::read_dir(&directory) {
+            Ok(entries) => {
+                let mut found = false;
+                for entry in entries {
+                    let entry = entry.with_context(|| format!("read n8n adoption custody directory {}", directory.display()))?;
+                    found |= entry.file_name().to_str().is_some_and(|name| {
+                        name.starts_with(".n8n-adoption-") && name.ends_with(".custody.yaml")
+                    });
+                }
+                found
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error).with_context(|| format!("inspect n8n adoption custody directory {}", directory.display())),
+        };
+        anyhow::ensure!(
+            read_private_journal(&directory.join(DUAL_FILE_JOURNAL_NAME))?.is_none()
+                && read_private_journal(&directory.join(RESTORE_IN_PROGRESS_NAME))?.is_none()
+                && !has_n8n_custody,
+            "n8n adoption status is unavailable while a configuration transaction is pending"
+        );
+        Ok(())
+    }
+
+    /// Coherently re-read the adopted endpoint and effective secret after
+    /// publication. It is crate-private because returning `SecretString` is
+    /// only needed by the integration adapter's post-commit probe.
+    pub(crate) fn read_n8n_adoption_binding_at(
+        freedom_path: &Path, credentials_path: &Path,
+    ) -> Result<(crate::config::N8nInstanceConfig, SecretString)> {
+        with_dual_file_transaction_lock(freedom_path, || with_config_writer_guard(freedom_path, || with_legacy_pair_locks(freedom_path, credentials_path, || {
+            let config = crate::config::FreedomConfig::load_public_from_path_unlocked(freedom_path)?;
+            let instance = config.n8n_instance.clone().context("adopted n8n endpoint is not configured")?;
+            let credentials = Self::load_effective_unlocked(credentials_path, config.secrets_backend)?;
+            let api_key = credentials.n8n_api_key.context("adopted n8n API key is not configured")?;
+            Ok((instance, api_key))
+        })))
+    }
+
+    /// Read-only status view: it intentionally performs no migration,
+    /// transaction recovery, or publication. The keychain path reports only
+    /// presence and never loads a plaintext fallback for this binding.
+    pub(crate) fn read_n8n_adoption_status_at(
+        freedom_path: &Path, credentials_path: &Path,
+    ) -> Result<(Option<crate::config::LoopbackHttpEndpoint>, bool)> {
+        // Status must never acquire the recovery lock: doing so can publish or
+        // roll back another process's journal. Snapshot twice and fail closed
+        // if a writer changed either source or left a journal behind.
+        Self::ensure_n8n_status_snapshot_is_safe(freedom_path)?;
+        let freedom_before = FileSnapshot::capture(freedom_path)?;
+        let credentials_before = FileSnapshot::capture(credentials_path)?;
+        let result = (|| {
+            let config = crate::config::FreedomConfig::load_public_from_path_unlocked(freedom_path)?;
+            let endpoint = config.n8n_instance.map(|instance| instance.endpoint);
+            let raw = Self::load_or_default_unlocked(credentials_path)?;
+            let present = if config.secrets_backend == crate::config::SecretsBackend::Keychain {
+                anyhow::ensure!(raw.n8n_api_key.is_none(), "adopted n8n API key must reside in the configured keychain backend");
+                crate::config::keychain::open_store()
+                    .context("open OS keychain for n8n status")?
+                    .get("n8n_api_key")?
+                    .is_some()
+            } else { raw.n8n_api_key.is_some() };
+            Ok((endpoint, present))
+        })();
+        Self::ensure_n8n_status_snapshot_is_safe(freedom_path)?;
+        anyhow::ensure!(
+            FileSnapshot::capture(freedom_path)?.same_as(&freedom_before)
+                && FileSnapshot::capture(credentials_path)?.same_as(&credentials_before),
+            "n8n adoption status changed while it was being read; retry"
+        );
+        result
+    }
+
+    /// Remove a published adoption only when the current public+private state
+    /// still equals its target. This CAS guard prevents a stale failed job from
+    /// deleting a later successful adoption.
+    pub(crate) fn rollback_n8n_adoption_at(freedom_path: &Path, credentials_path: &Path, job_id: &str) -> Result<()> {
+        let custody_path = n8n_adoption_custody_path(freedom_path, job_id)?;
+        with_dual_file_transaction_lock(freedom_path, || with_config_writer_guard(freedom_path, || with_legacy_pair_locks(freedom_path, credentials_path, || {
+            let custody = load_n8n_adoption_custody(&custody_path)?;
+            let (fb, cb, fa, ca) = custody.snapshots()?;
+            let mut opened_store = None;
+            let store = if custody.keychain_mode {
+                opened_store = Some(crate::config::keychain::open_store().context("open OS keychain for n8n adoption rollback")?);
+                Some(opened_store.as_deref().expect("opened keychain store"))
+            } else { None };
+            let files_before = FileSnapshot::capture(freedom_path)?.same_as(&fb) && FileSnapshot::capture(credentials_path)?.same_as(&cb);
+            let files_after = FileSnapshot::capture(freedom_path)?.same_as(&fa) && FileSnapshot::capture(credentials_path)?.same_as(&ca);
+            let (key_before, key_after) = if let Some(store) = store {
+                let backup = custody.keychain_backup_key.as_deref().context("missing n8n keychain backup reference")?;
+                let candidate = custody.keychain_candidate_key.as_deref().context("missing n8n keychain candidate reference")?;
+                let current = store.get("n8n_api_key")?;
+                let before = store.get(backup)?;
+                let candidate = store.get(candidate)?;
+                (before.is_some() == custody.keychain_before_present && same_secret_snapshot(current.as_ref(), before.as_ref()), same_secret_snapshot(current.as_ref(), candidate.as_ref()))
+            } else { (true, true) };
+            let state = classify_n8n_adoption_custody(custody.phase, files_before, files_after, key_before, key_after)?;
+            anyhow::ensure!(state != N8nAdoptionCustodyState::ReadyFinalizationPending,
+                "n8n adoption finalization has begun; Ready custody must not be rolled back");
+            if state == N8nAdoptionCustodyState::RollbackCleanupPending {
+                if let Some(store) = store {
+                    cleanup_n8n_keychain_custody(store, &custody)?;
+                }
+                return crate::util::atomic_write::durable_remove_file(&custody_path)
+                    .with_context(|| format!("remove completed n8n rollback custody {}", custody_path.display()));
+            }
+            if state == N8nAdoptionCustodyState::Prepared {
+                if let Some(store) = store {
+                    cleanup_n8n_keychain_custody(store, &custody)?;
+                }
+                return crate::util::atomic_write::durable_remove_file(&custody_path)
+                    .with_context(|| format!("remove uncommitted n8n adoption custody {}", custody_path.display()));
+            }
+            if matches!(state, N8nAdoptionCustodyState::CanonicalUpdatedPairPending | N8nAdoptionCustodyState::PairRestoredKeychainPending) {
+                if let Some(store) = store {
+                    let backup = custody.keychain_backup_key.as_deref().context("missing n8n keychain backup reference")?;
+                    match store.get(backup)? { Some(value) => store.set("n8n_api_key", &value), None => store.delete("n8n_api_key") }?;
+                    cleanup_n8n_keychain_custody(store, &custody)?;
+                }
+                return crate::util::atomic_write::durable_remove_file(&custody_path)
+                    .with_context(|| format!("remove repaired n8n adoption custody {}", custody_path.display()));
+            }
+            anyhow::ensure!(state == N8nAdoptionCustodyState::Published,
+                "n8n adoption custody is not recoverable");
+            let freedom_dir = transaction_directory(freedom_path);
+            publish_prepared_file_pair(freedom_path, credentials_path, &freedom_dir, &fa, &fb, &ca, &cb, (),
+                Some(|path: &Path, body: &[u8]| crate::util::atomic_write::atomic_write_private(path, body)
+                    .with_context(|| format!("atomically write {}", path.display()))), |_| Ok(()))?;
+            let mut custody = load_n8n_adoption_custody(&custody_path)?;
+            custody.phase = N8nAdoptionPhase::PairRestoredKeychainPending;
+            persist_n8n_adoption_custody(&custody_path, &custody)?;
+            if let Some(store) = store {
+                let backup = custody.keychain_backup_key.as_deref().context("missing n8n keychain backup reference")?;
+                match store.get(backup)? { Some(value) => store.set("n8n_api_key", &value), None => store.delete("n8n_api_key") }
+                    .context("restore n8n API key after adoption rollback")?;
+                custody.phase = N8nAdoptionPhase::CleanupPending;
+                persist_n8n_adoption_custody(&custody_path, &custody)?;
+                store.delete(backup).context("remove n8n API key backup custody")?;
+                store.delete(custody.keychain_candidate_key.as_deref().context("missing n8n keychain candidate reference")?)
+                    .context("remove n8n API key candidate custody")?;
+            }
+            crate::util::atomic_write::durable_remove_file(&custody_path)
+                .with_context(|| format!("remove rolled-back n8n adoption custody {}", custody_path.display()))
+        })))
+    }
+
+    /// A Ready job calls this only after its durable Ready evidence has landed.
+    /// It verifies the exact target before deleting compensation custody, so a
+    /// crash after Ready leaves no recovery path that can undo success.
+    pub(crate) fn finish_n8n_adoption_at(freedom_path: &Path, credentials_path: &Path, job_id: &str) -> Result<()> {
+        let custody_path = n8n_adoption_custody_path(freedom_path, job_id)?;
+        with_dual_file_transaction_lock(freedom_path, || with_config_writer_guard(freedom_path, || with_legacy_pair_locks(freedom_path, credentials_path, || {
+            let mut custody = load_n8n_adoption_custody(&custody_path)?;
+            let (_, _, fa, ca) = custody.snapshots()?;
+            anyhow::ensure!(FileSnapshot::capture(freedom_path)?.same_as(&fa) && FileSnapshot::capture(credentials_path)?.same_as(&ca),
+                "n8n adoption target changed before finalization; refusing to remove custody");
+            let mut opened_store = None;
+            let store = if custody.keychain_mode {
+                opened_store = Some(crate::config::keychain::open_store().context("open OS keychain for completed n8n custody cleanup")?);
+                Some(opened_store.as_deref().expect("opened keychain store"))
+            } else { None };
+            if custody.phase != N8nAdoptionPhase::ReadyFinalizationPending {
+                if let Some(store) = store {
+                    let candidate = custody.keychain_candidate_key.as_deref().context("missing n8n keychain candidate reference")?;
+                    anyhow::ensure!(same_secret_snapshot(store.get("n8n_api_key")?.as_ref(), store.get(candidate)?.as_ref()),
+                        "n8n API key changed before finalization; refusing to remove custody");
+                }
+                custody.phase = N8nAdoptionPhase::ReadyFinalizationPending;
+                persist_n8n_adoption_custody(&custody_path, &custody)?;
+            }
+            if let Some(store) = store {
+                // Retain the candidate until after backup deletion so a retry
+                // can still recognize the Ready target after a partial cleanup.
+                cleanup_n8n_keychain_custody(store, &custody)?;
+            }
+            crate::util::atomic_write::durable_remove_file(&custody_path)
+                .with_context(|| format!("remove completed n8n adoption custody {}", custody_path.display()))
+        })))
     }
 
     /// Commit the only permitted legacy-to-account Telegram binding. Both
@@ -1730,6 +2193,10 @@ impl Credentials {
         backend: crate::config::SecretsBackend,
     ) -> Result<Self> {
         if backend == crate::config::SecretsBackend::Keychain {
+            anyhow::ensure!(
+                credentials.n8n_api_key.is_none(),
+                "adopted n8n API key must reside in the configured keychain backend"
+            );
             match crate::config::keychain::open_store() {
                 Ok(store) => {
                     crate::config::keychain::supplement_from_store(
@@ -2084,6 +2551,7 @@ impl Credentials {
     /// silent wrong answer.
     pub fn is_empty(&self) -> bool {
         let Self {
+            n8n_api_key,
             provider_key,
             elevenlabs_tts_api_key,
             azure_tts_api_key,
@@ -2170,7 +2638,8 @@ impl Credentials {
             paperless_url,
             paperless_token,
         } = self;
-        provider_key.is_none()
+        n8n_api_key.is_none()
+            && provider_key.is_none()
             && elevenlabs_tts_api_key.is_none()
             && azure_tts_api_key.is_none()
             && telegram_token.is_none()
@@ -2946,6 +3415,141 @@ impl Credentials {
                 })
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod n8n_adoption_transaction_tests {
+    use super::{classify_n8n_adoption_custody, cleanup_n8n_keychain_custody, Credentials, FileSnapshot, JournalFileSnapshot, N8nAdoptionCustody, N8nAdoptionPhase, N8nAdoptionCustodyState};
+    use crate::config::{FreedomConfig, LoopbackHttpEndpoint, N8nInstanceConfig};
+    use crate::config::keychain::SecretStore as _;
+    use crate::secret::SecretString;
+
+    #[test]
+    fn file_adoption_publishes_and_rolls_back_only_its_exact_generation() {
+        let dir = tempfile::tempdir().expect("temporary home");
+        let freedom = dir.path().join("freedom.yaml");
+        let credentials = dir.path().join("credentials.yaml");
+        std::fs::write(&freedom, FreedomConfig::default().public_yaml().expect("public config"))
+            .expect("write public config");
+        let instance = N8nInstanceConfig {
+            endpoint: LoopbackHttpEndpoint::parse("http://127.0.0.1:5678").expect("loopback endpoint"),
+            api_version: Some("v1".to_string()),
+        };
+        let job_id = "018f4f64-5700-7000-8000-000000000001";
+        let prepared = Credentials::prepare_n8n_adoption_at(
+            &freedom, &credentials, job_id, instance, SecretString::from("n8n-test-key"),
+        ).expect("prepare custody");
+        Credentials::commit_prepared_n8n_adoption_at(prepared).expect("publish exact pair");
+        assert_eq!(
+            Credentials::inspect_n8n_adoption_custody_at(&freedom, &credentials, job_id).expect("inspect custody"),
+            N8nAdoptionCustodyState::Published,
+        );
+        Credentials::rollback_n8n_adoption_at(&freedom, &credentials, job_id).expect("exact rollback");
+        assert!(FreedomConfig::load_from_path(&freedom).expect("reload public config").n8n_instance.is_none());
+        assert!(Credentials::load_or_default_unlocked(&credentials).expect("reload credentials").n8n_api_key.is_none());
+    }
+
+    #[test]
+    fn keychain_custody_serialization_has_only_references_not_key_material() {
+        let snapshot = FileSnapshot::Present(zeroize::Zeroizing::new(b"n8n_instance: null\n".to_vec()));
+        let custody = N8nAdoptionCustody {
+            job_id: "018f4f64-5700-7000-8000-000000000001".to_string(),
+            phase: N8nAdoptionPhase::Prepared,
+            keychain_mode: true,
+            freedom_before: JournalFileSnapshot::from_file_snapshot(&snapshot),
+            credentials_before: JournalFileSnapshot::from_file_snapshot(&snapshot),
+            freedom_after: JournalFileSnapshot::from_file_snapshot(&snapshot),
+            credentials_after: JournalFileSnapshot::from_file_snapshot(&snapshot),
+            keychain_before_present: true,
+            keychain_backup_key: Some("n8n_api_key.backup.018f4f64-5700-7000-8000-000000000001".to_string()),
+            keychain_candidate_key: Some("n8n_api_key.candidate.018f4f64-5700-7000-8000-000000000001".to_string()),
+        };
+        let serialized = serde_yaml::to_string(&custody).expect("serialize custody");
+        assert!(!serialized.contains("n8n-test-key"));
+        assert!(!serialized.contains("previous-key-material"));
+    }
+
+    #[test]
+    fn stale_source_cas_refuses_publication_and_preserves_the_later_bytes() {
+        let dir = tempfile::tempdir().expect("temporary home");
+        let freedom = dir.path().join("freedom.yaml");
+        let credentials = dir.path().join("credentials.yaml");
+        std::fs::write(&freedom, "operator_id: first\nunknown_extension: retain\n").unwrap();
+        let prepared = Credentials::prepare_n8n_adoption_at(
+            &freedom, &credentials, "018f4f64-5700-7000-8000-000000000002",
+            N8nInstanceConfig { endpoint: LoopbackHttpEndpoint::parse("http://127.0.0.1:5678").unwrap(), api_version: None },
+            SecretString::from("n8n-test-key"),
+        ).unwrap();
+        std::fs::write(&freedom, "operator_id: later\nunknown_extension: retain\n").unwrap();
+        assert!(Credentials::commit_prepared_n8n_adoption_at(prepared).is_err());
+        assert_eq!(std::fs::read_to_string(&freedom).unwrap(), "operator_id: later\nunknown_extension: retain\n");
+    }
+
+    #[test]
+    fn adoption_round_trip_retains_unknown_public_yaml() {
+        let dir = tempfile::tempdir().expect("temporary home");
+        let freedom = dir.path().join("freedom.yaml");
+        let credentials = dir.path().join("credentials.yaml");
+        std::fs::write(&freedom, "operator_id: sam\nfuture_extension:\n  untouched: true\n").unwrap();
+        let job_id = "018f4f64-5700-7000-8000-000000000003";
+        let prepared = Credentials::prepare_n8n_adoption_at(
+            &freedom, &credentials, job_id,
+            N8nInstanceConfig { endpoint: LoopbackHttpEndpoint::parse("http://127.0.0.1:5678").unwrap(), api_version: None },
+            SecretString::from("n8n-test-key"),
+        ).unwrap();
+        Credentials::commit_prepared_n8n_adoption_at(prepared).unwrap();
+        Credentials::rollback_n8n_adoption_at(&freedom, &credentials, job_id).unwrap();
+        let rendered = std::fs::read_to_string(&freedom).unwrap();
+        assert!(rendered.contains("future_extension:"));
+        assert!(rendered.contains("untouched: true"));
+    }
+
+    #[test]
+    fn durable_phase_classifier_distinguishes_pair_pending_and_repairable_rollback() {
+        assert_eq!(
+            classify_n8n_adoption_custody(N8nAdoptionPhase::CanonicalUpdatedPairPending, true, false, false, true).unwrap(),
+            N8nAdoptionCustodyState::CanonicalUpdatedPairPending,
+        );
+        assert_eq!(
+            classify_n8n_adoption_custody(N8nAdoptionPhase::PairRestoredKeychainPending, true, false, false, true).unwrap(),
+            N8nAdoptionCustodyState::PairRestoredKeychainPending,
+        );
+        assert!(classify_n8n_adoption_custody(N8nAdoptionPhase::Published, false, false, false, false).is_err());
+        assert_eq!(
+            classify_n8n_adoption_custody(N8nAdoptionPhase::ReadyFinalizationPending, false, true, false, true).unwrap(),
+            N8nAdoptionCustodyState::ReadyFinalizationPending,
+        );
+    }
+
+    #[test]
+    fn injected_keychain_cleanup_can_retry_after_a_partial_delete() {
+        struct FailCandidateDeleteOnce { inner: crate::config::keychain::InMemorySecretStore, fail_once: std::sync::Mutex<bool> }
+        impl crate::config::keychain::SecretStore for FailCandidateDeleteOnce {
+            fn get(&self, key: &str) -> anyhow::Result<Option<SecretString>> { self.inner.get(key) }
+            fn set(&self, key: &str, value: &SecretString) -> anyhow::Result<()> { self.inner.set(key, value) }
+            fn delete(&self, key: &str) -> anyhow::Result<()> {
+                let mut fail_once = self.fail_once.lock().unwrap();
+                if key.contains("candidate") && *fail_once { *fail_once = false; anyhow::bail!("injected candidate delete failure"); }
+                self.inner.delete(key)
+            }
+            fn backend_name(&self) -> &'static str { "injected n8n custody test store" }
+        }
+        let snapshot = FileSnapshot::Present(zeroize::Zeroizing::new(b"n8n_instance: null\n".to_vec()));
+        let custody = N8nAdoptionCustody {
+            job_id: "018f4f64-5700-7000-8000-000000000004".to_string(), phase: N8nAdoptionPhase::ReadyFinalizationPending,
+            keychain_mode: true, freedom_before: JournalFileSnapshot::from_file_snapshot(&snapshot), credentials_before: JournalFileSnapshot::from_file_snapshot(&snapshot),
+            freedom_after: JournalFileSnapshot::from_file_snapshot(&snapshot), credentials_after: JournalFileSnapshot::from_file_snapshot(&snapshot),
+            keychain_before_present: false, keychain_backup_key: Some("n8n_api_key.backup.018f4f64-5700-7000-8000-000000000004".to_string()),
+            keychain_candidate_key: Some("n8n_api_key.candidate.018f4f64-5700-7000-8000-000000000004".to_string()),
+        };
+        let store = FailCandidateDeleteOnce { inner: Default::default(), fail_once: std::sync::Mutex::new(true) };
+        store.set(custody.keychain_backup_key.as_deref().unwrap(), &SecretString::from("before")).unwrap();
+        store.set(custody.keychain_candidate_key.as_deref().unwrap(), &SecretString::from("target")).unwrap();
+        assert!(cleanup_n8n_keychain_custody(&store, &custody).is_err());
+        assert!(store.get(custody.keychain_candidate_key.as_deref().unwrap()).unwrap().is_some());
+        cleanup_n8n_keychain_custody(&store, &custody).unwrap();
+        assert!(store.get(custody.keychain_candidate_key.as_deref().unwrap()).unwrap().is_none());
     }
 }
 

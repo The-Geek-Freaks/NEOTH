@@ -328,6 +328,19 @@ class CiCadenceContractTests(unittest.TestCase):
                 "cargo fmt --all -- --check",
                 "\n".join(
                     [
+                        'receipt_dir="$RUNNER_TEMP/neoth-preflight-rustfmt-receipt"',
+                        'mkdir -p "$receipt_dir"',
+                        'git -C SRC rev-parse HEAD > "$receipt_dir/source-head.txt"',
+                        "cargo fmt --manifest-path SRC/Cargo.toml --all",
+                        'git diff --binary --full-index -- SRC > "$receipt_dir/rustfmt.patch"',
+                        "(",
+                        '  cd "$receipt_dir"',
+                        "  sha256sum rustfmt.patch source-head.txt > SHA256SUMS",
+                        ")",
+                    ]
+                ),
+                "\n".join(
+                    [
                         'deny_dir="$RUNNER_TEMP/neoth-preflight-deny"',
                         'mkdir -p "$deny_dir"',
                         "for tool in cargo rustc rustup cc gcc clang c++ ld cmake make ninja npm npx pnpm yarn bun docker podman; do",
@@ -384,8 +397,70 @@ class CiCadenceContractTests(unittest.TestCase):
                     "dtolnay/rust-toolchain",
                     "4be7066ada62dd38de10e7b70166bc74ed198c30",
                 ),
+                (
+                    "actions/upload-artifact",
+                    "ea165f8d65b6e75b540449e92b4886f43607fa02",
+                ),
             ],
         )
+
+    def test_preflight_keeps_format_gate_failing_while_exporting_its_exact_receipt(self) -> None:
+        preflight = workflow_jobs(PREFLIGHT_TEXT)["static-contracts"]
+        steps = workflow_steps(preflight)
+        format_check = steps["Check Rust formatting without compiling"]
+        receipt = steps["Create exact rustfmt patch receipt"]
+        upload = steps["Upload exact rustfmt patch receipt"]
+
+        self.assertEqual(
+            direct_mapping_keys(format_check, 8), ["id", "working-directory", "run"]
+        )
+        self.assertIn("id: format-check", format_check)
+        self.assertRegex(
+            format_check, r"(?m)^        run: cargo fmt --all -- --check$"
+        )
+        self.assertNotIn("continue-on-error", PREFLIGHT_TEXT)
+
+        failure_condition = (
+            "if: ${{ failure() && steps.format-check.outcome == 'failure' }}"
+        )
+        self.assertEqual(direct_mapping_keys(receipt, 8), ["if", "shell", "run"])
+        self.assertIn(failure_condition, receipt)
+        self.assertEqual(
+            step_run_command(receipt),
+            "\n".join(
+                [
+                    'receipt_dir="$RUNNER_TEMP/neoth-preflight-rustfmt-receipt"',
+                    'mkdir -p "$receipt_dir"',
+                    'git -C SRC rev-parse HEAD > "$receipt_dir/source-head.txt"',
+                    "cargo fmt --manifest-path SRC/Cargo.toml --all",
+                    'git diff --binary --full-index -- SRC > "$receipt_dir/rustfmt.patch"',
+                    "(",
+                    '  cd "$receipt_dir"',
+                    "  sha256sum rustfmt.patch source-head.txt > SHA256SUMS",
+                    ")",
+                ]
+            ),
+        )
+        self.assertEqual(direct_mapping_keys(upload, 8), ["if", "uses", "with"])
+        self.assertIn(failure_condition, upload)
+        self.assertIn(
+            "uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+            upload,
+        )
+        self.assertIn("name: preflight-rustfmt-patch-receipt", upload)
+        self.assertIn(
+            "path: ${{ runner.temp }}/neoth-preflight-rustfmt-receipt", upload
+        )
+        self.assertIn("if-no-files-found: error", upload)
+        self.assertIn("retention-days: 14", upload)
+
+        format_step = preflight.index("Check Rust formatting without compiling")
+        receipt_step = preflight.index("Create exact rustfmt patch receipt")
+        upload_step = preflight.index("Upload exact rustfmt patch receipt")
+        deny_step = preflight.index("Deny transitive build tools in static contracts")
+        self.assertLess(format_step, receipt_step)
+        self.assertLess(receipt_step, upload_step)
+        self.assertLess(upload_step, deny_step)
 
     def test_security_privileged_jobs_are_main_only(self) -> None:
         jobs = workflow_jobs(SECURITY_TEXT)

@@ -58,6 +58,25 @@ byte-identical. Windows GUI preview gets a bounded 120-minute step after the
 observed90-minute timeout; GitHub-hosted job ceiling stays360 minutes. No local
 validation or reduced acceptance is permitted by these recovery changes.
 
+**W202 n8n adoption source publication (2026-09-22):** the new CLI adopts an
+explicit already-running literal-loopback instance through a durable job. The
+API key enters through bounded stdin and the existing credential backend;
+negative-control rejection and authenticated pre/post-publication API probes
+precede Ready. Every active request supports cancellation, failed publication
+compensates the exact prior config/secret generation, and restart terminates
+unowned work with custody recovery. Status reads stored state without a probe.
+Independent final source review passed after cancellation and input fixes.
+Twenty-three exact W202 identities join the existing sixty-test Hosted lane.
+Compilation, behavior, CLI reference and native acceptance remain pending;
+this is not an installer or a Gold/release completion claim. Road remains
+1324 total / 1015 checked / 307 open / 2 partial. Local execution stays suspended.
+Details: `docs/gold-wave202-verification.md`.
+
+W202 adds exactly 23 source-bound adoption/input/config fixtures (83 grouped total).
+Preflight retains its failing format gate and now exports an exact-source rustfmt
+patch on format failure; root imports it after HEAD/hash/preimage checks, without
+local Rust execution. Historical source receipts remain immutable.
+
 ## Workstation stability constraint — 2026-09-16
 
 All local validation workloads on Shadow-PC are suspended after another reported

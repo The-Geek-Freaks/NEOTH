@@ -1124,7 +1124,7 @@ pub use automation::{
     DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS, DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS,
     DEFAULT_VAULT_MIRROR_INTERVAL_SECS, DEFAULT_VAULT_MIRROR_RETAIN_VERIFIED_RUNS,
     DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig, EmailIngestCronConfig, GuidanceCronConfig,
-    KanbanSseConfig, MonitorConfig, N8nApiConfig, OaiServeConfig, PatternCronConfig,
+    KanbanSseConfig, LoopbackHttpEndpoint, MonitorConfig, N8nApiConfig, N8nInstanceConfig, OaiServeConfig, PatternCronConfig,
     ProactiveConfig, ProfileAdaptConfig, RecallLatencyConfig, RecursiveMasConfig,
     RegressionAnchorConfig, ResourceWatchConfig, SelfActivationConfig, SelfWikiConfig,
     SessionHealthConfig, SkillCuratorConfig, SynthesisCronConfig, TokenAnomalyConfig,
@@ -1870,6 +1870,10 @@ pub struct FreedomConfig {
     /// `~/.neoth/n8n_api_token` mode-0600.
     #[serde(default)]
     pub n8n_api: N8nApiConfig,
+    /// Adopted outbound n8n REST instance. This is separate from `n8n_api`,
+    /// which configures NEOTH's inbound loopback server.
+    #[serde(default)]
+    pub n8n_instance: Option<N8nInstanceConfig>,
     /// GOLD-ADAPT-HERMES-08 — SSE endpoint for live kanban events.
     /// Streams `idx_kanban_task_event` rows + real-time broadcast to
     /// browser/GUI/n8n EventSource clients. Off by default; operator
@@ -2843,6 +2847,11 @@ impl FreedomConfig {
         self.vault_mirror
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid vault_mirror config: {error}"))?;
+        if let Some(n8n_instance) = &self.n8n_instance {
+            n8n_instance
+                .validate()
+                .map_err(|error| anyhow::anyhow!("invalid n8n_instance config: {error}"))?;
+        }
         self.companion
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid companion config: {error}"))?;

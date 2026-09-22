@@ -62,6 +62,7 @@ use crate::secret::SecretString;
 /// exhaustiveness check for all fields; this slice covers the `SecretString`
 /// subset that carries keychain-worthy secrets.
 pub const SECRET_FIELD_KEYS: &[&str] = &[
+    "n8n_api_key",
     "provider_key",
     "elevenlabs_tts_api_key",
     "azure_tts_api_key",
@@ -187,6 +188,7 @@ fn secret_field<'a>(
     field: &str,
 ) -> Option<&'a SecretString> {
     match field {
+        "n8n_api_key" => credentials.n8n_api_key.as_ref(),
         "provider_key" => credentials.provider_key.as_ref(),
         "elevenlabs_tts_api_key" => credentials.elevenlabs_tts_api_key.as_ref(),
         "azure_tts_api_key" => credentials.azure_tts_api_key.as_ref(),
@@ -236,6 +238,7 @@ fn set_secret_field(
     value: Option<SecretString>,
 ) {
     match field {
+        "n8n_api_key" => credentials.n8n_api_key = value,
         "provider_key" => credentials.provider_key = value,
         "elevenlabs_tts_api_key" => credentials.elevenlabs_tts_api_key = value,
         "azure_tts_api_key" => credentials.azure_tts_api_key = value,
@@ -1093,6 +1096,12 @@ pub fn supplement_from_store(
                 set_secret_field(creds, field, Some(secret));
             }
             Err(e) => {
+                // Adoption has no safe plaintext fallback in keychain mode:
+                // a missing/unreadable n8n key must stop the configured
+                // outbound binding rather than silently changing authority.
+                if field == "n8n_api_key" {
+                    return Err(e).context("read adopted n8n API key from keychain");
+                }
                 // Log the error per-field and continue so the remaining 31
                 // fields are still loaded. A single corrupt or inaccessible
                 // entry must not prevent the daemon from starting.
@@ -1510,6 +1519,7 @@ mod tests {
 
     #[test]
     fn omi_secrets_are_managed_by_every_keychain_path() {
+        assert!(SECRET_FIELD_KEYS.contains(&"n8n_api_key"));
         assert!(SECRET_FIELD_KEYS.contains(&"elevenlabs_tts_api_key"));
         assert!(SECRET_FIELD_KEYS.contains(&"azure_tts_api_key"));
         assert!(SECRET_FIELD_KEYS.contains(&"omi_developer_api_key"));
