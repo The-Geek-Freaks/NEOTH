@@ -8604,7 +8604,10 @@ struct BuddyStatusWire {
 enum BuddyProviderRetryWire {
     #[default]
     Unavailable,
-    Available { authenticated_complete: bool, receipts: Vec<BuddyProviderRetryReceiptWire> },
+    Available {
+        authenticated_complete: bool,
+        receipts: Vec<BuddyProviderRetryReceiptWire>,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -8629,13 +8632,25 @@ struct BuddyProviderRetryReceiptBodyWire {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum BuddyProviderRetryClassWire { Transient, SessionCollision, EmptyStdout, Auth }
+enum BuddyProviderRetryClassWire {
+    Transient,
+    SessionCollision,
+    EmptyStdout,
+    Auth,
+}
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum BuddyProviderRetryDispositionWire { RetryIntentClosed, Exhausted, AuthNonRetryable }
+enum BuddyProviderRetryDispositionWire {
+    RetryIntentClosed,
+    Exhausted,
+    AuthNonRetryable,
+}
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum BuddyProviderRetryLifecycleWire { Observed, NotObserved }
+enum BuddyProviderRetryLifecycleWire {
+    Observed,
+    NotObserved,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -9010,15 +9025,29 @@ pub fn parse_buddy_status(json: &str) -> Result<BuddyStatusSnap, String> {
     Ok(snapshot)
 }
 
-fn project_buddy_provider_retry(wire: BuddyProviderRetryWire) -> Result<BuddyProviderRetrySnap, String> {
-    let BuddyProviderRetryWire::Available { authenticated_complete, receipts } = wire else {
+fn project_buddy_provider_retry(
+    wire: BuddyProviderRetryWire,
+) -> Result<BuddyProviderRetrySnap, String> {
+    let BuddyProviderRetryWire::Available {
+        authenticated_complete,
+        receipts,
+    } = wire
+    else {
         return Ok(BuddyProviderRetrySnap::default());
     };
-    if receipts.len() > 16 { return Err("provider retry has more than 16 receipts".into()); }
+    if receipts.len() > 16 {
+        return Err("provider retry has more than 16 receipts".into());
+    }
     let mut rows = Vec::with_capacity(receipts.len());
     for entry in receipts {
         let receipt = entry.receipt;
-        for value in [&receipt.schema, &receipt.retry_chain_id, &entry.session, &receipt.provider, &receipt.wire_model] {
+        for value in [
+            &receipt.schema,
+            &receipt.retry_chain_id,
+            &entry.session,
+            &receipt.provider,
+            &receipt.wire_model,
+        ] {
             if value.is_empty() || value.len() > 128 || value.chars().any(char::is_control) {
                 return Err("provider retry contains an invalid bounded identifier".into());
             }
@@ -9037,18 +9066,39 @@ fn project_buddy_provider_retry(wire: BuddyProviderRetryWire) -> Result<BuddyPro
         if entry.follow_up_lifecycle == BuddyProviderRetryLifecycleWire::Observed
             && receipt.disposition != BuddyProviderRetryDispositionWire::RetryIntentClosed
         {
-            return Err("provider retry follow-up observation requires a closed retry intent".into());
+            return Err(
+                "provider retry follow-up observation requires a closed retry intent".into(),
+            );
         }
         rows.push(BuddyProviderRetryRow {
-            class: match receipt.class { BuddyProviderRetryClassWire::Transient => "transient", BuddyProviderRetryClassWire::SessionCollision => "session_collision", BuddyProviderRetryClassWire::EmptyStdout => "empty_stdout", BuddyProviderRetryClassWire::Auth => "auth" }.into(),
+            class: match receipt.class {
+                BuddyProviderRetryClassWire::Transient => "transient",
+                BuddyProviderRetryClassWire::SessionCollision => "session_collision",
+                BuddyProviderRetryClassWire::EmptyStdout => "empty_stdout",
+                BuddyProviderRetryClassWire::Auth => "auth",
+            }
+            .into(),
             attempt: receipt.attempt,
             provider: receipt.provider,
             wire_model: receipt.wire_model,
-            disposition: match receipt.disposition { BuddyProviderRetryDispositionWire::RetryIntentClosed => "retry_intent_closed", BuddyProviderRetryDispositionWire::Exhausted => "exhausted", BuddyProviderRetryDispositionWire::AuthNonRetryable => "auth_non_retryable" }.into(),
-            follow_up_lifecycle: match entry.follow_up_lifecycle { BuddyProviderRetryLifecycleWire::Observed => "observed", BuddyProviderRetryLifecycleWire::NotObserved => "not_observed" }.into(),
+            disposition: match receipt.disposition {
+                BuddyProviderRetryDispositionWire::RetryIntentClosed => "retry_intent_closed",
+                BuddyProviderRetryDispositionWire::Exhausted => "exhausted",
+                BuddyProviderRetryDispositionWire::AuthNonRetryable => "auth_non_retryable",
+            }
+            .into(),
+            follow_up_lifecycle: match entry.follow_up_lifecycle {
+                BuddyProviderRetryLifecycleWire::Observed => "observed",
+                BuddyProviderRetryLifecycleWire::NotObserved => "not_observed",
+            }
+            .into(),
         });
     }
-    Ok(BuddyProviderRetrySnap { available: true, authenticated_complete, rows })
+    Ok(BuddyProviderRetrySnap {
+        available: true,
+        authenticated_complete,
+        rows,
+    })
 }
 
 pub fn parse_buddy_vault_mirror(json: &str) -> Result<BuddyVaultMirrorSnap, String> {
@@ -13764,16 +13814,22 @@ mod tests {
     #[test]
     fn w219_provider_retry_is_strict_bounded_redacted_and_absence_compatible() {
         let base = r#"{"sovereign_buddy":false,"self_activation_enabled":false,"self_activation_skills":[],"smart_approve_any":false,"autonomy":"standard","proactive_enabled":false,"skill_autonomy_caps":[],"self_improve_quality":{"state":"available","proposals":[]},"vault_mirror":{"config":"disabled","receipt":null,"repair":"no_action"}"#;
-        let absent = super::parse_buddy_status(&format!("{base}}}")).expect("older Buddy status remains compatible");
+        let absent = super::parse_buddy_status(&format!("{base}}}"))
+            .expect("older Buddy status remains compatible");
         assert!(!absent.provider_retry.available);
-        let available = format!(r#"{base},"provider_retry":{{"kind":"available","authenticated_complete":true,"receipts":[{{"receipt":{{"schema":"neoth.retry-receipt.v1","retry_chain_id":"chain-1","class":"transient","attempt":1,"provider":"claude","wire_model":"claude-test","disposition":"retry_intent_closed"}},"session":"session-1","follow_up_lifecycle":"observed"}}]}}}}"#);
+        let available = format!(
+            r#"{base},"provider_retry":{{"kind":"available","authenticated_complete":true,"receipts":[{{"receipt":{{"schema":"neoth.retry-receipt.v1","retry_chain_id":"chain-1","class":"transient","attempt":1,"provider":"claude","wire_model":"claude-test","disposition":"retry_intent_closed"}},"session":"session-1","follow_up_lifecycle":"observed"}}]}}}}"#
+        );
         let snap = super::parse_buddy_status(&available).expect("valid retry projection");
         assert_eq!(snap.provider_retry.rows.len(), 1);
         assert_eq!(snap.provider_retry.rows[0].class, "transient");
         assert_eq!(snap.provider_retry.rows[0].attempt, 1);
         assert_eq!(snap.provider_retry.rows[0].provider, "claude");
         assert_eq!(snap.provider_retry.rows[0].wire_model, "claude-test");
-        assert_eq!(snap.provider_retry.rows[0].disposition, "retry_intent_closed");
+        assert_eq!(
+            snap.provider_retry.rows[0].disposition,
+            "retry_intent_closed"
+        );
         assert_eq!(snap.provider_retry.rows[0].follow_up_lifecycle, "observed");
         let valid_auth = available
             .replace("\"class\":\"transient\"", "\"class\":\"auth\"")
@@ -13790,8 +13846,16 @@ mod tests {
                 .provider_retry
                 .available
         );
-        assert!(super::parse_buddy_status(&available.replace("retry_intent_closed", "exhausted")).is_err());
-        assert!(super::parse_buddy_status(&available.replace("retry_intent_closed", "auth_non_retryable")).is_err());
+        assert!(
+            super::parse_buddy_status(&available.replace("retry_intent_closed", "exhausted"))
+                .is_err()
+        );
+        assert!(
+            super::parse_buddy_status(
+                &available.replace("retry_intent_closed", "auth_non_retryable")
+            )
+            .is_err()
+        );
         assert!(
             super::parse_buddy_status(
                 &available
@@ -13810,15 +13874,24 @@ mod tests {
             .is_err(),
             "non-auth retry classes cannot claim an auth disposition"
         );
-        assert!(super::parse_buddy_status(&available.replace("\"attempt\":1", "\"attempt\":0")).is_err());
-        assert!(super::parse_buddy_status(&available.replace("\"session-1\"", "\"bad\\nvalue\"")).is_err());
-        let mut unknown_kind: serde_json::Value = serde_json::from_str(&available).expect("fixture JSON");
+        assert!(
+            super::parse_buddy_status(&available.replace("\"attempt\":1", "\"attempt\":0"))
+                .is_err()
+        );
+        assert!(
+            super::parse_buddy_status(&available.replace("\"session-1\"", "\"bad\\nvalue\""))
+                .is_err()
+        );
+        let mut unknown_kind: serde_json::Value =
+            serde_json::from_str(&available).expect("fixture JSON");
         unknown_kind["provider_retry"]["kind"] = serde_json::Value::String("future".into());
         assert!(super::parse_buddy_status(&unknown_kind.to_string()).is_err());
-        let mut unknown_field: serde_json::Value = serde_json::from_str(&available).expect("fixture JSON");
+        let mut unknown_field: serde_json::Value =
+            serde_json::from_str(&available).expect("fixture JSON");
         unknown_field["provider_retry"]["unexpected"] = serde_json::Value::Bool(true);
         assert!(super::parse_buddy_status(&unknown_field.to_string()).is_err());
-        let mut oversized_identifier: serde_json::Value = serde_json::from_str(&available).expect("fixture JSON");
+        let mut oversized_identifier: serde_json::Value =
+            serde_json::from_str(&available).expect("fixture JSON");
         oversized_identifier["provider_retry"]["receipts"][0]["receipt"]["provider"] =
             serde_json::Value::String("p".repeat(129));
         assert!(super::parse_buddy_status(&oversized_identifier.to_string()).is_err());

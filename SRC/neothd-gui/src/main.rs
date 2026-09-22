@@ -36013,14 +36013,26 @@ fn refresh_buddyconfig(weak: slint::Weak<MainWindow>) {
                 w.set_bc_smart_approve(snap.smart_approve_any);
                 w.set_bc_autonomy(snap.autonomy.as_str().into());
                 w.set_bc_proactive_enabled(snap.proactive_enabled);
-                let retry_rows = snap.provider_retry.rows.into_iter().map(|row| BuddyProviderRetryRow {
-                    class: row.class.into(), attempt: row.attempt.to_string().into(),
-                    provider: row.provider.into(), wire_model: row.wire_model.into(),
-                    disposition: row.disposition.into(), follow_up_lifecycle: row.follow_up_lifecycle.into(),
-                }).collect::<Vec<_>>();
+                let retry_rows = snap
+                    .provider_retry
+                    .rows
+                    .into_iter()
+                    .map(|row| BuddyProviderRetryRow {
+                        class: row.class.into(),
+                        attempt: row.attempt.to_string().into(),
+                        provider: row.provider.into(),
+                        wire_model: row.wire_model.into(),
+                        disposition: row.disposition.into(),
+                        follow_up_lifecycle: row.follow_up_lifecycle.into(),
+                    })
+                    .collect::<Vec<_>>();
                 w.set_bc_provider_retry_available(snap.provider_retry.available);
-                w.set_bc_provider_retry_authenticated_complete(snap.provider_retry.authenticated_complete);
-                w.set_bc_provider_retry_rows(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(retry_rows))));
+                w.set_bc_provider_retry_authenticated_complete(
+                    snap.provider_retry.authenticated_complete,
+                );
+                w.set_bc_provider_retry_rows(slint::ModelRc::new(std::rc::Rc::new(
+                    VecModel::from(retry_rows),
+                )));
                 match snap.self_improve_quality {
                     panel_logic::BuddySelfImproveQualitySnap::Available { proposals } => {
                         let rows: Vec<BuddySelfImproveProposal> = proposals
@@ -43283,7 +43295,7 @@ mod w58_gui_callback_runtime_tests {
         install_chat_launch_gate, install_legacy_child_chat_transport_callbacks,
         native_coding_terminal_bridge_accepts, neothd_executable_names, ouro_gui,
         parse_local_models_status, project_chat_reasoning_snapshot,
-        publish_code_map_enrichment_readiness, refresh_selfimprove,
+        publish_code_map_enrichment_readiness, refresh_buddyconfig, refresh_selfimprove,
         register_buddy_code_map_impact_callback, register_buddy_code_map_status_callback,
         register_buddy_embedding_callbacks, register_buddy_native_coding_callbacks,
         register_buddy_quality_handoff_callback, register_buddy_vault_mirror_callback,
@@ -43292,7 +43304,7 @@ mod w58_gui_callback_runtime_tests {
         register_channel_pairing_request_callbacks,
         register_code_map_enrichment_readiness_callbacks, register_embedding_model_callbacks,
         register_local_model_callbacks, register_selfimprove_accept_callback,
-        register_skill_autonomy_callbacks, refresh_buddyconfig, start_code_map_lifecycle_config_apply,
+        register_skill_autonomy_callbacks, start_code_map_lifecycle_config_apply,
         start_code_map_lifecycle_refresh, which_neothd,
     };
 
@@ -48446,7 +48458,8 @@ exit 0
             move || {
                 if weak.upgrade().is_some_and(|window| {
                     w184_call_count(&calls, "buddy-status") == status_calls
-                        && (window.get_bc_status_valid() || !window.get_bc_status_error().is_empty())
+                        && (window.get_bc_status_valid()
+                            || !window.get_bc_status_error().is_empty())
                 }) {
                     seen.set(true);
                     let _ = slint::quit_event_loop();

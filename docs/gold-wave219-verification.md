@@ -76,3 +76,7 @@ Independent static review passed; Hosted regression execution remains pending.
 The macOS acceptance class map now also includes the already-dispatched W185
 local-model callback under its existing custom binary owner; this corrects
 inventory drift without adding or duplicating a runtime test.
+
+Published 35c410a870fa43246043cb96ed7146bc79ca47fc. Hosted formatter receipt
+35782374142 imported after source/SHA256 and Git pre/postimage checks.
+Grouped272 repair 35782455869 runs against the published source; no local formatter ran.

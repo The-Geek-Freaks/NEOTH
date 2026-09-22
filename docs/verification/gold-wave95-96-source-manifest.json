@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T20:43:45.5233359Z",
-  "validationStatus": "W219 typed Buddy retry GUI and aggregate Skill rollback reviewed; Hosted pending",
+  "capturedUtc": "2026-09-22T20:46:31.2000190Z",
+  "validationStatus": "W219 exact Hosted formatting imported; Grouped272/nativeGUI pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -648,8 +648,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2134396,
-      "sha256": "47A3841B56AA562ECB48C0087DCE1729D6CA7F2E68CC26228E2CB6E87A56ADF7"
+      "bytes": 2134695,
+      "sha256": "B7A822DBF969ABC64224E859242626AC3F822EA7EB6E18AAEDE4A0E66D0F9015"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -658,8 +658,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/panel_logic.rs",
-      "bytes": 601899,
-      "sha256": "77973565AD50B438A3FF7BBA625B463419A63267571EDA20FC4038331C30318C"
+      "bytes": 602643,
+      "sha256": "CBC2E1CC803E8ED8DB5EB5759CC92CFAB1C841989AD87423C79B59F2EECE268C"
     },
     {
       "path": "SRC/neothd-gui/src/tray.rs",
