@@ -415,30 +415,40 @@ async fn idle_long_poll_returns_before_the_client_deadline() {
 #[tokio::test]
 async fn read_only_waiters_do_not_wake_each_other() {
     let home = tempfile::tempdir().unwrap();
-    let (listener_task, guard) = bind_and_serve(home.path()).unwrap();
-    let client = std::sync::Arc::new(WizardIpcClient::discover(home.path()).unwrap());
-    let opened = snapshot(client.open_or_resume().await.unwrap());
+    let service = WizardSessionService::new(home.path()).unwrap();
+    let opened = service.snapshot.clone();
+    let (updates, _initial_receiver) = tokio::sync::watch::channel(opened.clone());
+    let shutdown = std::sync::Arc::new(Shutdown::new());
+    let (commands, owner) =
+        spawn_owner(service, updates.clone(), std::sync::Arc::clone(&shutdown)).unwrap();
+    let state = State {
+        token: "read-only-waiter-test".to_owned(),
+        commands,
+        updates: updates.clone(),
+    };
 
-    let first_client = std::sync::Arc::clone(&client);
+    let first_state = state.clone();
     let first_session = opened.session_id.clone();
     let first_boot = opened.boot_id.clone();
     let first_sequence = opened.accepted_sequence;
     let mut first_waiter = tokio::spawn(async move {
-        first_client
-            .wait_for_change(first_session, first_boot, first_sequence)
-            .await
+        wait_for_change(&first_state, first_session, first_boot, first_sequence).await
     });
-    let second_client = std::sync::Arc::clone(&client);
+    let second_state = state.clone();
     let second_session = opened.session_id.clone();
     let second_boot = opened.boot_id.clone();
     let second_sequence = opened.accepted_sequence;
     let mut second_waiter = tokio::spawn(async move {
-        second_client
-            .wait_for_change(second_session, second_boot, second_sequence)
-            .await
+        wait_for_change(&second_state, second_session, second_boot, second_sequence).await
     });
 
-    tokio::task::yield_now().await;
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while updates.receiver_count() < 3 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("both waiters must subscribe before the pending assertion");
     let (first_pending, second_pending) = tokio::join!(
         tokio::time::timeout(std::time::Duration::from_millis(250), &mut first_waiter),
         tokio::time::timeout(std::time::Duration::from_millis(250), &mut second_waiter),
@@ -454,17 +464,19 @@ async fn read_only_waiters_do_not_wake_each_other() {
 
     let next_sequence = next(&opened);
     let accepted = snapshot(
-        client
-            .submit(
-                opened.session_id,
-                opened.boot_id,
+        dispatch(
+            &state,
+            WizardRequest::Submit {
+                session_id: opened.session_id,
+                boot_id: opened.boot_id,
                 next_sequence,
-                WizardIpcMessage::ChannelOverride {
+                message: WizardIpcMessage::ChannelOverride {
                     channel: ChannelRecommendation::Cli,
                 },
-            )
-            .await
-            .unwrap(),
+            },
+        )
+        .await
+        .unwrap(),
     );
     let first_observed = snapshot(first_waiter.await.unwrap().unwrap());
     let second_observed = snapshot(second_waiter.await.unwrap().unwrap());
@@ -474,9 +486,12 @@ async fn read_only_waiters_do_not_wake_each_other() {
         accepted.accepted_sequence
     );
 
-    guard.stop();
-    listener_task.await.unwrap().unwrap();
-    drop(guard);
+    drop(state);
+    drop(updates);
+    tokio::task::spawn_blocking(move || owner.join())
+        .await
+        .unwrap()
+        .unwrap();
 }
 
 #[cfg(any(unix, windows))]

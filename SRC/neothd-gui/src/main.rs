@@ -42443,7 +42443,21 @@ mod buddy_wiring_tests {
         assert!(source.contains("Self::Buddy => &[\"buddy\", \"embedding\"]"));
         assert!(source.contains("join(\"freedom.yaml\")"));
         assert!(source.contains("fn register_buddy_embedding_callbacks"));
-        assert!(source.contains("EmbeddingCommandSurface::Buddy, \"probe\""));
+        let buddy_probe_callback = source
+            .split("window.on_bc_embedding_probe(move |model| {")
+            .nth(1)
+            .and_then(|tail| tail.split("window.on_bc_embedding_pull(move |model| {").next())
+            .expect("Buddy embedding probe callback");
+        let buddy_probe_callback_without_whitespace: String = buddy_probe_callback
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        assert!(
+            buddy_probe_callback_without_whitespace.contains(
+                "start_embedding_model_action(weak.clone(),EmbeddingCommandSurface::Buddy,\"probe\",model.to_string()"
+            ),
+            "Buddy embedding probe callback must retain the ordered Buddy probe action wiring"
+        );
         assert!(source.contains("EMBEDDING_MODEL_ACTION_ACTIVE.swap(true"));
         assert!(source.contains("EMBEDDING_MODELS_UI_REVISION"));
         assert!(source.contains("snapshot.selected_model != expected_model"));

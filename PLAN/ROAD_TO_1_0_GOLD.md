@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W232 native-suite repairs (2026-09-23):** FullCI35782661515 completed actual
+Windows testing at17530passed/3failed/24skipped/1leaky, with no test timeouts.
+Three reviewed fixture repairs address watcher-registration timing, module-level
+test-only provider scanning and a whitespace-sensitive Buddy callback assertion.
+Production behavior and assertions remain enforced. The waiter and GUI callback
+are already selected; adding both scanner cases makes **Grouped394**. Actual
+post-fix Hosted execution remains required. macOS also compiled successfully
+and failed in tests; its diagnostics are under review. Inventory remains
+535sources/842native/94GUI with unchanged platform extras, and Road stays
+1016checked/306open/2partial. See `docs/gold-wave232-native-suite-repairs.md`.
+All executable validation remains on GitHub.
 **W231 recall/feedback selections (2026-09-23):** two independent contracts now
 share the focused Hosted run:25 existing recall-chip cases and26 existing
 response-feedback cases. All51 were absent the actual prior341 selection;

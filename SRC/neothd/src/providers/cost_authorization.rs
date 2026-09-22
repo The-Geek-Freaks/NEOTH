@@ -7406,6 +7406,9 @@ mod tests {
     #[test]
     fn production_transports_cannot_override_the_safe_dispatch_entry() {
         fn production_prefix(source: &str) -> &str {
+            if source.trim_start().starts_with("#![cfg(test)]") {
+                return "";
+            }
             source
                 .split_once("#[cfg(test)]\nmod tests")
                 .or_else(|| source.split_once("#[cfg(test)]\r\nmod tests"))
@@ -7484,6 +7487,9 @@ mod tests {
     #[test]
     fn production_provider_lifecycle_emitters_are_centralized() {
         fn production_prefix(source: &str) -> &str {
+            if source.trim_start().starts_with("#![cfg(test)]") {
+                return "";
+            }
             source
                 .split_once("#[cfg(test)]\nmod tests")
                 .or_else(|| source.split_once("#[cfg(test)]\r\nmod tests"))

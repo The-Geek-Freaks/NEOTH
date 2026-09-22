@@ -114,6 +114,7 @@ jobs:
               "wave229LiveAssignmentAcceptance": 1,
               "wave231RecallChipAcceptance": 25,
               "wave231ResponseFeedbackAcceptance": 26,
+              "wave232WindowsRegressionAcceptance": 2,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():
