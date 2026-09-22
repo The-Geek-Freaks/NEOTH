@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W218 Buddy embedding GUI+native callback fixture reviewed; Grouped272/531sources/814native/93GUIpending",
+  "status": "W218 exact Hosted formatting imported; Grouped272/nativeGUIpending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 91860,
-    "sha256": "AC721966DCF9372F3CA7EEAFC3C07EFA3195C6B26D23A530099597C01EE68589"
+    "bytes": 91823,
+    "sha256": "C4B07174A86E9007CBDFECCEC74B19FA047EF46DE45B5084A5431A8A6FD3F5D9"
   },
   "sourceInputs": 531,
   "requiredNativeTests": [
@@ -2118,7 +2118,7 @@
     {
       "test": "cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity",
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "C010037D42BA0B242C8379EA044653CA50E019F20E6AC61E0E7FAE012CF72782",
+      "sourceSha256": "9B13B42451F2062D6A68E54658255A13DCE2434D0680F445548D9C538734CC8D",
       "junitClass": "neoth"
     },
     {
@@ -3545,13 +3545,13 @@
     },
     {
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "C010037D42BA0B242C8379EA044653CA50E019F20E6AC61E0E7FAE012CF72782",
+      "sourceSha256": "9B13B42451F2062D6A68E54658255A13DCE2434D0680F445548D9C538734CC8D",
       "test": "cli::parity_drift::operation_inventory_binds_gui_callbacks_handlers_and_evidence",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "C010037D42BA0B242C8379EA044653CA50E019F20E6AC61E0E7FAE012CF72782",
+      "sourceSha256": "9B13B42451F2062D6A68E54658255A13DCE2434D0680F445548D9C538734CC8D",
       "test": "cli::parity_drift::operation_inventory_tracks_live_nested_cli_leaves",
       "junitClass": "neoth"
     },
@@ -4890,7 +4890,7 @@
     {
       "test": "cli::parity_drift::operation_inventory_keeps_r4_05_gaps_explicit",
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "C010037D42BA0B242C8379EA044653CA50E019F20E6AC61E0E7FAE012CF72782",
+      "sourceSha256": "9B13B42451F2062D6A68E54658255A13DCE2434D0680F445548D9C538734CC8D",
       "junitClass": "neoth"
     }
   ],
@@ -5483,8 +5483,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2125991,
-      "sha256": "3844F35C61314DAB0BFDFFF4742875CC6D97073A31FA6DA49D9ED43869C7D18F"
+      "bytes": 2127913,
+      "sha256": "AE57F155771A3D8BC4AB09943AA8B09FFCF60FDAB56F172CF0AFC0929645467C"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -14717,6 +14717,26 @@
       }
     ],
     "note": "Exact source bindings; shared GUI lifecycle owner/flight/revision, real callback fixture; macOS25 verifier aligned; no local executable validation",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave218HostedFormat": {
+    "base": "6739784f95e0532402161def49176451f0876e35",
+    "sources": [
+      {
+        "path": "SRC/neothd-gui/src/main.rs",
+        "bytes": 2127913,
+        "sha256": "AE57F155771A3D8BC4AB09943AA8B09FFCF60FDAB56F172CF0AFC0929645467C",
+        "blob": "bf63da0fa925f48d78413be4b59134fd096c6a6d"
+      },
+      {
+        "path": "SRC/neothd/src/cli/parity_drift.rs",
+        "bytes": 67375,
+        "sha256": "9B13B42451F2062D6A68E54658255A13DCE2434D0680F445548D9C538734CC8D",
+        "blob": "04f1b1cc70aabde3560680d44e84662c580986ed"
+      }
+    ],
+    "note": "Hosted35779348622 source/patch hashes and exact Git pre/postimages verified; no local formatter",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

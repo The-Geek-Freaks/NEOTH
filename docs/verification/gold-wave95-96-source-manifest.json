@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T20:15:54.8889141Z",
-  "validationStatus": "W218 Buddy embedding GUI+native callback fixture reviewed; Grouped272/531sources/814native/93GUIpending",
+  "capturedUtc": "2026-09-22T20:18:32.6047095Z",
+  "validationStatus": "W218 exact Hosted formatting imported; Grouped272/nativeGUIpending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -648,8 +648,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2125991,
-      "sha256": "3844F35C61314DAB0BFDFFF4742875CC6D97073A31FA6DA49D9ED43869C7D18F"
+      "bytes": 2127913,
+      "sha256": "AE57F155771A3D8BC4AB09943AA8B09FFCF60FDAB56F172CF0AFC0929645467C"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -1203,8 +1203,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/parity_drift.rs",
-      "bytes": 66209,
-      "sha256": "C010037D42BA0B242C8379EA044653CA50E019F20E6AC61E0E7FAE012CF72782"
+      "bytes": 67375,
+      "sha256": "9B13B42451F2062D6A68E54658255A13DCE2434D0680F445548D9C538734CC8D"
     },
     {
       "path": "SRC/neothd/src/cli/proactive.rs",
