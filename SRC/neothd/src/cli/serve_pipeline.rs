@@ -1769,7 +1769,7 @@ async fn handle_counterparty_consent_ingress<P: crate::permissions::PolicyArgume
             return Ok(CounterpartyConsentIngress::Handled(reply));
         }
     };
-    let proof = AuthenticatedInboundProof::from_writer_issued_receipt(input_receipt)?;
+    let proof = AuthenticatedInboundProof::from_writer_issued_receipt(&input_receipt)?;
     let now_ns = crate::time::now_unix_i64()
         .checked_mul(1_000_000_000)
         .ok_or_else(|| anyhow::anyhow!("counterparty consent clock overflow"))?;
@@ -2204,7 +2204,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 &writer,
                 &neoth_home,
                 &views_conn,
-                autonomy_policy,
+                &autonomy_policy,
                 &inbound,
                 &inbound_binding,
                 counterparty_consent_input,
@@ -7339,7 +7339,7 @@ mod tests {
             .await
             .unwrap();
         let request_proof =
-            AuthenticatedInboundProof::from_writer_issued_receipt(request_receipt).unwrap();
+            AuthenticatedInboundProof::from_writer_issued_receipt(&request_receipt).unwrap();
         let mut connection = store::open(&home.path().join("views.db")).unwrap();
         let challenge = request_challenge(&mut connection, &request_proof, 1).unwrap();
         drop(connection);
@@ -7357,7 +7357,7 @@ mod tests {
             .await
             .unwrap();
         let grant_proof =
-            AuthenticatedInboundProof::from_writer_issued_receipt(grant_receipt).unwrap();
+            AuthenticatedInboundProof::from_writer_issued_receipt(&grant_receipt).unwrap();
         let token = challenge
             .command
             .strip_prefix(crate::memory::counterparty_consent_ceremony::COMMAND_GRANT_PREFIX)
@@ -7422,7 +7422,7 @@ mod tests {
             .append_counterparty_consent_input_once(home.path(), descriptor)
             .await
             .unwrap();
-        let proof = AuthenticatedInboundProof::from_writer_issued_receipt(receipt).unwrap();
+        let proof = AuthenticatedInboundProof::from_writer_issued_receipt(&receipt).unwrap();
         let mut connection = store::open(&home.path().join("views.db")).unwrap();
         commit_counterparty_revoke_before_audit(&mut connection, &proof, 1).unwrap();
         let status_key = crate::memory::counterparty_consent::CounterpartyKey::from_authenticated(

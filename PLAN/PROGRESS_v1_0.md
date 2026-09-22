@@ -2,6 +2,16 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W209 Hosted compile repair (2026-09-22):** Grouped187 `35757019692` and
+Core/CLI `35757023750` on `7ca58b52` stopped at compilation, before behavior
+execution. The compiler identified a missing `ChannelRef` import and owned
+policy/receipt arguments where references are required. Six narrow corrections
+are published with refreshed source/test hashes. Preflight `35757459627` and
+CodeQL `35757459117` passed on `92da627a`. Fresh Grouped187/Core execution is
+required; the prior 30/30 W208 behavior proof remains bound to `719178ee`.
+W210 BGE-M3 core/CLI is in active integration. No Road acceptance box changes.
+No local executable validation ran under the workstation BSOD hold.
+
 **Hosted checkpoint (2026-09-22, W208/W209):** Grouped171 `35755005928` on
 `719178ee` executed all 171 exact identities: 169 passed, two failed normally,
 zero stack aborts. All 30 W208 origin/consumer/migration tests passed. Artifact

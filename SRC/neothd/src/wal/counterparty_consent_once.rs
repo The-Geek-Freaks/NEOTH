@@ -8,6 +8,7 @@ use anyhow::{Result, ensure};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
+use crate::channels::registry::ChannelRef;
 use crate::wal::{EventFlags, HeaderBuilder, WalSessionContext};
 
 use super::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};

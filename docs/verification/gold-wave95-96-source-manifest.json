@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T16:55:03.1413260Z",
-  "validationStatus": "W209_HOSTED_FORMAT_IMPORTED_BEHAVIOR_PENDING",
+  "capturedUtc": "2026-09-22T17:03:19.4332430Z",
+  "validationStatus": "W209 hosted compile repair; native and runtime acceptance pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -1228,8 +1228,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "bytes": 501657,
-      "sha256": "52E59C4DC7B8273ED5255152FD32A0A831520FA3BA0A2B7689DE9F5B839A2E8C"
+      "bytes": 501662,
+      "sha256": "AAB7884352B0EBB0E50702D3A7CD66E88C6113E219BE0A9D60219FD7E1830A6C"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
@@ -2593,8 +2593,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/counterparty_consent_once.rs",
-      "bytes": 19513,
-      "sha256": "A7A3733E97D36861AC5CF9C2F78BB66E38CB46FCA3DAD100761E946554EDF5EF"
+      "bytes": 19556,
+      "sha256": "6E3CA1C3D05233E4E638E02108B6B76B4C70363E693088CDEBEA4A65C964A408"
     },
     {
       "path": "docs/gold-wave209-verification.md",
