@@ -2071,6 +2071,29 @@ channel_accounts:
         }
     }
 
+    fn decoded_cron_registry_payload(system: &str) -> String {
+        let start = system
+            .find(crate::pipeline::untrusted_context::GUARD_OPEN)
+            .expect("Cron request contains the registry envelope");
+        let after_open = &system[start..];
+        let end = after_open
+            .find(crate::pipeline::untrusted_context::GUARD_CLOSE)
+            .expect("Cron registry envelope is complete")
+            + crate::pipeline::untrusted_context::GUARD_CLOSE.len();
+        let envelope = &after_open[..end];
+        let wire: serde_json::Value = serde_json::from_str(
+            envelope
+                .lines()
+                .nth(2)
+                .expect("canonical Cron registry envelope has a JSON body"),
+        )
+        .expect("canonical Cron registry envelope JSON parses");
+        wire["data"]
+            .as_str()
+            .expect("Cron registry envelope carries string data")
+            .to_owned()
+    }
+
     struct DelayedQualityProvider {
         calls: Arc<AtomicUsize>,
         delay: Duration,
@@ -2179,11 +2202,18 @@ channel_accounts:
         let system = request
             .system
             .expect("Cron registry is Block D system context");
-        assert_eq!(system.matches("\"skills\":").count(), 1);
+        assert_eq!(
+            system
+                .matches(crate::pipeline::untrusted_context::GUARD_OPEN)
+                .count(),
+            1
+        );
         assert!(system.contains("UNTRUSTED data"));
-        assert!(!system.contains("\"system_prompt\""));
-        assert!(!system.contains("\"tool_allowlist\""));
-        assert!(!system.contains("\"model\""));
+        let registry_payload = decoded_cron_registry_payload(&system);
+        assert_eq!(registry_payload.matches("\"skills\":").count(), 1);
+        assert!(!registry_payload.contains("\"system_prompt\""));
+        assert!(!registry_payload.contains("\"tool_allowlist\""));
+        assert!(!registry_payload.contains("\"model\""));
     }
 
     #[tokio::test]
@@ -2261,8 +2291,8 @@ channel_accounts:
             .system
             .as_deref()
             .expect("generation B registry");
-        assert!(!system_a.contains("\"skills\":[]"));
-        assert!(system_b.contains("\"skills\":[]"));
+        assert!(!decoded_cron_registry_payload(system_a).contains("\"skills\":[]"));
+        assert!(decoded_cron_registry_payload(system_b).contains("\"skills\":[]"));
     }
 
     #[tokio::test]

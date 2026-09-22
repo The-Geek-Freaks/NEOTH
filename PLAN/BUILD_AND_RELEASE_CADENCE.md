@@ -50,6 +50,14 @@ The old `8b654ebd` Windows preview `35713923652` hit the 90-minute GUI build
 bound and saved its interrupted cache; no portable acceptance was reached.
 Investigate that Hosted limit separately; local validation remains suspended.
 
+W203 follows the actual Grouped60 inventory: 55 executed, 50 passed, five failed,
+then a fatal Cron discovery mismatch. Corrected Cron module names retain all
+sixty tests. Repairs require another complete grouped run; partial passes do
+not close their parent Road criteria. Core/CLI 737b passed and its reference is
+byte-identical. Windows GUI preview gets a bounded 120-minute step after the
+observed90-minute timeout; GitHub-hosted job ceiling stays360 minutes. No local
+validation or reduced acceptance is permitted by these recovery changes.
+
 ## Workstation stability constraint — 2026-09-16
 
 All local validation workloads on Shadow-PC are suspended after another reported

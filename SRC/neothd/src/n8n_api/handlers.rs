@@ -1009,9 +1009,9 @@ mod tests {
         let system = request.system.expect("typed Block D registry system layer");
         assert_eq!(system.matches(context.as_str()).count(), 1);
         assert!(context.as_str().contains("UNTRUSTED data"));
-        assert!(context.as_str().contains("\"skills\""));
-        assert!(!system.contains("\"system_prompt\""));
-        assert!(!system.contains("\"used_skill_id\""));
+        assert!(context.payload().contains("\"skills\""));
+        assert!(!context.payload().contains("\"system_prompt\""));
+        assert!(!context.payload().contains("\"used_skill_id\""));
     }
 
     #[tokio::test]
@@ -1029,7 +1029,7 @@ mod tests {
             Some(Arc::clone(&registry)),
         )
         .expect("eval registry remains a valid empty typed envelope");
-        assert!(eval_context.as_str().contains("\"skills\":[]"));
+        assert!(eval_context.payload().contains("\"skills\":[]"));
 
         let mut pinned_config = crate::config::FreedomConfig::default();
         let pinned_skill = registry
@@ -1152,7 +1152,7 @@ mod tests {
             Some(registry),
         )
         .expect("render registry B");
-        assert!(registry_b.as_str().contains("\"skills\":[]"));
+        assert!(registry_b.payload().contains("\"skills\":[]"));
 
         let request_a = build_provider_request(
             home.path(),

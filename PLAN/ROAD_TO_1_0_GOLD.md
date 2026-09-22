@@ -8,6 +8,23 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W203 behavior repair (2026-09-22):** Grouped60 `35729827037` on `737b9835`
+executed 55 identities: 50 passed, five failed. All W190/W191/W194/W196/W197
+identities passed, including the prior WAL-join case and all eleven prerequisite
+cases. Five Cron tests were not discovered because their real namespace is
+`workstream_c_tests`. The matrix now selects that namespace without dropping
+any case. Production research-state loading now rejects absent budget fields;
+Drawio uses its actual declared trigger; n8n/Cron assertions inspect decoded
+registry payloads. Independent source review passed; a new complete Hosted run
+is required. Details: `docs/gold-wave203-verification.md`.
+
+Core/CLI `35729831467` passed on `737b9835`; its downloaded generated reference
+is byte-identical to the committed one. On `17b2a9f8`, Preflight `35730857086`
+and Code Quality `35730856493` passed. The next Windows Hosted preview permits
+120 GUI-build minutes within the unchanged six-hour job ceiling after the old
+run timed out at ninety. No preview/release or Road closure is claimed. W202
+n8n adoption remains in implementation and independent review.
+
 **W201 recovery follow-up (2026-09-22):** published source `737b9835` passed
 Hosted Preflight `35729768850` and Code Quality `35729767980`. Core test-target
 compilation in `35729831467` also passed; its public CLI build and Grouped60

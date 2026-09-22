@@ -734,6 +734,19 @@ fn validate_json_shape(value: &serde_json::Value) -> Result<()> {
         object.keys().all(|key| FIELDS.contains(&key.as_str())),
         "unknown research run field"
     );
+    // Serde accepts an omitted Option field as None. The schema requires an
+    // explicit null timestamp between attempts so missing budget state cannot
+    // be confused with a valid inactive reservation.
+    for field in [
+        "provider_calls_used",
+        "wall_elapsed_ms",
+        "attempt_started_unix_ms",
+    ] {
+        anyhow::ensure!(
+            object.contains_key(field),
+            "missing research budget field {field}"
+        );
+    }
     Ok(())
 }
 fn validate_hash(value: &str) -> Result<()> {

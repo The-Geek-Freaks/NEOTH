@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W201-hosted-fixture-repair",
-  "base": "737b9835b36af5b2e09c3c356138f5489a265802",
-  "capturedUtc": "2026-09-22T12:59:51.5367578Z",
-  "validationStatus": "W201_HOSTED_CORE_CHECK_PASSED_BEHAVIOR_PENDING",
-  "scopeNote": "W201 follow-up: explicit cfg(test) helper and current Hosted receipts. Historical wave source bindings retained.",
+  "item": "GOLD-W95-W203-grouped-behavior-repair",
+  "base": "17b2a9f8ef64fb34c5e96466e61ed9eab5fd0303",
+  "capturedUtc": "2026-09-22T13:09:56.1470428Z",
+  "validationStatus": "W203_REVIEWED_HOSTED_PENDING",
+  "scopeNote": "W203 repairs observed missing-budget state and typed registry assertions; corrects Cron exact discovery; bounded Hosted preview recovery. W202 uncommitted WIP excluded.",
   "files": [
     {
       "path": ".gitattributes",
@@ -48,8 +48,8 @@
     },
     {
       "path": ".github/workflows/preview-windows.yml",
-      "bytes": 21332,
-      "sha256": "CE762C17BF552FF49A2A27E7F3DB0C7881670EA2A95204C99EE61A105075DF0A"
+      "bytes": 21350,
+      "sha256": "8F2B13EF8AC99456CE27F7FE04364141AF5DA591BF67E9EAA4C3F62FFB44029F"
     },
     {
       "path": ".github/workflows/publish-crates.yml",
@@ -252,6 +252,36 @@
       "sha256": "B157B0B0B5150C876577F27846B7B15EF67625A674514C93971274B83816C0A3"
     },
     {
+      "path": "docs/gold-wave197-verification.md",
+      "bytes": 2224,
+      "sha256": "9B221D52DC0E0AA3FCDB70DF2E14D7CF4DE25B6AE565469981EA7383DE210694"
+    },
+    {
+      "path": "docs/gold-wave198-verification.md",
+      "bytes": 2133,
+      "sha256": "DE6D59F97F50D0C343DCECC9112815991B5D3B2FAD46037348F0F26ADA499850"
+    },
+    {
+      "path": "docs/gold-wave199-verification.md",
+      "bytes": 2238,
+      "sha256": "3B9B2D4C4045B7594ED100AC601CE92FAB7DE78BC1C59C4144E5E888D8858F5A"
+    },
+    {
+      "path": "docs/gold-wave200-verification.md",
+      "bytes": 1840,
+      "sha256": "E6286E598CF6097E7ADB494C98717E35290A1A413A041050BF30196C3CCA6164"
+    },
+    {
+      "path": "docs/gold-wave201-verification.md",
+      "bytes": 2554,
+      "sha256": "3911A7BB16F99299CE843FE58E4698705C9BF4D1B7A96050A51E2F21AA9C5D71"
+    },
+    {
+      "path": "docs/gold-wave203-verification.md",
+      "bytes": 2716,
+      "sha256": "1381512BD3CDAD8B426A0DEB6F7CB471B5CD664954FB97DC1FFEF32761BB6522"
+    },
+    {
       "path": "docs/install.md",
       "bytes": 13637,
       "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
@@ -358,18 +388,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 30776,
-      "sha256": "3C3E1DC6FB4DD9A3F5160E80B8F082862F3A2D99ACFB0AA5EB524319A0202B4F"
+      "bytes": 31323,
+      "sha256": "0AC7E1E1871618509AE2D2E9CFB0B51BF80D54592EF278B4A5B4CBC8D9AA839C"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1033564,
-      "sha256": "46C0549DF5F0CCC7A28780513DB6BB89A5DDDB7FD8F0F6FE668723B5FDE010BB"
+      "bytes": 1034702,
+      "sha256": "AB6BEC954812985D62665725DBD499CFC0BCF8C2A68BB27AC0CB4DCDDE424CE6"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1629011,
-      "sha256": "829983217E49916A15EDA2C07E0BEF87AA751233A626D305A688E77C1F620929"
+      "bytes": 1630149,
+      "sha256": "51C1A051A82F1DA12897506A2A28FA742A99CE80DB1EB22ABDF88307B858C7B5"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1413,8 +1443,8 @@
     },
     {
       "path": "SRC/neothd/src/cron/runner.rs",
-      "bytes": 137530,
-      "sha256": "A8CEBEDCC3A87036705848BE632CC7E8563B2F23B754049F459CD6FED5A8CB5E"
+      "bytes": 138821,
+      "sha256": "5E82BCA64675C7E7A0726BE8EB965F44838DC5E6F64FA54AAA35B632F982028A"
     },
     {
       "path": "SRC/neothd/src/cron/state.rs",
@@ -1568,8 +1598,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/research_runs.rs",
-      "bytes": 43577,
-      "sha256": "970E98AAF124539FDA3D72E59EBDA79346CA310E25412EA7ED2B4AA6DD44B5C8"
+      "bytes": 44041,
+      "sha256": "1162647A942B7EAF2B820481FCCA3C7DA4CB405CADE65388E3EAB32AD37F72C2"
     },
     {
       "path": "SRC/neothd/src/daemon/session_sort_cron.rs",
@@ -1873,8 +1903,8 @@
     },
     {
       "path": "SRC/neothd/src/n8n_api/handlers.rs",
-      "bytes": 52295,
-      "sha256": "385A797904377DEEAFB58F593A599AD5B2F7121D271B52E3D8F2D563A5C21DA0"
+      "bytes": 52320,
+      "sha256": "858E188C4F5632E8B9F6B4DED70F4F6D95B25595266B307070D973791B857F8C"
     },
     {
       "path": "SRC/neothd/src/permissions/gate.rs",
@@ -2098,8 +2128,8 @@
     },
     {
       "path": "SRC/neothd/src/skills/loader.rs",
-      "bytes": 126910,
-      "sha256": "ED2A0E351546E8C678382E314180CA4B3349CDF9D8E8A5F03D4CDF1CD17A0A10"
+      "bytes": 126914,
+      "sha256": "70CA928D0ADFDE467DF5896DC9954844C5666BF4EF9FBC11DBF95C10EFAF78C6"
     },
     {
       "path": "SRC/neothd/src/skills/mod.rs",
@@ -2110,6 +2140,11 @@
       "path": "SRC/neothd/src/skills/mutation_lifecycle.rs",
       "bytes": 114560,
       "sha256": "BAE7EB9F934FF49DAF32D4DCA840B75C944C0ED71A687D98930EF109C1F34CF3"
+    },
+    {
+      "path": "SRC/neothd/src/skills/prerequisites.rs",
+      "bytes": 10228,
+      "sha256": "6259BDCD6F7F1447AC968C03738423D5664B81D1A040693C7CEBCD79D7E89267"
     },
     {
       "path": "SRC/neothd/src/skills/registry.rs",
@@ -2420,36 +2455,6 @@
       "path": "THIRD_PARTY_LICENSES",
       "bytes": 2299156,
       "sha256": "A2F73733618DE347F4876EDD4325391DB8C2F11D853614CC4D8EDC2A82CA497D"
-    },
-    {
-      "path": "SRC/neothd/src/skills/prerequisites.rs",
-      "bytes": 10228,
-      "sha256": "6259BDCD6F7F1447AC968C03738423D5664B81D1A040693C7CEBCD79D7E89267"
-    },
-    {
-      "path": "docs/gold-wave197-verification.md",
-      "bytes": 2224,
-      "sha256": "9B221D52DC0E0AA3FCDB70DF2E14D7CF4DE25B6AE565469981EA7383DE210694"
-    },
-    {
-      "path": "docs/gold-wave198-verification.md",
-      "bytes": 2133,
-      "sha256": "DE6D59F97F50D0C343DCECC9112815991B5D3B2FAD46037348F0F26ADA499850"
-    },
-    {
-      "path": "docs/gold-wave199-verification.md",
-      "bytes": 2238,
-      "sha256": "3B9B2D4C4045B7594ED100AC601CE92FAB7DE78BC1C59C4144E5E888D8858F5A"
-    },
-    {
-      "path": "docs/gold-wave200-verification.md",
-      "bytes": 1840,
-      "sha256": "E6286E598CF6097E7ADB494C98717E35290A1A413A041050BF30196C3CCA6164"
-    },
-    {
-      "path": "docs/gold-wave201-verification.md",
-      "bytes": 2554,
-      "sha256": "3911A7BB16F99299CE843FE58E4698705C9BF4D1B7A96050A51E2F21AA9C5D71"
     }
   ]
 }

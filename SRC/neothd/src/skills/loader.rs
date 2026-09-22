@@ -1465,7 +1465,7 @@ mod tests {
         );
         let super::super::resolver::SkillRouteDecision::Match(route) = resolver
             .resolve(
-                super::super::resolver::SkillRouteRequest::automatic("drawio", 1, &[]),
+                super::super::resolver::SkillRouteRequest::automatic("drawio xml", 1, &[]),
                 None,
             )
             .await
