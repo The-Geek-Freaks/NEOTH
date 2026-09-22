@@ -28,7 +28,8 @@ pub const DEFAULT_N8N_PORT: u16 = 5678;
 /// Reviewed n8n release selected from the captured public metadata receipt.
 pub const N8N_VERSION: &str = "2.40.5";
 /// Immutable OCI index reference for the reviewed n8n release.
-pub const N8N_OCI_REFERENCE: &str = "docker.io/n8nio/n8n@sha256:9f693fd5565539efd5e75ad168526c8041a6af516d9e50bc4d9cb1c9c5031523";
+pub const N8N_OCI_REFERENCE: &str =
+    "docker.io/n8nio/n8n@sha256:9f693fd5565539efd5e75ad168526c8041a6af516d9e50bc4d9cb1c9c5031523";
 /// n8n 2.40.5 declares `engines.node: >=24.0.0` in the pinned npm metadata.
 pub const MIN_N8N_NODE_MAJOR: u64 = 24;
 

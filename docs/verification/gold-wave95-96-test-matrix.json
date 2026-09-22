@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W196_REVIEWED_HOSTED_PENDING",
-  "base": "bb91c4d347cb66337eb8e8820d3c230d95957a41",
+  "status": "W196_HOSTED_FORMAT_FOLLOWUP_PENDING",
+  "base": "7f2b8636e92ac01f647d7f9aa9e88cd9d505e03b",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 83660,
-    "sha256": "860291B59FD8919990368C2AE7D1C9450AB83E4AF0F20CDD5008F0AD668096BA"
+    "bytes": 83667,
+    "sha256": "9410FB69E4C521F02331199B694417BDAE24A83B9CD1A42E9F7FB7680FB02B48"
   },
   "sourceInputs": 483,
   "requiredNativeTests": [
@@ -3600,25 +3600,25 @@
     {
       "junitClass": "neoth",
       "sourcePath": "SRC/neothd/src/installers/n8n.rs",
-      "sourceSha256": "FDC636BF0F3612B5E0D13698A6307F53C4247CB2BBCB734288EE22C2323FF82C",
+      "sourceSha256": "EE7A9088AB293BA529AA87937A35074CA9E78608C2315BF078336D1FBFE70940",
       "test": "installers::n8n::tests::docker_install_command_uses_canonical_image_and_port"
     },
     {
       "junitClass": "neoth",
       "sourcePath": "SRC/neothd/src/installers/n8n.rs",
-      "sourceSha256": "FDC636BF0F3612B5E0D13698A6307F53C4247CB2BBCB734288EE22C2323FF82C",
+      "sourceSha256": "EE7A9088AB293BA529AA87937A35074CA9E78608C2315BF078336D1FBFE70940",
       "test": "installers::n8n::tests::npm_install_command_is_global_install"
     },
     {
       "junitClass": "neoth",
       "sourcePath": "SRC/neothd/src/installers/n8n.rs",
-      "sourceSha256": "FDC636BF0F3612B5E0D13698A6307F53C4247CB2BBCB734288EE22C2323FF82C",
+      "sourceSha256": "EE7A9088AB293BA529AA87937A35074CA9E78608C2315BF078336D1FBFE70940",
       "test": "installers::n8n::tests::node_version_gate_rejects_unsupported_or_malformed_versions"
     },
     {
       "junitClass": "neoth",
       "sourcePath": "SRC/neothd/src/installers/n8n.rs",
-      "sourceSha256": "FDC636BF0F3612B5E0D13698A6307F53C4247CB2BBCB734288EE22C2323FF82C",
+      "sourceSha256": "EE7A9088AB293BA529AA87937A35074CA9E78608C2315BF078336D1FBFE70940",
       "test": "installers::n8n::tests::node_version_gate_accepts_node_24_and_newer"
     }
   ],
@@ -9972,5 +9972,18 @@
     "priorGrouped": 35722981118,
     "priorGroupedResult": "compiled;first14passed;fallback authorizer missingWAL repaired with realwriter+privateusagehome",
     "releaseReady": false
+  },
+  "wave196HostedFormat": {
+    "sourceBase": "7f2b8636e92ac01f647d7f9aa9e88cd9d505e03b",
+    "run": 35724290463,
+    "hunks": 1,
+    "sources": [
+      {
+        "path": "SRC/neothd/src/installers/n8n.rs",
+        "bytes": 15399,
+        "sha256": "EE7A9088AB293BA529AA87937A35074CA9E78608C2315BF078336D1FBFE70940"
+      }
+    ],
+    "note": "Exact Hosted split of OCI reference constant; no semantic change."
   }
 }

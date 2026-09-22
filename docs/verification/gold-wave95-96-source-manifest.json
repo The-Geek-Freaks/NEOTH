@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W196-pinned-n8n-prerequisite",
-  "base": "bb91c4d347cb66337eb8e8820d3c230d95957a41",
-  "capturedUtc": "2026-09-22T11:54:28.1101106Z",
-  "validationStatus": "W196_REVIEWED_HOSTED_PENDING",
+  "base": "7f2b8636e92ac01f647d7f9aa9e88cd9d505e03b",
+  "capturedUtc": "2026-09-22T11:58:21.2308627Z",
+  "validationStatus": "W196_HOSTED_FORMAT_FOLLOWUP_PENDING",
   "scopeNote": "W196 version/OCI-pinned n8n commands and stable Node>=24 gate in both wizard paths; grouped38 collecting independent failures; W195 extractor digest+W191 authorizer wiring followups. Historical wave receipt sources unchanged.",
   "files": [
     {
@@ -1648,8 +1648,8 @@
     },
     {
       "path": "SRC/neothd/src/installers/n8n.rs",
-      "bytes": 15395,
-      "sha256": "FDC636BF0F3612B5E0D13698A6307F53C4247CB2BBCB734288EE22C2323FF82C"
+      "bytes": 15399,
+      "sha256": "EE7A9088AB293BA529AA87937A35074CA9E78608C2315BF078336D1FBFE70940"
     },
     {
       "path": "SRC/neothd/src/installers/ocr.rs",
