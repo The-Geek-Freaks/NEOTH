@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T21:16:18.3000925Z",
-  "validationStatus": "ExactW221format plus explicit slim Optiontype; Group275PASS; Group281/currentClippy pending",
+  "capturedUtc": "2026-09-22T21:22:42.2552406Z",
+  "validationStatus": "W224 checkpoint Markdown escaping repaired; W221/W224 Hosted acceptance pending; local BSOD hold",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -433,18 +433,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 70302,
-      "sha256": "1A1D24F1E14E113C0D7FD77BBA6724686EE9DF3CF425C6B589ED504B96E46AB7"
+      "bytes": 70311,
+      "sha256": "439B82A25804BD9150879455D71DFC8263C67885F8CCBB9A30964830FEE9E2D3"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1073184,
-      "sha256": "042B28CD97BB2F9C41EA58D83BCBB1705514A6ACA83702A42530A0E740FBB70C"
+      "bytes": 1073193,
+      "sha256": "47A69254EC5714A870888A791CDEEFF6E6CE91DE9E1830F33B500B57AA386D6F"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1668631,
-      "sha256": "037D29B3E7994BDFB4DAFAF482CBCA9A2FDFA542F7B386538F8F47912C775A0B"
+      "bytes": 1668640,
+      "sha256": "7EACF8A21EDAE2CA0F94C310FA78691B609F3BB649A574FB28BF8F1DB536E0E0"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",

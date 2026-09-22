@@ -3,12 +3,13 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
-**Hosted checkpoint (2026-09-22):** Grouped275 35784185143 on 716997a`npassed275/275 exact cases, including actual CLI fallback;57 source paths,
-matrix, lock and per-case terminals are verified. Grouped281 35785415701`nruns W221 and the four additional W224 acceptance cases. W223's focused
-slim recheck 35784699877 exposed one E0282 after cfg(test) gating;
-explicit None::<&str> now preserves inference and is queued for recheck.
+**Hosted checkpoint (2026-09-22):** Grouped275 `35784185143` on `e716997a`
+passed 275/275 exact cases, including actual CLI fallback; 57 source paths,
+matrix, lock and per-case terminals are verified. Grouped281 `35785415701`
+runs W221 and the four additional W224 acceptance cases. W223's focused
+slim recheck `35784699877` exposed one E0282 after cfg(test) gating;
+explicit `None::<&str>` now preserves inference and is queued for recheck.
 W221's exact Hosted formatter receipt is imported. No new Road closure.
-
 **W221 retry consent-denial receipt + W224 acceptance selection (2026-09-22):**
 an already admitted retry stopped by the final live-consent fence now emits a
 bounded `authorization_denied` terminal. Per-attempt error classes remain exact;

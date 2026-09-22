@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "ExactW221format plus explicit slim Optiontype; Group275PASS; Group281/currentClippy pending",
+  "status": "W224 checkpoint Markdown escaping repaired; W221/W224 Hosted acceptance pending; local BSOD hold",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92017,
-    "sha256": "F93F949C17AEF77ABE5D5136BE7D79796269A554F2948FD6426698E6FF183E9F"
+    "bytes": 92022,
+    "sha256": "A4BCF50EFA1B2762B71253A11E7C2D9B0190B7AF4759BFFB25CBECBD0ECBE1EB"
   },
   "sourceInputs": 531,
   "requiredNativeTests": [
@@ -15047,6 +15047,13 @@
       }
     ],
     "note": "Exactformatter35785415822 + single None::<&str> prod/test type preservation",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave224PlanTextRecovery": {
+    "base": "c42038984897887c435c82536dd5557ed65dc0a8",
+    "sources": [],
+    "note": "Repair three Markdown checkpoint paragraphs after PowerShell interpolation introduced ESC and literal backtick-n; documentation only.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
