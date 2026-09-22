@@ -1236,9 +1236,11 @@ OH-04 — detect host RAM / CPU / GPU and recommend a local-AI deployment tier (
 
 ## `neoth dictate`
 
-Transcribe an audio file via the configured STT dispatcher (GOLD-ADOPT-25; local by default, optional VAD pre-filter). Requires `media.dictation_enabled: true` in freedom.yaml. Microphone capture is a follow-up; this is the file-based dictation surface
+Transcribe an audio file or live microphone utterances via the configured STT dispatcher (GOLD-ADOPT-25; local by default, optional VAD pre-filter). Requires `media.dictation_enabled: true` in freedom.yaml. Microphone capture is available with `neoth dictate --live` and uses Silero VAD
 
-- `<FILE>` — Audio file to transcribe (WAV/MP3/FLAC/Ogg/M4A — decoded to 16 kHz mono before STT)
+- `<FILE>` — Audio file to transcribe (WAV/MP3/FLAC/Ogg/M4A — decoded to 16 kHz mono before STT). Omit this only with `--live`
+- `--live` — Capture a microphone and transcribe completed speech utterances until Ctrl-C or the device terminates
+- `--input-device <INPUT_DEVICE>` — Exact input-device name for `--live`; the platform default is used when omitted
 
 ## `neoth distill`
 

@@ -166,6 +166,103 @@ pub(crate) fn check_wal_audit_health(home: &Path) -> CheckOutcome {
     }
 }
 
+/// P2-06 — observational provider/capability quality trend from a complete
+/// authenticated terminal-WAL prefix. This is intentionally advisory only.
+pub(crate) fn check_capability_quality(home: &Path) -> CheckOutcome {
+    let now = crate::time::now_unix_i64();
+    let report = match crate::daemon::capability_decay::inspect_authenticated_terminal_history(home, now) {
+        Ok(report) => report,
+        Err(error) => return CheckOutcome {
+            name: "capability quality",
+            status: CheckStatus::Warn,
+            detail: format!(
+                "unavailable: authenticated terminal history could not be read completely ({error:#}); no quality conclusion"
+            ),
+        },
+    };
+    let degrading: Vec<_> = report
+        .observations
+        .iter()
+        .filter(|row| row.trend == crate::daemon::capability_decay::CapabilityTrend::Degrading)
+        .collect();
+    let recovering = report
+        .observations
+        .iter()
+        .filter(|row| row.trend == crate::daemon::capability_decay::CapabilityTrend::Recovering)
+        .count();
+    let comparable = report
+        .observations
+        .iter()
+        .filter(|row| {
+            row.trend != crate::daemon::capability_decay::CapabilityTrend::InsufficientSamples
+        })
+        .count();
+    let attribution = match (report.unattributed_terminal_rows, report.legacy_terminal_rows) {
+        (0, 0) => String::new(),
+        (unattributed, legacy) => {
+            format!("; {unattributed} unattributed and {legacy} legacy terminal row(s) excluded")
+        }
+    };
+    if !degrading.is_empty() {
+        let labels = render_degrading_labels(&degrading);
+        return CheckOutcome {
+            name: "capability quality",
+            status: CheckStatus::Warn,
+            detail: format!(
+                "observed degradation for {labels}; advisory failure/latency evidence only, no routing or disable action{attribution}"
+            ),
+        };
+    }
+    if comparable == 0 {
+        return CheckOutcome {
+            name: "capability quality",
+            status: CheckStatus::Pass,
+            detail: format!(
+                "inconclusive: no provider/model/workflow identity has the conservative recent+baseline sample floor{attribution}"
+            ),
+        };
+    }
+    CheckOutcome {
+        name: "capability quality",
+        status: CheckStatus::Pass,
+        detail: format!(
+            "{comparable} provider/model/workflow identity(s) have stable or recovering operational evidence ({recovering} recovering); adapter outcomes and latency do not measure reasoning quality{attribution}"
+        ),
+    }
+}
+
+fn render_degrading_labels(
+    rows: &[&crate::daemon::capability_decay::CapabilityObservation],
+) -> String {
+    let shown = rows
+        .iter()
+        .take(crate::daemon::capability_decay::MAX_RENDERED_DEGRADATIONS)
+        .map(|row| {
+            format!(
+                "{}/{}/{} (errors {}/{} -> {}/{}, p90 {} -> {} ms)",
+                row.identity.provider,
+                row.identity.model,
+                row.identity.workflow.as_str(),
+                row.baseline_failures,
+                row.baseline_samples,
+                row.recent_failures,
+                row.recent_samples,
+                row.baseline_p90_latency_ms,
+                row.recent_p90_latency_ms,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let omitted = rows
+        .len()
+        .saturating_sub(crate::daemon::capability_decay::MAX_RENDERED_DEGRADATIONS);
+    if omitted == 0 {
+        shown
+    } else {
+        format!("{shown} (+{omitted} more)")
+    }
+}
+
 /// Self-improvement (SkillOpt) — switch state + engine availability + last run.
 pub(crate) fn check_self_improve(home: &Path) -> CheckOutcome {
     let cfg = match crate::self_improve::SelfImproveConfig::load(home) {
@@ -221,6 +318,7 @@ pub(crate) const CHECKS: &[CheckFn] = &[
     check_iroh_transport,
     check_mcp_servers,
     check_wal_audit_health,
+    check_capability_quality,
     check_self_improve,
 ];
 
@@ -270,6 +368,12 @@ pub(crate) const DOCS: &[CheckDoc] = &[
               inspect frames.",
     },
     CheckDoc {
+        name: "capability quality",
+        purpose: "Read-only operational trend from a complete authenticated provider-terminal WAL prefix. It separates provider, wire model and closed workflow identity, compares a conservative 24-hour window with the preceding 7-day baseline, and reports only failure/latency evidence.",
+        common_failures: "No complete authenticated WAL prefix; too few comparable terminal outcomes; missing or unknown capability attribution; elevated completed-call failures or p90 latency.",
+        fix: "Inspect the named provider/model/workflow and its WAL terminal receipts. This check never routes around, disables, retries, or evaluates reasoning/factual quality.",
+    },
+    CheckDoc {
         name: "self-improvement",
         purpose: "Whether NEOTH's SkillOpt-based self-evolution is enabled + the \
                   engine is installed, plus the last improvement outcome. NEOTH \
@@ -283,6 +387,25 @@ pub(crate) const DOCS: &[CheckDoc] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn degrading_observation(index: usize) -> crate::daemon::capability_decay::CapabilityObservation {
+        crate::daemon::capability_decay::CapabilityObservation {
+            identity: crate::daemon::capability_decay::CapabilityIdentity {
+                provider: format!("provider-{index}"),
+                model: format!("model-{index}"),
+                workflow: crate::daemon::usage_log::WorkflowKey(
+                    crate::daemon::usage_log::WorkflowKind::ChatTurn,
+                ),
+            },
+            trend: crate::daemon::capability_decay::CapabilityTrend::Degrading,
+            recent_samples: 8,
+            baseline_samples: 12,
+            recent_failures: 4,
+            baseline_failures: 0,
+            recent_p90_latency_ms: 900,
+            baseline_p90_latency_ms: 100,
+        }
+    }
 
     #[test]
     fn every_check_has_a_doc() {
@@ -303,5 +426,36 @@ mod tests {
             assert!(!out.name.is_empty());
             assert!(!out.detail.is_empty());
         }
+    }
+
+    #[test]
+    fn capability_quality_doctor_home_is_read_only_when_history_is_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let before: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        let outcome = check_capability_quality(dir.path());
+        let after: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(matches!(outcome.status, CheckStatus::Pass | CheckStatus::Warn));
+        assert_eq!(
+            before, after,
+            "Doctor capability observation must not create or repair home state"
+        );
+    }
+
+    #[test]
+    fn capability_quality_limits_rendered_degradation_labels() {
+        let rows = (0..6).map(degrading_observation).collect::<Vec<_>>();
+        let references = rows.iter().collect::<Vec<_>>();
+        let rendered = render_degrading_labels(&references);
+        assert!(rendered.contains("provider-0/model-0/chat_turn"));
+        assert!(rendered.contains("errors 0/12 -> 4/8, p90 100 -> 900 ms"));
+        assert!(rendered.contains("provider-3/model-3/chat_turn"));
+        assert!(!rendered.contains("provider-4/model-4/chat_turn"));
+        assert!(rendered.ends_with("(+2 more)"));
     }
 }

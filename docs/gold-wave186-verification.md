@@ -55,3 +55,10 @@ Notice export `35705709793` found the single missing `dasp_sample 0.11.0`
 upstream snapshot; a focused Hosted export now preserves existing snapshots
 and binds that addition to the exact crate/VCS/license evidence. Fresh
 formatting, live-audio compilation and native behavior remain required.
+
+Hosted notice export35706938770 on88946b64 passed. All10 input/artifact hashes
+were verified;147 old snapshot records are unchanged, with exactly one new
+dasp_sample0.11.0 snapshot from upstream97c3bb9b2363c0b46ac1633858bf1054fd02a980.
+Generated THIRD_PARTY_LICENSES and CLI reference35705705773/7683e79f are imported
+byte-for-byte. Preflight35706905274 and Quality35706903957 passed on88946b64.
+Live-audio35706936164 is still running; no audio behavior acceptance is claimed.

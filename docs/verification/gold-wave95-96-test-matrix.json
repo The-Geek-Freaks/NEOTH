@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W186_HOSTED_API_REPAIRS_FRESH_GATES_PENDING",
-  "base": "7683e79fb29954f06b0e4791af6e52c14e7a7ef9",
+  "status": "W188_REVIEWED_SOURCE_HOSTED_GATES_PENDING",
+  "base": "88946b64d0655cee3372b6137a88da04e3cf212b",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 76554,
-    "sha256": "5DE09FEA75C25B1F2F6E400D06EA090BA1478027BB62F07E6CEF0BDAD3DC96DE"
+    "bytes": 77110,
+    "sha256": "2D1BC2885C7844149CBAB78CA8226A5F607E740D138468A1CB4F04D31E5F26C5"
   },
-  "sourceInputs": 444,
+  "sourceInputs": 447,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -3230,6 +3230,54 @@
       "sourcePath": "SRC/neothd/src/code_map/diff_impact.rs",
       "sourceSha256": "D39747F23A47F170DB0EEFEEEE13AD616029B92B41E3F147238CF5F0FC440261",
       "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::capability_decay::tests::min_samples_keep_each_identity_inconclusive",
+      "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
+      "sourceSha256": "047400A98930BDCF31926546992FD6727AD77D319C3320193002FE3515E22D78",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::capability_decay::tests::regression_and_recovery_require_separate_conservative_windows",
+      "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
+      "sourceSha256": "047400A98930BDCF31926546992FD6727AD77D319C3320193002FE3515E22D78",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::capability_decay::tests::provider_and_capability_never_share_a_window",
+      "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
+      "sourceSha256": "047400A98930BDCF31926546992FD6727AD77D319C3320193002FE3515E22D78",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::capability_decay::tests::malformed_or_unattributed_terminal_payload_never_becomes_quality_evidence",
+      "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
+      "sourceSha256": "047400A98930BDCF31926546992FD6727AD77D319C3320193002FE3515E22D78",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::capability_decay::tests::authenticated_provider_terminal_producer_reaches_scanner_and_doctor",
+      "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
+      "sourceSha256": "047400A98930BDCF31926546992FD6727AD77D319C3320193002FE3515E22D78",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "daemon::capability_decay::tests::authenticated_terminal_history_refuses_a_later_incomplete_prefix",
+      "sourcePath": "SRC/neothd/src/daemon/capability_decay.rs",
+      "sourceSha256": "047400A98930BDCF31926546992FD6727AD77D319C3320193002FE3515E22D78",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::checks::capabilities::tests::capability_quality_doctor_home_is_read_only_when_history_is_absent",
+      "sourcePath": "SRC/neothd/src/cli/doctor/checks/capabilities.rs",
+      "sourceSha256": "F2EB18CDFF047733E600FD24C62F1BD97865332AC73AC86C63E3763BBA30E05E",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::checks::capabilities::tests::capability_quality_limits_rendered_degradation_labels",
+      "sourcePath": "SRC/neothd/src/cli/doctor/checks/capabilities.rs",
+      "sourceSha256": "F2EB18CDFF047733E600FD24C62F1BD97865332AC73AC86C63E3763BBA30E05E",
+      "junitClass": "neoth"
     }
   ],
   "requiredGuiTests": [
@@ -3762,7 +3810,7 @@
   "hostConstraint": "ALL_LOCAL_VALIDATION_SUSPENDED; bounded source/metadata reads, edits and serialized Git/GitHub only",
   "releaseReady": false,
   "pending": [
-    "Fresh exact-source GitHub format/contracts/strict Clippy/workspace Nextest:537 universal native,80 universal GUI,6Windows/8Linux/7macOS additions,19LinuxMac callbacks; separate19live-audio and existing optional-adapter gates remain required.",
+    "Fresh exact-source GitHub format/contracts/strict Clippy/workspace Nextest:545 universal native,80 universal GUI,6Windows/8Linux/7macOS additions,19LinuxMac callbacks; separate19live-audio and existing optional-adapter gates remain required.",
     "W58 native GUI callback now includes Disabled/Unavailable/Ready, diagnosticCLI resolution and drained late-result publication; same macOS mainthread identity",
     "Provider-loop selected-route cancellation remains outside the W102 direct-CLI fixture; direct CLI deliberately uses unbound cancellation",
     "Portable, installed, visual and provider-live acceptance for final source; selector editing/Buddy enable-disable-explain remain open; no ROAD checkbox closes",
@@ -8301,5 +8349,87 @@
       }
     ],
     "liveAudioCatalogSha256": "725069CE64F89CF50A0ABA07EC219C5A4DAE6EC86D124C73C24D94B3A0A7AA88"
+  },
+  "wave188": {
+    "status": "Integrated source review complete; Hosted execution required",
+    "sourceBase": "88946b64d0655cee3372b6137a88da04e3cf212b",
+    "sources": [
+      {
+        "path": "docs/cli-commands.md",
+        "bytes": 234480,
+        "sha256": "D6E7E5E0D70434142BE32FF985C14F8359236ED863128F0F5B9EDE980B4CF3AE"
+      },
+      {
+        "path": "docs/gold-wave186-verification.md",
+        "bytes": 3925,
+        "sha256": "96F09C86FC0E69731C5612D3926DAD56E61FF83ADC59DB4C386CA0DE785354E4"
+      },
+      {
+        "path": "docs/gold-wave188-verification.md",
+        "bytes": 3769,
+        "sha256": "F8D671187F1785CB8ADB6E8D2929586960989B21D1E483B1D8D3F07933915C99"
+      },
+      {
+        "path": "packaging/rust-license-snapshots.json",
+        "bytes": 1297090,
+        "sha256": "AFA91D09AEB6B2B7A81D7ADE8D236C36A2867AAA99B3C7609CA76127C26A3CCF"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1025792,
+        "sha256": "BBB0FCC5834659B95F775F39C9426248855F6846DA8F430E48D6CE5A7F102B14"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1621239,
+        "sha256": "0E231CF93E317BFAA6C7A2D648E0717372B4DA6EB40D22C339EDE66E3FD8D2E8"
+      },
+      {
+        "path": "SRC/neothd/src/cli/doctor/checks/capabilities.rs",
+        "bytes": 18403,
+        "sha256": "F2EB18CDFF047733E600FD24C62F1BD97865332AC73AC86C63E3763BBA30E05E"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/capability_decay.rs",
+        "bytes": 24543,
+        "sha256": "047400A98930BDCF31926546992FD6727AD77D319C3320193002FE3515E22D78"
+      },
+      {
+        "path": "SRC/neothd/src/daemon/mod.rs",
+        "bytes": 18385,
+        "sha256": "C1D7F0ECA29C729306CA443B0189CB4BDF1AF8A0A33A16255B93878317F2C3CC"
+      },
+      {
+        "path": "THIRD_PARTY_LICENSES",
+        "bytes": 2299156,
+        "sha256": "A2F73733618DE347F4876EDD4325391DB8C2F11D853614CC4D8EDC2A82CA497D"
+      }
+    ],
+    "requiredTests": [
+      "daemon::capability_decay::tests::min_samples_keep_each_identity_inconclusive",
+      "daemon::capability_decay::tests::regression_and_recovery_require_separate_conservative_windows",
+      "daemon::capability_decay::tests::provider_and_capability_never_share_a_window",
+      "daemon::capability_decay::tests::malformed_or_unattributed_terminal_payload_never_becomes_quality_evidence",
+      "daemon::capability_decay::tests::authenticated_provider_terminal_producer_reaches_scanner_and_doctor",
+      "daemon::capability_decay::tests::authenticated_terminal_history_refuses_a_later_incomplete_prefix",
+      "cli::doctor::checks::capabilities::tests::capability_quality_doctor_home_is_read_only_when_history_is_absent",
+      "cli::doctor::checks::capabilities::tests::capability_quality_limits_rendered_degradation_labels"
+    ],
+    "scope": "Read-only terminal operational observation. No persisted metric snapshot or semantic response-quality/automatic disable claim.",
+    "review": "Independent review and root review; small diagnostic scan budget, retention/output bounds, signed WAL and torn-tail fixtures, visible failure counts/p90."
+  },
+  "wave186HostedNoticeReferenceImport": {
+    "noticeRun": 35706938770,
+    "noticeSource": "88946b64d0655cee3372b6137a88da04e3cf212b",
+    "verifiedChecksums": 10,
+    "oldSnapshotEntriesPreserved": 147,
+    "addedPackage": "dasp_sample 0.11.0",
+    "upstreamRevision": "97c3bb9b2363c0b46ac1633858bf1054fd02a980",
+    "noticeSha256": "A2F73733618DE347F4876EDD4325391DB8C2F11D853614CC4D8EDC2A82CA497D",
+    "snapshotSha256": "AFA91D09AEB6B2B7A81D7ADE8D236C36A2867AAA99B3C7609CA76127C26A3CCF",
+    "referenceRun": 35705705773,
+    "referenceSource": "7683e79fb29954f06b0e4791af6e52c14e7a7ef9",
+    "referenceSha256": "D6E7E5E0D70434142BE32FF985C14F8359236ED863128F0F5B9EDE980B4CF3AE",
+    "status": "Imported exact successful hosted artifacts, no local executable validation"
   }
 }

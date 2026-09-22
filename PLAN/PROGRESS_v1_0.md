@@ -9,6 +9,24 @@ public CLI build and reference export `35694693234` passed on `87c18246`; the
 exact generated CLI reference (40 Ollama help lines) is imported. These gates
 do not establish native, GUI, audio, or release behavior.
 
+**W188 capability observation (2026-09-22):** the next P2-06 slice adds a real
+read-only Doctor consumer of authenticated provider terminal WAL. It separates
+provider, wire model and closed workflow, compares 24-hour observations against
+a preceding seven-day baseline, requires independent minimum samples, and caps
+scan bytes, retained identities/samples and displayed labels. Eight regression
+identities include signed WAL writer/reader/Doctor and incomplete-tail refusal.
+Integrated source review is complete; Hosted compilation and behavior are still
+pending. It does not claim semantic response quality, persisted metric snapshots,
+provider disabling or completion of P2-06. See [W188](../docs/gold-wave188-verification.md).
+
+**Verified Hosted artifacts (2026-09-22):** Preflight `35706905274` and Code
+Quality `35706903957` passed on `88946b64`. Core test typecheck, public CLI build
+and reference export `35705705773` passed on `7683e79f`. Its exact generated
+reference is imported. Notice export `35706938770` passed on `88946b64`; all ten
+artifact/input hashes match, 147 old license snapshots are unchanged and exactly
+one VCS-bound `dasp_sample 0.11.0` snapshot is added. Native/GUI/audio acceptance
+remains separate. W186 live-audio `35706936164` is still running.
+
 **W186 Hosted follow-up (2026-09-22):** the default-feature core test typecheck
 in `35705705773` passed on `7683e79f`; public CLI build/export is still running.
 All 75 unique formatting hunks from `35705678481` are imported across seven
