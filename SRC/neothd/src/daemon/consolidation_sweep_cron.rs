@@ -71,7 +71,12 @@ pub async fn run_consolidation_sweep_tick(
     db_path: &Path,
     cfg: ConsolidationSweepConfig,
     writer: &WalWriterHandle,
+    provider: Option<crate::providers::LocalEmbeddingProvider>,
 ) -> crate::memory::consolidation_sweep::SweepReport {
+    let Some(provider) = provider else {
+        tracing::debug!("consolidation_sweep_cron: no current local embedding generation; skipped");
+        return crate::memory::consolidation_sweep::SweepReport::default();
+    };
     let ts_unix = crate::time::now_unix_i64();
 
     // Emit STARTED before blocking.
@@ -98,7 +103,7 @@ pub async fn run_consolidation_sweep_tick(
                     tracing::error!(error = %e, "consolidation_sweep_cron: open db failed");
                     crate::memory::consolidation_sweep::SweepReport::default()
                 }
-                Ok(conn) => match run_sweep(&conn, now_ns, &cfg) {
+                Ok(conn) => match run_sweep(&conn, now_ns, &cfg, &provider) {
                     Ok(r) => r,
                     Err(e) => {
                         tracing::error!(error = %e, "consolidation_sweep_cron: sweep failed");
@@ -138,6 +143,7 @@ pub fn spawn_consolidation_sweep_cron_loop(
     config: ConsolidationSweepConfig,
     db_path: PathBuf,
     writer: WalWriterHandle,
+    provider: Option<crate::providers::LocalEmbeddingProvider>,
 ) -> Option<tokio::task::JoinHandle<()>> {
     if !config.enabled {
         tracing::info!(
@@ -158,7 +164,13 @@ pub fn spawn_consolidation_sweep_cron_loop(
         );
         loop {
             ticker.tick().await;
-            let report = run_consolidation_sweep_tick(&db_path, config, &writer).await;
+            let report = run_consolidation_sweep_tick(
+                &db_path,
+                config,
+                &writer,
+                provider.clone(),
+            )
+            .await;
             tracing::info!(
                 clusters_found = report.clusters_found,
                 members_boosted = report.members_boosted,
@@ -211,7 +223,7 @@ mod tests {
         let seg = seg_dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
         let handle =
-            spawn_consolidation_sweep_cron_loop(cfg, "/nonexistent".into(), writer.clone());
+            spawn_consolidation_sweep_cron_loop(cfg, "/nonexistent".into(), writer.clone(), None);
         assert!(handle.is_none(), "disabled config must return None");
         drop(writer);
         join.await.ok();
@@ -228,7 +240,7 @@ mod tests {
         let seg = seg_dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
         let handle =
-            spawn_consolidation_sweep_cron_loop(cfg, "/nonexistent".into(), writer.clone());
+            spawn_consolidation_sweep_cron_loop(cfg, "/nonexistent".into(), writer.clone(), None);
         assert!(handle.is_some(), "enabled=true must return a JoinHandle");
         handle.unwrap().abort();
         drop(writer);
@@ -247,7 +259,12 @@ mod tests {
         let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
 
         let report =
-            run_consolidation_sweep_tick(&db_path, ConsolidationSweepConfig::default(), &writer)
+            run_consolidation_sweep_tick(
+                &db_path,
+                ConsolidationSweepConfig::default(),
+                &writer,
+                None,
+            )
                 .await;
 
         assert_eq!(report.clusters_found, 0);

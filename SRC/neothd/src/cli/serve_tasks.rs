@@ -3716,6 +3716,7 @@ pub(crate) fn spawn_consolidation_sweep_cron(
     }
     let ctrl = Arc::clone(reload_controller);
     let db_path = home.join("views.db");
+    let embedding_home = home.to_path_buf();
     let boot_cfg = config.consolidation_sweep;
     info!(
         interval_secs = boot_cfg.interval_secs,
@@ -3733,7 +3734,9 @@ pub(crate) fn spawn_consolidation_sweep_cron(
         );
         loop {
             ticker.tick().await;
-            let live_cfg = ctrl.latest().consolidation_sweep;
+            let accepted = ctrl.accepted_snapshot();
+            let accepted_config = accepted.config();
+            let live_cfg = accepted_config.consolidation_sweep;
             let live_interval = live_cfg.interval_duration();
             if live_interval != current_interval {
                 current_interval = live_interval;
@@ -3744,10 +3747,24 @@ pub(crate) fn spawn_consolidation_sweep_cron(
                     "consolidation-sweep cron: interval updated via config reload (TRAIL-03)",
                 );
             }
-            let report = crate::daemon::consolidation_sweep_cron::run_consolidation_sweep_tick(
-                &db_path, live_cfg, &writer,
+            let report = match crate::providers::local_embedding_provider_from_config_at_path(
+                &accepted_config,
+                &embedding_home,
+                ctrl.source_path(),
             )
-            .await;
+            .await
+            {
+                Some(provider) => crate::daemon::consolidation_sweep_cron::run_consolidation_sweep_tick(
+                    &db_path, live_cfg, &writer, Some(provider),
+                )
+                .await,
+                None => {
+                    tracing::debug!(
+                        "consolidation-sweep skipped: accepted embedding generation is unavailable"
+                    );
+                    crate::memory::consolidation_sweep::SweepReport::default()
+                }
+            };
             tracing::info!(
                 clusters_found = report.clusters_found,
                 merged_to_groundtruth = report.merged_to_groundtruth,
@@ -4564,9 +4581,9 @@ pub(crate) fn spawn_indexer(
     home: &std::path::Path,
     segment_path: &std::path::Path,
     writer: Option<crate::wal::writer::WalWriterHandle>,
-    // W208: only the opaque concrete-local capability can dispatch episode
-    // text to embeddings; an erased provider object has no such authority.
-    embed_provider: Option<crate::providers::LocalEmbeddingProvider>,
+    // W212: resolve the opaque local capability from every accepted embedding
+    // selection transition; the indexer must not retain a boot-time provider.
+    reload_controller: std::sync::Arc<crate::config::reload::ReloadController>,
     // GOLD-ADAPT-TRAIL-02: when `Some`, the indexer fires this sender
     // after every pass that indexes ≥1 new frame, so in-process consumers
     // (kanban_sse relay) can push updates without polling.
@@ -4584,7 +4601,7 @@ pub(crate) fn spawn_indexer(
             seg,
             std::time::Duration::from_millis(500),
             writer,
-            embed_provider,
+            reload_controller,
             change_tx,
         )
         .await

@@ -75,10 +75,15 @@ fn snapshot_mtime_unix(snap: &Path) -> Option<i64> {
 
 /// Newest `idx_embedding.created_at` (unix seconds), or `None` when the table is
 /// empty / unreadable. Mirrors the `neoth doctor` staleness probe.
-fn newest_embedding_unix(conn: &Connection) -> Option<i64> {
-    conn.query_row("SELECT MAX(created_at) FROM idx_embedding", [], |r| {
+fn newest_media_embedding_unix(conn: &Connection, dimension: usize) -> Option<i64> {
+    conn.query_row(
+        "SELECT MAX(created_at) FROM idx_embedding \
+         WHERE source_kind='image' AND model=?1 AND dim=?2",
+        rusqlite::params![crate::memory::embeddings::DEFAULT_MEDIA_EMBEDDING_MODEL, dimension as i64],
+        |r| {
         r.get::<_, Option<i64>>(0)
-    })
+        },
+    )
     .ok()
     .flatten()
 }
@@ -103,17 +108,35 @@ pub(crate) fn refresh_snapshot_once(
         return Ok(None);
     }
     let conn = crate::memory::store::open(&db)?;
-    let corpus = crate::memory::embeddings::count(&conn)? as usize;
+    let Some(dimension) = crate::memory::embeddings::media_model_dimension(
+        &conn,
+        crate::memory::embeddings::DEFAULT_MEDIA_EMBEDDING_MODEL,
+    )? else {
+        return Ok(None);
+    };
+    let corpus: usize = conn.query_row(
+        "SELECT COUNT(*) FROM idx_embedding WHERE source_kind='image' AND model=?1 AND dim=?2",
+        rusqlite::params![crate::memory::embeddings::DEFAULT_MEDIA_EMBEDDING_MODEL, dimension as i64],
+        |row| row.get::<_, i64>(0),
+    )? as usize;
     let snap = crate::memory::embeddings::hnsw_snapshot_path(neoth_home);
     if !should_refresh_snapshot(
         backend_is_hnsw,
         corpus,
         snapshot_mtime_unix(&snap),
-        newest_embedding_unix(&conn),
+        newest_media_embedding_unix(&conn, dimension),
     ) {
         return Ok(None);
     }
-    let n = crate::memory::embeddings::rebuild_index(&conn, &snap)?;
+    let n = crate::memory::embeddings::rebuild_index(
+        &conn,
+        &snap,
+        crate::memory::embeddings::VectorQueryScope::MediaModel {
+            source_kind: Some("image"),
+            model: crate::memory::embeddings::DEFAULT_MEDIA_EMBEDDING_MODEL,
+            dimension,
+        },
+    )?;
     tracing::info!(
         vectors = n,
         path = %snap.display(),
@@ -199,5 +222,32 @@ mod tests {
             !crate::memory::embeddings::hnsw_snapshot_path(dir.path()).exists(),
             "no snapshot should be written for a below-ceiling corpus"
         );
+    }
+
+    #[test]
+    fn newest_media_embedding_ignores_episode_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        crate::memory::embeddings::upsert(
+            &conn,
+            "image",
+            "media.png",
+            crate::memory::embeddings::DEFAULT_MEDIA_EMBEDDING_MODEL,
+            &[1.0, 0.0],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_embedding (source_kind,source_ref,model,generation,embedding,dim,created_at) \
+             VALUES ('episode','99','clip','other-generation',X'0000803F00000000',2,999)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE idx_embedding SET created_at=10 WHERE source_kind='image'",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(newest_media_embedding_unix(&conn, 2), Some(10));
     }
 }

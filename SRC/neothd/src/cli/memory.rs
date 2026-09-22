@@ -1669,7 +1669,22 @@ async fn run_memory_rebuild_index(args: &MemoryArgs) -> Result<()> {
     let neoth_home = FreedomConfig::default_neoth_home();
     let index_path = embeddings::hnsw_snapshot_path(&neoth_home);
 
-    let n = tokio::task::spawn_blocking(move || embeddings::rebuild_index(&conn, &index_path))
+    let dimension = embeddings::media_model_dimension(&conn, embeddings::DEFAULT_MEDIA_EMBEDDING_MODEL)?
+        .ok_or_else(|| anyhow::anyhow!("no CLIP media vectors exist to rebuild"))?;
+    let n = tokio::task::spawn_blocking(move || {
+        // This operator command historically maintains the CLIP media cache.
+        // Episode vectors require an active sealed provider and are rebuilt by
+        // their generation-aware maintenance path instead of being mixed here.
+        embeddings::rebuild_index(
+            &conn,
+            &index_path,
+            embeddings::VectorQueryScope::MediaModel {
+                source_kind: Some("image"),
+                model: embeddings::DEFAULT_MEDIA_EMBEDDING_MODEL,
+                dimension,
+            },
+        )
+    })
         .await
         .context("spawn_blocking for rebuild_index")??;
 
@@ -1706,13 +1721,20 @@ async fn run_memory_embed_backfill(args: &MemoryArgs) -> Result<()> {
     use crate::memory::{embeddings, store};
 
     let db_path = args.db.clone().unwrap_or_else(store::default_path);
-    let mut conn = store::open(&db_path)
+    let conn = store::open(&db_path)
         .with_context(|| format!("open views.db for embed-backfill: {}", db_path.display()))?;
 
     // Resolve the embed provider from the operator's freedom.yaml.
-    let config =
-        FreedomConfig::load_from_default_path().context("load freedom.yaml for embed-backfill")?;
-    let provider = match crate::providers::local_embedding_provider_from_config(&config).await {
+    let config_path = FreedomConfig::default_path();
+    let config = FreedomConfig::load_from_default_path()
+        .context("load exact freedom.yaml for embed-backfill")?;
+    let home = FreedomConfig::default_neoth_home();
+    let provider = match crate::providers::local_embedding_provider_from_config_at_path(
+        &config,
+        &home,
+        &config_path,
+    )
+    .await {
         Some(p) => p,
         None => {
             println!(
@@ -1729,27 +1751,11 @@ async fn run_memory_embed_backfill(args: &MemoryArgs) -> Result<()> {
     } else {
         args.limit
     };
-    let candidates =
-        crate::memory::counterparty_consent::claim_local_embedding_candidates(&conn, candidate_cap)
-            .context("select W208-eligible unembedded episodes for embed-backfill")?;
-    let total_candidates = candidates.len();
+    let total_candidates = embeddings::pending_episode_texts(&conn, &provider, candidate_cap).len();
+    let (_conn, newly_embedded) = embeddings::embed_pending_episodes(conn, &provider, candidate_cap).await;
     if total_candidates == 0 {
-        println!("no eligible unembedded episodes to backfill.");
+        println!("no eligible episodes needed the current embedding generation.");
         return Ok(());
-    }
-
-    // Embed each candidate best-effort (failures are warned inside embed_episode_text).
-    let mut newly_embedded = 0usize;
-    for (event_id, text) in &candidates {
-        conn = embeddings::embed_episode_text(conn, *event_id, text, &provider).await;
-        let stored: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM idx_embedding WHERE source_kind='episode' AND source_ref=?1)",
-            [event_id.to_string()],
-            |row| row.get(0),
-        )?;
-        if stored {
-            newly_embedded += 1;
-        }
     }
 
     match args.output {

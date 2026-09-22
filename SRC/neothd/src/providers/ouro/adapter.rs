@@ -198,6 +198,17 @@ pub struct LocalOuroAdapter {
     loaded: Arc<Mutex<Option<LoadedOuro>>>,
 }
 
+/// Exact Ouro receipt and dispatch shape used by a prepared embedding adapter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OuroEmbeddingGeneration {
+    pub(crate) model: String,
+    pub(crate) dimension: usize,
+    pub(crate) artifact_digest: String,
+    pub(crate) quant_mode: &'static str,
+}
+
+pub(crate) const OURO_EMBEDDING_ALGORITHM: &str = "ouro-last-hidden-l2-v1";
+
 /// Bounded, terminal result of an explicit cache-only Q8 verification.
 ///
 /// `verified` means the existing immutable generation was receipt-bound,
@@ -221,6 +232,54 @@ pub struct OuroQ8VerifyStatus {
 }
 
 impl LocalOuroAdapter {
+    /// Prepare the concrete local Ouro embedding model and retain its existing
+    /// exact load receipt. This deliberately runs outside config authority
+    /// locks and never calls the download constructor.
+    pub(crate) async fn prepare_embedding_generation(&self) -> Result<OuroEmbeddingGeneration> {
+        let adapter_handle = AdapterHandle {
+            repo: self.repo.clone(),
+            sampling: self.sampling,
+            max_new_tokens: self.max_new_tokens,
+            accelerator: self.accelerator,
+            quant_mode: self.quant_mode,
+            loaded: Arc::clone(&self.loaded),
+            tokenizer_path: self.tokenizer_path.clone(),
+            config_path: self.config_path.clone(),
+            weights_path: self.weights_path.clone(),
+            cache_dir: self.cache_dir.clone(),
+        };
+        tokio::task::spawn_blocking(move || {
+            let adapter = LocalOuroAdapter {
+                repo: adapter_handle.repo,
+                cache_dir: adapter_handle.cache_dir,
+                tokenizer_path: adapter_handle.tokenizer_path,
+                config_path: adapter_handle.config_path,
+                weights_path: adapter_handle.weights_path,
+                accelerator: adapter_handle.accelerator,
+                sampling: adapter_handle.sampling,
+                max_new_tokens: adapter_handle.max_new_tokens,
+                quant_mode: adapter_handle.quant_mode,
+                loaded: adapter_handle.loaded,
+            };
+            ensure_ouro_loaded(&adapter)?;
+            let slot = adapter
+                .loaded
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let loaded = slot
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Ouro embedding load completed without model"))?;
+            Ok(OuroEmbeddingGeneration {
+                model: adapter.repo,
+                dimension: loaded.model.hidden_size(),
+                artifact_digest: loaded.receipt.summary(),
+                quant_mode: adapter.quant_mode.as_str(),
+            })
+        })
+        .await
+        .context("join Ouro embedding generation preparation")?
+    }
+
     /// Build with HF repo + auto-download on first call. Hard rule
     /// AIO: weights are fetched + cached without operator manual
     /// steps (no npm / no HuggingFace web UI).

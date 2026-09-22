@@ -176,15 +176,46 @@ pub async fn tail(
     interval: Duration,
     // GR-164: when `Some`, a tamper-suspect segment emits a 0x5E alert frame.
     writer: Option<WalWriterHandle>,
-    // W208: this opaque capability is constructed only from a concrete local
-    // backend. A generic provider name/object cannot authorize episode text.
-    embed_provider: Option<crate::providers::LocalEmbeddingProvider>,
+    // W212: the selected local capability is re-resolved when an accepted
+    // reload changes. No boot-time A capability may serve a later B selection.
+    reload_controller: std::sync::Arc<crate::config::reload::ReloadController>,
     // GOLD-ADAPT-TRAIL-02: when `Some`, fires `()` on every pass that indexes
     // at least one new frame so in-process consumers (kanban_sse relay) can
     // push updates without polling. Silently discarded when no receiver exists.
     change_tx: Option<tokio::sync::watch::Sender<()>>,
 ) -> Result<()> {
+    let mut embedding_provider_cache: Option<(
+        u64,
+        Option<crate::providers::LocalEmbeddingProvider>,
+    )> = None;
+    let mut next_unavailable_embedding_retry = tokio::time::Instant::now();
     loop {
+        let accepted = reload_controller.accepted_snapshot();
+        let accepted_epoch = accepted.epoch();
+        let cached_epoch = embedding_provider_cache
+            .as_ref()
+            .map(|(epoch, _)| *epoch);
+        let cached_provider_unavailable = embedding_provider_cache
+            .as_ref()
+            .is_some_and(|(_, provider)| provider.is_none());
+        if should_refresh_embedding_provider(
+            cached_epoch,
+            cached_provider_unavailable,
+            accepted_epoch,
+            tokio::time::Instant::now(),
+            next_unavailable_embedding_retry,
+        ) {
+            let accepted_config = accepted.config();
+            let provider = crate::providers::local_embedding_provider_from_config_at_path(
+                &accepted_config,
+                &home,
+                reload_controller.source_path(),
+            )
+            .await;
+            next_unavailable_embedding_retry = tokio::time::Instant::now()
+                + std::time::Duration::from_secs(30);
+            embedding_provider_cache = Some((accepted_epoch, provider));
+        }
         match replay_all_segments_audited(&home, &mut conn, &segment_path, writer.as_ref()).await {
             Ok(n) if n > 0 => {
                 debug!(frames = n, "indexer caught up");
@@ -195,41 +226,39 @@ pub async fn tail(
                 if let Some(tx) = &change_tx {
                     let _ = tx.send(());
                 }
-                // MEMGRAPH-01 — auto-embed the new episode(s) this pass added, so
-                // the continuous (channel/daemon) ingest joins the vector lane
-                // without an operator backfill. Bounded per pass; best-effort.
-                // Orchestrated in three phases (sync collect → async embed → sync
-                // store) so NO `&Connection` is held across the `.await` — the
-                // owned `conn` stays parked (Connection is Send), keeping this
-                // spawned tail future `Send`.
-                if let Some(p) = embed_provider.as_ref() {
-                    let pending = crate::memory::embeddings::pending_episode_texts(&conn, 64);
-                    let mut vectors = Vec::with_capacity(pending.len());
-                    for (event_id, text) in pending {
-                        if let Some((model, vec)) =
-                            crate::memory::embeddings::embed_one(&text, p.as_embed_provider()).await
-                        {
-                            vectors.push((event_id, model, vec));
-                        }
-                    }
-                    let mut stored = 0;
-                    for (event_id, model, vec) in vectors {
-                        if crate::memory::embeddings::store_episode_vector(
-                            &conn, event_id, &model, &vec, p,
-                        ) {
-                            stored += 1;
-                        }
-                    }
-                    if stored > 0 {
-                        debug!(stored, "indexer auto-embedded eligible episodes (W208)");
-                    }
-                }
             }
             Ok(_) => {}
             Err(e) => warn!(error = %e, "indexer pass failed; retrying"),
         }
+        // W212 — process a bounded generation-aware pending batch every pass,
+        // including quiet WAL passes. A selected B generation therefore replaces
+        // durable A rows without waiting for another RAW frame. The provider
+        // guard rejects stale A after a B config commit.
+        if let Some((_, Some(provider))) = embedding_provider_cache.as_ref() {
+            let (returned_conn, stored) = crate::memory::embeddings::embed_pending_episodes(
+                conn,
+                provider,
+                64,
+            )
+            .await;
+            conn = returned_conn;
+            if stored > 0 {
+                debug!(stored, "indexer auto-embedded current-generation episodes (W212)");
+            }
+        }
         tokio::time::sleep(interval).await;
     }
+}
+
+fn should_refresh_embedding_provider(
+    cached_epoch: Option<u64>,
+    cached_provider_unavailable: bool,
+    accepted_epoch: u64,
+    now: tokio::time::Instant,
+    retry_at: tokio::time::Instant,
+) -> bool {
+    cached_epoch != Some(accepted_epoch)
+        || (cached_provider_unavailable && now >= retry_at)
 }
 
 /// Index every `.wal` file in `seed.parent()` (plus `seed` itself if the
@@ -580,6 +609,25 @@ mod tests {
     use crate::wal::{EventFlags, EventHeaderV2, EventId, Hlc, Importance, NodeId, SessionId};
     use tempfile::tempdir;
     use tokio::fs::write;
+
+    #[test]
+    fn unavailable_embedding_provider_retries_after_bounded_backoff() {
+        let now = tokio::time::Instant::now();
+        assert!(should_refresh_embedding_provider(
+            Some(7), true, 7, now, now,
+        ));
+        assert!(!should_refresh_embedding_provider(
+            Some(7), true, 7, now, now + std::time::Duration::from_secs(30),
+        ));
+    }
+
+    #[test]
+    fn embedding_provider_refreshes_on_accepted_generation_change() {
+        let now = tokio::time::Instant::now();
+        assert!(should_refresh_embedding_provider(
+            Some(7), false, 8, now, now + std::time::Duration::from_secs(30),
+        ));
+    }
 
     fn header_for(event_type: u8, payload_len: u32, event_id: u64, ts_ns: u64) -> EventHeaderV2 {
         EventHeaderV2 {
@@ -968,7 +1016,10 @@ mod tests {
                 seg_clone,
                 std::time::Duration::from_millis(50),
                 None, // no writer
-                None, // no embed provider
+                std::sync::Arc::new(crate::config::reload::ReloadController::new(
+                    crate::config::FreedomConfig::default(),
+                    dir.path().join("freedom.yaml"),
+                )),
                 Some(tx),
             )
             .await;

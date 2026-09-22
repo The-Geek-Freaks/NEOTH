@@ -324,7 +324,27 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "W209: verified counterparty consent ceremony challenge reservations",
         run: migration_v42_to_v43,
     },
+    Migration {
+        from: 43,
+        to: 44,
+        description: "W212: config-authoritative embedding generations with legacy quarantine",
+        run: migration_v43_to_v44,
+    },
 ];
+
+/// W212 adds a generation label without interpreting historical provider
+/// provenance. In particular, equal model labels or dimensions never turn a
+/// retained vector into the current config-selected vector space.
+pub(crate) fn migration_v43_to_v44(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE idx_embedding ADD COLUMN generation TEXT NOT NULL DEFAULT 'legacy-unknown-v0'; \
+         CREATE INDEX IF NOT EXISTS idx_embedding_episode_generation \
+             ON idx_embedding (source_kind, generation, dim, source_ref) \
+             WHERE source_kind = 'episode';",
+    )
+    .context("v43→v44: add config-authoritative embedding generation")?;
+    Ok(())
+}
 
 /// W209 is additive only. Existing W208 origin and consent projections remain
 /// unchanged; no historic channel interaction can become a ceremony challenge.
@@ -5150,6 +5170,8 @@ mod tests {
              INSERT INTO idx_counterparty_clustering_consent_v1 \
                 (channel_id,account_id,scoped_sender_hash,state,proof_kind,proof_sha256,proof_verified_at_ns,revision,revoked_at_ns) \
               VALUES('telegram','default','0123456789abcdef','verified_granted','pre-v43-proof',zeroblob(32),8,3,NULL); \
+             DROP INDEX idx_embedding_episode_generation; \
+             ALTER TABLE idx_embedding DROP COLUMN generation; \
              DROP TABLE idx_counterparty_consent_audit_terminal_v1; \
              DROP TABLE idx_counterparty_consent_challenge_v1; \
              UPDATE meta SET value='42' WHERE key='schema_version';",
@@ -5215,5 +5237,39 @@ mod tests {
             )
             .unwrap();
         assert_eq!((version, challenge_rows), ("43".to_owned(), (0, 0)));
+    }
+
+    #[test]
+    fn v43_to_v44_preserves_every_historical_vector_as_legacy_unknown() {
+        let mut conn = open_with_meta(43);
+        conn.execute_batch(
+            "CREATE TABLE idx_embedding ( \
+                id INTEGER PRIMARY KEY AUTOINCREMENT, \
+                source_kind TEXT NOT NULL, \
+                source_ref TEXT NOT NULL, \
+                model TEXT NOT NULL, \
+                embedding BLOB NOT NULL, \
+                dim INTEGER NOT NULL, \
+                created_at INTEGER NOT NULL, \
+                UNIQUE(source_kind, source_ref) \
+             ); \
+             INSERT INTO idx_embedding \
+                (source_kind,source_ref,model,embedding,dim,created_at) VALUES \
+                ('episode','1','same-label',X'00000000',1,1), \
+                ('episode','2','different-label',X'0000000000000000',2,2), \
+                ('image','media','same-label',X'00000000',1,3);",
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn, 43, 44).unwrap(), 44);
+        let generations: Vec<String> = conn
+            .prepare("SELECT generation FROM idx_embedding ORDER BY source_ref")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(generations, vec!["legacy-unknown-v0"; 3]);
+        assert!(sqlite_object_exists(&conn, "idx_embedding_episode_generation"));
     }
 }

@@ -2040,7 +2040,13 @@ async fn run_similar_to_image(
         embeddings::hnsw_beneficial_for_corpus(embeddings::count(conn).unwrap_or(0) as usize)
     });
     let hits =
-        embeddings::find_similar_dispatch(conn, &query, kind_filter, args.limit, hnsw.as_deref())
+        embeddings::find_similar_dispatch(
+            conn,
+            &query,
+            embeddings::VectorQueryScope::MediaModel { source_kind: kind_filter, model: crate::providers::clip_engine::DEFAULT_CLIP_REPO, dimension: query.len() },
+            args.limit,
+            hnsw.as_deref(),
+        )
             .context("similarity search")?;
     render_similarity(&hits, args.output, &image_path.display().to_string());
     Ok(())
@@ -2065,7 +2071,13 @@ async fn run_similar_to_text(conn: &Connection, prompt: String, args: &RecallArg
         embeddings::hnsw_beneficial_for_corpus(embeddings::count(conn).unwrap_or(0) as usize)
     });
     let hits =
-        embeddings::find_similar_dispatch(conn, &query, kind_filter, args.limit, hnsw.as_deref())
+        embeddings::find_similar_dispatch(
+            conn,
+            &query,
+            embeddings::VectorQueryScope::MediaModel { source_kind: kind_filter, model: crate::providers::clip_engine::DEFAULT_CLIP_REPO, dimension: query.len() },
+            args.limit,
+            hnsw.as_deref(),
+        )
             .context("similarity search")?;
     render_similarity(&hits, args.output, &format!("\"{prompt}\""));
     Ok(())

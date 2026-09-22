@@ -14,11 +14,13 @@
 //! and keeps the analysis on the operator's hardware.
 
 use std::path::{Path, PathBuf};
+use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use sha2::{Digest, Sha256};
 use tracing::info;
 
 use super::{
@@ -163,6 +165,9 @@ struct LoadedEmbedModel {
     /// for dim-mismatch guards before computing cosine. Varies by
     /// checkpoint (Qwen2.5-3B = 2048, Qwen2.5-0.5B = 896).
     hidden_size: usize,
+    /// Digest of the exact three inputs used to build this cached model. A
+    /// later factory must never label this warm model with changed disk bytes.
+    artifact_digest: String,
 }
 
 /// Default Hugging Face repo for the Qwen3-4B base. Operators may override
@@ -256,6 +261,54 @@ pub struct LocalQwenAdapter {
     /// `lm_head`). Populated on first `embed()` call; operators who
     /// never use the embedding surface pay nothing.
     loaded_embed: Arc<Mutex<Option<LoadedEmbedModel>>>,
+}
+
+/// Exact local inputs and embedding algorithm used by one prepared adapter.
+/// This is intentionally created only after the embed-only model is loaded;
+/// `repo` and a dimension hint alone are not a model-space identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct QwenEmbeddingGeneration {
+    pub(crate) model: String,
+    pub(crate) dimension: usize,
+    pub(crate) artifact_digest: String,
+}
+
+pub(crate) const QWEN_EMBEDDING_ALGORITHM: &str = "mean-postnorm-l2-v1";
+
+fn embedding_input_digest(
+    config_path: &Path,
+    tokenizer_path: &Path,
+    weights_path: &Path,
+) -> Result<String> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"neoth-qwen-embedding-inputs-v1\0");
+    for path in [config_path, tokenizer_path, weights_path] {
+        let mut file = std::fs::File::open(path)
+            .with_context(|| format!("open Qwen embedding input {}", path.display()))?;
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = file
+                .read(&mut buffer)
+                .with_context(|| format!("read Qwen embedding input {}", path.display()))?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+        }
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn ensure_generation_digest_matches(
+    digest_before: &str,
+    loaded_digest: &str,
+    digest_after: &str,
+) -> Result<()> {
+    anyhow::ensure!(
+        digest_before == digest_after && loaded_digest == digest_before,
+        "Qwen embedding inputs changed while a cached embed model was active; refusing mismatched generation"
+    );
+    Ok(())
 }
 
 /// Default new-token cap when the operator doesn't override. Fits typical
@@ -1256,11 +1309,13 @@ fn ensure_embed_loaded(
         "✓ Qwen embed-only model loaded in {:.1}s",
         started.elapsed().as_secs_f32()
     );
+    let artifact_digest = embedding_input_digest(config_path, tokenizer_path, weights_path)?;
     *slot = Some(LoadedEmbedModel {
         model,
         tokenizer,
         device,
         hidden_size,
+        artifact_digest,
     });
     Ok(())
 }
@@ -1341,6 +1396,54 @@ fn run_embed(
 }
 
 impl LocalQwenAdapter {
+    /// Prepare and bind the exact local embedding inputs without contacting a
+    /// network service. This runs outside configuration authority locks.
+    pub(crate) async fn prepare_embedding_generation(&self) -> Result<QwenEmbeddingGeneration> {
+        let loaded_embed = Arc::clone(&self.loaded_embed);
+        let tokenizer_path = self.tokenizer_path.clone();
+        let config_path = self.config_path.clone();
+        let weights_path = self.weights_path.clone();
+        let accelerator = self.accelerator;
+        let repo = self.repo.clone();
+        tokio::task::spawn_blocking(move || {
+            let digest_before = embedding_input_digest(
+                &config_path,
+                &tokenizer_path,
+                &weights_path,
+            )?;
+            ensure_embed_loaded(
+                &loaded_embed,
+                &tokenizer_path,
+                &config_path,
+                &weights_path,
+                accelerator,
+                &repo,
+            )?;
+            let (dimension, loaded_digest) = {
+                let slot = loaded_embed
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let loaded = slot
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Qwen embed load completed without model"))?;
+                (loaded.hidden_size, loaded.artifact_digest.clone())
+            };
+            let digest_after = embedding_input_digest(
+                &config_path,
+                &tokenizer_path,
+                &weights_path,
+            )?;
+            ensure_generation_digest_matches(&digest_before, &loaded_digest, &digest_after)?;
+            Ok(QwenEmbeddingGeneration {
+                model: repo,
+                dimension,
+                artifact_digest: loaded_digest,
+            })
+        })
+        .await
+        .context("join Qwen embedding generation preparation")?
+    }
+
     /// Async wrapper around the embed forward-pass. Spawns the
     /// blocking model call on the tokio blocking pool so the
     /// caller's tokio runtime stays responsive.
@@ -1514,6 +1617,29 @@ pub(crate) fn cache_dir_at(neoth_home: &Path, repo: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedding_input_digest_changes_when_bound_artifact_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join(CONFIG_FILE);
+        let tokenizer = dir.path().join(TOKENIZER_FILE);
+        let weights = dir.path().join(SAFETENSORS_FILE);
+        std::fs::write(&config, b"config-v1").unwrap();
+        std::fs::write(&tokenizer, b"tokenizer-v1").unwrap();
+        std::fs::write(&weights, b"weights-v1").unwrap();
+        let first = embedding_input_digest(&config, &tokenizer, &weights).unwrap();
+        std::fs::write(&weights, b"weights-v2").unwrap();
+        let second = embedding_input_digest(&config, &tokenizer, &weights).unwrap();
+        assert_ne!(first, second, "generation digest must bind weight bytes");
+    }
+
+    #[test]
+    fn prepared_generation_rejects_changed_disk_for_warm_model() {
+        let error = ensure_generation_digest_matches("new-digest", "old-digest", "new-digest")
+            .expect_err("warm model bytes must not be relabelled with changed disk bytes");
+        assert!(error.to_string().contains("cached embed model"));
+        ensure_generation_digest_matches("same", "same", "same").unwrap();
+    }
 
     #[tokio::test]
     async fn w41_worker_entry_is_started_before_the_owned_generation_join() {

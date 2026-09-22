@@ -3,6 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W212 generation isolation (2026-09-22):** model generations now bind artifact
+identity, config selection and exact config path through episode claim/write,
+SQLite/HNSW recall and consolidation. Model changes requeue eligible episodes;
+late results cannot restore superseded vectors. Media and episode spaces remain
+separate. Seventeen new tests plus fourteen existing HNSW/forget regressions
+bring the grouped lane to 236, with 526 source paths / 783 universal native /
+92 GUI identities and unchanged platform extras. Hosted W212 execution is pending.
+W211 Grouped205 `35763682082` is fully admitted (205/205, all 46 source paths,
+identities, matrix and lock bound to `54c57b19`). Full CI `35765595152` on
+`c4176c54` reported 33 Linux slim-Clippy diagnostics under separate repair;
+other native jobs remain pending. Road stays 1324 / 1015 checked / 307 open /
+2 partial. See `docs/gold-wave212-verification.md`. No local executable checks ran.
+
 **W211 Core pass / GUI compile repair (2026-09-22):** Grouped205
 `35763682082` and Core/CLI `35763685944` on `54c57b19` succeeded. The generated
 CLI reference is source/SHA-bound and imported. Native CI identified E0425

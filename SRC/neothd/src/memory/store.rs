@@ -131,7 +131,9 @@ impl std::ops::DerefMut for PrivateHistoryConnection {
 /// v41: secondary, threshold-selected Hippocampus event-id membership.
 /// v42: immutable raw-origin receipts and exact counterparty clustering state.
 /// v43: verified counterparty consent ceremony challenge reservations.
-pub const SCHEMA_VERSION: i64 = 43;
+/// v44: config-authoritative embedding generations; historical vectors stay
+///      `legacy-unknown-v0` and are never inferred from model or dimension.
+pub const SCHEMA_VERSION: i64 = 44;
 
 /// Current P1-08 metadata schema, split so the v36→v37 migration can rebuild
 /// the altered strict tables before the final trigger set is installed.  The
@@ -2341,12 +2343,16 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             model       TEXT NOT NULL,
             embedding   BLOB NOT NULL,
             dim         INTEGER NOT NULL,
+            generation  TEXT NOT NULL DEFAULT 'legacy-unknown-v0',
             created_at  INTEGER NOT NULL,
             UNIQUE (source_kind, source_ref)
         );
 
         CREATE INDEX IF NOT EXISTS idx_embedding_kind     ON idx_embedding (source_kind);
         CREATE INDEX IF NOT EXISTS idx_embedding_created  ON idx_embedding (created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_embedding_episode_generation
+            ON idx_embedding (source_kind, generation, dim, source_ref)
+            WHERE source_kind = 'episode';
 
         -- ── Schema v7: idx_profile (Phase 2 SPEC_proactive_learning §1) ───
         --

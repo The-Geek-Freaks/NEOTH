@@ -1134,7 +1134,7 @@ async fn run_embedding_models(
                 "qwen3_q8 has no verified read-only load probe; it remains unavailable until a no-download runtime probe exists"
             );
             let readiness =
-                crate::providers::local_embedding_readiness_from_config_at(&cfg, &home).await;
+                crate::providers::local_embedding_readiness_from_config_at_path(&cfg, &home, &path).await;
             let readback = FreedomConfig::load_from_path(&path)?;
             anyhow::ensure!(
                 readback.embed.model == cfg.embed.model

@@ -27,6 +27,8 @@ use super::embed::{EmbedProvider, EmbedRequest, EmbedResponse};
 pub const BGE_M3_DIM: usize = BGE_M3_EMBEDDING_DIMENSION;
 /// The official BGE-M3 model supports sequences through 8192 tokens.
 pub const BGE_M3_MAX_TOKENS: usize = MANIFEST_MAX_TOKENS;
+/// Bump when the dense embedding path (CLS pooling + L2 normalisation) changes.
+pub(crate) const BGE_M3_EMBEDDING_ALGORITHM: &str = "cls-pool-l2-v1";
 
 /// Exact official artifact identity shared with operator surfaces.
 pub const fn pinned_model_identity() -> (&'static str, &'static str) {

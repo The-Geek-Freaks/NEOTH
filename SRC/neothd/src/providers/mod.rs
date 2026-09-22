@@ -69,7 +69,7 @@ pub mod token_cap;
 pub mod whisper;
 
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -3605,22 +3605,137 @@ async fn from_config_with_optional_home(
 /// infer locality from a provider display name.  It prevents a future remote
 /// `EmbedProvider` implementation from being accidentally admitted to the
 /// W208 counterparty-vector path.
-pub struct LocalEmbeddingProvider(std::sync::Arc<dyn crate::providers::embed::EmbedProvider>);
+/// The embedding-relevant subset of an accepted `freedom.yaml` generation.
+/// It deliberately includes the selected local backend and Ouro quant mode so
+/// an old adapter cannot be used after any model-space-affecting config edit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EmbeddingSelection(String);
+
+impl EmbeddingSelection {
+    fn from_config(config: &FreedomConfig) -> Self {
+        let provider = config
+            .inference
+            .embedding_provider
+            .map(|value| value.as_str())
+            .unwrap_or("none");
+        Self(format!(
+            "model={};provider={provider};provider_model={};ouro_quant={}",
+            config.embed.model.as_str(),
+            config.provider_model.as_deref().unwrap_or(""),
+            config.inference.ouro_quant_mode.as_str(),
+        ))
+    }
+}
+
+/// Immutable model-space identity attached to one concrete local adapter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EmbeddingGeneration {
+    id: String,
+    expected_model: String,
+    dimension: usize,
+}
+
+impl EmbeddingGeneration {
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub(crate) fn expected_model(&self) -> &str {
+        &self.expected_model
+    }
+
+    pub(crate) const fn dimension(&self) -> usize {
+        self.dimension
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(id: impl Into<String>, dimension: usize) -> Self {
+        let id = id.into();
+        Self {
+            expected_model: id.clone(),
+            id,
+            dimension,
+        }
+    }
+}
+
+/// An embedding provider whose concrete construction was locally hosted.
+#[derive(Clone)]
+pub struct LocalEmbeddingProvider {
+    provider: Arc<dyn crate::providers::embed::EmbedProvider>,
+    config_path: PathBuf,
+    selection: EmbeddingSelection,
+    generation: EmbeddingGeneration,
+    #[cfg(test)]
+    bypass_config_authority: bool,
+}
 
 impl LocalEmbeddingProvider {
     pub(crate) fn as_embed_provider(&self) -> &dyn crate::providers::embed::EmbedProvider {
-        self.0.as_ref()
+        self.provider.as_ref()
+    }
+
+    pub(crate) fn generation(&self) -> &EmbeddingGeneration {
+        &self.generation
+    }
+
+    /// Run short synchronous durable work only if this adapter's sealed
+    /// selection still matches canonical `freedom.yaml`. The config authority
+    /// is intentionally acquired before the caller's SQLite transaction.
+    pub(crate) fn with_current_config<T>(
+        &self,
+        action: impl FnOnce() -> Result<T>,
+    ) -> Result<Option<T>> {
+        #[cfg(test)]
+        if self.bypass_config_authority {
+            return action().map(Some);
+        }
+
+        crate::config::with_current_freedom_config_authority_locked(
+            &self.config_path,
+            |current| {
+                if EmbeddingSelection::from_config(current) != self.selection {
+                    return Ok(None);
+                }
+                action().map(Some)
+            },
+        )
     }
 
     fn into_embed_provider(self) -> std::sync::Arc<dyn crate::providers::embed::EmbedProvider> {
-        self.0
+        self.provider
     }
 
     #[cfg(test)]
     pub(crate) fn for_test(
         provider: std::sync::Arc<dyn crate::providers::embed::EmbedProvider>,
     ) -> Self {
-        Self(provider)
+        let dimension = provider.default_dim();
+        let expected_model = provider.name().to_owned();
+        Self {
+            provider,
+            config_path: PathBuf::new(),
+            selection: EmbeddingSelection("test-local-embedding-selection-v1".to_owned()),
+            generation: EmbeddingGeneration {
+                id: format!("test-local-embedding-generation-v1:dim={dimension}"),
+                expected_model,
+                dimension,
+            },
+            bypass_config_authority: true,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_with_config(
+        provider: Arc<dyn crate::providers::embed::EmbedProvider>,
+        config_path: &Path,
+    ) -> Result<Self> {
+        let config = FreedomConfig::load_from_path(config_path)?;
+        let mut fixture = Self::for_test(provider);
+        fixture.config_path = config_path.to_path_buf();
+        fixture.selection = EmbeddingSelection::from_config(&config);
+        fixture.bypass_config_authority = false;
+        Ok(fixture)
     }
 }
 
@@ -3662,6 +3777,91 @@ impl LocalEmbeddingReadiness {
     }
 }
 
+fn seal_local_embedding_provider(
+    config: &FreedomConfig,
+    config_path: &Path,
+    provider: Arc<dyn crate::providers::embed::EmbedProvider>,
+    generation: EmbeddingGeneration,
+) -> Result<LocalEmbeddingProvider> {
+    let selection = EmbeddingSelection::from_config(config);
+    let still_current = crate::config::with_current_freedom_config_authority_locked(
+        config_path,
+        |current| Ok(EmbeddingSelection::from_config(current) == selection),
+    )?;
+    anyhow::ensure!(
+        still_current,
+        "embedding configuration changed while the local provider was preparing"
+    );
+    Ok(LocalEmbeddingProvider {
+        provider,
+        config_path: config_path.to_path_buf(),
+        selection,
+        generation,
+        #[cfg(test)]
+        bypass_config_authority: false,
+    })
+}
+
+fn local_embedding_provider_from_bge(
+    config: &FreedomConfig,
+    config_path: &Path,
+    adapter: crate::providers::local_bge_m3::LocalBgeM3Adapter,
+) -> Result<LocalEmbeddingProvider> {
+    let (repo, revision) = crate::providers::local_bge_m3::pinned_model_identity();
+    let expected_model = format!("{repo}@{revision}");
+    let generation = EmbeddingGeneration {
+        id: format!(
+            "bge-m3:{expected_model}:dim={}:{}",
+            crate::providers::local_bge_m3::BGE_M3_DIM,
+            crate::providers::local_bge_m3::BGE_M3_EMBEDDING_ALGORITHM,
+        ),
+        expected_model,
+        dimension: crate::providers::local_bge_m3::BGE_M3_DIM,
+    };
+    seal_local_embedding_provider(config, config_path, Arc::new(adapter), generation)
+}
+
+async fn local_embedding_provider_from_qwen(
+    config: &FreedomConfig,
+    config_path: &Path,
+    adapter: crate::providers::local_qwen::LocalQwenAdapter,
+) -> Result<LocalEmbeddingProvider> {
+    let identity = adapter.prepare_embedding_generation().await?;
+    let generation = EmbeddingGeneration {
+        id: format!(
+            "qwen3-q8:model={}:sha256={}:dim={}:{}",
+            identity.model,
+            identity.artifact_digest,
+            identity.dimension,
+            crate::providers::local_qwen::QWEN_EMBEDDING_ALGORITHM,
+        ),
+        expected_model: identity.model,
+        dimension: identity.dimension,
+    };
+    seal_local_embedding_provider(config, config_path, Arc::new(adapter), generation)
+}
+
+async fn local_embedding_provider_from_ouro(
+    config: &FreedomConfig,
+    config_path: &Path,
+    adapter: crate::providers::ouro::adapter::LocalOuroAdapter,
+) -> Result<LocalEmbeddingProvider> {
+    let identity = adapter.prepare_embedding_generation().await?;
+    let generation = EmbeddingGeneration {
+        id: format!(
+            "ouro:model={}:sha256={}:quant={}:dim={}:{}",
+            identity.model,
+            identity.artifact_digest,
+            identity.quant_mode,
+            identity.dimension,
+            crate::providers::ouro::adapter::OURO_EMBEDDING_ALGORITHM,
+        ),
+        expected_model: identity.model,
+        dimension: identity.dimension,
+    };
+    seal_local_embedding_provider(config, config_path, Arc::new(adapter), generation)
+}
+
 /// Resolve the selected model through a concrete local adapter and retain why
 /// it is unavailable. The selection is independent of chat/profile routing.
 /// It is also deliberately stricter than the historical erased factory:
@@ -3670,7 +3870,8 @@ pub async fn local_embedding_readiness_from_config(
     config: &FreedomConfig,
 ) -> LocalEmbeddingReadiness {
     let home = FreedomConfig::default_neoth_home();
-    local_embedding_readiness_from_config_at(config, &home).await
+    let config_path = FreedomConfig::default_path();
+    local_embedding_readiness_from_config_at_path(config, &home, &config_path).await
 }
 
 /// Resolve local embedding readiness for one explicit NEOTH instance home.
@@ -3679,6 +3880,17 @@ pub async fn local_embedding_readiness_from_config(
 pub async fn local_embedding_readiness_from_config_at(
     config: &FreedomConfig,
     home: &Path,
+) -> LocalEmbeddingReadiness {
+    local_embedding_readiness_from_config_at_path(config, home, &home.join("freedom.yaml")).await
+}
+
+/// Instance- and config-path-scoped readiness. The exact config path is kept
+/// in every ready W208 capability so later durable episode work can acquire
+/// the same authority boundary as `FreedomConfig::update_at`.
+pub async fn local_embedding_readiness_from_config_at_path(
+    config: &FreedomConfig,
+    home: &Path,
+    config_path: &Path,
 ) -> LocalEmbeddingReadiness {
     use crate::config::embedding::EmbeddingModel;
     use crate::config::inference::InferenceProvider;
@@ -3729,9 +3941,16 @@ pub async fn local_embedding_readiness_from_config_at(
             };
             match crate::providers::local_bge_m3::LocalBgeM3Adapter::open_verified(verified) {
                 Ok(adapter) => match adapter.validate_load().await {
-                    Ok(()) => LocalEmbeddingReadiness::Ready {
-                        model: selected,
-                        provider: LocalEmbeddingProvider(std::sync::Arc::new(adapter)),
+                    Ok(()) => match local_embedding_provider_from_bge(
+                        config,
+                        config_path,
+                        adapter,
+                    ) {
+                        Ok(provider) => LocalEmbeddingReadiness::Ready { model: selected, provider },
+                        Err(error) => LocalEmbeddingReadiness::Unavailable {
+                            model: selected,
+                            reason: format!("verified local BGE-M3 generation is unavailable: {error}"),
+                        },
                     },
                     Err(error) => LocalEmbeddingReadiness::Unavailable {
                         model: selected,
@@ -3753,13 +3972,16 @@ pub async fn local_embedding_readiness_from_config_at(
                 model: selected,
                 reason: "embed.model=qwen3_q8 is selected, but inference.embedding_provider is not configured".to_owned(),
             },
-            Some(provider_kind) => local_qwen_or_ouro_embedding_readiness(config, selected, provider_kind).await,
+            Some(provider_kind) => local_qwen_or_ouro_embedding_readiness(
+                config, config_path, selected, provider_kind,
+            ).await,
         },
     }
 }
 
 async fn local_qwen_or_ouro_embedding_readiness(
     config: &FreedomConfig,
+    config_path: &Path,
     selected: crate::config::embedding::EmbeddingModel,
     provider_kind: crate::config::inference::InferenceProvider,
 ) -> LocalEmbeddingReadiness {
@@ -3781,12 +4003,16 @@ async fn local_qwen_or_ouro_embedding_readiness(
             )
             .await
             {
-                Ok(adapter) => LocalEmbeddingReadiness::Ready {
-                    model: selected,
-                    provider: LocalEmbeddingProvider(std::sync::Arc::new(
-                        adapter.with_quant_mode(config.inference.ouro_quant_mode),
-                    )),
-                },
+                Ok(adapter) => {
+                    let adapter = adapter.with_quant_mode(config.inference.ouro_quant_mode);
+                    match local_embedding_provider_from_ouro(config, config_path, adapter).await {
+                        Ok(provider) => LocalEmbeddingReadiness::Ready { model: selected, provider },
+                        Err(error) => LocalEmbeddingReadiness::Unavailable {
+                            model: selected,
+                            reason: format!("local Ouro embedding generation is unavailable: {error}"),
+                        },
+                    }
+                }
                 Err(error) => LocalEmbeddingReadiness::Unavailable {
                     model: selected,
                     reason: format!("local Ouro embedding adapter is unavailable: {error}"),
@@ -3810,9 +4036,12 @@ async fn local_qwen_or_ouro_embedding_readiness(
             )
             .await
             {
-                Ok(adapter) => LocalEmbeddingReadiness::Ready {
-                    model: selected,
-                    provider: LocalEmbeddingProvider(std::sync::Arc::new(adapter)),
+                Ok(adapter) => match local_embedding_provider_from_qwen(config, config_path, adapter).await {
+                    Ok(provider) => LocalEmbeddingReadiness::Ready { model: selected, provider },
+                    Err(error) => LocalEmbeddingReadiness::Unavailable {
+                        model: selected,
+                        reason: format!("local Qwen embedding generation is unavailable: {error}"),
+                    },
                 },
                 Err(error) => LocalEmbeddingReadiness::Unavailable {
                     model: selected,
@@ -3837,7 +4066,8 @@ pub async fn local_embedding_provider_from_config(
     config: &FreedomConfig,
 ) -> Option<LocalEmbeddingProvider> {
     let home = FreedomConfig::default_neoth_home();
-    local_embedding_provider_from_config_at(config, &home).await
+    let config_path = FreedomConfig::default_path();
+    local_embedding_provider_from_config_at_path(config, &home, &config_path).await
 }
 
 /// Instance-scoped W208 local embedding capability. This preserves the opaque
@@ -3846,7 +4076,17 @@ pub async fn local_embedding_provider_from_config_at(
     config: &FreedomConfig,
     home: &Path,
 ) -> Option<LocalEmbeddingProvider> {
-    local_embedding_readiness_from_config_at(config, home)
+    local_embedding_provider_from_config_at_path(config, home, &home.join("freedom.yaml")).await
+}
+
+/// W212 exact-config-path factory. A ready return has been checked against the
+/// same canonical configuration path that guards later episode-vector writes.
+pub async fn local_embedding_provider_from_config_at_path(
+    config: &FreedomConfig,
+    home: &Path,
+    config_path: &Path,
+) -> Option<LocalEmbeddingProvider> {
+    local_embedding_readiness_from_config_at_path(config, home, config_path)
         .await
         .into_provider()
 }
@@ -3862,6 +4102,84 @@ pub async fn embed_provider_from_config(
     local_embedding_provider_from_config(config)
         .await
         .map(LocalEmbeddingProvider::into_embed_provider)
+}
+
+#[cfg(test)]
+mod embedding_generation_tests {
+    use super::*;
+    use std::time::Duration;
+
+    struct FixedEmbed;
+
+    #[async_trait::async_trait]
+    impl crate::providers::embed::EmbedProvider for FixedEmbed {
+        fn name(&self) -> &'static str {
+            "fixed-test"
+        }
+
+        fn default_dim(&self) -> usize {
+            2
+        }
+
+        async fn embed(
+            &self,
+            _request: crate::providers::embed::EmbedRequest,
+        ) -> Result<crate::providers::embed::EmbedResponse> {
+            Ok(crate::providers::embed::EmbedResponse {
+                vector: vec![1.0, 0.0],
+                model: "fixed-test".to_owned(),
+                latency: Duration::ZERO,
+            })
+        }
+    }
+
+    #[test]
+    fn local_embedding_provider_for_test_matches_fixed_embed_response_contract() {
+        let provider = LocalEmbeddingProvider::for_test(Arc::new(FixedEmbed));
+        assert_eq!(provider.generation().expected_model(), "fixed-test");
+        assert_eq!(provider.generation().dimension(), 2);
+    }
+
+    #[test]
+    fn with_current_config_for_test_executes_without_reading_default_config() {
+        let provider = LocalEmbeddingProvider::for_test(Arc::new(FixedEmbed));
+        let executed = std::cell::Cell::new(0);
+        assert_eq!(
+            provider
+                .with_current_config(|| {
+                    executed.set(executed.get() + 1);
+                    Ok(7_i32)
+                })
+                .unwrap(),
+            Some(7)
+        );
+        assert_eq!(executed.get(), 1);
+    }
+    #[test]
+    fn with_current_config_rejects_stale_selection_via_shared_update_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&FreedomConfig::default()).unwrap(),
+        )
+        .unwrap();
+        let current = FreedomConfig::load_from_path(&config_path).unwrap();
+        let provider = LocalEmbeddingProvider {
+            provider: Arc::new(FixedEmbed),
+            config_path: config_path.clone(),
+            selection: EmbeddingSelection::from_config(&current),
+            generation: EmbeddingGeneration::for_test("test-generation", 2),
+            bypass_config_authority: false,
+        };
+        assert_eq!(provider.with_current_config(|| Ok(7_i32)).unwrap(), Some(7));
+        FreedomConfig::update_at(&config_path, |config| {
+            config.embed.model = crate::config::embedding::EmbeddingModel::BgeM3;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(provider.with_current_config(|| Ok(9_i32)).unwrap(), None);
+    }
 }
 
 fn require_provider_key(config: &FreedomConfig, name: &str) -> Result<SecretString> {

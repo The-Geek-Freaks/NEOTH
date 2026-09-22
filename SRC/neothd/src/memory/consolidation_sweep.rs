@@ -129,6 +129,9 @@ enum EmbeddingDomain {
 /// Dot product of two L2-normalised vectors (= cosine similarity).
 #[inline]
 fn dot(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.iter().any(|v| !v.is_finite()) || b.iter().any(|v| !v.is_finite()) {
+        return f32::NEG_INFINITY;
+    }
     a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
 }
 
@@ -160,6 +163,24 @@ pub fn run_sweep(
     conn: &Connection,
     now_ns: i64,
     cfg: &ConsolidationSweepConfig,
+    provider: &crate::providers::LocalEmbeddingProvider,
+) -> Result<SweepReport> {
+    match provider.with_current_config(|| {
+        run_sweep_for_generation(conn, now_ns, cfg, provider.generation())
+    })? {
+        Some(report) => Ok(report),
+        None => Ok(SweepReport::default()),
+    }
+}
+
+/// The caller has already acquired config authority for `generation`. This
+/// function then acquires SQLite, preserving the required config → SQLite
+/// order while every cosine input and derived write remains in one transaction.
+fn run_sweep_for_generation(
+    conn: &Connection,
+    now_ns: i64,
+    cfg: &ConsolidationSweepConfig,
+    generation: &crate::providers::EmbeddingGeneration,
 ) -> Result<SweepReport> {
     // The eligibility snapshot, clustering and derived writes share one
     // writer transaction. A concurrent revoke therefore either commits first
@@ -180,11 +201,15 @@ pub fn run_sweep(
              LEFT JOIN idx_counterparty_clustering_consent_v1 c \
                ON c.channel_id=o.channel_id AND c.account_id=o.account_id \
               AND c.scoped_sender_hash=o.scoped_sender_hash \
-             WHERE ie.source_kind = 'episode' AND ( \
+             WHERE ie.source_kind = 'episode' \
+               AND ie.generation = ?1 AND ie.model = ?2 AND ie.dim = ?3 \
+               AND ( \
                 o.origin_kind='local_attested' OR \
                 (o.origin_kind='channel_bound' AND c.state='verified_granted'))",
         )?;
-        stmt.query_map([], |r| {
+        stmt.query_map(
+            params![generation.id(), generation.expected_model(), generation.dimension() as i64],
+            |r| {
             let source_ref: String = r.get(0)?;
             let blob: Vec<u8> = r.get(1)?;
             let origin_kind: String = r.get(2)?;
@@ -199,7 +224,8 @@ pub fn run_sweep(
                 account_id,
                 scoped_sender_hash,
             ))
-        })?
+            },
+        )?
         .filter_map(|res| {
             res.ok().and_then(
                 |(source_ref, blob, origin_kind, channel_id, account_id, scoped_sender_hash)| {
@@ -420,6 +446,7 @@ pub fn run_sweep(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::OptionalExtension;
     use crate::memory::counterparty_consent::{
         OriginFrameWitness, parse_channel_origin_receipt, parse_local_origin_receipt,
         project_origin, serialize_channel_origin_receipt, serialize_local_origin_receipt,
@@ -439,11 +466,32 @@ mod tests {
         let now = 1_000_000i64;
         conn.execute(
             "INSERT OR REPLACE INTO idx_embedding \
-             (source_kind, source_ref, model, embedding, dim, created_at) \
-             VALUES ('episode', ?1, 'test', ?2, ?3, ?4)",
+             (source_kind, source_ref, model, generation, embedding, dim, created_at) \
+             VALUES ('episode', ?1, 'test', 'test', ?2, ?3, ?4)",
             params![event_id.to_string(), blob, dim, now],
         )
         .unwrap();
+    }
+
+    /// Existing sweep regressions use the exact test generation carried by the
+    /// fixture rows. Production callers must use the config-authority wrapper.
+    fn run_sweep(
+        conn: &Connection,
+        now_ns: i64,
+        cfg: &ConsolidationSweepConfig,
+    ) -> Result<SweepReport> {
+        let dimension: Option<i64> = conn
+            .query_row(
+                "SELECT dim FROM idx_embedding WHERE source_kind='episode' LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let generation = crate::providers::EmbeddingGeneration::for_test(
+            "test",
+            dimension.unwrap_or(1) as usize,
+        );
+        super::run_sweep_for_generation(conn, now_ns, cfg, &generation)
     }
 
     /// Insert a minimal idx_episode row (no channel tag — e.g. RAW_TEXT).
@@ -883,5 +931,51 @@ mod tests {
             report.clusters_found, 0,
             "named-channel vs NULL-channel must not cluster"
         );
+    }
+
+    #[test]
+    fn same_dim_different_generation_and_stale_selection_never_boost_or_derive() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        insert_episode(&conn, 1, "generation a", 0.5, 1_000_000_000);
+        insert_episode(&conn, 2, "generation b", 0.5, 2_000_000_000);
+        attest_local(&conn, 1, "generation a");
+        attest_local(&conn, 2, "generation b");
+        insert_embedding(&conn, 1, &[1.0f32, 0.0]);
+        insert_embedding(&conn, 2, &[1.0f32, 0.0]);
+
+        conn.execute(
+            "UPDATE idx_embedding SET generation='same-dim-other-generation' \
+             WHERE source_kind='episode' AND source_ref='2'",
+            [],
+        )
+        .unwrap();
+        let report = run_sweep(&conn, 3_000_000_000_000, &default_cfg()).unwrap();
+        assert_eq!(report, SweepReport::default());
+        let importance: Vec<f64> = conn
+            .prepare("SELECT importance FROM idx_episode ORDER BY event_id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(importance, vec![0.5, 0.5]);
+
+        conn.execute(
+            "UPDATE idx_embedding SET generation='stale-selection-generation' \
+             WHERE source_kind='episode'",
+            [],
+        )
+        .unwrap();
+        let stale = run_sweep(&conn, 3_000_000_000_000, &default_cfg()).unwrap();
+        assert_eq!(stale, SweepReport::default());
+        let facts: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_groundtruth WHERE source='synthesis-cron'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(facts, 0);
     }
 }

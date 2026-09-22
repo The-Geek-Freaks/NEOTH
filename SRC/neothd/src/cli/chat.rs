@@ -8453,9 +8453,10 @@ pub(super) async fn run_post_reply_pipelines(
                             // provider is configured. Runs here (post-reply pipeline) so
                             // it never blocks the reply.
                             if let Some(embed_provider) =
-                                crate::providers::local_embedding_provider_from_config_at(
+                                crate::providers::local_embedding_provider_from_config_at_path(
                                     &config,
                                     &first_tour_home,
+                                    &instance_paths.config,
                                 )
                                 .await
                             {

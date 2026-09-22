@@ -541,6 +541,7 @@ pub fn status(conn: &Connection, key: &CounterpartyKey) -> Result<ConsentStatus>
 pub(crate) fn claim_local_embedding_candidates(
     conn: &Connection,
     cap: usize,
+    generation: &crate::providers::EmbeddingGeneration,
 ) -> Result<Vec<(i64, String)>> {
     if cap == 0 {
         return Ok(Vec::new());
@@ -549,7 +550,7 @@ pub(crate) fn claim_local_embedding_candidates(
         "SELECT e.event_id,e.text FROM idx_episode e \
          WHERE e.text<>'' AND NOT EXISTS ( \
              SELECT 1 FROM idx_embedding x WHERE x.source_kind='episode' \
-             AND x.source_ref=CAST(e.event_id AS TEXT)) \
+             AND x.source_ref=CAST(e.event_id AS TEXT) AND x.generation=?1) \
            AND (EXISTS (SELECT 1 FROM idx_episode_origin_v2 o \
                         WHERE o.raw_event_id=e.event_id AND o.origin_kind='local_attested') \
              OR EXISTS (SELECT 1 FROM idx_episode_origin_v2 o \
@@ -558,9 +559,11 @@ pub(crate) fn claim_local_embedding_candidates(
                          AND c.scoped_sender_hash=o.scoped_sender_hash \
                         WHERE o.raw_event_id=e.event_id AND o.origin_kind='channel_bound' \
                           AND c.state='verified_granted')) \
-         ORDER BY e.event_id DESC LIMIT ?1",
+         ORDER BY e.event_id DESC LIMIT ?2",
     )?;
-    stmt.query_map([cap as i64], |row| Ok((row.get(0)?, row.get(1)?)))?
+    stmt.query_map(params![generation.id(), cap as i64], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    })?
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("W208 select local embedding candidates")
 }
@@ -572,7 +575,7 @@ pub(crate) fn claim_local_embedding_candidates(
 pub(crate) fn store_local_episode_vector_if_eligible(
     tx: &Transaction<'_>,
     event_id: i64,
-    model: &str,
+    generation: &crate::providers::EmbeddingGeneration,
     vector: &[f32],
 ) -> Result<bool> {
     let eligible: bool = tx.query_row(
@@ -587,8 +590,8 @@ pub(crate) fn store_local_episode_vector_if_eligible(
     if !eligible {
         return Ok(false);
     }
-    crate::memory::embeddings::upsert(tx, "episode", &event_id.to_string(), model, vector)
-        .context("W208 store eligible local episode vector")?;
+    crate::memory::embeddings::upsert_episode_generation(tx, event_id, generation, vector)
+        .context("W212 store eligible generation-bound local episode vector")?;
     Ok(true)
 }
 
@@ -740,6 +743,10 @@ mod tests {
         .unwrap()
     }
 
+    fn test_generation(id: &str) -> crate::providers::EmbeddingGeneration {
+        crate::providers::EmbeddingGeneration::for_test(id, 1)
+    }
+
     #[test]
     fn v42_registry_and_fresh_schema_have_only_additive_default_deny_state() {
         assert!(store::SCHEMA_VERSION >= 42);
@@ -779,7 +786,9 @@ mod tests {
         // Build a faithful v41 fixture from the otherwise fresh schema: the
         // historic episode/vector survive, while all v42-only state is absent.
         conn.execute_batch(
-            "DROP TABLE idx_counterparty_consent_audit_terminal_v1; \
+            "DROP INDEX idx_embedding_episode_generation; \
+             ALTER TABLE idx_embedding DROP COLUMN generation; \
+             DROP TABLE idx_counterparty_consent_audit_terminal_v1; \
              DROP TABLE idx_counterparty_consent_challenge_v1; \
              DROP TABLE idx_episode_origin_conflict_v1; \
              DROP TABLE idx_counterparty_clustering_consent_v1; \
@@ -853,9 +862,10 @@ mod tests {
     fn legacy_raw_is_default_denied_but_valid_local_receipt_is_eligible() {
         let dir = tempfile::tempdir().unwrap();
         let mut conn = store::open(&dir.path().join("views.db")).unwrap();
+        let generation = test_generation("test-generation-a");
         insert_raw(&conn, 1);
         assert!(
-            claim_local_embedding_candidates(&conn, 10)
+            claim_local_embedding_candidates(&conn, 10, &generation)
                 .unwrap()
                 .is_empty()
         );
@@ -867,9 +877,44 @@ mod tests {
         );
         tx.commit().unwrap();
         assert_eq!(
-            claim_local_embedding_candidates(&conn, 10).unwrap(),
+            claim_local_embedding_candidates(&conn, 10, &generation).unwrap(),
             vec![(1, "raw".to_owned())]
         );
+    }
+
+    #[test]
+    fn generation_change_requeues_an_eligible_episode_and_write_stays_consent_checked() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut conn = store::open(&dir.path().join("views.db")).unwrap();
+        let generation_a = test_generation("test-generation-a");
+        let generation_b = test_generation("test-generation-b");
+        insert_raw(&conn, 1);
+        let tx = conn.transaction().unwrap();
+        assert_eq!(
+            project_origin(&tx, &local_receipt(1, 101)).unwrap(),
+            OriginProjection::Inserted
+        );
+        tx.commit().unwrap();
+
+        let tx = conn.transaction().unwrap();
+        assert!(store_local_episode_vector_if_eligible(&tx, 1, &generation_a, &[1.0]).unwrap());
+        tx.commit().unwrap();
+        assert!(claim_local_embedding_candidates(&conn, 10, &generation_a)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            claim_local_embedding_candidates(&conn, 10, &generation_b).unwrap(),
+            vec![(1, "raw".to_owned())]
+        );
+
+        let stored_generation: String = conn
+            .query_row(
+                "SELECT generation FROM idx_embedding WHERE source_kind='episode' AND source_ref='1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_generation, generation_a.id());
     }
 
     #[test]
