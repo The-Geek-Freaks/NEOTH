@@ -116,7 +116,15 @@ async fn ordinary_serve_still_rejects_an_incomplete_home_before_wal_startup() {
     .await
     .unwrap_err();
 
-    assert!(format!("{error:#}").contains("onboarding incomplete"));
+    let detail = format!("{error:#}");
+    assert!(
+        detail.contains("GOLD-ADAPT-OH-03"),
+        "ordinary serve must fail at the onboarding gate: {detail}"
+    );
+    assert!(
+        detail.contains("neoth init"),
+        "onboarding-gate refusal must retain the repair command: {detail}"
+    );
     assert!(
         !dir.path().join("wal").exists(),
         "ordinary serve must reject incomplete onboarding before WAL startup"

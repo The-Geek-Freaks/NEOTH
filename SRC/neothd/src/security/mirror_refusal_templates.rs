@@ -5,8 +5,8 @@
 //! messages, so putting any of that untrusted material back into the reply
 //! could accidentally turn a refusal explanation into a reframe or bypass.
 
-use super::refusal_detect::RefusalClass;
 use super::mirror_refusal_pipeline::{MirrorBoundaryFact, MirrorRefusalShape, MirrorSynthesis};
+use super::refusal_detect::RefusalClass;
 
 pub fn template(class: RefusalClass) -> &'static str {
     match class {
@@ -26,7 +26,9 @@ pub fn render_structured(synthesis: MirrorSynthesis) -> String {
         MirrorRefusalShape::Complete => "The system declined the request.",
         MirrorRefusalShape::Partial => "The system declined part of the request.",
         MirrorRefusalShape::Restricted => "The system returned a restricted or hedged result.",
-        MirrorRefusalShape::Redirected => "The system declined the original form and identified an adjacent path.",
+        MirrorRefusalShape::Redirected => {
+            "The system declined the original form and identified an adjacent path."
+        }
         MirrorRefusalShape::SafetyCaveat => "The system returned an answer with a safety caveat.",
     };
     let why = match synthesis.boundary {
@@ -35,9 +37,13 @@ pub fn render_structured(synthesis: MirrorSynthesis) -> String {
         MirrorBoundaryFact::Authorisation => "An authorisation boundary was identified.",
         MirrorBoundaryFact::Capability => "A capability boundary was identified.",
         MirrorBoundaryFact::Safety => "A safety boundary was identified.",
-        MirrorBoundaryFact::Unspecified => "The available response does not establish a more specific boundary.",
+        MirrorBoundaryFact::Unspecified => {
+            "The available response does not establish a more specific boundary."
+        }
     };
-    format!("## What happened\n{happened}\n\n## Why this happened (structural)\n{why}\n\n## Next steps\nOperator review is required before any fresh, explicitly authorised run.")
+    format!(
+        "## What happened\n{happened}\n\n## Why this happened (structural)\n{why}\n\n## Next steps\nOperator review is required before any fresh, explicitly authorised run."
+    )
 }
 
 pub const PERSISTENT: &str = "## What happened\nThis request was declined again during the current turn.\n\n## Why this happened (structural)\nThe mirror-refusal guard allows one structural explanation per turn and prevents further model calls for the declined request.\n\n## Next steps\nOperator action is required before a fresh, explicitly authorised run.";

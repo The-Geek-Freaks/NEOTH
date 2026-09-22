@@ -7637,16 +7637,17 @@ pub(super) async fn run_post_reply_pipelines(
         && operator_origin.is_some()
         && initial_refusal_observation.is_some()
         && recovery_can_replace_visible_response;
-    let should_check_hard_block = mirror_hard_block_eligible || should_check_refusal_hard_block(
-        recovery_route_eligible,
-        operator_origin,
-        initial_refusal_observation.is_some(),
-        truthful_retry_enabled,
-        config.refusal_recovery.abliterated_fallback_enabled,
-        config.refusal_recovery.teacher_escalation_enabled,
-        crate::providers::is_local_provider(&provider_used),
-        crate::skills::teacher::low_confidence_local(&refusal_completion.text),
-    );
+    let should_check_hard_block = mirror_hard_block_eligible
+        || should_check_refusal_hard_block(
+            recovery_route_eligible,
+            operator_origin,
+            initial_refusal_observation.is_some(),
+            truthful_retry_enabled,
+            config.refusal_recovery.abliterated_fallback_enabled,
+            config.refusal_recovery.teacher_escalation_enabled,
+            crate::providers::is_local_provider(&provider_used),
+            crate::skills::teacher::low_confidence_local(&refusal_completion.text),
+        );
     let hard_blocked = should_check_hard_block
         && crate::security::refusal_abliterated::hard_block_gate(
             &recovery_request,
@@ -7672,87 +7673,85 @@ pub(super) async fn run_post_reply_pipelines(
         && recovery_can_replace_visible_response
         && let Some(observation) = initial_refusal_observation.as_ref()
     {
-        let mirror_deadline = tokio::time::Instant::now()
-            + std::time::Duration::from_secs(6);
+        let mirror_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(6);
         let mirror = if hard_blocked {
             // D23 is a permanent no-provider floor. Do not admit the mirror
             // core or construct a role; publish only its typed terminal form.
-            crate::security::mirror_refusal_pipeline::hard_block_terminal(
-                observation.report.class,
-            )
+            crate::security::mirror_refusal_pipeline::hard_block_terminal(observation.report.class)
         } else {
             let build_roles = async {
-            let operation_budget = crate::providers::cost_authorization::new_operation_budget(
-                4_000,
-                0.02,
-            );
-            let roles: (
-                Box<dyn crate::council::orchestrator::HemisphereProvider>,
-                Box<dyn crate::council::orchestrator::HemisphereProvider>,
-            ) = match operation_budget {
-            Ok(operation_budget) => match call_authorizer
-                .clone()
-                .with_council_daily_cap(&instance_paths.home, config.council.daily_usd_cap)
-            {
-            Ok(mirror_authorizer) => {
-                let mut mirror_base_request = recovery_request.clone();
-                // A finite, provider-enforced ceiling is required for the
-                // shared per-mirror token/USD reservation. Unsupported
-                // providers reject this leaf and deterministically template.
-                mirror_base_request.max_output_tokens = Some(1_024);
-                let right: Box<dyn crate::council::orchestrator::HemisphereProvider> = match build_hemisphere(
-                    &config,
-                    &instance_paths.home,
-                    crate::config::inference::HemisphereRole::Right,
-                    &mirror_base_request,
-                    mirror_authorizer
+                let operation_budget =
+                    crate::providers::cost_authorization::new_operation_budget(4_000, 0.02);
+                let roles: (
+                    Box<dyn crate::council::orchestrator::HemisphereProvider>,
+                    Box<dyn crate::council::orchestrator::HemisphereProvider>,
+                ) = match operation_budget {
+                    Ok(operation_budget) => match call_authorizer
                         .clone()
-                        .with_operation_budget(operation_budget.clone()),
-                    Some(std::sync::Arc::clone(&canary_token)),
-                )
-                .await
-                {
-                    Ok(hemisphere) => Box::new(hemisphere),
+                        .with_council_daily_cap(&instance_paths.home, config.council.daily_usd_cap)
+                    {
+                        Ok(mirror_authorizer) => {
+                            let mut mirror_base_request = recovery_request.clone();
+                            // A finite, provider-enforced ceiling is required for the
+                            // shared per-mirror token/USD reservation. Unsupported
+                            // providers reject this leaf and deterministically template.
+                            mirror_base_request.max_output_tokens = Some(1_024);
+                            let right: Box<dyn crate::council::orchestrator::HemisphereProvider> =
+                                match build_hemisphere(
+                                    &config,
+                                    &instance_paths.home,
+                                    crate::config::inference::HemisphereRole::Right,
+                                    &mirror_base_request,
+                                    mirror_authorizer
+                                        .clone()
+                                        .with_operation_budget(operation_budget.clone()),
+                                    Some(std::sync::Arc::clone(&canary_token)),
+                                )
+                                .await
+                                {
+                                    Ok(hemisphere) => Box::new(hemisphere),
+                                    Err(error) => {
+                                        tracing::warn!(error = %error, "mirror-refusal Right role unavailable");
+                                        Box::new(MirrorUnavailableHemisphere)
+                                    }
+                                };
+                            let cerebellum: Box<
+                                dyn crate::council::orchestrator::HemisphereProvider,
+                            > = match build_hemisphere(
+                                &config,
+                                &instance_paths.home,
+                                crate::config::inference::HemisphereRole::Cerebellum,
+                                &mirror_base_request,
+                                mirror_authorizer.with_operation_budget(operation_budget),
+                                Some(std::sync::Arc::clone(&canary_token)),
+                            )
+                            .await
+                            {
+                                Ok(hemisphere) => Box::new(hemisphere),
+                                Err(error) => {
+                                    tracing::warn!(error = %error, "mirror-refusal Cerebellum role unavailable");
+                                    Box::new(MirrorUnavailableHemisphere)
+                                }
+                            };
+                            (right, cerebellum)
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "mirror-refusal council authorization unavailable");
+                            (
+                                Box::new(MirrorUnavailableHemisphere),
+                                Box::new(MirrorUnavailableHemisphere),
+                            )
+                        }
+                    },
                     Err(error) => {
-                        tracing::warn!(error = %error, "mirror-refusal Right role unavailable");
-                        Box::new(MirrorUnavailableHemisphere)
+                        tracing::warn!(error = %error, "mirror-refusal operation budget unavailable");
+                        (
+                            Box::new(MirrorUnavailableHemisphere),
+                            Box::new(MirrorUnavailableHemisphere),
+                        )
                     }
                 };
-                let cerebellum: Box<dyn crate::council::orchestrator::HemisphereProvider> = match build_hemisphere(
-                    &config,
-                    &instance_paths.home,
-                    crate::config::inference::HemisphereRole::Cerebellum,
-                    &mirror_base_request,
-                    mirror_authorizer.with_operation_budget(operation_budget),
-                    Some(std::sync::Arc::clone(&canary_token)),
-                )
-                .await
-                {
-                    Ok(hemisphere) => Box::new(hemisphere),
-                    Err(error) => {
-                        tracing::warn!(error = %error, "mirror-refusal Cerebellum role unavailable");
-                        Box::new(MirrorUnavailableHemisphere)
-                    }
-                };
-                (right, cerebellum)
-            }
-            Err(error) => {
-                tracing::warn!(error = %error, "mirror-refusal council authorization unavailable");
-                (
-                    Box::new(MirrorUnavailableHemisphere),
-                    Box::new(MirrorUnavailableHemisphere),
-                )
-            }
-            },
-            Err(error) => {
-                tracing::warn!(error = %error, "mirror-refusal operation budget unavailable");
-                (
-                    Box::new(MirrorUnavailableHemisphere),
-                    Box::new(MirrorUnavailableHemisphere),
-                )
-            }
-            };
-            roles
+                roles
             };
             let roles = tokio::select! {
                 biased;
@@ -7764,29 +7763,30 @@ pub(super) async fn run_post_reply_pipelines(
             };
             match roles {
                 Ok(roles) => {
-            let mut mirror_guard =
-                crate::security::mirror_refusal_pipeline::MirrorAttemptGuard::new();
-            crate::security::mirror_refusal_pipeline::run_mirror_refusal(
-                &mut mirror_guard,
-                crate::security::mirror_refusal_pipeline::MirrorRefusalInput {
-                    operator_request: &prompt,
-                    left_refusal: &refusal_completion.text,
-                    report: &observation.report,
-                    right: roles.0.as_ref(),
-                    cerebellum: roles.1.as_ref(),
-                    budget: council_budget.clone(),
-                    deadline: mirror_deadline,
-                    cancellation,
-                },
-            )
-            .await
+                    let mut mirror_guard =
+                        crate::security::mirror_refusal_pipeline::MirrorAttemptGuard::new();
+                    crate::security::mirror_refusal_pipeline::run_mirror_refusal(
+                        &mut mirror_guard,
+                        crate::security::mirror_refusal_pipeline::MirrorRefusalInput {
+                            operator_request: &prompt,
+                            left_refusal: &refusal_completion.text,
+                            report: &observation.report,
+                            right: roles.0.as_ref(),
+                            cerebellum: roles.1.as_ref(),
+                            budget: council_budget.clone(),
+                            deadline: mirror_deadline,
+                            cancellation,
+                        },
+                    )
+                    .await
                 }
                 Err(condition) => {
                     // All deterministic template variants are class-keyed;
                     // retain the exact timeout/cancellation reason in audit.
-                    let mut terminal = crate::security::mirror_refusal_pipeline::hard_block_terminal(
-                        observation.report.class,
-                    );
+                    let mut terminal =
+                        crate::security::mirror_refusal_pipeline::hard_block_terminal(
+                            observation.report.class,
+                        );
                     terminal.condition = condition;
                     terminal
                 }
@@ -19777,15 +19777,24 @@ modes:
         assert!(payload["confidence"].as_u64().unwrap() >= 80);
         assert!(!payload["matched_patterns"].as_array().unwrap().is_empty());
         assert_eq!(payload["provider"], "mock");
-        let (mirror_session, mirror_payload) = mirrored.expect("REFUSAL_MIRRORED frame must be present");
+        let (mirror_session, mirror_payload) =
+            mirrored.expect("REFUSAL_MIRRORED frame must be present");
         assert_eq!(Some(mirror_session), observed_session);
         assert!(!mirror_session.is_zero());
         assert_eq!(mirror_payload["refusal_class"], "hard_refusal");
         assert_eq!(mirror_payload["source"], "template_only");
         assert_eq!(mirror_payload["terminal_condition"], "hard_blocked");
         assert!(mirror_payload["source"].is_string());
-        assert!(!serde_json::to_string(&mirror_payload).unwrap().contains("explicit sexual story"));
-        assert!(!serde_json::to_string(&mirror_payload).unwrap().contains("I cannot help"));
+        assert!(
+            !serde_json::to_string(&mirror_payload)
+                .unwrap()
+                .contains("explicit sexual story")
+        );
+        assert!(
+            !serde_json::to_string(&mirror_payload)
+                .unwrap()
+                .contains("I cannot help")
+        );
     }
 
     /// A non-D23 refusal with no shared council calls left reaches the mirror
@@ -19807,15 +19816,30 @@ modes:
             reply: "I cannot help with that request.".to_string(),
         };
         let args = ChatArgs {
-            attach: Vec::new(), repository_root: None,
-            message: Some("do the dangerous thing".into()), model: None, skill: None,
-            system: None, edit: false, config: Some(dir.path().join("freedom.yaml")),
-            wal_segment: Some(seg.clone()), stream: false, show_reasoning: false,
-            gui_consent_token_stdin: false, temperature: None, top_p: None,
-            sampling_seed: None, resume_from: None, incognito: false, loop_mode: false,
-            iterations: None, until: vec![],
+            attach: Vec::new(),
+            repository_root: None,
+            message: Some("do the dangerous thing".into()),
+            model: None,
+            skill: None,
+            system: None,
+            edit: false,
+            config: Some(dir.path().join("freedom.yaml")),
+            wal_segment: Some(seg.clone()),
+            stream: false,
+            show_reasoning: false,
+            gui_consent_token_stdin: false,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            resume_from: None,
+            incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
         };
-        run_chat_with(args, config, &provider).await.expect("chat run_with succeeds");
+        run_chat_with(args, config, &provider)
+            .await
+            .expect("chat run_with succeeds");
 
         let bytes = read(&seg).await.unwrap();
         let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
@@ -19843,7 +19867,10 @@ modes:
         assert!(!session.is_zero());
         assert_eq!(payload["source"], "template_only");
         assert_eq!(payload["terminal_condition"], "budget_exhausted");
-        assert_eq!(provider_responses, 1, "terminal mirror must not retry the primary provider");
+        assert_eq!(
+            provider_responses, 1,
+            "terminal mirror must not retry the primary provider"
+        );
     }
 
     /// AP-2: every local inference call must leave a WAL trace

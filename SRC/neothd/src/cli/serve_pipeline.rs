@@ -5795,22 +5795,27 @@ fn current_user_message(items: &[crate::tokens::budget::BlockItem]) -> String {
 
 /// The typed bundle for a delegated sub-agent turn.
 ///
-/// `render_request` joins every non-E item into the system, so the substituted
-/// agent system must be the ONLY non-E item — otherwise the rendered system does
-/// not equal the preflight system and `finalize_provider_request` refuses the
-/// dispatch.
+/// `render_request` joins every non-E item into the system. Rebuild from the
+/// delegated agent system and retain only mandatory Block D material plus an
+/// admitted repository-context Block D. The latter remains degradable for the
+/// ordinary budget pass, but must survive delegation whenever it did survive
+/// that pass: its durable code-map receipt truthfully binds the provider request.
 fn delegated_system_bundle(
     agent_system: &str,
     prior: &[crate::tokens::budget::BlockItem],
 ) -> Vec<crate::tokens::budget::BlockItem> {
-    use crate::tokens::budget::{Block, BlockItem, PromptRetention};
+    use crate::tokens::budget::{Block, BlockItem, PromptRetention, PromptTaxSource};
 
     let mut bundle = Vec::with_capacity(prior.len().saturating_add(1));
     bundle.push(BlockItem::new(Block::B, agent_system.to_string()));
     bundle.extend(
         prior
             .iter()
-            .filter(|item| item.block == Block::D && item.retention == PromptRetention::Required)
+            .filter(|item| {
+                item.block == Block::D
+                    && (item.retention == PromptRetention::Required
+                        || item.prompt_tax_source == Some(PromptTaxSource::RepoContext))
+            })
             .cloned(),
     );
     bundle.push(BlockItem::new(Block::E, current_user_message(prior)));
@@ -6202,6 +6207,31 @@ mod tests {
         );
         assert_eq!(required[1].retention, PromptRetention::Required);
         assert_eq!(current_user_message(&bundle), "operator caption");
+    }
+
+    #[test]
+    fn delegated_bundle_preserves_admitted_repo_context_for_its_receipt() {
+        use crate::tokens::budget::{Block, BlockItem, PromptTaxSource};
+
+        let repo_context = BlockItem::new(Block::D, "typed repo context")
+            .with_prompt_tax_source(PromptTaxSource::RepoContext);
+        let bundle = delegated_system_bundle(
+            "delegated system",
+            &[
+                BlockItem::new(Block::D, "ordinary optional recall"),
+                repo_context.clone(),
+                BlockItem::new(Block::E, "operator caption"),
+            ],
+        );
+
+        assert_eq!(
+            bundle
+                .iter()
+                .filter(|item| item.block == Block::D)
+                .collect::<Vec<_>>(),
+            vec![&repo_context],
+            "delegation retains only the admitted repo-context needed for its provider-request receipt"
+        );
     }
 
     use async_trait::async_trait;

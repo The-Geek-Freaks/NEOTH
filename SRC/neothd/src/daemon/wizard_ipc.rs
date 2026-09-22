@@ -315,7 +315,16 @@ fn spawn_owner(
         let mut service = service;
         while let Some(command) = receiver.blocking_recv() {
             let response = service.handle(command.request);
-            if let Some(snapshot) = response_snapshot(&response) { let _ = updates.send(snapshot.clone()); }
+            if let Some(snapshot) = response_snapshot(&response) {
+                updates.send_if_modified(|published| {
+                    if *published == *snapshot {
+                        false
+                    } else {
+                        *published = snapshot.clone();
+                        true
+                    }
+                });
+            }
             let terminal = matches!(response, WizardResponse::Completed { .. }) || matches!(&response, WizardResponse::Progress { snapshot } if snapshot.terminal == WizardTerminalState::Cancelled);
             if !command.reply.is_closed() { let _ = command.reply.send(response); }
             // Terminal ownership is independent of an HTTP writer surviving
@@ -578,6 +587,8 @@ async fn wait_for_change(
     after_sequence: WizardSequence,
 ) -> Result<WizardResponse> {
     let mut receiver = state.updates.subscribe();
+    let expected_session_id = session_id.clone();
+    let expected_boot_id = boot_id.clone();
     let current = dispatch(
         state,
         WizardRequest::WaitForChange {
@@ -595,10 +606,20 @@ async fn wait_for_change(
     {
         return Ok(current);
     }
-    let _ = tokio::time::timeout(LONG_POLL_TIMEOUT, receiver.changed()).await;
-    Ok(WizardResponse::SessionSnapshot {
-        snapshot: receiver.borrow().clone(),
-    })
+    let changed = matches!(
+        tokio::time::timeout(LONG_POLL_TIMEOUT, receiver.changed()).await,
+        Ok(Ok(()))
+    );
+    let snapshot = receiver.borrow().clone();
+    if changed
+        && snapshot.session_id == expected_session_id
+        && snapshot.boot_id == expected_boot_id
+        && (snapshot.accepted_sequence.0 > after_sequence.0
+            || snapshot.terminal != WizardTerminalState::Active)
+    {
+        return Ok(WizardResponse::SessionSnapshot { snapshot });
+    }
+    Ok(current)
 }
 
 struct ParsedRequest {

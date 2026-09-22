@@ -7,8 +7,8 @@
 //! provider, model and streaming mode immediately before the inner call runs.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use anyhow::Result;
@@ -127,16 +127,14 @@ impl OperationBudget {
 /// its binary `f32` representation.
 fn usd_cap_to_microusd(usd: f32) -> Option<u64> {
     let scaled = f64::from(usd) * 1_000_000.0;
-    (scaled.is_finite() && scaled > 0.0 && scaled <= u64::MAX as f64)
-        .then(|| scaled.round() as u64)
+    (scaled.is_finite() && scaled > 0.0 && scaled <= u64::MAX as f64).then(|| scaled.round() as u64)
 }
 
 /// Round an independently calculated authorization bound upward. Unlike an
 /// operator cap, a fractional provider bound must never be rounded down.
 fn usd_bound_to_microusd(usd: f64) -> Option<u64> {
     let scaled = usd * 1_000_000.0;
-    (scaled.is_finite() && scaled >= 0.0 && scaled <= u64::MAX as f64)
-        .then(|| scaled.ceil() as u64)
+    (scaled.is_finite() && scaled >= 0.0 && scaled <= u64::MAX as f64).then(|| scaled.ceil() as u64)
 }
 
 /// Create one shareable operation budget. Attach clones of the returned value
@@ -161,12 +159,9 @@ fn operation_budget_reservation_plan(
             "{call_scope} ({provider}/{model}): operation budget blocks an unbounded provider invocation"
         );
     };
-    let Some(bound_usd) = crate::providers::cost::authorization_bound_usd(
-        provider,
-        model,
-        req,
-        output_token_ceiling,
-    ) else {
+    let Some(bound_usd) =
+        crate::providers::cost::authorization_bound_usd(provider, model, req, output_token_ceiling)
+    else {
         anyhow::bail!(
             "{call_scope} ({provider}/{model}): operation budget blocks unknown provider pricing"
         );
@@ -3053,7 +3048,11 @@ mod tests {
             Ok(_) => panic!("unknown provider price must block before dispatch"),
             Err(error) => error,
         };
-        assert!(unknown_price.to_string().contains("unknown provider pricing"));
+        assert!(
+            unknown_price
+                .to_string()
+                .contains("unknown provider pricing")
+        );
 
         let known_local_zero = operation_budget_reservation_plan(
             &mirror_budget,
@@ -3077,7 +3076,11 @@ mod tests {
             Ok(_) => panic!("missing output ceiling must block before dispatch"),
             Err(error) => error,
         };
-        assert!(missing_ceiling.to_string().contains("unbounded provider invocation"));
+        assert!(
+            missing_ceiling
+                .to_string()
+                .contains("unbounded provider invocation")
+        );
     }
 
     #[test]
@@ -3095,10 +3098,8 @@ mod tests {
     #[tokio::test]
     async fn operation_budget_authorizer_wrappers_share_admission_and_block_third_dispatch() {
         let request = Request::default();
-        let input = crate::providers::cost::authorization_input_token_upper_bound(
-            &request,
-            "qwen-local",
-        );
+        let input =
+            crate::providers::cost::authorization_input_token_upper_bound(&request, "qwen-local");
         let output_ceiling = 1_900_u32
             .checked_sub(input)
             .expect("fixture input bound must leave a finite output ceiling");
@@ -3134,10 +3135,8 @@ mod tests {
     #[tokio::test]
     async fn operation_budget_oversized_leaf_blocks_before_raw_provider_dispatch() {
         let request = Request::default();
-        let input = crate::providers::cost::authorization_input_token_upper_bound(
-            &request,
-            "qwen-local",
-        );
+        let input =
+            crate::providers::cost::authorization_input_token_upper_bound(&request, "qwen-local");
         let inner = OperationBudgetProvider {
             name: "local_ollama",
             model: "qwen-local",
@@ -3167,10 +3166,9 @@ mod tests {
             model: Some("gpt-4o".into()),
             ..Request::default()
         };
-        let bound = crate::providers::cost::authorization_bound_usd(
-            "openai_api", "gpt-4o", &request, 128,
-        )
-        .unwrap();
+        let bound =
+            crate::providers::cost::authorization_bound_usd("openai_api", "gpt-4o", &request, 128)
+                .unwrap();
         let budget = new_operation_budget(4_000, 0.02).unwrap();
         let paid = OperationBudgetProvider {
             name: "openai_api",
@@ -3216,10 +3214,9 @@ mod tests {
             model: Some("gpt-4o".into()),
             ..Request::default()
         };
-        let bound = crate::providers::cost::authorization_bound_usd(
-            "openai_api", "gpt-4o", &request, 128,
-        )
-        .unwrap();
+        let bound =
+            crate::providers::cost::authorization_bound_usd("openai_api", "gpt-4o", &request, 128)
+                .unwrap();
         let cap = (bound * 1.5) as f32;
         let rejected_inner = OperationBudgetProvider {
             name: "openai_api",
@@ -3263,10 +3260,8 @@ mod tests {
     #[tokio::test]
     async fn operation_budget_post_dispatch_failure_keeps_conservative_reservation() {
         let request = Request::default();
-        let input = crate::providers::cost::authorization_input_token_upper_bound(
-            &request,
-            "qwen-local",
-        );
+        let input =
+            crate::providers::cost::authorization_input_token_upper_bound(&request, "qwen-local");
         let inner = OperationBudgetProvider {
             name: "local_ollama",
             model: "qwen-local",

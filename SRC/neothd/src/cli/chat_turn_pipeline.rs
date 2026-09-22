@@ -92,9 +92,7 @@ impl crate::security::mirror_refusal_pipeline::MirrorCancellation for ChatTurnCa
         self.is_closed()
     }
 
-    fn cancelled(
-        &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+    fn cancelled(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         Box::pin(ChatTurnCancellation::cancelled(self))
     }
 }

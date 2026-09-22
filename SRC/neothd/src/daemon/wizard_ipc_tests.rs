@@ -413,6 +413,70 @@ async fn idle_long_poll_returns_before_the_client_deadline() {
 
 #[cfg(any(unix, windows))]
 #[tokio::test]
+async fn read_only_waiters_do_not_wake_each_other() {
+    let home = tempfile::tempdir().unwrap();
+    let (listener_task, guard) = bind_and_serve(home.path()).unwrap();
+    let client = std::sync::Arc::new(WizardIpcClient::discover(home.path()).unwrap());
+    let opened = snapshot(client.open_or_resume().await.unwrap());
+
+    let first_client = std::sync::Arc::clone(&client);
+    let first_session = opened.session_id.clone();
+    let first_boot = opened.boot_id.clone();
+    let first_sequence = opened.accepted_sequence;
+    let mut first_waiter = tokio::spawn(async move {
+        first_client
+            .wait_for_change(first_session, first_boot, first_sequence)
+            .await
+    });
+    let second_client = std::sync::Arc::clone(&client);
+    let second_session = opened.session_id.clone();
+    let second_boot = opened.boot_id.clone();
+    let second_sequence = opened.accepted_sequence;
+    let mut second_waiter = tokio::spawn(async move {
+        second_client
+            .wait_for_change(second_session, second_boot, second_sequence)
+            .await
+    });
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(250), &mut first_waiter)
+            .await
+            .is_err(),
+        "a read-only waiter must not wake itself"
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(250), &mut second_waiter)
+            .await
+            .is_err(),
+        "a read-only waiter must not wake another waiter"
+    );
+
+    let next_sequence = next(&opened);
+    let accepted = snapshot(
+        client
+            .submit(
+                opened.session_id,
+                opened.boot_id,
+                next_sequence,
+                WizardIpcMessage::ChannelOverride {
+                    channel: ChannelRecommendation::Cli,
+                },
+            )
+            .await
+            .unwrap(),
+    );
+    let first_observed = snapshot(first_waiter.await.unwrap().unwrap());
+    let second_observed = snapshot(second_waiter.await.unwrap().unwrap());
+    assert_eq!(first_observed.accepted_sequence, accepted.accepted_sequence);
+    assert_eq!(second_observed.accepted_sequence, accepted.accepted_sequence);
+
+    guard.stop();
+    listener_task.await.unwrap().unwrap();
+    drop(guard);
+}
+
+#[cfg(any(unix, windows))]
+#[tokio::test]
 async fn long_poll_receives_the_next_accepted_mutation() {
     let home = tempfile::tempdir().unwrap();
     let (listener_task, guard) = bind_and_serve(home.path()).unwrap();

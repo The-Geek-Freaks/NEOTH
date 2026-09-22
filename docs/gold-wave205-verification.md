@@ -1,5 +1,23 @@
 # Wave 205 hosted failure repair
 
+**W204/W205 behavior repair and W206 Hosted format (2026-09-22):** the
+Grouped101 failure exposed an unchanged wizard snapshot waking its own and
+other read-only long-polls. The owner now publishes only changed snapshots;
+waiters require their exact session/boot and a newer sequence or terminal state.
+A two-reader regression supplements the original mutation test. Ordinary serve
+still rejects an incomplete home before WAL startup; its test now checks the
+stable GOLD-ADAPT-OH-03 gate and actionable `neoth init` instruction.
+
+The delegated-channel failure exposed admitted repository context being dropped
+from the sub-agent bundle. Delegation now retains typed RepoContext alongside
+mandatory Block D, while the final budget and retained-context audit remain
+authoritative. Its original full integration assertions remain intact, with a
+new focused bundle regression. Independent static review passed both repairs.
+W206 is published at `4b39a208`; Preflight `35745312836` supplied six formatting
+postimages verified against the exact source, receipt hashes and Git object IDs.
+Fresh Hosted compile and Grouped121 behavior gates are required. No Road box
+closed and no local executable validation ran.
+
 **W205 Hosted formatting follow-up (2026-09-22):** source `6bf25239` is on
 GitHub main. Preflight `35739707562` exported exactly two formatting hunks;
 source HEAD, receipt SHA-256 and full Git pre/postimage identities were checked
