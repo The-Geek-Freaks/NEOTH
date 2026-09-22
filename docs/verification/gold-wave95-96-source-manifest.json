@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T19:51:17.1915146Z",
-  "validationStatus": "W216 reviewed 14 Windows repairs plus W215fixture; Grouped266 pending; prior71c253/255 source-bound",
+  "capturedUtc": "2026-09-22T19:55:23.0232233Z",
+  "validationStatus": "W216 reviewed14Windows+W215fixture; exact Hosted formatting imported; Grouped266 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -973,8 +973,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/agents.rs",
-      "bytes": 26545,
-      "sha256": "E3F9B97485622FEFB79654995C58B80A7F26FF74AA3E6CC1FF4BD06057151FA7"
+      "bytes": 26589,
+      "sha256": "CF0348DE48F92631655578CAACD2D31FB79EAB7C23185B2E0E68F9F3FDF1DE7D"
     },
     {
       "path": "SRC/neothd/src/cli/arxiv_ingest_task.rs",
@@ -1013,8 +1013,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "bytes": 162592,
-      "sha256": "63A1D0BBFBC02EE5546E23C4FE3205EB1B12D3965F801458007A59D5D765A5CD"
+      "bytes": 162562,
+      "sha256": "F5E984A23791E23CAB7CCAB8BE001DBD6C0655B19C1278E0FD1E8E4B81417032"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_watchdog.rs",
@@ -1023,8 +1023,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1087173,
-      "sha256": "F1CD20DDA3700735DFE227A7C7BBF1F885972FF5B9103B33B82110794CEC56BD"
+      "bytes": 1087207,
+      "sha256": "9028F3478BFDF9ADCBA1A8D8DDDA8CD7CB756A8236B3871B34405102472C9345"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -1203,8 +1203,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/parity_drift.rs",
-      "bytes": 62598,
-      "sha256": "9B04F4226539C1B8D4783D8F241F9137E1C08C393B4CC458D710D23343479547"
+      "bytes": 62840,
+      "sha256": "015F4D3761949F914EA4F143553CB06C0FCCC3B41AB2608015C0456E1B4ED942"
     },
     {
       "path": "SRC/neothd/src/cli/proactive.rs",

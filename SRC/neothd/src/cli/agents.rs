@@ -672,7 +672,11 @@ mod tests {
             .skills
             .disabled
             .push("fan-out-disabled".to_string());
-        std::fs::write(&config_path, serde_yaml::to_string(&disabled_config).unwrap()).unwrap();
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&disabled_config).unwrap(),
+        )
+        .unwrap();
         let admitted = fan_out_skill_registry_context(home.path(), &config_path, &disabled_config)
             .await
             .unwrap();

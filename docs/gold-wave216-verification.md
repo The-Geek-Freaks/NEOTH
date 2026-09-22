@@ -68,3 +68,10 @@ Hosted compile, behavior and native GUI execution remain required afterward.
 The old macOS full-CI run is preserved until its outcome; a new ci.yml dispatch
 would cancel it. No Road checkbox or release gate is closed by this batch.
 No local compiler, formatter, parser, test or product runtime was invoked.
+
+Hosted formatting receipt35776741729 is imported from exact source558163ad;
+patch/source SHA-256 and all four Git blob pre/postimages match. No formatter
+ran locally. Grouped25635775448354 on eefe379d is now source-bound255/256;
+the sole W215 admission-fixture failure is corrected by W216. Core/CLI
+35775451703 on eefe passed. Grouped26635776784587 and Core35776787510 on
+558163ad are running; their behavior results remain pending.

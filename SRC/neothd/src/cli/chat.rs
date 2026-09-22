@@ -19553,7 +19553,10 @@ modes:
         // It is metadata for the raw body, not part of the dispatch sequence.
         let origin = decode_frame(&frames[dec0.header.total_len as usize..])
             .expect("decode RAW_TEXT origin receipt");
-        assert_eq!(origin.header.event_type, crate::wal::events::EVENT_TYPE_EXTENDED);
+        assert_eq!(
+            origin.header.event_type,
+            crate::wal::events::EVENT_TYPE_EXTENDED
+        );
         assert_eq!(
             origin.header.event_subtype,
             crate::wal::events::ExtendedSubtype::RawTextOrigin as u8

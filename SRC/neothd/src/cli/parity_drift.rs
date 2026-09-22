@@ -549,37 +549,58 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ),
     },
     unwired_operation(
-        "buddy.embedding.list", "buddy", "buddy embedding list", "buddyconfig",
+        "buddy.embedding.list",
+        "buddy",
+        "buddy embedding list",
+        "buddyconfig",
         "Buddy Config > local embedding model",
         "the GUI has no buddy-scoped selected-embedding lifecycle action",
     ),
     unwired_operation(
-        "buddy.embedding.status", "buddy", "buddy embedding status", "buddyconfig",
+        "buddy.embedding.status",
+        "buddy",
+        "buddy embedding status",
+        "buddyconfig",
         "Buddy Config > local embedding model",
         "the GUI has no buddy-scoped selected-embedding lifecycle action",
     ),
     unwired_operation(
-        "buddy.embedding.select", "buddy", "buddy embedding select", "buddyconfig",
+        "buddy.embedding.select",
+        "buddy",
+        "buddy embedding select",
+        "buddyconfig",
         "Buddy Config > local embedding model",
         "the GUI has no buddy-scoped selected-embedding lifecycle action",
     ),
     unwired_operation(
-        "buddy.embedding.probe", "buddy", "buddy embedding probe", "buddyconfig",
+        "buddy.embedding.probe",
+        "buddy",
+        "buddy embedding probe",
+        "buddyconfig",
         "Buddy Config > local embedding model",
         "the GUI has no buddy-scoped selected-embedding lifecycle action",
     ),
     unwired_operation(
-        "buddy.embedding.pull", "buddy", "buddy embedding pull", "buddyconfig",
+        "buddy.embedding.pull",
+        "buddy",
+        "buddy embedding pull",
+        "buddyconfig",
         "Buddy Config > local embedding model",
         "the GUI has no buddy-scoped selected-embedding lifecycle action",
     ),
     unwired_operation(
-        "buddy.embedding.repair", "buddy", "buddy embedding repair", "buddyconfig",
+        "buddy.embedding.repair",
+        "buddy",
+        "buddy embedding repair",
+        "buddyconfig",
         "Buddy Config > local embedding model",
         "the GUI has no buddy-scoped selected-embedding lifecycle action",
     ),
     unwired_operation(
-        "buddy.embedding.prune", "buddy", "buddy embedding prune", "buddyconfig",
+        "buddy.embedding.prune",
+        "buddy",
+        "buddy embedding prune",
+        "buddyconfig",
         "Buddy Config > local embedding model",
         "the GUI has no buddy-scoped selected-embedding lifecycle action",
     ),
@@ -610,7 +631,10 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         state: OperationState::Verified,
     },
     unwired_operation(
-        "buddy.vault-mirror.status", "buddy", "buddy vault-mirror status", "buddyconfig",
+        "buddy.vault-mirror.status",
+        "buddy",
+        "buddy vault-mirror status",
+        "buddyconfig",
         "Buddy Config > Vault mirror status",
         "the GUI projects vault-mirror state through buddy status instead of this exact leaf",
     ),
@@ -648,19 +672,28 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
     },
     #[cfg(feature = "cluster")]
     unwired_operation(
-        "buddy.cluster.invite", "buddy", "buddy cluster invite", "buddyconfig",
+        "buddy.cluster.invite",
+        "buddy",
+        "buddy cluster invite",
+        "buddyconfig",
         "Buddy Config > Cluster pairing",
         "the GUI uses its separate pairing transaction rather than this exact CLI leaf",
     ),
     #[cfg(feature = "cluster")]
     unwired_operation(
-        "buddy.cluster.confirm", "buddy", "buddy cluster confirm", "buddyconfig",
+        "buddy.cluster.confirm",
+        "buddy",
+        "buddy cluster confirm",
+        "buddyconfig",
         "Buddy Config > Cluster pairing",
         "the GUI uses its separate pairing transaction rather than this exact CLI leaf",
     ),
     #[cfg(feature = "cluster")]
     unwired_operation(
-        "buddy.cluster.revoke", "buddy", "buddy cluster revoke", "buddyconfig",
+        "buddy.cluster.revoke",
+        "buddy",
+        "buddy cluster revoke",
+        "buddyconfig",
         "Buddy Config > Cluster membership",
         "the GUI uses its separate membership-revocation transaction rather than this exact CLI leaf",
     ),
@@ -1621,8 +1654,5 @@ fn operation_inventory_keeps_r4_05_gaps_explicit() {
         "buddy.cluster.confirm",
         "buddy.cluster.revoke",
     ]);
-    assert_eq!(
-        unwired,
-        expected_unwired
-    );
+    assert_eq!(unwired, expected_unwired);
 }

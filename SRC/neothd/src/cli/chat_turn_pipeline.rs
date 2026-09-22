@@ -1372,8 +1372,7 @@ mod tests {
         crate::wal::scan::for_each_frame(bytes, |_, frame| {
             if frame.header.event_type == crate::wal::events::EVENT_TYPE_REFUSAL_MIRRORED {
                 receipts.push(
-                    serde_json::from_slice(frame.payload)
-                        .expect("decode REFUSAL_MIRRORED receipt"),
+                    serde_json::from_slice(frame.payload).expect("decode REFUSAL_MIRRORED receipt"),
                 );
             }
             if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
@@ -2678,8 +2677,7 @@ mod tests {
     }
 
     #[test]
-    fn prepared_turn_terminal_mirror_preserves_seeded_context_before_final_receipt_and_terminal()
-     {
+    fn prepared_turn_terminal_mirror_preserves_seeded_context_before_final_receipt_and_terminal() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -2911,8 +2909,7 @@ mod tests {
     }
 
     #[test]
-    fn prepared_turn_terminal_mirror_blocks_retry_and_local_shadow_after_authorized_snapshot()
-     {
+    fn prepared_turn_terminal_mirror_blocks_retry_and_local_shadow_after_authorized_snapshot() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -3159,7 +3156,8 @@ mod tests {
     }
 
     #[test]
-    fn prepared_streaming_terminal_mirror_reports_finalization_error_when_final_binding_append_fails() {
+    fn prepared_streaming_terminal_mirror_reports_finalization_error_when_final_binding_append_fails()
+     {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
