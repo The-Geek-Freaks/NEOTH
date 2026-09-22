@@ -267,7 +267,7 @@ pub(crate) fn step6d_obsidian_vault_bootstrap_with_home(
 
 /// Step 6e — N-1 (Workstream B): n8n install opt-in.
 ///
-/// Probes Docker + npm asynchronously, picks the recommended path
+/// Probes Docker and npm with a Node.js >=24 prerequisite asynchronously, picks the recommended path
 /// via `InstallStrategy::recommend`. The actual install command is
 /// surfaced — never auto-spawned — so the operator runs it with full
 /// visibility.
@@ -287,7 +287,7 @@ pub(crate) async fn step6e_n8n_install(
         }
         state.install_n8n = true;
         let docker = n8n::check_docker_available().await.is_some();
-        let npm = n8n::check_npm_available().await.is_some();
+        let npm = n8n::check_npm_with_supported_node().await.is_some();
         match n8n::InstallStrategy::recommend(docker, npm) {
             Some(strategy) => {
                 let cmd = strategy.install_command(n8n::DEFAULT_N8N_PORT);
@@ -299,7 +299,7 @@ pub(crate) async fn step6e_n8n_install(
             }
             None => {
                 warn!(
-                    "n8n install opted in but neither docker nor npm available; install one first"
+                    "n8n install opted in but Docker is unavailable and npm needs Node.js >=24; install one first"
                 );
             }
         }
@@ -335,7 +335,7 @@ pub(crate) async fn step6e_n8n_install(
         }
         state.install_n8n = true;
         let docker = n8n::check_docker_available().await.is_some();
-        let npm = n8n::check_npm_available().await.is_some();
+        let npm = n8n::check_npm_with_supported_node().await.is_some();
         match n8n::InstallStrategy::recommend(docker, npm) {
             Some(strategy) => {
                 let cmd = strategy.install_command(n8n::DEFAULT_N8N_PORT);
@@ -350,7 +350,7 @@ pub(crate) async fn step6e_n8n_install(
             None => {
                 println!();
                 println!(
-                    "  Neither Docker nor npm is on PATH. Install one first, then re-run \
+                    "  Docker is unavailable and npm needs Node.js >=24. Install one first, then re-run \
                      `neoth init --force` to get the n8n step."
                 );
             }

@@ -1,10 +1,10 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
-  "item": "GOLD-W95-W195-windows-behavior-repair",
-  "base": "ff23b247498c393f9012ee80d7b82919c88d2a87",
-  "capturedUtc": "2026-09-22T11:43:43.5703409Z",
-  "validationStatus": "W195_HOSTED_FORMAT_FOLLOWUP_PENDING",
-  "scopeNote": "W195 all13 observed Windows failures repaired, two grouped34 compiler errors and48 exact Hosted format hunks. W196 installer source excluded. Previous wave sources remain historical.",
+  "item": "GOLD-W95-W196-pinned-n8n-prerequisite",
+  "base": "bb91c4d347cb66337eb8e8820d3c230d95957a41",
+  "capturedUtc": "2026-09-22T11:54:28.1101106Z",
+  "validationStatus": "W196_REVIEWED_HOSTED_PENDING",
+  "scopeNote": "W196 version/OCI-pinned n8n commands and stable Node>=24 gate in both wizard paths; grouped38 collecting independent failures; W195 extractor digest+W191 authorizer wiring followups. Historical wave receipt sources unchanged.",
   "files": [
     {
       "path": ".gitattributes",
@@ -63,8 +63,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 11275,
-      "sha256": "A149702667082C533972CB5BF7B0AF521ECAE2ED681D39F1C3B37279ECF8839E"
+      "bytes": 12216,
+      "sha256": "E5D9B3C3327BEB33D678C97C2562869878BCDC03EA69380D0EE2AFEA1B371195"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -247,6 +247,11 @@
       "sha256": "EA4891D3F9B48384830D9BA88636057F07A858D39245EE8CA4BC8B4A1C4F6688"
     },
     {
+      "path": "docs/gold-wave196-verification.md",
+      "bytes": 1647,
+      "sha256": "B157B0B0B5150C876577F27846B7B15EF67625A674514C93971274B83816C0A3"
+    },
+    {
       "path": "docs/install.md",
       "bytes": 13637,
       "sha256": "5C9D163E72A718C93618F47FB263C061F3E725647B609E2A8FDC7622A1E5C625"
@@ -353,18 +358,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 28369,
-      "sha256": "689E93ED1A3113C7488A375D304334D421C30D2706EA85EA6740FA4E637D6C75"
+      "bytes": 28611,
+      "sha256": "7B98D9DBA7930AFD87D3FF1DD8D0867D32C7EA4FAA865ED23C4A8DBF25083D2A"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1030760,
-      "sha256": "B30A8AC8C9D86AE75EF808FD3D1C1190AC135212D340CE80522D59A3D3FE1214"
+      "bytes": 1030836,
+      "sha256": "2F1FB4AE971F238044B5619B3499D8387F9E7C06E9D5E68C54F616D20FBCAAC2"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1626207,
-      "sha256": "D184986713E993727CBF541FF4691407907E788EA1C4DEA8BCED5A997ABF794B"
+      "bytes": 1626283,
+      "sha256": "531EA1708689B6979F087F9BDDEAD79BD49932BFF4F71D85EA9AEF80DECAD98E"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -379,7 +384,7 @@
     {
       "path": "scripts/extract_openclaw_channel_schema.py",
       "bytes": 10267,
-      "sha256": "555D5C30383A3C7900980D375E934676E68D979B5D40924B4F51F672850C6867"
+      "sha256": "08F2749E1A057F98A305C8589EF0BE1BA12830A268F6BB42E7D4F6EA1C721C12"
     },
     {
       "path": "scripts/test_extract_openclaw_channel_schema.py",
@@ -1032,6 +1037,11 @@
       "sha256": "1414245916CB5B7C7AF1784665E516D1C05644982164A0762CA6B4D57677E54D"
     },
     {
+      "path": "SRC/neothd/src/cli/init/steps_channel.rs",
+      "bytes": 25588,
+      "sha256": "D03A4943D1BE7327B215D49AF177701454DD854290AA2DE3D8BB79315920D71B"
+    },
+    {
       "path": "SRC/neothd/src/cli/internal.rs",
       "bytes": 14523,
       "sha256": "DF76F78173049CD8DEAC3DB111B24627A44C80E8EA2276F612C71F6C60CCDD5A"
@@ -1637,6 +1647,11 @@
       "sha256": "896B40E2FFAE8E353AC0F76828EB4B01C3782940FF63147549C73C47A147BB71"
     },
     {
+      "path": "SRC/neothd/src/installers/n8n.rs",
+      "bytes": 15395,
+      "sha256": "FDC636BF0F3612B5E0D13698A6307F53C4247CB2BBCB734288EE22C2323FF82C"
+    },
+    {
       "path": "SRC/neothd/src/installers/ocr.rs",
       "bytes": 4870,
       "sha256": "013B465DC3E4DD290DA5032E271D29EFEB6574AF03DDCD3A7D9C023047586240"
@@ -1653,8 +1668,8 @@
     },
     {
       "path": "SRC/neothd/src/loop_engine/engine.rs",
-      "bytes": 79068,
-      "sha256": "9970FB9F980A932D4FB15FD8A5C223954FAC129AEA6F74E78C0C0AAC672F4623"
+      "bytes": 79222,
+      "sha256": "1F83C2DA66520325EFDF15853A20A369F19E11EE875D99BFF21FC8E1598CC254"
     },
     {
       "path": "SRC/neothd/src/mcp/catalogue.rs",

@@ -6,14 +6,14 @@
 //! step that consumes this module:
 //!
 //!   1. Probes Docker via [`check_docker_available`].
-//!   2. Probes npm via [`check_npm_available`].
+//!   2. Probes npm plus a compatible Node runtime via
+//!      [`check_npm_with_supported_node`].
 //!   3. Offers the operator two install paths (Docker container vs
 //!      global npm) per [`InstallStrategy::recommend`].
-//!   4. Runs the chosen install command (subprocess shell-out, not
-//!      auto-spawned — we honour the "operator GO per command" rule
-//!      so n8n install is opt-in even when both Docker and npm are
-//!      available).
-//!   5. Probes the live HTTP endpoint at [`DEFAULT_N8N_PORT`] via
+//!   4. Surfaces the chosen install command but never auto-spawns it:
+//!      the operator runs it with full visibility.
+//!   5. Separately, callers can probe the live HTTP endpoint at
+//!      [`DEFAULT_N8N_PORT`] via
 //!      [`probe_n8n_endpoint`].
 //!
 //! All probes are async + non-blocking; the actual install commands
@@ -25,16 +25,22 @@ use std::time::Duration;
 /// Default n8n web port. Operator can override via wizard prompt;
 /// the const is the recommendation we render in the picker.
 pub const DEFAULT_N8N_PORT: u16 = 5678;
+/// Reviewed n8n release selected from the captured public metadata receipt.
+pub const N8N_VERSION: &str = "2.40.5";
+/// Immutable OCI index reference for the reviewed n8n release.
+pub const N8N_OCI_REFERENCE: &str = "docker.io/n8nio/n8n@sha256:9f693fd5565539efd5e75ad168526c8041a6af516d9e50bc4d9cb1c9c5031523";
+/// n8n 2.40.5 declares `engines.node: >=24.0.0` in the pinned npm metadata.
+pub const MIN_N8N_NODE_MAJOR: u64 = 24;
 
 /// One of the two install paths n8n supports. Pinned exhaustively
 /// — adding a third path needs operator-facing wizard UX.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum InstallStrategy {
-    /// `docker run -d -p <port>:5678 -v n8n_data:/home/node/.n8n n8nio/n8n`
+    /// `docker run … docker.io/n8nio/n8n@sha256:…`
     /// Recommended when Docker is available — operator keeps n8n
     /// isolated + can upgrade by pulling a new image.
     Docker,
-    /// `npm install -g n8n` + `n8n start --tunnel`
+    /// `npm install -g n8n@2.40.5` on Node.js >=24.
     /// Fallback when Docker isn't available. Operator owns the
     /// Node.js runtime + must manage the n8n process lifecycle.
     Npm,
@@ -59,7 +65,8 @@ impl InstallStrategy {
     }
 
     /// Decide which strategy to recommend given probe outcomes.
-    /// Docker wins when available (isolation); npm is the fallback.
+    /// Docker wins when available (isolation); npm is the fallback only when
+    /// the caller has already established that Node meets [`MIN_N8N_NODE_MAJOR`].
     /// `None` means neither path is available — the wizard surfaces
     /// "install Docker or Node.js first" with links.
     pub fn recommend(docker: bool, npm: bool) -> Option<Self> {
@@ -89,9 +96,14 @@ impl InstallStrategy {
                 "n8n_data:/home/node/.n8n".into(),
                 "--restart".into(),
                 "unless-stopped".into(),
-                "n8nio/n8n:latest".into(),
+                N8N_OCI_REFERENCE.into(),
             ],
-            Self::Npm => vec!["npm".into(), "install".into(), "-g".into(), "n8n".into()],
+            Self::Npm => vec![
+                "npm".into(),
+                "install".into(),
+                "-g".into(),
+                format!("n8n@{N8N_VERSION}"),
+            ],
         }
     }
 }
@@ -107,6 +119,21 @@ pub async fn check_docker_available() -> Option<String> {
 /// surface.
 pub async fn check_npm_available() -> Option<String> {
     crate::installers::probe::cli_version("npm").await
+}
+
+/// npm is an install option for this reviewed n8n release only when both npm
+/// and a Node runtime satisfying n8n's declared >=24 engine are present.
+pub async fn check_npm_with_supported_node() -> Option<(String, String)> {
+    let node = crate::installers::probe::cli_version("node").await?;
+    let npm = check_npm_available().await?;
+    node_version_supports_n8n(&node).then_some((node, npm))
+}
+
+pub fn node_version_supports_n8n(version: &str) -> bool {
+    let version = version.trim();
+    let version = version.strip_prefix('v').unwrap_or(version);
+    semver::Version::parse(version)
+        .is_ok_and(|version| version.major >= MIN_N8N_NODE_MAJOR && version.pre.is_empty())
 }
 
 /// Outcome of a live n8n HTTP probe. Operator-readable so the
@@ -251,7 +278,8 @@ mod tests {
         assert_eq!(cmd[0], "docker");
         assert_eq!(cmd[1], "run");
         assert!(cmd.contains(&"-d".to_string()));
-        assert!(cmd.contains(&"n8nio/n8n:latest".to_string()));
+        assert!(cmd.contains(&N8N_OCI_REFERENCE.to_string()));
+        assert!(!cmd.iter().any(|arg| arg.contains(":latest")));
         assert!(cmd.iter().any(|a| a == &format!("{DEFAULT_N8N_PORT}:5678")));
         assert!(cmd.contains(&"--restart".to_string()));
         assert!(cmd.contains(&"unless-stopped".to_string()));
@@ -266,7 +294,35 @@ mod tests {
     #[test]
     fn npm_install_command_is_global_install() {
         let cmd = InstallStrategy::Npm.install_command(DEFAULT_N8N_PORT);
-        assert_eq!(cmd, vec!["npm", "install", "-g", "n8n"]);
+        assert_eq!(cmd, vec!["npm", "install", "-g", "n8n@2.40.5"]);
+        assert!(!cmd.iter().any(|arg| arg == "n8n"));
+    }
+
+    #[test]
+    fn node_version_gate_rejects_unsupported_or_malformed_versions() {
+        for version in [
+            "v23.11.0",
+            "23.11.0",
+            "v0.0.0",
+            "node v24.0.0",
+            "24",
+            "24.invalid.0",
+            "vv24.0.0",
+            "v24.0.0-rc.1",
+            "",
+        ] {
+            assert!(
+                !node_version_supports_n8n(version),
+                "{version:?} must not enable the npm recommendation"
+            );
+        }
+    }
+
+    #[test]
+    fn node_version_gate_accepts_node_24_and_newer() {
+        assert!(node_version_supports_n8n("v24.0.0"));
+        assert!(node_version_supports_n8n("24.12.1"));
+        assert!(node_version_supports_n8n("v25.0.0"));
     }
 
     #[test]

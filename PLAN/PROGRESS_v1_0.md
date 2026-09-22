@@ -2,27 +2,28 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
-**Current W195 publication boundary (2026-09-22):** the Windows run in full CI
-`35713920675` on `8b654ebd` executed 17,296 tests and reported 13 failures.
-The reviewed repair covers all 13 causes: CLI operation parity, installed-Skill
-fixture policy, valid diff context, durable model-operation uncertainty through
-restart, bounded Windows pipe-busy retry, fallible resampler allocation, precise
-source gates, canonical OpenClaw registry mapping, and GUI sequence rejection.
-Fresh Hosted behavior is pending; this is not a full-CI success claim.
+**W196 next publication (2026-09-22):** n8n's offered install commands now use
+reviewed version 2.40.5 and its immutable OCI digest. Both wizard branches offer
+npm only after a complete stable Node version >=24 and npm are observed.
+Four focused identities expand the existing grouped lane from 34 to 38. It now
+records all independently failing behavior fixtures before returning failure;
+compile/discovery errors still stop immediately. Independent source/lane review
+passed, with the matching matrix admission included in this publication.
 
-W192/W194 were published in `4833365a` (its commit subject understates the batch).
-The grouped34 run `35721899294` found two compile errors in the new fixtures/cache;
-both are repaired. Its 48 exact Hosted format hunks are imported. The next
-published source must rerun grouped34, core targets and full CI. The current
-inventory is 480 sources / 598 native identities, plus unchanged platform,
-GUI, audio and custom-harness selections. Details: `docs/gold-wave195-verification.md`.
+W195 is published in `ff23b247`, followed by exact Hosted formatting in `bb91c4d3`.
+Preflight `35723253662` reached the source contracts and found the extractor's
+stale inventory digest; it now matches the corrected canonical gchat fixture.
+Grouped34 `35722981118` compiled, passed its first 14 identities, then showed
+that the fallback's call authorizer also needed the real WAL writer. The fixture
+now binds both writer and private usage home; remaining behavior awaits Hosted
+execution. No successful W192/W193 behavior claim is made yet.
 
-All 19 audio identities passed on Linux `35717299461` (`8fa6`), Windows
-`35718376823` (`71e`) and macOS `35718379383` (`71e`), with source/input/name/log
-custody verified. Core `35719897455` passed on `98c`. Old preview `35713923652`
-is still independent and cannot validate later sources. Device/microphone,
-provider and release acceptance remain separate. Road remains **1015 checked /
-307 open / 2 partial** (1324 total), with no checkbox changes.
+Current inventory: 483 source paths / 602 universal native identities; existing
+platform/GUI/audio/custom selections are unchanged. Audio19 previously passed on
+all three platforms with exact custody. W195's resampler source change still
+requires its new-source audio run. Road remains **1015 checked / 307 open /
+2 partial**, 1324 total; managed install, authenticated readiness, live-device
+and release gates remain open. Details: `docs/gold-wave196-verification.md`.
 
 **W186 Tract result (2026-09-22):** new graph run `35714955362` on `3ded02b7`
 passes all three Silero runtime cases on Linux, along with the first 18 of 19

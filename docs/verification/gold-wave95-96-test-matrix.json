@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W195_HOSTED_FORMAT_FOLLOWUP_PENDING",
-  "base": "ff23b247498c393f9012ee80d7b82919c88d2a87",
+  "status": "W196_REVIEWED_HOSTED_PENDING",
+  "base": "bb91c4d347cb66337eb8e8820d3c230d95957a41",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 83112,
-    "sha256": "590BD03905A0C3DB4519CDEB498691200C5D20466FE4CB40E3C04EE5BB5AEE46"
+    "bytes": 83660,
+    "sha256": "860291B59FD8919990368C2AE7D1C9450AB83E4AF0F20CDD5008F0AD668096BA"
   },
-  "sourceInputs": 480,
+  "sourceInputs": 483,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -1008,7 +1008,7 @@
     {
       "test": "loop_engine::engine::tests::w145_loop_forwards_retained_skill_mcp_deny_before_stdio_transport",
       "sourcePath": "SRC/neothd/src/loop_engine/engine.rs",
-      "sourceSha256": "9970FB9F980A932D4FB15FD8A5C223954FAC129AEA6F74E78C0C0AAC672F4623",
+      "sourceSha256": "1F83C2DA66520325EFDF15853A20A369F19E11EE875D99BFF21FC8E1598CC254",
       "junitClass": "neoth"
     },
     {
@@ -1776,7 +1776,7 @@
     {
       "test": "loop_engine::engine::tests::w159_loop_refined_emitter_stamps_context_and_none_as_zero",
       "sourcePath": "SRC/neothd/src/loop_engine/engine.rs",
-      "sourceSha256": "9970FB9F980A932D4FB15FD8A5C223954FAC129AEA6F74E78C0C0AAC672F4623",
+      "sourceSha256": "1F83C2DA66520325EFDF15853A20A369F19E11EE875D99BFF21FC8E1598CC254",
       "junitClass": "neoth"
     },
     {
@@ -3420,13 +3420,13 @@
     {
       "test": "loop_engine::engine::tests::w191_loop_retains_one_registry_envelope_byte_identically_across_rounds",
       "sourcePath": "SRC/neothd/src/loop_engine/engine.rs",
-      "sourceSha256": "9970FB9F980A932D4FB15FD8A5C223954FAC129AEA6F74E78C0C0AAC672F4623",
+      "sourceSha256": "1F83C2DA66520325EFDF15853A20A369F19E11EE875D99BFF21FC8E1598CC254",
       "junitClass": "neoth"
     },
     {
       "test": "loop_engine::engine::tests::w191_loop_fallback_recovery_keeps_the_same_registry_envelope",
       "sourcePath": "SRC/neothd/src/loop_engine/engine.rs",
-      "sourceSha256": "9970FB9F980A932D4FB15FD8A5C223954FAC129AEA6F74E78C0C0AAC672F4623",
+      "sourceSha256": "1F83C2DA66520325EFDF15853A20A369F19E11EE875D99BFF21FC8E1598CC254",
       "junitClass": "neoth"
     },
     {
@@ -3596,6 +3596,30 @@
       "sourceSha256": "E9BB9011DC7527BB148E82403FFF8BAEE1F8418165F434019C9BF5490C833661",
       "test": "subprocess_transports_stay_bounded",
       "junitClass": "neoth::provider_response_bounds_source_gate"
+    },
+    {
+      "junitClass": "neoth",
+      "sourcePath": "SRC/neothd/src/installers/n8n.rs",
+      "sourceSha256": "FDC636BF0F3612B5E0D13698A6307F53C4247CB2BBCB734288EE22C2323FF82C",
+      "test": "installers::n8n::tests::docker_install_command_uses_canonical_image_and_port"
+    },
+    {
+      "junitClass": "neoth",
+      "sourcePath": "SRC/neothd/src/installers/n8n.rs",
+      "sourceSha256": "FDC636BF0F3612B5E0D13698A6307F53C4247CB2BBCB734288EE22C2323FF82C",
+      "test": "installers::n8n::tests::npm_install_command_is_global_install"
+    },
+    {
+      "junitClass": "neoth",
+      "sourcePath": "SRC/neothd/src/installers/n8n.rs",
+      "sourceSha256": "FDC636BF0F3612B5E0D13698A6307F53C4247CB2BBCB734288EE22C2323FF82C",
+      "test": "installers::n8n::tests::node_version_gate_rejects_unsupported_or_malformed_versions"
+    },
+    {
+      "junitClass": "neoth",
+      "sourcePath": "SRC/neothd/src/installers/n8n.rs",
+      "sourceSha256": "FDC636BF0F3612B5E0D13698A6307F53C4247CB2BBCB734288EE22C2323FF82C",
+      "test": "installers::n8n::tests::node_version_gate_accepts_node_24_and_newer"
     }
   ],
   "requiredGuiTests": [
@@ -9884,5 +9908,69 @@
       }
     ],
     "note": "Exact Hosted format only; reviewed behavior unchanged; fresh Preflight pending"
+  },
+  "wave196": {
+    "status": "REVIEWED_HOSTED_PENDING",
+    "sourceBase": "bb91c4d347cb66337eb8e8820d3c230d95957a41",
+    "sources": [
+      {
+        "path": ".github/workflows/research-lifecycle.yml",
+        "bytes": 12216,
+        "sha256": "E5D9B3C3327BEB33D678C97C2562869878BCDC03EA69380D0EE2AFEA1B371195"
+      },
+      {
+        "path": "SRC/neothd/src/installers/n8n.rs",
+        "bytes": 15395,
+        "sha256": "FDC636BF0F3612B5E0D13698A6307F53C4247CB2BBCB734288EE22C2323FF82C"
+      },
+      {
+        "path": "SRC/neothd/src/cli/init/steps_channel.rs",
+        "bytes": 25588,
+        "sha256": "D03A4943D1BE7327B215D49AF177701454DD854290AA2DE3D8BB79315920D71B"
+      },
+      {
+        "path": "SRC/neothd/src/loop_engine/engine.rs",
+        "bytes": 79222,
+        "sha256": "1F83C2DA66520325EFDF15853A20A369F19E11EE875D99BFF21FC8E1598CC254"
+      },
+      {
+        "path": "scripts/extract_openclaw_channel_schema.py",
+        "bytes": 10267,
+        "sha256": "08F2749E1A057F98A305C8589EF0BE1BA12830A268F6BB42E7D4F6EA1C721C12"
+      },
+      {
+        "path": "docs/gold-wave196-verification.md",
+        "bytes": 1647,
+        "sha256": "B157B0B0B5150C876577F27846B7B15EF67625A674514C93971274B83816C0A3"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1626283,
+        "sha256": "531EA1708689B6979F087F9BDDEAD79BD49932BFF4F71D85EA9AEF80DECAD98E"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1030836,
+        "sha256": "2F1FB4AE971F238044B5619B3499D8387F9E7C06E9D5E68C54F616D20FBCAAC2"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 28611,
+        "sha256": "7B98D9DBA7930AFD87D3FF1DD8D0867D32C7EA4FAA865ED23C4A8DBF25083D2A"
+      }
+    ],
+    "requiredTests": [
+      "installers::n8n::tests::docker_install_command_uses_canonical_image_and_port",
+      "installers::n8n::tests::npm_install_command_is_global_install",
+      "installers::n8n::tests::node_version_gate_rejects_unsupported_or_malformed_versions",
+      "installers::n8n::tests::node_version_gate_accepts_node_24_and_newer"
+    ],
+    "note": "n8n2.40.5 and immutable OCI, stable semver Node>=24 plus npm prerequisite. Commands offered, not managed installs. Four selected fixtures; grouped38 accumulation retains final failure.",
+    "review": "Independent source PASS; workflow shell PASS, required matrix entry added at admission",
+    "priorPreflight": 35723253662,
+    "priorPreflightResult": "format passed; stale extractor fixture digest repaired",
+    "priorGrouped": 35722981118,
+    "priorGroupedResult": "compiled;first14passed;fallback authorizer missingWAL repaired with realwriter+privateusagehome",
+    "releaseReady": false
   }
 }

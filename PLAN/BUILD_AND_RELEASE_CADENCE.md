@@ -3,16 +3,19 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
-W192/W194 extend the focused Research/Loop lane to exactly 34 identities: W190
-ten, W191 five, W192 ten, W193 five and W194 four. Every name must bind to one
-current native source record before serial exact discovery/execution.
-
 W195 repairs the 13 failures observed in the completed 17,296-case Windows
 run `35713920675`, then requires a fresh full-CI milestone after focused/core
 checks. The grouped34 lane first exposed two new fixture/cache compile errors;
 those are repaired alongside the exact 48 Hosted formatter hunks. No failed
 identity is skipped or removed. Staging/commit/push remain root-only to avoid
 shared-index interference; narrow worker-owned source changes stay unstaged.
+
+W196 extends the grouped lane to exactly 38 identities (W19010/W1915/W19210/
+W1935/W1944/W1964). Every name must have one current native source record.
+Independent behavior failures are retained in failed-fixtures.txt and all selected
+identities continue; a nonempty failure receipt makes the final result fail.
+Compile/discovery and source-binding failures still stop immediately. This gives
+one useful error inventory per build without weakening any pass requirement.
 
 ## Workstation stability constraint — 2026-09-16
 

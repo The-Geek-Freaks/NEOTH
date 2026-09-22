@@ -1289,9 +1289,12 @@ mod tests {
             &crate::mcp::McpServers::default(),
             &writer,
             &freedom,
-            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
                 AutonomyLevel::Full,
-            ),
+                Some(writer.clone()),
+                crate::config::TokensConfig::default_max_per_request(),
+            )
+            .with_usage_home(home.path()),
             None,
             &crate::mcp::McpToolScope::default(),
             &crate::cli::elicitation::ElicitationHandler::Disabled,
