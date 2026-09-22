@@ -66,3 +66,9 @@ Core `35788596014` passed slim Clippy, test typecheck, public CLI build and
 reference export on `bbcb3c56`. The generated `docs/cli-commands.md` was imported
 after verifying the artifact source-head and SHA-256. This does not turn the
 four failed behavior tests into passes; their recheck joins Grouped328.
+## Fixture repair accepted — 2026-09-23
+
+Grouped328 run35790281385 on aca578a0 passed328/328 actual selected cases,
+including all21 W226 cases. All68 source bindings, matrix, lock and individual
+terminals were verified. The four Grouped303 setup repairs are accepted.
+W229 live mutation changes are separate and not covered by this receipt.

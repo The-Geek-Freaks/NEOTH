@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W228 manual exact LinuxGUI116 lane source-reviewed; Hosted pending, no releaseCI replacement",
+  "status": "W230 selects12 existing live throughput cases inGroup340; W226/W227 exactGroup328 admitted; GUI pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92533,
-    "sha256": "BB2E449BADE1AC23AFEFD3627BDBB021976DC4AA23D3976248BF1CB6BC5A3AF0"
+    "bytes": 92544,
+    "sha256": "3EE62A5D03386E62D4D7F721C78374247332C4FCF66721E2705DC23D5DCAFEFD"
   },
   "sourceInputs": 535,
   "requiredNativeTests": [
@@ -15438,6 +15438,32 @@
     "base": "aca578a0a3f35eb4cd0c4a35d6ca1265d8f2c30e",
     "sources": [],
     "note": "Strict target/name/source bindings, real CLI+GUIbin prebuild with jobs1, xvfb serial exact tests, onepass terminals, bounded durable partial receipts and fail-closed complete proof.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave230LiveThroughputAcceptance": {
+    "requiredTests": [
+      "daemon::live_throughput::tests::visible_events_use_a_stable_one_second_denominator",
+      "daemon::live_throughput::tests::discrete_window_expires_a_bucket_at_exactly_one_thousand_milliseconds",
+      "daemon::live_throughput::tests::fixed_buckets_preserve_high_event_rate_within_one_millisecond",
+      "daemon::live_throughput::tests::token_basis_requires_positive_explicit_incremental_deltas",
+      "daemon::live_throughput::tests::time_regression_is_rejected_without_reusing_old_buckets",
+      "daemon::live_throughput::tests::terminal_clears_state_and_reset_starts_a_distinct_lifetime",
+      "cli::chat::tests::live_throughput_wire_is_exact_private_and_content_free",
+      "cli::chat::tests::live_throughput_producer_sequences_transitions_before_provider_done",
+      "cli::chat::tests::live_throughput_idle_interval_is_not_starved_by_ready_nonvisible_events",
+      "daemon::gui_chat_protocol::tests::throughput_state_is_typed_bounded_and_content_free",
+      "daemon::gui_chat_runtime::lifecycle_tests::throughput_mapping_preserves_the_producer_state_without_rederivation",
+      "daemon::gui_chat_bridge::tests::throughput_bridge_event_preserves_inner_and_outer_sequences"
+    ],
+    "report": "docs/gold-wave230-live-throughput-acceptance.md",
+    "note": "12 existing exact behavior cases; 7 universal GUI plus W162/W168 callbacks are independently selected in GUI116; no new native records",
+    "localValidationRan": false
+  },
+  "wave230SelectionBinding": {
+    "base": "b1ef0a66402590bfdc719b75d07f31917f3424e0",
+    "sources": [],
+    "note": "No production source changes inW230; exactGroup328 35790281385 admitted328/328 with68sources/matrix/lock/actualterminals; W229 uncommitted excluded.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

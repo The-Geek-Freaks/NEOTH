@@ -26,3 +26,12 @@ for per-skill autonomy enforcement. Release/platform gates remain separate.
 
 No local compiler, parser, formatter, test or runtime ran. Source review and
 text/JSON inventory checks are preparation for GitHub-hosted verification.
+
+## Hosted acceptance update — 2026-09-23
+
+Grouped328 run35790281385 on aca578a0 passed all328 exact selected cases.
+All68 source-path hashes, matrix, Cargo.lock and actual per-case terminals
+were checked against the frozen Git source. This includes all25 W227 cases.
+Independent literal-contract review found no remaining source/selection gap.
+P2-12 stays open pending actual GUI116 acceptance, including the typed receipt
+and real inspect/set/reset callback. No local executable validation ran.

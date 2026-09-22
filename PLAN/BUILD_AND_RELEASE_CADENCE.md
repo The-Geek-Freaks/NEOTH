@@ -3,6 +3,18 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W230 selection / W226-W227 verified (2026-09-23):** Grouped328
+`35790281385` on `aca578a0` is admitted at **328/328**, with all68 source
+hashes, matrix, lock and each actual result terminal verified. This confirms
+all four W226 fixture repairs and the25 W227 autonomy cases. P2-12 awaits its
+GUI cases; Linux GUI116 `35790648880` remains running. W230 selects12 existing
+live-throughput cases absent the prior actual execution union, growing the
+focused selection to **Grouped340**. Its9 GUI cases are already selected by
+GUI116. P2-29 stays open pending actual execution. Inventory remains535sources/
+841native/94GUI plus22Linux/22macOS extras and26macOS custom cases. Road remains
+1016checked/306open/2partial. W229 live cluster mutation is separate work.
+See `docs/gold-wave230-live-throughput-acceptance.md`. FullCI `35782661515`
+is preserved; all executable validation remains GitHub-hosted.
 **W228 focused Linux GUI acceptance (2026-09-23):** a separate manual,
 non-cancelling GitHub lane now binds and executes the canonical **94 universal
 plus 22 Linux GUI fixtures**. It prebuilds the real CLI and GUI binary harness,

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T22:05:47.7998227Z",
-  "validationStatus": "W228 manual exact LinuxGUI116 lane source-reviewed; Hosted pending, no releaseCI replacement",
+  "capturedUtc": "2026-09-22T22:19:09.8391849Z",
+  "validationStatus": "W230 selects12 existing live throughput cases inGroup340; W226/W227 exactGroup328 admitted; GUI pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -68,8 +68,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 11772,
-      "sha256": "B7FE7C7AEB6DF987B070DFEFC278EC0932C90278EECC1075C36E877EB698726B"
+      "bytes": 11825,
+      "sha256": "7793ACE7C6C87BEB15A63A2878F60E094973652A6443048F617751B82D23E38D"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -433,18 +433,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 75037,
-      "sha256": "FAE373C232836325C843BC5B520CD480392E440EAFF44F9A1FD02830F9D03642"
+      "bytes": 75936,
+      "sha256": "F1AF6577AAFD03BDFFB2AB38B305FDB19914954B40203E6B07747F505F5E7708"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1077972,
-      "sha256": "24F226A05A4605D227A353F6DFF2EEDCA9A348CAAC4317647CEF9E1903C05259"
+      "bytes": 1078871,
+      "sha256": "4973A38DF1709E0E7B74F9781CF9FC1C8C59CDA42BCECF239A6C5BB3A949C13E"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1673540,
-      "sha256": "2D1F6BDE49EEF94815F360AE2A44F4F717F092BA30602C6C9EBCCF1E66A0C1A5"
+      "bytes": 1674439,
+      "sha256": "B98011D4AE468C41D8D49C0A5E0D73A00767D44FDBB35F346C6F0E6A352D3439"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
