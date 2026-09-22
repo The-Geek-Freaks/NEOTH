@@ -44,6 +44,8 @@ pub mod refusal_abliterated;
 pub mod refusal_cause;
 pub mod refusal_detect;
 pub mod refusal_hard_block;
+pub mod mirror_refusal_pipeline;
+pub mod mirror_refusal_templates;
 pub mod refusal_recovery;
 pub mod refusal_reframings;
 pub mod risk_gate;

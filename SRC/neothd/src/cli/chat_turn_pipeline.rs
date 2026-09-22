@@ -87,6 +87,18 @@ impl ChatTurnCancellation {
     }
 }
 
+impl crate::security::mirror_refusal_pipeline::MirrorCancellation for ChatTurnCancellation {
+    fn is_cancelled(&self) -> bool {
+        self.is_closed()
+    }
+
+    fn cancelled(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(ChatTurnCancellation::cancelled(self))
+    }
+}
+
 /// Sanitized presentation events. Provider bytes reach this boundary only
 /// after the existing framing/canary validation in `cli::chat`.
 #[derive(Debug, Clone, PartialEq)]
@@ -1065,6 +1077,9 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
     .with_prompt_tax(prompt_tax, &final_prompt, final_system.as_deref());
 
     cancellation.check_open("provider dispatch")?;
+    // One shared budget begins at prepared-turn admission and follows any
+    // council-shaped post-reply work. Do not mint a fresh cap in a fallback.
+    let council_budget = crate::council::BudgetToken::from_council(&config.council);
     let dispatch_output = match dispatch_provider(
         final_prompt,
         final_system,
@@ -1143,6 +1158,7 @@ pub(crate) async fn run_prepared_chat_turn_with_effect_gate(
         completion,
         writer,
         config,
+        council_budget,
         provider,
         args,
         prompt,

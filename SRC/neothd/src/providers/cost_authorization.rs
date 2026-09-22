@@ -7,7 +7,7 @@
 //! provider, model and streaming mode immediately before the inner call runs.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -69,6 +69,119 @@ impl CouncilAttemptBudget {
             )))
         })
     }
+}
+
+/// Process-local, whole-operation provider budget. Clones intentionally share
+/// one reservation state so sibling wrappers cannot each spend the full cap.
+#[derive(Clone)]
+pub(crate) struct OperationBudget {
+    state: Arc<Mutex<OperationBudgetState>>,
+}
+
+struct OperationBudgetState {
+    remaining_tokens: u64,
+    remaining_microusd: u64,
+}
+
+struct OperationBudgetReservationPlan {
+    budget: OperationBudget,
+    tokens: u64,
+    microusd: u64,
+}
+
+impl OperationBudget {
+    fn new(max_total_tokens: u32, max_total_cost_usd: f32) -> Result<Self> {
+        if max_total_tokens == 0 || !max_total_cost_usd.is_finite() || max_total_cost_usd <= 0.0 {
+            anyhow::bail!("operation budget requires finite non-zero token and USD caps");
+        }
+        let max_microusd = usd_cap_to_microusd(max_total_cost_usd).ok_or_else(|| {
+            anyhow::anyhow!("operation budget USD cap is not representable conservatively")
+        })?;
+        Ok(Self {
+            state: Arc::new(Mutex::new(OperationBudgetState {
+                remaining_tokens: u64::from(max_total_tokens),
+                remaining_microusd: max_microusd,
+            })),
+        })
+    }
+
+    fn reserve(&self, tokens: u64, microusd: u64) -> Result<()> {
+        let mut state = self.state.lock().map_err(|_| {
+            anyhow::anyhow!("operation budget reservation lock poisoned; dispatch blocked")
+        })?;
+        if tokens > state.remaining_tokens || microusd > state.remaining_microusd {
+            anyhow::bail!(
+                "operation budget exhausted (need {tokens} tokens and {microusd} micro-USD; remaining {} tokens and {} micro-USD)",
+                state.remaining_tokens,
+                state.remaining_microusd,
+            );
+        }
+        state.remaining_tokens -= tokens;
+        state.remaining_microusd -= microusd;
+        Ok(())
+    }
+}
+
+/// Convert the configured decimal USD cap to the nearest micro-USD. The cap
+/// is an operator value, so `.02` must remain exactly 20_000 micro-USD despite
+/// its binary `f32` representation.
+fn usd_cap_to_microusd(usd: f32) -> Option<u64> {
+    let scaled = f64::from(usd) * 1_000_000.0;
+    (scaled.is_finite() && scaled > 0.0 && scaled <= u64::MAX as f64)
+        .then(|| scaled.round() as u64)
+}
+
+/// Round an independently calculated authorization bound upward. Unlike an
+/// operator cap, a fractional provider bound must never be rounded down.
+fn usd_bound_to_microusd(usd: f64) -> Option<u64> {
+    let scaled = usd * 1_000_000.0;
+    (scaled.is_finite() && scaled >= 0.0 && scaled <= u64::MAX as f64)
+        .then(|| scaled.ceil() as u64)
+}
+
+/// Create one shareable operation budget. Attach clones of the returned value
+/// to every sibling authorizer that belongs to the same bounded operation.
+pub(crate) fn new_operation_budget(
+    max_total_tokens: u32,
+    max_total_cost_usd: f32,
+) -> Result<OperationBudget> {
+    OperationBudget::new(max_total_tokens, max_total_cost_usd)
+}
+
+fn operation_budget_reservation_plan(
+    budget: &OperationBudget,
+    provider: &'static str,
+    model: &str,
+    req: &Request,
+    call_scope: &'static str,
+    output_token_ceiling: Option<u32>,
+) -> Result<OperationBudgetReservationPlan> {
+    let Some(output_token_ceiling) = output_token_ceiling else {
+        anyhow::bail!(
+            "{call_scope} ({provider}/{model}): operation budget blocks an unbounded provider invocation"
+        );
+    };
+    let Some(bound_usd) = crate::providers::cost::authorization_bound_usd(
+        provider,
+        model,
+        req,
+        output_token_ceiling,
+    ) else {
+        anyhow::bail!(
+            "{call_scope} ({provider}/{model}): operation budget blocks unknown provider pricing"
+        );
+    };
+    let Some(microusd) = usd_bound_to_microusd(bound_usd) else {
+        anyhow::bail!(
+            "{call_scope} ({provider}/{model}): operation budget blocks an unrepresentable price bound"
+        );
+    };
+    let input_tokens = crate::providers::cost::authorization_input_token_upper_bound(req, model);
+    Ok(OperationBudgetReservationPlan {
+        budget: budget.clone(),
+        tokens: u64::from(input_tokens) + u64::from(output_token_ceiling),
+        microusd,
+    })
 }
 
 /// Attribute nested model-driven work (council leaves, MCP iterations) without
@@ -501,6 +614,7 @@ struct ProviderCallAuditTicket {
     usage_automated: bool,
     daily_budget_plan: Option<crate::council::daily_budget::DailyBudgetReservationPlan>,
     daily_budget_reservation: Option<crate::council::daily_budget::DailyBudgetReservation>,
+    operation_budget_plan: Option<OperationBudgetReservationPlan>,
     started: Instant,
 }
 
@@ -1092,6 +1206,25 @@ impl AuthorizedLeafCall {
                 })?;
             reservation_guard = Some(BeforeDispatchReservation::new(reservation));
         }
+        if let Some(plan) = self.ticket.operation_budget_plan.take()
+            && let Err(error) = plan.budget.reserve(plan.tokens, plan.microusd)
+        {
+            // The daily ledger has not observed a provider dispatch yet, so
+            // it can roll back this rejected second intersection cleanly.
+            // The operation reservation itself never refunds after admission.
+            if let Some(reservation) = reservation_guard.take()
+                && let Err(release_error) = reservation.release_off_thread().await
+            {
+                return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                    "{} ({}/{}): operation budget reservation denied; daily-budget rollback also failed (reservation remains fail-closed): {release_error}",
+                    self.ticket.call_scope, self.ticket.provider, self.ticket.wire_model,
+                ))));
+            }
+            return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                "{} ({}/{}): operation budget reservation denied; dispatch blocked: {error}",
+                self.ticket.call_scope, self.ticket.provider, self.ticket.wire_model
+            ))));
+        }
 
         let mut intent = match ProviderIntentLifecycle::start(self.ticket) {
             Ok(intent) => intent,
@@ -1400,6 +1533,7 @@ pub struct ProviderCallAuthorizer {
     usage_home: Option<PathBuf>,
     usage_automated: bool,
     council_daily_budget: Option<crate::council::daily_budget::DailyBudgetPolicy>,
+    operation_budget: Option<OperationBudget>,
     ephemeral_consent: crate::consent::EphemeralConsent,
     turn_effect_gate: Option<Arc<dyn ChatTurnEffectGate>>,
     #[cfg(test)]
@@ -1697,6 +1831,7 @@ impl ProviderCallAuthorizer {
             usage_home: default_usage_home(),
             usage_automated: false,
             council_daily_budget: None,
+            operation_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             #[cfg(test)]
@@ -1723,6 +1858,7 @@ impl ProviderCallAuthorizer {
             usage_home: default_usage_home(),
             usage_automated: true,
             council_daily_budget: None,
+            operation_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             #[cfg(test)]
@@ -1753,6 +1889,7 @@ impl ProviderCallAuthorizer {
             usage_home: default_usage_home(),
             usage_automated: true,
             council_daily_budget: None,
+            operation_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             #[cfg(test)]
@@ -1780,6 +1917,7 @@ impl ProviderCallAuthorizer {
             usage_home: default_usage_home(),
             usage_automated: true,
             council_daily_budget: None,
+            operation_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             #[cfg(test)]
@@ -1812,6 +1950,7 @@ impl ProviderCallAuthorizer {
             usage_home: Some(usage_home.into()),
             usage_automated: true,
             council_daily_budget: None,
+            operation_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             #[cfg(test)]
@@ -1840,6 +1979,7 @@ impl ProviderCallAuthorizer {
             usage_home: Some(usage_home.into()),
             usage_automated: true,
             council_daily_budget: None,
+            operation_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             #[cfg(test)]
@@ -1867,6 +2007,7 @@ impl ProviderCallAuthorizer {
             usage_home: None,
             usage_automated: false,
             council_daily_budget: None,
+            operation_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             allow_missing_writer: true,
@@ -1885,6 +2026,7 @@ impl ProviderCallAuthorizer {
             usage_home: None,
             usage_automated: false,
             council_daily_budget: None,
+            operation_budget: None,
             ephemeral_consent: crate::consent::EphemeralConsent::default(),
             turn_effect_gate: None,
             allow_missing_writer: true,
@@ -1988,6 +2130,14 @@ impl ProviderCallAuthorizer {
             .map(|cap| crate::council::daily_budget::DailyBudgetPolicy::new(home, cap))
             .transpose()?;
         Ok(self)
+    }
+
+    /// Attach a process-local whole-operation cap without replacing the
+    /// operator's independently configured Council daily ledger. Every clone
+    /// of this authorizer carries the same shared reservation state.
+    pub(crate) fn with_operation_budget(mut self, budget: OperationBudget) -> Self {
+        self.operation_budget = Some(budget);
+        self
     }
 
     /// Override caller attribution without weakening the authorization policy.
@@ -2178,6 +2328,17 @@ impl ProviderCallAuthorizer {
         let system_hash =
             xxhash_rust::xxh3::xxh3_64(req.system.as_deref().unwrap_or("").as_bytes());
         let prompt_hash = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
+        let operation_budget_plan = match &self.operation_budget {
+            None => None,
+            Some(budget) => Some(operation_budget_reservation_plan(
+                budget,
+                provider,
+                model,
+                req,
+                call_scope,
+                output_token_ceiling,
+            )?),
+        };
         let daily_budget_plan = match &self.council_daily_budget {
             None => None,
             Some(policy) if super::is_local_provider(provider) => {
@@ -2226,6 +2387,7 @@ impl ProviderCallAuthorizer {
                     usage_automated: current_usage_automated(self.usage_automated),
                     daily_budget_plan,
                     daily_budget_reservation: None,
+                    operation_budget_plan,
                     started: Instant::now(),
                 },
             });
@@ -2420,6 +2582,7 @@ impl ProviderCallAuthorizer {
                 usage_automated: current_usage_automated(self.usage_automated),
                 daily_budget_plan,
                 daily_budget_reservation: None,
+                operation_budget_plan,
                 started: Instant::now(),
             },
         })
@@ -2835,6 +2998,296 @@ mod tests {
 
     fn test_input_token_cap() -> u32 {
         crate::config::TokensConfig::default_max_per_request()
+    }
+
+    #[test]
+    fn operation_budget_shared_clones_aggregate_input_output_and_usd() {
+        assert_eq!(usd_cap_to_microusd(0.02), Some(20_000));
+        assert_eq!(usd_bound_to_microusd(0.0), Some(0));
+        let mirror_budget = new_operation_budget(4_000, 0.02).unwrap();
+        let right = mirror_budget.clone();
+        let cerebellum = mirror_budget;
+
+        // Two sibling calls each reserve their conservative input plus output
+        // bound. Together they exactly consume W206's 4k-token/$0.02 mirror.
+        right.reserve(1_200 + 800, 10_000).unwrap();
+        cerebellum.reserve(1_100 + 900, 10_000).unwrap();
+        assert!(right.reserve(1, 1).is_err());
+    }
+
+    #[test]
+    fn operation_budget_competing_admissions_are_atomic_and_never_refund() {
+        let mirror_budget = new_operation_budget(4_000, 0.02).unwrap();
+        let admitted = Arc::new(AtomicUsize::new(0));
+        let mut workers = Vec::new();
+        for _ in 0..8 {
+            let budget = mirror_budget.clone();
+            let admitted = Arc::clone(&admitted);
+            workers.push(std::thread::spawn(move || {
+                if budget.reserve(1_000, 5_000).is_ok() {
+                    admitted.fetch_add(1, Ordering::SeqCst);
+                }
+            }));
+        }
+        for worker in workers {
+            worker.join().unwrap();
+        }
+
+        assert_eq!(admitted.load(Ordering::SeqCst), 4);
+        // A terminal failure or indeterminate transport receives no refund:
+        // once admitted, the conservative reservation remains spent.
+        assert!(mirror_budget.reserve(1, 1).is_err());
+    }
+
+    #[test]
+    fn operation_budget_rejects_unknown_price_and_missing_ceiling_before_dispatch() {
+        let mirror_budget = new_operation_budget(4_000, 0.02).unwrap();
+        let unknown_price = match operation_budget_reservation_plan(
+            &mirror_budget,
+            "unknown_cloud",
+            "future-model",
+            &Request::default(),
+            "test.operation_budget",
+            Some(64),
+        ) {
+            Ok(_) => panic!("unknown provider price must block before dispatch"),
+            Err(error) => error,
+        };
+        assert!(unknown_price.to_string().contains("unknown provider pricing"));
+
+        let known_local_zero = operation_budget_reservation_plan(
+            &mirror_budget,
+            "local_ollama",
+            "qwen-local",
+            &Request::default(),
+            "test.operation_budget",
+            Some(64),
+        )
+        .unwrap();
+        assert_eq!(known_local_zero.microusd, 0);
+
+        let missing_ceiling = match operation_budget_reservation_plan(
+            &mirror_budget,
+            "openai_api",
+            "gpt-5",
+            &Request::default(),
+            "test.operation_budget",
+            None,
+        ) {
+            Ok(_) => panic!("missing output ceiling must block before dispatch"),
+            Err(error) => error,
+        };
+        assert!(missing_ceiling.to_string().contains("unbounded provider invocation"));
+    }
+
+    #[test]
+    fn operation_budget_attaches_without_replacing_council_daily_cap() {
+        let home = tempfile::tempdir().unwrap();
+        let authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+            .with_council_daily_cap(home.path(), Some(0.01))
+            .unwrap()
+            .with_operation_budget(new_operation_budget(4_000, 0.02).unwrap());
+
+        assert!(authorizer.council_daily_budget.is_some());
+        assert!(authorizer.operation_budget.is_some());
+    }
+
+    #[tokio::test]
+    async fn operation_budget_authorizer_wrappers_share_admission_and_block_third_dispatch() {
+        let request = Request::default();
+        let input = crate::providers::cost::authorization_input_token_upper_bound(
+            &request,
+            "qwen-local",
+        );
+        let output_ceiling = 1_900_u32
+            .checked_sub(input)
+            .expect("fixture input bound must leave a finite output ceiling");
+        let inner = OperationBudgetProvider {
+            name: "local_ollama",
+            model: "qwen-local",
+            output_ceiling,
+            calls: AtomicUsize::new(0),
+            fail_after_dispatch: false,
+        };
+        let budget = new_operation_budget(4_000, 0.02).unwrap();
+        let right = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+                .with_operation_budget(budget.clone()),
+            None,
+            "test.operation_budget.right",
+        );
+        let cerebellum = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::test_only(AutonomyLevel::Full).with_operation_budget(budget),
+            None,
+            "test.operation_budget.cerebellum",
+        );
+
+        right.complete(request.clone()).await.unwrap();
+        cerebellum.complete(request.clone()).await.unwrap();
+        let error = right.complete(request).await.unwrap_err();
+        assert!(error.to_string().contains("operation budget exhausted"));
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn operation_budget_oversized_leaf_blocks_before_raw_provider_dispatch() {
+        let request = Request::default();
+        let input = crate::providers::cost::authorization_input_token_upper_bound(
+            &request,
+            "qwen-local",
+        );
+        let inner = OperationBudgetProvider {
+            name: "local_ollama",
+            model: "qwen-local",
+            output_ceiling: 4_001_u32
+                .checked_sub(input)
+                .expect("fixture input bound must leave an oversized output ceiling"),
+            calls: AtomicUsize::new(0),
+            fail_after_dispatch: false,
+        };
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+                .with_operation_budget(new_operation_budget(4_000, 0.02).unwrap()),
+            None,
+            "test.operation_budget.oversized",
+        );
+
+        let error = provider.complete(request).await.unwrap_err();
+        assert!(error.to_string().contains("operation budget exhausted"));
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn operation_budget_daily_rejection_precedes_and_preserves_operation_quota() {
+        let home = tempfile::tempdir().unwrap();
+        let request = Request {
+            model: Some("gpt-4o".into()),
+            ..Request::default()
+        };
+        let bound = crate::providers::cost::authorization_bound_usd(
+            "openai_api", "gpt-4o", &request, 128,
+        )
+        .unwrap();
+        let budget = new_operation_budget(4_000, 0.02).unwrap();
+        let paid = OperationBudgetProvider {
+            name: "openai_api",
+            model: "gpt-4o",
+            output_ceiling: 128,
+            calls: AtomicUsize::new(0),
+            fail_after_dispatch: false,
+        };
+        let blocked = CostAuthorizingProvider::new(
+            &paid,
+            ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+                .with_council_daily_cap(home.path(), Some((bound / 2.0) as f32))
+                .unwrap()
+                .with_operation_budget(budget.clone()),
+            None,
+            "test.operation_budget.daily_first",
+        );
+        let error = blocked.complete(request).await.unwrap_err();
+        assert!(error.to_string().contains("council daily USD cap exceeded"));
+        assert_eq!(paid.calls.load(Ordering::SeqCst), 0);
+
+        let local = OperationBudgetProvider {
+            name: "local_ollama",
+            model: "qwen-local",
+            output_ceiling: 128,
+            calls: AtomicUsize::new(0),
+            fail_after_dispatch: false,
+        };
+        let admitted = CostAuthorizingProvider::new(
+            &local,
+            ProviderCallAuthorizer::test_only(AutonomyLevel::Full).with_operation_budget(budget),
+            None,
+            "test.operation_budget.daily_preserves_local_quota",
+        );
+        admitted.complete(Request::default()).await.unwrap();
+        assert_eq!(local.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn operation_budget_rejection_rolls_back_daily_pre_dispatch_reservation() {
+        let home = tempfile::tempdir().unwrap();
+        let request = Request {
+            model: Some("gpt-4o".into()),
+            ..Request::default()
+        };
+        let bound = crate::providers::cost::authorization_bound_usd(
+            "openai_api", "gpt-4o", &request, 128,
+        )
+        .unwrap();
+        let cap = (bound * 1.5) as f32;
+        let rejected_inner = OperationBudgetProvider {
+            name: "openai_api",
+            model: "gpt-4o",
+            output_ceiling: 128,
+            calls: AtomicUsize::new(0),
+            fail_after_dispatch: false,
+        };
+        let rejected = CostAuthorizingProvider::new(
+            &rejected_inner,
+            ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+                .with_council_daily_cap(home.path(), Some(cap))
+                .unwrap()
+                .with_operation_budget(new_operation_budget(1, 0.02).unwrap()),
+            None,
+            "test.operation_budget.daily_rollback",
+        );
+        let error = rejected.complete(request.clone()).await.unwrap_err();
+        assert!(error.to_string().contains("operation budget exhausted"));
+        assert_eq!(rejected_inner.calls.load(Ordering::SeqCst), 0);
+
+        let recovery_inner = OperationBudgetProvider {
+            name: "openai_api",
+            model: "gpt-4o",
+            output_ceiling: 128,
+            calls: AtomicUsize::new(0),
+            fail_after_dispatch: false,
+        };
+        let recovery = CostAuthorizingProvider::new(
+            &recovery_inner,
+            ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+                .with_council_daily_cap(home.path(), Some(cap))
+                .unwrap(),
+            None,
+            "test.operation_budget.daily_rollback_recovery",
+        );
+        recovery.complete(request).await.unwrap();
+        assert_eq!(recovery_inner.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn operation_budget_post_dispatch_failure_keeps_conservative_reservation() {
+        let request = Request::default();
+        let input = crate::providers::cost::authorization_input_token_upper_bound(
+            &request,
+            "qwen-local",
+        );
+        let inner = OperationBudgetProvider {
+            name: "local_ollama",
+            model: "qwen-local",
+            output_ceiling: 2_000_u32
+                .checked_sub(input)
+                .expect("fixture input bound must leave a finite output ceiling"),
+            calls: AtomicUsize::new(0),
+            fail_after_dispatch: true,
+        };
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+                .with_operation_budget(new_operation_budget(2_000, 0.02).unwrap()),
+            None,
+            "test.operation_budget.failure_retains",
+        );
+
+        assert!(provider.complete(request.clone()).await.is_err());
+        let error = provider.complete(request).await.unwrap_err();
+        assert!(error.to_string().contains("operation budget exhausted"));
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 1);
     }
 
     fn prompt_tax_fixture() -> crate::tokens::budget::PromptTax {
@@ -3566,6 +4019,43 @@ mod tests {
                 termination: Default::default(),
                 text: req.model.unwrap_or_default(),
                 model: "wire-model".into(),
+                latency: Duration::ZERO,
+                ..Completion::default()
+            })
+        }
+    }
+
+    struct OperationBudgetProvider {
+        name: &'static str,
+        model: &'static str,
+        output_ceiling: u32,
+        calls: AtomicUsize,
+        fail_after_dispatch: bool,
+    }
+
+    #[async_trait]
+    impl Provider for OperationBudgetProvider {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some(self.model)
+        }
+
+        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+            Some(self.output_ceiling)
+        }
+
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.fail_after_dispatch {
+                anyhow::bail!("operation-budget fixture provider failed after dispatch");
+            }
+            Ok(Completion {
+                termination: Default::default(),
+                text: "operation-budget fixture".into(),
+                model: self.model.into(),
                 latency: Duration::ZERO,
                 ..Completion::default()
             })

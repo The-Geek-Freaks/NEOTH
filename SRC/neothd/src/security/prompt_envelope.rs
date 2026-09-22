@@ -44,6 +44,10 @@ pub(crate) const MAX_MEMORY_ENTITY_SOURCE_TEXT_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_WARM_SUMMARY_INSTRUCTION_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_WARM_SUMMARY_SYSTEM_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_WARM_SUMMARY_EVENT_DATA_BYTES: usize = 64 * 1024;
+/// The refusal and structural-analysis values are model output / operator data,
+/// never trusted prompt instructions. Keep both bounded independently.
+pub(crate) const MAX_MIRROR_REFUSAL_TEXT_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_MIRROR_ANALYSIS_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_DATA_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_PROMPT_ENVELOPE_RENDERED_BYTES: usize = 384 * 1024;
 
@@ -72,6 +76,8 @@ pub(crate) enum PromptEnvelopePurpose {
     CouncilGroundTruthAssertions,
     CouncilGroundTruthQuestion,
     CallosumSynthesis,
+    MirrorRefusalAnalysis,
+    MirrorRefusalSynthesis,
     CouncilSelfReflect,
     SubAgentPrimary,
     SubAgentQa,
@@ -135,6 +141,15 @@ impl PromptEnvelopePurpose {
             Self::CouncilGroundTruthAssertions => &[PromptFieldKind::GroundTruthAssertions],
             Self::CouncilGroundTruthQuestion => &[PromptFieldKind::OriginalQuestion],
             Self::CallosumSynthesis => &[PromptFieldKind::OriginalQuestion],
+            Self::MirrorRefusalAnalysis => &[
+                PromptFieldKind::MirrorOriginalRequest,
+                PromptFieldKind::MirrorLeftRefusal,
+            ],
+            Self::MirrorRefusalSynthesis => &[
+                PromptFieldKind::MirrorOriginalRequest,
+                PromptFieldKind::MirrorLeftRefusal,
+                PromptFieldKind::MirrorRightAnalysis,
+            ],
             Self::CouncilSelfReflect => &[
                 PromptFieldKind::OriginalQuestion,
                 PromptFieldKind::PriorAnswer,
@@ -173,6 +188,8 @@ impl PromptEnvelopePurpose {
             Self::CouncilGroundTruthAssertions => "council_ground_truth_assertions",
             Self::CouncilGroundTruthQuestion => "council_ground_truth_question",
             Self::CallosumSynthesis => "callosum_synthesis",
+            Self::MirrorRefusalAnalysis => "mirror_refusal_analysis",
+            Self::MirrorRefusalSynthesis => "mirror_refusal_synthesis",
             Self::CouncilSelfReflect => "council_self_reflect",
             Self::SubAgentPrimary => "sub_agent_primary",
             Self::SubAgentQa => "sub_agent_qa",
@@ -220,6 +237,9 @@ pub(crate) enum PromptFieldKind {
     GroundTruthAssertions,
     OriginalQuestion,
     PriorAnswer,
+    MirrorOriginalRequest,
+    MirrorLeftRefusal,
+    MirrorRightAnalysis,
     QaContract,
     OperatorTask,
     Candidate,
@@ -265,6 +285,8 @@ impl PromptFieldKind {
             Self::GroundTruthAssertions => MAX_QA_CONTRACT_BYTES,
             Self::OperatorTask | Self::OriginalQuestion => MAX_OPERATOR_TASK_BYTES,
             Self::PriorAnswer => MAX_CANDIDATE_BYTES,
+            Self::MirrorOriginalRequest | Self::MirrorLeftRefusal => MAX_MIRROR_REFUSAL_TEXT_BYTES,
+            Self::MirrorRightAnalysis => MAX_MIRROR_ANALYSIS_BYTES,
             Self::QaContract => MAX_QA_CONTRACT_BYTES,
             Self::Candidate | Self::PreviousCandidate => MAX_CANDIDATE_BYTES,
             Self::QaFailures => MAX_QA_FAILURE_BYTES,
@@ -307,6 +329,9 @@ impl PromptFieldKind {
             Self::GroundTruthAssertions => "ground_truth_assertions",
             Self::OriginalQuestion => "original_question",
             Self::PriorAnswer => "prior_answer",
+            Self::MirrorOriginalRequest => "mirror_original_request",
+            Self::MirrorLeftRefusal => "mirror_left_refusal",
+            Self::MirrorRightAnalysis => "mirror_right_analysis",
             Self::QaContract => "qa_contract",
             Self::OperatorTask => "operator_task",
             Self::Candidate => "candidate",

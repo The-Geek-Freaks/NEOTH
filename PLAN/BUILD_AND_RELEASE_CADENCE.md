@@ -3,6 +3,26 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W206 terminal mirror source (2026-09-22):** structural Right/Cerebellum
+analysis now produces an enum-only, deterministic refusal explanation. The
+shared prepared-turn call budget, total 4,000-token/USD0.02 operation cap,
+configured daily cap and one six-second cancellation-aware deadline all apply
+before transport. D23 remains provider-free even with legacy recovery disabled;
+0x17 must be durable in the same session before visible replacement. Eighteen
+focused regressions and independent static review cover the real authorizer and
+chat paths. Hosted W206 compile/format/behavior are pending; P1-02 stays open.
+Evidence: `docs/gold-wave206-verification.md`.
+
+**W204/W205 execution checkpoint:** source `862eb030` passed Core test-target
+checking, public CLI build and reference export (`35742993700`), Preflight
+(`35742932579`) and Code Quality (`35742932102`). The exported CLI reference
+is byte-identical to the tracked reference. Grouped101 (`35742990116`) executed
+all 101 exact identities: 98 passed, three failed (delegated-channel WAL coverage,
+incomplete-home setup diagnostic, and wizard long-poll mutation). Source/input
+hashes and every actual test name were verified. Repairs are separate work in
+progress; no failed assertion was waived. Road remains 1324 total / 1015 checked /
+307 open / 2 partial. No local executable validation ran under the BSOD hold.
+
 **W204 first Hosted compile repair (2026-09-22):** source `40f2e46f` is
 published on main. Grouped101 `35741899027` stopped during compilation, before
 any selected behavior fixture ran: two missing generic annotations, a private
