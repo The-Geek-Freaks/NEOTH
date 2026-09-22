@@ -742,9 +742,12 @@ mod tests {
 
     #[test]
     fn v42_registry_and_fresh_schema_have_only_additive_default_deny_state() {
-        assert_eq!(store::SCHEMA_VERSION, 42);
-        let last = migrations::MIGRATIONS.last().unwrap();
-        assert_eq!((last.from, last.to), (41, 42));
+        assert!(store::SCHEMA_VERSION >= 42);
+        let migration = migrations::MIGRATIONS
+            .iter()
+            .find(|migration| (migration.from, migration.to) == (41, 42))
+            .expect("the additive W208 migration remains registered");
+        assert_eq!((migration.from, migration.to), (41, 42));
         let dir = tempfile::tempdir().unwrap();
         let conn = store::open(&dir.path().join("views.db")).unwrap();
         for table in [
@@ -776,7 +779,9 @@ mod tests {
         // Build a faithful v41 fixture from the otherwise fresh schema: the
         // historic episode/vector survive, while all v42-only state is absent.
         conn.execute_batch(
-            "DROP TABLE idx_episode_origin_conflict_v1; \
+            "DROP TABLE idx_counterparty_consent_audit_terminal_v1; \
+             DROP TABLE idx_counterparty_consent_challenge_v1; \
+             DROP TABLE idx_episode_origin_conflict_v1; \
              DROP TABLE idx_counterparty_clustering_consent_v1; \
              DROP TABLE idx_episode_origin_v2; \
              UPDATE meta SET value='41' WHERE key='schema_version';",

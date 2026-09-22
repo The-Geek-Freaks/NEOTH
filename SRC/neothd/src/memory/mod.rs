@@ -43,6 +43,8 @@ pub mod contradiction;
 /// clustering eligibility.  This module owns the consent boundary; callers
 /// must not reconstruct it from legacy episode metadata.
 pub mod counterparty_consent;
+/// W209 — authenticated counterparty challenge/echo consent ceremony.
+pub mod counterparty_consent_ceremony;
 pub mod ctx;
 pub mod decay_task;
 pub mod diff;

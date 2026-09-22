@@ -715,6 +715,19 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             }
         }
     }
+    let recovered_counterparty_consent =
+        crate::cli::serve_pipeline::recover_counterparty_consent_pending_with_writer(
+            &neoth_home,
+            &writer,
+        )
+        .await
+        .context("recover pending counterparty-consent audit before provider startup")?;
+    if recovered_counterparty_consent > 0 {
+        info!(
+            recovered = recovered_counterparty_consent,
+            "counterparty-consent audit recovery completed before provider startup"
+        );
+    }
 
     // Runtime-service priming follows the validated startup-hook, published
     // internal audit endpoint, and recovered consent boundary. The

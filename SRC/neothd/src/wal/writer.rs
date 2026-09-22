@@ -24,11 +24,16 @@ use super::segment_header::{
     SEGMENT_HEADER_V3_LEN, SegmentHeader, SegmentHeaderV3, parse_segment_header,
 };
 
+pub(crate) use crate::wal::counterparty_consent_once::{
+    CounterpartyConsentAuditReceipt, CounterpartyConsentInputReceipt,
+};
+
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024; // 16 MiB sanity ceiling
 const CONTEXT_EVIDENCE_RECEIPT_AUTHORITY_SENTINEL: &str = ".context-evidence-receipt-authority";
 const TRUST_DECISION_AUTHORITY_SENTINEL: &str = ".trust-decision-authority";
 const TRANSCRIPT_MINING_AUTHORITY_SENTINEL: &str = ".transcript-mining-authority";
+const COUNTERPARTY_CONSENT_AUTHORITY_SENTINEL: &str = ".counterparty-consent-authority";
 #[cfg(test)]
 const TRUST_DECISION_AUTHORITY_ATTEMPT_ENV: &str = "NEOTH_TRUST_DECISION_AUTHORITY_ATTEMPT_FILE";
 // Keep the in-process side of the receipt authority deliberately bounded: one
@@ -47,6 +52,9 @@ static TRUST_DECISION_PROCESS_AUTHORITY: std::sync::LazyLock<
     std::sync::Arc<tokio::sync::Mutex<()>>,
 > = std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
 static TRANSCRIPT_MINING_PROCESS_AUTHORITY: std::sync::LazyLock<
+    std::sync::Arc<tokio::sync::Mutex<()>>,
+> = std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
+static COUNTERPARTY_CONSENT_PROCESS_AUTHORITY: std::sync::LazyLock<
     std::sync::Arc<tokio::sync::Mutex<()>>,
 > = std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
 // Marker JSON uses only bounded integers plus a fixed 64-byte HMAC hex tag.
@@ -120,6 +128,28 @@ fn refuse_generic_transcript_mining_proof(header: &EventHeaderV2) -> Result<(), 
         return Err(WalError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "Transcript Mining proof frames require the writer-owned append-once API",
+        )));
+    }
+    Ok(())
+}
+
+fn is_counterparty_consent_header(header: &EventHeaderV2) -> bool {
+    header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+        && matches!(
+            crate::wal::events::ExtendedSubtype::from_u8(header.event_subtype),
+            Some(
+                crate::wal::events::ExtendedSubtype::CounterpartyConsentInput
+                    | crate::wal::events::ExtendedSubtype::CounterpartyConsentGrant
+                    | crate::wal::events::ExtendedSubtype::CounterpartyConsentRevoked
+            )
+        )
+}
+
+fn refuse_generic_counterparty_consent_receipt(header: &EventHeaderV2) -> Result<(), WalError> {
+    if is_counterparty_consent_header(header) {
+        return Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Counterparty Consent receipts require the writer-owned append-once API",
         )));
     }
     Ok(())
@@ -475,6 +505,9 @@ pub struct WriteRequest {
     /// carries a persisted exact descriptor whose authenticated read-back is
     /// the only successful terminal result.
     transcript_mining_once: Option<TranscriptMiningOnce>,
+    /// Closed W209 ceremony input/audit append. The writer owns authenticated
+    /// replay/readback and never accepts these protected subtypes generically.
+    counterparty_consent_once: Option<CounterpartyConsentOnce>,
     /// Generic WAL admission ownership. It remains pending from the successful
     /// pre-write quota decision until this request reaches a writer-terminal
     /// state, so an unrelated home-directory growth cannot consume it during a
@@ -575,6 +608,39 @@ struct TranscriptMiningOnce {
             >,
         >,
     >,
+}
+
+struct CounterpartyConsentOnce {
+    home: PathBuf,
+    expected: crate::wal::counterparty_consent_once::CounterpartyConsentDescriptor,
+    reply: Option<oneshot::Sender<std::result::Result<
+        crate::wal::counterparty_consent_once::CounterpartyConsentDurability,
+        crate::wal::counterparty_consent_once::CounterpartyConsentOnceError,
+    >>>,
+}
+
+impl CounterpartyConsentOnce {
+    fn finish(
+        mut self,
+        outcome: std::result::Result<
+            crate::wal::counterparty_consent_once::CounterpartyConsentDurability,
+            crate::wal::counterparty_consent_once::CounterpartyConsentOnceError,
+        >,
+    ) {
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(outcome);
+        }
+    }
+}
+
+impl Drop for CounterpartyConsentOnce {
+    fn drop(&mut self) {
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(Err(
+                crate::wal::counterparty_consent_once::CounterpartyConsentOnceError::Indeterminate,
+            ));
+        }
+    }
 }
 
 impl TranscriptMiningOnce {
@@ -1448,6 +1514,7 @@ impl WalWriterHandle {
         refuse_generic_context_evidence_receipt(&header)?;
         refuse_generic_durable_trust_decision(&header, &payload)?;
         refuse_generic_transcript_mining_proof(&header)?;
+        refuse_generic_counterparty_consent_receipt(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -1466,6 +1533,7 @@ impl WalWriterHandle {
             context_evidence_receipt_once: None,
             trust_decision_once: None,
             transcript_mining_once: None,
+            counterparty_consent_once: None,
             quota_admission,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1492,6 +1560,7 @@ impl WalWriterHandle {
         refuse_generic_context_evidence_receipt(&header)?;
         refuse_generic_durable_trust_decision(&header, &payload)?;
         refuse_generic_transcript_mining_proof(&header)?;
+        refuse_generic_counterparty_consent_receipt(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -1510,6 +1579,7 @@ impl WalWriterHandle {
             context_evidence_receipt_once: None,
             trust_decision_once: None,
             transcript_mining_once: None,
+            counterparty_consent_once: None,
             quota_admission,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1591,6 +1661,7 @@ impl WalWriterHandle {
             }),
             trust_decision_once: None,
             transcript_mining_once: None,
+            counterparty_consent_once: None,
             quota_admission: None,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1713,6 +1784,98 @@ impl WalWriterHandle {
         )
     }
 
+    /// Append or authenticated-recover one sealed W209 ceremony input. The
+    /// reply is a capability issued only after the exact frame is visible in
+    /// authenticated primary WAL; a dropped caller is indeterminate.
+    pub(crate) async fn append_counterparty_consent_input_once(
+        &self,
+        home: &Path,
+        expected: crate::wal::counterparty_consent_once::CounterpartyConsentInputDescriptor,
+    ) -> std::result::Result<
+        CounterpartyConsentInputReceipt,
+        crate::wal::counterparty_consent_once::CounterpartyConsentOnceError,
+    > {
+        match self.append_counterparty_consent_once(
+            home,
+            crate::wal::counterparty_consent_once::CounterpartyConsentDescriptor::Input(expected),
+        ).await? {
+            crate::wal::counterparty_consent_once::CounterpartyConsentDurability::Input(receipt) => Ok(receipt),
+            crate::wal::counterparty_consent_once::CounterpartyConsentDurability::Audit(_) => unreachable!("W209 input descriptor returned audit receipt"),
+        }
+    }
+
+    /// Append or authenticated-recover one sealed W209 grant/revoke audit.
+    pub(crate) async fn append_counterparty_consent_audit_once(
+        &self,
+        home: &Path,
+        expected: crate::wal::counterparty_consent_once::CounterpartyConsentAuditDescriptor,
+    ) -> std::result::Result<
+        CounterpartyConsentAuditReceipt,
+        crate::wal::counterparty_consent_once::CounterpartyConsentOnceError,
+    > {
+        match self.append_counterparty_consent_once(
+            home,
+            crate::wal::counterparty_consent_once::CounterpartyConsentDescriptor::Audit(expected),
+        ).await? {
+            crate::wal::counterparty_consent_once::CounterpartyConsentDurability::Audit(receipt) => Ok(receipt),
+            crate::wal::counterparty_consent_once::CounterpartyConsentDurability::Input(_) => unreachable!("W209 audit descriptor returned input receipt"),
+        }
+    }
+
+    async fn append_counterparty_consent_once(
+        &self,
+        home: &Path,
+        expected: crate::wal::counterparty_consent_once::CounterpartyConsentDescriptor,
+    ) -> std::result::Result<
+        crate::wal::counterparty_consent_once::CounterpartyConsentDurability,
+        crate::wal::counterparty_consent_once::CounterpartyConsentOnceError,
+    > {
+        let writer = self.clone();
+        let home = home.to_path_buf();
+        match tokio::task::spawn_blocking(move || writer.append_counterparty_consent_once_blocking(&home, expected)).await {
+            Ok(outcome) => outcome,
+            Err(_) => Err(crate::wal::counterparty_consent_once::CounterpartyConsentOnceError::Indeterminate),
+        }
+    }
+
+    fn append_counterparty_consent_once_blocking(
+        &self,
+        home: &Path,
+        expected: crate::wal::counterparty_consent_once::CounterpartyConsentDescriptor,
+    ) -> std::result::Result<
+        crate::wal::counterparty_consent_once::CounterpartyConsentDurability,
+        crate::wal::counterparty_consent_once::CounterpartyConsentOnceError,
+    > {
+        use crate::wal::counterparty_consent_once::CounterpartyConsentOnceError;
+        if !self.authentication_markers_enabled {
+            return Err(CounterpartyConsentOnceError::Indeterminate);
+        }
+        let header = expected.header();
+        let payload = expected.payload();
+        let (ack_tx, _ack_rx_drop) = oneshot::channel();
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let request = WriteRequest {
+            header,
+            payload,
+            ack: ack_tx,
+            force_authentication_marker: true,
+            context_evidence_receipt_once: None,
+            trust_decision_once: None,
+            transcript_mining_once: None,
+            counterparty_consent_once: Some(CounterpartyConsentOnce { home: home.to_path_buf(), expected, reply: Some(reply_tx) }),
+            quota_admission: None,
+            #[cfg(test)] test_ack_gate: self.test_ack_gate.clone(),
+            #[cfg(test)] test_receipt_decision_gate: self.test_receipt_decision_gate.clone(),
+        };
+        if let Err(error) = self.tx.blocking_send(WriterRequest::Append(Box::new(request)))
+            && let WriterRequest::Append(mut request) = error.0
+            && let Some(once) = request.counterparty_consent_once.take()
+        {
+            once.finish(Err(CounterpartyConsentOnceError::Indeterminate));
+        }
+        reply_rx.blocking_recv().unwrap_or(Err(CounterpartyConsentOnceError::Indeterminate))
+    }
+
     async fn append_transcript_mining_once(
         &self,
         home: &Path,
@@ -1762,6 +1925,7 @@ impl WalWriterHandle {
                 expected,
                 reply: Some(reply_tx),
             }),
+            counterparty_consent_once: None,
             quota_admission: None,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1825,6 +1989,7 @@ impl WalWriterHandle {
                 reply: Some(reply_tx),
             }),
             transcript_mining_once: None,
+            counterparty_consent_once: None,
             quota_admission: None,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1906,6 +2071,7 @@ impl WalWriterHandle {
         refuse_generic_context_evidence_receipt(&header)?;
         refuse_generic_durable_trust_decision(&header, &payload)?;
         refuse_generic_transcript_mining_proof(&header)?;
+        refuse_generic_counterparty_consent_receipt(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -1926,6 +2092,7 @@ impl WalWriterHandle {
                 context_evidence_receipt_once: None,
                 trust_decision_once: None,
                 transcript_mining_once: None,
+            counterparty_consent_once: None,
                 quota_admission,
                 #[cfg(test)]
                 test_ack_gate: self.test_ack_gate.clone(),
@@ -1954,6 +2121,7 @@ impl WalWriterHandle {
         refuse_generic_context_evidence_receipt(&header)?;
         refuse_generic_durable_trust_decision(&header, &payload)?;
         refuse_generic_transcript_mining_proof(&header)?;
+        refuse_generic_counterparty_consent_receipt(&header)?;
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
         }
@@ -1976,6 +2144,7 @@ impl WalWriterHandle {
             context_evidence_receipt_once: None,
             trust_decision_once: None,
             transcript_mining_once: None,
+            counterparty_consent_once: None,
             quota_admission,
             #[cfg(test)]
             test_ack_gate: self.test_ack_gate.clone(),
@@ -1988,6 +2157,21 @@ impl WalWriterHandle {
         }
         Ok(())
     }
+    /// Recovery-only sealed lookup for a persisted W209 input receipt. The
+    /// caller receives no descriptor and cannot manufacture a new frame.
+    pub(crate) fn counterparty_consent_input_receipt_at_home(
+        &self,
+        home: &Path,
+        event_id: i64,
+        input_sha256: [u8; 32],
+    ) -> std::result::Result<
+        Option<CounterpartyConsentInputReceipt>,
+        crate::wal::counterparty_consent_once::CounterpartyConsentOnceError,
+    > {
+        let _ = self;
+        crate::wal::counterparty_consent_once::input_receipt_at_home(home, event_id, input_sha256)
+    }
+
 }
 
 /// Spawn the raw unit-test writer with default rotation policy (16 MiB / 24 h)
@@ -3409,6 +3593,33 @@ struct TranscriptMiningAuthority {
     _file_guard: std::fs::File,
 }
 
+fn counterparty_consent_authority_sentinel(home: &Path) -> PathBuf {
+    home.join("wal").join(COUNTERPARTY_CONSENT_AUTHORITY_SENTINEL)
+}
+
+async fn acquire_counterparty_consent_authority(
+    home: &Path,
+) -> Result<CounterpartyConsentAuthority, WalError> {
+    let process_authority = std::sync::Arc::clone(&*COUNTERPARTY_CONSENT_PROCESS_AUTHORITY);
+    let process_guard = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        process_authority.lock_owned(),
+    )
+    .await
+    .map_err(|_| compaction_recovery_error("CounterpartyConsent process authority remained busy for >5s"))?;
+    let sentinel = counterparty_consent_authority_sentinel(home);
+    let file_guard = tokio::task::spawn_blocking(move || super::redact::lock_segment_for_rewrite(&sentinel))
+        .await
+        .map_err(|error| compaction_recovery_error(format!("CounterpartyConsent authority task failed: {error}")))?
+        .map_err(|error| compaction_recovery_error(format!("acquire capability-bound CounterpartyConsent authority: {error:#}")))?;
+    Ok(CounterpartyConsentAuthority { _process_guard: process_guard, _file_guard: file_guard })
+}
+
+struct CounterpartyConsentAuthority {
+    _process_guard: tokio::sync::OwnedMutexGuard<()>,
+    _file_guard: std::fs::File,
+}
+
 fn canonical_home_matches(expected: &Path, authoritative: &Path) -> Result<bool, WalError> {
     let expected = std::fs::canonicalize(expected).map_err(WalError::Io)?;
     let authoritative = std::fs::canonicalize(authoritative).map_err(WalError::Io)?;
@@ -4427,7 +4638,9 @@ async fn run_writer(
         let is_receipt = is_context_evidence_receipt_header(&req.header);
         let mut trust_decision_once = req.trust_decision_once.take();
         let mut transcript_mining_once = req.transcript_mining_once.take();
+        let mut counterparty_consent_once = req.counterparty_consent_once.take();
         let is_transcript_mining_proof = is_transcript_mining_proof_header(&req.header);
+        let is_counterparty_consent = is_counterparty_consent_header(&req.header);
         let is_durable_trust_decision = if is_trust_decision_header(&req.header) {
             match crate::permissions::trust_ledger::is_durable_trust_admission_payload(&req.payload)
             {
@@ -4464,6 +4677,8 @@ async fn run_writer(
             || (is_transcript_mining_proof && transcript_mining_once.is_none())
             || (transcript_mining_once.is_some() && !transcript_mining_once_matches_frame)
             || (transcript_mining_once.is_some() && !req.force_authentication_marker)
+            || is_counterparty_consent != counterparty_consent_once.is_some()
+            || (counterparty_consent_once.is_some() && !req.force_authentication_marker)
         {
             if let Some(admission) = req.quota_admission.take() {
                 admission.settle();
@@ -4475,6 +4690,7 @@ async fn run_writer(
             continue;
         }
         let mut transcript_mining_authority = None;
+        let mut counterparty_consent_authority = None;
         if let Some(once) = transcript_mining_once.take() {
             let requested_home = once.home.clone();
             let authoritative_home = hmac_home.clone();
@@ -4573,6 +4789,73 @@ async fn run_writer(
                 }
                 _ => {
                     once.finish(Err(crate::wal::transcript_mining_once::TranscriptMiningOnceError::Indeterminate));
+                    drop(authority);
+                    continue;
+                }
+            }
+        }
+        if let Some(once) = counterparty_consent_once.take() {
+            let requested_home = once.home.clone();
+            let authoritative_home = hmac_home.clone();
+            let homes_match = match tokio::task::spawn_blocking(move || {
+                canonical_home_matches(&requested_home, &authoritative_home)
+            }).await {
+                Ok(Ok(value)) => value,
+                _ => false,
+            };
+            let expected_header = once.expected.header();
+            let expected_payload = once.expected.payload();
+            if !homes_match || expected_header != req.header || expected_payload != req.payload {
+                once.finish(Err(crate::wal::counterparty_consent_once::CounterpartyConsentOnceError::Indeterminate));
+                continue;
+            }
+            let authority = match acquire_counterparty_consent_authority(&hmac_home).await {
+                Ok(authority) => authority,
+                Err(_) => {
+                    once.finish(Err(crate::wal::counterparty_consent_once::CounterpartyConsentOnceError::Indeterminate));
+                    continue;
+                }
+            };
+            let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key) else {
+                once.finish(Err(crate::wal::counterparty_consent_once::CounterpartyConsentOnceError::Indeterminate));
+                drop(authority);
+                continue;
+            };
+            validate_hmac_writer_authority(hmac_authority.as_ref())?;
+            if compaction_state.frames() > 0
+                && emit_compaction_marker(&mut state, compaction_state, key, None).await.is_err()
+            {
+                once.finish(Err(crate::wal::counterparty_consent_once::CounterpartyConsentOnceError::Indeterminate));
+                drop(authority);
+                return Err(compaction_recovery_error("CounterpartyConsent authority could not close owned HMAC tail"));
+            }
+            pending_unsynced = false;
+            let lookup_home = hmac_home.clone();
+            let lookup_expected = once.expected.clone();
+            match tokio::task::spawn_blocking(move || {
+                crate::wal::counterparty_consent_once::lookup_exact_at_home(&lookup_home, &lookup_expected)
+            }).await {
+                Ok(crate::wal::counterparty_consent_once::Lookup::Exact(receipt)) => {
+                    once.finish(Ok(receipt));
+                    drop(authority);
+                    continue;
+                }
+                Ok(crate::wal::counterparty_consent_once::Lookup::AbsentComplete) => {
+                    req.counterparty_consent_once = Some(once);
+                    counterparty_consent_authority = Some(authority);
+                }
+                Ok(crate::wal::counterparty_consent_once::Lookup::Conflict) => {
+                    once.finish(Err(crate::wal::counterparty_consent_once::CounterpartyConsentOnceError::Conflict));
+                    drop(authority);
+                    continue;
+                }
+                Ok(crate::wal::counterparty_consent_once::Lookup::Duplicate) => {
+                    once.finish(Err(crate::wal::counterparty_consent_once::CounterpartyConsentOnceError::Duplicate));
+                    drop(authority);
+                    continue;
+                }
+                _ => {
+                    once.finish(Err(crate::wal::counterparty_consent_once::CounterpartyConsentOnceError::Indeterminate));
                     drop(authority);
                     continue;
                 }
@@ -5004,6 +5287,21 @@ async fn run_writer(
                     };
                     once.finish(outcome);
                 }
+                if let Some(once) = req.counterparty_consent_once.take() {
+                    let lookup_home = hmac_home.clone();
+                    let lookup_expected = once.expected.clone();
+                    let outcome = match tokio::task::spawn_blocking(move || {
+                        crate::wal::counterparty_consent_once::lookup_exact_at_home(
+                            &lookup_home, &lookup_expected,
+                        )
+                    }).await {
+                        Ok(crate::wal::counterparty_consent_once::Lookup::Exact(receipt)) => Ok(receipt),
+                        Ok(crate::wal::counterparty_consent_once::Lookup::Conflict) => Err(crate::wal::counterparty_consent_once::CounterpartyConsentOnceError::Conflict),
+                        Ok(crate::wal::counterparty_consent_once::Lookup::Duplicate) => Err(crate::wal::counterparty_consent_once::CounterpartyConsentOnceError::Duplicate),
+                        _ => Err(crate::wal::counterparty_consent_once::CounterpartyConsentOnceError::Indeterminate),
+                    };
+                    once.finish(outcome);
+                }
                 if req.ack.send(Ok(written_at)).is_err() {
                     tracing::debug!(
                         offset = written_at,
@@ -5013,6 +5311,7 @@ async fn run_writer(
                 drop(context_evidence_receipt_authority);
                 drop(trust_decision_authority);
                 drop(transcript_mining_authority);
+                drop(counterparty_consent_authority);
             }
             Err(e) => {
                 error!(error = %e, "WAL frame write failed");
@@ -5034,6 +5333,7 @@ async fn run_writer(
                 drop(context_evidence_receipt_authority);
                 drop(trust_decision_authority);
                 drop(transcript_mining_authority);
+                drop(counterparty_consent_authority);
                 // Continue; next caller may still succeed (e.g. transient ENOSPC clears).
             }
         }
@@ -7725,6 +8025,7 @@ mod tests {
                 context_evidence_receipt_once: None,
                 trust_decision_once: None,
                 transcript_mining_once: None,
+            counterparty_consent_once: None,
                 quota_admission: Some(quota_admission),
                 test_ack_gate: None,
                 test_receipt_decision_gate: None,
@@ -9457,4 +9758,93 @@ mod tests {
              second try_admit incorrectly rejected (disk is empty, ceiling = 1 MiB)"
         );
     }
+    #[test]
+    fn counterparty_consent_subtypes_refuse_every_generic_writer_entry() {
+        for subtype in [
+            crate::wal::events::ExtendedSubtype::CounterpartyConsentInput,
+            crate::wal::events::ExtendedSubtype::CounterpartyConsentGrant,
+            crate::wal::events::ExtendedSubtype::CounterpartyConsentRevoked,
+        ] {
+            let payload = b"generic-counterparty-consent".to_vec();
+            let header = crate::wal::HeaderBuilder::new(
+                crate::wal::events::EVENT_TYPE_EXTENDED,
+                &payload,
+            )
+            .event_subtype(subtype as u8)
+            .build();
+            let error = refuse_generic_counterparty_consent_receipt(&header)
+                .expect_err("W209 protected subtype must refuse generic append");
+            assert!(error.to_string().contains("append-once"));
+        }
+    }
+
+    fn counterparty_consent_input_descriptor(
+        home: &std::path::Path,
+    ) -> crate::wal::counterparty_consent_once::CounterpartyConsentInputDescriptor {
+        let binding = crate::cli::serve_pipeline::AuthenticatedInboundBinding::for_account(
+            crate::channels::registry::ChannelRef::default_account(
+                crate::channels::registry::ChannelId::Telegram,
+            ),
+        );
+        let inbound = crate::channels::InboundMessage {
+            channel: crate::channels::ChannelKind::Telegram,
+            chat_id: "w209-test-chat".to_owned(), thread_id: None,
+            sender_id: "w209-test-sender".to_owned(), sender_display: None,
+            text: Some(crate::memory::counterparty_consent_ceremony::COMMAND_REQUEST.to_owned()),
+            media: None, reply_to: None, message_id: Some("w209-test-message".to_owned()),
+            edit_unix: None, mention_kind: None, channel_ts_unix: 1, raw_ts_ms: None,
+            human_uuid: None,
+        };
+        let admitted = crate::cli::serve_pipeline::AdmittedCounterpartyConsentInput::for_authenticated_test(
+            home, &binding, &inbound,
+        ).expect("sealed W209 test admission");
+        crate::wal::counterparty_consent_once::CounterpartyConsentInputDescriptor::from_admitted_input(&admitted)
+            .expect("sealed W209 input descriptor")
+    }
+
+    #[tokio::test]
+    async fn counterparty_consent_input_locator_conflict_fails_closed() {
+        use crate::wal::counterparty_consent_once::CounterpartyConsentOnceError;
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("counterparty-consent-conflict-000001.wal"), home.path(),
+            RotationPolicy::default(), CompressionPolicy::None,
+        ).unwrap();
+        let descriptor = counterparty_consent_input_descriptor(home.path());
+        let conflict = descriptor.conflicting_test_descriptor();
+        writer.append_counterparty_consent_input_once(home.path(), descriptor)
+            .await.expect("initial sealed input");
+        assert!(matches!(
+            writer.append_counterparty_consent_input_once(home.path(), conflict).await,
+            Err(CounterpartyConsentOnceError::Conflict)
+        ));
+        drop(writer); join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn counterparty_consent_input_once_is_durable_readback_and_idempotent() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        let (writer, join) = spawn_test_writer_at_home(
+            wal.join("counterparty-consent-000001.wal"), home.path(),
+            RotationPolicy::default(), CompressionPolicy::None,
+        ).unwrap();
+        let descriptor = counterparty_consent_input_descriptor(home.path());
+        let first = writer.append_counterparty_consent_input_once(home.path(), descriptor.clone())
+            .await.expect("first sealed W209 input write");
+        let replay = writer.append_counterparty_consent_input_once(home.path(), descriptor)
+            .await.expect("exact descriptor must reconcile instead of duplicate");
+        assert_eq!(first.event_id(), replay.event_id());
+        assert_eq!(first.input_sha256(), replay.input_sha256());
+        let reloaded = writer.counterparty_consent_input_receipt_at_home(
+            home.path(), first.event_id(), first.input_sha256(),
+        ).expect("authenticated W209 input readback").expect("exact receipt exists");
+        assert_eq!(reloaded.event_id(), first.event_id());
+        assert_eq!(reloaded.conversation_sha256(), first.conversation_sha256());
+        drop(writer); join.await.unwrap();
+    }
+
 }

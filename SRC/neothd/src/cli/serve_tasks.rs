@@ -5137,6 +5137,21 @@ pub(crate) fn spawn_consent_outbox_recovery(
                     );
                 }
             }
+            match crate::cli::serve_pipeline::recover_counterparty_consent_pending_with_writer(
+                &home, &writer,
+            )
+            .await
+            {
+                Ok(0) => {}
+                Ok(recovered) => info!(
+                    recovered,
+                    "counterparty-consent audit recovery completed"
+                ),
+                Err(error) => warn!(
+                    %error,
+                    "counterparty-consent audit recovery failed; denial remains pending"
+                ),
+            }
         }
     })
 }
@@ -8500,6 +8515,19 @@ pub(crate) async fn shutdown_background_tasks(
                 "consent mutation journal final-drain failed; state retained for next start"
             );
         }
+    }
+    match crate::cli::serve_pipeline::recover_counterparty_consent_pending_with_writer(home, &writer)
+        .await
+    {
+        Ok(0) => {}
+        Ok(recovered) => info!(
+            recovered,
+            "counterparty-consent audit final-drained on shutdown"
+        ),
+        Err(error) => warn!(
+            %error,
+            "counterparty-consent audit final-drain failed; denial retained for next start"
+        ),
     }
 
     // Abort the indexer next. It may have been mid-pass; the next `neoth serve`

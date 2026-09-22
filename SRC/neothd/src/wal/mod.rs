@@ -4,6 +4,8 @@
 
 pub mod builder;
 pub mod compaction;
+/// W209 closed consent ceremony receipts. Generic WAL append paths reject its subtypes.
+pub(crate) mod counterparty_consent_once;
 /// Workstream F (CT-10/E-20/V1x-06) — zstd compress/decompress helpers
 /// for sealed WAL segments. Pure sync wrappers; the writer calls them
 /// during segment finalization (not on the hot per-frame path).

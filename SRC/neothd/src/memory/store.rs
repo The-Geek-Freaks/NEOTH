@@ -130,7 +130,8 @@ impl std::ops::DerefMut for PrivateHistoryConnection {
 /// v40: exact 16-byte WAL session projections for episode/provider views.
 /// v41: secondary, threshold-selected Hippocampus event-id membership.
 /// v42: immutable raw-origin receipts and exact counterparty clustering state.
-pub const SCHEMA_VERSION: i64 = 42;
+/// v43: verified counterparty consent ceremony challenge reservations.
+pub const SCHEMA_VERSION: i64 = 43;
 
 /// Current P1-08 metadata schema, split so the v36→v37 migration can rebuild
 /// the altered strict tables before the final trigger set is installed.  The
@@ -3007,6 +3008,11 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         "#,
     )
     .context("create OMI reconciliation ledger")?;
+
+    // v43: W209 owns this additive ceremony reservation contract. Keep fresh
+    // schema and the v42→v43 migration on the one canonical SQL definition.
+    conn.execute_batch(crate::memory::counterparty_consent_ceremony::CHALLENGE_SCHEMA_SQL)
+        .context("create W209 counterparty consent challenge reservations")?;
 
     // Stamp schema version (idempotent).
     conn.execute(

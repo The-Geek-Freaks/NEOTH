@@ -1496,6 +1496,404 @@ fn reply_to_inbound(inbound: &InboundMessage, text: impl Into<String>) -> Outbou
     }
 }
 
+enum CounterpartyConsentIngress {
+    NotCeremony,
+    Handled(Option<OutboundMessage>),
+}
+
+/// An ingress-only capability minted from the actual admitted channel turn.
+/// Its fields deliberately cannot be assembled by a generic channel caller;
+/// the closed W209 writer consumes the binding, envelope, exact parsed command,
+/// and already-derived session as one unit.
+pub(crate) struct AdmittedCounterpartyConsentInput {
+    binding: AuthenticatedInboundBinding,
+    inbound: InboundMessage,
+    command: crate::memory::counterparty_consent_ceremony::CounterpartyConsentCommand,
+    exact_command: Vec<u8>,
+    wal_session: crate::wal::WalSessionContext,
+}
+
+impl AdmittedCounterpartyConsentInput {
+    pub(crate) fn binding(&self) -> &AuthenticatedInboundBinding {
+        &self.binding
+    }
+
+    pub(crate) fn inbound(&self) -> &InboundMessage {
+        &self.inbound
+    }
+
+    pub(crate) fn exact_command(&self) -> &[u8] {
+        &self.exact_command
+    }
+
+    pub(crate) fn wal_session(&self) -> crate::wal::WalSessionContext {
+        self.wal_session
+    }
+
+    fn command(&self) -> &crate::memory::counterparty_consent_ceremony::CounterpartyConsentCommand {
+        &self.command
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_authenticated_test(
+        home: &std::path::Path,
+        binding: &AuthenticatedInboundBinding,
+        inbound: &InboundMessage,
+    ) -> Result<Self> {
+        mint_admitted_counterparty_consent_input(home, binding, inbound)?
+            .ok_or_else(|| anyhow::anyhow!("W209 test fixture requires an exact non-media ceremony command"))
+    }
+}
+
+/// Mint only at the production admission boundary, before normal ingress
+/// effects. Reserved malformed/media turns deliberately receive no capability.
+fn mint_admitted_counterparty_consent_input(
+    home: &std::path::Path,
+    binding: &AuthenticatedInboundBinding,
+    inbound: &InboundMessage,
+) -> Result<Option<AdmittedCounterpartyConsentInput>> {
+    use crate::memory::counterparty_consent_ceremony::CeremonyCommandParse;
+
+    let Some(command_text) = inbound.text.as_deref() else {
+        return Ok(None);
+    };
+    let CeremonyCommandParse::Command(command) =
+        crate::memory::counterparty_consent_ceremony::parse_command(command_text)
+    else {
+        return Ok(None);
+    };
+    if inbound.media.is_some() {
+        return Ok(None);
+    }
+    let exact_command = command_text.as_bytes().to_vec();
+    Ok(Some(AdmittedCounterpartyConsentInput {
+        binding: binding.clone(),
+        inbound: inbound.clone(),
+        command,
+        exact_command,
+        wal_session: admitted_channel_wal_session(home, binding, inbound)?,
+    }))
+}
+
+async fn with_counterparty_consent_connection<T>(
+    views_conn: &Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>>,
+    home: &std::path::Path,
+    mutate: impl FnOnce(&mut rusqlite::Connection) -> Result<T>,
+) -> Result<T> {
+    if let Some(shared) = views_conn {
+        let mut connection = shared.lock().await;
+        mutate(&mut connection)
+    } else {
+        let mut connection = crate::memory::store::open(&home.join("views.db"))
+            .context("open views database for counterparty consent ceremony")?;
+        mutate(&mut connection)
+    }
+}
+
+/// Finish only exact, already-pending W209 audit obligations. The input
+/// capability is reloaded from marker-authenticated WAL by its persisted
+/// receipt identity; no command, token, or fresh descriptor is reconstructed.
+/// SQLite connections are deliberately dropped before the audit writer await.
+pub(crate) async fn recover_counterparty_consent_pending_with_writer(
+    home: &std::path::Path,
+    writer: &WalWriterHandle,
+) -> Result<usize> {
+    let locators = {
+        let connection = crate::memory::store::open(&home.join("views.db"))
+            .context("open views database for counterparty consent recovery")?;
+        crate::memory::counterparty_consent_ceremony::pending_audit_locators(&connection)?
+    };
+    let mut completed = 0usize;
+
+    for locator in locators {
+        let Some(input_receipt) = writer.counterparty_consent_input_receipt_at_home(
+            home,
+            locator.input_receipt_event_id(),
+            locator.input_sha256(),
+        )? else {
+            continue;
+        };
+        let recovery = {
+            let connection = crate::memory::store::open(&home.join("views.db"))
+                .context("reopen views database for counterparty consent recovery")?;
+            crate::memory::counterparty_consent_ceremony::rehydrate_pending_audit(
+                &connection,
+                &input_receipt,
+            )?
+        };
+        let Some(recovery) = recovery else {
+            continue;
+        };
+        let audit_descriptor = crate::wal::counterparty_consent_once::CounterpartyConsentAuditDescriptor::from_recovered_ceremony_payload(
+            recovery.audit_payload(),
+            &input_receipt,
+        )?;
+        let audit_receipt = writer
+            .append_counterparty_consent_audit_once(home, audit_descriptor)
+            .await?;
+        let now_ns = crate::time::now_unix_i64()
+            .checked_mul(1_000_000_000)
+            .ok_or_else(|| anyhow::anyhow!("counterparty consent recovery clock overflow"))?;
+        let mut connection = crate::memory::store::open(&home.join("views.db"))
+            .context("reopen views database to complete counterparty consent recovery")?;
+        recovery.complete_after_writer_ack(&mut connection, audit_receipt, now_ns)?;
+        completed = completed.saturating_add(1);
+    }
+    Ok(completed)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn release_counterparty_consent_reply<P: crate::permissions::PolicyArgument + Copy>(
+    writer: &WalWriterHandle,
+    home: &std::path::Path,
+    autonomy_policy: P,
+    inbound: &InboundMessage,
+    binding: &AuthenticatedInboundBinding,
+    channel_str: &str,
+    sender_hash: &str,
+    body: &str,
+    channel_asker: Option<Arc<dyn crate::permissions::gate::ChannelAsker>>,
+    once_guard: &crate::hooks::SessionOnceGuard,
+    wal_session: Option<crate::wal::WalSessionContext>,
+) -> Result<Option<OutboundMessage>> {
+    let hooks = crate::hooks::load_all_strict(&home.join("hooks"))
+        .await
+        .context("load hook policy for counterparty consent egress")?;
+    let provenance = ReplyProvenance {
+        provider: "counterparty-consent".to_owned(),
+        model: "local-ceremony".to_owned(),
+        latency: std::time::Duration::ZERO,
+        input_tokens: None,
+        output_tokens: None,
+    };
+    release_channel_reply_in(
+        writer,
+        home,
+        &hooks,
+        autonomy_policy,
+        inbound,
+        binding,
+        channel_str,
+        sender_hash,
+        body,
+        &provenance,
+        channel_asker,
+        false,
+        None,
+        once_guard,
+        wal_session,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_counterparty_consent_ingress<P: crate::permissions::PolicyArgument + Copy>(
+    writer: &WalWriterHandle,
+    home: &std::path::Path,
+    views_conn: &Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>>,
+    autonomy_policy: P,
+    inbound: &InboundMessage,
+    binding: &AuthenticatedInboundBinding,
+    admitted_input: Option<AdmittedCounterpartyConsentInput>,
+    channel_str: &str,
+    sender_hash: &str,
+    channel_asker: Option<Arc<dyn crate::permissions::gate::ChannelAsker>>,
+    once_guard: &crate::hooks::SessionOnceGuard,
+) -> Result<CounterpartyConsentIngress> {
+    use crate::memory::counterparty_consent_ceremony::{
+        AuthenticatedInboundProof, CeremonyCommandParse, CounterpartyConsentCommand,
+        DurableCeremonyAudit,
+    };
+
+    let parsed = inbound
+        .text
+        .as_deref()
+        .map(crate::memory::counterparty_consent_ceremony::parse_command)
+        .unwrap_or(CeremonyCommandParse::NotCeremony);
+    if matches!(parsed, CeremonyCommandParse::NotCeremony) {
+        return Ok(CounterpartyConsentIngress::NotCeremony);
+    }
+
+    // This branch is deliberately before hook loading, sanitization, ingress
+    // WAL, transcript/profile work, and provider construction. A reserved
+    // command with media cannot be reinterpreted as an ordinary caption.
+    if inbound.media.is_some() || matches!(parsed, CeremonyCommandParse::MalformedReserved) {
+        let wal_session = admitted_channel_wal_session(home, binding, inbound)?;
+        let reply = release_counterparty_consent_reply(
+            writer,
+            home,
+            autonomy_policy,
+            inbound,
+            binding,
+            channel_str,
+            sender_hash,
+            "Invalid counterparty consent command.",
+            channel_asker,
+            once_guard,
+            Some(wal_session),
+        )
+        .await?;
+        return Ok(CounterpartyConsentIngress::Handled(reply));
+    }
+
+    let admitted_input = admitted_input.ok_or_else(|| {
+        anyhow::anyhow!("counterparty consent command was not minted at channel admission")
+    })?;
+    let wal_session = admitted_input.wal_session();
+    let command = admitted_input.command().clone();
+    let descriptor = crate::wal::counterparty_consent_once::CounterpartyConsentInputDescriptor::from_admitted_input(
+        &admitted_input,
+    )?;
+    let input_receipt = match writer
+        .append_counterparty_consent_input_once(home, descriptor)
+        .await
+    {
+        Ok(receipt) => receipt,
+        Err(_) => {
+            let reply = release_counterparty_consent_reply(
+                writer,
+                home,
+                autonomy_policy,
+                inbound,
+                binding,
+                channel_str,
+                sender_hash,
+                "Counterparty consent is unavailable; no grant was applied.",
+                channel_asker,
+                once_guard,
+                Some(wal_session),
+            )
+            .await?;
+            return Ok(CounterpartyConsentIngress::Handled(reply));
+        }
+    };
+    let proof = AuthenticatedInboundProof::from_writer_issued_receipt(input_receipt)?;
+    let now_ns = crate::time::now_unix_i64()
+        .checked_mul(1_000_000_000)
+        .ok_or_else(|| anyhow::anyhow!("counterparty consent clock overflow"))?;
+
+    match command {
+        CounterpartyConsentCommand::Request => {
+            let challenge = with_counterparty_consent_connection(views_conn, home, |connection| {
+                crate::memory::counterparty_consent_ceremony::request_challenge(
+                    connection, &proof, now_ns,
+                )
+            })
+            .await;
+            let body = match challenge {
+                Ok(challenge) => format!(
+                    "This enables local clustering and derived memory for this sender in this channel/account. This conversation is used only to confirm the challenge. Reply with this exact command within ten minutes:\n{}\nYou can revoke consent at any time with {}.",
+                    challenge.command,
+                    crate::memory::counterparty_consent_ceremony::COMMAND_REVOKE,
+                ),
+                Err(_) => "Counterparty consent is unavailable; no grant was applied.".to_owned(),
+            };
+            let reply = release_counterparty_consent_reply(
+                writer, home, autonomy_policy, inbound, binding, channel_str, sender_hash, &body,
+                channel_asker, once_guard, Some(wal_session),
+            )
+            .await?;
+            Ok(CounterpartyConsentIngress::Handled(reply))
+        }
+        CounterpartyConsentCommand::Grant { token } => {
+            let reservation = with_counterparty_consent_connection(views_conn, home, |connection| {
+                crate::memory::counterparty_consent_ceremony::reserve_verified_grant(
+                    connection, &proof, &token, now_ns,
+                )
+            })
+            .await;
+            let Ok(reservation) = reservation else {
+                let reply = release_counterparty_consent_reply(
+                    writer, home, autonomy_policy, inbound, binding, channel_str, sender_hash,
+                    "Counterparty consent grant was rejected.", channel_asker, once_guard,
+                    Some(wal_session),
+                ).await?;
+                return Ok(CounterpartyConsentIngress::Handled(reply));
+            };
+            let audit_descriptor = crate::wal::counterparty_consent_once::CounterpartyConsentAuditDescriptor::from_ceremony_payload(
+                reservation.audit_payload(&proof),
+                wal_session,
+            )?;
+            let audit_receipt = writer
+                .append_counterparty_consent_audit_once(home, audit_descriptor)
+                .await;
+            let body = match audit_receipt {
+                Ok(receipt) => {
+                    let audit = DurableCeremonyAudit::from_writer_issued_receipt(
+                        &reservation, &proof, receipt,
+                    )?;
+                    match with_counterparty_consent_connection(views_conn, home, |connection| {
+                        crate::memory::counterparty_consent_ceremony::commit_verified_grant_after_audit(
+                            connection, &proof, &reservation, &audit, now_ns,
+                        )
+                    }).await {
+                        Ok(_) => "Counterparty consent verified.",
+                        Err(_) => "Counterparty consent is pending durable recovery.",
+                    }
+                }
+                Err(crate::wal::counterparty_consent_once::CounterpartyConsentOnceError::Indeterminate) => {
+                    // An acknowledgement can be lost after the closed writer
+                    // made the exact audit durable. Keep the reservation for
+                    // receipt-bound recovery; never cancel it blindly.
+                    "Counterparty consent is pending durable recovery."
+                }
+                Err(_) => match with_counterparty_consent_connection(views_conn, home, |connection| {
+                    crate::memory::counterparty_consent_ceremony::cancel_reservation(
+                        connection, &reservation,
+                    )
+                }).await {
+                    Ok(()) => "Counterparty consent is unavailable; no grant was applied.",
+                    Err(_) => "Counterparty consent is pending durable recovery.",
+                }
+            };
+            let reply = release_counterparty_consent_reply(
+                writer, home, autonomy_policy, inbound, binding, channel_str, sender_hash, body,
+                channel_asker, once_guard, Some(wal_session),
+            ).await?;
+            Ok(CounterpartyConsentIngress::Handled(reply))
+        }
+        CounterpartyConsentCommand::Revoke => {
+            let reservation = with_counterparty_consent_connection(views_conn, home, |connection| {
+                crate::memory::counterparty_consent_ceremony::commit_counterparty_revoke_before_audit(
+                    connection, &proof, now_ns,
+                ).map(|(reservation, _)| reservation)
+            }).await;
+            let Ok(reservation) = reservation else {
+                let reply = release_counterparty_consent_reply(
+                    writer, home, autonomy_policy, inbound, binding, channel_str, sender_hash,
+                    "Counterparty consent revoke could not be completed.", channel_asker, once_guard,
+                    Some(wal_session),
+                ).await?;
+                return Ok(CounterpartyConsentIngress::Handled(reply));
+            };
+            let audit_descriptor = crate::wal::counterparty_consent_once::CounterpartyConsentAuditDescriptor::from_ceremony_payload(
+                reservation.audit_payload(&proof), wal_session,
+            )?;
+            let body = match writer.append_counterparty_consent_audit_once(home, audit_descriptor).await {
+                Ok(receipt) => {
+                    let audit = DurableCeremonyAudit::from_writer_issued_receipt(
+                        &reservation, &proof, receipt,
+                    )?;
+                    match with_counterparty_consent_connection(views_conn, home, |connection| {
+                        crate::memory::counterparty_consent_ceremony::acknowledge_revocation_audit(
+                            connection, &proof, &reservation, &audit,
+                        )
+                    }).await {
+                        Ok(()) => "Counterparty consent revoked.",
+                        Err(_) => "Counterparty consent revoked; audit recovery is pending.",
+                    }
+                }
+                Err(_) => "Counterparty consent revoked; audit recovery is pending.",
+            };
+            let reply = release_counterparty_consent_reply(
+                writer, home, autonomy_policy, inbound, binding, channel_str, sender_hash, body,
+                channel_asker, once_guard, Some(wal_session),
+            ).await?;
+            Ok(CounterpartyConsentIngress::Handled(reply))
+        }
+    }
+}
+
 fn provider_backed_channel_slash(name: &str) -> bool {
     matches!(name, "research" | "background" | "btw")
 }
@@ -1743,6 +2141,30 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             let sender_hash = scoped_sender_hash_of(&inbound_binding, &inbound.sender_id);
             let channel_name = inbound.channel;
             let channel_str = channel_name.as_str();
+            let counterparty_consent_input = mint_admitted_counterparty_consent_input(
+                &neoth_home,
+                &inbound_binding,
+                &inbound,
+            )?;
+
+            match handle_counterparty_consent_ingress(
+                &writer,
+                &neoth_home,
+                &views_conn,
+                autonomy_policy,
+                &inbound,
+                &inbound_binding,
+                counterparty_consent_input,
+                channel_str,
+                &sender_hash,
+                channel_asker.as_ref().map(Arc::clone),
+                &session_fired_once,
+            )
+            .await?
+            {
+                CounterpartyConsentIngress::NotCeremony => {}
+                CounterpartyConsentIngress::Handled(reply) => return Ok(reply),
+            }
 
             // Load the hook policy once, before any branch can emit a reply.
             // An invalid policy cannot safely run PreEgress, so fail closed
@@ -6570,6 +6992,395 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn counterparty_consent_request_bypasses_normal_ingress_and_provider() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let wal_path = wal_dir.join("000001.wal");
+        let (writer, writer_join) =
+            crate::wal::spawn_for_home(wal_path.clone(), home.path().to_path_buf()).unwrap();
+        let provider = Arc::new(ChannelRequestCapturingProvider {
+            request: std::sync::Mutex::new(None),
+        });
+        let handler = build_pipeline_handler(PipelineHandlerDeps {
+            inbound_binding: AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                ChannelId::Telegram,
+            )),
+            provider: provider.clone(),
+            live_channel: None,
+            writer: writer.clone(),
+            operator_id: None,
+            goal_max_turns: 1,
+            meter: crate::providers::meter::Meter::with_default_window(),
+            rate_limiter: Arc::new(crate::channels::rate_limit::RateLimiter::with_defaults()),
+            segment_path: wal_path.clone(),
+            neoth_home: home.path().to_path_buf(),
+            profile_config: crate::config::ProfileConfig::default(),
+            reload_controller: Arc::new(crate::config::reload::ReloadController::new(
+                FreedomConfig::default(),
+                home.path().join("missing-freedom.yaml"),
+            )),
+            views_conn: None,
+            views_executor: None,
+            confirm_bus: None,
+            abliterated_loader: None,
+        });
+
+        let reply = handler(inbound(
+            Some(crate::memory::counterparty_consent_ceremony::COMMAND_REQUEST),
+            None,
+        ))
+        .await
+        .expect("counterparty request is handled locally")
+        .expect("counterparty request releases a channel reply");
+        assert!(reply.text.contains(
+            crate::memory::counterparty_consent_ceremony::COMMAND_GRANT_PREFIX
+        ));
+        assert!(
+            provider.request.lock().unwrap().is_none(),
+            "reserved command never reaches the provider"
+        );
+
+        drop(handler);
+        drop(writer);
+        writer_join.await.unwrap();
+        let bytes = std::fs::read(wal_path).unwrap();
+        let (mut input, mut raw, mut ingress, mut egress) = (0usize, 0usize, 0usize, 0usize);
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            match (frame.header.event_type, frame.header.event_subtype) {
+                (crate::wal::events::EVENT_TYPE_EXTENDED, subtype)
+                    if subtype
+                        == crate::wal::events::ExtendedSubtype::CounterpartyConsentInput as u8 =>
+                {
+                    input += 1;
+                }
+                (crate::wal::events::EVENT_TYPE_RAW_TEXT, _) => raw += 1,
+                (crate::wal::events::EVENT_TYPE_CHANNEL_INGRESS, _) => ingress += 1,
+                (crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS, _) => egress += 1,
+                _ => {}
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(input, 1, "the exact request receives one sealed input receipt");
+        assert_eq!(raw, 0, "ceremony text must never become RAW_TEXT");
+        assert_eq!(ingress, 0, "ceremony text must never become CHANNEL_INGRESS");
+        assert_eq!(egress, 1, "the local ceremony reply uses normal channel egress");
+    }
+
+    #[tokio::test]
+    async fn malformed_counterparty_consent_never_receipts_or_reaches_provider() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let wal_path = wal_dir.join("000001.wal");
+        let (writer, writer_join) =
+            crate::wal::spawn_for_home(wal_path.clone(), home.path().to_path_buf()).unwrap();
+        let provider = Arc::new(ChannelRequestCapturingProvider {
+            request: std::sync::Mutex::new(None),
+        });
+        let handler = build_pipeline_handler(PipelineHandlerDeps {
+            inbound_binding: AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+                ChannelId::Telegram,
+            )),
+            provider: provider.clone(),
+            live_channel: None,
+            writer: writer.clone(),
+            operator_id: None,
+            goal_max_turns: 1,
+            meter: crate::providers::meter::Meter::with_default_window(),
+            rate_limiter: Arc::new(crate::channels::rate_limit::RateLimiter::with_defaults()),
+            segment_path: wal_path.clone(),
+            neoth_home: home.path().to_path_buf(),
+            profile_config: crate::config::ProfileConfig::default(),
+            reload_controller: Arc::new(crate::config::reload::ReloadController::new(
+                FreedomConfig::default(),
+                home.path().join("missing-freedom.yaml"),
+            )),
+            views_conn: None,
+            views_executor: None,
+            confirm_bus: None,
+            abliterated_loader: None,
+        });
+
+        let mut malformed = inbound(Some("/neoth consent clustering grant invalid"), None);
+        malformed.media = Some(crate::channels::MediaPayload {
+            kind: crate::channels::MediaKind::Image,
+            data: vec![],
+            mime: "image/png".to_owned(),
+            filename: None,
+        });
+        let reply = handler(malformed)
+            .await
+            .expect("malformed reserved command is handled locally")
+            .expect("malformed reserved command releases a controlled reply");
+        assert_eq!(reply.text, "Invalid counterparty consent command.");
+        assert!(provider.request.lock().unwrap().is_none());
+
+        drop(handler);
+        drop(writer);
+        writer_join.await.unwrap();
+        let bytes = std::fs::read(wal_path).unwrap();
+        let (mut input, mut raw, mut ingress, mut egress) = (0usize, 0usize, 0usize, 0usize);
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            match (frame.header.event_type, frame.header.event_subtype) {
+                (crate::wal::events::EVENT_TYPE_EXTENDED, subtype)
+                    if subtype
+                        == crate::wal::events::ExtendedSubtype::CounterpartyConsentInput as u8 =>
+                {
+                    input += 1;
+                }
+                (crate::wal::events::EVENT_TYPE_RAW_TEXT, _) => raw += 1,
+                (crate::wal::events::EVENT_TYPE_CHANNEL_INGRESS, _) => ingress += 1,
+                (crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS, _) => egress += 1,
+                _ => {}
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(input, 0, "malformed ceremony input gets no durable receipt");
+        assert_eq!(raw, 0, "malformed ceremony text must never become RAW_TEXT");
+        assert_eq!(ingress, 0, "malformed ceremony text must never become CHANNEL_INGRESS");
+        assert_eq!(egress, 1, "controlled rejection uses normal channel egress");
+    }
+
+    #[tokio::test]
+    async fn counterparty_consent_pipeline_grant_then_revoke_tracks_real_status() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let wal_path = wal_dir.join("000001.wal");
+        let (writer, writer_join) =
+            crate::wal::spawn_for_home(wal_path.clone(), home.path().to_path_buf()).unwrap();
+        let binding = AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+            ChannelId::Telegram,
+        ));
+        let provider = Arc::new(ChannelRequestCapturingProvider {
+            request: std::sync::Mutex::new(None),
+        });
+        let handler = build_pipeline_handler(PipelineHandlerDeps {
+            inbound_binding: binding.clone(),
+            provider: provider.clone(),
+            live_channel: None,
+            writer: writer.clone(),
+            operator_id: None,
+            goal_max_turns: 1,
+            meter: crate::providers::meter::Meter::with_default_window(),
+            rate_limiter: Arc::new(crate::channels::rate_limit::RateLimiter::with_defaults()),
+            segment_path: wal_path,
+            neoth_home: home.path().to_path_buf(),
+            profile_config: crate::config::ProfileConfig::default(),
+            reload_controller: Arc::new(crate::config::reload::ReloadController::new(
+                FreedomConfig::default(),
+                home.path().join("missing-freedom.yaml"),
+            )),
+            views_conn: None,
+            views_executor: None,
+            confirm_bus: None,
+            abliterated_loader: None,
+        });
+        let request_reply = handler(inbound(
+            Some(crate::memory::counterparty_consent_ceremony::COMMAND_REQUEST),
+            None,
+        ))
+        .await
+        .unwrap()
+        .expect("request reply");
+        let grant_command = request_reply
+            .text
+            .lines()
+            .find(|line| line.starts_with(crate::memory::counterparty_consent_ceremony::COMMAND_GRANT_PREFIX))
+            .expect("challenge reply retains one exact grant command")
+            .to_owned();
+        assert_eq!(
+            handler(inbound(Some(&grant_command), None)).await.unwrap().unwrap().text,
+            "Counterparty consent verified."
+        );
+        let status_key = crate::memory::counterparty_consent::CounterpartyKey::from_authenticated(
+            &binding.channel_ref,
+            scoped_sender_hash_of(&binding, "+15551234567"),
+        )
+        .unwrap();
+        let connection = store::open(&home.path().join("views.db")).unwrap();
+        assert!(matches!(
+            crate::memory::counterparty_consent::status(&connection, &status_key).unwrap(),
+            crate::memory::counterparty_consent::ConsentStatus::VerifiedGranted { .. }
+        ));
+        drop(connection);
+
+        assert_eq!(
+            handler(inbound(
+                Some(crate::memory::counterparty_consent_ceremony::COMMAND_REVOKE),
+                None,
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .text,
+            "Counterparty consent revoked."
+        );
+        let connection = store::open(&home.path().join("views.db")).unwrap();
+        assert!(matches!(
+            crate::memory::counterparty_consent::status(&connection, &status_key).unwrap(),
+            crate::memory::counterparty_consent::ConsentStatus::Revoked { .. }
+        ));
+        assert!(provider.request.lock().unwrap().is_none());
+
+        drop(connection);
+        drop(handler);
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn counterparty_consent_pending_grant_audit_recovers_from_exact_input_receipt() {
+        use crate::memory::counterparty_consent_ceremony::{
+            AuthenticatedInboundProof, request_challenge, reserve_verified_grant,
+        };
+
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let wal_path = wal_dir.join("000001.wal");
+        let (writer, writer_join) =
+            crate::wal::spawn_for_home(wal_path, home.path().to_path_buf()).unwrap();
+        let binding = AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+            ChannelId::Telegram,
+        ));
+        let request = inbound(
+            Some(crate::memory::counterparty_consent_ceremony::COMMAND_REQUEST),
+            None,
+        );
+        let request_admission = AdmittedCounterpartyConsentInput::for_authenticated_test(
+            home.path(), &binding, &request,
+        )
+        .unwrap();
+        let request_descriptor = crate::wal::counterparty_consent_once::CounterpartyConsentInputDescriptor::from_admitted_input(
+            &request_admission,
+        )
+        .unwrap();
+        let request_receipt = writer
+            .append_counterparty_consent_input_once(home.path(), request_descriptor)
+            .await
+            .unwrap();
+        let request_proof = AuthenticatedInboundProof::from_writer_issued_receipt(request_receipt)
+            .unwrap();
+        let mut connection = store::open(&home.path().join("views.db")).unwrap();
+        let challenge = request_challenge(&mut connection, &request_proof, 1).unwrap();
+        drop(connection);
+
+        let grant = inbound(Some(&challenge.command), None);
+        let grant_admission = AdmittedCounterpartyConsentInput::for_authenticated_test(
+            home.path(), &binding, &grant,
+        )
+        .unwrap();
+        let grant_descriptor = crate::wal::counterparty_consent_once::CounterpartyConsentInputDescriptor::from_admitted_input(
+            &grant_admission,
+        )
+        .unwrap();
+        let grant_receipt = writer
+            .append_counterparty_consent_input_once(home.path(), grant_descriptor)
+            .await
+            .unwrap();
+        let grant_proof = AuthenticatedInboundProof::from_writer_issued_receipt(grant_receipt)
+            .unwrap();
+        let token = challenge
+            .command
+            .strip_prefix(crate::memory::counterparty_consent_ceremony::COMMAND_GRANT_PREFIX)
+            .unwrap();
+        let mut connection = store::open(&home.path().join("views.db")).unwrap();
+        let _pending = reserve_verified_grant(&mut connection, &grant_proof, token, 2).unwrap();
+        drop(connection);
+
+        assert_eq!(
+            recover_counterparty_consent_pending_with_writer(home.path(), &writer)
+                .await
+                .unwrap(),
+            1,
+            "the exact pending reservation receives its closed audit and DB acknowledgement"
+        );
+        let status_key = crate::memory::counterparty_consent::CounterpartyKey::from_authenticated(
+            &binding.channel_ref,
+            scoped_sender_hash_of(&binding, &grant.sender_id),
+        )
+        .unwrap();
+        let connection = store::open(&home.path().join("views.db")).unwrap();
+        assert!(matches!(
+            crate::memory::counterparty_consent::status(&connection, &status_key).unwrap(),
+            crate::memory::counterparty_consent::ConsentStatus::VerifiedGranted { .. }
+        ));
+
+        drop(connection);
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn counterparty_consent_pending_revoke_audit_recovers_without_restoring_consent() {
+        use crate::memory::counterparty_consent_ceremony::{
+            AuthenticatedInboundProof, commit_counterparty_revoke_before_audit,
+        };
+
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let wal_path = wal_dir.join("000001.wal");
+        let (writer, writer_join) =
+            crate::wal::spawn_for_home(wal_path, home.path().to_path_buf()).unwrap();
+        let binding = AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
+            ChannelId::Telegram,
+        ));
+        let revoke = inbound(
+            Some(crate::memory::counterparty_consent_ceremony::COMMAND_REVOKE),
+            None,
+        );
+        let admission = AdmittedCounterpartyConsentInput::for_authenticated_test(
+            home.path(), &binding, &revoke,
+        )
+        .unwrap();
+        let descriptor = crate::wal::counterparty_consent_once::CounterpartyConsentInputDescriptor::from_admitted_input(
+            &admission,
+        )
+        .unwrap();
+        let receipt = writer
+            .append_counterparty_consent_input_once(home.path(), descriptor)
+            .await
+            .unwrap();
+        let proof = AuthenticatedInboundProof::from_writer_issued_receipt(receipt).unwrap();
+        let mut connection = store::open(&home.path().join("views.db")).unwrap();
+        commit_counterparty_revoke_before_audit(&mut connection, &proof, 1).unwrap();
+        let status_key = crate::memory::counterparty_consent::CounterpartyKey::from_authenticated(
+            &binding.channel_ref,
+            scoped_sender_hash_of(&binding, &revoke.sender_id),
+        )
+        .unwrap();
+        assert!(matches!(
+            crate::memory::counterparty_consent::status(&connection, &status_key).unwrap(),
+            crate::memory::counterparty_consent::ConsentStatus::Revoked { .. }
+        ));
+        drop(connection);
+
+        assert_eq!(
+            recover_counterparty_consent_pending_with_writer(home.path(), &writer)
+                .await
+                .unwrap(),
+            1
+        );
+        let connection = store::open(&home.path().join("views.db")).unwrap();
+        assert!(matches!(
+            crate::memory::counterparty_consent::status(&connection, &status_key).unwrap(),
+            crate::memory::counterparty_consent::ConsentStatus::Revoked { .. }
+        ));
+        assert!(crate::memory::counterparty_consent_ceremony::pending_audit_locators(&connection)
+            .unwrap()
+            .is_empty());
+
+        drop(connection);
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn authenticated_channel_policy_cannot_inject_a_disabled_subject_skill() {
         let fixture = tempfile::tempdir().expect("create channel policy-isolation fixture");
         let make_binding = |account| {
@@ -9838,6 +10649,7 @@ mod tests {
                 // the missing contract without serializing payload bytes, paths,
                 // prompts, tool arguments, or the opaque session identifier.
                 let mut observed_frame_families = std::collections::BTreeSet::new();
+                let mut code_map_receipt_families = std::collections::BTreeSet::new();
                 crate::wal::scan::for_each_frame(
                     &std::fs::read(&wal_path).expect("read W137 accepted-turn WAL"),
                     |_, frame| {
@@ -9851,6 +10663,50 @@ mod tests {
                                 "other"
                             },
                         ));
+                        if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                            && frame.header.event_subtype
+                                == crate::wal::events::ExtendedSubtype::CodeMapRecallResolved
+                                    as u8
+                        {
+                            // Do not render the receipt payload: statuses and surfaces are
+                            // closed source-owned vocabularies, while every unknown or
+                            // malformed value collapses to one diagnostic bucket.
+                            let (status, surface) = serde_json::from_slice::<serde_json::Value>(
+                                frame.payload,
+                            )
+                            .ok()
+                            .map(|payload| {
+                                let status = match payload["status"].as_str() {
+                                    Some("enabled_context_unavailable") => {
+                                        "enabled_context_unavailable"
+                                    }
+                                    Some("retained_in_provider_request") => {
+                                        "retained_in_provider_request"
+                                    }
+                                    Some("final_reply_prepared") => "final_reply_prepared",
+                                    Some("final_tool_result_prepared") => {
+                                        "final_tool_result_prepared"
+                                    }
+                                    _ => "other",
+                                };
+                                let surface = match payload["surface"].as_str() {
+                                    Some("channel") => "channel",
+                                    Some("cli") => "cli",
+                                    Some("direct_cli_mcp") => "direct_cli_mcp",
+                                    _ => "other",
+                                };
+                                (status, surface)
+                            })
+                            .unwrap_or(("invalid_payload", "invalid_payload"));
+                            code_map_receipt_families.insert(format!(
+                                "status={status},surface={surface},session={}",
+                                if frame.header.session_id == expected_wal_session {
+                                    "accepted"
+                                } else {
+                                    "other"
+                                },
+                            ));
+                        }
                         let session_bound = match frame.header.event_type {
                             EVENT_TYPE_RAW_TEXT => Some("raw_text"),
                             EVENT_TYPE_CHANNEL_INGRESS => Some("channel_ingress"),
@@ -9899,7 +10755,7 @@ mod tests {
                     .collect::<Vec<_>>();
                 assert!(
                     missing_contextual_headers.is_empty(),
-                    "accepted channel fixture covers ingress/provider/code-map/MCP/egress under one retained session; missing_roles={missing_contextual_headers:?}; observed_frame_families={observed_frame_families:?}"
+                    "accepted channel fixture covers ingress/provider/code-map/MCP/egress under one retained session; missing_roles={missing_contextual_headers:?}; observed_frame_families={observed_frame_families:?}; code_map_receipt_families={code_map_receipt_families:?}"
                 );
                 assert!(!initial_system.contains("W137 selected skill body"));
                 let registry = retained_skill_registry_context(&initial_system);

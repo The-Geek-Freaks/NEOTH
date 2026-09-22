@@ -26,7 +26,10 @@ use anyhow::{Context, Result, anyhow, ensure};
 use rusqlite::Connection;
 use tracing::info;
 
-use crate::memory::store::{TRANSCRIPT_MINING_V37_TABLES_SQL, TRANSCRIPT_MINING_V37_TRIGGERS_SQL};
+use crate::memory::{
+    counterparty_consent_ceremony::CHALLENGE_SCHEMA_SQL,
+    store::{TRANSCRIPT_MINING_V37_TABLES_SQL, TRANSCRIPT_MINING_V37_TRIGGERS_SQL},
+};
 
 /// A single schema upgrade step.
 pub struct Migration {
@@ -315,7 +318,21 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "W208: immutable raw-origin receipts and default-deny counterparty clustering consent",
         run: migration_v41_to_v42,
     },
+    Migration {
+        from: 42,
+        to: 43,
+        description: "W209: verified counterparty consent ceremony challenge reservations",
+        run: migration_v42_to_v43,
+    },
 ];
+
+/// W209 is additive only. Existing W208 origin and consent projections remain
+/// unchanged; no historic channel interaction can become a ceremony challenge.
+pub(crate) fn migration_v42_to_v43(conn: &Connection) -> Result<()> {
+    conn.execute_batch(CHALLENGE_SCHEMA_SQL)
+        .context("v42→v43: create verified counterparty consent challenge reservations")?;
+    Ok(())
+}
 
 /// W208 is additive only.  In particular it intentionally does not backfill
 /// historic episodes: no legacy RAW_TEXT record proves a local or channel
@@ -5111,5 +5128,85 @@ mod tests {
             .collect::<rusqlite::Result<_>>()
             .unwrap();
         assert_eq!(columns, vec!["event_id"]);
+    }
+
+    #[test]
+    fn v42_to_v43_preserves_w208_state_without_backfilling_challenges_and_reopens() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("views.db");
+        let mut conn = crate::memory::store::open(&database).unwrap();
+        conn.execute(
+            "INSERT INTO idx_episode \
+             (event_id,event_type,ts_ns,text,text_hash,wal_session_id) \
+             VALUES(88,1,8,'pre-v43 retained text','0000000000000058',X'22222222222222222222222222222222')",
+            [],
+        )
+        .unwrap();
+        crate::memory::embeddings::upsert(&conn, "episode", "88", "pre-v43-local", &[1.0])
+            .unwrap();
+        conn.execute_batch(
+            "INSERT INTO idx_episode_origin_v2 \
+                (raw_event_id,origin_kind,origin_event_id,raw_payload_hash,channel_id,account_id,scoped_sender_hash) \
+              VALUES(88,'channel_bound',188,'0000000000000058','telegram','default','0123456789abcdef'); \
+             INSERT INTO idx_counterparty_clustering_consent_v1 \
+                (channel_id,account_id,scoped_sender_hash,state,proof_kind,proof_sha256,proof_verified_at_ns,revision,revoked_at_ns) \
+              VALUES('telegram','default','0123456789abcdef','verified_granted','pre-v43-proof',zeroblob(32),8,3,NULL); \
+             DROP TABLE idx_counterparty_consent_audit_terminal_v1; \
+             DROP TABLE idx_counterparty_consent_challenge_v1; \
+             UPDATE meta SET value='42' WHERE key='schema_version';",
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&mut conn, 42, 43).unwrap(), 43);
+        let episode: (String, String) = conn
+            .query_row(
+                "SELECT text,text_hash FROM idx_episode WHERE event_id=88",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(episode, ("pre-v43 retained text".to_owned(), "0000000000000058".to_owned()));
+        let preserved: (i64, i64, i64) = conn
+            .query_row(
+                "SELECT \
+                    (SELECT COUNT(*) FROM idx_embedding WHERE source_kind='episode' AND source_ref='88'), \
+                    (SELECT COUNT(*) FROM idx_episode_origin_v2 WHERE raw_event_id=88), \
+                    (SELECT COUNT(*) FROM idx_counterparty_clustering_consent_v1 \
+                       WHERE channel_id='telegram' AND account_id='default' \
+                         AND scoped_sender_hash='0123456789abcdef' AND state='verified_granted' AND revision=3)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(preserved, (1, 1, 1));
+        for table in [
+            "idx_counterparty_consent_challenge_v1",
+            "idx_counterparty_consent_audit_terminal_v1",
+        ] {
+            let rows: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(rows, 0, "v43 must not backfill {table}");
+        }
+        drop(conn);
+
+        let reopened = crate::memory::store::open(&database).unwrap();
+        let version: String = reopened
+            .query_row(
+                "SELECT value FROM meta WHERE key='schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let challenge_rows: (i64, i64) = reopened
+            .query_row(
+                "SELECT \
+                    (SELECT COUNT(*) FROM idx_counterparty_consent_challenge_v1), \
+                    (SELECT COUNT(*) FROM idx_counterparty_consent_audit_terminal_v1)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((version, challenge_rows), ("43".to_owned(), (0, 0)));
     }
 }

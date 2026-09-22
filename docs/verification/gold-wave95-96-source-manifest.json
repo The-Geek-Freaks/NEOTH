@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T16:43:08.0724621Z",
-  "validationStatus": "W207_VISIBLE_OUTPUT_FIXTURE_REPAIRED_HOSTED_PENDING",
+  "capturedUtc": "2026-09-22T16:50:41.4376574Z",
+  "validationStatus": "W209_VERIFIED_SENDER_CEREMONY_INTEGRATED_STATIC_REVIEWED_HOSTED_PENDING",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -63,8 +63,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 11165,
-      "sha256": "E1E1624353D39B87FDC625725D1FCCCD417B53E41D100A3D8ACD36FA8600F35F"
+      "bytes": 11194,
+      "sha256": "53A5C5C83FE23E1578E56B5AB12C8D9EC5D2873A72AAFA1FFC727A7134F21CA1"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -418,18 +418,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 46161,
-      "sha256": "58B007371699F7EBC6CF46EFCFC9E6821CB28BB10341EABAA9CC4DEE424FB734"
+      "bytes": 46909,
+      "sha256": "24F9B6ADDE9A94DC90FE2F43B25E64983EAB5180A5295311D4EA37A024E4D065"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1049043,
-      "sha256": "D81E635AADE7F37D39D714F375AAD53935A8473FD7A83126DDB3DD115EA25103"
+      "bytes": 1049791,
+      "sha256": "1A1B6B996AE046F42D506FBE3A4ED0B387AB99FE88CE87B3F6C5BA6559525B6C"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1644490,
-      "sha256": "990FC80437916E0D50A49FFAE5C3B78C1D96B17EAAB32F56F4CB45D47B4962C1"
+      "bytes": 1645238,
+      "sha256": "B9D8668B2BF46370347532798FA5B1A848099BA70C3BAB555E689C00E3E5D868"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1228,13 +1228,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "bytes": 462671,
-      "sha256": "05CDBA7EAFCF35F4C3CE2892D7A10C22D3DE9128DD03639D80BEFEB4AD7650B3"
+      "bytes": 500332,
+      "sha256": "43E610D97D558031F56CF19F68F7D168E102F09AFB895E4CE0C3DBE120A8C6CD"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",
-      "bytes": 526657,
-      "sha256": "A774382D062AE0EE25B37F205C7F07806E7DFAE7AA9CD5C9FEE5B4808D563DC3"
+      "bytes": 527639,
+      "sha256": "F9371A8EA8D74421BED2A8ED638D7C045C2B12C7157C281B446AC359258583F2"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tests.rs",
@@ -1243,8 +1243,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve.rs",
-      "bytes": 173361,
-      "sha256": "5139A13BC3DF50DA08C6F0DBEBA2E8DDE6CB58176FD21B114BCFA977DD7D87AE"
+      "bytes": 173864,
+      "sha256": "8E3CD647CB84E2B63D520ED3B03C9CAD51151182933743210BC6A54F0049D992"
     },
     {
       "path": "SRC/neothd/src/cli/updater.rs",
@@ -1933,8 +1933,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/counterparty_consent.rs",
-      "bytes": 37488,
-      "sha256": "9214072C95F79E1875835E8074816343EC41E905E57790ECA78FE6519B319963"
+      "bytes": 37785,
+      "sha256": "9FE07EFB730781470347A10C476264618E4FC3C4E31CC0C196E131B85FD8CFC4"
     },
     {
       "path": "SRC/neothd/src/memory/decay_task.rs",
@@ -1958,13 +1958,13 @@
     },
     {
       "path": "SRC/neothd/src/memory/migrations/mod.rs",
-      "bytes": 226779,
-      "sha256": "89C2641DEFA04889C6650FD1F2FCB812A874848956A64FE64390D07F4BEF475F"
+      "bytes": 231256,
+      "sha256": "C3AF323FB762BAF2549BEF62A470D6A043B005CF8FE6EC52FA647B9F9FF70D6D"
     },
     {
       "path": "SRC/neothd/src/memory/mod.rs",
-      "bytes": 7066,
-      "sha256": "5FC6F9D00C5CF4CD95BF0136A6871520C07CE01101916ABE2EEE6E301B6E32B5"
+      "bytes": 7178,
+      "sha256": "B7873EABEFAC33E1C81D29521BE2554D4630DF74DADFDE5EA4D4BB2EFB6B50A2"
     },
     {
       "path": "SRC/neothd/src/memory/recall_lanes.rs",
@@ -1988,8 +1988,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/store.rs",
-      "bytes": 198585,
-      "sha256": "A33DD813BEE01C2C1AB7DC489656185221F604181527022D2A001C790FDFDB3D"
+      "bytes": 198984,
+      "sha256": "422536EE7D373B6751F19E2B77ABAB82F222CCBC817AF6329F934ED85BD7933F"
     },
     {
       "path": "SRC/neothd/src/memory/transcript_mining_provenance.rs",
@@ -2408,8 +2408,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/events.rs",
-      "bytes": 269351,
-      "sha256": "97D142E81665B840E1896D7CBB9A6AB0E127F61482457E4464F6ADFC0E467337"
+      "bytes": 270725,
+      "sha256": "5012FD91EAC958643F177DAF4994B812B3E56997B864DEC5ADEF34D233B32263"
     },
     {
       "path": "SRC/neothd/src/wal/header.rs",
@@ -2418,8 +2418,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/mod.rs",
-      "bytes": 6021,
-      "sha256": "53C7AC3BDD0DA8F43A3548D44F624CFD3AA7DAF3631DCAEB2A4B6CCEFC564A41"
+      "bytes": 6152,
+      "sha256": "4DA4563564CB1F9B4B8CD33CCE06912C4C34D83BE7212E0B7D5233F913064E6F"
     },
     {
       "path": "SRC/neothd/src/wal/payloads_u04.rs",
@@ -2463,8 +2463,8 @@
     },
     {
       "path": "SRC/neothd/src/wal/writer.rs",
-      "bytes": 390542,
-      "sha256": "2A4F5A9AF1DBA8856FE55A32737E98B1D104B1A9DD41C30E8A9186EB5367660B"
+      "bytes": 409905,
+      "sha256": "B647FF791830020D4376433C7EF020DDB2B20ECED48C69FE2B6E780B7B291E85"
     },
     {
       "path": "SRC/neothd/src/wizard/ipc.rs",
@@ -2585,6 +2585,21 @@
       "path": "THIRD_PARTY_LICENSES",
       "bytes": 2299156,
       "sha256": "A2F73733618DE347F4876EDD4325391DB8C2F11D853614CC4D8EDC2A82CA497D"
+    },
+    {
+      "path": "SRC/neothd/src/memory/counterparty_consent_ceremony.rs",
+      "bytes": 56425,
+      "sha256": "B0B6DBC0EF85BD730B37139203DC2EE1873E241722F6235EC465BC22F6697EC3"
+    },
+    {
+      "path": "SRC/neothd/src/wal/counterparty_consent_once.rs",
+      "bytes": 17912,
+      "sha256": "11022D98E7600AB35491246EC452F0ACF86A7C08CEA4E5255AD0C489AB6F380E"
+    },
+    {
+      "path": "docs/gold-wave209-verification.md",
+      "bytes": 2648,
+      "sha256": "84F49167D71328383FD6F72D036008543192B697BBB35BE4C788C9BA991BD194"
     }
   ]
 }

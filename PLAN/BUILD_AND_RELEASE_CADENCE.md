@@ -3,23 +3,33 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
-**Hosted checkpoint (2026-09-22, W205-W209):** Grouped171 `35753809069` on
-`76769a27` ran all 171 exact identities: 167 passed, four failed normally and
-none aborted from stack overflow. All source/matrix/lock bindings were verified.
-Core/CLI `35753813179` passed; source-bound formatting at `d6939d2e` passed
-Preflight `35754236442` and Code Quality `35754235347`. The remaining W208 SQL
-migration and same-counterparty fixture failures are repaired in `719178ee`;
-Grouped171 `35755005928` and Core/CLI `35755009718` are checking that source.
-The W207 visible-output fixture now checks the complete concatenated text,
-allowing canonical Markdown buffering while retaining its progress/deadline
-assertions. The delegated-channel code-map session failure remains unresolved;
-its original assertion is retained. Inventory remains 516 sources, 718 universal
-native identities and 87 GUI identities, with unchanged platform extras.
-W209 sender-verified consent, closed WAL receipts and durable recovery are
-uncommitted work undergoing integrated review and behavioral test completion.
-The older Windows preview is evidence for `a68442cb` only. Road remains 1324
-total / 1015 checked / 307 open / 2 partial. No local executable validation ran.
+**Hosted checkpoint (2026-09-22, W208/W209):** Grouped171 `35755005928` on
+`719178ee` executed all 171 exact identities: 169 passed, two failed normally,
+zero stack aborts. All 30 W208 origin/consumer/migration tests passed. Artifact
+source identities, matrix and lock hashes were verified. Core/CLI `35755009718`
+also passed. The W207 buffered-output assertion is corrected in `91844f89` and
+needs a fresh run. The delegated-channel code-map session assertion remains
+open; a bounded status/surface diagnostic preserves the original assertion.
+This publication adds the integrated W209 sender request/grant/revoke ceremony,
+closed marker-authenticated WAL receipts, additive v43 schema and actual
+startup/drain/shutdown audit recovery. Independent integrated static review
+passed. Sixteen new focused tests bring the grouped selection to 187 and the
+inventory to 519 source inputs / 734 universal native identities / 87 GUI
+identities, with unchanged platform extras. Fresh Hosted compile and behavior
+are required. The older Windows preview is evidence for `a68442cb` only.
+Road remains 1324 total / 1015 checked / 307 open / 2 partial. No local
+executable validation ran under the workstation BSOD hold.
 
+**W209 sender-confirmed consent source (2026-09-22):** challenges bind exact
+commands, sender, account and confirmation conversation; positive consent
+covers that sender/account. Issuance-generation checks reject stale pre-revoke
+tokens, while fresh post-revoke consent remains possible. Revoke immediately
+quarantines existing derived state and supersedes a pending re-grant without
+losing its terminal audit custody. Ambiguous writer results preserve truthful
+pending recovery. Ceremony tokens bypass RAW/transcripts/providers and ordinary
+writer entry points cannot mint their receipts. Core, migration, real writer
+and channel lifecycle/recovery fixtures are inventoried for Hosted execution.
+P2-22 and release acceptance remain open. See `docs/gold-wave209-verification.md`.
 **W208 origin/consumer source (2026-09-22):** local chat and authenticated
 channel RAW now have exact header/session-bound origin receipts. Unknown data
 is denied for episode vectors and clustering; local-only construction and
