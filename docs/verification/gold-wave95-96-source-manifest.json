@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T21:37:33.9691354Z",
-  "validationStatus": "W225 Hosted compile imports/opaque error assertion repaired; Road machine summary reconciled; recheck pending",
+  "capturedUtc": "2026-09-22T21:39:45.7866759Z",
+  "validationStatus": "P2-10 accepted; canonical PROGRESS WS-LF section reconciled with Road9done109open",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -438,8 +438,8 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1074261,
-      "sha256": "D1DE4CDD803B1D3E4560B012BECE4BDCC479233DD36C6118CCE434DDF2BD754B"
+      "bytes": 1074314,
+      "sha256": "A6078B96C7726B210510AEE9D7B48D1A1745D8160842E05F9053170A38E8BE00"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",

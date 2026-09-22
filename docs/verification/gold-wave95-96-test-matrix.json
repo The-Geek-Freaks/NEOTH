@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W225 Hosted compile imports/opaque error assertion repaired; Road machine summary reconciled; recheck pending",
+  "status": "P2-10 accepted; canonical PROGRESS WS-LF section reconciled with Road9done109open",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92035,
-    "sha256": "A6CAFD18F7FD1CFFE8B6A83D9624247706F2BA1F0B2F0BC6A06803DF2B0AC99A"
+    "bytes": 92007,
+    "sha256": "4499C04CBDF404F48E46B1B7ACBBF29A320FB011A8C897E3FC27D3903B10EA42"
   },
   "sourceInputs": 532,
   "requiredNativeTests": [
@@ -15127,6 +15127,13 @@
       }
     ],
     "note": "Grouped2821129 failed before test execution: 2missing enum imports and expect_err Debug bound. No production type weakened. Preflight dashboard marker mismatch repaired. W223 exact Hosted core success recorded.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave224ProgressCounterRepair": {
+    "base": "5dff0afb5443a708c402a1f7f9d5a92c04169e2f",
+    "sources": [],
+    "note": "Preflight35787943999 correctly rejected stale PROGRESS WS-LF counter; exact section corrected without changing release gate or tests.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
