@@ -13852,7 +13852,10 @@ mod tests {
             .replace("\"attempt\":1", "\"attempt\":2");
         let denied = super::parse_buddy_status(&valid_authorization_denied)
             .expect("non-auth retry denial is a valid terminal receipt");
-        assert_eq!(denied.provider_retry.rows[0].disposition, "authorization_denied");
+        assert_eq!(
+            denied.provider_retry.rows[0].disposition,
+            "authorization_denied"
+        );
         assert_eq!(
             denied.provider_retry.rows[0].follow_up_lifecycle,
             "not_observed"
@@ -13900,10 +13903,10 @@ mod tests {
             "non-auth retry classes cannot claim an auth disposition"
         );
         assert!(
-            super::parse_buddy_status(&valid_authorization_denied.replace(
-                "\"class\":\"transient\"",
-                "\"class\":\"auth\""
-            ))
+            super::parse_buddy_status(
+                &valid_authorization_denied
+                    .replace("\"class\":\"transient\"", "\"class\":\"auth\"")
+            )
             .is_err(),
             "auth cannot claim an authorization-denied disposition"
         );

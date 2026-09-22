@@ -211,7 +211,7 @@ fn find_similar_scoped_inner(
             source_kind,
             model,
             dimension,
-        } => (source_kind, model, None, dimension),
+        } => (source_kind, model, None::<&str>, dimension),
     };
     if query.len() != dimension {
         return Ok(Vec::new());

@@ -42,3 +42,8 @@ slim_clippy=true and runs the exact full-CI slim production command before
 its normal typecheck/build/export. This gives W223 a focused recheck while
 native Windows/macOS continue. It is not a release-CI substitute. Independent
 text review passed; no local workflow parser or compiler ran.
+
+Focused slim run35784699877 on48c08050 reached one E0282 after the test-only
+Episode arm was gated out: the remaining MediaModel tuple needed an explicit
+Option type. None::<&str> now matches the Episode branch generation.id() type.
+Source correction only; the exact Hosted slim command must be rerun.

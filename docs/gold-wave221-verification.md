@@ -45,3 +45,7 @@ Prior source-bound Grouped27435783436951 on e8772e77 passed all274 exact cases,
 including both W220 persisted-registry/config-drift regressions. All57 source
 paths, matrix, lock and individual result terminals match Git objects. That
 receipt does not validate later W221 or W222 source.
+
+Published778637e05d611cba84504adecfcfa325715348b1. Hosted formatter receipt
+35785415822 imported with source/SHA256 and exact Git pre/postimage checks.
+Grouped28135785415701 is running on that published source; no local formatter ran.

@@ -4435,11 +4435,9 @@ mod tests {
         let wal = home.path().join("wal");
         std::fs::create_dir_all(&wal).unwrap();
         let segment = wal.join("000001.wal");
-        let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
-            segment.clone(),
-            home.path().to_path_buf(),
-        )
-        .unwrap();
+        let (writer, join, ready) =
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.path().to_path_buf())
+                .unwrap();
         ready.wait().await.unwrap();
         let inner = MixedRetryAuthorizationDeniedProvider {
             home: home.path().to_path_buf(),
@@ -4503,7 +4501,11 @@ mod tests {
 
         let history = crate::providers::claude_retry::retry_operator_history(home.path());
         let rows = history["receipts"].as_array().expect("Buddy retry rows");
-        assert_eq!(rows.len(), 1, "later terminal supersedes the chain projection");
+        assert_eq!(
+            rows.len(),
+            1,
+            "later terminal supersedes the chain projection"
+        );
         assert_eq!(rows[0]["receipt"]["disposition"], "authorization_denied");
         assert_eq!(rows[0]["follow_up_lifecycle"], "not_observed");
     }

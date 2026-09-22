@@ -2115,7 +2115,9 @@ impl ProviderDispatchPermit {
                     return result;
                 };
                 if class == claude_retry::RetryClass::Auth {
-                    anyhow::bail!("auth retry origin cannot produce an authorization-denied receipt");
+                    anyhow::bail!(
+                        "auth retry origin cannot produce an authorization-denied receipt"
+                    );
                 }
                 let receipt = self.retry_receipt(
                     audit,
@@ -2128,7 +2130,9 @@ impl ProviderDispatchPermit {
                 result
             }
             ProviderDispatchAuditState::BetweenAttempts => {
-                anyhow::bail!("provider retry authorization denial arrived before a lifecycle intent")
+                anyhow::bail!(
+                    "provider retry authorization denial arrived before a lifecycle intent"
+                )
             }
             ProviderDispatchAuditState::Closed => Ok(()),
             ProviderDispatchAuditState::TransportOnly => {
