@@ -37,3 +37,11 @@ No local compiler, Cargo command, formatter, parser, fixture runner, product,
 GUI, microphone, audio or test runtime was used because the workstation BSOD
 hold remains in force. All executable validation for W186 is pending on
 GitHub-hosted runners.
+
+The first integrated publication is `590d5068`. Code Quality `35704952294`
+passed. Preflight `35704953012` found one malformed nested type delimiter;
+the narrow syntax correction is source-applied. Core `35704970467` and audio
+`35704972833` were cancelled after that shared parse blocker. The audio lane
+had already accepted all declared source/test hashes. Revised zero-debug-info
+profiles and failed-build dependency cache recovery preserve the Hosted worker
+and evidence boundaries. Fresh executable gates remain required.

@@ -50,7 +50,7 @@ enum LiveCaptureRelay {
 struct LiveDictateOwnedTasks {
     scope: crate::media::conversation_scope::CancelScope,
     capture_worker: Option<tokio::task::JoinHandle<Result<()>>>,
-    transcription: Option<tokio::task::JoinHandle<(u64, Option<Result<String, DictationError>)>>>,
+    transcription: Option<tokio::task::JoinHandle<(u64, Option<Result<String, DictationError>>)>>,
 }
 
 #[cfg(feature = "live-audio")]

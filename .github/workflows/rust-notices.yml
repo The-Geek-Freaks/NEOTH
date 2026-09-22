@@ -1,0 +1,84 @@
+# =============================================================================
+# NEOTH — Hosted Rust distribution-notice export
+#
+# A manual evidence lane for lockfile changes.  It intentionally runs the
+# existing generator on a hosted runner and exports the exact resulting notice
+# file; it does not build a product binary or run a Rust test suite.
+# =============================================================================
+
+name: Rust notice export
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-notices-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  export:
+    name: Regenerate exact distribution notices
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup pinned Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      - name: Regenerate locked Rust distribution notices
+        run: python3 packaging/generate_rust_notices.py --write
+
+      - name: Verify bundled Silero VAD custody and notice
+        shell: bash
+        run: |
+          set -euo pipefail
+          model='SRC/neothd/assets/silero-vad/silero_vad_16k_op15.onnx'
+          license='SRC/neothd/assets/silero-vad/LICENSE'
+          provenance='SRC/neothd/assets/silero-vad/PROVENANCE.txt'
+          test "$(sha256sum "$model" | awk '{print $1}')" = '7ed98ddbad84ccac4cd0aeb3099049280713df825c610a8ed34543318f1b2c49'
+          test "$(sha256sum "$license" | awk '{print $1}')" = '2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b'
+          grep -Fqx 'source_repo=snakers4/silero-vad' "$provenance"
+          grep -Fqx 'commit=60b7ffa243625ebdc1070275a29f18c87843786a' "$provenance"
+          grep -Fqx 'path=src/silero_vad/data/silero_vad_16k_op15.onnx' "$provenance"
+          grep -Fq '## Silero VAD ONNX model' THIRD_PARTY_LICENSES
+          grep -Fq 'Copyright (c) 2020-present Silero Team' THIRD_PARTY_LICENSES
+
+      - name: Prepare reproducible export
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir='rust-notice-export'
+          mkdir -p "$evidence_dir"
+          git rev-parse HEAD > "$evidence_dir/SOURCE_HEAD"
+          cp THIRD_PARTY_LICENSES "$evidence_dir/THIRD_PARTY_LICENSES"
+          sha256sum \
+            THIRD_PARTY_LICENSES \
+            SRC/Cargo.lock \
+            SRC/neothd/Cargo.toml \
+            SRC/neothd/assets/silero-vad/silero_vad_16k_op15.onnx \
+            SRC/neothd/assets/silero-vad/LICENSE \
+            SRC/neothd/assets/silero-vad/PROVENANCE.txt \
+            > "$evidence_dir/SHA256SUMS"
+
+      - name: Upload generated notice evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rust-notice-export-${{ github.sha }}
+          path: rust-notice-export/
+          if-no-files-found: error
+          retention-days: 14

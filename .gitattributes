@@ -24,6 +24,7 @@ PLAN/NEOTH_Context_Connector_Masterplan_2026-08-13.md whitespace=-trailing-space
 *.iss   text eol=lf
 *.txt   text eol=lf
 *.lock  text eol=lf
+THIRD_PARTY_LICENSES text eol=lf
 packaging/**/fixtures/*.txt text eol=lf
 *.ps1  text eol=crlf
 # This vendor archive is checked against upstream SHA-256 file bytes. Disable

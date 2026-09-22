@@ -1,15 +1,15 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W187-live-audio-and-ci-repairs",
-  "base": "1eb93f14f35b3631f3b3fbc155dad1dd2abbeef9",
-  "capturedUtc": "2026-09-22T08:24:24.2722957Z",
-  "validationStatus": "W186_W187_REVIEWED_SOURCE_HOSTED_GATES_PENDING",
+  "base": "590d5068e8e997940c955aca3f77fb2fc7f723b8",
+  "capturedUtc": "2026-09-22T08:34:00.5710478Z",
+  "validationStatus": "W186_W187_HOSTED_PARSE_REPAIR_FRESH_GATES_PENDING",
   "scopeNote": "W186 desktop live audio, W187 A130 repairs, W180 concrete caller fixture. Historical freeze records remain unchanged; no behavioral acceptance or roadmap closure.",
   "files": [
     {
       "path": ".gitattributes",
-      "bytes": 1251,
-      "sha256": "C1755266FBA09D7F7816688B8607132072C250EF537DB7286582F7292B593425"
+      "bytes": 1284,
+      "sha256": "C5CB7AA02B4315CCCF303F26821B74E9C8D4A613983C8CE7D096DF75DEA02829"
     },
     {
       "path": ".github/release-tools/test-release-isolation.py",
@@ -28,8 +28,8 @@
     },
     {
       "path": ".github/workflows/live-audio.yml",
-      "bytes": 7843,
-      "sha256": "42F5E02E379BA7E02FC2E431161F61B07CB47FFDC7844B14F8AE54B27192E1F4"
+      "bytes": 9315,
+      "sha256": "C4C6817693AF651BA3C8A7660328E72E3389E56269A7F4FDAD90F63240CF0C98"
     },
     {
       "path": ".github/workflows/openclaw-schema-inventory.yml",
@@ -55,6 +55,11 @@
       "path": ".github/workflows/release.yml",
       "bytes": 136438,
       "sha256": "18AACBA0DB319341E1A59F00F867E8FEAAF37B3B778B7B79AD8F6E621CECD5B8"
+    },
+    {
+      "path": ".github/workflows/rust-notices.yml",
+      "bytes": 3231,
+      "sha256": "62402E265E2AC2A60AF5503781E8D730474727DA73D6D70A44A06268ED7CE4E7"
     },
     {
       "path": "docs/architecture.md",
@@ -178,8 +183,8 @@
     },
     {
       "path": "docs/gold-wave186-verification.md",
-      "bytes": 2230,
-      "sha256": "4B5FB18866DEA986A88EC01BDD424D02777D2566559453F39A51B1BCCA28BB06"
+      "bytes": 2757,
+      "sha256": "97F5D5D36F2F33A94F23AFFEF078B4357064AF0E5EB190B03D3BBFD678C5C72E"
     },
     {
       "path": "docs/gold-wave187-verification.md",
@@ -224,7 +229,7 @@
     {
       "path": "docs/verification/gold-wave186-live-audio-tests.json",
       "bytes": 5147,
-      "sha256": "D1C28991B5A016C99D9DBB462C5CF0132D07F79DEA4813C81FFF261EBCAFB685"
+      "sha256": "CC544FCC819F845B4A4E88E254DAD118886AB81711D0214A30E89C96D3D411B9"
     },
     {
       "path": "packaging/linux/build-packages.sh",
@@ -243,8 +248,8 @@
     },
     {
       "path": "packaging/tests/test_ci_cadence_contract.py",
-      "bytes": 39900,
-      "sha256": "A30C3BC80E0AB5DC5DA203D8CC321E827B765B621CA669093116F8D2FA2651DF"
+      "bytes": 40881,
+      "sha256": "7685FFDF26714C0BF3DB8914521EBDB5DE9B2161B0889D38D611B1B0B29C0382"
     },
     {
       "path": "packaging/tests/test_preview_windows_workflow_contract.py",
@@ -283,18 +288,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 25420,
-      "sha256": "57F1DA7BF872803337C643F614FE8FA3FBD7343FF95782199AC5AFF7F51AD095"
+      "bytes": 25847,
+      "sha256": "586B58D501B3170929B70EF76CFC698E7228C7BAE90759783C360662A0A0874B"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1022992,
-      "sha256": "AA10B3AC3F950D3F35E1D146F23764DC39C1CA9776C1B6E3EF581482CA46D575"
+      "bytes": 1023823,
+      "sha256": "BCD2678FAE427312FB2E85646904D4E081698F396ADF8D7E5BDA588804110719"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1618439,
-      "sha256": "65C2FFAB491BF798EE1121309901B0771B1375DF6C96B983C42D30899A19682E"
+      "bytes": 1619270,
+      "sha256": "E7CA17D158FC47490FF46E577ECEA7E13EF96A6A246D27B0FAAE336B2AE8E900"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -844,7 +849,7 @@
     {
       "path": "SRC/neothd/src/cli/dictate.rs",
       "bytes": 31556,
-      "sha256": "1D4182CC098BB9B8A1E033D73AD8B90C63B9B8EB8F98773107727AD32FCBE63B"
+      "sha256": "9F3E0B43B2F82E1F3CD21140100B1ECD6C9B5E6C342EB6E54C181C703CECB1A8"
     },
     {
       "path": "SRC/neothd/src/cli/docgen.rs",
@@ -2218,8 +2223,8 @@
     },
     {
       "path": "THIRD_PARTY_LICENSES",
-      "bytes": 2271741,
-      "sha256": "4E77A7CC896F8B5EEDCEFB458199A0939522B9191F22939BE3EFD78C575D9CF7"
+      "bytes": 2273535,
+      "sha256": "2CC19F665A825DEB14F18276DBC98989EBFFC96D343EB8EB23378EFA3D3D7934"
     }
   ]
 }

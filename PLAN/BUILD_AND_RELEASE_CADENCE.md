@@ -299,8 +299,11 @@ bounds before it counts as macOS evidence.
 platform selector: `all` (the default), `linux`, `windows`, or `macos`. CI
 calls `all`, so its one required job expands to Linux, Windows, and macOS.
 The lane has one Cargo worker, a 120-minute Windows bound, and 90-minute Linux
-and macOS bounds. Linux installs `libasound2-dev` and `pkg-config`; the native
-Linux desktop release build installs the same dependencies with its GUI headers.
+and macOS bounds. It retains CI's `CARGO_INCREMENTAL=0` and zero debug-info
+profiles for dev and test artifacts, preventing an optional tract build from
+expanding hosted link/disk pressure. Linux installs `libasound2-dev` and
+`pkg-config`; the native Linux desktop release build installs the same
+dependencies with its GUI headers.
 
 The lane builds and runs only the committed, exact `--lib` fixture identities
 from `docs/verification/gold-wave186-live-audio-tests.json` with
@@ -308,8 +311,11 @@ from `docs/verification/gold-wave186-live-audio-tests.json` with
 rejects a missing, duplicate, or empty filter. It makes no physical microphone
 capture and no provider request. Cargo output and the verified source-identity
 manifest are always uploaded as a platform artifact, including on a compile or
-fixture failure. The cache key is scoped by operating system, `live-audio`, and
-the committed `SRC/Cargo.lock`.
+fixture failure. The cache restores an OS/live-audio/lock-scoped complete key,
+then compatible interrupted keys. A successful Cargo step alone writes the
+immutable complete key. A failed Cargo step writes a source/run-suffixed
+interrupted key, unless cancelled, so completed tract downloads and object
+files are recoverable without being treated as a passing result.
 
 `live-audio` stays optional for default and release-server/musl builds. Only
 the native `release-desktop` capability bundle enables its pinned direct

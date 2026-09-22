@@ -8,12 +8,23 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
-**Latest verified gates (2026-09-22):** GitHub `main` is confirmed at
+**Prior verified gates (2026-09-22):** GitHub `main` was confirmed at
 `1eb93f14f35b3631f3b3fbc155dad1dd2abbeef9`. Preflight `35695668011` and
 Code Quality `35695667625` passed on that source. Core test-target typecheck,
 public CLI build and reference export `35694693234` passed on `87c18246`; the
 exact generated CLI reference (40 Ollama help lines) is imported. These gates
 do not establish native, GUI, audio, or release behavior.
+
+**W186/W187 early Hosted repair (2026-09-22):** Code Quality `35704952294`
+passed on `590d5068`. Preflight `35704953012` passed dependency provenance and
+locked metadata, then found a malformed nested generic in `cli/dictate.rs:53`.
+That syntax is corrected. Core `35704970467` and live-audio `35704972833` were
+cancelled after this shared blocker was established; both cancellations were
+read back. Live-audio source identity binding passed before cancellation.
+The replacement lane retains zero debug-info profiles, one worker and scoped
+failed-build cache recovery. Fresh formatting, compilation and behavior remain
+required. The source inventory now contains 443 entries, 537 universal native
+tests, 6 Windows / 8 Linux / 7 macOS additions, and 19 exact live-audio tests.
 
 **Current batch status (2026-09-22):** W185 daemon-owned Ollama operations are
 published and retain source-review plus the successful core/reference boundary;
@@ -22,10 +33,10 @@ native model-operation and GUI-callback acceptance remain open. See
 The current Road inventory remains **1015 checked / 307 open / 2 partial**;
 this status update changes no checkbox.
 
-W186 is a separate, unadmitted implementation slice for
+W186 was published with W187 and W180 repairs in `590d5068`, as an implementation slice for
 [GOLD-LF-P1-13](#gold-lf-p1-13--sub-200ms-voice-streaming-capture). Hosted
 input run `35694695810` on `87c18246` verified 85 artifact checksums and the
-recorded dependency inputs. The working source pins optional `cpal = 0.18.2`
+recorded dependency inputs. The published source pins optional `cpal = 0.18.2`
 and `tract-onnx = 0.23.8`; live audio is desktop-only, while default and server
 builds retain an explicit unavailable result. It contains bounded capture,
 Silero VAD and dictation/STT lifecycle source plus 19 registered Hosted test
@@ -36,8 +47,8 @@ W187 is a separate source-only repair set for the recorded failed A130 Windows
 and macOS CI groups: private native paths, yearly atomic collision settlement,
 chat/cancellation fixtures and private-child ownership, daemon fixtures, and
 attachment/channel/parity source gates. It also includes the W180 cross-file
-caller fixture repair. Independent review and fresh Hosted validation remain
-pending. See [W187](../docs/gold-wave187-verification.md).
+caller fixture repair. Integrated source review is complete; fresh Hosted
+validation remains pending. See [W187](../docs/gold-wave187-verification.md).
 
 **W184 validation boundary:** full CI `35677727994` on `a130526e` completed
 with five Linux lint diagnostics, 20 distinct Windows failures and 21 macOS

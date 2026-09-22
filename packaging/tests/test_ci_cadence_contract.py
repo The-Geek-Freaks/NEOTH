@@ -229,14 +229,36 @@ class CiCadenceContractTests(unittest.TestCase):
         self.assertIn("runs-on: ${{ matrix.os }}", live_audio)
         self.assertIn("timeout-minutes: ${{ matrix.timeout }}", live_audio)
         self.assertIn("CARGO_BUILD_JOBS: 1", live_audio)
+        self.assertIn("CARGO_INCREMENTAL: 0", live_audio)
+        self.assertIn('CARGO_PROFILE_DEV_DEBUG: "0"', live_audio)
+        self.assertIn('CARGO_PROFILE_TEST_DEBUG: "0"', live_audio)
         self.assertIn('"os":"ubuntu-24.04","timeout":90', selector)
         self.assertIn('"os":"windows-2022","timeout":120', selector)
         self.assertIn('"os":"macos-14","timeout":90', selector)
         self.assertIn("libasound2-dev pkg-config", live_audio)
         self.assertIn(
-            "${{ runner.os }}-live-audio-cargo-${{ hashFiles('SRC/Cargo.lock') }}",
+            "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830",
             live_audio,
         )
+        self.assertIn("id: cargo-cache", live_audio)
+        self.assertIn(
+            "${{ runner.os }}-live-audio-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}",
+            live_audio,
+        )
+        self.assertIn(
+            "${{ runner.os }}-live-audio-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-",
+            live_audio,
+        )
+        self.assertIn("id: compile-live-audio", live_audio)
+        self.assertIn(
+            "!cancelled() && steps.compile-live-audio.outcome == 'success'",
+            live_audio,
+        )
+        self.assertIn(
+            "!cancelled() && failure() && steps.compile-live-audio.outcome == 'failure'",
+            live_audio,
+        )
+        self.assertIn("${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}", live_audio)
         self.assertIn("docs/verification/gold-wave186-live-audio-tests.json", live_audio)
         self.assertIn("sourceSha256", live_audio)
         self.assertIn("--lib --locked --features live-audio", live_audio)

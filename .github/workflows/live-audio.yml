@@ -71,6 +71,9 @@ jobs:
       # The optional tract/cpal graph is deliberately serialized on hosted
       # runners. This lane is compile + selected hermetic fixtures only.
       CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: 1
     steps:
@@ -91,15 +94,17 @@ jobs:
           toolchain: '1.91.0'
 
       - name: Restore live-audio Cargo cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: ${{ runner.os }}-live-audio-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          key: ${{ runner.os }}-live-audio-cargo-complete-${{ hashFiles('SRC/Cargo.lock') }}
           restore-keys: |
+            ${{ runner.os }}-live-audio-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-
             ${{ runner.os }}-live-audio-cargo-
 
       # This validates the committed identity list before Cargo starts. The
@@ -162,6 +167,7 @@ jobs:
       # Cargo filter cannot satisfy this lane; fixtures are hermetic and must
       # not open a microphone or contact a provider.
       - name: Compile and run exact live-audio fixtures
+        id: compile-live-audio
         shell: bash
         working-directory: SRC
         run: |
@@ -179,6 +185,30 @@ jobs:
               cargo test -p neoth --lib --locked --features live-audio "$test_name" -- --exact --test-threads=1
             } 2>&1 | tee -a "$evidence_dir/cargo-live-audio.log"
           done < "$evidence_dir/fixture-names.txt"
+
+      - name: Save completed live-audio Cargo registry + target
+        if: ${{ !cancelled() && steps.compile-live-audio.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+      # Retain completed downloads and object files after a Rust failure, but
+      # never publish that interrupted state under the immutable complete key.
+      - name: Save interrupted live-audio Cargo registry + target
+        if: ${{ !cancelled() && failure() && steps.compile-live-audio.outcome == 'failure' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-live-audio-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload W186 live-audio hosted evidence
         if: always()

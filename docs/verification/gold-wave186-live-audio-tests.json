@@ -71,32 +71,32 @@
     {
       "test": "cli::dictate::tests::live_parser_requires_live_for_an_explicit_device_and_rejects_a_file",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "1D4182CC098BB9B8A1E033D73AD8B90C63B9B8EB8F98773107727AD32FCBE63B"
+      "sourceSha256": "9F3E0B43B2F82E1F3CD21140100B1ECD6C9B5E6C342EB6E54C181C703CECB1A8"
     },
     {
       "test": "cli::dictate::tests::bounded_pending_utterances_keep_order_and_drop_the_newest_overflow",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "1D4182CC098BB9B8A1E033D73AD8B90C63B9B8EB8F98773107727AD32FCBE63B"
+      "sourceSha256": "9F3E0B43B2F82E1F3CD21140100B1ECD6C9B5E6C342EB6E54C181C703CECB1A8"
     },
     {
       "test": "cli::dictate::tests::stale_scope_never_calls_the_fake_stt_dispatcher",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "1D4182CC098BB9B8A1E033D73AD8B90C63B9B8EB8F98773107727AD32FCBE63B"
+      "sourceSha256": "9F3E0B43B2F82E1F3CD21140100B1ECD6C9B5E6C342EB6E54C181C703CECB1A8"
     },
     {
       "test": "cli::dictate::tests::full_fake_capture_relay_surfaces_through_the_owned_worker_join",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "1D4182CC098BB9B8A1E033D73AD8B90C63B9B8EB8F98773107727AD32FCBE63B"
+      "sourceSha256": "9F3E0B43B2F82E1F3CD21140100B1ECD6C9B5E6C342EB6E54C181C703CECB1A8"
     },
     {
       "test": "cli::dictate::tests::draining_fake_stt_waits_for_its_fake_wal_sender_and_returns_stale_result",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "1D4182CC098BB9B8A1E033D73AD8B90C63B9B8EB8F98773107727AD32FCBE63B"
+      "sourceSha256": "9F3E0B43B2F82E1F3CD21140100B1ECD6C9B5E6C342EB6E54C181C703CECB1A8"
     },
     {
       "test": "cli::dictate::tests::outer_future_drop_guard_aborts_an_active_task_and_signals_scope",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "1D4182CC098BB9B8A1E033D73AD8B90C63B9B8EB8F98773107727AD32FCBE63B"
+      "sourceSha256": "9F3E0B43B2F82E1F3CD21140100B1ECD6C9B5E6C342EB6E54C181C703CECB1A8"
     }
   ]
 }

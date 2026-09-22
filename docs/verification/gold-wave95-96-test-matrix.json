@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W186_W187_REVIEWED_SOURCE_HOSTED_GATES_PENDING",
-  "base": "1eb93f14f35b3631f3b3fbc155dad1dd2abbeef9",
+  "status": "W186_W187_HOSTED_PARSE_REPAIR_FRESH_GATES_PENDING",
+  "base": "590d5068e8e997940c955aca3f77fb2fc7f723b8",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 76402,
-    "sha256": "0687B978546A3E7A926F29CC283B8F7C7F9BD213314647778B57EDA93B898505"
+    "bytes": 76574,
+    "sha256": "9CD4106BAABA7899DDCD99B21F072E8DC6CF864FAA007A7C0AD5D07FCD5F61BA"
   },
-  "sourceInputs": 443,
+  "sourceInputs": 444,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -3216,13 +3216,13 @@
     {
       "test": "cli::dictate::tests::live_parser_requires_live_for_an_explicit_device_and_rejects_a_file",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "1D4182CC098BB9B8A1E033D73AD8B90C63B9B8EB8F98773107727AD32FCBE63B",
+      "sourceSha256": "9F3E0B43B2F82E1F3CD21140100B1ECD6C9B5E6C342EB6E54C181C703CECB1A8",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dictate::tests::live_capture_unavailable_build_refuses_before_loading_configuration",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "1D4182CC098BB9B8A1E033D73AD8B90C63B9B8EB8F98773107727AD32FCBE63B",
+      "sourceSha256": "9F3E0B43B2F82E1F3CD21140100B1ECD6C9B5E6C342EB6E54C181C703CECB1A8",
       "junitClass": "neoth"
     },
     {
@@ -8175,5 +8175,64 @@
     "priorFullCi": 35677727994,
     "priorPreview": 35671504968,
     "review": "Integrated Rust reviews repaired default cfg and narrowed feedback privacy; workflow review repaired matrix scope, portable hashing, and contract assumptions. Native execution remains pending."
+  },
+  "wave186HostedParseRepair": {
+    "source": "590d5068e8e997940c955aca3f77fb2fc7f723b8",
+    "preflight": 35704953012,
+    "quality": 35704952294,
+    "status": "Quality passed; malformed generic fixed after Hosted parser error. Early core/audio runs cancelled and read back; replacement gates pending.",
+    "sources": [
+      {
+        "path": ".gitattributes",
+        "bytes": 1284,
+        "sha256": "C5CB7AA02B4315CCCF303F26821B74E9C8D4A613983C8CE7D096DF75DEA02829"
+      },
+      {
+        "path": ".github/workflows/live-audio.yml",
+        "bytes": 9315,
+        "sha256": "C4C6817693AF651BA3C8A7660328E72E3389E56269A7F4FDAD90F63240CF0C98"
+      },
+      {
+        "path": ".github/workflows/rust-notices.yml",
+        "bytes": 3231,
+        "sha256": "62402E265E2AC2A60AF5503781E8D730474727DA73D6D70A44A06268ED7CE4E7"
+      },
+      {
+        "path": "docs/gold-wave186-verification.md",
+        "bytes": 2757,
+        "sha256": "97F5D5D36F2F33A94F23AFFEF078B4357064AF0E5EB190B03D3BBFD678C5C72E"
+      },
+      {
+        "path": "packaging/tests/test_ci_cadence_contract.py",
+        "bytes": 40881,
+        "sha256": "7685FFDF26714C0BF3DB8914521EBDB5DE9B2161B0889D38D611B1B0B29C0382"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 25847,
+        "sha256": "586B58D501B3170929B70EF76CFC698E7228C7BAE90759783C360662A0A0874B"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1023823,
+        "sha256": "BCD2678FAE427312FB2E85646904D4E081698F396ADF8D7E5BDA588804110719"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1619270,
+        "sha256": "E7CA17D158FC47490FF46E577ECEA7E13EF96A6A246D27B0FAAE336B2AE8E900"
+      },
+      {
+        "path": "SRC/neothd/src/cli/dictate.rs",
+        "bytes": 31556,
+        "sha256": "9F3E0B43B2F82E1F3CD21140100B1ECD6C9B5E6C342EB6E54C181C703CECB1A8"
+      },
+      {
+        "path": "THIRD_PARTY_LICENSES",
+        "bytes": 2273535,
+        "sha256": "2CC19F665A825DEB14F18276DBC98989EBFFC96D343EB8EB23378EFA3D3D7934"
+      }
+    ],
+    "liveAudioCatalogSha256": "CC544FCC819F845B4A4E88E254DAD118886AB81711D0214A30E89C96D3D411B9"
   }
 }
