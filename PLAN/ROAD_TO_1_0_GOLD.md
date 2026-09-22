@@ -8491,3 +8491,9 @@ Then use one build job and only the named scopes; no broad duplicate build on th
 | B25 | `council::day_counter`, CLI/channel admission call sites; multi-thread and multi-process near-cap fixture |
 
 For each closure, append the exact working-tree base, affected file list, red-before/green-after regression names, pass counts, build/feature results, and remaining manual/environment limits. A code-presence grep, mock-only internal primitive, or unchanged status/UI surface is not completion evidence.
+
+W183 follow-up on run35673634686/source46f7bc54: the previous textual repair
+hit the similar retention guard, leaving the yearly guard unchanged. The
+retention parameter is already &str and now compares directly; the yearly
+String uses as_str(). Both exact sites are corrected. E0658/E0277 were
+compile errors only; fresh Hosted compilation and behavior remain required.

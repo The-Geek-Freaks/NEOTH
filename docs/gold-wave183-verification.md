@@ -52,3 +52,9 @@ future-tag guard: it compared `&str` with `String`. Both operands now use
 affected the library and library-test targets; no behavior test ran.
 Preflight `35673066800` and Code Quality `35673066255` passed on the intervening
 format-only source `92ac013f`. A fresh core check is required after this repair.
+
+W183 follow-up on run35673634686/source46f7bc54: the previous textual repair
+hit the similar retention guard, leaving the yearly guard unchanged. The
+retention parameter is already &str and now compares directly; the yearly
+String uses as_str(). Both exact sites are corrected. E0658/E0277 were
+compile errors only; fresh Hosted compilation and behavior remain required.
