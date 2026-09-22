@@ -48,6 +48,7 @@ use serde_json::{Value, json};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
+use crate::daemon::local_models_ipc::LocalModelsIpcClient;
 use crate::daemon::vault_mirror;
 use crate::self_improve::passive;
 
@@ -82,7 +83,8 @@ pub enum BuddyAction {
     ///   "self_activation_skills": [string], "smart_approve_any": bool,
     ///   "autonomy": string, "proactive_enabled": bool,
     ///   "skill_autonomy_caps": [{"id": string, "configured": object,
-    ///   "effective_cap": object, "origin": string}]}`
+    ///   "effective_cap": object, "origin": string}],
+    ///   "local_models": LocalModelsSnapshot | {"kind":"unavailable"}}`
     Status,
 
     /// Toggle `self_activation.enabled` in freedom.yaml.
@@ -402,6 +404,7 @@ async fn run_status(output: OutputFormat) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
     let vault_mirror =
         crate::cli::backup::mirror_status_wire(&vault_mirror::status(&home, &cfg.vault_mirror));
+    let local_models = buddy_local_models_status(&home).await;
     let self_improve_quality = passive::quality_snapshot(&home);
     let path = FreedomConfig::default_path();
     let mut skill_autonomy_caps = Vec::new();
@@ -433,6 +436,7 @@ async fn run_status(output: OutputFormat) -> Result<()> {
                     "skill_autonomy_caps": skill_autonomy_caps,
                     "self_improve_quality": self_improve_quality,
                     "vault_mirror": vault_mirror,
+                    "local_models": local_models,
                 })
             );
         }
@@ -457,9 +461,22 @@ async fn run_status(output: OutputFormat) -> Result<()> {
                 serde_json::to_string(&self_improve_quality)?
             );
             println!("vault_mirror            : {}", vault_mirror);
+            println!("local_models            : {}", local_models);
         }
     }
     Ok(())
+}
+
+/// Buddy stays available when `neoth serve` is down. A successful value is the
+/// exact daemon snapshot; the fallback deliberately has no invented readiness.
+async fn buddy_local_models_status(home: &std::path::Path) -> Value {
+    let Ok(client) = LocalModelsIpcClient::discover(home) else {
+        return json!({"kind": "unavailable", "detail": "local-model daemon IPC unavailable"});
+    };
+    match client.status().await {
+        Ok(snapshot) => crate::cli::models::local_models_snapshot_wire(&snapshot),
+        Err(_) => json!({"kind": "unavailable", "detail": "local-model daemon IPC unavailable"}),
+    }
 }
 
 async fn run_vault_mirror(action: BuddyVaultMirrorAction, output: OutputFormat) -> Result<()> {

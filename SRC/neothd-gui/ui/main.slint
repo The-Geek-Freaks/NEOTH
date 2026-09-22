@@ -27,7 +27,7 @@ import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
 import { MiniOverlay } from "overlay.slint";
 export { MiniOverlay }
-import { ResourcesView, DoctorView, ProbeView, SlashCmdsView, SlashCmdRow } from "tabs.slint";
+import { ResourcesView, DoctorView, ProbeView, SlashCmdsView, SlashCmdRow, LocalModelRow } from "tabs.slint";
 import { AgentsView, AgentRow } from "agents_view.slint";
 import { WalInspectorView, WalEventRow } from "wal_inspector.slint";
 import { WalTimelineStrip, WalBucket } from "wal_timeline.slint";
@@ -77,6 +77,8 @@ export { ChannelActivityRow }
 export { CronJobRow }
 // Chat-surface consent strip.
 export { ConsentGrant }
+// W185 Resources local-model rows, constructed by Rust from the core status DTO.
+export { LocalModelRow }
 export { CodeMapImpactTestRow }
 
 export enum WizardStep {
@@ -1350,6 +1352,19 @@ export component MainWindow inherits Window {
     in property <[TrustRow]> hw-models: [];
     // GUI-HARDWARE-RESOURCES-01 — runtime load readout, forwarded to SettingsView.
     in property <string> hw-load-readout: "";
+    // W185 daemon-owned local-model lifecycle projection. Hardware remains
+    // separate; a model is Ready only after the core's inference probe.
+    in property <[LocalModelRow]> local-model-rows: [];
+    in property <string> local-model-endpoint: "Checking local-model status…";
+    in property <bool> local-model-status-valid: false;
+    in property <string> local-model-status-error: "";
+    in property <bool> local-model-in-flight: false;
+    in property <string> local-model-refreshed: "";
+    callback local-model-pull(string);
+    callback local-model-update(string);
+    callback local-model-prune(string);
+    callback local-model-cancel(string);
+    callback local-model-retry(string);
     // GOLD-PROG-05 — cluster peer topology, forwarded to SettingsView.
     in property <[ClusterPeerRow]> cluster-peers: [];
     in property <bool> cluster-topology-valid: false;
@@ -4412,6 +4427,17 @@ export component MainWindow inherits Window {
                     disk: root.hw-disk;
                     models-count: root.hw-models.length;
                     load-readout: root.hw-load-readout;
+                    local-models: root.local-model-rows;
+                    local-model-endpoint: root.local-model-endpoint;
+                    local-model-status-valid: root.local-model-status-valid;
+                    local-model-status-error: root.local-model-status-error;
+                    local-model-in-flight: root.local-model-in-flight;
+                    local-model-refreshed: root.local-model-refreshed;
+                    local-model-pull(model) => { root.local-model-pull(model); }
+                    local-model-update(model) => { root.local-model-update(model); }
+                    local-model-prune(model) => { root.local-model-prune(model); }
+                    local-model-cancel(operation) => { root.local-model-cancel(operation); }
+                    local-model-retry(operation) => { root.local-model-retry(operation); }
                 }
                 // Net-new mockup tab — Doctor (`neoth doctor`, wired).
                 if root.nav-active == "doctor": DoctorView {

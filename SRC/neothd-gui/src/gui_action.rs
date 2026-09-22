@@ -4507,6 +4507,57 @@ impl VaultMirrorRepairAck {
     }
 }
 
+/// W185 local-model actions are accepted only when the daemon returns the
+/// exact action and an operation identifier. The nested snapshot is retained
+/// for strict shared-schema validation by `panel_logic`, then compared with a
+/// separate fresh status readback by the GUI callback.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalModelActionAck {
+    pub schema_version: u32,
+    pub ok: bool,
+    pub action: String,
+    pub operation_id: Option<String>,
+    pub error: Option<LocalModelActionErrorAck>,
+    pub snapshot: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalModelActionErrorAck {
+    pub code: LocalModelActionErrorCode,
+    pub detail: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalModelActionErrorCode {
+    InvalidRequest, EndpointUnavailable, Protocol, Transport, RemoteRejected,
+    Cancelled, InterruptedUnknown, Conflict, Persistence,
+}
+
+impl LocalModelActionAck {
+    pub fn verify(&self, expected_action: Option<&str>) -> Result<&str, String> {
+        if self.schema_version != 1 { return Err(format!("local-model acknowledgement uses schema {}, expected 1", self.schema_version)); }
+        if let Some(expected_action) = expected_action {
+            require_action(&self.action, expected_action)?;
+        } else if !matches!(self.action.as_str(), "pull" | "update" | "prune") {
+            return Err(format!("local-model acknowledgement reported unsupported action `{}`", self.action));
+        }
+        if !self.ok {
+            let detail = self.error.as_ref().map(|error| error.detail.as_str()).unwrap_or("core did not provide an error detail");
+            return Err(format!("local-model {} was not accepted: {detail}", expected_action.unwrap_or("retry/cancel")));
+        }
+        if self.error.is_some() { return Err("successful local-model acknowledgement included an error".into()); }
+        let operation_id = self.operation_id.as_deref().filter(|value| !value.is_empty() && value.trim() == *value && !value.chars().any(char::is_control)).ok_or_else(|| "successful local-model acknowledgement omitted a valid operation id".to_string())?;
+        Ok(operation_id)
+    }
+
+    pub fn snapshot_json(&self) -> Result<String, String> {
+        serde_json::to_string(&self.snapshot).map_err(|error| format!("could not retain typed local-model acknowledgement: {error}"))
+    }
+}
+
 impl BuddyProactiveAck {
     pub fn verify(&self, enabled: bool) -> Result<(), String> {
         if !self.ok {

@@ -549,6 +549,28 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     .await
     .context("start mandatory daemon audit RPC")?;
 
+    // W185: only an accepted native-Ollama provider owns this controller. The
+    // reload controller rejects provider kind/endpoint/model changes, so this
+    // endpoint cannot continue serving a stale configuration generation.
+    let local_models_runtime = crate::cli::serve_tasks::spawn_local_models_runtime(
+        &config,
+        &neoth_home,
+    )?;
+    let (
+        local_models_ipc_task,
+        local_models_ipc_guard,
+        local_models_refresh_task,
+        local_models_controller,
+    ) = match local_models_runtime {
+        Some(runtime) => (
+            Some(runtime.ipc_task),
+            Some(runtime.ipc_guard),
+            Some(runtime.refresh_task),
+            Some(runtime.controller),
+        ),
+        None => (None, None, None, None),
+    };
+    let local_models_ipc_required = local_models_ipc_task.is_some();
     #[cfg(any(unix, windows))]
     let connector_control_replay_enabled = config.context_connectors.enabled
         && config
@@ -2594,6 +2616,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let mut audit_rpc_task = audit_rpc_task;
     let mut connector_control_rpc_task = connector_control_rpc_task;
     let mut connector_control_rpc_completed = false;
+    let mut local_models_ipc_completed = false;
+    let mut local_models_ipc_task = local_models_ipc_task;
     let mut writer_join_result: Option<
         std::result::Result<Result<(), String>, tokio::task::JoinError>,
     > = None;
@@ -2666,6 +2690,21 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             true
         }
         result = async {
+            local_models_ipc_task
+                .as_mut()
+                .expect("local-model IPC task missing after startup")
+                .await
+        }, if local_models_ipc_required => {
+            local_models_ipc_completed = true;
+            match result {
+                Ok(Ok(())) => error!("private local-model IPC listener exited unexpectedly"),
+                Ok(Err(error)) => error!(%error, "private local-model IPC listener failed"),
+                Err(error) => error!(%error, "private local-model IPC listener panicked"),
+            }
+            local_models_ipc_guard.take();
+            true
+        }
+        result = async {
             connector_control_rpc_task
                 .as_mut()
                 .expect("required connector-control listener task missing after startup")
@@ -2702,6 +2741,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     chat_runtime.close_and_drain().await;
     audit_rpc_guard.take();
     connector_control_rpc_guard.take();
+    if local_models_ipc_completed {
+        let _ = local_models_ipc_task.take();
+    }
     if connector_control_rpc_completed {
         // This JoinHandle was already polled to completion by the fatal select
         // branch above. Never hand a completed Future to the later drain.
@@ -2843,6 +2885,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         code_map_lifecycle_supervisor,
         audit_rpc_task,
         connector_control_rpc_task,
+        local_models_refresh_task,
+        local_models_ipc_guard,
+        local_models_controller,
+        local_models_ipc_task,
         healthz_task,
         decay_task,
         gc_task,

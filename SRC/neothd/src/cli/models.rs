@@ -17,11 +17,15 @@
 //! own onboarding flow via `cli/init.rs::step5b_inference_topology`
 //! that runs sysinfo-based hardware sizing before picking the repo.
 
+use std::path::{Path, PathBuf};
+
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
+use crate::daemon::local_models::{LocalModelAction, LocalModelActionAck, LocalModelsSnapshot};
+use crate::daemon::local_models_ipc::LocalModelsIpcClient;
 use crate::installers::{gpu, ollama};
 use crate::models::gguf_variants::{self, GgufVariant, VariantClass};
 use crate::models::selector::{self, Quant};
@@ -39,6 +43,16 @@ pub struct ModelsArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum ModelsAction {
+    /// Daemon-owned local Ollama inventory and operation controls. This uses
+    /// the private local-model IPC service; it never creates a CLI controller.
+    Ollama {
+        /// Select the daemon instance by its freedom.yaml path. The parent
+        /// directory is the private IPC home, matching `neoth serve --config`.
+        #[arg(long, value_name = "PATH")]
+        config: Option<PathBuf>,
+        #[command(subcommand)]
+        action: OllamaModelsAction,
+    },
     /// Print every known model + whether its artifacts are cached.
     List,
     /// H18 — dump the live provider-model catalog (the wizard's model
@@ -98,6 +112,22 @@ pub enum ModelsAction {
         #[arg(long, value_name = "GB")]
         vram: Option<f64>,
     },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum OllamaModelsAction {
+    /// Read the daemon's current typed local-model snapshot.
+    Status,
+    /// Start a pull for this exact Ollama tag selector.
+    Pull { model: String },
+    /// Start an update for this exact installed Ollama tag selector.
+    Update { model: String },
+    /// Request a verified prune for this exact Ollama tag selector.
+    Prune { model: String },
+    /// Request cancellation of the daemon-owned exact operation id.
+    Cancel { operation_id: String },
+    /// Retry the retained failed exact operation id.
+    Retry { operation_id: String },
 }
 
 /// Operator-facing lineage choice for `models recommend`.
@@ -269,6 +299,7 @@ fn resolve_managed_model(
 
 pub async fn run_models(args: ModelsArgs) -> Result<()> {
     match args.action {
+        ModelsAction::Ollama { config, action } => run_ollama(action, config, args.output).await,
         ModelsAction::List => run_list(&args.output),
         ModelsAction::Catalog => run_catalog(&args.output),
         ModelsAction::Pull { name, repo } => run_pull(&name, repo.as_deref()).await,
@@ -284,6 +315,111 @@ pub async fn run_models(args: ModelsArgs) -> Result<()> {
             vram,
         } => run_models_fit(gpu.as_deref(), bandwidth, vram, &args.output),
     }
+}
+
+async fn run_ollama(
+    action: OllamaModelsAction,
+    config: Option<PathBuf>,
+    output: OutputFormat,
+) -> Result<()> {
+    let home = ollama_ipc_home(config.as_deref());
+    let client = LocalModelsIpcClient::discover(&home).with_context(|| {
+        format!(
+            "local-model daemon IPC is unavailable for {}; start `neoth serve` and retry",
+            home.display()
+        )
+    })?;
+
+    match action {
+        OllamaModelsAction::Status => {
+            let snapshot = client.status().await.context("read local-model daemon status")?;
+            render_ollama_snapshot(&snapshot, output)
+        }
+        action => {
+            let ack = match ollama_ipc_action(action) {
+                OllamaIpcRequest::Start(action) => client.start(action).await,
+                OllamaIpcRequest::Cancel(operation_id) => client.cancel(&operation_id).await,
+            }
+            .context("submit local-model daemon operation")?;
+            render_ollama_ack(&ack, output)
+        }
+    }
+}
+
+/// Match `serve --config`: a custom config selects its parent instance home.
+/// Without that override, preserve the ordinary `NEOTH_HOME`-aware default.
+fn ollama_ipc_home(config: Option<&Path>) -> PathBuf {
+    match config {
+        Some(path) => path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from(".")),
+        None => FreedomConfig::default_neoth_home(),
+    }
+}
+
+enum OllamaIpcRequest {
+    Start(LocalModelAction),
+    Cancel(String),
+}
+
+fn ollama_ipc_action(action: OllamaModelsAction) -> OllamaIpcRequest {
+    match action {
+        OllamaModelsAction::Pull { model } => OllamaIpcRequest::Start(LocalModelAction::Pull { model }),
+        OllamaModelsAction::Update { model } => OllamaIpcRequest::Start(LocalModelAction::Update { model }),
+        OllamaModelsAction::Prune { model } => OllamaIpcRequest::Start(LocalModelAction::Prune { model }),
+        OllamaModelsAction::Retry { operation_id } => {
+            OllamaIpcRequest::Start(LocalModelAction::Retry { terminal_operation_id: operation_id })
+        }
+        OllamaModelsAction::Cancel { operation_id } => OllamaIpcRequest::Cancel(operation_id),
+        OllamaModelsAction::Status => unreachable!("status is handled before IPC action conversion"),
+    }
+}
+
+/// The JSON model snapshot is the daemon DTO without a separate CLI schema.
+pub(crate) fn local_models_snapshot_wire(snapshot: &LocalModelsSnapshot) -> serde_json::Value {
+    serde_json::to_value(snapshot).expect("LocalModelsSnapshot is serializable")
+}
+
+fn render_ollama_snapshot(snapshot: &LocalModelsSnapshot, output: OutputFormat) -> Result<()> {
+    let wire = local_models_snapshot_wire(snapshot);
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!("{wire}"),
+        OutputFormat::Table => {
+            println!("local-model endpoint: {}", wire["endpoint"]);
+            println!("observed_at_unix_ms: {}", wire["observed_at_unix_ms"]);
+            println!("models: {}", wire["models"].as_array().map_or(0, Vec::len));
+            if let Some(operation) = wire["active_operation"].as_object() {
+                println!("active operation: {} ({})", operation["operation_id"], operation["action"]);
+            }
+            for model in wire["models"].as_array().into_iter().flatten() {
+                println!(
+                    "{}  digest={}  size_bytes={}  readiness={}",
+                    model["model"], model["digest"], model["size_bytes"], model["readiness"]
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn render_ollama_ack(ack: &LocalModelActionAck, output: OutputFormat) -> Result<()> {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::to_value(ack)?),
+        OutputFormat::Table => {
+            println!("operation accepted: {}", ack.ok);
+            println!("action: {:?}", ack.action);
+            if let Some(operation_id) = &ack.operation_id {
+                println!("operation_id: {operation_id}");
+            }
+            if let Some(error) = &ack.error {
+                println!("error: {:?}", error.code);
+            }
+            render_ollama_snapshot(&ack.snapshot, OutputFormat::Table)?;
+        }
+    }
+    Ok(())
 }
 
 /// GOLD-ADAPT-ODY-13 — render the hardware-fit tok/s ranking.
@@ -1088,6 +1224,13 @@ fn prune_target(name: &str, target: &ManagedModel, neoth_home: &std::path::Path)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
+
+    #[derive(Debug, Parser)]
+    struct ModelsCli {
+        #[command(flatten)]
+        args: ModelsArgs,
+    }
 
     struct EnvGuard {
         key: &'static str,
@@ -1115,6 +1258,54 @@ mod tests {
                 None => unsafe { std::env::remove_var(self.key) },
             }
         }
+    }
+
+    #[test]
+    fn ollama_nested_commands_preserve_exact_selectors_and_operation_ids() {
+        let pull = ModelsCli::try_parse_from([
+            "models", "ollama", "pull", "qwen2.5:7b-instruct-q4_K_M",
+        ])
+        .expect("ollama pull parses");
+        assert!(matches!(
+            ollama_ipc_action(match pull.args.action {
+                ModelsAction::Ollama { action, .. } => action,
+                _ => unreachable!("expected ollama action"),
+            }),
+            OllamaIpcRequest::Start(LocalModelAction::Pull { model }) if model == "qwen2.5:7b-instruct-q4_K_M"
+        ));
+        let cancel = ModelsCli::try_parse_from(["models", "ollama", "cancel", "op-01ABC"])
+            .expect("ollama cancel parses");
+        assert!(matches!(
+            ollama_ipc_action(match cancel.args.action {
+                ModelsAction::Ollama { action, .. } => action,
+                _ => unreachable!("expected ollama action"),
+            }),
+            OllamaIpcRequest::Cancel(operation_id) if operation_id == "op-01ABC"
+        ));
+    }
+
+    #[test]
+    fn ollama_config_selects_the_same_spaced_parent_home_as_serve() {
+        let cli = ModelsCli::try_parse_from([
+            "models",
+            "ollama",
+            "--config",
+            "C:/NEOTH Instances/blue instance/freedom.yaml",
+            "status",
+        ])
+        .expect("ollama custom config parses");
+        let config = match cli.args.action {
+            ModelsAction::Ollama { config, action: OllamaModelsAction::Status } => config,
+            _ => unreachable!("expected Ollama status with a config override"),
+        };
+        assert_eq!(
+            ollama_ipc_home(config.as_deref()),
+            PathBuf::from("C:/NEOTH Instances/blue instance")
+        );
+        assert_eq!(
+            ollama_ipc_home(Some(Path::new("freedom.yaml"))),
+            PathBuf::from(".")
+        );
     }
 
     #[test]

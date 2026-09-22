@@ -1,0 +1,85 @@
+{
+  "schema": "neoth-source-freeze/v1",
+  "wave": 185,
+  "capturedUtc": "2026-09-22T02:22:29.0925906Z",
+  "base": "a130526e8a4c2d1a13b4435805a55951ede070d9",
+  "status": "SOURCE_REVIEW_PASSED_HOSTED_PENDING",
+  "files": [
+    {
+      "path": "SRC/neothd/src/daemon/local_models.rs",
+      "bytes": 53462,
+      "sha256": "D8D98801682E9EA23E0F3216A8E51940354B130AB6DBB983EEA8367143501FF1"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/local_models/tests.rs",
+      "bytes": 33717,
+      "sha256": "6D1686D399D102EB946ED8FD6B4E8F27C542645524AC8998BE931254D0DFDB50"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/local_models_ipc.rs",
+      "bytes": 36741,
+      "sha256": "496318E3A6006C4668B7DD5D06DEDE3873B0C0EDAE09B8910612EF67782B984D"
+    },
+    {
+      "path": "SRC/neothd/src/daemon/mod.rs",
+      "bytes": 18199,
+      "sha256": "B366E5A88EB01DC9C744A63C7950A84EC47F987BBD42644A93EA7018621D101A"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve_tasks.rs",
+      "bytes": 526525,
+      "sha256": "03C422103992BD96C73378F8107A657B0A1BB44326A66285B984450DF2A078E0"
+    },
+    {
+      "path": "SRC/neothd/src/cli/serve.rs",
+      "bytes": 171257,
+      "sha256": "1C4EB4B60685673A27C561D3ED408BF42D5017D08A9223D90E94A77C42532142"
+    },
+    {
+      "path": "SRC/neothd/src/cli/models.rs",
+      "bytes": 64209,
+      "sha256": "55C1C13700EC71616B3AFF567308343AB9E9A7DAD5F075FB08EB023806A44632"
+    },
+    {
+      "path": "SRC/neothd/src/cli/buddy.rs",
+      "bytes": 38466,
+      "sha256": "AC1A1AB8A9DBDABFFF7FD00BD906D32CC581BE5B4AFEDAEDA8A56D9D8991F613"
+    },
+    {
+      "path": "SRC/neothd-gui/src/panel_logic.rs",
+      "bytes": 575693,
+      "sha256": "90C1857D1E96BA7774B821529E5349A1FD16CB954BD4A90005805A2E734FD234"
+    },
+    {
+      "path": "SRC/neothd-gui/src/gui_action.rs",
+      "bytes": 340132,
+      "sha256": "7E122F3C220D173E18E88A795CE293EB46619C47426103327251470E440A4015"
+    },
+    {
+      "path": "SRC/neothd-gui/src/main.rs",
+      "bytes": 2067123,
+      "sha256": "7169B074221554D05FB465882CD86C4CE7DCEED35564A4EBB334314BDADF2ED9"
+    },
+    {
+      "path": "SRC/neothd-gui/src/buddy_activity.rs",
+      "bytes": 17183,
+      "sha256": "330F8547858F1B96007111F3A8260E1A6A6F4675BF85EB3051A026C599752FA8"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/main.slint",
+      "bytes": 317631,
+      "sha256": "AF9B2FD8FB4CF1B20A2930099B6BBEF626B608BDEF1DCFA572970C4035DDB89F"
+    },
+    {
+      "path": "SRC/neothd-gui/ui/tabs.slint",
+      "bytes": 33611,
+      "sha256": "A56F2C7E79EF3D87C6DC2FBE9660CFE31618B1E12B34EDB68AAD3C308D449A61"
+    },
+    {
+      "path": "packaging/tests/verify_macos_native_gui_fixture_discovery.py",
+      "bytes": 5710,
+      "sha256": "B3E81952B56CD2B6305EA4EC283C39B4D78A0B11F31D4E0CD400C34237B19E7C"
+    }
+  ],
+  "note": "Includes Root cancellation/critical-persistence serialization, 18 core regression sources, final failed-only GUI retry and precise footprint labels. Source-only; Hosted execution required."
+}

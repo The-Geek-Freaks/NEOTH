@@ -28,6 +28,20 @@ pub(crate) struct AdmittedLegacyTelegramSingleton {
 }
 
 #[cfg(test)]
+mod local_models_lifecycle_tests {
+    use super::local_models_runtime_enabled;
+    use crate::cli::init::ProviderKind;
+    use crate::config::FreedomConfig;
+
+    #[test]
+    fn local_models_runtime_requires_active_native_ollama_provider() {
+        let mut config = FreedomConfig::default();
+        assert!(!local_models_runtime_enabled(&config));
+        config.provider_kind = Some(ProviderKind::LocalOllama);
+        assert!(local_models_runtime_enabled(&config));
+    }
+}
+#[cfg(test)]
 mod vault_mirror_scheduler_tests {
     use std::collections::HashSet;
 
@@ -4301,6 +4315,62 @@ pub(crate) async fn spawn_connector_control_rpc(
     .context("bind private connector-control RPC listener")
 }
 
+/// Daemon-lifetime Local Models runtime.  It exists only for an accepted
+/// `local_ollama` provider generation; provider identity and endpoint changes
+/// are reload-rejected, so this controller never observes a stale accepted
+/// endpoint under a newer configuration.
+pub(crate) struct LocalModelsRuntime {
+    pub(crate) controller: Arc<crate::daemon::local_models::LocalModelController>,
+    pub(crate) ipc_task: JoinHandle<anyhow::Result<()>>,
+    pub(crate) ipc_guard: crate::daemon::local_models_ipc::LocalModelsIpcGuard,
+    pub(crate) refresh_task: JoinHandle<()>,
+}
+
+fn local_models_runtime_enabled(config: &FreedomConfig) -> bool {
+    matches!(
+        config.provider_kind,
+        Some(crate::cli::init::ProviderKind::LocalOllama)
+    )
+}
+
+/// Bind Local Models only for the accepted native Ollama provider.  A
+/// non-loopback configured origin is still represented by the controller, but
+/// its core denies all HTTP contact and reports `UnsupportedRemoteEndpoint`.
+pub(crate) fn spawn_local_models_runtime(
+    config: &FreedomConfig,
+    home: &std::path::Path,
+) -> anyhow::Result<Option<LocalModelsRuntime>> {
+    if !local_models_runtime_enabled(config) {
+        return Ok(None);
+    }
+    let endpoint = crate::daemon::local_models::LocalModelEndpoint::from_provider_config(
+        config.provider_endpoint.clone(),
+        config.provider_model.clone(),
+    );
+    let controller = Arc::new(
+        crate::daemon::local_models::LocalModelController::new(home.to_path_buf(), endpoint)
+            .context("initialize local-model controller")?,
+    );
+    let (ipc_task, ipc_guard) = crate::daemon::local_models_ipc::bind_and_serve(
+        home,
+        Arc::clone(&controller),
+    )
+    .context("bind private local-model IPC")?;
+    let refresh_controller = Arc::clone(&controller);
+    let refresh_task = tokio::spawn(async move {
+        let mut cadence = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            cadence.tick().await;
+            let _ = refresh_controller.refresh().await;
+        }
+    });
+    Ok(Some(LocalModelsRuntime {
+        controller,
+        ipc_task,
+        ipc_guard,
+        refresh_task,
+    }))
+}
 /// Drain persisted, content-free Context Evidence receipts before the CC
 /// endpoint is discoverable. The RPC child owns the daemon-only subject
 /// session and the plan-independent replay coordinator; this wrapper keeps
@@ -8035,6 +8105,13 @@ pub(crate) struct BackgroundHandles {
     pub code_map_lifecycle_supervisor: Option<CodeMapLifecycleSupervisor>,
     pub audit_rpc_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub connector_control_rpc_task: Option<JoinHandle<anyhow::Result<()>>>,
+    /// W185: cancellation-aware inventory refresh is stopped before the IPC listener drains.
+    pub local_models_refresh_task: Option<JoinHandle<()>>,
+    /// W185: retained root so shutdown can classify and settle any active exact operation.
+    pub local_models_ipc_guard: Option<crate::daemon::local_models_ipc::LocalModelsIpcGuard>,
+    pub local_models_controller: Option<Arc<crate::daemon::local_models::LocalModelController>>,
+    /// W185: after its guard withdrew discovery, join every accepted local-model IPC handler.
+    pub local_models_ipc_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub healthz_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub decay_task: Option<JoinHandle<()>>,
     pub gc_task: Option<JoinHandle<anyhow::Result<()>>>,
@@ -8161,6 +8238,10 @@ pub(crate) async fn shutdown_background_tasks(
         code_map_lifecycle_supervisor,
         audit_rpc_task,
         connector_control_rpc_task,
+        local_models_refresh_task,
+        local_models_ipc_guard,
+        local_models_controller,
+        local_models_ipc_task,
         healthz_task,
         decay_task,
         gc_task,
@@ -8442,6 +8523,20 @@ pub(crate) async fn shutdown_background_tasks(
     // boundary.
     crate::cli::serve_tasks::abort_optional(audit_rpc_task).await;
     crate::cli::serve_tasks::join_connector_control_rpc(connector_control_rpc_task).await;
+    crate::cli::serve_tasks::abort_optional(local_models_refresh_task).await;
+    // Stop admission first. The listener owns accepted handlers in its JoinSet;
+    // draining it before core shutdown prevents an already parsed request from
+    // racing the exact active operation selected for shutdown.
+    if let Some(guard) = local_models_ipc_guard.as_ref() {
+        guard.stop();
+    }
+    drop(local_models_ipc_guard);
+    if let Some(task) = local_models_ipc_task {
+        let _ = task.await;
+    }
+    if let Some(controller) = local_models_controller {
+        controller.shutdown().await;
+    }
     // Abort the independent /healthz listener; it never writes WAL.
     crate::cli::serve_tasks::abort_optional(healthz_task).await;
 

@@ -8,38 +8,28 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
-**W184 native compile follow-up (2026-09-22):** Windows and macOS jobs in
-`35676411709` stopped at the same Slint callback/property name collision.
-The status property is now `bc-vault-mirror-repair-state`; the action callback
-is unchanged. The one formatting hunk from Preflight `35677253412` is imported.
-Only those W184 deltas are admitted here; W185 remains separate working code.
-Native compilation and behavior require rerun; no Road checkbox closes.
+**Current batch status (2026-09-22):** W185 adds daemon-owned Ollama inventory,
+model-specific readiness, pull/update/prune/cancel/explicit retry, private IPC,
+CLI/Buddy and Resources UI. The assembled source review passed after worker
+ownership/persistence, exact instance-home and peer-credential repairs. Thirty
+new native test identities and three GUI identities are registered; executable
+Hosted gates have not run on W185. GOLD-LF-P1-19 stays open. See [W185](../docs/gold-wave185-verification.md).
+W186 live capture/Silero is a separate working batch, not part of W185 admission.
 
-**W184 strict-Clippy follow-up (2026-09-22):** CI `35676411709` on `6ac451a1`
-reported seven lint failures in the mirror module. The active-state guard,
-four redundant borrows, an unused tuple-field projection and a reverse-capable
-iterator are corrected without changing behavior. Hosted revalidation remains
-required. The existing Windows/macOS run continues on its original source;
-W185 stays outside this repair publication. No Road checkbox closes.
+**W184 validation boundary:** published source `a130526e` repairs the seven
+strict-Clippy diagnostics and the Slint property/callback collision from
+`35676411709`. Preflight `35677728357` and Code Quality `35677727666` passed.
+Full CI `35677727994` found five more Linux headless-harness/unused-field lint errors; the narrow source repairs are included here. Windows/macOS jobs still run on that original source. Core test
+checking and CLI compilation previously passed on `eabc22a5` in `35675458308`;
+its generated reference and 127 unique formatting hunks are imported. These
+are separate source boundaries, not W185 behavior acceptance. P2-03 stays open.
+See [W184](../docs/gold-wave184-verification.md).
 
-**W184 Hosted follow-up (2026-09-22):** core test typechecking and the public
-CLI build passed in run `35675458308` on `eabc22a5`. The generated CLI reference
-was imported with its source and SHA-256 witness. Preflight `35675458038`
-reported formatting only; 127 unique Hosted hunks in 12 files are imported,
-including exact reconciliation of one masked test dummy. Code Quality
-`35675457773` passed. Fresh native behavior and GUI acceptance remain required;
-no Road checkbox closes. W185 Local-LLM core and private IPC are under review.
+**W180 portable acceptance:** Windows preview `35671504968` retains source
+`850aad7e`; CLI, migration and relay builds passed, GUI build is in progress.
+Lifecycle/diff-impact acceptance and exact caller diagnostics remain pending.
+No local validation workloads are allowed under the BSOD hold.
 
-**W184 vault mirror (2026-09-22):** the opt-in daemon/CLI/Buddy/GUI path is
-implemented and independently source-reviewed: credential-free WAL archive,
-retained file/Git-CWD capabilities, durable push intent, exact-remote repair,
-kernel ownership lock, manifest-only retention and typed GUI readback. Real
-bare-remote, replay/refusal, retention, corrupt-state, platform and callback
-fixtures are registered. Hosted execution remains required; P2-03 stays open.
-See [W184](../docs/gold-wave184-verification.md). W183 core typecheck and CLI
-build passed in35674232090/sourcea666a2c9. Full CI35674687864 found two strict
-Clippy errors; this publication fixes their exact sites without behavior changes.
-Windows preview35671504968 retains source850aad7e and has reached GUI build.
 **W183 yearly period synthesis (2026-09-22):** the independently reviewed CLI
 and cron paths now share a strict Daily-archive composer, source/config hashes,
 source-stable retry timestamps and exclusive atomic yearly publication. A

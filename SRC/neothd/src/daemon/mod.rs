@@ -229,6 +229,9 @@ pub mod synthesis_cron;
 /// frames over a rolling baseline; emits `0x6E TOKEN_ANOMALY_DETECTED`).
 pub mod token_anomaly_cron;
 pub mod train_export;
+/// W185 — daemon-owned local model inventory and operations.
+pub(crate) mod local_models;
+pub(crate) mod local_models_ipc;
 pub(crate) mod updater_cron;
 /// W184 — dedicated, default-off Git mirror for WAL-inclusive backups.
 pub mod vault_mirror;

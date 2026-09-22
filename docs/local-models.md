@@ -151,3 +151,46 @@ neoth models fit
 
 Cloud providers remain useful for high-end reasoning. The contract is operator
 choice plus visible routing, not a claim that every laptop can run every model.
+
+## Daemon-owned Ollama operations
+
+When `neoth serve` is running with a configured loopback Ollama endpoint, it
+owns the local model inventory, readiness probes, and mutable Ollama work. The
+CLI communicates with that daemon through private same-user IPC; it does not
+start another controller and it does not send direct Ollama HTTP requests.
+
+```bash
+neoth models ollama status --output json
+neoth models ollama pull qwen2.5:7b-instruct --output json
+neoth models ollama update qwen2.5:7b-instruct --output json
+neoth models ollama prune qwen2.5:7b-instruct --output json
+neoth models ollama cancel <operation-id> --output json
+neoth models ollama retry <operation-id> --output json
+neoth models ollama --config "D:/NEOTH Instances/blue/freedom.yaml" status --output json
+```
+
+`status` returns the daemon's typed snapshot. It fails visibly when the daemon
+or its private local-model service is unavailable. `pull`, `update`, `prune`,
+`cancel`, and `retry` return a typed action acknowledgement immediately; a
+transfer or reconciliation can continue in the daemon after that response.
+Only exact Ollama selectors and daemon-generated operation IDs are accepted.
+
+`--config` is scoped to `models ollama`. Its parent directory selects the same
+private IPC instance home as `neoth serve --config`; it does not change the
+other `models` commands. Without `--config`, the normal NEOTH home selection
+applies, including `NEOTH_HOME`. The desktop GUI inherits its child process
+environment, so set `NEOTH_HOME` before launching it when selecting a
+nondefault instance; the GUI does not add a separate model-instance switch.
+
+Ready means more than an open port or a model listed by Ollama. NEOTH requires
+a successful bounded model-specific inference probe followed by a fresh
+matching `/api/ps` digest. A listed, loaded, or reachable model can therefore
+remain explicitly unready. A configured non-loopback endpoint is displayed as
+unsupported and is not managed.
+
+Only one mutable operation is active at a time. Cancellation is a request, not
+proof that the remote engine discarded work. A restart or transport ambiguity
+is retained as `interrupted_unknown` and is never automatically replayed.
+`retry` is explicit and can only repeat the retained operation's exact action
+and model after a confirmed failure; unknown outcomes cannot be retried. Prune first rejects absent, non-exact, or loaded targets, and is
+complete only after a fresh inventory proves the selector is gone.

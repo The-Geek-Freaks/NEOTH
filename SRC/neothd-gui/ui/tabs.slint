@@ -34,6 +34,21 @@ component StatRow inherits Rectangle {
     }
 }
 
+// W185 typed daemon-owned local-model row. Readiness is already projected by
+// Rust; only a core `ready` record can say "Ready (probe verified)".
+export struct LocalModelRow {
+    model: string,
+    readiness: string,
+    progress: string,
+    resources: string,
+    operation-id: string,
+    can-pull: bool,
+    can-update: bool,
+    can-prune: bool,
+    can-cancel: bool,
+    can-retry: bool,
+}
+
 // Resources — the live hardware probe (CPU / memory / accelerator / VRAM /
 // disk / local models), the mockup's "neoth-core" surface.
 export component ResourcesView inherits Rectangle {
@@ -51,6 +66,17 @@ export component ResourcesView inherits Rectangle {
     in property <int> models-count: 0;
     // GUI-HARDWARE-RESOURCES-01 — runtime load readout, e.g. "CPU 23% · GPU 41% · 62°C · 118W".
     in property <string> load-readout;
+    in property <[LocalModelRow]> local-models: [];
+    in property <string> local-model-endpoint: "Checking local-model status…";
+    in property <bool> local-model-status-valid: false;
+    in property <string> local-model-status-error: "";
+    in property <bool> local-model-in-flight: false;
+    in property <string> local-model-refreshed: "";
+    callback local-model-pull(string);
+    callback local-model-update(string);
+    callback local-model-prune(string);
+    callback local-model-cancel(string);
+    callback local-model-retry(string);
 
     background: Theme.bg-base;
     VerticalLayout {
@@ -94,6 +120,42 @@ export component ResourcesView inherits Rectangle {
         if root.load-readout != "": StatRow { label: "LOAD"; value: root.load-readout; }
         StatRow { label: "DISK"; value: root.disk; }
         StatRow { label: "LOCAL MODELS"; value: root.models-count > 0 ? "\{root.models-count} installed" : "none"; }
+
+        Rectangle {
+            width: parent.width; height: local-models-body.height + 42px;
+            border-radius: Theme.radius-lg; background: Theme.surface-1;
+            border-width: 1px; border-color: root.local-model-status-valid ? Theme.border-subtle : Theme.border-accent;
+            local-models-body := VerticalLayout {
+                x: 16px; y: 16px; width: parent.width - 32px; spacing: 10px;
+                HorizontalLayout {
+                    Text { text: "OLLAMA MODELS"; color: Theme.text-primary; font-family: Theme.font-mono; font-size: Theme.font-size-sm; }
+                    Text { horizontal-stretch: 1; text: root.local-model-in-flight ? "action in progress…" : root.local-model-endpoint; color: Theme.text-secondary; font-family: Theme.font-sans; font-size: Theme.font-size-sm; overflow: elide; horizontal-alignment: right; }
+                }
+                if root.local-model-status-error != "": Text { text: root.local-model-status-error; color: Theme.warning; font-family: Theme.font-sans; font-size: Theme.font-size-sm; wrap: word-wrap; }
+                if root.local-models.length == 0: Text { text: root.local-model-status-valid ? "No local model inventory returned." : "Local-model status has not been verified."; color: Theme.text-tertiary; font-family: Theme.font-sans; font-size: Theme.font-size-sm; }
+                for row in root.local-models: Rectangle {
+                    width: parent.width; height: model-row-body.height + 24px; border-radius: Theme.radius-md;
+                    background: Theme.surface-2; border-width: 1px; border-color: Theme.border-subtle;
+                    model-row-body := VerticalLayout {
+                        x: 12px; y: 12px; width: parent.width - 24px; spacing: 7px;
+                        HorizontalLayout {
+                            Text { text: row.model; horizontal-stretch: 1; color: Theme.text-primary; font-family: Theme.font-mono; font-size: Theme.font-size-sm; overflow: elide; }
+                            Text { text: row.readiness; color: row.readiness == "Ready (probe verified)" ? Theme.accent : Theme.text-secondary; font-family: Theme.font-sans; font-size: Theme.font-size-sm; overflow: elide; }
+                        }
+                        Text { text: row.resources; color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; overflow: elide; }
+                        if row.progress != "" || row.operation-id != "": Text { text: row.progress != "" ? "Progress: " + row.progress : "Operation: " + row.operation-id; color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; overflow: elide; }
+                        HorizontalLayout { spacing: 6px;
+                            Rectangle { width: pull.width + 16px; height: 28px; border-radius: Theme.radius-pill; background: row.can-pull && !root.local-model-in-flight ? Theme.accent-tint : Theme.surface-1; accessible-role: button; accessible-label: "Pull " + row.model; accessible-enabled: row.can-pull && !root.local-model-in-flight; accessible-action-default => { if (row.can-pull && !root.local-model-in-flight) { root.local-model-pull(row.model); } } pull := Text { text: "Pull"; color: row.can-pull && !root.local-model-in-flight ? Theme.accent : Theme.text-tertiary; font-family: Theme.font-sans; font-size: Theme.font-size-2xs; horizontal-alignment: center; vertical-alignment: center; } TouchArea { clicked => { if (row.can-pull && !root.local-model-in-flight) { root.local-model-pull(row.model); } } } }
+                            Rectangle { width: update.width + 16px; height: 28px; border-radius: Theme.radius-pill; background: row.can-update && !root.local-model-in-flight ? Theme.accent-tint : Theme.surface-1; accessible-role: button; accessible-label: "Update " + row.model; accessible-enabled: row.can-update && !root.local-model-in-flight; accessible-action-default => { if (row.can-update && !root.local-model-in-flight) { root.local-model-update(row.model); } } update := Text { text: "Update"; color: row.can-update && !root.local-model-in-flight ? Theme.accent : Theme.text-tertiary; font-family: Theme.font-sans; font-size: Theme.font-size-2xs; horizontal-alignment: center; vertical-alignment: center; } TouchArea { clicked => { if (row.can-update && !root.local-model-in-flight) { root.local-model-update(row.model); } } } }
+                            Rectangle { width: prune.width + 16px; height: 28px; border-radius: Theme.radius-pill; background: row.can-prune && !root.local-model-in-flight ? Theme.accent-tint : Theme.surface-1; accessible-role: button; accessible-label: "Prune " + row.model; accessible-enabled: row.can-prune && !root.local-model-in-flight; accessible-action-default => { if (row.can-prune && !root.local-model-in-flight) { root.local-model-prune(row.model); } } prune := Text { text: "Prune"; color: row.can-prune && !root.local-model-in-flight ? Theme.accent : Theme.text-tertiary; font-family: Theme.font-sans; font-size: Theme.font-size-2xs; horizontal-alignment: center; vertical-alignment: center; } TouchArea { clicked => { if (row.can-prune && !root.local-model-in-flight) { root.local-model-prune(row.model); } } } }
+                            Rectangle { width: cancel.width + 16px; height: 28px; border-radius: Theme.radius-pill; background: row.can-cancel && !root.local-model-in-flight ? Theme.warning-tint : Theme.surface-1; accessible-role: button; accessible-label: "Cancel " + row.operation-id; accessible-enabled: row.can-cancel && !root.local-model-in-flight; accessible-action-default => { if (row.can-cancel && !root.local-model-in-flight) { root.local-model-cancel(row.operation-id); } } cancel := Text { text: "Cancel"; color: row.can-cancel && !root.local-model-in-flight ? Theme.warning : Theme.text-tertiary; font-family: Theme.font-sans; font-size: Theme.font-size-2xs; horizontal-alignment: center; vertical-alignment: center; } TouchArea { clicked => { if (row.can-cancel && !root.local-model-in-flight) { root.local-model-cancel(row.operation-id); } } } }
+                            Rectangle { width: retry.width + 16px; height: 28px; border-radius: Theme.radius-pill; background: row.can-retry && !root.local-model-in-flight ? Theme.accent-tint : Theme.surface-1; accessible-role: button; accessible-label: "Retry " + row.operation-id; accessible-enabled: row.can-retry && !root.local-model-in-flight; accessible-action-default => { if (row.can-retry && !root.local-model-in-flight) { root.local-model-retry(row.operation-id); } } retry := Text { text: "Retry"; color: row.can-retry && !root.local-model-in-flight ? Theme.accent : Theme.text-tertiary; font-family: Theme.font-sans; font-size: Theme.font-size-2xs; horizontal-alignment: center; vertical-alignment: center; } TouchArea { clicked => { if (row.can-retry && !root.local-model-in-flight) { root.local-model-retry(row.operation-id); } } } }
+                        }
+                    }
+                }
+                if root.local-model-refreshed != "": Text { text: root.local-model-refreshed; color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; }
+            }
+        }
     }
 }
 

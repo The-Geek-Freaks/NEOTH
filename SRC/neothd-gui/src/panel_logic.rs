@@ -991,6 +991,113 @@ pub struct HardwareSnapshot {
     pub load_readout: String,
 }
 
+/// W185 strict daemon-owned Ollama snapshot projection for Resources.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalModelsSnapshotWire {
+    pub schema_version: u32,
+    pub observed_at_unix_ms: u64,
+    pub endpoint: LocalModelsEndpointWire,
+    pub host_resources: LocalModelsHostResourcesWire,
+    pub models: Vec<LocalModelWire>,
+    pub active_operation: Option<LocalModelOperationWire>,
+    pub last_terminal_operation: Option<LocalModelTerminalWire>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "kind", rename_all = "snake_case")]
+pub enum LocalModelsEndpointWire { Unavailable { detail: String }, UnsupportedRemoteEndpoint { redacted_origin: String }, Reachable { detail: String } }
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalModelsHostResourcesWire { pub ram_bytes: Option<u64>, pub vram_bytes: Option<u64>, pub gpu_name: Option<String> }
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalModelWire { pub model: String, pub digest: String, pub size_bytes: u64, pub loaded: Option<LoadedModelUseWire>, pub readiness: LocalModelReadinessWire, pub last_error: Option<LocalModelErrorWire> }
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LoadedModelUseWire { pub model: String, pub name: Option<String>, pub digest: String, pub size_bytes: u64, pub size_vram_bytes: Option<u64>, pub expires_at: Option<String> }
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "kind", rename_all = "snake_case")]
+pub enum LocalModelReadinessWire { Unavailable, Installed, Probing, Ready { verified_at_unix_ms: u64 }, ReachableButUnready { reason: LocalModelUnreadyReasonWire }, Downloading { operation_id: String, completed: Option<u64>, total: Option<u64> }, Updating { operation_id: String, completed: Option<u64>, total: Option<u64> }, Pruning { operation_id: String }, Failed { operation_id: String, code: LocalModelErrorCodeWire }, CancelRequested { operation_id: String }, InterruptedUnknown { operation_id: String } }
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalModelUnreadyReasonWire { ProbeFailed, MissingFreshLoadedDigest, ResponseModelMismatch, NotSelected }
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalModelErrorCodeWire { InvalidRequest, EndpointUnavailable, Protocol, Transport, RemoteRejected, Cancelled, InterruptedUnknown, Conflict, Persistence }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalModelActionKindWire { Pull, Update, Prune, Retry }
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalModelTerminalOutcomeWire { Completed, Failed, InterruptedUnknown }
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalModelErrorWire { pub code: LocalModelErrorCodeWire, pub detail: String }
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalModelOperationWire { pub operation_id: String, pub action: LocalModelActionKindWire, pub model: String, pub started_at_unix_ms: u64, pub progress: Option<LocalModelProgressWire>, pub cancellation_requested: bool }
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalModelProgressWire { pub status: String, pub completed: Option<u64>, pub total: Option<u64> }
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalModelTerminalWire { pub operation_id: String, pub action: LocalModelActionKindWire, pub model: String, pub started_at_unix_ms: u64, pub finished_at_unix_ms: u64, pub outcome: LocalModelTerminalOutcomeWire, pub old_digest: Option<String>, pub new_digest: Option<String>, pub error: Option<LocalModelErrorWire> }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalModelsPresentation { pub endpoint: String, pub rows: Vec<LocalModelPresentationRow>, pub active_operation: String, pub valid: bool }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalModelPresentationRow { pub model: String, pub readiness: String, pub progress: String, pub resources: String, pub operation_id: String, pub can_pull: bool, pub can_update: bool, pub can_prune: bool, pub can_cancel: bool, pub can_retry: bool }
+
+pub fn parse_local_models_snapshot(json: &str) -> Result<LocalModelsPresentation, String> {
+    let snapshot: LocalModelsSnapshotWire = serde_json::from_str(json).map_err(|e| format!("invalid local-model status JSON: {e}"))?;
+    if snapshot.schema_version != 1 { return Err("unsupported local-model status schema".into()); }
+    let endpoint = match snapshot.endpoint { LocalModelsEndpointWire::Reachable { detail } => format!("reachable: {detail}"), LocalModelsEndpointWire::Unavailable { detail } => format!("unavailable: {detail}"), LocalModelsEndpointWire::UnsupportedRemoteEndpoint { .. } => "unsupported remote endpoint".into() };
+    let active = snapshot.active_operation.as_ref().map(|o| o.operation_id.clone()).unwrap_or_default();
+    let rows = snapshot.models.into_iter().map(|model| {
+        let (readiness, progress, operation_id, can_cancel, can_retry) = match model.readiness {
+            LocalModelReadinessWire::Ready { .. } => ("Ready (probe verified)".into(), String::new(), String::new(), false, false),
+            LocalModelReadinessWire::ReachableButUnready { reason } => (format!("Reachable but unready: {}", local_models_unready_reason(reason)), String::new(), String::new(), false, false),
+            LocalModelReadinessWire::Downloading { operation_id, completed, total } | LocalModelReadinessWire::Updating { operation_id, completed, total } => ("Working".into(), format_progress(completed, total), operation_id, true, false),
+            LocalModelReadinessWire::Pruning { operation_id } | LocalModelReadinessWire::CancelRequested { operation_id } => ("Working".into(), String::new(), operation_id, true, false),
+            LocalModelReadinessWire::Failed { operation_id, .. } => ("Failed".into(), String::new(), operation_id, false, true),
+            // Core deliberately treats an interrupted remote outcome as uncertain;
+            // Retry is refused until the operator has reconciled it.
+            LocalModelReadinessWire::InterruptedUnknown { operation_id } => ("Interrupted".into(), String::new(), operation_id, false, false),
+            LocalModelReadinessWire::Unavailable => ("Unavailable".into(), String::new(), String::new(), false, false),
+            LocalModelReadinessWire::Installed => ("Installed".into(), String::new(), String::new(), false, false),
+            LocalModelReadinessWire::Probing => ("Probing".into(), String::new(), String::new(), false, false),
+        };
+        let resources = local_model_resources(model.size_bytes, model.loaded.as_ref());
+        LocalModelPresentationRow { model: model.model, readiness, progress, resources, operation_id, can_pull: active.is_empty(), can_update: active.is_empty(), can_prune: active.is_empty() && model.loaded.is_none(), can_cancel, can_retry }
+    }).collect::<Vec<_>>();
+    // A pull for a not-yet-installed model is intentionally absent from the
+    // inventory. Preserve its active core operation as a visible working row.
+    let mut rows = rows;
+    if let Some(operation) = snapshot.active_operation.as_ref()
+        && !rows.iter().any(|row| row.model == operation.model) {
+        rows.push(LocalModelPresentationRow {
+            model: operation.model.clone(), readiness: "Working".into(),
+            progress: operation.progress.as_ref().map(|p| format_progress(p.completed, p.total)).unwrap_or_default(),
+            resources: "Not installed yet · RAM unknown · VRAM unknown".into(),
+            operation_id: operation.operation_id.clone(), can_pull: false, can_update: false,
+            can_prune: false, can_cancel: true, can_retry: false,
+        });
+    }
+    Ok(LocalModelsPresentation { endpoint, rows, active_operation: active, valid: true })
+}
+fn local_models_unready_reason(reason: LocalModelUnreadyReasonWire) -> &'static str { match reason { LocalModelUnreadyReasonWire::ProbeFailed => "probe failed", LocalModelUnreadyReasonWire::MissingFreshLoadedDigest => "missing fresh loaded digest", LocalModelUnreadyReasonWire::ResponseModelMismatch => "response model mismatch", LocalModelUnreadyReasonWire::NotSelected => "not selected" } }
+fn local_model_resources(size_bytes: u64, loaded: Option<&LoadedModelUseWire>) -> String {
+    let size = format!("{} MiB", size_bytes / (1024 * 1024));
+    match loaded {
+        // Ollama's loaded `size_bytes` is an overall footprint, not an
+        // authoritative RAM measurement. Do not turn it into a false RAM sum.
+        Some(loaded) => format!("{size} installed · loaded total {} MiB · RAM unknown · VRAM {}", loaded.size_bytes / (1024 * 1024), loaded.size_vram_bytes.map(|v| format!("{} MiB", v / (1024 * 1024))).unwrap_or_else(|| "unknown".into())),
+        None => format!("{size} installed · RAM unknown · VRAM unknown"),
+    }
+}
+fn format_progress(completed: Option<u64>, total: Option<u64>) -> String { match (completed,total) { (Some(c),Some(t)) if t>0 => format!("{c}/{t}"), (Some(c),_) => c.to_string(), _ => String::new() } }
+
 /// Bytes → whole GiB (rounded) as a display string.
 fn gib(bytes: u64) -> u64 {
     bytes / (1024 * 1024 * 1024)
@@ -7898,7 +8005,8 @@ struct BuddyVaultMirrorReceiptWire {
     commit_oid: Option<String>,
     remote_head_oid: Option<String>,
     phase: BuddyVaultMirrorPhaseWire,
-    created_at_unix: i64,
+    #[serde(rename = "created_at_unix")]
+    _created_at_unix: i64,
     verified_at_unix: Option<i64>,
     retention: BuddyVaultMirrorRetentionWire,
 }
@@ -9250,6 +9358,39 @@ mod tests {
                 value: "on".into()
             }]
         );
+    }
+
+    // ── W185 local-model controller projection ───────────────────────────
+    #[test]
+    fn local_models_ready_requires_the_core_ready_variant() {
+        let ready = r#"{
+            "schema_version":1,"observed_at_unix_ms":1,
+            "endpoint":{"kind":"reachable","detail":"fresh tags and ps"},
+            "host_resources":{"ram_bytes":null,"vram_bytes":null,"gpu_name":null},
+            "models":[{"model":"qwen","digest":"sha256:x","size_bytes":1,"loaded":null,"readiness":{"kind":"ready","verified_at_unix_ms":1},"last_error":null}],
+            "active_operation":null,"last_terminal_operation":null
+        }"#;
+        let projection = parse_local_models_snapshot(ready).expect("ready schema");
+        assert_eq!(projection.rows[0].readiness, "Ready (probe verified)");
+
+        let unready = ready.replace(
+            r#"{"kind":"ready","verified_at_unix_ms":1}"#,
+            r#"{"kind":"reachable_but_unready","reason":"probe_failed"}"#,
+        );
+        let projection = parse_local_models_snapshot(&unready).expect("unready schema");
+        assert_eq!(projection.rows[0].readiness, "Reachable but unready: probe failed");
+    }
+
+    #[test]
+    fn local_models_reject_unknown_readiness_schema() {
+        let invalid = r#"{
+            "schema_version":1,"observed_at_unix_ms":1,
+            "endpoint":{"kind":"reachable","detail":"fresh tags and ps"},
+            "host_resources":{"ram_bytes":null,"vram_bytes":null,"gpu_name":null},
+            "models":[{"model":"qwen","digest":"sha256:x","size_bytes":1,"loaded":null,"readiness":{"kind":"ready","verified_at_unix_ms":1,"forged":true},"last_error":null}],
+            "active_operation":null,"last_terminal_operation":null
+        }"#;
+        assert!(parse_local_models_snapshot(invalid).is_err());
     }
 
     // ── SL-03 resource panel parser ───────────────────────────────────────

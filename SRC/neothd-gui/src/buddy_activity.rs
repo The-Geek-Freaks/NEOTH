@@ -49,6 +49,12 @@ pub enum GuiActivity {
 
     // ── Providers / models ───────────────────────────────────────────
     ModelLoading,
+    /// A local-model pull/update/prune/cancel action is awaiting core status.
+    LocalModelWorking,
+    /// A local-model acknowledgement matched a fresh daemon readback.
+    LocalModelVerified,
+    /// A local-model action or mandatory fresh readback failed.
+    LocalModelFailed,
     ProviderFallback,
 
     // ── Agents / coding ──────────────────────────────────────────────
@@ -136,6 +142,9 @@ impl GuiActivity {
             GuiActivity::ChannelTest => ("connecting", "connecting…"),
 
             GuiActivity::ModelLoading => ("loading", "loading"),
+            GuiActivity::LocalModelWorking => ("working", "managing local model…"),
+            GuiActivity::LocalModelVerified => ("success", "local model verified"),
+            GuiActivity::LocalModelFailed => ("error", "local model action failed"),
             GuiActivity::ProviderFallback => ("intense", "fallback"),
 
             GuiActivity::AgentParallel => ("parallel", "parallel workers"),
@@ -238,6 +247,9 @@ mod tests {
         GuiActivity::ChannelIngress,
         GuiActivity::ChannelTest,
         GuiActivity::ModelLoading,
+        GuiActivity::LocalModelWorking,
+        GuiActivity::LocalModelVerified,
+        GuiActivity::LocalModelFailed,
         GuiActivity::ProviderFallback,
         GuiActivity::AgentParallel,
         GuiActivity::AgentDeploy,
