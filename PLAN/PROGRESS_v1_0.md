@@ -2,6 +2,19 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**Hosted consent acceptance and fixture repair (2026-09-22):** Grouped187
+`35758426828` on `7209c07d` executed 185 passes / 2 ordinary failures / no
+process aborts. All 30 W208 and all 16 W209 behavior tests passed. The three
+artifacts, 187 identities across 40 source paths, matrix and Cargo.lock match
+the run exactly. Core test-check, public CLI build and export `35758430620`
+also passed. The two remaining fixtures had incorrect setup/observation:
+W205 must query its seeded `delegated` marker to require a real code-map
+receipt (`0x26`; `0x25` is SkillRouteResolved). W207's default refusal-recovery
+mode publishes its exact final body through `StreamFrames`, not early deltas.
+Both mandatory behavioral assertions remain intact with corrected fixture
+inputs/output selection. Fresh Grouped200 also validates W210, published at
+`bcecdc29`. Road remains 1324 / 1015 checked / 307 open / 2 partial.
+
 **W210 BGE-M3 core/CLI (2026-09-22):** explicit `embed.model=bge_m3` selects
 only the verified local official model at immutable revision
 `5617a9f61b028005a4858fdac845db406aefb181`. The native Candle PTH adapter,

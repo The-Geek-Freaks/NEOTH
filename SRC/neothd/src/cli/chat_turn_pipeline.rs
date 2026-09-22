@@ -2456,13 +2456,14 @@ mod tests {
         assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 1);
         assert!(prepared.deferred_failure_output.is_none());
         assert!(prepared.deferred_terminal.is_some());
-        // MarkdownBuffer may coalesce safe visible prefixes; assert the canonical output across chunks.
+        // Default refusal recovery defers visible stream output until post-reply
+        // mutation settles; the canonical accepted body is then one StreamFrames record.
         let visible_output = sink
             .events
             .iter()
             .filter_map(|event| match event {
-                ChatTurnEvent::Output(ChatOutput::ProviderDelta { text, .. }) => {
-                    Some(text.as_str())
+                ChatTurnEvent::Output(ChatOutput::StreamFrames { frames }) => {
+                    Some(frames.as_str())
                 }
                 _ => None,
             })

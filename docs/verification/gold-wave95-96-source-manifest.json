@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T17:16:01.9182990Z",
-  "validationStatus": "W210 BGE core/CLI integrated static PASS; focused200, hosted official model and GUI/Buddy parity pending",
+  "capturedUtc": "2026-09-22T17:17:21.3744267Z",
+  "validationStatus": "W20830/W20916 hostedPASS7209; W205/W207 fixture repair and W210 pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -993,8 +993,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_pipeline.rs",
-      "bytes": 164106,
-      "sha256": "85610844DEFD962D380963DDEDA7CD61E9807103A5BA5062BB4FAA250F61786D"
+      "bytes": 164172,
+      "sha256": "E2C8AD960EB3DD0C068FB1DA9ED25A378274A5F7491BB53103121C5FEECA0A7A"
     },
     {
       "path": "SRC/neothd/src/cli/chat_turn_watchdog.rs",
@@ -1228,8 +1228,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve_pipeline.rs",
-      "bytes": 501662,
-      "sha256": "AAB7884352B0EBB0E50702D3A7CD66E88C6113E219BE0A9D60219FD7E1830A6C"
+      "bytes": 501990,
+      "sha256": "C0DEA2080C5C30E5C77BD80E61A5BEAAC156C58F16B7413204BF62B5C6CD3C21"
     },
     {
       "path": "SRC/neothd/src/cli/serve_tasks.rs",

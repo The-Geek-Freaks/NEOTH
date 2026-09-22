@@ -10677,7 +10677,11 @@ mod tests {
                 // Automatic keyword routing is covered by the resolver; this
                 // fixture owns the installed-Skill -> real-agent-loader ->
                 // child-scope contract.
-                let accepted_inbound = inbound(Some("/w137-channel-delegate run"), None);
+                // The sole persisted root contains the `delegated` fixture marker.
+                // Include it in the accepted command body so the real channel
+                // auto-context path has a retained code-map result to audit;
+                // an empty selection deliberately produces no code-map receipt.
+                let accepted_inbound = inbound(Some("/w137-channel-delegate delegated"), None);
                 let expected_wal_identity = canonical_admitted_channel_wal_identity(
                     &AuthenticatedInboundBinding::for_account(ChannelRef::default_account(
                         ChannelId::Telegram,
