@@ -1,4 +1,5 @@
 pub mod automation;
+pub mod embedding;
 pub mod features;
 pub mod inference;
 mod instance_paths;
@@ -1301,10 +1302,15 @@ pub struct FreedomConfig {
     /// Per-hemisphere LLM topology (D14b extension): operator may want one
     /// provider for all three hemispheres (single), the same provider on
     /// all three slots (triplet), or fully custom per-slot configuration.
-    /// Auto-detected accelerator + embedding provider also live here.
+    /// Auto-detected accelerator and the legacy generic embedding-provider route live here.
     /// Defaults to `single` mode that mirrors the legacy provider_kind path.
     #[serde(default)]
     pub inference: crate::config::inference::InferenceTopology,
+    /// The local embedding model family. This is deliberately independent of
+    /// chat/profile provider routing: `qwen3_q8` preserves the existing route,
+    /// while `bge_m3` is an explicit local-only opt-in.
+    #[serde(default)]
+    pub embed: crate::config::embedding::EmbeddingConfig,
     /// Pick #8 SP-2 (Session 14) — council winner-selection +
     /// cost-cap config. Defaults preserve v0.1 / Session-14-prior
     /// behaviour exactly: `selection_mode = LegacyMajority` skips

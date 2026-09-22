@@ -8,6 +8,8 @@
 //!     run isn't blocked on a several-GiB HF download.
 //!   - `prune <name>` — delete a model's cache directory. Useful when
 //!     iterating on disk-strapped laptops.
+//!   - `bge-m3` — inspect or explicitly operate the pinned BGE-M3 embedding
+//!     artifact lifecycle. This group has no mutable repository selector.
 //!   - `recommend` / `fit` — select and size local inference models.
 //!
 //! Known names: `clip` (vision Phase 2b), `whisper` (audio Phase 2b).
@@ -61,6 +63,15 @@ pub enum ModelsAction {
     /// stale providers surface their fetch error so consumers degrade
     /// honestly instead of guessing model ids.
     Catalog,
+    /// Operate the immutable, local-only BGE-M3 embedding artifact.
+    ///
+    /// The repository, revision, and manifest are fixed in the reviewed
+    /// artifact module. Selection remains an explicit `embed.model=bge_m3`
+    /// operator choice; this command never changes that configuration.
+    BgeM3 {
+        #[command(subcommand)]
+        action: BgeM3ModelsAction,
+    },
     /// Download a model's artifacts into `~/.neoth/models/<flat>/`.
     /// `neoth model fetch <name>` is an accepted alias for this.
     #[command(visible_alias = "fetch")]
@@ -130,6 +141,24 @@ pub enum OllamaModelsAction {
     Retry { operation_id: String },
 }
 
+/// Lifecycle actions for the exact pinned BGE-M3 artifact manifest.
+///
+/// There intentionally are no repository, revision, filename, or hash flags:
+/// each operation targets only `providers::bge_m3_artifacts`' reviewed pin.
+#[derive(Subcommand, Debug, Clone)]
+pub enum BgeM3ModelsAction {
+    /// Show the selected embedding model and the BGE-M3 cache row.
+    List,
+    /// Show selected-model readiness plus the immutable BGE-M3 artifact pin.
+    Status,
+    /// Download and verify the exact pinned BGE-M3 manifest.
+    Pull,
+    /// Reconcile a pending, missing, or corrupt exact BGE-M3 generation.
+    Repair,
+    /// Remove only the exact owned BGE-M3 cache after lifecycle safeguards.
+    Prune,
+}
+
 /// Operator-facing lineage choice for `models recommend`.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecClass {
@@ -156,6 +185,7 @@ enum ManagedModel {
         model_id: String,
         cache_path: std::path::PathBuf,
     },
+    BgeM3(crate::providers::bge_m3_artifacts::BgeM3Artifacts),
     Whisper(crate::media::stt_provider::LocalWhisperTarget),
 }
 
@@ -163,6 +193,7 @@ impl ManagedModel {
     fn model_id(&self) -> &str {
         match self {
             Self::Clip { model_id, .. } => model_id,
+            Self::BgeM3(_) => crate::providers::bge_m3_artifacts::DEFAULT_REPO,
             Self::Whisper(target) => target.model_id(),
         }
     }
@@ -170,6 +201,7 @@ impl ManagedModel {
     fn cache_path(&self) -> &std::path::Path {
         match self {
             Self::Clip { cache_path, .. } => cache_path,
+            Self::BgeM3(artifacts) => artifacts.cache_dir(),
             Self::Whisper(target) => target.cache_path(),
         }
     }
@@ -177,6 +209,7 @@ impl ManagedModel {
     fn backend(&self) -> &'static str {
         match self {
             Self::Clip { .. } => "clip",
+            Self::BgeM3(_) => "bge-m3",
             Self::Whisper(target) => target.backend().as_str(),
         }
     }
@@ -193,6 +226,7 @@ impl ManagedModel {
                     reason: "CLIP cache path has no model root".to_string(),
                 },
             },
+            Self::BgeM3(artifacts) => artifacts.cache_health(),
             Self::Whisper(target) => target.cache_health(),
         }
     }
@@ -214,6 +248,18 @@ impl ManagedModel {
                     reason: "CLIP cache path has no model root".to_string(),
                 },
             },
+            Self::BgeM3(artifacts) => {
+                if during_attempt {
+                    crate::media::model_manager::verified_cache_health_during_install(
+                        artifacts.cache_dir(),
+                        crate::providers::bge_m3_artifacts::REQUIRED_ARTIFACTS,
+                    )
+                } else {
+                    crate::providers::bge_m3_artifacts::verified_cache_health_at(
+                        artifacts.cache_dir(),
+                    )
+                }
+            },
             Self::Whisper(target) => target.verified_cache_health(during_attempt),
         }
     }
@@ -221,6 +267,7 @@ impl ManagedModel {
     fn policy_name(&self) -> &'static str {
         match self {
             Self::Clip { .. } => "clip",
+            Self::BgeM3(_) => "bge-m3",
             Self::Whisper(_) => "whisper",
         }
     }
@@ -228,6 +275,7 @@ impl ManagedModel {
     fn cache_is_neoth_owned(&self) -> bool {
         match self {
             Self::Clip { .. } => true,
+            Self::BgeM3(_) => true,
             Self::Whisper(target) => target.cache_is_neoth_owned(),
         }
     }
@@ -236,6 +284,7 @@ impl ManagedModel {
 fn model_description(name: &str) -> &'static str {
     match name {
         "clip" => "CLIP ViT-B/32 image + text embeddings (vision Phase 2b)",
+        "bge-m3" => "Pinned local BGE-M3 multilingual embedding artifacts",
         "whisper" => "Configured effective local Whisper transcription model",
         "whisper-candle" => "Explicit local Candle Whisper transcription model",
         "whisper-faster" => "Explicit local faster-whisper transcription model",
@@ -261,6 +310,16 @@ fn resolve_managed_model(
                 model_id,
                 cache_path,
             })
+        }
+        "bge-m3" => {
+            if repo_override.is_some() {
+                anyhow::bail!(
+                    "BGE-M3 has an immutable reviewed repository and revision; use `neoth models bge-m3 pull` without overrides"
+                );
+            }
+            Ok(ManagedModel::BgeM3(
+                crate::providers::bge_m3_artifacts::BgeM3Artifacts::at_neoth_home(neoth_home),
+            ))
         }
         "whisper" | "whisper-candle" | "whisper-faster" => {
             if repo_override.is_some() {
@@ -302,6 +361,7 @@ pub async fn run_models(args: ModelsArgs) -> Result<()> {
         ModelsAction::Ollama { config, action } => run_ollama(action, config, args.output).await,
         ModelsAction::List => run_list(&args.output),
         ModelsAction::Catalog => run_catalog(&args.output),
+        ModelsAction::BgeM3 { action } => run_bge_m3(action, &args.output).await,
         ModelsAction::Pull { name, repo } => run_pull(&name, repo.as_deref()).await,
         ModelsAction::Prune { name } => run_prune(&name),
         ModelsAction::Recommend {
@@ -758,6 +818,29 @@ fn build_list_rows(neoth_home: &std::path::Path, cfg: &FreedomConfig) -> Result<
             },
         )
         .collect::<Result<Vec<_>>>()?;
+    let bge_artifacts =
+        crate::providers::bge_m3_artifacts::BgeM3Artifacts::at_neoth_home(neoth_home);
+    // Inventory stays cheap and artifact-only: it must never hash the
+    // multi-GiB checkpoint or claim that the Candle adapter has loaded.
+    let bge_health = bge_artifacts.cache_health();
+    rows.push(ListRow {
+        name: "bge-m3".to_string(),
+        backend: "local-bge-m3".to_string(),
+        description: model_description("bge-m3").to_string(),
+        repo: format!(
+            "{}@{}",
+            crate::providers::bge_m3_artifacts::DEFAULT_REPO,
+            crate::providers::bge_m3_artifacts::DEFAULT_REVISION,
+        ),
+        cache_dir: bge_artifacts.cache_dir().display().to_string(),
+        cached: bge_health.is_ready(),
+        health: if bge_health.is_ready() {
+            "cached".to_string()
+        } else {
+            bge_health.label().to_string()
+        },
+        error: (!bge_health.is_ready()).then(|| bge_health.to_string()),
+    });
     let tts = &cfg.media.tts;
     let voice = if tts.voice.is_empty() {
         crate::media::tts_dispatch::pick_voice_for_locale(
@@ -831,6 +914,76 @@ struct ListRow {
     health: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct BgeM3Status {
+    selected_model: String,
+    selected: bool,
+    repository: &'static str,
+    revision: &'static str,
+    cache_dir: String,
+    health: String,
+    artifact_cached: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+}
+
+fn bge_m3_status(neoth_home: &Path, cfg: &FreedomConfig) -> BgeM3Status {
+    let artifacts =
+        crate::providers::bge_m3_artifacts::BgeM3Artifacts::at_neoth_home(neoth_home);
+    let pending = crate::media::model_manager::has_pending_download(artifacts.cache_dir())
+        .unwrap_or(false);
+    // Status is intentionally a non-loading, non-hashing artifact snapshot.
+    // Pull/repair prove the full manifest and adapter load before D8 success.
+    let health = artifacts.cache_health();
+    let (health, reason) = if pending {
+        (
+            "installing".to_string(),
+            Some("an exact BGE-M3 model-download lifecycle is pending; run `neoth models bge-m3 repair` to reconcile it".to_string()),
+        )
+    } else if health.is_ready() {
+        ("cached".to_string(), None)
+    } else {
+        (health.label().to_string(), Some(health.to_string()))
+    };
+    BgeM3Status {
+        selected_model: cfg.embed.model.as_str().to_string(),
+        selected: matches!(cfg.embed.model, crate::config::embedding::EmbeddingModel::BgeM3),
+        repository: crate::providers::bge_m3_artifacts::DEFAULT_REPO,
+        revision: crate::providers::bge_m3_artifacts::DEFAULT_REVISION,
+        cache_dir: artifacts.cache_dir().display().to_string(),
+        artifact_cached: health == "cached",
+        health,
+        reason,
+    }
+}
+
+async fn run_bge_m3(action: BgeM3ModelsAction, output: &OutputFormat) -> Result<()> {
+    let neoth_home = FreedomConfig::default_neoth_home();
+    let cfg = load_models_config(&neoth_home)?;
+    match action {
+        BgeM3ModelsAction::List | BgeM3ModelsAction::Status => {
+            let status = bge_m3_status(&neoth_home, &cfg);
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::to_string_pretty(&status)?);
+                }
+                OutputFormat::Table => {
+                    println!("BGE-M3 selected: {} ({})", status.selected, status.selected_model);
+                    println!("pin: {}@{}", status.repository, status.revision);
+                    println!("cache: {}", status.cache_dir);
+                    println!("status: {}", status.health);
+                    if let Some(reason) = status.reason {
+                        println!("reason: {reason}");
+                    }
+                }
+            }
+            Ok(())
+        }
+        BgeM3ModelsAction::Pull | BgeM3ModelsAction::Repair => run_pull("bge-m3", None).await,
+        BgeM3ModelsAction::Prune => run_prune("bge-m3"),
+    }
 }
 
 enum PullAuditSink {
@@ -924,6 +1077,33 @@ async fn execute_pull_with(
                 .await
                 .with_context(|| "validate CLIP backend")?;
             Ok(())
+        }
+        ManagedModel::BgeM3(artifacts) => {
+            tracing::info!(
+                repo = crate::providers::bge_m3_artifacts::DEFAULT_REPO,
+                revision = crate::providers::bge_m3_artifacts::DEFAULT_REVISION,
+                "pulling pinned BGE-M3 artifacts"
+            );
+            let verified = match attempt {
+                Some(attempt) => artifacts
+                    .acquire_from_hf(attempt)
+                    .await
+                    .context("pull pinned BGE-M3 artifacts"),
+                None => {
+                    let artifacts = artifacts.clone();
+                    tokio::task::spawn_blocking(move || artifacts.verify())
+                        .await
+                        .context("join pinned BGE-M3 artifact verification")?
+                        .context("verify pinned BGE-M3 artifacts")
+                }
+            }?;
+            let adapter =
+                crate::providers::local_bge_m3::LocalBgeM3Adapter::open_verified(verified)
+                    .context("open verified BGE-M3 adapter")?;
+            adapter
+                .validate_load()
+                .await
+                .context("validate pinned BGE-M3 adapter load")
         }
         ManagedModel::Whisper(target) => {
             tracing::info!(
@@ -1077,40 +1257,7 @@ async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
             lifecycle_attempt,
         )
         .await;
-        match pull_result {
-            Ok(()) => {
-                if attempt.is_pending() {
-                    attempt
-                        .finish_ready(
-                            audit_sink
-                                .as_ref()
-                                .context("completed model attempt has no mandatory audit sink")?,
-                            &cache_dir,
-                        )
-                        .await
-                        .context("append mandatory ready MODEL_DOWNLOAD_COMPLETE")?;
-                }
-                Ok(())
-            }
-            Err(error) => {
-                if attempt.is_pending() {
-                    let terminal = attempt
-                        .finish_failed(
-                            audit_sink
-                                .as_ref()
-                                .context("failed model attempt has no mandatory audit sink")?,
-                            &format!("{error:#}"),
-                        )
-                        .await;
-                    if let Err(audit_error) = terminal {
-                        anyhow::bail!(
-                            "model pull failed: {error:#}; terminal D8 failed: {audit_error:#}"
-                        );
-                    }
-                }
-                Err(error)
-            }
-        }
+        finalize_model_pull(&mut attempt, audit_sink.as_ref(), &cache_dir, pull_result).await
     }
     .await;
 
@@ -1136,6 +1283,47 @@ async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
 
     println!("{} cached at {}", name, cache_dir.display());
     Ok(())
+}
+
+/// Complete the durable D7/D8 lifecycle after the concrete loader returns.
+/// A BGE-M3 artifact may hash correctly yet still fail its real Candle load;
+/// that error must take the failed D8 path and can never publish ready.
+async fn finalize_model_pull(
+    attempt: &mut crate::media::model_manager::ModelDownloadAttempt,
+    audit_sink: Option<&PullAuditSink>,
+    cache_dir: &Path,
+    pull_result: Result<()>,
+) -> Result<()> {
+    match pull_result {
+        Ok(()) => {
+            if attempt.is_pending() {
+                attempt
+                    .finish_ready(
+                        audit_sink.context("completed model attempt has no mandatory audit sink")?,
+                        cache_dir,
+                    )
+                    .await
+                    .context("append mandatory ready MODEL_DOWNLOAD_COMPLETE")?;
+            }
+            Ok(())
+        }
+        Err(error) => {
+            if attempt.is_pending() {
+                let terminal = attempt
+                    .finish_failed(
+                        audit_sink.context("failed model attempt has no mandatory audit sink")?,
+                        &format!("{error:#}"),
+                    )
+                    .await;
+                if let Err(audit_error) = terminal {
+                    anyhow::bail!(
+                        "model pull failed: {error:#}; terminal D8 failed: {audit_error:#}"
+                    );
+                }
+            }
+            Err(error)
+        }
+    }
 }
 
 fn run_prune(name: &str) -> Result<()> {
@@ -1297,6 +1485,143 @@ mod tests {
             }),
             OllamaIpcRequest::Cancel(operation_id) if operation_id == "op-01ABC"
         ));
+    }
+
+    #[test]
+    fn bge_m3_nested_commands_have_no_mutable_artifact_selectors() {
+        let pull = ModelsCli::try_parse_from(["models", "bge-m3", "pull"])
+            .expect("pinned BGE-M3 pull parses");
+        assert!(matches!(
+            pull.args.action,
+            ModelsAction::BgeM3 {
+                action: BgeM3ModelsAction::Pull
+            }
+        ));
+        let repair = ModelsCli::try_parse_from(["models", "bge-m3", "repair"])
+            .expect("pinned BGE-M3 repair parses");
+        assert!(matches!(
+            repair.args.action,
+            ModelsAction::BgeM3 {
+                action: BgeM3ModelsAction::Repair
+            }
+        ));
+        assert!(ModelsCli::try_parse_from(["models", "bge-m3", "pull", "--repo", "other/model"])
+            .is_err());
+        assert!(ModelsCli::try_parse_from(["models", "bge-m3", "pull", "--revision", "main"])
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn bge_m3_load_failure_records_failed_d8_and_never_ready() {
+        let home = tempfile::tempdir().unwrap();
+        let cache_dir = home.path().join("models").join("bge-m3");
+        let (writer, join) =
+            crate::wal::writer::spawn(home.path().join("attempt.wal")).unwrap();
+        let sink = PullAuditSink::Wal(writer);
+        let mut attempt = crate::media::model_manager::ModelDownloadAttempt::acquire(
+            &cache_dir,
+            crate::providers::bge_m3_artifacts::DEFAULT_REPO,
+            "explicit",
+        )
+        .await
+        .unwrap();
+        attempt.ensure_started(&sink).await.unwrap();
+
+        let error = finalize_model_pull(
+            &mut attempt,
+            Some(&sink),
+            &cache_dir,
+            Err(anyhow::anyhow!("BGE-M3 adapter load rejected pinned artifacts")),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("adapter load rejected"));
+        assert!(
+            !crate::media::model_manager::has_pending_download(&cache_dir).unwrap(),
+            "a durably accepted failed D8 clears the pending marker"
+        );
+        drop(attempt);
+        drop(sink);
+        join.await.unwrap();
+
+        let bytes = std::fs::read(home.path().join("attempt.wal")).unwrap();
+        let mut terminal_statuses = Vec::new();
+        crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE {
+                let payload: serde_json::Value = serde_json::from_slice(frame.payload)?;
+                terminal_statuses.push((
+                    payload["status"].as_str().unwrap_or_default().to_string(),
+                    payload["reason"].as_str().map(str::to_string),
+                ));
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(terminal_statuses.len(), 1);
+        assert_eq!(terminal_statuses[0].0, "failed");
+        assert!(terminal_statuses[0]
+            .1
+            .as_deref()
+            .is_some_and(|reason| reason.contains("adapter load rejected")));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a hosted runner with the hash-verified official BGE-M3 cache"]
+    async fn bge_m3_retained_ready_marker_is_healthy_only_for_its_recovery_attempt() {
+        struct FailComplete;
+
+        #[async_trait::async_trait]
+        impl crate::media::model_manager::ModelDownloadAuditSink for FailComplete {
+            async fn append_model_download(
+                &self,
+                event_type: u8,
+                _payload: Vec<u8>,
+            ) -> Result<()> {
+                if event_type == crate::wal::events::EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE {
+                    anyhow::bail!("simulate an accepted-ready cleanup interruption");
+                }
+                Ok(())
+            }
+        }
+
+        let home = std::env::var_os("NEOTH_BGE_M3_HOSTED_NEOTH_HOME")
+            .expect("hosted BGE-M3 recovery test requires its explicit NEOTH home");
+        let home = PathBuf::from(home);
+        let cfg = FreedomConfig::default();
+        let target = resolve_managed_model(&home, "bge-m3", None, &cfg).unwrap();
+        assert!(target.verified_cache_health(false).is_ready());
+
+        let mut attempt = crate::media::model_manager::ModelDownloadAttempt::acquire(
+            target.cache_path(),
+            crate::providers::bge_m3_artifacts::DEFAULT_REPO,
+            "explicit",
+        )
+        .await
+        .unwrap();
+        let failing = FailComplete;
+        attempt.ensure_started(&failing).await.unwrap();
+        assert!(attempt.finish_ready(&failing, target.cache_path()).await.is_err());
+
+        assert!(!target.verified_cache_health(false).is_ready());
+        assert!(target.verified_cache_health(true).is_ready());
+        assert!(!attempt.network_authorized(target.cache_path(), target.model_id()));
+        execute_pull_with(
+            &target,
+            &cfg.updater,
+            &RuntimeWhisperPrefetcher,
+            Some(&attempt),
+        )
+        .await
+        .expect("verified retained-ready cache must reload without new network authority");
+
+        let cleanup_wal = tempfile::tempdir().unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn(cleanup_wal.path().join("recovery-cleanup.wal")).unwrap();
+        let cleanup = PullAuditSink::Wal(writer);
+        attempt.replay_terminal(&cleanup).await.unwrap();
+        drop(cleanup);
+        join.await.unwrap();
     }
 
     #[test]

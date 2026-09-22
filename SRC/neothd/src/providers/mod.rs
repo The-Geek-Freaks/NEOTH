@@ -17,6 +17,7 @@ pub mod anthropic_api;
 pub mod aws_bedrock;
 pub mod aws_credentials;
 pub mod aws_sigv4;
+pub(crate) mod bge_m3_artifacts;
 pub mod azure_openai;
 pub mod circuit_breaker;
 pub mod circuit_breaker_stream;
@@ -45,6 +46,7 @@ pub mod gemini_api;
 pub mod http_client;
 pub mod known_endpoints;
 pub mod local_probe;
+pub mod local_bge_m3;
 pub mod local_qwen;
 pub mod meter;
 pub mod model_roles;
@@ -3622,13 +3624,145 @@ impl LocalEmbeddingProvider {
     }
 }
 
-/// Build the W208-capable local embedding provider.  The locality proof comes
-/// from this exhaustive concrete-config match, before the adapter is erased to
-/// `dyn EmbedProvider`; `EmbedProvider::name()` is never used as proof.
-pub async fn local_embedding_provider_from_config(
+/// Truthful state of the explicitly selected local embedding model.
+///
+/// The unavailable case retains the selected model and an operator-readable
+/// reason. It therefore cannot be misread as permission to retry a different
+/// local checkpoint or to route episode text to a remote provider.
+pub enum LocalEmbeddingReadiness {
+    Ready {
+        model: crate::config::embedding::EmbeddingModel,
+        provider: LocalEmbeddingProvider,
+    },
+    Unavailable {
+        model: crate::config::embedding::EmbeddingModel,
+        reason: String,
+    },
+}
+
+impl LocalEmbeddingReadiness {
+    pub const fn selected_model(&self) -> crate::config::embedding::EmbeddingModel {
+        match self {
+            Self::Ready { model, .. } | Self::Unavailable { model, .. } => *model,
+        }
+    }
+
+    pub fn unavailable_reason(&self) -> Option<&str> {
+        match self {
+            Self::Ready { .. } => None,
+            Self::Unavailable { reason, .. } => Some(reason),
+        }
+    }
+
+    fn into_provider(self) -> Option<LocalEmbeddingProvider> {
+        match self {
+            Self::Ready { provider, .. } => Some(provider),
+            Self::Unavailable { .. } => None,
+        }
+    }
+}
+
+/// Resolve the selected model through a concrete local adapter and retain why
+/// it is unavailable. The selection is independent of chat/profile routing.
+/// It is also deliberately stricter than the historical erased factory:
+/// selected BGE-M3 never falls through to Qwen or a cloud provider.
+pub async fn local_embedding_readiness_from_config(
     config: &FreedomConfig,
-) -> Option<LocalEmbeddingProvider> {
-    let provider_kind = config.inference.embedding_provider?;
+) -> LocalEmbeddingReadiness {
+    let home = FreedomConfig::default_neoth_home();
+    local_embedding_readiness_from_config_at(config, &home).await
+}
+
+/// Resolve local embedding readiness for one explicit NEOTH instance home.
+/// Callers already scoped to an instance must use this variant so BGE cache
+/// verification cannot accidentally inspect the process-default home.
+pub async fn local_embedding_readiness_from_config_at(
+    config: &FreedomConfig,
+    home: &Path,
+) -> LocalEmbeddingReadiness {
+    use crate::config::embedding::EmbeddingModel;
+    use crate::config::inference::InferenceProvider;
+
+    let selected = config.embed.model;
+    match selected {
+        EmbeddingModel::BgeM3 => {
+            if let Some(provider) = config.inference.embedding_provider
+                && !provider.is_local()
+            {
+                return LocalEmbeddingReadiness::Unavailable {
+                    model: selected,
+                    reason: format!(
+                        "embed.model=bge_m3 is incompatible with inference.embedding_provider={}; BGE-M3 is local-only",
+                        provider.as_str()
+                    ),
+                };
+            }
+            if matches!(
+                config.inference.embedding_provider,
+                Some(InferenceProvider::LocalOllama | InferenceProvider::RecursiveMas)
+            ) {
+                return LocalEmbeddingReadiness::Unavailable {
+                    model: selected,
+                    reason: "embed.model=bge_m3 requires its dedicated verified local adapter; the configured embedding provider is unsupported".to_owned(),
+                };
+            }
+
+            let artifacts = crate::providers::bge_m3_artifacts::BgeM3Artifacts::at_neoth_home(home);
+            let verified = match tokio::task::spawn_blocking(move || artifacts.verify()).await {
+                Ok(Ok(verified)) => verified,
+                Ok(Err(error)) => {
+                    return LocalEmbeddingReadiness::Unavailable {
+                        model: selected,
+                        reason: format!(
+                            "embed.model=bge_m3 is selected, but its pinned local artifacts are unavailable: {error}"
+                        ),
+                    };
+                }
+                Err(error) => {
+                    return LocalEmbeddingReadiness::Unavailable {
+                        model: selected,
+                        reason: format!(
+                            "embed.model=bge_m3 verification worker did not complete: {error}"
+                        ),
+                    };
+                }
+            };
+            match crate::providers::local_bge_m3::LocalBgeM3Adapter::open_verified(verified) {
+                Ok(adapter) => match adapter.validate_load().await {
+                    Ok(()) => LocalEmbeddingReadiness::Ready {
+                        model: selected,
+                        provider: LocalEmbeddingProvider(std::sync::Arc::new(adapter)),
+                    },
+                    Err(error) => LocalEmbeddingReadiness::Unavailable {
+                        model: selected,
+                        reason: format!(
+                            "embed.model=bge_m3 is selected, but its verified local model failed to load: {error}"
+                        ),
+                    },
+                },
+                Err(error) => LocalEmbeddingReadiness::Unavailable {
+                    model: selected,
+                    reason: format!(
+                        "embed.model=bge_m3 is selected, but its verified local adapter is unavailable: {error}"
+                    ),
+                },
+            }
+        }
+        EmbeddingModel::Qwen3Q8 => match config.inference.embedding_provider {
+            None => LocalEmbeddingReadiness::Unavailable {
+                model: selected,
+                reason: "embed.model=qwen3_q8 is selected, but inference.embedding_provider is not configured".to_owned(),
+            },
+            Some(provider_kind) => local_qwen_or_ouro_embedding_readiness(config, selected, provider_kind).await,
+        },
+    }
+}
+
+async fn local_qwen_or_ouro_embedding_readiness(
+    config: &FreedomConfig,
+    selected: crate::config::embedding::EmbeddingModel,
+    provider_kind: crate::config::inference::InferenceProvider,
+) -> LocalEmbeddingReadiness {
     match provider_kind {
         crate::config::inference::InferenceProvider::LocalOuro => {
             let repo = config.provider_model.clone();
@@ -3647,16 +3781,16 @@ pub async fn local_embedding_provider_from_config(
             )
             .await
             {
-                Ok(adapter) => Some(LocalEmbeddingProvider(std::sync::Arc::new(
-                    adapter.with_quant_mode(config.inference.ouro_quant_mode),
-                ))),
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "embed_provider_from_config: local_ouro build failed; Stage-2 disabled"
-                    );
-                    None
-                }
+                Ok(adapter) => LocalEmbeddingReadiness::Ready {
+                    model: selected,
+                    provider: LocalEmbeddingProvider(std::sync::Arc::new(
+                        adapter.with_quant_mode(config.inference.ouro_quant_mode),
+                    )),
+                },
+                Err(error) => LocalEmbeddingReadiness::Unavailable {
+                    model: selected,
+                    reason: format!("local Ouro embedding adapter is unavailable: {error}"),
+                },
             }
         }
         crate::config::inference::InferenceProvider::LocalQwen => {
@@ -3676,24 +3810,45 @@ pub async fn local_embedding_provider_from_config(
             )
             .await
             {
-                Ok(adapter) => Some(LocalEmbeddingProvider(std::sync::Arc::new(adapter))),
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "embed_provider_from_config: local_qwen build failed; Stage-2 disabled"
-                    );
-                    None
-                }
+                Ok(adapter) => LocalEmbeddingReadiness::Ready {
+                    model: selected,
+                    provider: LocalEmbeddingProvider(std::sync::Arc::new(adapter)),
+                },
+                Err(error) => LocalEmbeddingReadiness::Unavailable {
+                    model: selected,
+                    reason: format!("local Qwen embedding adapter is unavailable: {error}"),
+                },
             }
         }
-        other => {
-            tracing::warn!(
-                provider = %other.as_str(),
-                "embed_provider_from_config: no EmbedProvider impl yet; Stage-2 disabled (v0.1 ships local_qwen only)"
-            );
-            None
-        }
+        other => LocalEmbeddingReadiness::Unavailable {
+            model: selected,
+            reason: format!(
+                "inference.embedding_provider={} cannot provide the selected local Qwen embedding model",
+                other.as_str()
+            ),
+        },
     }
+}
+
+/// Build the W208-capable local embedding provider. The locality proof remains
+/// at the closed selected-model-to-concrete-adapter match above; this wrapper
+/// preserves the existing optional-consumer API without erasing readiness.
+pub async fn local_embedding_provider_from_config(
+    config: &FreedomConfig,
+) -> Option<LocalEmbeddingProvider> {
+    let home = FreedomConfig::default_neoth_home();
+    local_embedding_provider_from_config_at(config, &home).await
+}
+
+/// Instance-scoped W208 local embedding capability. This preserves the opaque
+/// locality proof while reading BGE artifacts from the caller's exact home.
+pub async fn local_embedding_provider_from_config_at(
+    config: &FreedomConfig,
+    home: &Path,
+) -> Option<LocalEmbeddingProvider> {
+    local_embedding_readiness_from_config_at(config, home)
+        .await
+        .into_provider()
 }
 
 /// Day-14b Phase 2 — build an embedding provider for consumers that do not
@@ -5428,6 +5583,28 @@ mod tests {
         assert_eq!(
             ProviderUsageAttribution::from_explicit_completion(&Completion::default()).unwrap(),
             None
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_bge_m3_rejects_cloud_embedding_provider_without_dispatch() {
+        let mut config = FreedomConfig::default();
+        config.embed.model = crate::config::embedding::EmbeddingModel::BgeM3;
+        config.inference.embedding_provider = Some(
+            crate::config::inference::InferenceProvider::OpenAi,
+        );
+
+        let readiness = local_embedding_readiness_from_config(&config).await;
+        assert_eq!(
+            readiness.selected_model(),
+            crate::config::embedding::EmbeddingModel::BgeM3
+        );
+        assert!(matches!(&readiness, LocalEmbeddingReadiness::Unavailable { .. }));
+        assert!(
+            readiness
+                .unavailable_reason()
+                .expect("unavailable BGE selection must retain a reason")
+                .contains("incompatible")
         );
     }
 }

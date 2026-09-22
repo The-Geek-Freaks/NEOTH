@@ -711,9 +711,10 @@ pub enum Commands {
     ///
     /// `list` shows every known model + cache status; `pull <name>`
     /// downloads artifacts for `clip` / `whisper`; `prune <name>`
-    /// deletes a model directory. Operators run `pull` once after
-    /// `neoth init` so the first media-extract doesn't block on a
-    /// multi-GiB HF download.
+    /// deletes a model directory. `bge-m3` exposes the separate immutable
+    /// local embedding artifact lifecycle, with no repository override.
+    /// Operators run `pull` once after `neoth init` so the first media-extract
+    /// doesn't block on a multi-GiB HF download.
     #[command(visible_alias = "model")]
     Models(models::ModelsArgs),
 

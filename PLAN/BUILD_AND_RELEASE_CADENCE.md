@@ -3,6 +3,20 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W210 BGE-M3 core/CLI (2026-09-22):** explicit `embed.model=bge_m3` selects
+only the verified local official model at immutable revision
+`5617a9f61b028005a4858fdac845db406aefb181`. The native Candle PTH adapter,
+fixed artifact manifest, D7/D8 acquisition/recovery, instance-bound readiness
+and `models bge-m3 list|status|pull|repair|prune` are integrated. Independent
+static review passed. Thirteen focused tests bring the grouped lane to 200;
+two separate Hosted tests exercise official weights and retained-Ready recovery.
+Inventory: 524 source inputs / 747 universal native / 87 GUI identities, with
+unchanged platform extras. Execution remains pending; GUI/Buddy parity is W211.
+`GOLD-LF-P2-24` stays open. See `docs/gold-wave210-verification.md`.
+On `7209c07d`, Grouped187 ran all selected cases and still reports W205/W207
+failures; artifact admission is being checked. Core test type-check passed and
+the CLI build is running. No local executable validation occurred.
+
 **W209 Hosted compile repair (2026-09-22):** Grouped187 `35757019692` and
 Core/CLI `35757023750` on `7ca58b52` stopped at compilation, before behavior
 execution. The compiler identified a missing `ChannelRef` import and owned

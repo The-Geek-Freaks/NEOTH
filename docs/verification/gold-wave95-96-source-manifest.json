@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T17:03:19.4332430Z",
-  "validationStatus": "W209 hosted compile repair; native and runtime acceptance pending",
+  "capturedUtc": "2026-09-22T17:16:01.9182990Z",
+  "validationStatus": "W210 BGE core/CLI integrated static PASS; focused200, hosted official model and GUI/Buddy parity pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -63,8 +63,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 11194,
-      "sha256": "53A5C5C83FE23E1578E56B5AB12C8D9EC5D2873A72AAFA1FFC727A7134F21CA1"
+      "bytes": 11223,
+      "sha256": "214A385E608AA21B4CA7A29FDF668E6135CA1417357E72553DFEA510FA6A5BCC"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -1003,8 +1003,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/chat.rs",
-      "bytes": 1084369,
-      "sha256": "31BF9A9BCFE051613B2570AD25C3C41D7BA94E8079C8C68522F342463E7958CC"
+      "bytes": 1084493,
+      "sha256": "0FA371646944064917DAD5D134ED052ADDBAE8222142DED2903895F32134E334"
     },
     {
       "path": "SRC/neothd/src/cli/citation.rs",
@@ -1163,13 +1163,13 @@
     },
     {
       "path": "SRC/neothd/src/cli/mod.rs",
-      "bytes": 114489,
-      "sha256": "DEAA75EFDD1C23A25257E8454A3B1B1866FF22F59506D37944C5077D3AC0F072"
+      "bytes": 114602,
+      "sha256": "233D273E9AA22209162C34810DBFA14982D0224C1B9F22DD033FEDD0B56438CA"
     },
     {
       "path": "SRC/neothd/src/cli/models.rs",
-      "bytes": 64481,
-      "sha256": "4BC2D70C456C5BEE0F3967FF946EF3919637E2D29956B64A0A5DC6DC7EF60171"
+      "bytes": 77990,
+      "sha256": "C34DB75CD4FC4DE11DC716FECACD9B5412D174872CC50AE64319EAA79B2105E9"
     },
     {
       "path": "SRC/neothd/src/cli/n8n.rs",
@@ -1243,8 +1243,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/serve.rs",
-      "bytes": 173864,
-      "sha256": "8E3CD647CB84E2B63D520ED3B03C9CAD51151182933743210BC6A54F0049D992"
+      "bytes": 173880,
+      "sha256": "C02038CCC6D6A844395B9D66B41A15BF39AE7BF4113F9F2562980D9FA9485DEA"
     },
     {
       "path": "SRC/neothd/src/cli/updater.rs",
@@ -1453,8 +1453,8 @@
     },
     {
       "path": "SRC/neothd/src/config/mod.rs",
-      "bytes": 149557,
-      "sha256": "613DCEE448F4F7408370D5C0764739C78DAD0F7A89FDB2AF8F26AE35F2141802"
+      "bytes": 149893,
+      "sha256": "0B9A350D55969B016BD8BC9F49F288CDD1779B629848A92FA1156451BA58F6F9"
     },
     {
       "path": "SRC/neothd/src/config/ops.rs",
@@ -2133,13 +2133,13 @@
     },
     {
       "path": "SRC/neothd/src/providers/local_qwen.rs",
-      "bytes": 87457,
-      "sha256": "11165D0B8D9A2F740A94826B2CE6C469CC0BA9B75973CF06F4F3564475146069"
+      "bytes": 87431,
+      "sha256": "339928A9F816746EEEE865F8096BCF43AC9C6FFFE821852A500386FFAFAAABD6"
     },
     {
       "path": "SRC/neothd/src/providers/mod.rs",
-      "bytes": 216798,
-      "sha256": "383E4D3AF292AA562332578668042013B16731FA1E049CE6A9479143F60D795C"
+      "bytes": 224262,
+      "sha256": "7EFFD644EA1BA937B6A5591F1344A083EC50F5C90252DFEC348F19A1CE9C0B2F"
     },
     {
       "path": "SRC/neothd/src/providers/ollama_api.rs",
@@ -2600,6 +2600,31 @@
       "path": "docs/gold-wave209-verification.md",
       "bytes": 2648,
       "sha256": "84F49167D71328383FD6F72D036008543192B697BBB35BE4C788C9BA991BD194"
+    },
+    {
+      "path": ".github/workflows/bge-m3.yml",
+      "bytes": 4815,
+      "sha256": "A03F5BCD83AADC79AED40B5BCC18E1BA6E988FF647E71C96E1E5DF6C6758B459"
+    },
+    {
+      "path": "SRC/neothd/src/config/embedding.rs",
+      "bytes": 2787,
+      "sha256": "4F4845815F7D033BD61D239E3AA157DEDC4EB234F9917ECCDD360080F4C283F2"
+    },
+    {
+      "path": "SRC/neothd/src/providers/bge_m3_artifacts.rs",
+      "bytes": 14447,
+      "sha256": "8FE9776A608E829DDB93B384C42E5EE140D8C95B511FC1CD897723DC3AB3FD41"
+    },
+    {
+      "path": "SRC/neothd/src/providers/local_bge_m3.rs",
+      "bytes": 13557,
+      "sha256": "7ECBB30AA9F9F004A45B10445278FE88D000C54A0B2229CF6D4C85427227EDF9"
+    },
+    {
+      "path": "docs/gold-wave210-verification.md",
+      "bytes": 2298,
+      "sha256": "A5A2A979B857ABF7E39CF9BE2F053E5F501B29D2DD85D5C651A1AB244CDBB90B"
     }
   ]
 }

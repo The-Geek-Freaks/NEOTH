@@ -1471,9 +1471,8 @@ pub fn preflight_disk_space(cache_dir: &std::path::Path, min_free_bytes: u64) ->
     let available = disk.available_space();
     if available < min_free_bytes {
         anyhow::bail!(
-            "insufficient disk space for Qwen download: {} available on {}, need {} \
-             (free up at least {} on this volume, or set \
-             NEOTH_QWEN_SKIP_DISK_PREFLIGHT=1 to bypass)",
+            "insufficient disk space for model download: {} available on {}, need {} \
+             (free up at least {} on this volume)",
             human_bytes(available),
             disk.mount_point().display(),
             human_bytes(min_free_bytes),
@@ -1732,17 +1731,17 @@ mod tests {
     #[test]
     fn preflight_disk_space_rejects_absurd_minimum() {
         // 1 EiB minimum on any real filesystem fails the
-        // check. Pin the operator-facing diagnostic mentions
-        // the env-var bypass + names the available + required
-        // sizes.
+        // check. The shared diagnostic names available and required space
+        // without suggesting a bypass that only the Qwen caller supports.
         let dir = std::env::temp_dir();
         let err = preflight_disk_space(&dir, 1u64 << 60)
             .unwrap_err()
             .to_string();
         assert!(
-            err.contains("NEOTH_QWEN_SKIP_DISK_PREFLIGHT")
-                || err.contains("no matching mount point"),
-            "diagnostic must name the bypass env-var or skip cleanly: {err}"
+            err.contains("insufficient disk space for model download")
+                && err.contains("available")
+                && err.contains("need"),
+            "diagnostic must name available and required space: {err}"
         );
     }
 

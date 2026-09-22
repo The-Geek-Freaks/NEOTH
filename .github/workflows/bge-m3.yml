@@ -1,0 +1,118 @@
+name: W210 BGE-M3 hosted acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bge-m3-hosted-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bge-m3-hosted:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+      RECEIPT_DIR: ${{ runner.temp }}/w210-bge-m3-receipt
+      NEOTH_BGE_M3_HOSTED_NEOTH_HOME: ${{ runner.temp }}/w210-bge-m3-home
+      NEOTH_HOME: ${{ runner.temp }}/w210-bge-m3-home
+    steps:
+      - name: Checkout main without credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup pinned Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      - name: Restore Cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-gold-smoke-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-gold-smoke-cargo-
+
+      - name: Record immutable source inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RECEIPT_DIR" "$NEOTH_BGE_M3_HOSTED_NEOTH_HOME"
+          git rev-parse HEAD > "$RECEIPT_DIR/source-head.txt"
+          sha256sum SRC/Cargo.lock SRC/neothd/src/config/mod.rs SRC/neothd/src/config/embedding.rs SRC/neothd/src/providers/mod.rs SRC/neothd/src/providers/local_bge_m3.rs SRC/neothd/src/providers/bge_m3_artifacts.rs SRC/neothd/src/cli/mod.rs SRC/neothd/src/cli/models.rs .github/workflows/bge-m3.yml > "$RECEIPT_DIR/source-inputs.sha256"
+          cat > "$NEOTH_BGE_M3_HOSTED_NEOTH_HOME/freedom.yaml" <<'EOF'
+          updater:
+            allow_huggingface_downloads: true
+          EOF
+
+      - name: Pull immutable official BGE-M3 through product CLI
+        id: pull
+        shell: bash
+        working-directory: SRC
+        run: |
+          set -euo pipefail
+          cargo run -p neoth --bin neoth --locked -- models bge-m3 pull 2>&1 | tee "$RECEIPT_DIR/bge-m3-pull.log"
+
+      - name: Run exact official BGE-M3 loader smoke
+        id: smoke
+        shell: bash
+        working-directory: SRC
+        run: |
+          set -euo pipefail
+          for test_name in \
+            'providers::local_bge_m3::tests::hosted_official_bge_m3_smoke' \
+            'cli::models::tests::bge_m3_retained_ready_marker_is_healthy_only_for_its_recovery_attempt'; do
+            log_name="${test_name##*::}.log"
+            cargo test -p neoth --lib --locked "$test_name" -- --exact --ignored --test-threads=1 2>&1 | tee "$RECEIPT_DIR/$log_name"
+            TEST_NAME="$test_name" LOG_PATH="$RECEIPT_DIR/$log_name" python - <<'PY'
+          import os
+          from pathlib import Path
+          test_name = os.environ["TEST_NAME"]
+          log = Path(os.environ["LOG_PATH"]).read_text(encoding="utf-8", errors="replace")
+          if log.count(test_name) < 1:
+              raise SystemExit("exact hosted test name was absent from Cargo output")
+          if "test result: ok. 1 passed; 0 failed;" not in log:
+              raise SystemExit("hosted Cargo receipt did not prove exactly one passing test")
+          PY
+            printf '%s\n' "$test_name" >> "$RECEIPT_DIR/passed-test.txt"
+          done
+
+      - name: Save completed Cargo cache
+        if: ${{ !cancelled() && steps.smoke.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-w210-bge-m3-cargo-complete-${{ hashFiles('SRC/Cargo.lock', 'SRC/neothd/src/providers/local_bge_m3.rs', 'SRC/neothd/src/providers/bge_m3_artifacts.rs', 'SRC/neothd/src/cli/models.rs') }}
+
+      - name: Upload small hosted receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w210-bge-m3-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/w210-bge-m3-receipt/*.log
+            ${{ runner.temp }}/w210-bge-m3-receipt/*.txt
+            ${{ runner.temp }}/w210-bge-m3-receipt/*.sha256
+          if-no-files-found: error
+          retention-days: 14
