@@ -4048,6 +4048,55 @@ mod tests {
         }
     }
 
+    struct MixedRetryAuthorizationDeniedProvider {
+        home: PathBuf,
+        attempts: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for MixedRetryAuthorizationDeniedProvider {
+        fn name(&self) -> &'static str {
+            "openai_api"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("gpt-5")
+        }
+
+        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+            Some(128)
+        }
+
+        async fn complete_raw(
+            &self,
+            _req: Request,
+            permit: &ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            loop {
+                match self.attempts.fetch_add(1, Ordering::SeqCst) {
+                    0 => {
+                        permit
+                            .finish_attempt_for_retry(ProviderRetryReason::Transient)
+                            .await?;
+                        permit.begin_retry_attempt().await?;
+                    }
+                    1 => {
+                        permit
+                            .finish_attempt_for_retry(ProviderRetryReason::SessionCollision)
+                            .await?;
+                        crate::consent::revoke(
+                            &self.home,
+                            crate::cli::init::ProviderKind::OpenaiApi,
+                        )?;
+                        permit.begin_retry_attempt().await?;
+                        unreachable!("revoked consent must deny the admitted third attempt")
+                    }
+                    _ => anyhow::bail!("retry denial must occur before a third raw provider send"),
+                }
+            }
+        }
+    }
+
     async fn run_scripted_retry(
         reason: ProviderRetryReason,
         retry_failures: usize,
@@ -4356,6 +4405,107 @@ mod tests {
             ]
         );
         assert_eq!(lifecycle[3].1["error_kind"], "provider_consent_revoked");
+        assert_eq!(
+            lifecycle[3].1["retry_receipt"]["disposition"],
+            "authorization_denied"
+        );
+        assert_eq!(lifecycle[3].1["retry_receipt"]["attempt"], 2);
+        assert_eq!(
+            lifecycle[3].1["retry_receipt"]["class"],
+            lifecycle[1].1["retry_receipt"]["class"]
+        );
+        assert_eq!(
+            lifecycle[3].1["retry_receipt"]["retry_chain_id"],
+            lifecycle[1].1["retry_receipt"]["retry_chain_id"]
+        );
+        assert_eq!(
+            lifecycle[3].1["retry_receipt"]["provider"],
+            lifecycle[1].1["retry_receipt"]["provider"]
+        );
+        assert_eq!(
+            lifecycle[3].1["retry_receipt"]["wire_model"],
+            lifecycle[1].1["retry_receipt"]["wire_model"]
+        );
+    }
+
+    #[tokio::test]
+    async fn mixed_retry_chain_retains_origin_only_for_final_authorization_denial() {
+        let home = tempfile::tempdir().unwrap();
+        crate::consent::grant(home.path(), crate::cli::init::ProviderKind::OpenaiApi).unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let segment = wal.join("000001.wal");
+        let (writer, join, ready) = crate::wal::writer::spawn_for_home_ready(
+            segment.clone(),
+            home.path().to_path_buf(),
+        )
+        .unwrap();
+        ready.wait().await.unwrap();
+        let inner = MixedRetryAuthorizationDeniedProvider {
+            home: home.path().to_path_buf(),
+            attempts: AtomicUsize::new(0),
+        };
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Full,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            )
+            .with_usage_home(home.path()),
+            None,
+            "test.mixed_retry_denial",
+        );
+        let error = provider.complete(Request::default()).await.unwrap_err();
+        assert!(error.to_string().contains("consent"));
+        assert_eq!(inner.attempts.load(Ordering::SeqCst), 2);
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+
+        let lifecycle = wal_frames(&segment)
+            .into_iter()
+            .filter(|frame| {
+                matches!(
+                    frame.0,
+                    crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST
+                        | crate::wal::events::EVENT_TYPE_PROVIDER_ERROR
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lifecycle.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            ]
+        );
+        let first = &lifecycle[1].1["retry_receipt"];
+        let second = &lifecycle[3].1["retry_receipt"];
+        let denied = &lifecycle[5].1["retry_receipt"];
+        assert_eq!(first["class"], "transient");
+        assert_eq!(first["disposition"], "retry_intent_closed");
+        assert_eq!(first["attempt"], 1);
+        assert_eq!(second["class"], "session_collision");
+        assert_eq!(second["disposition"], "retry_intent_closed");
+        assert_eq!(second["attempt"], 2);
+        assert_eq!(denied["class"], "transient");
+        assert_eq!(denied["disposition"], "authorization_denied");
+        assert_eq!(denied["attempt"], 3);
+        for field in ["retry_chain_id", "provider", "wire_model"] {
+            assert_eq!(first[field], second[field]);
+            assert_eq!(first[field], denied[field]);
+        }
+
+        let history = crate::providers::claude_retry::retry_operator_history(home.path());
+        let rows = history["receipts"].as_array().expect("Buddy retry rows");
+        assert_eq!(rows.len(), 1, "later terminal supersedes the chain projection");
+        assert_eq!(rows[0]["receipt"]["disposition"], "authorization_denied");
+        assert_eq!(rows[0]["follow_up_lifecycle"], "not_observed");
     }
 
     #[tokio::test]

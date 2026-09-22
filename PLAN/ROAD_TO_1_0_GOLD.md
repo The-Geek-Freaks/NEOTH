@@ -8,6 +8,21 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W221 retry consent-denial receipt + W224 acceptance selection (2026-09-22):**
+an already admitted retry stopped by the final live-consent fence now emits a
+bounded `authorization_denied` terminal. Per-attempt error classes remain exact;
+the denial retains the chain's origin class. Core and GUI require attempt >=2,
+non-Auth and no observed follow-up. The mixed-chain fixture uses the actual
+authenticated home WAL and Buddy reader. Independent source review passed;
+Hosted behavior is pending. Role/effect-start denial visibility remains open.
+W224 selects four existing Channel/Block-D tests absent from earlier grouped
+runs; Grouped281 now includes them and the two W221 cases. P2-10 remains open
+until exact selected results pass. Inventory: 532 sources / 819 native / 94 GUI,
+unchanged 22/22 platform GUI extras and 26 custom macOS cases.
+**Confirmed:** Grouped274 `35783436951` on `e8772e77` is admitted at274/274,
+including both W220 tests, with all57 source hashes/matrix/lock/terminals bound.
+See `docs/gold-wave221-verification.md` and `docs/gold-wave224-registry-acceptance.md`.
+Road remains1015 checked/307 open/2 partial. Local BSOD hold remains absolute.
 **W223 slim-core Clippy corrections (2026-09-22):** the Linux quality job
 `106931734757` in full CI `35782661515` reported nine diagnostics. Four source
 files now use test-only gates for genuinely test-only wrappers, direct function

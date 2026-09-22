@@ -76,6 +76,9 @@ pub(crate) enum RetryDisposition {
     RetryIntentClosed,
     Exhausted,
     AuthNonRetryable,
+    /// A previously admitted retry was denied by its final live-authorization
+    /// fence before another raw transport submission.
+    AuthorizationDenied,
 }
 
 const RETRY_HISTORY_MAX_ENTRIES: usize = 16;
@@ -164,6 +167,9 @@ fn valid_retry_receipt(receipt: &RetryOperatorReceipt) -> bool {
         && receipt.retry_chain_id.len() <= RETRY_HISTORY_MAX_FIELD_BYTES
         && receipt.provider.len() <= RETRY_HISTORY_MAX_FIELD_BYTES
         && receipt.wire_model.len() <= RETRY_HISTORY_MAX_FIELD_BYTES
+        && (matches!(receipt.class, RetryClass::Auth)
+            == matches!(receipt.disposition, RetryDisposition::AuthNonRetryable))
+        && (receipt.disposition != RetryDisposition::AuthorizationDenied || receipt.attempt >= 2)
 }
 
 #[derive(Serialize)]
@@ -570,6 +576,32 @@ mod tests {
         assert_eq!(wire["disposition"], "exhausted");
         assert!(wire.get("prompt").is_none());
         assert!(wire.get("error").is_none());
+
+        let auth_denial = RetryOperatorReceipt::new(
+            "invocation-opaque-2".to_owned(),
+            RetryClass::Auth,
+            1,
+            "claude_cli",
+            "claude-3-7-sonnet",
+            RetryDisposition::AuthorizationDenied,
+        );
+        assert!(
+            !valid_retry_receipt(&auth_denial),
+            "an auth class can only use auth_non_retryable"
+        );
+
+        let first_attempt_denial = RetryOperatorReceipt::new(
+            "invocation-opaque-3".to_owned(),
+            RetryClass::Transient,
+            1,
+            "claude_cli",
+            "claude-3-7-sonnet",
+            RetryDisposition::AuthorizationDenied,
+        );
+        assert!(
+            !valid_retry_receipt(&first_attempt_denial),
+            "authorization denial requires an admitted later retry attempt"
+        );
     }
 
     #[tokio::test]
@@ -623,6 +655,12 @@ mod tests {
                 session_a,
             ),
             ("exhausted", 1, RetryDisposition::Exhausted, session_a),
+            (
+                "authorization-denied",
+                2,
+                RetryDisposition::AuthorizationDenied,
+                session_a,
+            ),
             (
                 "shared-chain",
                 1,
@@ -705,7 +743,7 @@ mod tests {
         let rows = history["receipts"].as_array().expect("receipt rows");
         assert_eq!(
             rows.len(),
-            7,
+            8,
             "malformed receipts and live tails stay absent"
         );
         let valid = rows
@@ -718,6 +756,7 @@ mod tests {
             "earlier-request",
             "wrong-attempt",
             "exhausted",
+            "authorization-denied",
         ] {
             let row = rows
                 .iter()

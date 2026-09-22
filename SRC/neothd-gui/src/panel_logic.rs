@@ -8644,6 +8644,7 @@ enum BuddyProviderRetryDispositionWire {
     RetryIntentClosed,
     Exhausted,
     AuthNonRetryable,
+    AuthorizationDenied,
 }
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -9055,6 +9056,11 @@ fn project_buddy_provider_retry(
         if receipt.schema != "neoth.retry-receipt.v1" || receipt.attempt == 0 {
             return Err("provider retry receipt has an unknown schema or zero attempt".into());
         }
+        if receipt.disposition == BuddyProviderRetryDispositionWire::AuthorizationDenied
+            && receipt.attempt < 2
+        {
+            return Err("provider retry authorization denial requires a later attempt".into());
+        }
         let auth_class = matches!(&receipt.class, BuddyProviderRetryClassWire::Auth);
         let auth_disposition = matches!(
             &receipt.disposition,
@@ -9085,6 +9091,7 @@ fn project_buddy_provider_retry(
                 BuddyProviderRetryDispositionWire::RetryIntentClosed => "retry_intent_closed",
                 BuddyProviderRetryDispositionWire::Exhausted => "exhausted",
                 BuddyProviderRetryDispositionWire::AuthNonRetryable => "auth_non_retryable",
+                BuddyProviderRetryDispositionWire::AuthorizationDenied => "authorization_denied",
             }
             .into(),
             follow_up_lifecycle: match entry.follow_up_lifecycle {
@@ -13839,6 +13846,24 @@ mod tests {
             super::parse_buddy_status(&valid_auth).is_ok(),
             "auth must use auth_non_retryable with no follow-up observation"
         );
+        let valid_authorization_denied = available
+            .replace("retry_intent_closed", "authorization_denied")
+            .replace("\"observed\"", "\"not_observed\"")
+            .replace("\"attempt\":1", "\"attempt\":2");
+        let denied = super::parse_buddy_status(&valid_authorization_denied)
+            .expect("non-auth retry denial is a valid terminal receipt");
+        assert_eq!(denied.provider_retry.rows[0].disposition, "authorization_denied");
+        assert_eq!(
+            denied.provider_retry.rows[0].follow_up_lifecycle,
+            "not_observed"
+        );
+        assert!(
+            super::parse_buddy_status(
+                &valid_authorization_denied.replace("\"attempt\":2", "\"attempt\":1")
+            )
+            .is_err(),
+            "authorization-denied must name a later retry attempt"
+        );
         let unavailable = format!(r#"{base},"provider_retry":{{"kind":"unavailable"}}}}"#);
         assert!(
             !super::parse_buddy_status(&unavailable)
@@ -13873,6 +13898,21 @@ mod tests {
             )
             .is_err(),
             "non-auth retry classes cannot claim an auth disposition"
+        );
+        assert!(
+            super::parse_buddy_status(&valid_authorization_denied.replace(
+                "\"class\":\"transient\"",
+                "\"class\":\"auth\""
+            ))
+            .is_err(),
+            "auth cannot claim an authorization-denied disposition"
+        );
+        assert!(
+            super::parse_buddy_status(
+                &valid_authorization_denied.replace("authorization_denied", "unknown_denial")
+            )
+            .is_err(),
+            "unknown retry dispositions must fail closed"
         );
         assert!(
             super::parse_buddy_status(&available.replace("\"attempt\":1", "\"attempt\":0"))

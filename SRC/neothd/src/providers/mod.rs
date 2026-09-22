@@ -1773,6 +1773,7 @@ pub struct ProviderDispatchPermit {
     role_dispatch: Arc<std::sync::Mutex<Option<crate::config::role_policy::RoleDispatchDecision>>>,
     retry_chain_id: std::sync::Mutex<Option<String>>,
     retry_attempt: std::sync::Mutex<u32>,
+    retry_origin_class: std::sync::Mutex<Option<claude_retry::RetryClass>>,
     _private: (),
 }
 
@@ -1811,6 +1812,7 @@ impl ProviderDispatchPermit {
             role_dispatch,
             retry_chain_id: std::sync::Mutex::new(None),
             retry_attempt: std::sync::Mutex::new(0),
+            retry_origin_class: std::sync::Mutex::new(None),
             _private: (),
         }
     }
@@ -1837,6 +1839,7 @@ impl ProviderDispatchPermit {
             role_dispatch,
             retry_chain_id: std::sync::Mutex::new(None),
             retry_attempt: std::sync::Mutex::new(0),
+            retry_origin_class: std::sync::Mutex::new(None),
             _private: (),
         }
     }
@@ -1970,7 +1973,10 @@ impl ProviderDispatchPermit {
             .authorizer
             .ensure_live_consent(retry.consent_route.as_ref())
         {
-            if let Err(audit_error) = self.failure("provider_consent_revoked").await {
+            if let Err(audit_error) = self
+                .finish_retry_authorization_denied("provider_consent_revoked")
+                .await
+            {
                 return Err(anyhow::anyhow!(
                     "provider consent was revoked and terminal audit failed: {audit_error}; consent error: {error}"
                 ));
@@ -2056,6 +2062,15 @@ impl ProviderDispatchPermit {
         let mut state = self.audit.lock().await;
         match &mut *state {
             ProviderDispatchAuditState::Active(audit) => {
+                {
+                    let mut origin_class = self
+                        .retry_origin_class
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("provider retry class state is poisoned"))?;
+                    if origin_class.is_none() {
+                        *origin_class = Some(reason.retry_class());
+                    }
+                }
                 let receipt = self.retry_receipt(
                     audit,
                     reason.retry_class(),
@@ -2074,6 +2089,50 @@ impl ProviderDispatchPermit {
             }
             ProviderDispatchAuditState::TransportOnly => {
                 anyhow::bail!("transport-only dispatch permits cannot authorize retries")
+            }
+        }
+    }
+
+    /// Close an admitted retry that the final authorization or effect-start
+    /// fence denied before raw transport. Earlier reauthorization failures do
+    /// not reach `Active` and deliberately retain their existing no-receipt
+    /// behavior.
+    pub(crate) async fn finish_retry_authorization_denied(
+        &self,
+        error_kind: &'static str,
+    ) -> Result<()> {
+        let mut state = self.audit.lock().await;
+        match &mut *state {
+            ProviderDispatchAuditState::Active(audit) => {
+                let class = self
+                    .retry_origin_class
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("provider retry class state is poisoned"))?
+                    .to_owned();
+                let Some(class) = class else {
+                    let result = audit.failure(error_kind).await;
+                    *state = ProviderDispatchAuditState::Closed;
+                    return result;
+                };
+                if class == claude_retry::RetryClass::Auth {
+                    anyhow::bail!("auth retry origin cannot produce an authorization-denied receipt");
+                }
+                let receipt = self.retry_receipt(
+                    audit,
+                    class,
+                    claude_retry::RetryDisposition::AuthorizationDenied,
+                )?;
+                audit.attach_retry_receipt(receipt);
+                let result = audit.failure(error_kind).await;
+                *state = ProviderDispatchAuditState::Closed;
+                result
+            }
+            ProviderDispatchAuditState::BetweenAttempts => {
+                anyhow::bail!("provider retry authorization denial arrived before a lifecycle intent")
+            }
+            ProviderDispatchAuditState::Closed => Ok(()),
+            ProviderDispatchAuditState::TransportOnly => {
+                anyhow::bail!("transport-only dispatch permits cannot write retry denial receipts")
             }
         }
     }
