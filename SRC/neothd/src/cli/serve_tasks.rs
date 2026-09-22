@@ -27,6 +27,56 @@ pub(crate) struct AdmittedLegacyTelegramSingleton {
     sender_id: u64,
 }
 
+#[cfg(test)]
+mod vault_mirror_scheduler_tests {
+    use std::collections::HashSet;
+
+    use super::{CronKey, desired_cron_keys, plan_cron_fleet_reload};
+    use crate::config::FreedomConfig;
+    use crate::config::reload::{ReloadController, ReloadResult};
+
+    #[test]
+    fn vault_mirror_scheduler_requires_both_nightly_gates() {
+        let mut config = FreedomConfig::default();
+        assert!(!desired_cron_keys(&config).contains(&CronKey::VaultMirror));
+        config.vault_mirror.enabled = true;
+        assert!(!desired_cron_keys(&config).contains(&CronKey::VaultMirror));
+        config.vault_mirror.allow_nightly_push = true;
+        assert!(desired_cron_keys(&config).contains(&CronKey::VaultMirror));
+    }
+
+    #[test]
+    fn accepted_reload_revoking_nightly_push_stops_scheduler() {
+        let temp = tempfile::tempdir().expect("temporary config directory");
+        let path = temp.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            "vault_mirror:\n  enabled: true\n  allow_nightly_push: true\n  remote_url: ssh://git@git.example.invalid/operator/neoth-vault.git\n",
+        )
+        .expect("write enabled config");
+        let controller = ReloadController::new(FreedomConfig::default(), path.clone());
+        assert!(matches!(
+            controller.try_reload().expect("accept enabled mirror config"),
+            ReloadResult::Reloaded { .. }
+        ));
+        assert!(desired_cron_keys(&controller.latest()).contains(&CronKey::VaultMirror));
+        let running = HashSet::from([CronKey::VaultMirror]);
+        std::fs::write(
+            path,
+            "vault_mirror:\n  enabled: true\n  allow_nightly_push: false\n  remote_url: ssh://git@git.example.invalid/operator/neoth-vault.git\n",
+        )
+        .expect("write revoked config");
+        assert!(matches!(
+            controller.try_reload().expect("accept revoked mirror config"),
+            ReloadResult::Reloaded { .. }
+        ));
+        let desired = desired_cron_keys(&controller.latest());
+        let (to_stop, to_start) = plan_cron_fleet_reload(&running, &desired, &HashSet::new());
+        assert_eq!(to_stop, vec![CronKey::VaultMirror]);
+        assert!(to_start.is_empty());
+    }
+}
+
 impl AdmittedLegacyTelegramSingleton {
     pub(crate) fn sender_id(&self) -> u64 {
         self.sender_id
@@ -81,6 +131,7 @@ pub(crate) enum CronKey {
     ObsidianWikiRebuild,
     SelfMap,
     ConsolidationSweep,
+    VaultMirror,
     MonitorCron,
     Dream,
     #[cfg(feature = "cluster")]
@@ -188,6 +239,12 @@ pub(crate) fn desired_cron_keys(cfg: &FreedomConfig) -> std::collections::HashSe
     }
     if cfg.babel.enabled {
         keys.insert(Babel);
+    }
+    // W184: both positive gates are required before the daemon owns a task
+    // that can reach a configured remote. A manual-only configuration remains
+    // available to the CLI but has no background child to reload or drain.
+    if cfg.vault_mirror.enabled && cfg.vault_mirror.allow_nightly_push {
+        keys.insert(VaultMirror);
     }
     if cfg.dreaming.enabled && crate::cron::scheduler::autonomy_allows_scheduler(cfg.autonomy) {
         keys.insert(Dream);
@@ -570,6 +627,7 @@ pub(crate) async fn spawn_cron_for_key(
         }
         Babel => spawn_babel_cron(cfg, home, wd, &deps.views_executor, deps.sse_tx.clone())
             .into_cron_task(),
+        VaultMirror => spawn_vault_mirror_cron(cfg, rc, home).into_cron_task(),
         BgMonitor => spawn_bg_monitor_task(cfg, rc, home).into_cron_task(),
         ContradictionResolve => spawn_contradiction_resolve_cron(cfg, home).into_cron_task(),
         MonitorCron => spawn_monitor_cron(cfg, rc, home, wd, w).into_cron_task(),
@@ -602,6 +660,53 @@ pub(crate) async fn spawn_cron_for_key(
                 .into_cron_task()
         }
     }
+}
+
+/// GOLD-LF-P2-03 — reload-aware nightly dedicated Git WAL mirror.
+///
+/// The fleet owns this handle, so a config reload revoking either positive
+/// gate aborts it and ordered daemon shutdown reaps it before the process
+/// exits. Every tick snapshots the latest accepted configuration; the core
+/// makes the durable receipt and Git-process decisions from that same copy.
+pub(crate) fn spawn_vault_mirror_cron(
+    config: &FreedomConfig,
+    reload_controller: &Arc<ReloadController>,
+    home: &std::path::Path,
+) -> Option<JoinHandle<()>> {
+    if !config.vault_mirror.enabled || !config.vault_mirror.allow_nightly_push {
+        return None;
+    }
+    let boot_cfg = config.vault_mirror.clone();
+    let ctrl = Arc::clone(reload_controller);
+    let home = home.to_path_buf();
+    info!(
+        interval_secs = boot_cfg.interval_secs,
+        "vault-mirror nightly cron loop spawned (GOLD-LF-P2-03)"
+    );
+    Some(tokio::spawn(async move {
+        let mut current_interval = std::time::Duration::from_secs(boot_cfg.interval_secs);
+        let mut ticker = tokio::time::interval(current_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            let live_cfg = ctrl.latest().vault_mirror.clone();
+            let live_interval = std::time::Duration::from_secs(live_cfg.interval_secs);
+            if live_interval != current_interval {
+                current_interval = live_interval;
+                ticker = tokio::time::interval(current_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                continue;
+            }
+            // This positive gate is checked again on the accepted snapshot so
+            // an already-spawned task cannot create a new Git child after a
+            // concurrent reload has revoked unattended publication.
+            if !live_cfg.enabled || !live_cfg.allow_nightly_push {
+                tracing::debug!("vault-mirror nightly cron disabled by accepted reload snapshot");
+                continue;
+            }
+            let _status = crate::daemon::vault_mirror::run_nightly(&home, &live_cfg).await;
+        }
+    }))
 }
 
 /// R-5 — Obsidian vault auto-sync. Spawned only when `freedom.yaml::obsidian_vault`

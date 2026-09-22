@@ -48,10 +48,12 @@ use serde_json::{Value, json};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
+use crate::daemon::vault_mirror;
 use crate::self_improve::passive;
 
 const SELF_ACTIVATION_ACTION: &str = "set_self_activation";
 const PROACTIVE_ACTION: &str = "set_proactive";
+const VAULT_MIRROR_REPAIR_ACTION: &str = "vault_mirror_repair";
 
 // ── Args ──────────────────────────────────────────────────────────────────────
 
@@ -112,6 +114,14 @@ pub enum BuddyAction {
         disable: bool,
     },
 
+    /// Read or reconcile the same private vault-mirror service used by
+    /// `neoth backup mirror`; this surface has no policy bypass.
+    #[command(name = "vault-mirror")]
+    VaultMirror {
+        #[command(subcommand)]
+        action: BuddyVaultMirrorAction,
+    },
+
     /// Membership pairing and revocation through the same daemon/offline
     /// authority controller used by `neoth cluster`.
     #[cfg(feature = "cluster")]
@@ -119,6 +129,14 @@ pub enum BuddyAction {
         #[command(subcommand)]
         action: BuddyClusterAction,
     },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum BuddyVaultMirrorAction {
+    /// Read the mirror receipt without starting Git.
+    Status,
+    /// Reconcile only a durable ambiguous push receipt against its exact ref.
+    Repair,
 }
 
 #[cfg(feature = "cluster")]
@@ -190,6 +208,7 @@ pub async fn run_buddy(args: BuddyArgs) -> Result<()> {
             run_self_activation(enable, disable, args.output)
         }
         BuddyAction::Proactive { enable, disable } => run_proactive(enable, disable, args.output),
+        BuddyAction::VaultMirror { action } => run_vault_mirror(action, args.output).await,
         #[cfg(feature = "cluster")]
         BuddyAction::Cluster { action } => run_cluster(action, args.output).await,
     }
@@ -381,6 +400,10 @@ async fn run_status(output: OutputFormat) -> Result<()> {
     let autonomy = cfg.autonomy.as_str().to_owned();
     let proactive_enabled = cfg.proactive.enabled;
     let home = FreedomConfig::default_neoth_home();
+    let vault_mirror = crate::cli::backup::mirror_status_wire(&vault_mirror::status(
+        &home,
+        &cfg.vault_mirror,
+    ));
     let self_improve_quality = passive::quality_snapshot(&home);
     let path = FreedomConfig::default_path();
     let mut skill_autonomy_caps = Vec::new();
@@ -411,6 +434,7 @@ async fn run_status(output: OutputFormat) -> Result<()> {
                     "proactive_enabled": proactive_enabled,
                     "skill_autonomy_caps": skill_autonomy_caps,
                     "self_improve_quality": self_improve_quality,
+                    "vault_mirror": vault_mirror,
                 })
             );
         }
@@ -434,9 +458,43 @@ async fn run_status(output: OutputFormat) -> Result<()> {
                 "self_improve_quality    : {}",
                 serde_json::to_string(&self_improve_quality)?
             );
+            println!("vault_mirror            : {}", vault_mirror);
         }
     }
     Ok(())
+}
+
+async fn run_vault_mirror(action: BuddyVaultMirrorAction, output: OutputFormat) -> Result<()> {
+    let cfg = FreedomConfig::load_from_default_path()
+        .context("load freedom.yaml for vault mirror (run `neoth init` first if this is a fresh install)")?;
+    let home = FreedomConfig::default_neoth_home();
+    let is_repair = matches!(action, BuddyVaultMirrorAction::Repair);
+    let status = match action {
+        BuddyVaultMirrorAction::Status => vault_mirror::status(&home, &cfg.vault_mirror),
+        BuddyVaultMirrorAction::Repair => vault_mirror::repair(&home, &cfg.vault_mirror).await,
+    };
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            if is_repair {
+                println!("{}", vault_mirror_repair_ack(&status));
+            } else {
+                println!("{}", crate::cli::backup::mirror_status_wire(&status));
+            }
+        }
+        OutputFormat::Table => crate::cli::backup::render_mirror_status(&status, output)?,
+    }
+    Ok(())
+}
+
+/// A reconciliation is successful only when the core reports no remaining
+/// action.  Blocked and indeterminate outcomes retain their exact status for
+/// the caller and never receive a misleading success acknowledgement.
+fn vault_mirror_repair_ack(status: &vault_mirror::VaultMirrorStatus) -> Value {
+    json!({
+        "ok": matches!(&status.repair, vault_mirror::MirrorRepairAdvice::NoAction),
+        "action": VAULT_MIRROR_REPAIR_ACTION,
+        "vault_mirror": crate::cli::backup::mirror_status_wire(status),
+    })
 }
 
 // ── self-activation toggle ────────────────────────────────────────────────────
@@ -522,11 +580,18 @@ fn set_proactive_at(path: &std::path::Path, enabled: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
     use crate::{
         config::{FreedomConfig, SelfActivationConfig},
         permissions::AutonomyLevel,
     };
     use tempfile::TempDir;
+
+    #[derive(Debug, Parser)]
+    struct BuddyCli {
+        #[command(flatten)]
+        args: BuddyArgs,
+    }
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -633,6 +698,39 @@ mod tests {
         assert_eq!(proactive["action"], PROACTIVE_ACTION);
         assert_eq!(proactive["proactive_enabled"], false);
         assert_eq!(proactive.as_object().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn vault_mirror_surface_parses_status_and_repair_without_a_bypass_flag() {
+        let status = BuddyCli::try_parse_from(["buddy", "vault-mirror", "status"])
+            .expect("vault-mirror status parses");
+        assert!(matches!(
+            status.args.action,
+            BuddyAction::VaultMirror {
+                action: BuddyVaultMirrorAction::Status
+            }
+        ));
+        let repair = BuddyCli::try_parse_from(["buddy", "vault-mirror", "repair"])
+            .expect("vault-mirror repair parses");
+        assert!(matches!(
+            repair.args.action,
+            BuddyAction::VaultMirror {
+                action: BuddyVaultMirrorAction::Repair
+            }
+        ));
+    }
+
+    #[test]
+    fn unresolved_vault_mirror_repair_ack_is_not_success() {
+        let status = vault_mirror::VaultMirrorStatus {
+            config: vault_mirror::MirrorConfigStatus::Blocked,
+            receipt: None,
+            repair: vault_mirror::MirrorRepairAdvice::RunVerification,
+        };
+        let ack = vault_mirror_repair_ack(&status);
+        assert_eq!(ack["ok"], false);
+        assert_eq!(ack["action"], VAULT_MIRROR_REPAIR_ACTION);
+        assert_eq!(ack["vault_mirror"]["repair"], "run_verification");
     }
 
     // ── smart_approve_any reflects live security.smart_approve ───────────────

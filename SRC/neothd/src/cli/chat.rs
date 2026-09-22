@@ -8805,6 +8805,7 @@ async fn run_chat_with_consent(
 /// The direct adapter's one post-WAL terminal boundary. It is intentionally
 /// small so lifecycle tests exercise the same error and sink ordering as the
 /// production CLI path.
+#[allow(clippy::too_many_arguments)] // Post-WAL lifecycle, sink, and response-feedback boundary stays explicit.
 fn finish_cli_chat_turn_with_response_feedback(
     result: Result<Option<ChatOutput>>,
     drained: Result<()>,

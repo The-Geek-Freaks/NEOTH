@@ -1122,12 +1122,13 @@ pub use automation::{
     DEFAULT_REGRESSION_INTERVAL_SECS, DEFAULT_RESOURCE_WATCH_INTERVAL_SECS,
     DEFAULT_SESSION_HEALTH_INTERVAL_SECS, DEFAULT_SKILL_CURATOR_INTERVAL_SECS,
     DEFAULT_SYNTHESIS_CRON_INTERVAL_SECS, DEFAULT_TOKEN_ANOMALY_INTERVAL_SECS,
+    DEFAULT_VAULT_MIRROR_INTERVAL_SECS, DEFAULT_VAULT_MIRROR_RETAIN_VERIFIED_RUNS,
     DEFAULT_WATCHDOG_WINDOW_SECS, DriftAlertConfig, EmailIngestCronConfig, GuidanceCronConfig,
     KanbanSseConfig, MonitorConfig, N8nApiConfig, OaiServeConfig, PatternCronConfig,
     ProactiveConfig, ProfileAdaptConfig, RecallLatencyConfig, RecursiveMasConfig,
     RegressionAnchorConfig, ResourceWatchConfig, SelfActivationConfig, SelfWikiConfig,
     SessionHealthConfig, SkillCuratorConfig, SynthesisCronConfig, TokenAnomalyConfig,
-    WatchdogConfig,
+    VaultMirrorConfig, WatchdogConfig,
 };
 pub use features::{
     ArxivIngestConfig, ArxivSkillScanConfig, CalendarConfig, ChannelLearnScope,
@@ -1699,6 +1700,10 @@ pub struct FreedomConfig {
     /// action without operator GO per command".
     #[serde(default)]
     pub proactive: ProactiveConfig,
+    /// GOLD-LF-P2-03 — private dedicated Git WAL archive mirror. Default OFF;
+    /// its independent nightly/manual push flags default OFF as well.
+    #[serde(default)]
+    pub vault_mirror: VaultMirrorConfig,
     /// HO-09 / V1x-03 — profile baseline drift alerting. When
     /// `enabled = true`, a drift-report whose ratio exceeds `threshold`
     /// is surfaced as an alert (CLI today; daemon cron is a follow-on).
@@ -2835,6 +2840,9 @@ impl FreedomConfig {
         self.proactive
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid proactive config: {error}"))?;
+        self.vault_mirror
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid vault_mirror config: {error}"))?;
         self.companion
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid companion config: {error}"))?;
@@ -2954,6 +2962,29 @@ fn warn_if_world_readable(path: &Path) {
                 path.display()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod vault_mirror_config_boundary_tests {
+    use std::path::Path;
+
+    use super::{FreedomConfig, parse_public_freedom_yaml};
+
+    #[test]
+    fn vault_mirror_defaults_roundtrip_through_public_config_boundary() {
+        let parsed = parse_public_freedom_yaml(Path::new("freedom.yaml"), b"operator_id: sam\n")
+            .expect("legacy config remains valid");
+        assert_eq!(parsed.vault_mirror, Default::default());
+        let rendered = parsed.public_yaml().expect("render defaults");
+        let reloaded: FreedomConfig = serde_yaml::from_str(&rendered).expect("roundtrip shape");
+        assert_eq!(reloaded.vault_mirror, parsed.vault_mirror);
+    }
+
+    #[test]
+    fn public_config_boundary_rejects_invalid_enabled_vault_mirror() {
+        let source = b"vault_mirror:\n  enabled: true\n  allow_nightly_push: true\n  remote_url: https://token@git.example.invalid/operator/repo.git\n";
+        assert!(parse_public_freedom_yaml(Path::new("freedom.yaml"), source).is_err());
     }
 }
 

@@ -913,6 +913,14 @@ export component MainWindow inherits Window {
     in property <string>          bc-refreshed-at: "";
     in property <bool>            bc-status-valid: false;
     in property <string>          bc-status-error: "";
+    in property <string>          bc-vault-mirror-config: "disabled";
+    in property <string>          bc-vault-mirror-phase: "not_started";
+    in property <string>          bc-vault-mirror-repair: "no_action";
+    in property <string>          bc-vault-mirror-archive-prefix: "";
+    in property <string>          bc-vault-mirror-verified-at: "";
+    in property <bool>            bc-vault-mirror-repair-available: false;
+    in property <bool>            bc-vault-mirror-in-flight: false;
+    callback bc-vault-mirror-repair();
     in property <string> bc-self-improve-quality-state: "unavailable";
     in property <string> bc-self-improve-quality-reason: "Refresh Buddy status to inspect proposal quality.";
     in property <[BuddySelfImproveProposal]> bc-self-improve-proposals: [];
@@ -4906,6 +4914,14 @@ export component MainWindow inherits Window {
                     bc-refreshed-at: root.bc-refreshed-at;
                     bc-status-valid: root.bc-status-valid;
                     bc-status-error: root.bc-status-error;
+                    bc-vault-mirror-config: root.bc-vault-mirror-config;
+                    bc-vault-mirror-phase: root.bc-vault-mirror-phase;
+                    bc-vault-mirror-repair: root.bc-vault-mirror-repair;
+                    bc-vault-mirror-archive-prefix: root.bc-vault-mirror-archive-prefix;
+                    bc-vault-mirror-verified-at: root.bc-vault-mirror-verified-at;
+                    bc-vault-mirror-repair-available: root.bc-vault-mirror-repair-available;
+                    bc-vault-mirror-in-flight: root.bc-vault-mirror-in-flight;
+                    bc-vault-mirror-repair() => { root.bc-vault-mirror-repair(); }
                     bc-self-improve-quality-state: root.bc-self-improve-quality-state;
                     bc-self-improve-quality-reason: root.bc-self-improve-quality-reason;
                     bc-self-improve-proposals: root.bc-self-improve-proposals;

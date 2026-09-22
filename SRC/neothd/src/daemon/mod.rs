@@ -28,6 +28,8 @@ pub(crate) mod auto_update;
 pub mod babel_cron;
 pub mod backup;
 pub mod backup_retention;
+/// W184 — dedicated, default-off Git mirror for WAL-inclusive backups.
+pub mod vault_mirror;
 /// HERMES-06 GAP-B — capability evolver: reads a [`CollectorReport`] from the
 /// self-improvement collector, applies an auto-safe gate (only `PromptEdit`
 /// signals qualify — `PatchSkill`, `ConfigChange`, and `Escalate` require

@@ -4485,6 +4485,27 @@ pub struct BuddyProactiveAck {
     pub proactive_enabled: bool,
 }
 
+/// W184 repair acknowledgement. The nested status stays raw at this low-level
+/// subprocess boundary; `panel_logic` owns its strict shared status schema.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VaultMirrorRepairAck {
+    pub ok: bool,
+    pub action: String,
+    pub vault_mirror: serde_json::Value,
+}
+
+impl VaultMirrorRepairAck {
+    pub fn verify(&self) -> Result<(), String> {
+        require_action(&self.action, "vault_mirror_repair")
+    }
+
+    pub fn vault_mirror_json(&self) -> Result<String, String> {
+        serde_json::to_string(&self.vault_mirror)
+            .map_err(|error| format!("could not retain typed vault mirror acknowledgement: {error}"))
+    }
+}
+
 impl BuddyProactiveAck {
     pub fn verify(&self, enabled: bool) -> Result<(), String> {
         if !self.ok {

@@ -2,6 +2,248 @@
 
 use serde::{Deserialize, Serialize};
 
+/// GOLD-LF-P2-03 — dedicated Git WAL archive mirror policy.
+///
+/// The feature is inert by default. `enabled` permits the local mirror
+/// workflow, while the two positive push permissions independently authorize
+/// unattended and manual publication. Git credentials deliberately remain in
+/// the operator's existing credential manager or SSH agent; this config has no
+/// secret-bearing fields.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct VaultMirrorConfig {
+    /// Master switch. Default false: no mirror work or Git child is started.
+    pub enabled: bool,
+    /// Explicit permission for the daemon's recurring external push.
+    pub allow_nightly_push: bool,
+    /// Explicit permission for `neoth backup mirror run --push`.
+    pub allow_manual_push: bool,
+    /// HTTPS or SSH remote. Required only while `enabled` is true.
+    pub remote_url: Option<String>,
+    /// One ordinary remote branch, never a refspec.
+    pub branch: String,
+    /// Scheduler cadence, with a one-hour minimum.
+    pub interval_secs: u64,
+    /// Number of verified receipts retained as managed-retention candidates.
+    pub retain_verified_runs: u32,
+    /// Explicitly permits cleanup of mirror-owned, receipt-backed run paths.
+    pub allow_managed_retention: bool,
+}
+
+pub const DEFAULT_VAULT_MIRROR_INTERVAL_SECS: u64 = 24 * 60 * 60;
+pub const DEFAULT_VAULT_MIRROR_RETAIN_VERIFIED_RUNS: u32 = 14;
+
+impl Default for VaultMirrorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            allow_nightly_push: false,
+            allow_manual_push: false,
+            remote_url: None,
+            branch: "neoth-vault".to_string(),
+            interval_secs: DEFAULT_VAULT_MIRROR_INTERVAL_SECS,
+            retain_verified_runs: DEFAULT_VAULT_MIRROR_RETAIN_VERIFIED_RUNS,
+            allow_managed_retention: false,
+        }
+    }
+}
+
+impl VaultMirrorConfig {
+    pub const MIN_INTERVAL_SECS: u64 = 60 * 60;
+
+    /// Validates the persisted policy before it can enter an accepted config
+    /// snapshot. Ordinary SSH identities such as `git@host:path` and
+    /// `ssh://git@host/path` are valid; password/token userinfo is not.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.interval_secs < Self::MIN_INTERVAL_SECS {
+            return Err(format!(
+                "vault_mirror.interval_secs must be at least {}",
+                Self::MIN_INTERVAL_SECS
+            ));
+        }
+        if !(1..=255).contains(&self.retain_verified_runs) {
+            return Err("vault_mirror.retain_verified_runs must be between 1 and 255".to_string());
+        }
+        validate_vault_mirror_branch(&self.branch)?;
+        if self.enabled {
+            let remote = self.remote_url.as_deref().ok_or_else(|| {
+                "vault_mirror.remote_url is required when vault_mirror.enabled is true".to_string()
+            })?;
+            validate_vault_mirror_remote(remote)?;
+        } else if let Some(remote) = self.remote_url.as_deref() {
+            // Validate supplied disabled configuration too, so a later enable
+            // cannot turn a dormant malformed value into a delayed effect.
+            validate_vault_mirror_remote(remote)?;
+        }
+        Ok(())
+    }
+}
+
+fn validate_vault_mirror_remote(remote: &str) -> Result<(), String> {
+    if remote.is_empty() || remote.chars().any(|ch| ch.is_control() || ch.is_whitespace()) {
+        return Err("vault_mirror.remote_url must be nonempty and contain no whitespace or control characters".to_string());
+    }
+    if remote.starts_with('-') || is_windows_local_path(remote) {
+        return Err("vault_mirror.remote_url must name a remote, not a Git option or local path".to_string());
+    }
+    if remote.contains('?') || remote.contains('#') {
+        return Err("vault_mirror.remote_url must not contain a query or fragment".to_string());
+    }
+    if let Some(rest) = remote.strip_prefix("https://") {
+        let authority = rest.split('/').next().unwrap_or_default();
+        let host = authority.split_once(':').map_or(authority, |(host, port)| {
+            if port.is_empty() || !port.chars().all(|ch| ch.is_ascii_digit()) {
+                ""
+            } else {
+                host
+            }
+        });
+        if !valid_remote_host(host) || authority.contains('@') {
+            return Err("vault_mirror.remote_url HTTPS authority must contain a host without userinfo".to_string());
+        }
+        return Ok(());
+    }
+    if let Some(rest) = remote.strip_prefix("ssh://") {
+        let authority = rest.split('/').next().unwrap_or_default();
+        let host = authority.rsplit_once('@').map_or(authority, |(user, host)| {
+            if !valid_ssh_user(user) {
+                ""
+            } else {
+                host
+            }
+        });
+        let host = host.split_once(':').map_or(host, |(host, port)| {
+            if port.is_empty() || !port.chars().all(|ch| ch.is_ascii_digit()) {
+                ""
+            } else {
+                host
+            }
+        });
+        if !valid_remote_host(host) || host.contains('@') {
+            return Err("vault_mirror.remote_url SSH authority must contain a host and no password".to_string());
+        }
+        return Ok(());
+    }
+    // Git's ordinary SCP-like SSH spelling is intentionally accepted. The
+    // username is an SSH identity, not a credential URL; colon in the path is
+    // not accepted, which keeps this a single repository location.
+    if let Some((identity_host, path)) = remote.split_once(':')
+        && !path.is_empty()
+        && !path.contains(':')
+        && identity_host.matches('@').count() <= 1
+    {
+        let host = identity_host.rsplit_once('@').map_or(identity_host, |(user, host)| {
+            if valid_ssh_user(user) { host } else { "" }
+        });
+        if valid_remote_host(host) && !host.contains('@') && !host.contains(':') {
+            return Ok(());
+        }
+    }
+    Err("vault_mirror.remote_url must be an HTTPS or SSH Git remote without credentials".to_string())
+}
+
+fn valid_remote_host(host: &str) -> bool {
+    !host.is_empty()
+        && !host.starts_with('-')
+        && !host.chars().any(|ch| {
+            ch.is_whitespace() || ch.is_control() || matches!(ch, '@' | '/' | '\\')
+        })
+}
+
+fn valid_ssh_user(user: &str) -> bool {
+    !user.is_empty()
+        && !user.chars().any(|ch| {
+            ch.is_whitespace() || ch.is_control() || matches!(ch, ':' | '@' | '/' | '\\')
+        })
+}
+
+fn is_windows_local_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
+fn validate_vault_mirror_branch(branch: &str) -> Result<(), String> {
+    if branch.is_empty()
+        || branch.starts_with('-')
+        || branch.starts_with("refs/")
+        || branch.contains("..")
+        || branch.chars().any(|ch| {
+            ch.is_whitespace() || matches!(ch, '/' | '~' | '^' | ':' | '?' | '*' | '[' | '\\' | '@') || ch.is_control()
+        })
+    {
+        return Err("vault_mirror.branch must be one safe branch component".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod vault_mirror_config_tests {
+    use super::{VaultMirrorConfig, validate_vault_mirror_remote};
+
+    #[test]
+    fn defaults_are_inert_and_secret_free() {
+        let config = VaultMirrorConfig::default();
+        assert!(!config.enabled);
+        assert!(!config.allow_nightly_push);
+        assert!(!config.allow_manual_push);
+        assert!(config.remote_url.is_none());
+        config.validate().expect("default mirror config is inert but valid");
+    }
+
+    #[test]
+    fn accepts_https_and_ordinary_ssh_identities() {
+        for remote in [
+            "https://git.example.invalid/operator/neoth-vault.git",
+            "ssh://git@git.example.invalid:2222/operator/neoth-vault.git",
+            "git@git.example.invalid:operator/neoth-vault.git",
+        ] {
+            validate_vault_mirror_remote(remote).expect("normal credential-manager or SSH-agent remote");
+        }
+    }
+
+    #[test]
+    fn rejects_credential_urls_and_unsafe_branch_controls() {
+        let mut config = VaultMirrorConfig {
+            enabled: true,
+            remote_url: Some("https://token@git.example.invalid/operator/repo.git".to_string()),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+        config.remote_url = Some("ssh://git:password@git.example.invalid/operator/repo.git".to_string());
+        assert!(config.validate().is_err());
+        config.remote_url = Some("git@git.example.invalid:operator/repo.git".to_string());
+        config.branch = "refs/heads/main".to_string();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_option_looking_and_local_path_remotes() {
+        for remote in [
+            "--upload-pack=foo:bar",
+            "C:\\neoth\\vault.git",
+            "C:/neoth/vault.git",
+            "git @git.example.invalid:operator/repo.git",
+            "ssh://git@-git.example.invalid/operator/repo.git",
+        ] {
+            assert!(
+                validate_vault_mirror_remote(remote).is_err(),
+                "unsafe remote unexpectedly accepted: {remote}"
+            );
+        }
+    }
+
+    #[test]
+    fn retention_count_fits_the_bounded_receipt_history() {
+        let mut config = VaultMirrorConfig::default();
+        for count in [0, 256, u32::MAX] {
+            config.retain_verified_runs = count;
+            assert!(config.validate().is_err());
+        }
+        config.retain_verified_runs = 255;
+        config.validate().expect("one history slot remains for the next backup");
+    }
+}
+
 /// N-3 Workstream D (Session 23) — `freedom.yaml::n8n_api` shape.
 ///
 /// Default OFF: a fresh install must explicitly flip `enabled: true`

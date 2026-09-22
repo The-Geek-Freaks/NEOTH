@@ -371,3 +371,12 @@ The artifact producer, installer packager and smoke runner may be separate
 jobs, but the receipt must bind them to the same immutable bytes. A same-version
 reinstall is useful idempotency evidence and is not accepted as an upgrade or
 rollback proof.
+W184 (2026-09-22): source admission includes the default-off vault mirror and
+its actual bare-remote/repair/retention/GUI fixtures. Preserve Hosted-only
+execution: Preflight, early core test typecheck/CLI export, then native and GUI
+acceptance on the exact admitted hashes. The retained-CWD helper has explicit
+Unix and Windows tests; the new real GUI callback runs on Linux/macOS and is
+registered in the 23-entry macOS custom harness. Prior full CI35674687864 stays
+bound to a666a2c9; its two strict-Clippy diagnostics are fixed here. Do not infer
+W184 runtime acceptance from earlier W183 compilation or the older Windows
+preview. Road checkbox counts remain unchanged.

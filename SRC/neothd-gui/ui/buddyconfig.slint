@@ -188,6 +188,16 @@ export component BuddyConfigView inherits Rectangle {
     in property <string> bc-cluster-revocation-detail: "Checking the authoritative durable revocation state.";
     in property <bool> bc-cluster-revocation-unresolved: true;
 
+    /// W184 vault-mirror projection. Remote identity and raw Git diagnostics
+    /// intentionally never enter the GUI model.
+    in property <string> bc-vault-mirror-config: "disabled";
+    in property <string> bc-vault-mirror-phase: "not_started";
+    in property <string> bc-vault-mirror-repair: "no_action";
+    in property <string> bc-vault-mirror-archive-prefix: "";
+    in property <string> bc-vault-mirror-verified-at: "";
+    in property <bool> bc-vault-mirror-repair-available: false;
+    in property <bool> bc-vault-mirror-in-flight: false;
+
     // ── Callbacks (fired by UI, mapped to daemon commands by integrator) ──────
 
     /// Open the real TTY-only Sovereign activation ceremony.
@@ -212,6 +222,7 @@ export component BuddyConfigView inherits Rectangle {
     callback bc-refresh-clicked();
     callback bc-cluster-continue-pairing();
     callback bc-cluster-revoke(string);
+    callback bc-vault-mirror-repair();
 
     // ── Layout ────────────────────────────────────────────────────────────────
     background: Theme.bg-base;
@@ -301,7 +312,56 @@ export component BuddyConfigView inherits Rectangle {
                     alignment: start;
                     // ScrollView needs a concrete inner height; cards self-size
                     // so we give the inner layout a generous min-height.
-                    min-height: 1320px;
+                    min-height: 1500px;
+
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                height: 18px;
+                                Kicker { label: "VAULT MIRROR"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Led {
+                                    state: root.bc-vault-mirror-in-flight ? "connecting"
+                                        : root.bc-vault-mirror-phase == "verified" ? "live"
+                                        : root.bc-vault-mirror-config == "disabled" ? "off"
+                                        : root.bc-vault-mirror-repair-available ? "error" : "connecting";
+                                    dot-size: 7px;
+                                }
+                            }
+
+                            Note {
+                                body: "Nightly archive mirroring is configured in automation settings. This panel shows the latest durable receipt and can only reconcile an indeterminate push; it cannot start a mirror push.";
+                            }
+
+                            Divider {}
+
+                            InfoRow { label: "CONFIG"; value: root.bc-vault-mirror-config; value-color: root.bc-vault-mirror-config == "ready" ? Theme.accent : Theme.text-tertiary; }
+                            InfoRow { label: "PHASE"; value: root.bc-vault-mirror-phase; value-color: root.bc-vault-mirror-phase == "verified" ? Theme.memory : root.bc-vault-mirror-repair-available ? Theme.consent : Theme.warning; }
+                            InfoRow { label: "REPAIR"; value: root.bc-vault-mirror-repair; value-color: root.bc-vault-mirror-repair-available ? Theme.warning : Theme.text-tertiary; }
+                            if root.bc-vault-mirror-verified-at != "": InfoRow { label: "LAST VERIFIED"; value: root.bc-vault-mirror-verified-at; value-color: Theme.audit; }
+                            if root.bc-vault-mirror-archive-prefix != "": InfoRow { label: "ARCHIVE SHA-256"; value: root.bc-vault-mirror-archive-prefix; value-color: Theme.audit; }
+
+                            HorizontalLayout {
+                                Rectangle { horizontal-stretch: 1; }
+                                NeothButton {
+                                    label: root.bc-vault-mirror-in-flight ? "Repairing…" : "Repair";
+                                    size: "sm";
+                                    primary: root.bc-vault-mirror-repair-available;
+                                    loading: root.bc-vault-mirror-in-flight;
+                                    enabled: root.bc-status-valid && root.bc-vault-mirror-repair-available && !root.bc-vault-mirror-in-flight;
+                                    clicked => { root.bc-vault-mirror-repair(); }
+                                }
+                            }
+
+                            RefreshFooter { ts: root.bc-refreshed-at; }
+                        }
+                    }
 
                     Card {
                         VerticalLayout {

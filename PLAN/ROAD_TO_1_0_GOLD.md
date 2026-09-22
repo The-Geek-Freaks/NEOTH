@@ -8,6 +8,16 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W184 vault mirror (2026-09-22):** the opt-in daemon/CLI/Buddy/GUI path is
+implemented and independently source-reviewed: credential-free WAL archive,
+retained file/Git-CWD capabilities, durable push intent, exact-remote repair,
+kernel ownership lock, manifest-only retention and typed GUI readback. Real
+bare-remote, replay/refusal, retention, corrupt-state, platform and callback
+fixtures are registered. Hosted execution remains required; P2-03 stays open.
+See [W184](../docs/gold-wave184-verification.md). W183 core typecheck and CLI
+build passed in35674232090/sourcea666a2c9. Full CI35674687864 found two strict
+Clippy errors; this publication fixes their exact sites without behavior changes.
+Windows preview35671504968 retains source850aad7e and has reached GUI build.
 **W183 yearly period synthesis (2026-09-22):** the independently reviewed CLI
 and cron paths now share a strict Daily-archive composer, source/config hashes,
 source-stable retry timestamps and exclusive atomic yearly publication. A

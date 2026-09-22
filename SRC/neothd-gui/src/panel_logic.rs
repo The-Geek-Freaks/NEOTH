@@ -7823,6 +7823,21 @@ pub struct BuddyStatusSnap {
     pub proactive_enabled: bool,
     pub skill_autonomy_caps: Vec<BuddySkillAutonomyCap>,
     pub self_improve_quality: BuddySelfImproveQualitySnap,
+    pub vault_mirror: BuddyVaultMirrorSnap,
+}
+
+/// Sanitized W184 mirror projection from the canonical Buddy status readback.
+/// It is deliberately display-only: remote identity and Git diagnostics never
+/// cross this boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuddyVaultMirrorSnap {
+    pub config: String,
+    pub phase: String,
+    pub repair: String,
+    pub run_id: String,
+    pub archive_sha256: String,
+    pub verified_at_unix: Option<i64>,
+    pub repair_available: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -7857,6 +7872,55 @@ struct BuddyStatusWire {
     proactive_enabled: bool,
     skill_autonomy_caps: Vec<BuddySkillAutonomyCap>,
     self_improve_quality: BuddySelfImproveQualityWire,
+    vault_mirror: BuddyVaultMirrorWire,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BuddyVaultMirrorWire {
+    config: String,
+    receipt: Option<BuddyVaultMirrorReceiptWire>,
+    repair: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BuddyVaultMirrorReceiptWire {
+    schema_version: u32,
+    run_id: String,
+    config_fingerprint_sha256: String,
+    archive_sha256: String,
+    archive_bytes: u64,
+    wal_included: bool,
+    credentials_included: bool,
+    branch: String,
+    remote_redaction: String,
+    commit_oid: Option<String>,
+    remote_head_oid: Option<String>,
+    phase: BuddyVaultMirrorPhaseWire,
+    created_at_unix: i64,
+    verified_at_unix: Option<i64>,
+    retention: BuddyVaultMirrorRetentionWire,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", content = "reason", rename_all = "snake_case")]
+enum BuddyVaultMirrorPhaseWire {
+    Disabled,
+    Prepared,
+    PushIntent,
+    Verified,
+    Blocked(String),
+    Indeterminate(String),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BuddyVaultMirrorRetentionWire {
+    enabled: bool,
+    retained_verified_runs: u32,
+    removed_runs: Vec<String>,
+    phase: Option<BuddyVaultMirrorPhaseWire>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -8121,6 +8185,8 @@ pub fn parse_buddy_status(json: &str) -> Result<BuddyStatusSnap, String> {
             }
         }
     };
+    let vault_mirror = project_buddy_vault_mirror(wire.vault_mirror)
+        .map_err(|error| format!("invalid Buddy vault mirror status: {error}"))?;
     let snapshot = BuddyStatusSnap {
         sovereign_buddy: wire.sovereign_buddy,
         self_activation_enabled: wire.self_activation_enabled,
@@ -8130,6 +8196,7 @@ pub fn parse_buddy_status(json: &str) -> Result<BuddyStatusSnap, String> {
         proactive_enabled: wire.proactive_enabled,
         skill_autonomy_caps: wire.skill_autonomy_caps,
         self_improve_quality,
+        vault_mirror,
     };
     if !matches!(
         snapshot.autonomy.as_str(),
@@ -8175,6 +8242,106 @@ pub fn parse_buddy_status(json: &str) -> Result<BuddyStatusSnap, String> {
         }
     }
     Ok(snapshot)
+}
+
+pub fn parse_buddy_vault_mirror(json: &str) -> Result<BuddyVaultMirrorSnap, String> {
+    let wire: BuddyVaultMirrorWire = serde_json::from_str(json)
+        .map_err(|error| format!("invalid vault mirror JSON: {error}"))?;
+    project_buddy_vault_mirror(wire)
+}
+
+fn project_buddy_vault_mirror(wire: BuddyVaultMirrorWire) -> Result<BuddyVaultMirrorSnap, String> {
+    if !matches!(wire.config.as_str(), "disabled" | "ready" | "blocked") {
+        return Err("unknown config state".into());
+    }
+    if !matches!(
+        wire.repair.as_str(),
+        "no_action"
+            | "run_verification"
+            | "fix_config"
+            | "restore_credential"
+            | "resolve_remote_advance"
+    ) {
+        return Err("unknown repair advice".into());
+    }
+    let Some(receipt) = wire.receipt else {
+        if wire.config != "ready" && wire.config != "disabled" {
+            return Err("blocked mirror status is missing its receipt".into());
+        }
+        return Ok(BuddyVaultMirrorSnap {
+            config: wire.config,
+            phase: "not_started".into(),
+            repair: wire.repair,
+            run_id: String::new(),
+            archive_sha256: String::new(),
+            verified_at_unix: None,
+            repair_available: false,
+        });
+    };
+    if receipt.schema_version != 1 {
+        return Err("unsupported receipt schema".into());
+    }
+    if receipt.credentials_included || !receipt.wal_included {
+        return Err("receipt violates archive custody invariants".into());
+    }
+    if receipt.archive_bytes == 0 && receipt.run_id.trim().is_empty() {
+        return Err("receipt lacks both archive identity and run identity".into());
+    }
+    if !receipt.config_fingerprint_sha256.is_empty()
+        && !crate::gui_action::is_canonical_sha256(&receipt.config_fingerprint_sha256)
+    {
+        return Err("receipt configuration fingerprint is not canonical SHA-256".into());
+    }
+    if !receipt.archive_sha256.is_empty()
+        && !crate::gui_action::is_canonical_sha256(&receipt.archive_sha256)
+    {
+        return Err("receipt archive hash is not canonical SHA-256".into());
+    }
+    if receipt.branch.chars().any(char::is_control)
+        || receipt.remote_redaction.chars().any(char::is_control)
+        || receipt.commit_oid.as_deref().is_some_and(|value| value.chars().any(char::is_control))
+        || receipt.remote_head_oid.as_deref().is_some_and(|value| value.chars().any(char::is_control))
+    {
+        return Err("receipt contains control text".into());
+    }
+    if receipt.retention.removed_runs.iter().any(|run| run.trim().is_empty() || run.chars().any(char::is_control)) {
+        return Err("receipt retention contains an invalid run identity".into());
+    }
+    if receipt.retention.retained_verified_runs == 0 && receipt.retention.enabled {
+        return Err("enabled retention lacks a verified-run limit".into());
+    }
+    if let Some(phase) = receipt.retention.phase {
+        let _ = mirror_phase_label(&phase);
+    }
+    let phase = mirror_phase_label(&receipt.phase);
+    let verified = matches!(&receipt.phase, BuddyVaultMirrorPhaseWire::Verified);
+    if verified
+        && (receipt.verified_at_unix.is_none()
+            || receipt.commit_oid.is_none()
+            || receipt.remote_head_oid.as_deref() != receipt.commit_oid.as_deref())
+    {
+        return Err("verified receipt lacks matching exact-head proof".into());
+    }
+    Ok(BuddyVaultMirrorSnap {
+        config: wire.config,
+        phase,
+        repair_available: matches!(wire.repair.as_str(), "run_verification" | "restore_credential" | "resolve_remote_advance"),
+        repair: wire.repair,
+        run_id: receipt.run_id,
+        archive_sha256: receipt.archive_sha256,
+        verified_at_unix: receipt.verified_at_unix,
+    })
+}
+
+fn mirror_phase_label(phase: &BuddyVaultMirrorPhaseWire) -> String {
+    match phase {
+        BuddyVaultMirrorPhaseWire::Disabled => "disabled".into(),
+        BuddyVaultMirrorPhaseWire::Prepared => "prepared".into(),
+        BuddyVaultMirrorPhaseWire::PushIntent => "push_intent".into(),
+        BuddyVaultMirrorPhaseWire::Verified => "verified".into(),
+        BuddyVaultMirrorPhaseWire::Blocked(reason) => format!("blocked: {reason}"),
+        BuddyVaultMirrorPhaseWire::Indeterminate(reason) => format!("indeterminate: {reason}"),
+    }
 }
 
 fn parse_membership_snapshot_envelope(
@@ -12693,7 +12860,7 @@ mod tests {
 
     #[test]
     fn parse_buddy_status_happy_path() {
-        let json = r#"{"sovereign_buddy":true,"self_activation_enabled":true,"self_activation_skills":["code","review"],"smart_approve_any":true,"autonomy":"standard","proactive_enabled":true,"skill_autonomy_caps":[{"id":"code","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"effective_cap":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"origin":"bundled"}],"self_improve_quality":{"state":"available","proposals":[]}}"#;
+        let json = r#"{"sovereign_buddy":true,"self_activation_enabled":true,"self_activation_skills":["code","review"],"smart_approve_any":true,"autonomy":"standard","proactive_enabled":true,"skill_autonomy_caps":[{"id":"code","configured":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"effective_cap":{"level":"custom","overrides":{"exec_arbitrary":"deny"}},"origin":"bundled"}],"self_improve_quality":{"state":"available","proposals":[]},"vault_mirror":{"config":"ready","receipt":{"schema_version":1,"run_id":"018f1a0a-1234-7abc-8def-0123456789ab","config_fingerprint_sha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","archive_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","archive_bytes":42,"wal_included":true,"credentials_included":false,"branch":"neoth-vault","remote_redaction":"git.example.invalid/operator/vault","commit_oid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","remote_head_oid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","phase":{"kind":"verified"},"created_at_unix":1700000000,"verified_at_unix":1700000010,"retention":{"enabled":false,"retained_verified_runs":14,"removed_runs":[],"phase":null}},"repair":"no_action"}}"#;
         let snap = super::parse_buddy_status(json).expect("valid Buddy status");
         assert!(snap.sovereign_buddy);
         assert!(snap.self_activation_enabled);
@@ -12707,6 +12874,8 @@ mod tests {
             snap.self_improve_quality,
             super::BuddySelfImproveQualitySnap::Available { ref proposals } if proposals.is_empty()
         ));
+        assert_eq!(snap.vault_mirror.phase, "verified");
+        assert_eq!(snap.vault_mirror.archive_sha256, "a".repeat(64));
     }
 
     #[test]
@@ -12721,14 +12890,14 @@ mod tests {
         );
         assert!(
             super::parse_buddy_status(
-                r#"{"sovereign_buddy":false,"self_activation_enabled":"false","self_activation_skills":[],"smart_approve_any":false,"autonomy":"standard","proactive_enabled":false,"skill_autonomy_caps":[],"self_improve_quality":{"state":"available","proposals":[]}}"#
+                r#"{"sovereign_buddy":false,"self_activation_enabled":"false","self_activation_skills":[],"smart_approve_any":false,"autonomy":"standard","proactive_enabled":false,"skill_autonomy_caps":[],"self_improve_quality":{"state":"available","proposals":[]},"vault_mirror":{"config":"disabled","receipt":null,"repair":"no_action"}}"#
             )
             .is_err(),
             "wrong-typed booleans must not render as false"
         );
         assert!(
             super::parse_buddy_status(
-                r#"{"sovereign_buddy":false,"self_activation_enabled":false,"self_activation_skills":[],"smart_approve_any":false,"autonomy":"future","proactive_enabled":false,"skill_autonomy_caps":[],"self_improve_quality":{"state":"available","proposals":[]}}"#
+                r#"{"sovereign_buddy":false,"self_activation_enabled":false,"self_activation_skills":[],"smart_approve_any":false,"autonomy":"future","proactive_enabled":false,"skill_autonomy_caps":[],"self_improve_quality":{"state":"available","proposals":[]},"vault_mirror":{"config":"disabled","receipt":null,"repair":"no_action"}}"#
             )
             .is_err(),
             "unknown autonomy must be explicit"
@@ -12736,10 +12905,28 @@ mod tests {
     }
 
     #[test]
+    fn w184_vault_mirror_parser_rejects_forged_verified_receipt() {
+        let forged = r#"{"config":"ready","receipt":{"schema_version":1,"run_id":"run-1","config_fingerprint_sha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","archive_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","archive_bytes":1,"wal_included":true,"credentials_included":false,"branch":"neoth-vault","remote_redaction":"example.invalid/vault","commit_oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","remote_head_oid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","phase":{"kind":"verified"},"created_at_unix":1,"verified_at_unix":1,"retention":{"enabled":false,"retained_verified_runs":14,"removed_runs":[],"phase":null}},"repair":"no_action"}"#;
+        assert!(
+            super::parse_buddy_vault_mirror(forged).is_err(),
+            "verified presentation requires exact remote-head proof"
+        );
+    }
+
+    #[test]
+    fn w184_vault_mirror_parser_keeps_indeterminate_repairable() {
+        let indeterminate = r#"{"config":"blocked","receipt":{"schema_version":1,"run_id":"run-1","config_fingerprint_sha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","archive_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","archive_bytes":1,"wal_included":true,"credentials_included":false,"branch":"neoth-vault","remote_redaction":"example.invalid/vault","commit_oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","remote_head_oid":null,"phase":{"kind":"indeterminate","reason":"remote_outcome_unknown"},"created_at_unix":1,"verified_at_unix":null,"retention":{"enabled":false,"retained_verified_runs":14,"removed_runs":[],"phase":null}},"repair":"run_verification"}"#;
+        let projection = super::parse_buddy_vault_mirror(indeterminate).expect("typed indeterminate receipt");
+        assert_eq!(projection.phase, "indeterminate: remote_outcome_unknown");
+        assert!(projection.repair_available);
+    }
+
+    #[test]
     fn w149_buddy_quality_rejects_partial_evidence_and_keeps_unavailable_explicit() {
         let base = r#"{"sovereign_buddy":false,"self_activation_enabled":false,"self_activation_skills":[],"smart_approve_any":false,"autonomy":"standard","proactive_enabled":false,"skill_autonomy_caps":[]"#;
+        let vault = r#""vault_mirror":{"config":"disabled","receipt":null,"repair":"no_action"}"#;
         let unavailable = format!(
-            r#"{base},"self_improve_quality":{{"state":"unavailable","reason":"stage recovery is pending"}}}}"#
+            r#"{base},"self_improve_quality":{{"state":"unavailable","reason":"stage recovery is pending"}},{vault}}}"#
         );
         let unavailable = super::parse_buddy_status(&unavailable).expect("explicit unavailable");
         assert!(matches!(
@@ -12754,7 +12941,7 @@ mod tests {
         );
         assert!(
             super::parse_buddy_status(&format!(
-                r#"{base},"self_improve_quality":{{"state":"future"}}}}"#
+                r#"{base},"self_improve_quality":{{"state":"future"}},{vault}}}"#
             ))
             .is_err(),
             "unknown quality snapshot states must not become available"
@@ -12762,7 +12949,7 @@ mod tests {
 
         let buddy_with_quality = |quality: &str| {
             format!(
-                r#"{base},"self_improve_quality":{{"state":"available","proposals":[{{"id":"proposal-1","skill":"quality-check","summary":"Current quality evidence","status":"verified_approved","quality":{quality}}}]}}}}"#
+                r#"{base},"self_improve_quality":{{"state":"available","proposals":[{{"id":"proposal-1","skill":"quality-check","summary":"Current quality evidence","status":"verified_approved","quality":{quality}}}]}},{vault}}}"#
             )
         };
         let current_without_evidence = r#"{"state":"current","reason":null,"metric":"quality_score","score_before":0.1,"score_after":0.2,"score_delta":0.1,"evaluator_source_short_id":"aaaaaaaaaaaa","corpus_manifest_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","regression_total":1,"regression_passed":1,"evidence_sha256":null}"#;

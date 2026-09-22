@@ -408,13 +408,12 @@ fn validate_projection(projection: &StoredProjection) -> Result<(), ResponseFeed
         {
             return Err(ResponseFeedbackRejection::Unavailable);
         }
-        if let Some(raw_turn_id) = target.raw_turn_id {
-            if projection.targets[..index]
+        if let Some(raw_turn_id) = target.raw_turn_id
+            && projection.targets[..index]
                 .iter()
                 .any(|prior| prior.raw_turn_id == Some(raw_turn_id))
-            {
-                return Err(ResponseFeedbackRejection::Unavailable);
-            }
+        {
+            return Err(ResponseFeedbackRejection::Unavailable);
         }
     }
     Ok(())

@@ -17,6 +17,13 @@ use std::{
 use anyhow::{Context as _, Result};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
 
+#[cfg(windows)]
+use cap_fs_ext::DirExt as _;
+#[cfg(windows)]
+use cap_fs_ext::MetadataExt as _;
+#[cfg(windows)]
+use cap_std::fs::Dir;
+
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const PIPE_DRAIN_GRACE: Duration = Duration::from_secs(2);
 
@@ -174,6 +181,23 @@ pub(crate) struct ContainedChild {
     stderr: Option<ReaderTask>,
     stdin: Option<WriterTask>,
     output_cap: usize,
+    // The directory capability which selected the child's CWD stays alive
+    // until this owner has reaped the whole contained process tree.
+    _retained_working_directory: Option<RetainedWorkingDirectory>,
+}
+
+#[cfg(unix)]
+struct RetainedWorkingDirectory {
+    _directory: cap_std::fs::Dir,
+}
+
+#[cfg(windows)]
+struct RetainedWorkingDirectory {
+    // `Dir` deliberately excludes FILE_SHARE_DELETE on Windows. Holding the
+    // full root-to-leaf chain prevents a `current_dir` path component from
+    // being renamed/replaced between its no-follow binding and CreateProcess.
+    _ancestors: Vec<Dir>,
+    _directory: Dir,
 }
 
 impl ContainedChild {
@@ -227,10 +251,41 @@ impl ContainedChild {
         Self::spawn_configured(command, &[], output_cap).await
     }
 
-    async fn spawn_configured(
+    /// Launch inside a retained real-directory capability. This is the only
+    /// contained-child variant for an externally selected working directory.
+    ///
+    /// Unix changes the child directory through `fchdir` in the post-fork,
+    /// pre-exec hook. Windows has no CreateProcess directory-handle argument,
+    /// so it retains a no-follow disk-root-to-leaf `Dir` chain which denies
+    /// delete sharing while the display path is supplied to CreateProcess.
+    pub(crate) async fn spawn_in_retained_directory(
+        mut command: tokio::process::Command,
+        directory: &cap_std::fs::Dir,
+        display_path: &Path,
+        exact_stdin: &[u8],
+        output_cap: usize,
+    ) -> std::result::Result<Self, ContainedChildError> {
+        let retained = configure_retained_working_directory(&mut command, directory, display_path)
+            .map_err(ContainedChildError::Setup)?;
+        Self::spawn_configured_with_retained(command, exact_stdin, output_cap, Some(retained)).await
+    }
+
+    /// Launch a caller-configured command through the same owned process-tree
+    /// and pipe lifecycle. Callers select the working directory and environment;
+    /// this function retains control of stdio, containment, and child cleanup.
+    pub(crate) async fn spawn_configured(
+        command: tokio::process::Command,
+        exact_stdin: &[u8],
+        output_cap: usize,
+    ) -> std::result::Result<Self, ContainedChildError> {
+        Self::spawn_configured_with_retained(command, exact_stdin, output_cap, None).await
+    }
+
+    async fn spawn_configured_with_retained(
         mut command: tokio::process::Command,
         exact_stdin: &[u8],
         output_cap: usize,
+        retained_working_directory: Option<RetainedWorkingDirectory>,
     ) -> std::result::Result<Self, ContainedChildError> {
         command
             .stdin(std::process::Stdio::piped())
@@ -348,6 +403,7 @@ impl ContainedChild {
                 stdin.shutdown().await
             })),
             output_cap,
+            _retained_working_directory: retained_working_directory,
         })
     }
 
@@ -702,6 +758,171 @@ async fn join_stdin(mut task: WriterTask) -> std::result::Result<(), ContainedCh
 }
 
 #[cfg(unix)]
+fn configure_retained_working_directory(
+    command: &mut tokio::process::Command,
+    directory: &cap_std::fs::Dir,
+    _display_path: &Path,
+) -> Result<RetainedWorkingDirectory> {
+    use std::os::fd::AsRawFd as _;
+    use std::os::unix::process::CommandExt as _;
+
+    // One clone is captured by the pre-exec hook, where its descriptor names
+    // the exact opened directory even if its namespace path is renamed. A
+    // second clone stays in the eventual ContainedChild through tree teardown.
+    let pre_exec_directory = directory
+        .try_clone()
+        .context("clone retained contained-child working directory for fchdir")?;
+    let retained_directory = directory
+        .try_clone()
+        .context("retain contained-child working directory through teardown")?;
+    // SAFETY: the hook makes only async-signal-safe `fchdir` and, on failure,
+    // reads the thread-local OS error for the immediate spawn error path. The
+    // captured directory FD remains live until exec because the closure owns it.
+    unsafe {
+        command.as_std_mut().pre_exec(move || {
+            if libc::fchdir(pre_exec_directory.as_raw_fd()) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+    Ok(RetainedWorkingDirectory {
+        _directory: retained_directory,
+    })
+}
+
+#[cfg(windows)]
+fn configure_retained_working_directory(
+    command: &mut tokio::process::Command,
+    directory: &Dir,
+    display_path: &Path,
+) -> Result<RetainedWorkingDirectory> {
+    use cap_std::fs::MetadataExt as _;
+    use std::os::windows::fs::OpenOptionsExt as _;
+    use std::path::{Component, Prefix};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+
+    let absolute = std::path::absolute(display_path).with_context(|| {
+        format!(
+            "resolve retained contained-child working directory {}",
+            display_path.display()
+        )
+    })?;
+    let mut components = absolute.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        anyhow::bail!(
+            "retained contained-child working directory lacks a disk root: {}",
+            display_path.display()
+        );
+    };
+    let (letter, verbatim_disk) = match prefix.kind() {
+        Prefix::Disk(letter) => (letter, false),
+        // `std::fs::canonicalize` produces this prefix for the physical
+        // Windows display paths retained by the capability store.
+        Prefix::VerbatimDisk(letter) => (letter, true),
+        _ => anyhow::bail!(
+            "retained contained-child working directory has an unsupported namespace: {}",
+            display_path.display()
+        ),
+    };
+    anyhow::ensure!(
+        matches!(components.next(), Some(Component::RootDir)),
+        "retained contained-child working directory is not absolute: {}",
+        display_path.display()
+    );
+
+    let names = components
+        .map(|component| match component {
+            Component::Normal(name) => Ok(name.to_os_string()),
+            _ => anyhow::bail!(
+                "retained contained-child working directory has a non-child component: {}",
+                display_path.display()
+            ),
+        })
+        .collect::<Result<Vec<_>>>()?;
+    anyhow::ensure!(
+        !names.is_empty(),
+        "retained contained-child working directory must not be a disk root: {}",
+        display_path.display()
+    );
+
+    let disk_root = std::path::PathBuf::from(if verbatim_disk {
+        format!(r"\\?\{}:\", char::from(letter))
+    } else {
+        format!("{}:\\", char::from(letter))
+    });
+    let mut root_options = std::fs::OpenOptions::new();
+    root_options
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+    let root_file = root_options.open(&disk_root).with_context(|| {
+        format!(
+            "open disk root for retained contained-child working directory {}",
+            display_path.display()
+        )
+    })?;
+    let root_metadata = root_file.metadata().with_context(|| {
+        format!(
+            "inspect disk root for retained contained-child working directory {}",
+            display_path.display()
+        )
+    })?;
+    anyhow::ensure!(
+        root_metadata.is_dir()
+            && std::os::windows::fs::MetadataExt::file_attributes(&root_metadata)
+                & FILE_ATTRIBUTE_REPARSE_POINT
+                == 0,
+        "retained contained-child disk root is not a real directory: {}",
+        display_path.display()
+    );
+
+    let mut parent = Dir::from_std_file(root_file);
+    let mut retained_ancestors = Vec::with_capacity(names.len());
+    for name in &names[..names.len() - 1] {
+        let next = parent.open_dir_nofollow(name).with_context(|| {
+            format!(
+                "open retained contained-child ancestor without following links {}",
+                display_path.display()
+            )
+        })?;
+        let metadata = next.dir_metadata().with_context(|| {
+            format!(
+                "inspect retained contained-child ancestor {}",
+                display_path.display()
+            )
+        })?;
+        anyhow::ensure!(
+            metadata.is_dir() && metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0,
+            "retained contained-child ancestor is not a real directory: {}",
+            display_path.display()
+        );
+        retained_ancestors.push(parent);
+        parent = next;
+    }
+
+    let final_name = names.last().expect("non-empty child component list");
+    let (retained_directory, _binding) = crate::skills::store::bind_retained_real_child_dir(
+        &parent,
+        final_name,
+        display_path,
+        directory
+            .try_clone()
+            .context("clone retained contained-child working directory")?,
+    )?;
+    retained_ancestors.push(parent);
+    command.current_dir(display_path);
+    Ok(RetainedWorkingDirectory {
+        _ancestors: retained_ancestors,
+        _directory: retained_directory,
+    })
+}
+
+#[cfg(unix)]
 fn configure_process_tree(command: &mut tokio::process::Command) {
     use std::os::unix::process::CommandExt as _;
     command.as_std_mut().process_group(0);
@@ -952,6 +1173,16 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn contained_child_retained_cwd_helper() {
+        let Some(marker) = std::env::var_os("NEOTH_TEST_UPDATER_RETAINED_CWD_MARKER") else {
+            return;
+        };
+        std::fs::write(marker, std::env::current_dir().unwrap().to_string_lossy().as_bytes())
+            .unwrap();
+    }
+
     // The process-wide environment and fault injector must remain serialized
     // through the awaited child lifecycle; this guard is deliberate test-only
     // ownership, not production synchronization.
@@ -1008,6 +1239,91 @@ mod tests {
         }
         std::thread::sleep(Duration::from_millis(900));
         assert!(!marker.exists(), "fast leader left descendant");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn retained_directory_cwd_survives_namespace_rename_before_spawn() {
+        let _environment = ENVIRONMENT.lock().unwrap();
+        let tempdir = tempfile::tempdir().unwrap();
+        let original = tempdir.path().join("repository");
+        let moved = tempdir.path().join("repository-moved");
+        let marker = tempdir.path().join("retained-cwd.txt");
+        std::fs::create_dir(&original).unwrap();
+        let directory = cap_std::fs::Dir::from_std_file(std::fs::File::open(&original).unwrap());
+        std::fs::rename(&original, &moved).unwrap();
+
+        let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .arg("contained_child_retained_cwd_helper")
+            .env("NEOTH_TEST_UPDATER_RETAINED_CWD_MARKER", &marker);
+        let mut child = ContainedChild::spawn_in_retained_directory(
+            command,
+            &directory,
+            &original,
+            b"",
+            8 * 1024,
+        )
+        .await
+        .unwrap();
+        let output = child
+            .wait_until(Instant::now() + Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            std::fs::read_to_string(marker).unwrap(),
+            moved.to_string_lossy(),
+            "the child must enter the retained directory object, not the stale name"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn retained_directory_windows_accepts_canonical_path_and_refuses_distinct_capability() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ,
+            FILE_SHARE_WRITE,
+        };
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let root = tempdir.path().join("root");
+        let repository = root.join("repository");
+        let replacement = root.join("replacement");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&repository).unwrap();
+        std::fs::create_dir(&replacement).unwrap();
+        let open_directory = |path: &Path| {
+            let mut options = std::fs::OpenOptions::new();
+            options
+                .read(true)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+            Dir::from_std_file(options.open(path).unwrap())
+        };
+        let original = open_directory(&repository);
+        let replacement = open_directory(&replacement);
+        let canonical_repository = std::fs::canonicalize(&repository).unwrap();
+
+        let mut command = tokio::process::Command::new("cmd.exe");
+        let retained = configure_retained_working_directory(
+            &mut command,
+            &original,
+            &canonical_repository,
+        )
+        .expect("canonical physical repository path should bind to its retained capability");
+        let mut mismatch_command = tokio::process::Command::new("cmd.exe");
+        assert!(
+            configure_retained_working_directory(
+                &mut mismatch_command,
+                &replacement,
+                &canonical_repository,
+            )
+            .is_err(),
+            "a distinct retained directory must not bind to the canonical repository namespace"
+        );
+        drop(retained);
     }
 
     #[tokio::test]

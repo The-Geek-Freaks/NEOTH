@@ -2970,6 +2970,7 @@ pub(crate) fn cron_spec_fingerprint(
         BgMonitor => jh!(cfg.bg_monitor),
         DoctorCron => jh!(cfg.doctor),
         Babel => jh!(cfg.babel),
+        VaultMirror => jh!(cfg.vault_mirror),
         WatchdogCron => jh!(cfg.watchdog),
         DriftAlert => jh!(cfg.drift_alert),
         RecallLatency => jh!(cfg.recall_latency),

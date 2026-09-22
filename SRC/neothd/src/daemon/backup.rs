@@ -129,6 +129,27 @@ pub fn write_backup(
     )
 }
 
+/// Write a `.tar.gz` backup into an already-created archive file.
+///
+/// The caller retains ownership of `file`, including any capability-relative
+/// creation and post-write handling. This function still snapshots the
+/// config/credential pair before writing and fsyncs the completed archive.
+pub(crate) fn write_backup_to_file(
+    home: &Path,
+    file: &mut std::fs::File,
+    include_wal: bool,
+    include_credentials: bool,
+) -> Result<BackupOutcome> {
+    let config_pair = crate::config::snapshot_raw_config_pair(&home.join("freedom.yaml"))?;
+    populate_backup_file(
+        home,
+        file,
+        include_wal,
+        include_credentials,
+        &config_pair,
+    )
+}
+
 fn write_backup_with_pair_loader(
     home: &Path,
     out: &Path,
@@ -146,7 +167,26 @@ fn write_backup_with_pair_loader(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create backup parent {}", parent.display()))?;
     }
-    let file = File::create(out).with_context(|| format!("create backup {}", out.display()))?;
+    let mut file =
+        File::create(out).with_context(|| format!("create backup {}", out.display()))?;
+    populate_backup_file(
+        home,
+        &mut file,
+        include_wal,
+        include_credentials,
+        &config_pair,
+    )
+}
+
+/// Populate and durably finish one caller-owned archive file from a config
+/// pair that was already captured under the config transaction boundary.
+fn populate_backup_file(
+    home: &Path,
+    file: &mut File,
+    include_wal: bool,
+    include_credentials: bool,
+    config_pair: &crate::config::RawConfigPairSnapshot,
+) -> Result<BackupOutcome> {
     let writer = BufWriter::new(file);
     let gz = GzEncoder::new(writer, Compression::default());
     let mut tar = tar::Builder::new(gz);
@@ -603,6 +643,28 @@ mod tests {
         let n = write_backup(&home, &out, false, true).unwrap();
         assert!(out.exists());
         assert!(n.included >= 4, "expected ≥4 entries, got {}", n.included);
+    }
+
+    #[test]
+    fn write_backup_to_file_populates_retained_archive_without_credentials() {
+        let dir = tempdir().unwrap();
+        let home = fake_home(dir.path());
+        let out = dir.path().join("retained-backup.tar.gz");
+        let mut archive = File::create(&out).unwrap();
+        let outcome = write_backup_to_file(&home, &mut archive, true, false).unwrap();
+        assert!(!outcome.included_plaintext_credentials);
+        assert!(
+            archive.metadata().unwrap().len() > 0,
+            "caller retains the populated archive handle"
+        );
+        drop(archive);
+
+        let target = dir.path().join("restored");
+        restore_backup(&out, &target, false).unwrap();
+        assert!(target.join("freedom.yaml").exists());
+        assert!(target.join("archive/sessions/2026-05-14/093412-abc.md").exists());
+        assert!(target.join("wal/000001.wal").exists());
+        assert!(!target.join("credentials.yaml").exists());
     }
 
     #[test]

@@ -80,6 +80,12 @@ pub enum GuiActivity {
     NativeCodingComplete,
     /// A typed Coding service terminal result failed or was cancelled.
     NativeCodingFailed,
+    /// Vault mirror repair owns a contained reconciliation action.
+    VaultMirrorRunning,
+    /// A vault mirror receipt has been reconciled and fresh status read back.
+    VaultMirrorVerified,
+    /// Vault mirror repair or its mandatory readback failed.
+    VaultMirrorFailed,
 
     // ── Daemon lifecycle (WAL-driven, fired by the events follower) ──
     /// Dreaming pass composing a journal entry (WAL 0xF4).
@@ -147,6 +153,9 @@ impl GuiActivity {
             GuiActivity::NativeCodingCancelling => ("alert", "cancelling coding run…"),
             GuiActivity::NativeCodingComplete => ("success", "coding receipt ready"),
             GuiActivity::NativeCodingFailed => ("error", "coding run failed"),
+            GuiActivity::VaultMirrorRunning => ("working", "repairing vault mirror…"),
+            GuiActivity::VaultMirrorVerified => ("success", "vault mirror verified"),
+            GuiActivity::VaultMirrorFailed => ("error", "vault mirror needs repair"),
 
             GuiActivity::Dreaming => ("sleeping", "dreaming…"),
             GuiActivity::CouncilDeliberating => ("parallel", "council in session"),
@@ -245,6 +254,9 @@ mod tests {
         GuiActivity::NativeCodingCancelling,
         GuiActivity::NativeCodingComplete,
         GuiActivity::NativeCodingFailed,
+        GuiActivity::VaultMirrorRunning,
+        GuiActivity::VaultMirrorVerified,
+        GuiActivity::VaultMirrorFailed,
         GuiActivity::Dreaming,
         GuiActivity::CouncilDeliberating,
         GuiActivity::SelfImproving,
@@ -335,6 +347,13 @@ mod tests {
             GuiActivity::NativeCodingFailed.mood(),
             ("error", "coding run failed")
         );
+    }
+
+    #[test]
+    fn vault_mirror_uses_existing_working_success_and_error_moods() {
+        assert_eq!(GuiActivity::VaultMirrorRunning.mood(), ("working", "repairing vault mirror…"));
+        assert_eq!(GuiActivity::VaultMirrorVerified.mood(), ("success", "vault mirror verified"));
+        assert_eq!(GuiActivity::VaultMirrorFailed.mood(), ("error", "vault mirror needs repair"));
     }
 
     #[test]

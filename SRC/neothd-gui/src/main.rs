@@ -55,6 +55,20 @@ static DREAM_CRON_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic:
 static DREAM_CRON_OPERATION_ACTIVE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+// W184 repair is a reconcile-only external-effect check. The GUI owns exactly
+// one invocation and never reports completion before a new Buddy status
+// readback matches its typed acknowledgement.
+static VAULT_MIRROR_REPAIR_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+struct VaultMirrorRepairFlight;
+
+impl Drop for VaultMirrorRepairFlight {
+    fn drop(&mut self) {
+        VAULT_MIRROR_REPAIR_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 // GOLD-R3-13: only one explicit-root code-map recall may own the compact card
 // and Buddy state at a time. The Slint button is also disabled while active;
 // this guard covers callback re-entry and tests driving the callback directly.
@@ -7885,6 +7899,8 @@ fn main() -> Result<()> {
             let weak = weak_bc.clone();
             std::thread::spawn(move || refresh_buddyconfig(weak));
         });
+
+        register_buddy_vault_mirror_callback(&window);
 
         // Self-activation toggle — real daemon command.
         let weak_bc_sa = window.as_weak();
@@ -21770,6 +21786,98 @@ fn fetch_buddy_status() -> std::result::Result<panel_logic::BuddyStatusSnap, Str
     panel_logic::parse_buddy_status(&String::from_utf8_lossy(&output.stdout))
 }
 
+fn apply_buddy_vault_mirror(window: &MainWindow, mirror: &panel_logic::BuddyVaultMirrorSnap) {
+    window.set_bc_vault_mirror_config(mirror.config.as_str().into());
+    window.set_bc_vault_mirror_phase(mirror.phase.as_str().into());
+    window.set_bc_vault_mirror_repair(mirror.repair.as_str().into());
+    window.set_bc_vault_mirror_repair_available(mirror.repair_available);
+    window.set_bc_vault_mirror_archive_prefix(
+        mirror.archive_sha256.chars().take(12).collect::<String>().into(),
+    );
+    window.set_bc_vault_mirror_verified_at(
+        mirror
+            .verified_at_unix
+            .map(panel_logic::format_epoch_utc)
+            .unwrap_or_default()
+            .into(),
+    );
+}
+
+fn vault_mirror_readback_matches(
+    acknowledgement: &panel_logic::BuddyVaultMirrorSnap,
+    readback: &panel_logic::BuddyVaultMirrorSnap,
+) -> Result<(), String> {
+    if acknowledgement.config != readback.config
+        || acknowledgement.phase != readback.phase
+        || acknowledgement.run_id != readback.run_id
+        || acknowledgement.archive_sha256 != readback.archive_sha256
+    {
+        return Err("vault mirror repair acknowledgement does not match fresh Buddy status".into());
+    }
+    Ok(())
+}
+
+fn register_buddy_vault_mirror_callback(window: &MainWindow) {
+    let weak = window.as_weak();
+    window.on_bc_vault_mirror_repair(move || start_vault_mirror_repair(weak.clone()));
+}
+
+fn start_vault_mirror_repair(weak: slint::Weak<MainWindow>) {
+    if VAULT_MIRROR_REPAIR_ACTIVE.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        push_toast(&weak, "info", "Vault mirror", "A repair readback is already in progress.");
+        return;
+    }
+    if let Some(window) = weak.upgrade() {
+        window.set_bc_vault_mirror_in_flight(true);
+        buddy(&window, GuiActivity::VaultMirrorRunning);
+    }
+    let flight = VaultMirrorRepairFlight;
+    let worker_weak = weak.clone();
+    let worker = std::thread::Builder::new()
+        .name("neoth-vault-mirror-repair".into())
+        .spawn(move || {
+        let result: Result<(panel_logic::BuddyVaultMirrorSnap, bool), String> = (|| {
+            let acknowledgement = run_neothd_json_action::<gui_action::VaultMirrorRepairAck>(
+                &["buddy", "vault-mirror", "repair"],
+                "Vault mirror repair",
+            )?;
+            acknowledgement.verify()?;
+            let acknowledged = panel_logic::parse_buddy_vault_mirror(&acknowledgement.vault_mirror_json()?)?;
+            let readback = fetch_buddy_status()?.vault_mirror;
+            vault_mirror_readback_matches(&acknowledged, &readback)?;
+            Ok((readback, acknowledgement.ok))
+        })();
+        let _ = slint::invoke_from_event_loop(move || {
+            let _flight = flight;
+            let Some(window) = worker_weak.upgrade() else { return };
+            window.set_bc_vault_mirror_in_flight(false);
+            match result {
+                Ok((readback, acknowledged_success)) => {
+                    apply_buddy_vault_mirror(&window, &readback);
+                    if acknowledged_success && readback.phase == "verified" {
+                        buddy(&window, GuiActivity::VaultMirrorVerified);
+                        push_toast(&worker_weak, "success", "Vault mirror verified", "Repair receipt matched a fresh Buddy status readback.");
+                    } else {
+                        buddy(&window, GuiActivity::VaultMirrorFailed);
+                        push_toast(&worker_weak, "warn", "Vault mirror repair incomplete", &format!("Vault mirror remains {}; follow the displayed repair advice.", readback.phase));
+                    }
+                }
+                Err(error) => {
+                    buddy(&window, GuiActivity::VaultMirrorFailed);
+                    push_toast(&worker_weak, "warn", "Vault mirror repair incomplete", &error);
+                }
+            }
+        });
+    });
+    if let Err(error) = worker {
+        if let Some(window) = weak.upgrade() {
+            window.set_bc_vault_mirror_in_flight(false);
+            buddy(&window, GuiActivity::VaultMirrorFailed);
+            push_toast(&weak, "warn", "Vault mirror repair unavailable", &format!("Could not start repair worker: {error}"));
+        }
+    }
+}
+
 fn fetch_buddy_cluster_status() -> std::result::Result<panel_logic::BuddyClusterStatusSnap, String>
 {
     let binary = which_neothd().ok_or_else(|| {
@@ -34478,6 +34586,7 @@ fn refresh_buddyconfig(weak: slint::Weak<MainWindow>) {
         let Some(w) = weak.upgrade() else { return };
         match result {
             Ok(snap) => {
+                apply_buddy_vault_mirror(&w, &snap.vault_mirror);
                 let skill_rows: Vec<SelfActSkill> = snap
                     .self_activation_skills
                     .into_iter()
@@ -40786,6 +40895,33 @@ mod deep_link_tests {
 
 /// Buddy dock and six-field status wiring must not drift back to decorative UI.
 #[cfg(test)]
+mod vault_mirror_gui_tests {
+    use super::{panel_logic::BuddyVaultMirrorSnap, vault_mirror_readback_matches};
+
+    fn projection(phase: &str, run_id: &str, archive_sha256: &str) -> BuddyVaultMirrorSnap {
+        BuddyVaultMirrorSnap {
+            config: "ready".into(),
+            phase: phase.into(),
+            repair: "no_action".into(),
+            run_id: run_id.into(),
+            archive_sha256: archive_sha256.into(),
+            verified_at_unix: Some(1),
+            repair_available: false,
+        }
+    }
+
+    #[test]
+    fn w184_repair_reducer_requires_fresh_matching_status() {
+        let acknowledgement = projection("verified", "run-1", "a".repeat(64).as_str());
+        assert!(vault_mirror_readback_matches(&acknowledgement, &acknowledgement).is_ok());
+        let stale = projection("verified", "run-2", "a".repeat(64).as_str());
+        assert!(vault_mirror_readback_matches(&acknowledgement, &stale).is_err());
+    }
+
+}
+
+/// Buddy dock and six-field status wiring must not drift back to decorative UI.
+#[cfg(test)]
 mod buddy_wiring_tests {
     use super::{
         buddy_revocation_health_may_replace, buddy_revocation_health_presentation,
@@ -41663,6 +41799,7 @@ mod w58_gui_callback_runtime_tests {
         project_chat_reasoning_snapshot, publish_code_map_enrichment_readiness,
         refresh_selfimprove, register_buddy_code_map_impact_callback,
         register_buddy_code_map_status_callback, register_buddy_native_coding_callbacks,
+        register_buddy_vault_mirror_callback,
         register_buddy_quality_handoff_callback, register_channel_account_dm_pairing_callback,
         register_channel_account_retirement_callback, register_channel_legacy_migration_callback,
         register_channel_pairing_approval_callback, register_channel_pairing_request_callbacks,
@@ -43633,6 +43770,24 @@ if [ "$1" = ouro ] && [ "$2" = verify-q8 ] && [ "$3" = --output ] && [ "$4" = js
     w151_success|w151_blocked) printf '{"configured_quant_mode":"none","tested_quant_mode":"q8","result":{"verified":true,"quant_mode":"q8","repo":"ByteDance/Ouro-1.4B-Thinking","cache_dir":"ouro-cache","receipt":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","resolved_device":"Cpu","loop_steps":4,"forward_checked":true,"forward_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","alternate_forward_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","context_sensitive":true,"detail":null}}\n' ;;
     *) printf 'unexpected ouro mode: %s\n' "$mode" >&2; exit 92 ;;
   esac
+  exit 0
+fi
+if [ "$1" = buddy ] && [ "$2" = vault-mirror ] && [ "$3" = repair ] && [ "$4" = --output ] && [ "$5" = json ] && [ "$#" -eq 5 ]; then
+  printf 'vault-mirror-repair\n' >> "$base/calls"
+  if [ "$mode" = w184_blocked ]; then
+    : > "$base/w184-repair-started"
+    while [ ! -f "$base/w184-repair-release" ]; do /bin/sleep 0.01; done
+  fi
+  case "$mode" in
+    w184_success|w184_blocked|w184_false|w184_mismatch) /bin/cat "$base/w184-repair.json" ;;
+    w184_failure) printf 'controlled vault mirror repair failure\n' >&2; exit 43 ;;
+    *) printf 'unexpected W184 repair mode: %s\n' "$mode" >&2; exit 94 ;;
+  esac
+  exit 0
+fi
+if [ "$1" = buddy ] && [ "$2" = status ] && [ "$3" = --output ] && [ "$4" = json ] && [ "$#" -eq 4 ]; then
+  printf 'buddy-status\n' >> "$base/calls"
+  /bin/cat "$base/w184-buddy-status.json"
   exit 0
 fi
 printf 'unexpected argv: %s %s %s %s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" >&2
@@ -46640,6 +46795,143 @@ exit 0
     }
 
     #[cfg(not(windows))]
+    fn w184_mirror_status(phase: &str, run_id: &str) -> String {
+        let archive = "a".repeat(64);
+        let fingerprint = "f".repeat(64);
+        let commit = "b".repeat(40);
+        let phase_json = if phase == "verified" {
+            r#"{"kind":"verified"}"#.to_string()
+        } else {
+            r#"{"kind":"indeterminate","reason":"remote_outcome_unknown"}"#.to_string()
+        };
+        let mirror = format!(
+            r#"{{"config":"{}","receipt":{{"schema_version":1,"run_id":"{}","config_fingerprint_sha256":"{}","archive_sha256":"{}","archive_bytes":1,"wal_included":true,"credentials_included":false,"branch":"neoth-vault","remote_redaction":"fixture.invalid/mirror","commit_oid":"{}","remote_head_oid":{},"phase":{},"created_at_unix":1,"verified_at_unix":{},"retention":{{"enabled":false,"retained_verified_runs":14,"removed_runs":[],"phase":null}}}},"repair":"{}"}}"#,
+            if phase == "verified" { "ready" } else { "blocked" },
+            run_id,
+            fingerprint,
+            archive,
+            commit,
+            if phase == "verified" { format!("\"{commit}\"") } else { "null".into() },
+            phase_json,
+            if phase == "verified" { "1" } else { "null" },
+            if phase == "verified" { "no_action" } else { "run_verification" },
+        );
+        format!(
+            r#"{{"sovereign_buddy":false,"self_activation_enabled":false,"self_activation_skills":[],"smart_approve_any":false,"autonomy":"standard","proactive_enabled":false,"skill_autonomy_caps":[],"self_improve_quality":{{"state":"unavailable","reason":"fixture"}},"vault_mirror":{mirror}}}"#
+        )
+    }
+
+    #[cfg(not(windows))]
+    fn w184_repair_ack(phase: &str, run_id: &str, ok: bool) -> String {
+        let status = w184_mirror_status(phase, run_id);
+        let value: serde_json::Value = serde_json::from_str(&status).expect("W184 status JSON");
+        format!(
+            r#"{{"ok":{ok},"action":"vault_mirror_repair","vault_mirror":{}}}"#,
+            value["vault_mirror"]
+        )
+    }
+
+    #[cfg(not(windows))]
+    fn w184_call_count(calls: &Path, expected: &str) -> usize {
+        w116_call_lines(calls)
+            .iter()
+            .filter(|line| line.as_str() == expected)
+            .count()
+    }
+
+    #[cfg(not(windows))]
+    fn w184_pump_until(window: &MainWindow, calls: &Path, repair_calls: usize, status_calls: usize) {
+        let completed = Rc::new(Cell::new(false));
+        let seen = Rc::clone(&completed);
+        let weak = window.as_weak();
+        let calls = calls.to_path_buf();
+        let ticks = Rc::new(Cell::new(0_u16));
+        let observed_ticks = Rc::clone(&ticks);
+        let timer = slint::Timer::default();
+        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
+            if weak.upgrade().is_some_and(|window| {
+                !window.get_bc_vault_mirror_in_flight()
+                    && w184_call_count(&calls, "vault-mirror-repair") == repair_calls
+                    && w184_call_count(&calls, "buddy-status") == status_calls
+            }) {
+                seen.set(true);
+                let _ = slint::quit_event_loop();
+                return;
+            }
+            if observed_ticks.get().saturating_add(1) >= 500 {
+                let _ = slint::quit_event_loop();
+            } else {
+                observed_ticks.set(observed_ticks.get() + 1);
+            }
+        });
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("run W184 callback fixture event loop");
+        drop(timer);
+        assert!(completed.get(), "W184 repair callback did not settle");
+    }
+
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback() {
+        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("serial GUI fixture environment");
+        let fixture = TempDir::new().expect("create W184 CLI fixture");
+        let bin = w116_stage_fake_neoth(&fixture);
+        let mode = fixture.path().join("mode");
+        let repair = fixture.path().join("w184-repair.json");
+        let status = fixture.path().join("w184-buddy-status.json");
+        let calls = fixture.path().join("calls");
+        std::fs::write(&calls, b"").expect("initialize W184 calls");
+        let _path = PathGuard::install(fixture.path());
+        assert_eq!(std::fs::canonicalize(which_neothd().expect("resolve staged W184 CLI")).unwrap(), std::fs::canonicalize(bin).unwrap());
+        let window = MainWindow::new().expect("construct generated MainWindow");
+        register_buddy_vault_mirror_callback(&window);
+
+        std::fs::write(&mode, b"w184_blocked").unwrap();
+        std::fs::write(&repair, w184_repair_ack("verified", "run-1", true)).unwrap();
+        std::fs::write(&status, w184_mirror_status("verified", "run-1")).unwrap();
+        let started = fixture.path().join("w184-repair-started");
+        let release = fixture.path().join("w184-repair-release");
+        window.invoke_bc_vault_mirror_repair();
+        w151_wait_for_file(&window, &started, "W184 repair child did not start");
+        window.invoke_bc_vault_mirror_repair();
+        assert_eq!(w184_call_count(&calls, "vault-mirror-repair"), 1, "duplicate repair must not spawn another child");
+        assert!(window.get_bc_vault_mirror_in_flight());
+        assert_eq!(w142_toast_count(&window, "Vault mirror verified"), 0, "repair cannot announce success before its fresh status readback");
+        std::fs::write(&release, b"release").unwrap();
+        w184_pump_until(&window, &calls, 1, 1);
+        assert_eq!(window.get_bc_vault_mirror_phase().to_string(), "verified");
+        assert_eq!(w142_toast_count(&window, "Vault mirror verified"), 1);
+
+        std::fs::write(&mode, b"w184_false").unwrap();
+        std::fs::write(&repair, w184_repair_ack("indeterminate", "run-2", false)).unwrap();
+        std::fs::write(&status, w184_mirror_status("indeterminate", "run-2")).unwrap();
+        window.invoke_bc_vault_mirror_repair();
+        w184_pump_until(&window, &calls, 2, 2);
+        assert!(window.get_bc_vault_mirror_phase().to_string().contains("indeterminate"));
+        assert_eq!(w142_toast_count(&window, "Vault mirror verified"), 1, "false receipt must not repaint success");
+
+        std::fs::write(&mode, b"w184_mismatch").unwrap();
+        std::fs::write(&repair, w184_repair_ack("verified", "run-3", true)).unwrap();
+        std::fs::write(&status, w184_mirror_status("verified", "run-4")).unwrap();
+        window.invoke_bc_vault_mirror_repair();
+        w184_pump_until(&window, &calls, 3, 3);
+        assert!(window.get_bc_vault_mirror_phase().to_string().contains("indeterminate"), "mismatched readback must retain prior truthful state");
+        assert_eq!(w142_toast_count(&window, "Vault mirror verified"), 1, "mismatched receipt must not repaint success");
+
+        std::fs::write(&mode, b"w184_failure").unwrap();
+        window.invoke_bc_vault_mirror_repair();
+        w184_pump_until(&window, &calls, 4, 3);
+        assert!(!window.get_bc_vault_mirror_in_flight(), "failed child releases GUI singleflight");
+        std::fs::write(&mode, b"w184_success").unwrap();
+        std::fs::write(&repair, w184_repair_ack("verified", "run-5", true)).unwrap();
+        std::fs::write(&status, w184_mirror_status("verified", "run-5")).unwrap();
+        window.invoke_bc_vault_mirror_repair();
+        w184_pump_until(&window, &calls, 5, 4);
+        assert_eq!(window.get_bc_vault_mirror_phase().to_string(), "verified");
+        assert_eq!(w142_toast_count(&window, "Vault mirror verified"), 2, "retry after failure may succeed only after its own fresh readback");
+    }
+
+    #[cfg(not(windows))]
     fn w155_found_offline_receipt(request: &CitationGuiRequest) -> String {
         use neothd::tools::citation_lookup::{ClaimCitationBinding, LookupSource, RecordSource};
 
@@ -47072,7 +47364,7 @@ exit 7
     }
 
     #[cfg(target_os = "macos")]
-    const MACOS_NATIVE_HARNESS_TESTS: [&str; 22] = [
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 23] = [
         "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
         "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
@@ -47095,6 +47387,7 @@ exit 7
         "w58_gui_callback_runtime_tests::w164_response_feedback_callback_requires_post_done_target_and_verified_readback",
         "w58_gui_callback_runtime_tests::w151_ouro_q8_callback_requires_typed_receipt_and_keeps_singleflight",
         "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts",
+        "w58_gui_callback_runtime_tests::w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback",
     ];
 
     /// Native macOS Nextest bridge. Keep its stdout restricted to the libtest
@@ -47216,6 +47509,9 @@ exit 7
                     }
                     "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts" => {
                         w155_citation_callbacks_bind_cache_and_live_consent_receipts()
+                    }
+                    "w58_gui_callback_runtime_tests::w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback" => {
+                        w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback()
                     }
                     _ => return Err(format!("unknown macOS native GUI test {test_name:?}")),
                 }
