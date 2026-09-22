@@ -370,6 +370,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     // ── SC-09 step 3b: HMAC key backup prompt ─────────────────────────
 
@@ -1857,6 +1858,35 @@ audit_rpc:
         assert_eq!(resumed.transaction_id, winner.transaction_id);
         assert_eq!(resumed.token, winner.token);
         assert!(winner.pending_path.exists());
+    }
+
+    #[test]
+    fn daemon_prepared_hash_mismatch_keeps_gui_transaction_resumable() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        let transaction = begin_initialized_home_from_gui(&neoth_dir).unwrap();
+        std::fs::write(neoth_dir.join("freedom.yaml"), "operator_id: alice\n").unwrap();
+
+        let wrong_hash: [u8; 32] = Sha256::digest(b"a different prepared config").into();
+        let error = complete_initialized_home_from_gui_with_prepared_hash(
+            &neoth_dir,
+            &transaction,
+            &wrong_hash,
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("SHA-256"));
+        assert!(transaction.pending_path.exists());
+        assert!(!neoth_dir.join(".initialized").exists());
+
+        let prepared_hash: [u8; 32] = Sha256::digest(b"operator_id: alice\n").into();
+        let acknowledgement = complete_initialized_home_from_gui_with_prepared_hash(
+            &neoth_dir,
+            &transaction,
+            &prepared_hash,
+        )
+        .unwrap();
+        assert!(acknowledgement.completed);
+        assert!(!transaction.pending_path.exists());
     }
 
     #[test]

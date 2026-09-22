@@ -116,6 +116,9 @@ pub mod live_throughput;
 /// W185 — daemon-owned local model inventory and operations.
 pub(crate) mod local_models;
 pub(crate) mod local_models_ipc;
+/// W204 private first-run bootstrap endpoint. Public only because the separate
+/// desktop GUI crate is its authenticated local client.
+pub mod wizard_ipc;
 pub mod metering;
 pub mod model_download_audit;
 /// HO-07 — neoth-monitor alerting cron. Scans WAL integrity + crash.log +

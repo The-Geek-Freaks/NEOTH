@@ -167,6 +167,50 @@ pub struct ServeArgs {
     /// the timestamps in the WAL are intentional. Phase 33c BS-5.
     #[arg(long)]
     pub allow_clock_rollback: bool,
+
+    /// Start only the private first-run wizard endpoint. This mode owns no
+    /// normal daemon runtime and is intended for the packaged GUI launcher.
+    #[arg(long, hide = true)]
+    pub wizard_bootstrap: bool,
+}
+
+/// Serve the daemon-owned GUI initialization session before `freedom.yaml`
+/// exists. This intentionally performs no config, credential, WAL, provider,
+/// channel, plugin, cron, audit-RPC, or ordinary runtime startup.
+async fn run_wizard_bootstrap(neoth_home: PathBuf) -> Result<()> {
+    // Make the selected home private before canonicalizing it. The bootstrap
+    // endpoint acquires its native PID lease against this canonical home before
+    // publishing discovery, so aliases cannot create competing sessions.
+    crate::cli::init::ensure_dir_secure(&neoth_home)?;
+    let canonical_home = std::fs::canonicalize(&neoth_home).with_context(|| {
+        format!(
+            "canonicalize wizard bootstrap home {}",
+            neoth_home.display()
+        )
+    })?;
+    crate::daemon::isolation::check_home_isolation(&canonical_home)?;
+    let (mut listener_task, listener_guard) =
+        crate::daemon::wizard_ipc::bind_and_serve(&canonical_home)
+            .context("bind private wizard bootstrap IPC")?;
+
+    let listener_result = tokio::select! {
+        _ = shutdown::wait_for_signal() => None,
+        result = &mut listener_task => Some(result),
+    };
+
+    // Stop new endpoint admission, then drain accepted work while the native
+    // PID lease remains held. Dropping the guard only after that drain removes
+    // the private sidecar/token and releases the single-instance lease.
+    listener_guard.stop();
+    let listener_result = match listener_result {
+        Some(result) => result,
+        None => listener_task.await,
+    };
+    let listener_result = listener_result
+        .context("wizard bootstrap IPC task panicked")
+        .and_then(|result| result.context("wizard bootstrap IPC listener failed"));
+    drop(listener_guard);
+    listener_result
 }
 
 pub async fn run_serve(args: ServeArgs) -> Result<()> {
@@ -182,6 +226,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         .filter(|parent| !parent.as_os_str().is_empty())
         .map(std::path::Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
+
+    if args.wizard_bootstrap {
+        return run_wizard_bootstrap(neoth_home).await;
+    }
 
     // ── 0/0a/0b. Pre-config startup guards (GOLD-ARCH-01: relocated to
     // serve_tasks). Home-dir isolation (BS-9) + clock-rollback guard (BS-5) +

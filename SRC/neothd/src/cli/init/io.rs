@@ -1665,6 +1665,48 @@ pub(crate) fn complete_initialized_home_from_gui(
     provided_token: &str,
 ) -> Result<GuiInitCompletionAcknowledgement> {
     require_lower_hex_64(provided_token, "GUI completion token")?;
+    complete_initialized_home_from_gui_authorized(neoth_dir, None, |pending, _| {
+        if !crate::n8n_api::constant_time_token_eq(provided_token, &pending.token) {
+            anyhow::bail!("GUI completion token does not authorize the active transaction");
+        }
+        Ok(())
+    })
+}
+
+/// Complete a daemon-owned GUI initialization transaction after binding the
+/// exact prepared `freedom.yaml` bytes to the active pending transaction.
+///
+/// The acknowledgement is retained by the daemon session owner and never
+/// crosses the wizard IPC boundary.  Hash verification deliberately happens
+/// under the same canonical completion lock as marker publication, so a GUI
+/// cannot replace the prepared configuration between validation and commit.
+pub(crate) fn complete_initialized_home_from_gui_with_prepared_hash(
+    neoth_dir: &std::path::Path,
+    acknowledgement: &GuiInitBeginAcknowledgement,
+    expected_config_sha256: &[u8; 32],
+) -> Result<GuiInitCompletionAcknowledgement> {
+    complete_initialized_home_from_gui_authorized(
+        neoth_dir,
+        Some(expected_config_sha256),
+        |pending, canonical_home| {
+            if acknowledgement.schema_version != GUI_INIT_SCHEMA_VERSION
+                || acknowledgement.home != canonical_home
+                || acknowledgement.pending_path != gui_init_pending_path(canonical_home)
+                || acknowledgement.transaction_id != pending.transaction_id
+                || !crate::n8n_api::constant_time_token_eq(&acknowledgement.token, &pending.token)
+            {
+                anyhow::bail!("daemon GUI initialization acknowledgement does not authorize the active transaction");
+            }
+            Ok(())
+        },
+    )
+}
+
+fn complete_initialized_home_from_gui_authorized(
+    neoth_dir: &std::path::Path,
+    expected_config_sha256: Option<&[u8; 32]>,
+    authorize: impl FnOnce(&GuiInitPending, &Path) -> Result<()>,
+) -> Result<GuiInitCompletionAcknowledgement> {
     ensure_dir_secure(neoth_dir)?;
     let canonical_home = std::fs::canonicalize(neoth_dir).with_context(|| {
         format!(
@@ -1679,14 +1721,18 @@ pub(crate) fn complete_initialized_home_from_gui(
                 canonical_home.display()
             )
         })?;
-        if !crate::n8n_api::constant_time_token_eq(provided_token, &pending.token) {
-            anyhow::bail!("GUI completion token does not authorize the active transaction");
-        }
+        authorize(&pending, &canonical_home)?;
 
         let freedom_path = pending.config_path.clone();
         let config = read_initialization_config(&freedom_path)?.ok_or_else(|| {
             anyhow::anyhow!("GUI configuration {} is missing", freedom_path.display())
         })?;
+        if let Some(expected_config_sha256) = expected_config_sha256 {
+            let expected_config_sha256 = hex::encode(expected_config_sha256);
+            if !crate::n8n_api::constant_time_token_eq(&config.sha256, &expected_config_sha256) {
+                anyhow::bail!("prepared GUI configuration SHA-256 does not match the active commit request");
+            }
+        }
         // The exact public bytes above own the transaction hash. Load the
         // effective view as well so split credentials contribute truthful
         // non-secret marker metadata (currently the Telegram channel bit).

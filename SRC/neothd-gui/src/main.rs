@@ -25,6 +25,15 @@ use tracing_subscriber::EnvFilter;
 // interleave their read-modify-write cycles and lose an update.
 static FREEDOM_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+// W204 owns one daemon binding for one GUI onboarding lifetime. The mutex is
+// held only while a worker makes an ordered request; Slint callbacks never
+// perform IPC on the event loop.
+static WIZARD_DAEMON_SESSION: std::sync::OnceLock<
+    std::sync::Mutex<Option<wizard_session_controller::WizardSessionController>>,
+> = std::sync::OnceLock::new();
+static WIZARD_DAEMON_FROZEN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 // A status probe started before a mutation must never overwrite the newer
 // receipt-backed state. Every accepted Apply attempt advances this revision;
 // asynchronous status callbacks only publish while their captured revision is
@@ -1204,6 +1213,7 @@ mod citation_gui;
 mod code_map_controller;
 mod code_map_impact_controller;
 mod coding_controller;
+mod wizard_session_controller;
 mod gui_action;
 mod gui_chat_bridge_controller;
 mod gui_stream;
@@ -2892,6 +2902,29 @@ fn main() -> Result<()> {
     }
     if interface_choice_recorded && !already_initialized {
         window.set_step(WizardStep::Welcome);
+        // Returning to an interrupted GUI setup is also an onboarding entry.
+        // Bind its existing daemon transaction before any Finish/Cancel action.
+        let weak_wizard_bind = window.as_weak();
+        let home = neoth_dir.clone();
+        std::thread::spawn(move || {
+            let result = which_neothd()
+                .context("NEOTH daemon binary is missing beside the GUI")
+                .and_then(|bin| bind_wizard_daemon_session(&home, &bin));
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(window) = weak_wizard_bind.upgrade() else { return };
+                match result {
+                    Ok(()) => {
+                        window.set_status_line("Setup daemon ready. Existing wizard screens remain available.".into());
+                        start_wizard_session_projection(window.as_weak());
+                    }
+                    Err(error) => {
+                        WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
+                        window.set_wizard_daemon_available(false);
+                        window.set_status_line(format!("Setup daemon unavailable: {error}. Reopen NEOTH to reconcile setup.").into());
+                    }
+                }
+            });
+        });
     }
     if let Some(error) = interface_choice_error {
         window.set_step(WizardStep::ModeSelection);
@@ -2930,6 +2963,13 @@ fn main() -> Result<()> {
                 .context("NEOTH CLI binary is missing beside the GUI")
                 .and_then(|bin| {
                     set_interface_preference_via_cli(&bin, &home, GuiInterfacePreference::Gui)
+                        .and_then(|()| {
+                            if already_initialized {
+                                Ok(())
+                            } else {
+                                bind_wizard_daemon_session(&home, &bin)
+                            }
+                        })
                 });
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(w) = weak.upgrade() else { return };
@@ -2939,6 +2979,9 @@ fn main() -> Result<()> {
                         w.set_mode_gui_chosen(true);
                         w.set_mode_cli_chosen(false);
                         w.set_status_line("GUI selected. You can open the CLI anytime from Settings → Maintenance.".into());
+                        if !already_initialized {
+                            start_wizard_session_projection(w.as_weak());
+                        }
                         w.set_step(if already_initialized {
                             WizardStep::Done
                         } else {
@@ -13291,6 +13334,105 @@ fn main() -> Result<()> {
         });
     });
 
+    let weak_wizard_channel = window.as_weak();
+    window.on_wizard_channel_changed(move |enabled| {
+        let Some(w) = weak_wizard_channel.upgrade() else {
+            return;
+        };
+        if w.get_wizard_daemon_operation_in_flight() || !w.get_wizard_daemon_available() {
+            return;
+        }
+        w.set_wizard_daemon_operation_in_flight(true);
+        w.set_status_line("Recording channel choice with the private setup daemon…".into());
+        let weak_completion = w.as_weak();
+        std::thread::spawn(move || {
+            let result = (|| -> Result<()> {
+                let mut slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let Some(session) = slot.as_mut() else {
+                    anyhow::bail!("setup daemon session request is already active");
+                };
+                let channel = if enabled {
+                    neothd::wizard::recommend::ChannelRecommendation::Telegram
+                } else {
+                    neothd::wizard::recommend::ChannelRecommendation::Cli
+                };
+                session.submit_operator_choice(
+                    neothd::wizard::ipc::WizardIpcMessage::ChannelOverride { channel },
+                )?;
+                Ok(())
+            })();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(w) = weak_completion.upgrade() else {
+                    return;
+                };
+                w.set_wizard_daemon_operation_in_flight(false);
+                match result {
+                    Ok(()) => w.set_status_line("Channel choice recorded by the setup daemon.".into()),
+                    Err(error) if error.to_string().contains("request is already active") => {
+                        w.set_status_line("Setup daemon is reporting status; retry the channel choice shortly.".into());
+                    }
+                    Err(error) => {
+                        tracing::error!(error = %error, "GUI wizard channel submission unavailable");
+                        WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
+                        w.set_wizard_daemon_available(false);
+                        w.set_status_line("Setup daemon became unavailable. Reopen NEOTH to reconcile setup before continuing.".into());
+                    }
+                }
+            });
+        });
+    });
+
+    let weak_cancel_setup = window.as_weak();
+    window.on_cancel_clicked(move || {
+        let Some(w) = weak_cancel_setup.upgrade() else {
+            return;
+        };
+        if w.get_wizard_daemon_operation_in_flight() || !w.get_wizard_daemon_available() {
+            return;
+        }
+        w.set_wizard_daemon_operation_in_flight(true);
+        w.set_status_line("Cancelling setup through the private setup daemon…".into());
+        let weak_completion = w.as_weak();
+        std::thread::spawn(move || {
+            let result = (|| -> Result<()> {
+                let mut slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let Some(session) = slot.as_mut() else {
+                    anyhow::bail!("setup daemon session request is already active");
+                };
+                session.cancel(neothd::wizard::ipc::WizardStepId::Finish)?;
+                Ok(())
+            })();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(w) = weak_completion.upgrade() else {
+                    return;
+                };
+                w.set_wizard_daemon_operation_in_flight(false);
+                match result {
+                    Ok(()) => {
+                        WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
+                        w.set_wizard_daemon_available(false);
+                        w.set_status_line(
+                            "Setup cancelled by the daemon. No completion was claimed; reopen NEOTH to resume the retained pending setup."
+                                .into(),
+                        );
+                    }
+                    Err(error) if error.to_string().contains("request is already active") => {
+                        w.set_status_line("Setup daemon is reporting status; retry cancellation shortly.".into());
+                    }
+                    Err(error) => {
+                        tracing::error!(error = %error, "GUI wizard cancellation unavailable");
+                        WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
+                        w.set_wizard_daemon_available(false);
+                        w.set_status_line(
+                            "Setup daemon became unavailable while cancelling. Reopen NEOTH to reconcile its authoritative status."
+                                .into(),
+                        );
+                    }
+                }
+            });
+        });
+    });
+
     let weak = window.as_weak();
     // GUI-REENTRY-PRESET fix: clone the flag into the closure so on_finish_clicked
     // can refuse to overwrite an existing config when read_freedom_yaml failed on
@@ -13300,6 +13442,10 @@ fn main() -> Result<()> {
     let reentry_config_ok_for_finish = std::sync::Arc::clone(&reentry_config_ok);
     window.on_finish_clicked(move || {
         if let Some(w) = weak.upgrade() {
+            if WIZARD_DAEMON_FROZEN.load(std::sync::atomic::Ordering::Acquire) {
+                w.set_status_line("Setup daemon state must be reconciled by reopening NEOTH before another Finish attempt.".into());
+                return;
+            }
             // Re-entry guard: if freedom.yaml already existed but could not be
             // parsed, refuse to write rather than stomp it with type defaults.
             // The operator must fix / inspect the YAML manually first.
@@ -13371,104 +13517,98 @@ fn main() -> Result<()> {
                 omi_seed_groundtruth: w.get_wz_omi_seed_groundtruth(),
                 omi_summary_enabled: w.get_wz_omi_summary_enabled(),
             };
-            let neoth_dir = default_neoth_home();
-            let begun = (|| -> Result<_> {
-                let bin =
-                    which_neothd().context("NEOTH CLI binary is missing beside the GUI")?;
-                validate_begin_and_prepare_gui_finish_with(
-                    || validate_finish_state(&state),
-                    || begin_gui_initialization(&bin, &neoth_dir),
-                    || finish(&state),
-                )
-                .map(|(transaction, report)| (bin, transaction, report))
-            })();
-            match begun {
-                Ok((bin, transaction, report)) => {
-                    info!(?report.freedom_path, ?report.credentials_path, "wizard files prepared");
-                    // ZF-05: write parity fields into the freshly-created
-                    // freedom.yaml using set_nested_in_freedom so they coexist
-                    // with the base config written by write_freedom_yaml.
-                    let fp = neoth_dir.join("freedom.yaml");
-                    let rd = neoth_dir.join(".reload-requested");
-                    // `finish()` already wrote the merged config. Invalidate
-                    // any startup status sample from before that write whether
-                    // the following Dream transaction succeeds or fails.
+            if let Err(error) = validate_finish_state(&state) {
+                w.set_status_line(
+                    format!("Setup details need attention before contacting the setup daemon: {error}")
+                        .into(),
+                );
+                return;
+            }
+            // W204 keeps the init completion capability solely in the bootstrap
+            // daemon. Every potentially blocking request and existing file
+            // preparation runs off Slint's event loop.
+            w.set_wizard_daemon_available(true);
+            w.set_wizard_daemon_operation_in_flight(true);
+            w.set_status_line("Connecting to the private setup daemon…".into());
+            let weak_completion = w.as_weak();
+            std::thread::spawn(move || {
+                let neoth_dir = default_neoth_home();
+                let result = (|| -> WizardDaemonFinishResult {
+                    let mut slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let Some(session) = slot.as_mut() else {
+                        return WizardDaemonFinishResult::LocalFailure {
+                            error: anyhow::anyhow!("setup daemon session request is already active; retry Finish shortly"),
+                            dream_readback: None,
+                        };
+                    };
+                    let report = match finish(&state) {
+                        Ok(report) => report,
+                        Err(error) => return WizardDaemonFinishResult::LocalFailure { error, dream_readback: None },
+                    };
+                    // `finish()` has written the merged configuration. Invalidate
+                    // older startup samples before the existing Dream receipt.
                     DREAM_CRON_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-                    let mut dream_readback = None;
-                    match commit_gui_finish_with(
-                        report.message(),
-                        || {
-                            write_zf05_fields(&fp, &rd, &state)?;
-                            // Use the exact CLI transaction exposed to day-two
-                            // Settings: canonical key mutation, reload request,
-                            // typed receipt, then authoritative status readback.
-                            dream_readback =
-                                Some(persist_wizard_dream_cron(state.dream_cron_enabled)?);
-                            Ok(())
-                        },
-                        || complete_gui_initialization(&bin, &neoth_dir, &transaction),
-                    ) {
-                        GuiFinishOutcome::Completed {
-                            marker_path,
-                            status,
-                        } => {
-                            info!(
-                                ?report.freedom_path,
-                                ?report.credentials_path,
-                                marker_path = %marker_path.display(),
-                                "wizard finished"
-                            );
-                            let status = if let Some(readback) = dream_readback.take() {
-                                apply_dream_cron_status(&w, readback);
-                                // The verified Rust completion path is the
-                                // sole owner of the post-onboarding transition.
-                                w.set_step(WizardStep::Chat);
-                                status
-                            } else {
-                                let detail = "Setup completed, but no verified Dream cron readback was retained.";
-                                w.set_dream_cron_status_verified(false);
-                                w.set_dream_cron_status_error(detail.into());
-                                format!("{status}\n{detail}")
-                            };
+                    let freedom_path = neoth_dir.join("freedom.yaml");
+                    let reload_path = neoth_dir.join(".reload-requested");
+                    if let Err(error) = write_zf05_fields(&freedom_path, &reload_path, &state) {
+                        return WizardDaemonFinishResult::LocalFailure { error, dream_readback: None };
+                    }
+                    let dream_readback = match persist_wizard_dream_cron(state.dream_cron_enabled) {
+                        Ok(readback) => readback,
+                        Err(error) => return WizardDaemonFinishResult::LocalFailure { error, dream_readback: None },
+                    };
+                    let config_sha256 = match wizard_session_controller::prepared_config_sha256(&freedom_path) {
+                        Ok(hash) => hash,
+                        Err(error) => return WizardDaemonFinishResult::LocalFailure { error, dream_readback: Some(dream_readback) },
+                    };
+                    // Only the daemon's Completed acknowledgement authorizes
+                    // the transition to Chat. No marker or config-file probe is
+                    // treated as a completion receipt.
+                    match session.prepare_for_commit(config_sha256) {
+                        Ok(_) => WizardDaemonFinishResult::Completed { report, dream_readback },
+                        Err(error) => WizardDaemonFinishResult::DaemonFailure { error, dream_readback: Some(dream_readback) },
+                    }
+                })();
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(w) = weak_completion.upgrade() else {
+                        return;
+                    };
+                    w.set_wizard_daemon_operation_in_flight(false);
+                    match result {
+                        WizardDaemonFinishResult::Completed { report, dream_readback } => {
+                            info!(?report.freedom_path, ?report.credentials_path, "wizard completed by daemon acknowledgement");
+                            apply_dream_cron_status(&w, dream_readback);
                             w.set_dream_cron_operation_in_flight(false);
-                            w.set_status_line(status.into());
+                            w.set_wizard_daemon_available(true);
+                            w.set_step(WizardStep::Chat);
+                            w.set_status_line("Setup complete and verified by the setup daemon.".into());
                         }
-                        GuiFinishOutcome::Failed { error, status } => {
-                            tracing::error!(error = %error, "GUI completion commit failed");
-                            let status = if let Some(readback) = dream_readback.take() {
-                                let configured = if readback.cron_enabled {
-                                    "enabled"
-                                } else {
-                                    "disabled"
-                                };
-                                let scheduler_state = readback.scheduler_state.clone();
-                                let autonomy = readback.autonomy.clone();
+                        WizardDaemonFinishResult::LocalFailure { error, dream_readback } => {
+                            if let Some(readback) = dream_readback {
                                 apply_dream_cron_status(&w, readback);
-                                format!(
-                                    "{status}\nDream cron was already committed and verified as {configured} \
-                                     ({scheduler_state}, autonomy {autonomy}); only setup completion remains incomplete."
-                                )
-                            } else {
-                                let detail = format!(
-                                    "Setup completion failed before a verified Dream cron readback was retained: {error}"
-                                );
-                                w.set_dream_cron_status_verified(false);
-                                w.set_dream_cron_status_error(detail.clone().into());
-                                format!("{status}\n{detail}")
-                            };
-                            w.set_dream_cron_operation_in_flight(false);
-                            w.set_status_line(status.into());
+                            }
+                            tracing::error!(error = %error, "GUI wizard local preparation failed");
+                            w.set_wizard_daemon_available(true);
+                            w.set_status_line(format!("Setup files need attention before daemon completion: {error}").into());
+                        }
+                        WizardDaemonFinishResult::DaemonFailure { error, dream_readback } => {
+                            // The failed operation can have reached the daemon.
+                            // Keep controls unavailable for this GUI lifetime;
+                            // reopening performs OpenOrResume before any action.
+                            tracing::error!(error = %error, "GUI wizard daemon operation unavailable");
+                            WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
+                            if let Some(readback) = dream_readback {
+                                apply_dream_cron_status(&w, readback);
+                            }
+                            w.set_wizard_daemon_available(false);
+                            w.set_status_line(
+                                "Setup daemon became unavailable or rejected this action. Setup was not claimed complete; reopen NEOTH to resume its authoritative status."
+                                    .into(),
+                            );
                         }
                     }
-                }
-                Err(e) => {
-                    let msg = format!(
-                        "Setup could not be committed: {e}. No completion was recorded; fix the error and click Finish again."
-                    );
-                    tracing::error!(error = %e, "wizard transaction or file preparation failed");
-                    w.set_status_line(msg.into());
-                }
-            }
+                });
+            });
         }
     });
 
@@ -16973,6 +17113,24 @@ enum GuiFinishOutcome {
     },
 }
 
+/// W204 keeps the old Dream receipt visible even when a later daemon commit
+/// cannot be acknowledged. It distinguishes a local preparation error from an
+/// uncertain daemon request so the latter is never replayed in-process.
+enum WizardDaemonFinishResult {
+    Completed {
+        report: FinishReport,
+        dream_readback: gui_action::DreamStatusAck,
+    },
+    LocalFailure {
+        error: anyhow::Error,
+        dream_readback: Option<gui_action::DreamStatusAck>,
+    },
+    DaemonFailure {
+        error: anyhow::Error,
+        dream_readback: Option<gui_action::DreamStatusAck>,
+    },
+}
+
 fn validate_begin_and_prepare_gui_finish_with<Validate, Begin, Prepare, Transaction, Report>(
     validate: Validate,
     begin: Begin,
@@ -19247,6 +19405,140 @@ fn spawn_neothd_plain(bin: &Path) -> std::process::Command {
         .env("NEOTH_LOG", "error");
     suppress_console_window(&mut cmd);
     cmd
+}
+
+fn wizard_daemon_session() -> &'static std::sync::Mutex<Option<wizard_session_controller::WizardSessionController>> {
+    WIZARD_DAEMON_SESSION.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Bind once at real GUI-onboarding entry. Finish and Cancel only consume this
+/// stored binding; neither is permitted to start a fresh daemon session.
+fn bind_wizard_daemon_session(home: &Path, bin: &Path) -> Result<()> {
+    let mut slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if slot.is_some() {
+        return Ok(());
+    }
+    let session = wizard_session_controller::WizardSessionController::open_or_start(
+        home,
+        bin,
+        |bin, home| {
+            let mut command = spawn_neothd_plain(bin);
+            command
+                .env("NEOTH_HOME", home)
+                .args(["serve", "--wizard-bootstrap", "--config"])
+                .arg(home.join("freedom.yaml"));
+            command.spawn().context("start private setup daemon")?;
+            Ok(())
+        },
+    )?;
+    *slot = Some(session);
+    WIZARD_DAEMON_FROZEN.store(false, std::sync::atomic::Ordering::Release);
+    Ok(())
+}
+
+fn start_wizard_session_projection(weak: slint::Weak<MainWindow>) {
+    std::thread::spawn(move || loop {
+        // Copy a read-only observer under the lock, then poll using its own
+        // client. The mutable controller remains available to operator actions.
+        let watch = {
+            let slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let Some(session) = slot.as_ref() else { return };
+            session.watch_handle()
+        };
+        let result = watch.wait_for_change();
+        let (accepted, stale_observation) = match result {
+            Ok(snapshot) => {
+                let mut slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let Some(session) = slot.as_mut() else { return };
+                match session.accept_watch_snapshot(snapshot.clone()) {
+                    Ok(true) => (Some(snapshot), false),
+                    // A concurrent mutation advanced the owner cursor. This
+                    // older observer result is intentionally ignored, not
+                    // treated as a reconnect failure.
+                    Ok(false) => (None, true),
+                    Err(_) => (None, false),
+                }
+            }
+            Err(_) => (None, false),
+        };
+        if let Some(snapshot) = accepted {
+            let terminal = snapshot.terminal.clone();
+            if !matches!(terminal, neothd::wizard::ipc::WizardTerminalState::Active) {
+                WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
+                let _ = slint::invoke_from_event_loop({
+                    let weak = weak.clone();
+                    move || {
+                        if let Some(window) = weak.upgrade() {
+                            window.set_wizard_daemon_available(false);
+                            window.set_status_line("Setup daemon reached a terminal state. Reopen NEOTH to reconcile setup.".into());
+                        }
+                    }
+                });
+                return;
+            }
+            if WIZARD_DAEMON_FROZEN.load(std::sync::atomic::Ordering::Acquire) {
+                continue;
+            }
+            let last = snapshot
+                .last_message
+                .as_ref()
+                .map(neothd::wizard::ipc::WizardIpcMessage::kind_tag)
+                .unwrap_or("no operator choice yet");
+            let status = format!(
+                "Setup daemon: step {}, sequence {}, {}.",
+                snapshot.current_step.as_str(), snapshot.accepted_sequence.0, last
+            );
+            let _ = slint::invoke_from_event_loop({
+                let weak = weak.clone();
+                move || {
+                    if let Some(window) = weak.upgrade() {
+                        window.set_wizard_daemon_available(true);
+                        window.set_status_line(status.into());
+                    }
+                }
+            });
+            continue;
+        }
+        if stale_observation {
+            continue;
+        }
+        // Transport failure or changed observer identity: reconcile via the
+        // mutable owner briefly. A same boot may continue; a changed boot
+        // freezes actions and never replays an in-flight request.
+        let reconcile = {
+            let mut slot = wizard_daemon_session().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            slot.as_mut().map(|session| session.reconcile_same_boot())
+        };
+        if let Some(Ok(snapshot)) = reconcile {
+                if !WIZARD_DAEMON_FROZEN.load(std::sync::atomic::Ordering::Acquire) {
+                    let status = format!(
+                        "Setup daemon reconnected at sequence {}; no action was replayed.",
+                        snapshot.accepted_sequence.0
+                    );
+                    let _ = slint::invoke_from_event_loop({
+                        let weak = weak.clone();
+                        move || {
+                            if let Some(window) = weak.upgrade() {
+                                window.set_wizard_daemon_available(true);
+                                window.set_status_line(status.into());
+                            }
+                        }
+                    });
+                }
+                continue;
+        }
+        WIZARD_DAEMON_FROZEN.store(true, std::sync::atomic::Ordering::Release);
+        let _ = slint::invoke_from_event_loop({
+            let weak = weak.clone();
+            move || {
+                if let Some(window) = weak.upgrade() {
+                    window.set_wizard_daemon_available(false);
+                    window.set_status_line("Setup daemon identity changed or became unavailable. Reopen NEOTH to reconcile setup.".into());
+                }
+            }
+        });
+        return;
+    });
 }
 
 /// Configure the two GUI-owned chat entry points identically before either
@@ -36490,13 +36782,16 @@ struct GuiCompletionStatusAcknowledgement {
     home: PathBuf,
 }
 
+#[cfg(test)]
 const GUI_INIT_TRANSACTION_HEX_LEN: usize = 64;
 
+#[cfg(test)]
 struct GuiInitializationTransaction {
     transaction_id: String,
     token: String,
 }
 
+#[cfg(test)]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GuiInitializationBeginAcknowledgement {
@@ -36507,6 +36802,7 @@ struct GuiInitializationBeginAcknowledgement {
     pending_path: PathBuf,
 }
 
+#[cfg(test)]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GuiCompletionAcknowledgement {
@@ -36518,6 +36814,7 @@ struct GuiCompletionAcknowledgement {
     marker_path: PathBuf,
 }
 
+#[cfg(test)]
 fn valid_gui_transaction_hex(value: &str) -> bool {
     value.len() == GUI_INIT_TRANSACTION_HEX_LEN
         && value
@@ -36530,6 +36827,7 @@ fn canonical_existing_path(path: &Path, label: &str) -> Result<PathBuf> {
         .with_context(|| format!("resolve {label} {}", path.display()))
 }
 
+#[cfg(test)]
 fn parse_gui_initialization_begin(
     stdout: &[u8],
     expected_home: &Path,
@@ -36561,6 +36859,7 @@ fn parse_gui_initialization_begin(
     })
 }
 
+#[cfg(test)]
 fn begin_gui_initialization(bin: &Path, home: &Path) -> Result<GuiInitializationTransaction> {
     let output = spawn_neothd_plain(bin)
         .env("NEOTH_HOME", home)
@@ -36606,6 +36905,7 @@ fn gui_initialization_is_ready(bin: &Path, home: &Path) -> Result<bool> {
     Ok(acknowledgement.ready)
 }
 
+#[cfg(test)]
 fn complete_gui_initialization(
     bin: &Path,
     home: &Path,
@@ -42012,20 +42312,60 @@ mod dream_cron_gui_tests {
     }
 
     #[test]
-    fn finish_failure_publishes_retained_readback_or_explicitly_marks_unverified() {
+    fn wizard_completion_is_daemon_acknowledged_and_fails_closed_on_loss() {
         let source = include_str!("main.rs");
-        let start = source.find("let mut dream_readback = None;").unwrap();
+        let start = source.find("window.on_finish_clicked(move || {").unwrap();
         let end = source[start..]
             .find("// ── Companion overlay wiring")
             .unwrap()
             + start;
         let finish = &source[start..end];
-        assert!(finish.matches("dream_readback.take()").count() >= 2);
-        assert!(finish.contains("Dream cron was already committed and verified"));
-        assert!(finish.contains("only setup completion remains incomplete"));
-        assert!(finish.contains("failed before a verified Dream cron readback was retained"));
-        assert!(finish.contains("set_dream_cron_status_verified(false)"));
+        assert!(finish.contains("std::thread::spawn"));
+        assert!(finish.contains("setup daemon session is not bound"));
+        assert!(!finish.contains("WizardSessionController::open_or_start"));
+        assert!(source.contains("window.on_wizard_channel_changed"));
+        assert!(source.contains("submit_operator_choice"));
+        assert!(finish.contains("prepare_for_commit(config_sha256)"));
+        assert!(!finish.contains("complete_gui_initialization("));
+        assert!(finish.contains("set_wizard_daemon_available(false)"));
+        assert!(finish.contains("w.set_step(WizardStep::Chat)"));
+    }
+
+    #[test]
+    fn daemon_completion_failure_retains_existing_dream_readback_and_revision_order() {
+        let source = include_str!("main.rs");
+        let start = source.find("window.on_finish_clicked(move || {").unwrap();
+        let end = source[start..]
+            .find("// ── Companion overlay wiring")
+            .unwrap()
+            + start;
+        let finish = &source[start..end];
+        let revision = finish.find("DREAM_CRON_UI_REVISION.fetch_add").unwrap();
+        let dream = finish.find("persist_wizard_dream_cron(state.dream_cron_enabled)").unwrap();
+        let commit = finish.find("session.prepare_for_commit(config_sha256)").unwrap();
+        assert!(revision < dream && dream < commit);
+        assert!(finish.contains("DaemonFailure { error, dream_readback: Some(dream_readback) }"));
+        assert!(finish.contains("if let Some(readback) = dream_readback"));
         assert!(finish.contains("apply_dream_cron_status(&w, readback)"));
+    }
+
+    #[test]
+    fn observer_uses_a_separate_read_only_handle_without_holding_mutation_lock() {
+        let source = include_str!("main.rs");
+        let start = source.find("fn start_wizard_session_projection").unwrap();
+        let end = source[start..]
+            .find("/// Configure the two GUI-owned chat entry points")
+            .unwrap()
+            + start;
+        let observer = &source[start..end];
+        let handle = observer.find("session.watch_handle()").unwrap();
+        let poll = observer.find("watch.wait_for_change()").unwrap();
+        let update = observer.find("session.accept_watch_snapshot").unwrap();
+        assert!(handle < poll && poll < update);
+        assert!(!observer.contains("slot.take()"));
+        assert!(observer.contains("Ok(false) => (None, true)"));
+        assert!(observer.contains("WizardTerminalState::Active"));
+        assert!(observer.contains("WIZARD_DAEMON_FROZEN.store(true"));
     }
 
     #[test]
@@ -42051,32 +42391,10 @@ mod dream_cron_gui_tests {
             "guards and every failure path must stay on the retryable wizard screen"
         );
 
-        let completed_start = handler.find("GuiFinishOutcome::Completed {").unwrap();
-        let failed_start = handler[completed_start..]
-            .find("GuiFinishOutcome::Failed { error, status }")
-            .unwrap()
-            + completed_start;
-        let completed = &handler[completed_start..failed_start];
-        let verified_start = completed
-            .find("if let Some(readback) = dream_readback.take()")
-            .unwrap();
-        let unverified_start =
-            completed[verified_start..].find("} else {").unwrap() + verified_start;
-        assert!(
-            completed[verified_start..unverified_start]
-                .contains("apply_dream_cron_status(&w, readback)")
-        );
-        assert!(
-            completed[verified_start..unverified_start].contains("w.set_step(WizardStep::Chat)")
-        );
-        assert!(!completed[..verified_start].contains("set_step("));
-        assert!(!completed[unverified_start..].contains("set_step("));
-
-        let failed_end = handler[failed_start..]
-            .find("\n                    }\n                }\n                Err(e)")
-            .unwrap()
-            + failed_start;
-        assert!(!handler[failed_start..failed_end].contains("set_step("));
+        let acknowledgement = handler.find("session.prepare_for_commit(config_sha256)").unwrap();
+        let chat = handler.find("w.set_step(WizardStep::Chat)").unwrap();
+        assert!(acknowledgement < chat, "Chat follows daemon completion acknowledgement");
+        assert!(handler[chat..].contains("set_wizard_daemon_available(false)"));
     }
 
     #[test]

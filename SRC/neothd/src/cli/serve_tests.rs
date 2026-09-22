@@ -49,6 +49,7 @@ async fn serve_one_shot_writes_boot_frame_and_binds_custom_instance_home() {
         wal_segment: Some(seg_path.clone()),
         one_shot: true,
         allow_clock_rollback: false,
+        wizard_bootstrap: false,
     };
 
     run_serve(args).await.expect("serve one-shot");
@@ -89,9 +90,37 @@ async fn serve_fails_with_helpful_error_when_freedom_yaml_missing() {
         wal_segment: Some(seg_path),
         one_shot: true,
         allow_clock_rollback: false,
+        wizard_bootstrap: false,
     };
     let err = run_serve(args).await.unwrap_err();
     assert!(format!("{err:#}").contains("neoth init"));
+}
+
+#[tokio::test]
+async fn ordinary_serve_still_rejects_an_incomplete_home_before_wal_startup() {
+    let dir = tempdir().unwrap();
+    let cfg_path = dir.path().join("freedom.yaml");
+    std::fs::write(
+        &cfg_path,
+        b"operator_id: alice\nrole: developer\nprovider_kind: claude_cli\n",
+    )
+    .unwrap();
+
+    let error = run_serve(ServeArgs {
+        config: Some(cfg_path),
+        wal_segment: None,
+        one_shot: false,
+        allow_clock_rollback: false,
+        wizard_bootstrap: false,
+    })
+    .await
+    .unwrap_err();
+
+    assert!(format!("{error:#}").contains("onboarding incomplete"));
+    assert!(
+        !dir.path().join("wal").exists(),
+        "ordinary serve must reject incomplete onboarding before WAL startup"
+    );
 }
 
 #[tokio::test]
@@ -113,6 +142,7 @@ async fn serve_rejects_malformed_hook_set_before_wal_or_runtime_start() {
         wal_segment: Some(seg_path.clone()),
         one_shot: true,
         allow_clock_rollback: false,
+        wizard_bootstrap: false,
     })
     .await
     .unwrap_err();
@@ -147,6 +177,7 @@ async fn on_session_start_block_is_audited_and_vetoes_startup() {
         wal_segment: Some(seg_path.clone()),
         one_shot: true,
         allow_clock_rollback: false,
+        wizard_bootstrap: false,
     })
     .await
     .unwrap_err();

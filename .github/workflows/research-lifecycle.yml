@@ -85,6 +85,7 @@ jobs:
               "wave199": 5,
               "wave202": 23,
               "wave205": 3,
+              "wave204": 15,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():
@@ -104,6 +105,12 @@ jobs:
           if not isinstance(native_tests, list):
               raise SystemExit("Grouped test matrix has no requiredNativeTests")
 
+          # This hosted lane is Linux. Require exact platform identities in
+          # addition to portable tests; other native platforms run in full CI.
+          platform_tests = payload.get("requiredNativeTestsByPlatform", {}).get("Linux", [])
+          if not isinstance(platform_tests, list):
+              raise SystemExit("Grouped Linux native source records must be a list")
+          native_tests = native_tests + platform_tests
           records = []
           for name in required_names:
               matches = [entry for entry in native_tests if isinstance(entry, dict) and entry.get("test") == name]

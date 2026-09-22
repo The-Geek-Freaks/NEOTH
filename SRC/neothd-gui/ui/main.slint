@@ -225,6 +225,10 @@ export component MainWindow inherits Window {
     /// the naive `!= ""` check so the copy + the gate finally agree.
     in property <bool> operator-id-valid: false;
     in-out property <string> status-line: "";
+    // W204: an uncertain daemon action cannot be replayed by this process.
+    // Reopen to bind a fresh OpenOrResume snapshot before another Finish.
+    in-out property <bool> wizard-daemon-available: true;
+    in-out property <bool> wizard-daemon-operation-in-flight: false;
     // Wave-1 toast system. Rust pushes via push_toast(); expires via prune_toast().
     // The ToastStack overlay renders this model in the shell area (top-right, z=70).
     in-out property <[ToastData]> toasts: [];
@@ -405,6 +409,9 @@ export component MainWindow inherits Window {
 
     callback finish-clicked;
     callback cancel-clicked;
+    /// W204 sends this existing operator channel choice to the private daemon;
+    /// it does not synthesize a wizard-progress event in the GUI.
+    callback wizard-channel-changed(bool);
     /// Operator confirmed the graphical surface. Rust persists the canonical
     /// instance preference before advancing the wizard.
     callback gui-mode-chosen;
@@ -2710,9 +2717,10 @@ export component MainWindow inherits Window {
                         letter-spacing: Theme.letter-spacing-wide;
                         color: Theme.accent-green;
                     }
-                    CheckBox {
+                    NeothCheckBox {
                         text: "Telegram bot — long-poll, no public HTTPS needed";
                         checked <=> root.enable-telegram;
+                        toggled(enabled) => { root.wizard-channel-changed(enabled); }
                     }
 
                     // Reviewer-3 P1-B disclosure (2026-05-20): the 8
@@ -3532,10 +3540,20 @@ export component MainWindow inherits Window {
                 }
                 NeothButton {
                     label: "Finish";
-                    enabled: root.license-accepted;
+                    enabled: root.license-accepted
+                        && root.wizard-daemon-available
+                        && !root.wizard-daemon-operation-in-flight;
+                    loading: root.wizard-daemon-operation-in-flight;
                     clicked => {
                         root.finish-clicked();
                     }
+                }
+                NeothButton {
+                    label: "Cancel setup";
+                    danger: true;
+                    enabled: root.wizard-daemon-available
+                        && !root.wizard-daemon-operation-in-flight;
+                    clicked => { root.cancel-clicked(); }
                 }
             }
         } }  // close Done VerticalLayout + SovereignFade

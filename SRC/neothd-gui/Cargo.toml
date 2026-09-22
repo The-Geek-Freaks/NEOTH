@@ -63,7 +63,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # The GUI uses a small background current-thread runtime only to await the
 # Send-safe CodingService command replies. The service owns provider, SQLite,
 # and its LocalSet runtime internally.
-tokio = { version = "1", features = ["rt", "sync"] }
+tokio = { version = "1", features = ["rt", "sync", "net", "time"] }
 getrandom = "0.2"
 hex = "0.4"
 sha2 = "0.10"

@@ -9585,6 +9585,7 @@ mod tests {
                      system = \"W137 delegated agent system\"\n\
                      tools = [\"codegraph_recall_v1\", \"codegraph_extract_identifiers\", \"codegraph_path_keywords\"]\n\
                      disallowedTools = [\"codegraph_path_keywords\"]\n\
+                     omit_mcp_catalogue = false\n\
                      enabled = true\n",
                 )
                 .expect("write W137 real delegated agent TOML");

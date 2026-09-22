@@ -1,26 +1,10 @@
-//! W-07 — wizard IPC channel primitive.
+//! Typed wizard messages and the private GUI bootstrap session protocol.
 //!
-//! GUI + CLI wizard surfaces both consume the same data shapes
-//! so the operator's pick on one side reaches the other without
-//! a re-prompt. The GUI's Slint view and the CLI's clap dialogs
-//! both serialise into [`WizardIpcMessage`] flowing over a
-//! shared MPSC channel inside the daemon.
-//!
-//! ## What ships here
-//!
-//! - [`WizardIpcMessage`] — every message type the protocol
-//!   carries. Tagged-enum snake_case wire form.
-//! - [`WizardStepId`] — pinned enum of every wizard step both
-//!   surfaces support.
-//! - Constructors + accessors so producer + consumer side never
-//!   reach into the inner variant data directly.
-//!
-//! ## What's NOT here
-//!
-//! - The Slint GUI itself (separate crate; landed when the
-//!   `neothd-gui` workspace member adds the bindings).
-//! - The actual MPSC wire-up (lands when `cli::serve` opens the
-//!   channel + the GUI process connects).
+//! The daemon admits the existing GUI channel choice through a bounded MPSC
+//! owner. Clients observe sequence-bound, coalesced snapshots over private IPC;
+//! the original message vocabulary remains available to wizard components.
+//! Completion belongs to the canonical initialization transaction, and its
+//! secret token never crosses this wire boundary.
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +12,130 @@ use crate::installers::detect::DetectReport;
 use crate::wizard::recommend::{
     ChannelRecommendation, ComplexityLevel, ExperienceLevel, Recommendation, VpnRecommendation,
 };
+
+/// W204 wire contract. Bump only with an explicit GUI/daemon compatibility
+/// migration; discovery artifacts deliberately bind an endpoint to this value.
+pub const WIZARD_IPC_PROTOCOL_VERSION: u8 = 1;
+/// Every decoded request and response is bounded before JSON parsing.
+pub const MAX_WIZARD_IPC_BODY_BYTES: usize = 16 * 1024;
+
+/// Opaque daemon-generated identity for the one pending GUI-init transaction.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct WizardSessionId(pub String);
+
+/// Opaque identity for one bootstrap daemon process. It changes on restart.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct WizardBootId(pub String);
+
+/// Monotonic per-session admission cursor. The next request must be exactly
+/// `accepted_sequence + 1`; snapshots report the cursor the daemon accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct WizardSequence(pub u64);
+
+/// Non-secret lifecycle state projected by the daemon. It is deliberately a
+/// scalar status rather than a synthetic replay of GUI screen messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WizardTerminalState {
+    Active,
+    CommitReady,
+    Completed,
+    Cancelled,
+}
+
+/// Ordered, reconnect-safe non-secret daemon projection. `last_message` is
+/// present only for accepted operator input and never contains credentials.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WizardSnapshot {
+    pub protocol_version: u8,
+    pub session_id: WizardSessionId,
+    pub boot_id: WizardBootId,
+    pub accepted_sequence: WizardSequence,
+    pub current_step: WizardStepId,
+    pub terminal: WizardTerminalState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_message: Option<WizardIpcMessage>,
+}
+
+/// Typed rejection returned in-band so a GUI can distinguish stale local
+/// state from a transport failure. A missing response remains daemon-unavailable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WizardRejectionCode {
+    StaleBoot,
+    WrongSession,
+    OutOfOrder,
+    NotReady,
+    Cancelled,
+    DaemonUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WizardRejected {
+    pub code: WizardRejectionCode,
+    pub session_id: WizardSessionId,
+    pub boot_id: WizardBootId,
+    pub accepted_sequence: WizardSequence,
+}
+
+/// Versioned request envelope. The completion digest is lower-case SHA-256 of
+/// canonical `freedom.yaml` bytes; credentials never cross this boundary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WizardRequest {
+    OpenOrResume,
+    Snapshot,
+    /// Bounded long-poll used by the off-thread GUI controller. A response is
+    /// always a complete snapshot, so lagging clients resynchronise safely.
+    WaitForChange {
+        session_id: WizardSessionId,
+        boot_id: WizardBootId,
+        after_sequence: WizardSequence,
+    },
+    Submit {
+        session_id: WizardSessionId,
+        boot_id: WizardBootId,
+        next_sequence: WizardSequence,
+        message: WizardIpcMessage,
+    },
+    PrepareForCommit {
+        session_id: WizardSessionId,
+        boot_id: WizardBootId,
+        next_sequence: WizardSequence,
+        config_sha256: String,
+    },
+    Cancel {
+        session_id: WizardSessionId,
+        boot_id: WizardBootId,
+        next_sequence: WizardSequence,
+        from_step: WizardStepId,
+    },
+}
+
+/// Versioned response envelope. Every successful response carries the latest
+/// snapshot, making reconnect polling ordered without a second durable store.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WizardResponse {
+    SessionSnapshot { snapshot: WizardSnapshot },
+    Progress { snapshot: WizardSnapshot },
+    CommitReady { snapshot: WizardSnapshot },
+    Completed { snapshot: WizardSnapshot },
+    Rejected { rejection: WizardRejected },
+}
+
+impl WizardRequest {
+    pub fn encoded_is_bounded(&self) -> bool {
+        serde_json::to_vec(self)
+            .map(|body| body.len() <= MAX_WIZARD_IPC_BODY_BYTES)
+            .unwrap_or(false)
+    }
+}
 
 /// One wizard step. Pinned snake_case wire form so the GUI's
 /// step-progress bar + the CLI's progress messages stay synced.
@@ -124,7 +232,7 @@ impl WizardProgress {
 /// discriminator — easy to dispatch in Slint + clap callbacks
 /// alike.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WizardIpcMessage {
     /// Producer signals the operator started a wizard step. The
     /// receiving surface focuses its UI on the matching panel.
@@ -440,6 +548,21 @@ mod tests {
         let json = serde_json::to_string(&m).unwrap();
         let back: WizardIpcMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(back, m);
+    }
+
+    #[test]
+    fn submit_rejects_unknown_fields_inside_operator_message() {
+        let request = WizardRequest::Submit {
+            session_id: WizardSessionId("session".into()),
+            boot_id: WizardBootId("boot".into()),
+            next_sequence: WizardSequence(1),
+            message: WizardIpcMessage::ChannelOverride {
+                channel: ChannelRecommendation::Telegram,
+            },
+        };
+        let mut value = serde_json::to_value(&request).unwrap();
+        value["message"]["unrecognized_authority"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<WizardRequest>(value).is_err());
     }
 
     #[test]
