@@ -33,6 +33,21 @@ consolidation and model probing retain the exact accepted config path.
 
 ## Verification boundary
 
+Hosted run `35767413693` on `02a10972` executed all 236 selected cases:
+232 passed, four failed normally. All 17 new W212 tests passed. All 47 source
+paths, identities, matrix and lock matched the run. Core test type-check and
+public CLI build `35767417912` passed; its source/SHA-bound generated CLI
+reference matches the checked-in file. Preflight `35767604603` passed after
+the exact Hosted formatting import at `9ea97d56`.
+
+The four failures exposed outdated fixture assumptions. The explicit 42-to-43
+migration remains tested, while the later normal open now expects the current
+schema. Forget proves the surviving media row remains in the rebuilt snapshot
+and neither forgotten vector remains. The two kind-filter regressions now
+build a broader media snapshot, preserving their proof that a mismatched query
+uses SQLite; a matching scoped snapshot is correctly allowed. Those corrections
+require a fresh Hosted run and do not weaken the original data-bound assertions.
+
 Seventeen new regressions cover generation sealing, actual artifact digests,
 additive migration, requeue, config-switch fencing, invalid responses, media
 separation, legacy/malformed snapshot rejection, scheduling and consolidation.

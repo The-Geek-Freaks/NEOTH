@@ -1552,15 +1552,20 @@ mod tests {
             3,
             "snapshot still holds forgotten vectors before the rebuild"
         );
-        let invalidated = rebuild_snapshot_if_present(&conn, home).unwrap();
+        let rebuilt = rebuild_snapshot_if_present(&conn, home).unwrap();
         assert_eq!(
-            invalidated,
-            Some(0),
-            "forget invalidates the old scoped snapshot"
+            rebuilt,
+            Some(1),
+            "forget rebuilds the known media scope with only the surviving row"
         );
-        assert!(
-            !hnsw_snapshot_path(home).exists(),
-            "a forget path has no authority to rebuild an ambiguous vector space"
+        let retained = EmbeddingIndex::load(&hnsw_snapshot_path(home))
+            .unwrap()
+            .unwrap();
+        assert_eq!(retained.len(), 1);
+        assert_eq!(
+            retained.find_similar_hnsw(&q8(1.0, 0.0), 3)[0].source_ref,
+            "public-doc.png",
+            "the rebuilt snapshot must never expose either forgotten vector"
         );
     }
 
@@ -1771,12 +1776,19 @@ mod tests {
 
     #[test]
     fn find_similar_dispatch_kind_filter_skips_hnsw() {
-        // A kind-scoped query must use brute-force (HNSW is not kind-filterable).
-        // Snapshot has vectors; the conn is empty → a kind-filtered dispatch
-        // returns empty (brute-force on empty conn), proving HNSW was skipped.
+        // A kind-scoped query cannot use a snapshot of the broader media scope.
+        // The empty conn makes any snapshot result an observable scope bypass.
         let src = open_with_schema();
         seed_vectors(&src, "image", 20);
-        let idx = EmbeddingIndex::build_from_sqlite(&src, clip_scope(8)).unwrap();
+        let idx = EmbeddingIndex::build_from_sqlite(
+            &src,
+            VectorQueryScope::MediaModel {
+                source_kind: None,
+                model: DEFAULT_MEDIA_EMBEDDING_MODEL,
+                dimension: 8,
+            },
+        )
+        .unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("embeddings.hnsw");
         idx.save(&path).unwrap();
@@ -1882,12 +1894,19 @@ mod tests {
     #[test]
     fn find_similar_dispatch_kind_filter_returns_conn_rows_via_brute_force() {
         // Positive discriminator: with a populated conn + a present snapshot,
-        // a kind-filtered dispatch returns the CONN's matching rows (brute-
-        // force), proving the kind path bypasses HNSW rather than both paths
-        // being trivially empty.
+        // a kind-filtered query must bypass a broader media snapshot and return
+        // the conn's matching rows instead of leaking the snapshot's rows.
         let src = open_with_schema();
         seed_vectors(&src, "image", 20);
-        let idx = EmbeddingIndex::build_from_sqlite(&src, clip_scope(8)).unwrap();
+        let idx = EmbeddingIndex::build_from_sqlite(
+            &src,
+            VectorQueryScope::MediaModel {
+                source_kind: None,
+                model: DEFAULT_MEDIA_EMBEDDING_MODEL,
+                dimension: 8,
+            },
+        )
+        .unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("embeddings.hnsw");
         idx.save(&path).unwrap();

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T18:28:34.0371141Z",
-  "validationStatus": "W212 Hosted format imported; core and 236 cases running against pre-format 02a10972",
+  "capturedUtc": "2026-09-22T18:42:34.1365708Z",
+  "validationStatus": "W212 232/236 source-bound;17 new tests passed;4 existing fixture repairs pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -418,18 +418,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 53490,
-      "sha256": "26BE09A6446E5A8A9D4A62E5C556E2FB241CCA7FB48D0C8B2594350105F18EA8"
+      "bytes": 55026,
+      "sha256": "2A1F9F51BC4F167DC09540296865A3303864D2AB00B16DE310FEF9902BD0FB12"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1056372,
-      "sha256": "E8053B3859A2B171246382DF7BE476B9C124FFE29886A460AD3A648C57791F71"
+      "bytes": 1057908,
+      "sha256": "D97B863688EFD2C092570D9BB33F74D007A0605E365CBED14B2EFE12FE0EB90D"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1651819,
-      "sha256": "622333AC45234AD0D9819DE2FC5841BA793C8908BD63B1163972EC4F3AA2C65E"
+      "bytes": 1653355,
+      "sha256": "9CB695724567DC8A98974383E6F935AD9742BAD481CA90661F4DCD35568A88DC"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -1943,8 +1943,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/embeddings.rs",
-      "bytes": 108821,
-      "sha256": "53326E66FE6F0965ADC405558D4B4585B55D27E0B87FD20DE4E153FD8A279027"
+      "bytes": 109317,
+      "sha256": "EDA60137AE1CC17A31E6C5BC9A67C61AAD8C0821DE7DB170404CDA83ED86A34B"
     },
     {
       "path": "SRC/neothd/src/memory/hippocampus.rs",
@@ -1958,8 +1958,8 @@
     },
     {
       "path": "SRC/neothd/src/memory/migrations/mod.rs",
-      "bytes": 233849,
-      "sha256": "953C82A68A305E0C43A26A5B0543F39C524BC2ED7D9E9AF99A13C3ADCF258580"
+      "bytes": 233916,
+      "sha256": "388D3AE1823D37C50C00D092032AEB02AB69149DF3C2059447EFF29713535697"
     },
     {
       "path": "SRC/neothd/src/memory/mod.rs",

@@ -3,6 +3,29 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W212 Hosted behavior and regression repair (2026-09-22):** Grouped236
+`35767413693` on `02a10972` executed all 236 selected cases: 232 passed and
+four failed; all 17 new generation tests passed. Source hashes for 47 paths,
+exact identities, matrix and lock are admitted. Three older index fixtures
+still assumed unscoped snapshots: they now prove media-scope-preserving forget
+and SQLite fallback for a broader snapshot versus a kind-filtered query. The
+v42-to-v43 reopen regression now expects the current schema after normal open,
+while retaining its explicit 42-to-43 migration and preservation assertions.
+The corrective sources need a fresh Hosted run. Core/CLI `35767417912` passed
+and the generated reference matches the checked-in file. W213 stays uncommitted.
+
+**W212 published / Hosted checkpoint (2026-09-22):** generation isolation is
+on main at `104343bf`, followed by the narrow c417 Clippy source repairs in
+`02a10972`. Source/SHA-bound Hosted formatting is imported in `9ea97d56`;
+its Preflight `35767604603` passed. Core test-target type-check and public CLI
+build `35767417912` passed; the source/SHA-bound CLI reference is unchanged.
+Grouped236 `35767413693`
+is running on `02a10972`; behavior and fresh full-CI acceptance remain pending.
+W213 is now implementing primary/recursive Council role admission. Source
+tracing confirmed that ordinary-chat fallback is a separate consumer, so no
+new Council fallback selection is introduced or claimed covered. Road counts
+and the workstation BSOD hold remain unchanged.
+
 **W212 generation isolation (2026-09-22):** model generations now bind artifact
 identity, config selection and exact config path through episode claim/write,
 SQLite/HNSW recall and consolidation. Model changes requeue eligible episodes;

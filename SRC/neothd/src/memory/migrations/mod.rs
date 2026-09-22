@@ -5236,7 +5236,10 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!((version, challenge_rows), ("43".to_owned(), (0, 0)));
+        assert_eq!(
+            (version, challenge_rows),
+            (crate::memory::store::SCHEMA_VERSION.to_string(), (0, 0))
+        );
     }
 
     #[test]
