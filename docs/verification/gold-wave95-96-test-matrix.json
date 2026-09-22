@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W185_STATIC_REVIEWED_HOSTED_REQUIRED",
-  "base": "d72c9f4d08526f14eea942b212c687fda4cf819f",
+  "status": "W185_HOSTED_FIXTURE_DELIMITER_REPAIRED",
+  "base": "f091d5fe9eab773ba4593a1abb7ebd6c3a36f332",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 74485,
-    "sha256": "BFBCDA33C2C9911E5501B3899A8607904A11868F749A27C1E7132F6A66F71DD7"
+    "bytes": 74487,
+    "sha256": "B623584B8A560483E56AEC8EB92285911134D496928C5DCCE6194DD9900497FC"
   },
   "sourceInputs": 432,
   "requiredNativeTests": [
@@ -7782,5 +7782,13 @@
     "priorFullCiSource": "a130526e8a4c2d1a13b4435805a55951ede070d9",
     "priorFullCiBoundary": "Linux strict Clippy failed at five headless harness/unused receipt symbols; narrow source repairs included. Native lanes still pending.",
     "reviewSha256": "53F4719632795026E2F3518383AA92152486710FC43F9194BEA63B7BE4CD5820"
+  },
+  "wave185Hosted": {
+    "source": "f091d5fe9eab773ba4593a1abb7ebd6c3a36f332",
+    "preflight": 35679412294,
+    "core": 35679420073,
+    "finding": "Missing fixture delimiter at local_models.rs:630, exact repair applied",
+    "receipt": "work/gold-20260906/wave185-next-batch/HOSTED-F091.md",
+    "status": "source_repair_hosted_pending"
   }
 }

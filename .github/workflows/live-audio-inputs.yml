@@ -53,13 +53,19 @@ jobs:
             done < <(find "$source" -name Cargo.toml -type f -print0 | sort -z)
           }
 
+          capture_workspace_state() {
+            local source="$1" target="$2"
+            mkdir -p "$target"
+            cp "$source/Cargo.toml" "$target/Cargo.toml"
+            cp "$source/Cargo.lock" "$target/Cargo.lock"
+            cp "$source/neothd/Cargo.toml" "$target/neothd-Cargo.toml"
+            copy_manifests "$source" "$target"
+            find "$source" -name Cargo.toml -type f -print0 | sort -z | xargs -0 sha256sum > "$target/cargo-manifests.sha256"
+            sha256sum "$source/Cargo.lock" > "$target/Cargo.lock.sha256"
+          }
+
           git rev-parse HEAD > "$evidence/source-head.txt"
-          cp "$work_src/Cargo.toml" "$evidence/input/Cargo.toml"
-          cp "$work_src/Cargo.lock" "$evidence/input/Cargo.lock"
-          cp "$work_src/neothd/Cargo.toml" "$evidence/input/neothd-Cargo.toml"
-          copy_manifests "$work_src" "$evidence/input"
-          find "$work_src" -name Cargo.toml -type f -print0 | sort -z | xargs -0 sha256sum > "$evidence/input/cargo-manifests.sha256"
-          sha256sum "$work_src/Cargo.lock" > "$evidence/input/Cargo.lock.sha256"
+          capture_workspace_state "$work_src" "$evidence/input"
 
           WORK_SRC="$work_src" python3 - <<'PY'
           import os
@@ -88,6 +94,14 @@ jobs:
           # not compile targets. Do not use `cargo generate-lockfile`, which
           # would broadly refresh pins.
           cargo metadata --manifest-path "$work_src/Cargo.toml" --format-version 1 > "$evidence/cargo-metadata.json"
+          capture_workspace_state "$work_src" "$evidence/normal-resolution"
+
+          # Hosted run 35679007670 showed normal metadata resolution upgrading
+          # the pre-existing borsh 1.6.1 lock entry to 1.8.1. Restore only that
+          # pin before the strict identity gate. A conflict remains fatal.
+          cargo update --manifest-path "$work_src/Cargo.toml" -p borsh --precise 1.6.1
+          cargo metadata --manifest-path "$work_src/Cargo.toml" --locked --format-version 1 > "$evidence/cargo-metadata-after-borsh-restore.json"
+          capture_workspace_state "$work_src" "$evidence/restored-resolution"
 
           # A resolver downgrade or changed pre-existing registry identity is
           # a hard failure. New entries are allowed. Package dependency lists
@@ -137,7 +151,7 @@ jobs:
           # can target newer release channels outside this dependency closure.
           # A native selected-target build remains the full proof.
           cargo metadata --manifest-path "$work_src/Cargo.toml" --locked --format-version 1 > "$evidence/cargo-metadata-locked.json"
-          METADATA="$evidence/cargo-metadata-locked.json" NEW_LOCK="$evidence/new-lock-packages.json" \
+          METADATA="$evidence/cargo-metadata-after-borsh-restore.json" NEW_LOCK="$evidence/new-lock-packages.json" \
             MSRV_EVIDENCE="$evidence/new-dependency-msrv.json" python3 - <<'PY'
           import json
           import os
@@ -211,12 +225,7 @@ jobs:
           )
           PY
 
-          cp "$work_src/Cargo.toml" "$evidence/output/Cargo.toml"
-          cp "$work_src/Cargo.lock" "$evidence/output/Cargo.lock"
-          cp "$work_src/neothd/Cargo.toml" "$evidence/output/neothd-Cargo.toml"
-          copy_manifests "$work_src" "$evidence/output"
-          find "$work_src" -name Cargo.toml -type f -print0 | sort -z | xargs -0 sha256sum > "$evidence/output/cargo-manifests.sha256"
-          sha256sum "$work_src/Cargo.lock" > "$evidence/output/Cargo.lock.sha256"
+          capture_workspace_state "$work_src" "$evidence/output"
           (cd "$evidence" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum) > "$evidence/SHA256SUMS"
 
       - name: Upload W186 supply inputs

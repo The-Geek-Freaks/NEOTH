@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W185-local-model-operations",
-  "base": "d72c9f4d08526f14eea942b212c687fda4cf819f",
-  "capturedUtc": "2026-09-22T02:22:01.9089885Z",
-  "validationStatus": "W185_STATIC_REVIEWED_HOSTED_REQUIRED",
+  "base": "f091d5fe9eab773ba4593a1abb7ebd6c3a36f332",
+  "capturedUtc": "2026-09-22T06:04:53.8900618Z",
+  "validationStatus": "W185_HOSTED_FIXTURE_DELIMITER_REPAIRED",
   "scopeNote": "15 W185 implementation paths with final hash-bound review; native/GUI execution pending. Narrow A130 lint repairs included; W186 source excluded.",
   "files": [
     {
@@ -1308,8 +1308,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/local_models.rs",
-      "bytes": 53462,
-      "sha256": "D8D98801682E9EA23E0F3216A8E51940354B130AB6DBB983EEA8367143501FF1"
+      "bytes": 53463,
+      "sha256": "47C1E01CE27421205998C9DA128887F421060F12FD55206EA5EEAEC5FB0EC652"
     },
     {
       "path": "SRC/neothd/src/daemon/local_models/tests.rs",

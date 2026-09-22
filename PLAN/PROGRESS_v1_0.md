@@ -7,7 +7,7 @@ model-specific readiness, pull/update/prune/cancel/explicit retry, private IPC,
 CLI/Buddy and Resources UI. The assembled source review passed after worker
 ownership/persistence, exact instance-home and peer-credential repairs. Thirty
 new native test identities and three GUI identities are registered; executable
-Hosted gates have not run on W185. GOLD-LF-P1-19 stays open. See [W185](../docs/gold-wave185-verification.md).
+First Hosted Preflight/core runs (35679412294/35679420073) found a missing fixture delimiter; its exact source repair is applied, formatting and fresh compilation remain pending. GOLD-LF-P1-19 stays open. See [W185](../docs/gold-wave185-verification.md).
 W186 live capture/Silero is a separate working batch, not part of W185 admission.
 
 **W184 validation boundary:** published source `a130526e` repairs the seven

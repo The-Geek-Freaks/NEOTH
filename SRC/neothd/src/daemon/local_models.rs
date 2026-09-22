@@ -627,7 +627,7 @@ pub(crate) mod loopback_fixture {
     async fn serve(mut stream: TcpStream, state: Arc<Mutex<FixtureState>>) -> std::io::Result<()> {
         let request = read_request(&mut stream).await?;
         let (method, path) = request.split_once(' ').map(|(method, rest)| (method, rest.split_whitespace().next().unwrap_or("/"))).unwrap_or(("", "/"));
-        let request_model = request.split("\r\n\r\n").nth(1).and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok()).and_then(|json| json.get("model").or_else(|| json.get("name")).and_then(serde_json::Value::as_str).map(str::to_owned);
+        let request_model = request.split("\r\n\r\n").nth(1).and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok()).and_then(|json| json.get("model").or_else(|| json.get("name")).and_then(serde_json::Value::as_str).map(str::to_owned));
         let mut guard = state.lock().await; guard.requests.push(request.to_string());
         let (status, body, streaming) = match (method, path) {
             ("GET", "/api/tags") if guard.oversized_response => (200, "x".repeat(super::MAX_STATE_BYTES + 1), false),

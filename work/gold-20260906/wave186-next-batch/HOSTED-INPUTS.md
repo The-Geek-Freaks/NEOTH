@@ -15,6 +15,16 @@ It deliberately does not compare package dependency-display lists: `neothd`
 must acquire the two direct edges and Cargo may disambiguate those strings.
 New resolution entries are retained in the output evidence.
 
+Hosted run `35679007670` showed the normal temporary resolver replacing the
+pre-existing `borsh 1.6.1` lock entry with `borsh 1.8.1`; the strict identity
+gate rejected that churn. The workflow now records the complete
+`normal-resolution` manifests and lock before any repair, then performs only
+`cargo update -p borsh --precise 1.6.1`. It re-reads Cargo metadata and records
+`restored-resolution` before the identity and MSRV gates. A failed restore is
+terminal, and the identity/checksum gate is unchanged. The artifact therefore
+retains both the observed resolver output and the repaired candidate for
+diagnosis even when a later gate fails.
+
 The workflow performs no build, test, formatter, device action, or model
 execution. It invokes Cargo only to resolve the temporary lock and emit
 metadata, using the Rust-1.91-compatible resolver policy. Its metadata check
