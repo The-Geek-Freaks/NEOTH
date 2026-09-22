@@ -183,14 +183,14 @@ pub mod reflection_cron;
 /// anchor queries' fresh answers + emits `0x3F REGRESSION_ALERT` on cosine
 /// drift below threshold. Off by default.
 pub mod regression_cron;
+/// P2-09 private, revisioned operator research-run lifecycle store.
+pub mod research_runs;
 /// GOLD-FEAT-06 — local resource-snapshot cron: samples CPU/RAM/VRAM every
 /// `SwarmConfig::interval_secs` and emits `EXTENDED/LocalSnapshot` WAL frames.
 /// Consumed by `neoth cluster swarm` to build the exo-style dashboard.
 #[cfg(feature = "cluster")]
 pub mod resource_snapshot_cron;
 pub mod resource_watch;
-/// P2-09 private, revisioned operator research-run lifecycle store.
-pub mod research_runs;
 /// GOLD-ADAPT-HERMES-07b — log-analysis → patch-proposal → operator-reviewed
 /// fix. Categorises panics from crash.log into staged, advisory PatchProposals
 /// (never auto-applied). Consumed by the monitor crash path + `neoth self-heal`.

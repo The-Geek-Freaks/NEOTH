@@ -2,18 +2,21 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
-**W190 research lifecycle (2026-09-22):** the operator now creates, approves,
-executes and inspects a persisted research run through `neoth research`.
-The actual deep-research producer receives fixed round/page/result/call/time
-budgets and stores its query/evidence checkpoint. Resume skips completed rounds;
-pause waits for a safe completed-round boundary, while cancel prevents the next
-effect. Private bounded storage, revision and executor-attempt fences, required
-WAL writes and explicit unknown-interruption states preserve control and evidence.
-A completed synthesis with a late control is persisted and audited without replay.
-Ten new real store/CLI/producer regressions and the exact-source Hosted lane are
-admitted after independent review and root fixes; executable gates remain pending.
-P2-09 and all release/visual/provider-live acceptance remain open. See
-[W190](../docs/gold-wave190-verification.md).
+**Current W190/W191 Hosted boundary (2026-09-22):** W190's first Hosted lane
+failed compilation in its optional checkpoint layer; this batch includes the
+narrow source repair. Code Quality `35716223195` passed, but it is not a
+compilation result. All 72 exact Hosted Rustfmt hunks are imported. W191's
+production loop-registry integration is reviewed with five actual behavior
+tests; its grouped W190/W191 Hosted lane now selects 15 identities. Reviewed
+source may be published before these gates, but runtime acceptance remains
+pending. P2-09 and all release, visual and provider-live acceptance stay open.
+
+**W186 active Hosted boundary (2026-09-22):** Linux and Windows `3ded02b7`
+reached 18 of 19 live-audio identities, including actual Tract execution. The
+final Drop-guard fixture setup is fixed in `e176`, but audio `35716228725` is
+blocked by the same W190 compilation failure. macOS `3ded02b7` remains active;
+the full `8b` native Windows/macOS run and preview remain active. None is a
+platform, preview or runtime-success claim.
 
 **W186 Tract result (2026-09-22):** new graph run `35714955362` on `3ded02b7`
 passes all three Silero runtime cases on Linux, along with the first 18 of 19
@@ -62,7 +65,7 @@ Linux/macOS audio reach the original Tract If blocker. Windows compiled but
 CRLF in its fixture-name transport yielded zero tests; the Hosted lane now
 writes LF and normalizes terminal CR while still requiring one exact match.
 
-The admitted inventory contains 460 source paths and 565 universal
+The admitted inventory contains 461 source paths and 570 universal
 native identities; platform, GUI and audio counts remain unchanged. Road counts
 remain **1015 checked / 307 open / 2 partial**. This status update changes no
 checkbox or runtime/release acceptance boundary.

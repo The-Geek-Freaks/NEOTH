@@ -1003,6 +1003,101 @@ mod tests {
         }
     }
 
+    struct RegistryRecordingLoopProvider {
+        requests: Arc<Mutex<Vec<crate::providers::Request>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for RegistryRecordingLoopProvider {
+        fn name(&self) -> &'static str {
+            "loop_registry_recording_test"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("test-model")
+        }
+
+        async fn complete(
+            &self,
+            req: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            self.requests.lock().unwrap().push(req);
+            Ok(crate::providers::Completion {
+                termination: Default::default(),
+                text: "round output".into(),
+                identity: Default::default(),
+                model: "test-model".into(),
+                latency: std::time::Duration::ZERO,
+                input_tokens: None,
+                output_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                usage_measurements: None,
+            })
+        }
+    }
+
+    struct QuotaRecordingLoopProvider {
+        requests: Arc<Mutex<Vec<crate::providers::Request>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for QuotaRecordingLoopProvider {
+        fn name(&self) -> &'static str {
+            "loop_registry_quota_primary"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("test-model")
+        }
+
+        async fn complete(
+            &self,
+            req: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            self.requests.lock().unwrap().push(req);
+            Err(anyhow::Error::new(crate::providers::quota::QuotaError {
+                provider: self.name(),
+                retry_after: None,
+                body: "test quota".into(),
+            }))
+        }
+    }
+
+    struct RecoveryRecordingLoopProvider {
+        requests: Arc<Mutex<Vec<crate::providers::Request>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for RecoveryRecordingLoopProvider {
+        fn name(&self) -> &'static str {
+            "loop_registry_recovery"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("test-model")
+        }
+
+        async fn complete(
+            &self,
+            req: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            self.requests.lock().unwrap().push(req);
+            Ok(crate::providers::Completion {
+                termination: Default::default(),
+                text: "recovered round output".into(),
+                identity: Default::default(),
+                model: "test-model".into(),
+                latency: std::time::Duration::ZERO,
+                input_tokens: None,
+                output_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                usage_measurements: None,
+            })
+        }
+    }
+
     #[tokio::test]
     async fn council_loop_provider_cannot_dispatch_past_shared_budget() {
         let calls = Arc::new(AtomicUsize::new(0));
@@ -1084,6 +1179,142 @@ mod tests {
         assert_eq!(prompts[0], "verify the result");
         assert!(prompts[1].contains("Previous round (#1) produced"));
         assert!(prompts[1].contains("round output"));
+    }
+
+    #[tokio::test]
+    async fn w191_loop_retains_one_registry_envelope_byte_identically_across_rounds() {
+        let home = TempDir::new().unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn(home.path().join("loop-registry-retention.wal")).unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = RegistryRecordingLoopProvider {
+            requests: Arc::clone(&requests),
+        };
+        let config = LoopConfig {
+            min_rounds: 2,
+            max_rounds: 2,
+            until: vec![],
+            tool_call_budget: Some(10),
+            autonomy: AutonomyLevel::Full,
+            refine_enabled: false,
+            neoth_home: home.path().to_path_buf(),
+        };
+        let freedom = crate::config::FreedomConfig {
+            autonomy: AutonomyLevel::Full,
+            ..Default::default()
+        };
+        let registry_envelope = "<untrusted-context source=\"skills:registry:pinned-generation\">{\"skills\":[{\"id\":\"visible\",\"description\":\"admitted\"}]}</untrusted-context>";
+        let record = run_loop(
+            &config,
+            &provider,
+            crate::providers::Request {
+                prompt: "iterate with retained registry".into(),
+                system: Some(format!("local authority\n{registry_envelope}")),
+                model: Some("test-model".into()),
+                ..Default::default()
+            },
+            &crate::mcp::McpServers::default(),
+            &writer,
+            &freedom,
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                AutonomyLevel::Full,
+            ),
+            None,
+            &crate::mcp::McpToolScope::default(),
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+            None,
+        )
+        .await
+        .expect("two-round loop");
+        drop(writer);
+        join.await.unwrap();
+
+        assert_eq!(record.rounds_run, 2);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2, "one actual provider request per round");
+        let initial_system = requests[0].system.as_deref().expect("initial system");
+        let later_system = requests[1].system.as_deref().expect("later system");
+        assert_eq!(
+            initial_system, later_system,
+            "the later round must retain the exact session-start registry envelope"
+        );
+        assert!(initial_system.contains(registry_envelope));
+        assert_ne!(requests[0].prompt, requests[1].prompt);
+    }
+
+    #[tokio::test]
+    async fn w191_loop_fallback_recovery_keeps_the_same_registry_envelope() {
+        let home = TempDir::new().unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn(home.path().join("loop-registry-fallback.wal")).unwrap();
+        let primary_requests = Arc::new(Mutex::new(Vec::new()));
+        let recovery_requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = crate::providers::fallback::FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(QuotaRecordingLoopProvider {
+                    requests: Arc::clone(&primary_requests),
+                }),
+                Box::new(RecoveryRecordingLoopProvider {
+                    requests: Arc::clone(&recovery_requests),
+                }),
+            ],
+            vec![None, None],
+            1,
+            None,
+            home.path().join("quota.json"),
+        );
+        let config = LoopConfig {
+            min_rounds: 1,
+            max_rounds: 1,
+            until: vec![],
+            tool_call_budget: Some(10),
+            autonomy: AutonomyLevel::Full,
+            refine_enabled: false,
+            neoth_home: home.path().to_path_buf(),
+        };
+        let freedom = crate::config::FreedomConfig {
+            autonomy: AutonomyLevel::Full,
+            ..Default::default()
+        };
+        let registry_envelope = "<untrusted-context source=\"skills:registry:recovery-generation\">{\"skills\":[{\"id\":\"visible\",\"description\":\"admitted\"}]}</untrusted-context>";
+        run_loop(
+            &config,
+            &provider,
+            crate::providers::Request {
+                prompt: "recover with retained registry".into(),
+                system: Some(format!("local authority\n{registry_envelope}")),
+                model: Some("test-model".into()),
+                ..Default::default()
+            },
+            &crate::mcp::McpServers::default(),
+            &writer,
+            &freedom,
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                AutonomyLevel::Full,
+            ),
+            None,
+            &crate::mcp::McpToolScope::default(),
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+            None,
+        )
+        .await
+        .expect("quota fallback recovers the loop provider request");
+        drop(writer);
+        join.await.unwrap();
+
+        let primary = primary_requests.lock().unwrap();
+        let recovery = recovery_requests.lock().unwrap();
+        assert_eq!(primary.len(), 1, "the quota primary sees the request once");
+        assert_eq!(recovery.len(), 1, "the recovery leaf sees the request once");
+        assert_eq!(
+            primary[0].system, recovery[0].system,
+            "fallback recovery must receive the exact accepted registry envelope"
+        );
+        assert!(primary[0]
+            .system
+            .as_deref()
+            .expect("registry system")
+            .contains(registry_envelope));
     }
 
     #[tokio::test]

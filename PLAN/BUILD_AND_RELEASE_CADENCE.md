@@ -58,6 +58,12 @@ source SHA bindings before running them (W188: 8, W189: 8, Doctor: 2). It is a
 focused behavioral lane, not a replacement for full CI, preview, GUI, audio or
 release validation. The lane grants no local execution permission.
 
+W190/W191 use one grouped GitHub-hosted lane for the 15 exact behavior
+identities after source-SHA discovery. It runs only after the optional W190
+checkpoint layer compiles, preserves the one-worker bound, and is evidence only
+for its selected identities; it neither replaces native/preview/full-CI gates
+nor authorizes local execution.
+
 W190 adds a separate main-only `research-lifecycle.yml` Hosted lane for ten
 source-SHA-bound lifecycle tests. It retains Rust 1.91, one Cargo worker,
 serial exact discovery/execution, bounded runtime and retained receipts.

@@ -13,6 +13,7 @@
 
 use anyhow::{Context as _, Result};
 use clap::{Args, Subcommand};
+use tracing::warn;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
@@ -182,9 +183,19 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
             config.tokens.max_per_request,
         );
 
-    let req = crate::providers::Request {
-        prompt: args.prompt,
-        ..Default::default()
+    let req = match standalone_loop_enriched_request(&config, &neoth_home, &writer, &args.prompt)
+        .await
+    {
+        Ok(request) => request,
+        Err(error) => {
+            drop(writer);
+            return match writer_join.await {
+                Ok(()) => Err(error),
+                Err(join_error) => Err(error.context(format!(
+                    "standalone loop Skill setup failed and WAL writer join also failed: {join_error}"
+                ))),
+            };
+        }
     };
     let elicitation = if config.elicitation.enabled {
         crate::cli::elicitation::ElicitationHandler::Cli
@@ -235,6 +246,131 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
     let record = result?;
     print!("{}", render_record(&record, output)?);
     Ok(())
+}
+
+/// Build the one request a standalone loop may reuse for all of its rounds.
+/// This owns the session-start Skill publication boundary: callers cannot
+/// rebuild a registry inside the engine's round/retry path.
+async fn standalone_loop_enriched_request(
+    config: &FreedomConfig,
+    neoth_home: &std::path::Path,
+    writer: &crate::wal::writer::WalWriterHandle,
+    prompt: &str,
+) -> Result<crate::providers::Request> {
+    // A standalone loop is an authenticated local-operator session too. Load
+    // one compound config/authority Skill snapshot and render its filtered
+    // inventory before the first provider request. `run_loop` clones this
+    // request for later rounds, so retries and rounds retain these exact bytes
+    // rather than observing a newer registry generation.
+    let skills_dir = neoth_home.join("skills");
+    let reload = std::sync::Arc::new(crate::config::reload::ReloadController::new(
+        config.clone(),
+        neoth_home.join("freedom.yaml"),
+    ));
+    let config_epoch = reload.accepted_snapshot().epoch();
+    let registry = crate::skills::SkillRegistry::load_with_reload_controller(
+        &skills_dir,
+        std::sync::Arc::clone(&reload),
+    )
+    .await
+    .with_context(|| format!("load loop skill registry from {}", skills_dir.display()))?;
+    let skill_snapshot = registry
+        .authority_bound_snapshot_for_epoch(config_epoch)
+        .context("acquire authority-bound standalone loop Skill snapshot")?;
+    let raw_installed_skills = skill_snapshot.skills();
+    let mut blocked_skill_ids = std::collections::BTreeSet::<String>::new();
+    if !config.skills.pinned_hashes.is_empty() {
+        let verdicts = crate::skills::versioning::check_pinned_hashes(
+            raw_installed_skills
+                .iter()
+                .map(|skill| (skill.id(), skill.content_hash.as_str())),
+            &config.skills.pinned_hashes,
+        );
+        for (skill, verdict) in raw_installed_skills.iter().zip(verdicts.iter()) {
+            if matches!(
+                verdict.verdict,
+                crate::skills::versioning::PinnedHashOutcome::Mismatch
+            ) {
+                blocked_skill_ids.insert(skill.id().to_owned());
+                let payload = serde_json::to_vec(&serde_json::json!({
+                    "skill_id": verdict.skill_id,
+                    "content_hash": verdict.actual_hash,
+                    "expected_hash": verdict.expected_hash,
+                    "reason": crate::skills::versioning::SkillSkipReason::HashMismatch.as_str(),
+                    "ts_unix": crate::time::now_unix_secs(),
+                }))
+                .unwrap_or_default();
+                let header = crate::wal::make_header(
+                    crate::wal::events::EVENT_TYPE_SKILL_INJECT_SKIPPED,
+                    &payload,
+                );
+                if let Err(error) = writer.append(header, payload).await {
+                    warn!(
+                        skill = %verdict.skill_id,
+                        error = %error,
+                        "SKILL_INJECT_SKIPPED (hash_mismatch) emit failed (non-fatal)"
+                    );
+                }
+            }
+        }
+    }
+    let eval_suppress = config.skills.should_suppress_for_eval();
+    if eval_suppress {
+        for skill in raw_installed_skills
+            .iter()
+            .filter(|skill| skill.manifest.enabled && !blocked_skill_ids.contains(skill.id()))
+        {
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "skill_id": skill.id(),
+                "content_hash": skill.content_hash,
+                "reason": crate::skills::versioning::SkillSkipReason::EvalSession.as_str(),
+                "ts_unix": crate::time::now_unix_secs(),
+            }))
+            .unwrap_or_default();
+            let header = crate::wal::make_header(
+                crate::wal::events::EVENT_TYPE_SKILL_INJECT_SKIPPED,
+                &payload,
+            );
+            if let Err(error) = writer.append(header, payload).await {
+                warn!(
+                    skill = skill.id(),
+                    error = %error,
+                    "SKILL_INJECT_SKIPPED (eval_session) emit failed (non-fatal)"
+                );
+            }
+        }
+    }
+    let active_files = crate::skills::resolver::active_files_from_env();
+    let skill_registry_context = crate::skills::resolver::SkillRouteResolver::new(skill_snapshot)
+        .retaining(|skill| !eval_suppress && !blocked_skill_ids.contains(skill.id()))
+        .session_registry_context(&active_files)
+        .context("render standalone loop session-start Skill registry context")?;
+    let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
+        prompt,
+        operator_sovereignty: Some(
+            crate::security::operator_sovereignty::OperatorSovereigntyPrompt::local_interactive(),
+        ),
+        operator_context: None,
+        preset_addendum: None,
+        explicit_system: None,
+        repo_context_block: None,
+        attachment_contexts: None,
+        skill_system_prompt: None,
+        skill_registry_context: Some(&skill_registry_context),
+        used_skill_id: None,
+        mcp_catalogue: None,
+        persona_override: None,
+        moral_core: None,
+        identity_anchor: None,
+        identity_locked: false,
+        current_goal: None,
+        communication_profile: None,
+    });
+    Ok(crate::providers::Request {
+        prompt: enriched.prompt,
+        system: enriched.system,
+        ..Default::default()
+    })
 }
 
 /// Load every LoopRunRecord in `loops_dir`, newest first. Unreadable or
@@ -348,6 +484,63 @@ fn truncate_id(id: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use crate::loop_engine::engine::{LoopRound, StopReason};
+    use std::sync::{Arc, Mutex};
+
+    struct StandaloneRequestRecordingProvider {
+        requests: Arc<Mutex<Vec<crate::providers::Request>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for StandaloneRequestRecordingProvider {
+        fn name(&self) -> &'static str {
+            "standalone_loop_registry_test"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("test-model")
+        }
+
+        async fn complete(
+            &self,
+            request: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            self.requests.lock().unwrap().push(request);
+            Ok(crate::providers::Completion {
+                termination: Default::default(),
+                text: "loop round output".into(),
+                identity: Default::default(),
+                model: "test-model".into(),
+                latency: std::time::Duration::ZERO,
+                input_tokens: None,
+                output_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+                usage_measurements: None,
+            })
+        }
+    }
+
+    async fn loop_request_for_test(
+        home: &std::path::Path,
+        config: &FreedomConfig,
+    ) -> crate::providers::Request {
+        let (writer, join) = crate::wal::writer::spawn(home.join("loop-registry-test.wal"))
+            .expect("test WAL writer");
+        let request = standalone_loop_enriched_request(config, home, &writer, "test loop prompt")
+            .await
+            .expect("standalone loop request");
+        drop(writer);
+        join.await.expect("test WAL writer join");
+        request
+    }
+
+    fn first_registry_skill_id(request: &crate::providers::Request) -> String {
+        let system = request.system.as_deref().expect("registry system layer");
+        let marker = "\"id\":\"";
+        let start = system.find(marker).expect("at least one admitted Skill") + marker.len();
+        let end = system[start..].find('\"').expect("Skill id closing quote") + start;
+        system[start..end].to_owned()
+    }
 
     fn record(id: &str, ts_start: i64) -> LoopRunRecord {
         LoopRunRecord {
@@ -428,5 +621,114 @@ mod tests {
         let table = render_record(&r, OutputFormat::Table).unwrap();
         assert!(table.contains("round 1"), "{table}");
         assert!(table.contains("done"), "{table}");
+    }
+
+    #[tokio::test]
+    async fn w191_loop_request_excludes_pin_rejected_and_eval_suppressed_registry_entries() {
+        let home = tempfile::tempdir().unwrap();
+        let baseline = loop_request_for_test(home.path(), &FreedomConfig::default()).await;
+        let admitted_id = first_registry_skill_id(&baseline);
+        assert!(
+            baseline.system.as_deref().unwrap().contains(&admitted_id),
+            "the baseline must prove this fixture uses the production registry loader"
+        );
+
+        let mut pin_rejected = FreedomConfig::default();
+        pin_rejected
+            .skills
+            .pinned_hashes
+            .insert(admitted_id.clone(), "0".repeat(64));
+        let pin_request = loop_request_for_test(home.path(), &pin_rejected).await;
+        assert!(
+            !pin_request.system.as_deref().unwrap().contains(&admitted_id),
+            "a pinned-hash mismatch must stay out of the standalone loop registry"
+        );
+
+        let mut eval_suppressed = FreedomConfig::default();
+        eval_suppressed.skills.disabled_for_eval_sessions = true;
+        eval_suppressed.skills.eval_session_active = true;
+        let eval_request = loop_request_for_test(home.path(), &eval_suppressed).await;
+        assert!(
+            !eval_request.system.as_deref().unwrap().contains(&admitted_id),
+            "an eval-suppressed session must expose no Skill registry entry"
+        );
+    }
+
+    #[tokio::test]
+    async fn w191_later_standalone_loop_rebuilds_its_registry_from_fresh_config() {
+        let home = tempfile::tempdir().unwrap();
+        let baseline = loop_request_for_test(home.path(), &FreedomConfig::default()).await;
+        let admitted_id = first_registry_skill_id(&baseline);
+
+        let mut reject_first_generation = FreedomConfig::default();
+        reject_first_generation
+            .skills
+            .pinned_hashes
+            .insert(admitted_id.clone(), "0".repeat(64));
+        let first = loop_request_for_test(home.path(), &reject_first_generation).await;
+        assert!(
+            !first.system.as_deref().unwrap().contains(&admitted_id),
+            "the first loop generation rejects the pinned Skill"
+        );
+
+        let later = loop_request_for_test(home.path(), &FreedomConfig::default()).await;
+        assert!(
+            later.system.as_deref().unwrap().contains(&admitted_id),
+            "a later standalone loop must acquire a fresh registry instead of reusing the rejected generation"
+        );
+    }
+
+    #[tokio::test]
+    async fn w191_actual_standalone_request_retains_loaded_registry_through_two_rounds() {
+        let home = tempfile::tempdir().unwrap();
+        let freedom = FreedomConfig {
+            autonomy: crate::permissions::AutonomyLevel::Full,
+            ..Default::default()
+        };
+        let request = loop_request_for_test(home.path(), &freedom).await;
+        let registry_id = first_registry_skill_id(&request);
+        let initial_system = request.system.clone().expect("loaded registry system");
+        assert!(initial_system.contains(&registry_id));
+
+        let (writer, join) =
+            crate::wal::writer::spawn(home.path().join("actual-loop-registry.wal")).unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = StandaloneRequestRecordingProvider {
+            requests: Arc::clone(&requests),
+        };
+        let loop_config = crate::loop_engine::engine::LoopConfig {
+            min_rounds: 2,
+            max_rounds: 2,
+            until: vec![],
+            tool_call_budget: Some(10),
+            autonomy: crate::permissions::AutonomyLevel::Full,
+            refine_enabled: false,
+            neoth_home: home.path().to_path_buf(),
+        };
+        crate::loop_engine::run_loop(
+            &loop_config,
+            &provider,
+            request,
+            &crate::mcp::McpServers::default(),
+            &writer,
+            &freedom,
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            None,
+            &crate::mcp::McpToolScope::default(),
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+            None,
+        )
+        .await
+        .expect("actual standalone request completes two rounds");
+        drop(writer);
+        join.await.unwrap();
+
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].system.as_deref(), Some(initial_system.as_str()));
+        assert_eq!(requests[1].system.as_deref(), Some(initial_system.as_str()));
+        assert_ne!(requests[0].prompt, requests[1].prompt);
     }
 }

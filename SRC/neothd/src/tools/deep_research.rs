@@ -69,9 +69,15 @@ pub struct ResearchReport {
 /// no control and therefore retains its historical behaviour.
 pub trait ResearchRunControl: Sync {
     fn checkpoint(&self, phase: &'static str) -> Result<()>;
-    fn resume_checkpoint(&self) -> Result<Option<ResearchCheckpoint>> { Ok(None) }
-    fn persist_checkpoint(&self, _checkpoint: &ResearchCheckpoint) -> Result<()> { Ok(()) }
-    fn round_completed(&self) -> Result<()> { Ok(()) }
+    fn resume_checkpoint(&self) -> Result<Option<ResearchCheckpoint>> {
+        Ok(None)
+    }
+    fn persist_checkpoint(&self, _checkpoint: &ResearchCheckpoint) -> Result<()> {
+        Ok(())
+    }
+    fn round_completed(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Private durable replay input.  It contains only bounded operator-owned
@@ -406,7 +412,17 @@ pub async fn run_deep_research(
     writer: &WalWriterHandle,
     http: &crate::tools::external_http::ExternalHttpAuthorizer,
 ) -> Result<ResearchReport> {
-    run_deep_research_controlled(topic, provider, search_key, search_provider, budget, writer, http, None).await
+    run_deep_research_controlled(
+        topic,
+        provider,
+        search_key,
+        search_provider,
+        budget,
+        writer,
+        http,
+        None,
+    )
+    .await
 }
 
 /// Lifecycle-aware variant used by `neoth research`. Checks happen before
@@ -428,12 +444,20 @@ pub async fn run_deep_research_controlled(
     // xxh3 matches the pattern used by all other WAL payload hashes in chat.rs;
     // formatted as 16-char hex so log grepping works the same way.
     let topic_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(topic.as_bytes()));
-    if control.is_some() { emit_wal_started_required(writer, &topic_hash).await?; } else { emit_wal_started(writer, &topic_hash).await; }
+    if control.is_some() {
+        emit_wal_started_required(writer, &topic_hash).await?;
+    } else {
+        emit_wal_started(writer, &topic_hash).await;
+    }
 
     info!(topic_hash = %topic_hash, max_rounds = budget.max_rounds, "deep_research: starting");
 
     // ── Step 1: Plan — LLM decomposes the topic into sub-queries ──────────
-    let mut persisted = control.map(|c| c.resume_checkpoint()).transpose()?.unwrap_or_default();
+    let mut persisted = control
+        .map(|c| c.resume_checkpoint())
+        .transpose()?
+        .flatten()
+        .unwrap_or_default();
     if persisted.queries.is_empty() {
         checkpoint(control, "plan")?;
         persisted.queries = plan_queries(topic, provider).await.unwrap_or_else(|e| {
@@ -443,18 +467,35 @@ pub async fn run_deep_research_controlled(
         persisted.queries.truncate(budget.max_rounds as usize);
         persist_checkpoint(control, &persisted)?;
     }
-    if persisted.queries.len() > budget.max_rounds as usize || persisted.completed_rounds as usize > persisted.queries.len() {
+    if persisted.queries.len() > budget.max_rounds as usize
+        || persisted.completed_rounds as usize > persisted.queries.len()
+    {
         anyhow::bail!("deep_research: invalid durable checkpoint exceeds immutable round budget");
     }
     let queries = persisted.queries.clone();
     debug!(queries = ?queries, "deep_research: planned sub-queries");
 
     // ── Step 2: Round loop ─────────────────────────────────────────────────
-    let mut all_evidence: Vec<RenderedUntrustedContext> = persisted.evidence.iter().map(|e| UntrustedContext::new(UntrustedContextClass::Web, &e.source_id, &e.content).render()).collect();
-    let mut citations: Vec<CitedSource> = persisted.evidence.iter().map(|e| e.citation.clone()).collect();
+    let mut all_evidence: Vec<RenderedUntrustedContext> = persisted
+        .evidence
+        .iter()
+        .map(|e| {
+            UntrustedContext::new(UntrustedContextClass::Web, &e.source_id, &e.content).render()
+        })
+        .collect();
+    let mut citations: Vec<CitedSource> = persisted
+        .evidence
+        .iter()
+        .map(|e| e.citation.clone())
+        .collect();
     let mut rounds_done: u8 = persisted.completed_rounds;
 
-    for (round_idx, query) in queries.iter().enumerate().skip(rounds_done as usize).take(budget.max_rounds as usize) {
+    for (round_idx, query) in queries
+        .iter()
+        .enumerate()
+        .skip(rounds_done as usize)
+        .take(budget.max_rounds as usize)
+    {
         checkpoint(control, "round")?;
         rounds_done += 1;
         eprintln!(
@@ -481,7 +522,9 @@ pub async fn run_deep_research_controlled(
                 persisted.evidence.extend(checkpoint_evidence);
                 persisted.completed_rounds = rounds_done;
                 persist_checkpoint(control, &persisted)?;
-                if let Some(control) = control { control.round_completed()?; }
+                if let Some(control) = control {
+                    control.round_completed()?;
+                }
             }
             Err(e) => {
                 // A pause/cancel raised from a fetch boundary must escape the
@@ -529,7 +572,12 @@ pub async fn run_deep_research_controlled(
     let citation_count = citations.len();
 
     // ── WAL: DEEP_RESEARCH_COMPLETED ──────────────────────────────────────
-    if control.is_some() { emit_wal_completed_required(writer, &topic_hash, rounds_done, word_count, citation_count).await?; } else { emit_wal_completed(writer, &topic_hash, rounds_done, word_count, citation_count).await; }
+    if control.is_some() {
+        emit_wal_completed_required(writer, &topic_hash, rounds_done, word_count, citation_count)
+            .await?;
+    } else {
+        emit_wal_completed(writer, &topic_hash, rounds_done, word_count, citation_count).await;
+    }
 
     info!(
         topic_hash = %topic_hash,
@@ -593,7 +641,11 @@ async fn research_round(
     budget: &Budget,
     http: &crate::tools::external_http::ExternalHttpAuthorizer,
     control: Option<&dyn ResearchRunControl>,
-) -> Result<(Vec<RenderedUntrustedContext>, Vec<CitedSource>, Vec<ResearchCheckpointEvidence>)> {
+) -> Result<(
+    Vec<RenderedUntrustedContext>,
+    Vec<CitedSource>,
+    Vec<ResearchCheckpointEvidence>,
+)> {
     checkpoint(control, "search")?;
     let hits = web_search::search_cached_authorized(
         search_provider,
@@ -652,7 +704,11 @@ async fn research_round(
                     title: hit.title.clone(),
                     url: hit.url.clone(),
                 };
-                checkpoint_evidence.push(ResearchCheckpointEvidence { source_id: format!("deep-research:web:{}", hit.url), content: truncated, citation: citation.clone() });
+                checkpoint_evidence.push(ResearchCheckpointEvidence {
+                    source_id: format!("deep-research:web:{}", hit.url),
+                    content: truncated,
+                    citation: citation.clone(),
+                });
                 evidence_blocks.push(fenced);
                 new_citations.push(citation);
             }
@@ -666,12 +722,19 @@ async fn research_round(
 }
 
 fn checkpoint(control: Option<&dyn ResearchRunControl>, phase: &'static str) -> Result<()> {
-    if let Some(control) = control { control.checkpoint(phase)?; }
+    if let Some(control) = control {
+        control.checkpoint(phase)?;
+    }
     Ok(())
 }
 
-fn persist_checkpoint(control: Option<&dyn ResearchRunControl>, checkpoint: &ResearchCheckpoint) -> Result<()> {
-    if let Some(control) = control { control.persist_checkpoint(checkpoint)?; }
+fn persist_checkpoint(
+    control: Option<&dyn ResearchRunControl>,
+    checkpoint: &ResearchCheckpoint,
+) -> Result<()> {
+    if let Some(control) = control {
+        control.persist_checkpoint(checkpoint)?;
+    }
     Ok(())
 }
 
@@ -839,8 +902,21 @@ async fn emit_wal_started(writer: &WalWriterHandle, topic_hash: &str) {
 }
 
 async fn emit_wal_started_required(writer: &WalWriterHandle, topic_hash: &str) -> Result<()> {
-    let payload = serde_json::to_vec(&serde_json::json!({"topic_hash":topic_hash,"ts_unix":crate::time::now_unix_secs()})).context("serialise required deep-research start audit")?;
-    writer.append(crate::wal::make_header(crate::wal::events::EVENT_TYPE_DEEP_RESEARCH_STARTED,&payload),payload).await.context("append required deep-research start audit").map(|_|())
+    let payload = serde_json::to_vec(
+        &serde_json::json!({"topic_hash":topic_hash,"ts_unix":crate::time::now_unix_secs()}),
+    )
+    .context("serialise required deep-research start audit")?;
+    writer
+        .append(
+            crate::wal::make_header(
+                crate::wal::events::EVENT_TYPE_DEEP_RESEARCH_STARTED,
+                &payload,
+            ),
+            payload,
+        )
+        .await
+        .context("append required deep-research start audit")
+        .map(|_| ())
 }
 
 async fn emit_wal_completed(
@@ -872,9 +948,25 @@ async fn emit_wal_completed(
     }
 }
 
-async fn emit_wal_completed_required(writer:&WalWriterHandle,topic_hash:&str,rounds:u8,word_count:usize,citation_count:usize)->Result<()> {
+async fn emit_wal_completed_required(
+    writer: &WalWriterHandle,
+    topic_hash: &str,
+    rounds: u8,
+    word_count: usize,
+    citation_count: usize,
+) -> Result<()> {
     let payload=serde_json::to_vec(&serde_json::json!({"topic_hash":topic_hash,"rounds":rounds,"word_count":word_count,"citation_count":citation_count,"ts_unix":crate::time::now_unix_secs()})).context("serialise required deep-research completion audit")?;
-    writer.append(crate::wal::make_header(crate::wal::events::EVENT_TYPE_DEEP_RESEARCH_COMPLETED,&payload),payload).await.context("append required deep-research completion audit").map(|_|())
+    writer
+        .append(
+            crate::wal::make_header(
+                crate::wal::events::EVENT_TYPE_DEEP_RESEARCH_COMPLETED,
+                &payload,
+            ),
+            payload,
+        )
+        .await
+        .context("append required deep-research completion audit")
+        .map(|_| ())
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────
@@ -1059,24 +1151,63 @@ mod tests {
         }
     }
 
-    struct MemoryCheckpointControl { checkpoint: Mutex<ResearchCheckpoint>, calls: AtomicUsize }
+    struct MemoryCheckpointControl {
+        checkpoint: Mutex<ResearchCheckpoint>,
+        calls: AtomicUsize,
+    }
     impl ResearchRunControl for MemoryCheckpointControl {
-        fn checkpoint(&self, _phase: &'static str) -> Result<()> { self.calls.fetch_add(1, Ordering::SeqCst); Ok(()) }
-        fn resume_checkpoint(&self) -> Result<Option<ResearchCheckpoint>> { Ok(Some(self.checkpoint.lock().unwrap().clone())) }
-        fn persist_checkpoint(&self, checkpoint:&ResearchCheckpoint)->Result<()> { *self.checkpoint.lock().unwrap()=checkpoint.clone(); Ok(()) }
+        fn checkpoint(&self, _phase: &'static str) -> Result<()> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn resume_checkpoint(&self) -> Result<Option<ResearchCheckpoint>> {
+            Ok(Some(self.checkpoint.lock().unwrap().clone()))
+        }
+        fn persist_checkpoint(&self, checkpoint: &ResearchCheckpoint) -> Result<()> {
+            *self.checkpoint.lock().unwrap() = checkpoint.clone();
+            Ok(())
+        }
     }
 
     #[tokio::test]
     async fn resumed_checkpoint_skips_planning_search_and_fetch_for_completed_round() {
-        let dir=tempfile::tempdir().unwrap(); let segment=dir.path().join("research.wal");
-        let (writer, join)=crate::wal::writer::spawn(segment).unwrap();
-        let provider=CycleProvider::new(vec!["resumed synthesis"]);
-        let control=MemoryCheckpointControl { checkpoint:Mutex::new(ResearchCheckpoint { queries:vec!["already-completed".into()], completed_rounds:1, evidence:Vec::new() }), calls:AtomicUsize::new(0) };
-        let cfg=crate::config::DeepResearchConfig { max_rounds:Some(1), results_per_query:Some(1), pages_per_round:Some(1) };
-        let report=run_deep_research_controlled("topic",&provider,&SecretString::from(String::new()),SearchProvider::SearXng,&cfg,&writer,&crate::tools::external_http::ExternalHttpAuthorizer::test_allow(),Some(&control)).await.unwrap();
-        assert_eq!(report.article,"resumed synthesis");
-        assert_eq!(provider.prompts.lock().unwrap().len(),1,"resume must issue synthesis only, not re-plan/search/fetch completed round");
-        drop(writer); join.await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("research.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment).unwrap();
+        let provider = CycleProvider::new(vec!["resumed synthesis"]);
+        let control = MemoryCheckpointControl {
+            checkpoint: Mutex::new(ResearchCheckpoint {
+                queries: vec!["already-completed".into()],
+                completed_rounds: 1,
+                evidence: Vec::new(),
+            }),
+            calls: AtomicUsize::new(0),
+        };
+        let cfg = crate::config::DeepResearchConfig {
+            max_rounds: Some(1),
+            results_per_query: Some(1),
+            pages_per_round: Some(1),
+        };
+        let report = run_deep_research_controlled(
+            "topic",
+            &provider,
+            &SecretString::from(String::new()),
+            SearchProvider::SearXng,
+            &cfg,
+            &writer,
+            &crate::tools::external_http::ExternalHttpAuthorizer::test_allow(),
+            Some(&control),
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.article, "resumed synthesis");
+        assert_eq!(
+            provider.prompts.lock().unwrap().len(),
+            1,
+            "resume must issue synthesis only, not re-plan/search/fetch completed round"
+        );
+        drop(writer);
+        join.await.unwrap();
     }
 
     #[test]

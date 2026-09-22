@@ -145,7 +145,6 @@ pub mod providers;
 pub mod quota;
 pub mod recall;
 pub mod recall_score;
-pub mod research;
 pub mod recipe;
 pub mod recon;
 pub mod recover;
@@ -154,6 +153,7 @@ pub mod refusal;
 /// MAR-02 — `neoth release {keygen, sign, verify, pubkey}` release signing.
 pub mod release;
 pub mod reload;
+pub mod research;
 pub mod review;
 pub mod risk_confirm;
 /// ZF-04 — RecursiveMAS code acknowledgement and revocable provider-egress gates.

@@ -42150,7 +42150,7 @@ mod w58_gui_callback_runtime_tests {
         MiniOverlay, NATIVE_CODING_UI_REVISION, OwnedChatChild, PendingChatWatchdogRetry,
         ReasoningControlFrame, RequestBoundChatConsentToken, RequestBoundChatRetryInput,
         RequestBoundChatWatchdogRetryStop, SiProposalRow, activate_buddy_chat_request_ui,
-        apply_channel_snapshot, apply_channels, apply_chat_reasoning_controls,
+        apply_channel_snapshot, apply_channels, apply_chat_reasoning_controls, apply_local_models,
         begin_chat_reasoning_projection, bind_chat_consent_token, claim_chat_presentation_owner,
         code_map_controller::{AutomaticContextPresentationController, CodeMapLifecycleController},
         code_map_impact_controller::CodeMapImpactController,
@@ -42158,6 +42158,7 @@ mod w58_gui_callback_runtime_tests {
         install_chat_launch_gate, install_legacy_child_chat_transport_callbacks,
         native_coding_terminal_bridge_accepts, neothd_executable_names, ouro_gui,
         project_chat_reasoning_snapshot, publish_code_map_enrichment_readiness,
+        parse_local_models_status,
         refresh_selfimprove, register_buddy_code_map_impact_callback,
         register_buddy_code_map_status_callback, register_buddy_native_coding_callbacks,
         register_buddy_quality_handoff_callback, register_buddy_vault_mirror_callback,
@@ -42165,7 +42166,8 @@ mod w58_gui_callback_runtime_tests {
         register_channel_legacy_migration_callback, register_channel_pairing_approval_callback,
         register_channel_pairing_request_callbacks,
         register_code_map_enrichment_readiness_callbacks, register_selfimprove_accept_callback,
-        register_skill_autonomy_callbacks, start_code_map_lifecycle_config_apply,
+        register_local_model_callbacks, register_skill_autonomy_callbacks,
+        start_code_map_lifecycle_config_apply,
         start_code_map_lifecycle_refresh, which_neothd,
     };
 
@@ -47409,7 +47411,7 @@ exit 0
             )
         };
         format!(
-            r#"{{"schema_version":1,"observed_at_unix_ms":2,"endpoint":{{"kind":"reachable","detail":"fresh tags and ps"}},"host_resources":{{"ram_bytes":null,"vram_bytes":null,"gpu_name":null}},"models":{models},"active_operation":{active},"last_terminal_operation":{terminal}}"#
+            r#"{{"schema_version":1,"observed_at_unix_ms":2,"endpoint":{{"kind":"reachable","detail":"fresh tags and ps"}},"host_resources":{{"ram_bytes":null,"vram_bytes":null,"gpu_name":null}},"models":{models},"active_operation":{active},"last_terminal_operation":{terminal}}}"#
         )
     }
 

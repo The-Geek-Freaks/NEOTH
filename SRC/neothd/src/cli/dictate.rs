@@ -841,7 +841,9 @@ mod tests {
         let (started_sender, started_signal) = tokio::sync::oneshot::channel();
         let transcription = tokio::spawn(async move {
             let _signal = DropSignal(Some(drop_sender));
-            started_sender.send(()).expect("test still awaits active task");
+            started_sender
+                .send(())
+                .expect("test still awaits active task");
             std::future::pending::<(u64, Option<Result<String, DictationError>>)>().await
         });
         let owned = LiveDictateOwnedTasks {
