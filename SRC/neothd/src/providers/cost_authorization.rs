@@ -664,7 +664,10 @@ impl ProviderCallAuditTicket {
         add_audit_context(&mut payload, &self.context);
         if let Some(decision) = &self.role_dispatch {
             payload.insert("hemisphere_role".into(), decision.role.as_str().into());
-            payload.insert("hemisphere_provider".into(), decision.provider.as_str().into());
+            payload.insert(
+                "hemisphere_provider".into(),
+                decision.provider.as_str().into(),
+            );
             payload.insert("hemisphere_model".into(), decision.model.clone().into());
             payload.insert(
                 "hemisphere_policy".into(),
@@ -1791,9 +1794,11 @@ impl ProviderCallAuthorizer {
         let current = self
             .resolve_role_dispatch(&original.model)
             .map_err(anyhow::Error::new)?
-            .ok_or_else(|| anyhow::anyhow!(ProviderAuthorizationError(
-                "role dispatch lost its Council binding before authorization".into(),
-            )))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(ProviderAuthorizationError(
+                    "role dispatch lost its Council binding before authorization".into(),
+                ))
+            })?;
         if current.policy != original.policy {
             return Err(anyhow::anyhow!(ProviderAuthorizationError(
                 "role dispatch policy changed after handler construction; provider dispatch blocked".into(),

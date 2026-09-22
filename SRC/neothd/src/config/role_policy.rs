@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use sha2::{Digest as _, Sha256};
 
 use super::inference::{HemisphereRole, InferenceProvider};
@@ -35,20 +35,23 @@ impl RolePolicyConfig {
         let candidate = RoleDispatchCandidate::new(role, provider, final_model);
         let policy = self.identity();
         if final_model.trim().is_empty() {
-            return Err(candidate.violation(
-                policy,
-                RoleDispatchViolationReason::ModelNotAllowed,
-            ));
+            return Err(candidate.violation(policy, RoleDispatchViolationReason::ModelNotAllowed));
         }
         let Some(rule) = self.rules.iter().find(|rule| rule.role == role) else {
             return Err(candidate.violation(policy, RoleDispatchViolationReason::RoleUnconfigured));
         };
 
         if rule.provider != provider {
-            return Err(candidate.violation(policy, RoleDispatchViolationReason::ProviderNotAllowed));
+            return Err(
+                candidate.violation(policy, RoleDispatchViolationReason::ProviderNotAllowed)
+            );
         }
 
-        if rule.model.as_deref().is_some_and(|model| model != final_model) {
+        if rule
+            .model
+            .as_deref()
+            .is_some_and(|model| model != final_model)
+        {
             return Err(candidate.violation(policy, RoleDispatchViolationReason::ModelNotAllowed));
         }
 
@@ -68,8 +71,7 @@ impl RolePolicyConfig {
                     "{}\u{1f}{}\u{1f}",
                     rule.role.as_str(),
                     rule.provider.as_str(),
-                )
-                + rule.model.as_deref().unwrap_or("")
+                ) + rule.model.as_deref().unwrap_or("")
             })
             .collect::<Vec<_>>()
             .join("\u{1e}");
@@ -221,11 +223,7 @@ struct RoleDispatchCandidate<'a> {
 }
 
 impl<'a> RoleDispatchCandidate<'a> {
-    const fn new(
-        role: HemisphereRole,
-        provider: InferenceProvider,
-        final_model: &'a str,
-    ) -> Self {
+    const fn new(role: HemisphereRole, provider: InferenceProvider, final_model: &'a str) -> Self {
         Self {
             role,
             provider,
@@ -289,7 +287,10 @@ mod tests {
             "rules:\n  - role: unknown\n    provider: openai_api\n",
             "rules:\n  - role: left\n    provider: unknown\n",
         ] {
-            assert!(serde_yaml::from_str::<RolePolicyConfig>(yaml).is_err(), "{yaml}");
+            assert!(
+                serde_yaml::from_str::<RolePolicyConfig>(yaml).is_err(),
+                "{yaml}"
+            );
         }
     }
 
@@ -358,7 +359,9 @@ mod tests {
             .policy
         {
             RolePolicyIdentity::ConfiguredPolicy { digest } => digest,
-            RolePolicyIdentity::CompatibilityDefault => unreachable!("configured policy has a digest"),
+            RolePolicyIdentity::CompatibilityDefault => {
+                unreachable!("configured policy has a digest")
+            }
         };
         let violation_digest = |policy: &RolePolicyConfig| match policy
             .resolve(HemisphereRole::Left, InferenceProvider::OpenAi, "gpt-5.5")
@@ -366,7 +369,9 @@ mod tests {
             .policy
         {
             RolePolicyIdentity::ConfiguredPolicy { digest } => digest,
-            RolePolicyIdentity::CompatibilityDefault => unreachable!("configured policy has a digest"),
+            RolePolicyIdentity::CompatibilityDefault => {
+                unreachable!("configured policy has a digest")
+            }
         };
 
         let baseline_decision = decision_digest(&baseline);

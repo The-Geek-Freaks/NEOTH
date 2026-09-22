@@ -947,9 +947,9 @@ mod tests {
 
     use super::*;
     use crate::cli::init::ProviderKind;
+    use crate::config::credentials::Credentials;
     use crate::config::inference::{HemisphereRole, InferenceProvider};
     use crate::config::role_policy::{RolePolicyConfig, RolePolicyRule};
-    use crate::config::credentials::Credentials;
     use crate::secret::SecretString;
     use crate::transport::ssh_config::{SshAuth, SshEndpoint, SshTunnelConfig};
 
@@ -1417,22 +1417,36 @@ mod tests {
         write_yaml(&yaml_path, &serde_yaml::to_string(&role_only).unwrap());
         let controller = ReloadController::new(initial, yaml_path.clone());
         assert!(matches!(
-            controller.try_reload().expect("role policy reload is valid"),
+            controller
+                .try_reload()
+                .expect("role policy reload is valid"),
             ReloadResult::Reloaded { .. }
         ));
-        assert_eq!(controller.latest().inference.role_policy, role_only.inference.role_policy);
+        assert_eq!(
+            controller.latest().inference.role_policy,
+            role_only.inference.role_policy
+        );
 
         let mut topology_change = role_only.clone();
         topology_change.inference.left.provider = Some(InferenceProvider::AnthropicApi);
-        write_yaml(&yaml_path, &serde_yaml::to_string(&topology_change).unwrap());
-        match controller.try_reload().expect("inference validation succeeds") {
+        write_yaml(
+            &yaml_path,
+            &serde_yaml::to_string(&topology_change).unwrap(),
+        );
+        match controller
+            .try_reload()
+            .expect("inference validation succeeds")
+        {
             ReloadResult::Rejected { rejection } => {
                 assert_eq!(rejection.reason_codes(), ["provider_runtime_changed"]);
                 assert!(rejection.to_string().contains("inference"));
             }
             other => panic!("expected restart-bound inference rejection, got {other:?}"),
         }
-        assert_eq!(controller.latest().inference.left.provider, role_only.inference.left.provider);
+        assert_eq!(
+            controller.latest().inference.left.provider,
+            role_only.inference.left.provider
+        );
     }
 
     #[test]

@@ -1804,7 +1804,10 @@ impl ProviderDispatchPermit {
         let Some(expected) = expected else {
             return Ok(());
         };
-        let model = req.model.as_deref().ok_or_else(|| anyhow::anyhow!("role dispatch raw request has no final model"))?;
+        let model = req
+            .model
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("role dispatch raw request has no final model"))?;
         let authorizer = self
             .retry
             .as_ref()
@@ -1816,7 +1819,9 @@ impl ProviderDispatchPermit {
             .map_err(anyhow::Error::new)?
             .ok_or_else(|| anyhow::anyhow!("role dispatch permit lost its Council binding"))?;
         if current != expected {
-            anyhow::bail!("role dispatch policy changed after authorization; provider transport blocked");
+            anyhow::bail!(
+                "role dispatch policy changed after authorization; provider transport blocked"
+            );
         }
         Ok(())
     }
@@ -1997,7 +2002,7 @@ impl ProviderDispatchPermit {
                 retry.call_scope,
                 false,
                 retry.output_token_ceiling,
-        )
+            )
             .await?;
         let role_dispatch = authorized.take_role_dispatch();
         let provider_subject = authorized.take_provider_subject();

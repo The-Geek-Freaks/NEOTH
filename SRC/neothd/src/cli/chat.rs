@@ -11496,7 +11496,8 @@ async fn build_hemisphere_with_config(
     session_canary: Option<std::sync::Arc<crate::security::injection_tracker::CanaryToken>>,
 ) -> Result<ProviderHemisphere> {
     let role_provider = role_provider_from_slot(config.as_ref(), config.inference.slot_for(role))?;
-    let authorizer = authorizer.with_role_dispatch(role, role_provider, std::sync::Arc::clone(&config));
+    let authorizer =
+        authorizer.with_role_dispatch(role, role_provider, std::sync::Arc::clone(&config));
     let provider =
         crate::providers::from_config_for_role_at(config.as_ref(), role, neoth_home).await?;
     // GOLD-WIRE-04: outer-council hemisphere — voice from this role's slot,
@@ -11556,11 +11557,8 @@ async fn build_sub_hemisphere_with_config(
         config.as_ref(),
         config.inference.slot_for_sub(outer_role, inner_role),
     )?;
-    let authorizer = authorizer.with_role_dispatch(
-        inner_role,
-        role_provider,
-        std::sync::Arc::clone(&config),
-    );
+    let authorizer =
+        authorizer.with_role_dispatch(inner_role, role_provider, std::sync::Arc::clone(&config));
     let provider = crate::providers::from_config_for_sub_role_at(
         config.as_ref(),
         outer_role,

@@ -40,7 +40,10 @@ impl Provider for RecordingLeaf {
     }
 }
 
-fn configured_role_policy(provider: InferenceProvider, model: &str) -> Arc<crate::config::FreedomConfig> {
+fn configured_role_policy(
+    provider: InferenceProvider,
+    model: &str,
+) -> Arc<crate::config::FreedomConfig> {
     let mut config = crate::config::FreedomConfig::default();
     config.inference.role_policy = Some(RolePolicyConfig {
         rules: vec![RolePolicyRule {
@@ -70,8 +73,8 @@ fn lifecycle_frames(segment: &std::path::Path) -> Vec<(u8, serde_json::Value)> {
     let mut cursor = header.header_len();
     let mut frames = Vec::new();
     while cursor < bytes.len() {
-        let frame = crate::wal::frame::decode_frame(&bytes[cursor..])
-            .expect("decode lifecycle WAL frame");
+        let frame =
+            crate::wal::frame::decode_frame(&bytes[cursor..]).expect("decode lifecycle WAL frame");
         if frame.header.event_type != crate::wal::events::EVENT_TYPE_COMPACTION_MARKER {
             frames.push((
                 frame.header.event_type,
@@ -103,7 +106,10 @@ async fn configured_role_denial_blocks_raw_transport() {
         .complete(Request::default())
         .await
         .expect_err("configured role/provider mismatch must deny the leaf");
-    assert!(error.to_string().contains("role dispatch denied"), "{error:#}");
+    assert!(
+        error.to_string().contains("role dispatch denied"),
+        "{error:#}"
+    );
     assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
 }
 
@@ -125,7 +131,10 @@ async fn allowed_council_leaf_returns_response_and_audits_typed_role_identity() 
     .with_role_dispatch(HemisphereRole::Left, InferenceProvider::LocalOllama, policy);
     let provider = CostAuthorizingProvider::new(&inner, authorizer, None, "w213.role_allowed");
 
-    let response = provider.complete(Request::default()).await.expect("allowed leaf response");
+    let response = provider
+        .complete(Request::default())
+        .await
+        .expect("allowed leaf response");
     assert_eq!(response.text, "authenticated leaf response");
     assert_eq!(inner.calls.load(Ordering::SeqCst), 1);
     drop(provider);
@@ -183,8 +192,11 @@ async fn accepted_role_policy_reload_between_authorization_and_raw_send_is_block
     let dir = tempfile::tempdir().expect("temporary reload directory");
     let config_path = dir.path().join("freedom.yaml");
     let initial = (*configured_role_policy(InferenceProvider::LocalOllama, "qwen-allowed")).clone();
-    std::fs::write(&config_path, serde_yaml::to_string(&initial).expect("serialize initial config"))
-        .expect("write initial config");
+    std::fs::write(
+        &config_path,
+        serde_yaml::to_string(&initial).expect("serialize initial config"),
+    )
+    .expect("write initial config");
     let reload = Arc::new(crate::config::reload::ReloadController::new(
         initial.clone(),
         config_path.clone(),
@@ -192,9 +204,8 @@ async fn accepted_role_policy_reload_between_authorization_and_raw_send_is_block
 
     let segment = dir.path().join("w213-role-policy-reload-000001.wal");
     let (writer, join) = crate::wal::writer::spawn(segment.clone()).expect("start WAL writer");
-    let ack_gate = crate::wal::writer::TestAckGate::once(
-        crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
-    );
+    let ack_gate =
+        crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
     let writer = writer.with_test_ack_gate(ack_gate.clone());
     let inner = RecordingLeaf {
         calls: AtomicUsize::new(0),
@@ -235,8 +246,11 @@ async fn accepted_role_policy_reload_between_authorization_and_raw_send_is_block
                 provider: InferenceProvider::OpenAi,
                 model: Some("gpt-5".into()),
             });
-        std::fs::write(&config_path, serde_yaml::to_string(&reloaded).expect("serialize reloaded config"))
-            .expect("write reloaded config");
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&reloaded).expect("serialize reloaded config"),
+        )
+        .expect("write reloaded config");
         assert!(matches!(
             reload.try_reload().expect("reload role-policy generation"),
             crate::config::reload::ReloadResult::Reloaded { .. }
@@ -247,7 +261,9 @@ async fn accepted_role_policy_reload_between_authorization_and_raw_send_is_block
             .await
             .expect_err("accepted changed role policy must block raw transport");
         assert!(
-            error.to_string().contains("role dispatch policy changed after authorization"),
+            error
+                .to_string()
+                .contains("role dispatch policy changed after authorization"),
             "{error:#}"
         );
         assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
@@ -280,7 +296,10 @@ async fn non_council_leaf_ignores_a_closed_policy_without_role_binding() {
         "w213.compatibility",
     );
 
-    let response = provider.complete(Request::default()).await.expect("legacy leaf remains compatible");
+    let response = provider
+        .complete(Request::default())
+        .await
+        .expect("legacy leaf remains compatible");
     assert_eq!(response.text, "authenticated leaf response");
     assert_eq!(inner.calls.load(Ordering::SeqCst), 1);
 }

@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W214 Buddy embedding parity (2026-09-22):** `neoth buddy embedding --config
+PATH list|status|select|probe|pull|repair|prune` now delegates to the existing
+typed model lifecycle, retaining exact instance scope, updater/audit policy,
+probe freshness and prune safeguards. Independent bounded source review passed;
+three new regressions bring Grouped to 251 and inventory to 529 source paths /
+798 universal native / 92 GUI identities. Hosted behavior and the generated CLI
+reference update are pending. W213 is published at `889d3df8`; Grouped248
+`35771699017` and Core/CLI `35771703379` are running, and its source/SHA-bound
+Hosted formatting receipt `35771681385` is imported with this batch. Road
+counts remain unchanged; see `docs/gold-wave214-verification.md`.
+
 **W213 Council role admission (2026-09-22):** optional closed provider/model
 rules now bind primary and recursive Council leaves. The retained policy
 identity reaches lifecycle audit and final complete/stream/event transport

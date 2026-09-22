@@ -1106,7 +1106,7 @@ fn select_embedding_model(
     Ok(readback)
 }
 
-async fn run_embedding_models(
+pub(crate) async fn run_embedding_models(
     action: EmbeddingModelsAction,
     config: Option<&Path>,
     output: &OutputFormat,

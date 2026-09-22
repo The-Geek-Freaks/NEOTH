@@ -35,7 +35,6 @@
 //! server. Per-server values are not surfaced here (would require loading the
 //! MCP config; deferred until that surface stabilises).
 
-#[cfg(feature = "cluster")]
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -47,6 +46,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::cli::OutputFormat;
+use crate::cli::models::EmbeddingModelsAction;
 use crate::config::FreedomConfig;
 use crate::daemon::local_models_ipc::LocalModelsIpcClient;
 use crate::daemon::vault_mirror;
@@ -86,6 +86,16 @@ pub enum BuddyAction {
     ///   "effective_cap": object, "origin": string}],
     ///   "local_models": LocalModelsSnapshot | {"kind":"unavailable"}}`
     Status,
+
+    /// Inspect or explicitly operate the selected local embedding model using
+    /// the same lifecycle owner as `neoth models embedding`.
+    /// `--config` binds the operation to that exact instance home.
+    Embedding {
+        #[arg(long, value_name = "PATH")]
+        config: Option<PathBuf>,
+        #[command(subcommand)]
+        action: EmbeddingModelsAction,
+    },
 
     /// Toggle `self_activation.enabled` in freedom.yaml.
     ///
@@ -206,6 +216,10 @@ pub enum BuddyClusterAction {
 pub async fn run_buddy(args: BuddyArgs) -> Result<()> {
     match args.action {
         BuddyAction::Status => run_status(args.output).await,
+        BuddyAction::Embedding { config, action } => {
+            crate::cli::models::run_embedding_models(action, config.as_deref(), &args.output)
+                .await
+        }
         BuddyAction::SelfActivation { enable, disable } => {
             run_self_activation(enable, disable, args.output)
         }
@@ -734,6 +748,123 @@ mod tests {
                 action: BuddyVaultMirrorAction::Repair
             }
         ));
+    }
+
+    #[test]
+    fn buddy_embedding_parses_all_actions_and_rejects_unknown_action() {
+        for action in ["list", "status", "probe", "pull", "repair", "prune"] {
+            let cli = BuddyCli::try_parse_from([
+                "buddy",
+                "embedding",
+                "--config",
+                "C:/instances/blue/freedom.yaml",
+                action,
+            ])
+            .expect("embedding action parses");
+            let parsed = match cli.args.action {
+                BuddyAction::Embedding {
+                    config: Some(_),
+                    action,
+                } => action,
+                _ => panic!("expected configured embedding action"),
+            };
+            assert!(matches!(
+                (action, parsed),
+                ("list", EmbeddingModelsAction::List)
+                    | ("status", EmbeddingModelsAction::Status)
+                    | ("probe", EmbeddingModelsAction::Probe)
+                    | ("pull", EmbeddingModelsAction::Pull)
+                    | ("repair", EmbeddingModelsAction::Repair)
+                    | ("prune", EmbeddingModelsAction::Prune)
+            ));
+        }
+
+        let select = BuddyCli::try_parse_from([
+            "buddy",
+            "embedding",
+            "--config",
+            "C:/instances/blue/freedom.yaml",
+            "select",
+            "bge_m3",
+        ])
+        .expect("embedding select parses");
+        assert!(matches!(
+            select.args.action,
+            BuddyAction::Embedding {
+                config: Some(_),
+                action: EmbeddingModelsAction::Select { .. },
+            }
+        ));
+        assert!(BuddyCli::try_parse_from(["buddy", "embedding", "refresh"]).is_err());
+    }
+
+    #[tokio::test]
+    async fn buddy_embedding_select_mutates_only_supplied_config_and_preserves_unknown_fields() {
+        let home = tempfile::tempdir().expect("temp home");
+        let path = home.path().join("operator-blue.yaml");
+        let yaml = serde_yaml::to_string(&FreedomConfig::default()).expect("serialize config");
+        std::fs::write(&path, format!("{yaml}buddy_extension: retain-me\n"))
+            .expect("write custom config");
+
+        run_buddy(BuddyArgs {
+            action: BuddyAction::Embedding {
+                config: Some(path.clone()),
+                action: EmbeddingModelsAction::Select {
+                    model: crate::cli::models::EmbeddingModelArg::BgeM3,
+                },
+            },
+            output: OutputFormat::Json,
+        })
+        .await
+        .expect("custom-config embedding select succeeds");
+
+        let readback = FreedomConfig::load_from_path(&path).expect("read selected config");
+        assert_eq!(
+            readback.embed.model,
+            crate::config::embedding::EmbeddingModel::BgeM3
+        );
+        assert!(std::fs::read_to_string(&path)
+            .expect("read custom config")
+            .contains("buddy_extension: retain-me"));
+        assert!(
+            !home.path().join("freedom.yaml").exists(),
+            "selection must not create or mutate a sibling default config"
+        );
+    }
+
+    #[tokio::test]
+    async fn buddy_embedding_qwen_actions_fail_before_lifecycle_side_effects() {
+        let home = tempfile::tempdir().expect("temp home");
+        let path = write_cfg(&home, &FreedomConfig::default());
+        let before = std::fs::read(&path).expect("read config before refusal");
+
+        for action in [
+            EmbeddingModelsAction::Probe,
+            EmbeddingModelsAction::Pull,
+            EmbeddingModelsAction::Repair,
+            EmbeddingModelsAction::Prune,
+        ] {
+            let error = run_buddy(BuddyArgs {
+                action: BuddyAction::Embedding {
+                    config: Some(path.clone()),
+                    action,
+                },
+                output: OutputFormat::Json,
+            })
+            .await
+            .expect_err("Qwen action must be rejected before lifecycle work");
+            assert!(error.to_string().contains("Qwen") || error.to_string().contains("qwen"));
+        }
+
+        assert_eq!(
+            std::fs::read(&path).expect("read config after refusal"),
+            before,
+            "rejected Qwen actions must not mutate the supplied config"
+        );
+        assert!(
+            !home.path().join("models").exists(),
+            "rejected Qwen actions must not create a model cache"
+        );
     }
 
     #[test]
