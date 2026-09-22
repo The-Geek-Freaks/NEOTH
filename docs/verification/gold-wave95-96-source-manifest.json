@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T22:01:58.8482840Z",
-  "validationStatus": "Group303299pass4fixturefailures repaired; exact Hosted CLI reference imported; Group328 pending",
+  "capturedUtc": "2026-09-22T22:05:47.7998227Z",
+  "validationStatus": "W228 manual exact LinuxGUI116 lane source-reviewed; Hosted pending, no releaseCI replacement",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -433,18 +433,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 74225,
-      "sha256": "B8879626F6BA2BBFD86223C802640ED05A8C182C00FE6966C4186E61B1118488"
+      "bytes": 75037,
+      "sha256": "FAE373C232836325C843BC5B520CD480392E440EAFF44F9A1FD02830F9D03642"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1077160,
-      "sha256": "D33F0C357EDD0F5EDC62702424A19DF3EFB4847CE821B9E9092C0AC704D6CEEA"
+      "bytes": 1077972,
+      "sha256": "24F226A05A4605D227A353F6DFF2EEDCA9A348CAAC4317647CEF9E1903C05259"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1672728,
-      "sha256": "7AFAC17760638A3B4EA3E6FF74F7742F1F55484F56124A1EB063C734A4072039"
+      "bytes": 1673540,
+      "sha256": "2D1F6BDE49EEF94815F360AE2A44F4F717F092BA30602C6C9EBCCF1E66A0C1A5"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -2675,6 +2675,11 @@
       "path": "SRC/neothd/src/cli/cluster.rs",
       "bytes": 246189,
       "sha256": "131039EF4B6D5C083AA0C49ABDBDEBEAF7760E26A019F0EE6A04CA84B5FDCFA9"
+    },
+    {
+      "path": ".github/workflows/gui-linux-fixtures.yml",
+      "bytes": 19898,
+      "sha256": "803623644E0EF621FC34B54A47F1349128CB0FEEC3A90B52ED76797E6FBA06C0"
     }
   ]
 }

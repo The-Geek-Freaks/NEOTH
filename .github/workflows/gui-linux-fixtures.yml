@@ -1,0 +1,388 @@
+name: W228 Linux GUI fixture acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# This deliberately has no relationship to CI's cancellable `ci-${{ github.ref }}`
+# group. It is a manually dispatched, focused acceptance receipt and must not
+# cancel or be cancelled by the full Windows/macOS matrix.
+concurrency:
+  group: w228-linux-gui-fixtures-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux-gui-fixtures:
+    name: W228 exact Linux GUI fixtures / Rust 1.91
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+
+    steps:
+      - name: Checkout dispatched source without credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Rust 1.91
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      - name: Install Linux GUI dependencies and Xvfb
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-0 \
+            xauth \
+            xvfb \
+            ffmpeg
+
+      # Read-only reuse of CI's Linux/Rust-1.91 cache. This lane never saves a
+      # partial target directory into that shared cache family.
+      - name: Restore Linux Cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: linux-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          restore-keys: |
+            linux-1.91-cargo-
+
+      - name: Bind the complete declared GUI fixture closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/w228-linux-gui-fixtures"
+          mkdir -p "$evidence_root/source" "$evidence_root/log" "$evidence_root/receipt"
+          git rev-parse HEAD | tee "$evidence_root/receipt/source-head.txt"
+          printf '%s\n' "$GITHUB_REF" | tee "$evidence_root/receipt/source-ref.txt"
+          printf '%s\n' 'binding-pending' > "$evidence_root/source/selection-status.txt"
+          export EVIDENCE_ROOT="$evidence_root"
+          python3 - <<'PY' > >(tee "$evidence_root/log/bind-source.log") 2>&1
+          import hashlib
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          root = Path(os.environ["GITHUB_WORKSPACE"])
+          evidence_root = Path(os.environ["EVIDENCE_ROOT"])
+          matrix_path = root / "docs/verification/gold-wave95-96-test-matrix.json"
+          matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+          required_gui_class = matrix.get("requiredGuiClass")
+          if required_gui_class != "neothd-gui::bin/neothd-gui":
+              raise SystemExit("requiredGuiClass must bind the neothd-gui binary harness")
+
+          def require_names(value, label, expected_count):
+              if not isinstance(value, list) or len(value) != expected_count:
+                  raise SystemExit(f"{label} must be a {expected_count}-item string array")
+              if any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_:]+", name) for name in value):
+                  raise SystemExit(f"{label} contains a missing or malformed test identity")
+              if len(value) != len(set(value)):
+                  raise SystemExit(f"{label} contains a duplicate test identity")
+              return value
+
+          universal = require_names(matrix.get("requiredGuiTests"), "requiredGuiTests", 94)
+          by_platform = matrix.get("requiredGuiTestsByPlatform")
+          if not isinstance(by_platform, dict):
+              raise SystemExit("requiredGuiTestsByPlatform is missing or malformed")
+          linux = require_names(by_platform.get("Linux"), "requiredGuiTestsByPlatform.Linux", 22)
+          selected = universal + linux
+          if len(selected) != 116 or len(selected) != len(set(selected)):
+              raise SystemExit("GUI fixture selection must contain exactly 116 unique identities (94 universal + 22 Linux)")
+
+          bindings = matrix.get("guiSourceBindings")
+          if not isinstance(bindings, list) or not bindings:
+              raise SystemExit("guiSourceBindings is missing or malformed")
+          bound_paths = set()
+          actual_bindings = []
+          for binding in bindings:
+              if not isinstance(binding, dict) or set(binding) != {"path", "bytes", "sha256"}:
+                  raise SystemExit("guiSourceBindings contains a malformed binding")
+              path, expected_bytes, expected_hash = binding["path"], binding["bytes"], binding["sha256"]
+              if (not isinstance(path, str) or not path or Path(path).is_absolute() or ".." in Path(path).parts
+                      or not isinstance(expected_bytes, int) or expected_bytes < 0
+                      or not isinstance(expected_hash, str) or len(expected_hash) != 64):
+                  raise SystemExit("guiSourceBindings contains an invalid binding value")
+              if path in bound_paths:
+                  raise SystemExit(f"guiSourceBindings duplicates a path: {path}")
+              bound_paths.add(path)
+              candidate = root / path
+              if not candidate.is_file():
+                  raise SystemExit(f"declared GUI source binding is missing: {path}")
+              payload = candidate.read_bytes()
+              actual_hash = hashlib.sha256(payload).hexdigest().upper()
+              if len(payload) != expected_bytes or actual_hash != expected_hash.upper():
+                  raise SystemExit(f"declared GUI source binding drifted: {path}")
+              actual_bindings.append({"path": path, "bytes": len(payload), "sha256": actual_hash})
+
+          source_manifest = matrix.get("sourceManifest")
+          if not isinstance(source_manifest, dict) or set(source_manifest) != {"path", "bytes", "sha256"}:
+              raise SystemExit("sourceManifest is missing or malformed")
+          manifest_path = source_manifest["path"]
+          if (not isinstance(manifest_path, str) or not manifest_path or Path(manifest_path).is_absolute()
+                  or ".." in Path(manifest_path).parts or not isinstance(source_manifest["bytes"], int)
+                  or not isinstance(source_manifest["sha256"], str)):
+              raise SystemExit("sourceManifest contains an invalid value")
+          manifest = root / manifest_path
+          manifest_payload = manifest.read_bytes() if manifest.is_file() else None
+          if manifest_payload is None:
+              raise SystemExit(f"declared source manifest is missing: {manifest_path}")
+          manifest_hash = hashlib.sha256(manifest_payload).hexdigest().upper()
+          if len(manifest_payload) != source_manifest["bytes"] or manifest_hash != source_manifest["sha256"].upper():
+              raise SystemExit("declared source manifest hash or byte count drifted")
+
+          lock_path = root / "SRC/Cargo.lock"
+          if not lock_path.is_file():
+              raise SystemExit("SRC/Cargo.lock is missing")
+          inputs = {
+              "matrix": {"path": str(matrix_path.relative_to(root)), "sha256": hashlib.sha256(matrix_path.read_bytes()).hexdigest().upper()},
+              "sourceManifest": {"path": manifest_path, "bytes": len(manifest_payload), "sha256": manifest_hash},
+              "cargoLock": {"path": "SRC/Cargo.lock", "bytes": lock_path.stat().st_size, "sha256": hashlib.sha256(lock_path.read_bytes()).hexdigest().upper()},
+              "guiCargoToml": {"path": "SRC/neothd-gui/Cargo.toml", "sha256": hashlib.sha256((root / "SRC/neothd-gui/Cargo.toml").read_bytes()).hexdigest().upper()},
+          }
+          (evidence_root / "source" / "selected-fixtures.json").write_text(json.dumps({
+              "schema": "neoth-w228-linux-gui-fixtures/v1",
+              "requiredGuiClass": required_gui_class,
+              "universal": universal,
+              "linux": linux,
+              "selected": selected,
+              "counts": {"universal": len(universal), "linux": len(linux), "total": len(selected)},
+          }, indent=2) + "\n", encoding="utf-8")
+          (evidence_root / "source" / "gui-source-bindings.json").write_text(json.dumps(actual_bindings, indent=2) + "\n", encoding="utf-8")
+          (evidence_root / "source" / "source-manifest.json").write_bytes(manifest_payload)
+          (evidence_root / "source" / "inputs.json").write_text(json.dumps(inputs, indent=2) + "\n", encoding="utf-8")
+          (evidence_root / "source" / "fixture-names.txt").write_text("\n".join(selected) + "\n", encoding="utf-8")
+          PY
+          printf '%s\n' 'binding-verified' > "$evidence_root/source/selection-status.txt"
+          test "$(cat "$evidence_root/receipt/source-head.txt")" = "$GITHUB_SHA"
+
+      # The selected fixtures are tests in the neothd-gui binary harness. The
+      # real CLI is built once for callbacks that do not stage a test-local
+      # executable; fixtures which intentionally stage `neoth` keep their
+      # own PATH precedence. No `neoth --lib` test binary is requested.
+      - name: Build and run each exact GUI fixture once
+        id: gui-fixtures
+        shell: bash
+        working-directory: SRC
+        run: |
+          set -uo pipefail
+          evidence_root="$RUNNER_TEMP/w228-linux-gui-fixtures"
+          result="$evidence_root/receipt/result.json"
+          names="$evidence_root/source/fixture-names.txt"
+          failed="$evidence_root/receipt/failed-names.txt"
+          executed="$evidence_root/receipt/executed-names.txt"
+          started="$evidence_root/receipt/started-names.txt"
+          completed="$evidence_root/receipt/completed-names.txt"
+          passed="$evidence_root/receipt/passed-names.txt"
+          unstarted="$evidence_root/receipt/unstarted-names.txt"
+          : > "$failed"
+          : > "$executed"
+          : > "$started"
+          : > "$completed"
+          : > "$passed"
+          : > "$unstarted"
+          overall=0
+          deadline_reached=false
+          incomplete_reason=""
+          required_gui_class='neothd-gui::bin/neothd-gui'
+          # Finish the runner-side protocol with time for receipt creation and
+          # the always-uploaded artifacts before GitHub's 90-minute job limit.
+          deadline_seconds=4500
+          SECONDS=0
+
+          timeout --preserve-status 25m cargo build -p neoth --bin neoth --locked 2>&1 | tee "$evidence_root/log/build-neoth-cli.log"
+          build_status=${PIPESTATUS[0]}
+          if [[ "$build_status" -ne 0 ]]; then
+            printf '%s\n' '__build_neoth_cli__' >> "$failed"
+            overall=1
+          fi
+
+          if [[ "$build_status" -eq 0 ]]; then
+            export PATH="$PWD/target/debug:$PATH"
+            # Compile exactly this binary test harness once. Later discovery
+            # and exact runs only reuse this target directory; a cold compile
+            # failure is terminal and is never retried for every fixture.
+            timeout --preserve-status 45m cargo test -p neothd-gui --bin neothd-gui --locked --no-run 2>&1 | tee "$evidence_root/log/build-gui-test-harness.log"
+            gui_build_status=${PIPESTATUS[0]}
+            if [[ "$gui_build_status" -ne 0 ]]; then
+              printf '%s\n' '__build_neothd_gui_test_harness__' >> "$failed"
+              overall=1
+            fi
+          else
+            gui_build_status=125
+          fi
+
+          if [[ "$build_status" -eq 0 && "$gui_build_status" -eq 0 ]]; then
+            mapfile -t tests < "$names"
+            for index in "${!tests[@]}"; do
+              test_name="${tests[$index]}"
+              remaining_seconds=$((deadline_seconds - SECONDS))
+              if [[ "$remaining_seconds" -le 90 ]]; then
+                deadline_reached=true
+                incomplete_reason="deadline reserve reached before fixture $((index + 1))"
+                break
+              fi
+              case_timeout=$((remaining_seconds - 90))
+              if [[ "$case_timeout" -gt 720 ]]; then
+                case_timeout=720
+              fi
+              log="$evidence_root/log/test-$(printf '%03d' "$((index + 1))").log"
+              execution_receipt="$evidence_root/receipt/test-$(printf '%03d' "$((index + 1))")-execution.txt"
+              printf '%s\n' "$test_name" >> "$started"
+              run_fixture() {
+                echo "=== fixture $((index + 1))/${#tests[@]}: $test_name ==="
+                echo "=== discovery ==="
+                listed="$(timeout --preserve-status "$case_timeout" cargo test -p neothd-gui --bin neothd-gui --locked "$test_name" -- --exact --list)"
+                list_status=$?
+                printf '%s\n' "$listed"
+                if [[ "$list_status" -ne 0 ]]; then
+                  echo "discovery command failed: $list_status" >&2
+                  return 1
+                fi
+                if [[ "$(printf '%s\n' "$listed" | grep -Fxc "$test_name: test")" -ne 1 ]]; then
+                  echo "fixture discovery was missing, ambiguous, or malformed: $test_name" >&2
+                  return 1
+                fi
+                echo "=== execution ==="
+                printf '%s\n' "$test_name" >> "$executed"
+                xvfb-run --auto-servernum timeout --preserve-status "$case_timeout" cargo test -p neothd-gui --bin neothd-gui --locked "$test_name" -- --exact --test-threads=1 2>&1 | tee "$execution_receipt"
+                run_status=${PIPESTATUS[0]}
+                if [[ "$run_status" -ne 0 ]]; then
+                  echo "exact execution command failed: $run_status" >&2
+                  return 1
+                fi
+                terminal_summary="$(grep -F 'test result:' "$execution_receipt" | tail -n 1)"
+                if [[ "$terminal_summary" != *'test result: ok. 1 passed; 0 failed; 0 ignored;'* ]]; then
+                  echo "exact execution did not prove one non-ignored passing test: $test_name" >&2
+                  return 1
+                fi
+              }
+              if run_fixture > >(tee "$log") 2>&1; then
+                test_status=0
+                printf '%s\n' "$test_name" >> "$passed"
+              else
+                test_status=$?
+                printf '%s\n' "$test_name" >> "$failed"
+                overall=1
+              fi
+              printf '%s\n' "$test_name" >> "$completed"
+            done
+          fi
+
+          mapfile -t expected_tests < "$names"
+          for test_name in "${expected_tests[@]}"; do
+            grep -Fqx "$test_name" "$started" || printf '%s\n' "$test_name" >> "$unstarted"
+          done
+          if [[ -s "$unstarted" && "$overall" -eq 0 ]]; then
+            overall=1
+            incomplete_reason="fixture loop ended before every selected identity started"
+          fi
+          if [[ "$deadline_reached" == true ]]; then
+            overall=1
+          fi
+
+          invariant_status="$evidence_root/receipt/proof-invariant-status.txt"
+          export RESULT_PATH="$result" INVARIANT_STATUS_PATH="$invariant_status" EXECUTED_PATH="$executed" STARTED_PATH="$started" COMPLETED_PATH="$completed" PASSED_PATH="$passed" FAILED_PATH="$failed" UNSTARTED_PATH="$unstarted" BUILD_STATUS="$build_status" GUI_BUILD_STATUS="$gui_build_status" EXPECTED_PATH="$names" DEADLINE_REACHED="$deadline_reached" INCOMPLETE_REASON="$incomplete_reason" DEADLINE_SECONDS="$deadline_seconds" REQUIRED_GUI_CLASS="$required_gui_class"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          expected = Path(os.environ["EXPECTED_PATH"]).read_text(encoding="utf-8").splitlines()
+          executed = Path(os.environ["EXECUTED_PATH"]).read_text(encoding="utf-8").splitlines()
+          started = Path(os.environ["STARTED_PATH"]).read_text(encoding="utf-8").splitlines()
+          completed = Path(os.environ["COMPLETED_PATH"]).read_text(encoding="utf-8").splitlines()
+          passed = Path(os.environ["PASSED_PATH"]).read_text(encoding="utf-8").splitlines()
+          failed = Path(os.environ["FAILED_PATH"]).read_text(encoding="utf-8").splitlines()
+          unstarted = Path(os.environ["UNSTARTED_PATH"]).read_text(encoding="utf-8").splitlines()
+          coverage_complete = started == expected and completed == expected
+          proof_complete = (
+              started == expected
+              and completed == expected
+              and executed == expected
+              and passed == expected
+              and not failed
+          )
+          status = "passed" if proof_complete else ("failed" if coverage_complete else "incomplete")
+          Path(os.environ["RESULT_PATH"]).write_text(json.dumps({
+              "schema": "neoth-w228-linux-gui-fixtures-result/v1",
+              "status": status,
+              "complete": proof_complete,
+              "coverageComplete": coverage_complete,
+              "requiredGuiClass": os.environ["REQUIRED_GUI_CLASS"],
+              "expectedCount": len(expected),
+              "startedCount": len(started),
+              "completedCount": len(completed),
+              "actualExecutedCount": len(executed),
+              "passedNames": passed,
+              "failedNames": failed,
+              "unstartedNames": unstarted,
+              "buildNeothCliExit": int(os.environ["BUILD_STATUS"]),
+              "buildGuiTestHarnessExit": int(os.environ["GUI_BUILD_STATUS"]),
+              "deadlineSeconds": int(os.environ["DEADLINE_SECONDS"]),
+              "deadlineReached": os.environ["DEADLINE_REACHED"] == "true",
+              "incompleteReason": os.environ["INCOMPLETE_REASON"] or None,
+          }, indent=2) + "\n", encoding="utf-8")
+          Path(os.environ["INVARIANT_STATUS_PATH"]).write_text(
+              "proof-complete\n" if proof_complete else "proof-incomplete\n", encoding="utf-8"
+          )
+          if not proof_complete:
+              raise SystemExit("fixture receipt invariants did not prove every selected identity exactly once")
+          PY
+          receipt_status=$?
+          if [[ "$receipt_status" -ne 0 ]]; then
+            if [[ ! -f "$invariant_status" ]] || [[ "$(cat "$invariant_status")" != 'proof-incomplete' ]]; then
+              printf '%s\n' '__receipt_writer__' >> "$failed"
+            fi
+            overall=1
+          fi
+          test "$(wc -l < "$completed")" -eq "$(wc -l < "$names")" || overall=1
+          exit "$overall"
+
+      - name: Upload GUI fixture source bindings
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w228-linux-gui-fixtures-source-${{ github.sha }}
+          path: ${{ runner.temp }}/w228-linux-gui-fixtures/source/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload GUI fixture logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w228-linux-gui-fixtures-log-${{ github.sha }}
+          path: ${{ runner.temp }}/w228-linux-gui-fixtures/log/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload GUI fixture receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w228-linux-gui-fixtures-receipt-${{ github.sha }}
+          path: ${{ runner.temp }}/w228-linux-gui-fixtures/receipt/
+          if-no-files-found: error
+          retention-days: 14

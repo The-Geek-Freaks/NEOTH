@@ -8,6 +8,17 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W228 focused Linux GUI acceptance (2026-09-23):** a separate manual,
+non-cancelling GitHub lane now binds and executes the canonical **94 universal
+plus 22 Linux GUI fixtures**. It prebuilds the real CLI and GUI binary harness,
+uses one build job/Xvfb, verifies actual one-test pass terminals, and retains
+truthful partial receipts before its bounded job deadline. Independent static
+review passed. Hosted results are pending; full native/release CI remains
+required. The ongoing Windows/macOS FullCI `35782661515` is preserved.
+Inventory: **535 source paths / 841 native / 94 GUI**, unchanged22Linux/22macOS
+extras and26macOS custom cases; Grouped328 `35790281385` runs separately.
+Road remains1016checked/306open/2partial. See
+`docs/gold-wave228-linux-gui-acceptance.md`. No local executable validation ran.
 **W226 Hosted repair checkpoint (2026-09-23):** Grouped303 `35788592926` is
 source-bound at **299 passed / 4 failed**, all 62 source hashes and exact result
 terminals verified. Four fixture setup defects are repaired: mismatched signed
