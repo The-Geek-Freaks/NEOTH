@@ -29,3 +29,15 @@ The corrected fixture passed independent source review. Hosted execution is
 pending; no local compiler, parser, formatter, tests or runtime ran. Grouped282
 will include the new identity alongside all 281 prior selections. No Road
 checkbox is closed by source changes alone.
+
+Published `1129c61b23171993fe0c0043da16933ccd28f557`; Grouped282
+`35787183572` is running on that source. The exact formatter artifact from
+Preflight `35787183568` was imported in `ea700f15` after source/SHA256SUMS,
+Git preimage, unchanged working preimage, patch-check and postimage verification.
+Only the fixture formatting changed. No local formatter ran.
+The first Grouped282 run failed before executing tests: two nested-module enum
+imports were missing and `expect_err` required Debug on the intentionally opaque
+EffectStartLease. The fixture now imports its enums explicitly and matches the
+error result without changing production types. A fresh run remains required.
+Preflight also detected a stale machine-readable Road summary after P2-10;
+the published marker and top-level workstream count are now reconciled.

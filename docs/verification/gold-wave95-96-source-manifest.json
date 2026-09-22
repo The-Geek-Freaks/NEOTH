@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T21:32:02.9329679Z",
-  "validationStatus": "W225 exact Hosted formatter patch imported; Group282 running; no local executable validation",
+  "capturedUtc": "2026-09-22T21:37:33.9691354Z",
+  "validationStatus": "W225 Hosted compile imports/opaque error assertion repaired; Road machine summary reconciled; recheck pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -443,8 +443,8 @@
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1669892,
-      "sha256": "B9C01B5DF7BAB74935CAB0874F639B439CF9D3D90FE8BF936990C4FBC388F3FA"
+      "bytes": 1669882,
+      "sha256": "7751F0D5955145FDE0EBD6DBA7DED3A4D63D77AAE8997507253A4C2EF9A50F06"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -2233,8 +2233,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/role_dispatch_tests.rs",
-      "bytes": 15605,
-      "sha256": "D63347981454B39C6E04BA654FD95D2176E214E5AF643263BD4374002CF9388D"
+      "bytes": 15702,
+      "sha256": "390B11079EA9383DE47C451B5F59439CA66FD3A1DC538E5FC50FDF2FBCE23C41"
     },
     {
       "path": "SRC/neothd/src/providers/tmux_session.rs",

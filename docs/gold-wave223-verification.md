@@ -47,3 +47,13 @@ Focused slim run35784699877 on48c08050 reached one E0282 after the test-only
 Episode arm was gated out: the remaining MediaModel tuple needed an explicit
 Option type. None::<&str> now matches the Episode branch generation.id() type.
 Source correction only; the exact Hosted slim command must be rerun.
+
+## Hosted acceptance 2026-09-22
+
+Run `35785793542` on `c42038984897887c435c82536dd5557ed65dc0a8`
+passed the exact slim-core production Clippy command, core test-target typecheck,
+public CLI build and reference export. The generated reference artifact's
+source-head and SHA-256 are verified; its bytes match the committed
+`docs/cli-commands.md` snapshot. This confirms the W223 repairs including the
+explicit `None::<&str>` type. The still-running native full CI on `74334d4b`
+remains an independent older-source Windows/macOS evidence boundary.

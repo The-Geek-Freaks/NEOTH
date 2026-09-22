@@ -10,7 +10,7 @@ use super::*;
 use crate::config::inference::{HemisphereRole, InferenceProvider};
 use crate::config::role_policy::{RolePolicyConfig, RolePolicyRule};
 use crate::permissions::AutonomyLevel;
-use crate::providers::{Completion, Provider, Request};
+use crate::providers::{ChatTurnEffectKind, Completion, Provider, ProviderRetryReason, Request};
 
 struct RecordingLeaf {
     calls: AtomicUsize,
@@ -380,11 +380,14 @@ async fn w225_effect_start_role_rejection_closes_admitted_retry_with_denial_rece
         crate::config::reload::ReloadResult::Reloaded { .. }
     ));
 
-    let error = crate::providers::claude_cli::test_only_begin_effect_start_or_role_terminal(
+    let error = match crate::providers::claude_cli::test_only_begin_effect_start_or_role_terminal(
         &permit, &req, effect,
     )
     .await
-    .expect_err("changed role policy must stop before effect start");
+    {
+        Ok(_) => panic!("changed role policy must stop before effect start"),
+        Err(error) => error,
+    };
     assert!(error.to_string().contains("role dispatch"), "{error:#}");
     assert_eq!(
         gate.phase(),
