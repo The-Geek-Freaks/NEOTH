@@ -39,6 +39,115 @@ jobs:
         with:
           toolchain: '1.91.0'
 
+      # Keep this repair deliberately package-scoped.  The checked-in helper
+      # supplies all VCS, archive, lock-checksum, path, and notice extraction
+      # primitives; this wrapper adds the missing key or verifies its already
+      # imported value, proving every pre-existing record survives.
+      - name: Export exact missing dasp_sample license snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir='rust-notice-export'
+          mkdir -p "$evidence_dir"
+          git rev-parse HEAD > "$evidence_dir/SOURCE_HEAD"
+          cp packaging/rust-license-snapshots.json "$evidence_dir/source-rust-license-snapshots.json"
+          python3 - <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "packaging")
+          import fetch_rust_license_snapshots as helper
+          from generate_rust_notices import (
+              SNAPSHOT_FILE,
+              notice_paths,
+              package_identity_key,
+              package_label,
+              repository_key,
+              resolved_release_packages,
+          )
+
+          target_name = "dasp_sample"
+          target_version = "0.11.0"
+          candidates = [
+              package
+              for package in resolved_release_packages()
+              if package["name"] == target_name and package["version"] == target_version
+          ]
+          if len(candidates) != 1:
+              raise SystemExit(
+                  f"expected exactly one locked {target_name} {target_version}; found {len(candidates)}"
+              )
+          package = candidates[0]
+          if notice_paths(package):
+              raise SystemExit(f"{package_label(package)} already has an archive notice")
+          key = package_identity_key(package)
+
+          original = json.loads(SNAPSHOT_FILE.read_text(encoding="utf-8"))
+          if original.get("schema") != 1 or not isinstance(original.get("packages"), dict):
+              raise SystemExit("unsupported checked-in Rust license snapshot schema")
+
+          repository = (
+              package.get("repository")
+              or package.get("homepage")
+              or helper.REPOSITORY_OVERRIDES.get(package["name"])
+              or helper.crates_io_repository(package)
+          )
+          normalized_repository = repository_key({"repository": repository}) if repository else None
+          if normalized_repository is None:
+              raise SystemExit(f"{package_label(package)} has no canonical upstream repository")
+          checksum = helper.lock_checksums().get(
+              (package["name"], package["version"], package["source"])
+          )
+          if not checksum:
+              raise SystemExit(f"Cargo.lock has no checksum for {package_label(package)}")
+          revision, path_in_vcs = helper.vcs_info(package)
+          files = helper.extract_notices(
+              helper.fetch(helper.archive_url(repository, revision)), path_in_vcs
+          )
+          if not files:
+              raise SystemExit(
+                  f"exact upstream revision {revision} contains no applicable notice for "
+                  f"{package_label(package)}"
+              )
+
+          record = {
+              "repository": normalized_repository,
+              "revision": revision,
+              "path_in_vcs": path_in_vcs,
+              "files": files,
+          }
+          if key in original["packages"] and original["packages"][key] != record:
+              raise SystemExit(f"existing snapshot differs from exact upstream evidence for {package_label(package)}")
+          merged_packages = dict(original["packages"])
+          merged_packages[key] = record
+          if any(
+              merged_packages[existing_key] != existing_value
+              for existing_key, existing_value in original["packages"].items()
+          ):
+              raise SystemExit("existing snapshot record changed during focused export")
+
+          evidence_dir = Path("rust-notice-export")
+          provenance = {
+              "schema": 1,
+              "package": package_label(package),
+              "identity": key,
+              "locked_registry_source": package["source"],
+              "locked_crate_sha256": checksum,
+              "snapshot": record,
+          }
+          (evidence_dir / "dasp_sample-0.11.0-snapshot.json").write_text(
+              json.dumps(provenance, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          merged = {"schema": 1, "packages": dict(sorted(merged_packages.items()))}
+          serialized = json.dumps(merged, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+          (evidence_dir / "rust-license-snapshots.json").write_text(
+              serialized, encoding="utf-8", newline="\n"
+          )
+          SNAPSHOT_FILE.write_text(serialized, encoding="utf-8", newline="\n")
+          PY
+
       - name: Regenerate locked Rust distribution notices
         run: python3 packaging/generate_rust_notices.py --write
 
@@ -62,8 +171,6 @@ jobs:
         run: |
           set -euo pipefail
           evidence_dir='rust-notice-export'
-          mkdir -p "$evidence_dir"
-          git rev-parse HEAD > "$evidence_dir/SOURCE_HEAD"
           cp THIRD_PARTY_LICENSES "$evidence_dir/THIRD_PARTY_LICENSES"
           sha256sum \
             THIRD_PARTY_LICENSES \
@@ -72,6 +179,10 @@ jobs:
             SRC/neothd/assets/silero-vad/silero_vad_16k_op15.onnx \
             SRC/neothd/assets/silero-vad/LICENSE \
             SRC/neothd/assets/silero-vad/PROVENANCE.txt \
+            packaging/fetch_rust_license_snapshots.py \
+            "$evidence_dir/source-rust-license-snapshots.json" \
+            "$evidence_dir/rust-license-snapshots.json" \
+            "$evidence_dir/dasp_sample-0.11.0-snapshot.json" \
             > "$evidence_dir/SHA256SUMS"
 
       - name: Upload generated notice evidence

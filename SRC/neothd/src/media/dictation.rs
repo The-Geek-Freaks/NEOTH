@@ -40,9 +40,9 @@
 use tracing::{info, warn};
 
 use crate::config::features::MediaConfig;
-use crate::media::vad::{SmoothedVad, VadDecision};
 #[cfg(feature = "live-audio")]
 use crate::media::vad::SileroVad;
+use crate::media::vad::{SmoothedVad, VadDecision};
 
 // ── First-use sentinel ───────────────────────────────────────────────────────
 
@@ -357,9 +357,15 @@ impl LiveUtteranceState {
     /// Deterministic state transition seam. Production supplies the probability
     /// only from Silero; tests can verify segmentation without asserting that a
     /// synthetic waveform represents speech.
-    fn observe_probability(&mut self, probability: f32, block: Vec<f32>) -> Result<Option<LiveUtteranceEvent>, DictationError> {
+    fn observe_probability(
+        &mut self,
+        probability: f32,
+        block: Vec<f32>,
+    ) -> Result<Option<LiveUtteranceEvent>, DictationError> {
         if !probability.is_finite() || !(0.0..=1.0).contains(&probability) {
-            return Err(DictationError::Transcription("live Silero VAD returned an invalid probability".into()));
+            return Err(DictationError::Transcription(
+                "live Silero VAD returned an invalid probability".into(),
+            ));
         }
         let speech = probability >= self.speech_probability;
         if !self.speaking && !speech {
@@ -421,15 +427,28 @@ impl LiveUtteranceAssembler {
         if !config.dictation_enabled {
             return Err(DictationError::NotEnabled);
         }
-        config.vad.validate().map_err(|error| DictationError::Config(format!("{error:#}")))?;
+        config
+            .vad
+            .validate()
+            .map_err(|error| DictationError::Config(format!("{error:#}")))?;
         let hangover_samples = usize::try_from(config.vad.hangover_ms)
             .unwrap_or(usize::MAX)
             .saturating_mul(LIVE_VAD_SAMPLE_RATE_HZ as usize)
             / 1_000;
         Ok(Self {
-            vad: SileroVad::new().map_err(|error| DictationError::Transcription(format!("live Silero VAD initialization failed: {error}")))?,
-            resampler: crate::media::resampler::StreamingMonoResampler::new(LIVE_VAD_SAMPLE_RATE_HZ)
-                .map_err(|error| DictationError::Transcription(format!("live streaming resampler initialization failed: {error}")))?,
+            vad: SileroVad::new().map_err(|error| {
+                DictationError::Transcription(format!(
+                    "live Silero VAD initialization failed: {error}"
+                ))
+            })?,
+            resampler: crate::media::resampler::StreamingMonoResampler::new(
+                LIVE_VAD_SAMPLE_RATE_HZ,
+            )
+            .map_err(|error| {
+                DictationError::Transcription(format!(
+                    "live streaming resampler initialization failed: {error}"
+                ))
+            })?,
             residual: Vec::with_capacity(LIVE_VAD_FRAME_SAMPLES * 2),
             state: LiveUtteranceState::new(
                 config.vad.speech_prob,
@@ -441,16 +460,26 @@ impl LiveUtteranceAssembler {
 
     /// Consume one bounded device frame. The caller owns cancellation and must
     /// suppress the returned events if its generation is stale.
-    pub(crate) fn push_frame(&mut self, frame: &crate::media::live_capture::CapturedPcmFrame) -> Result<Vec<LiveUtteranceEvent>, DictationError> {
-        let normalized = self.resampler.push(&frame.pcm, frame.sample_rate_hz)
-            .map_err(|error| DictationError::Transcription(format!("live capture streaming normalization failed: {error}")))?;
+    pub(crate) fn push_frame(
+        &mut self,
+        frame: &crate::media::live_capture::CapturedPcmFrame,
+    ) -> Result<Vec<LiveUtteranceEvent>, DictationError> {
+        let normalized = self
+            .resampler
+            .push(&frame.pcm, frame.sample_rate_hz)
+            .map_err(|error| {
+                DictationError::Transcription(format!(
+                    "live capture streaming normalization failed: {error}"
+                ))
+            })?;
         self.residual.extend(normalized);
 
         let mut events = Vec::new();
         while self.residual.len() >= LIVE_VAD_FRAME_SAMPLES {
             let block: Vec<f32> = self.residual.drain(..LIVE_VAD_FRAME_SAMPLES).collect();
-            let probability = self.vad.speech_probability(&block)
-                .map_err(|error| DictationError::Transcription(format!("live Silero VAD inference failed: {error}")))?;
+            let probability = self.vad.speech_probability(&block).map_err(|error| {
+                DictationError::Transcription(format!("live Silero VAD inference failed: {error}"))
+            })?;
             if let Some(event) = self.state.observe_probability(probability, block)? {
                 if matches!(event, LiveUtteranceEvent::UtteranceReady { .. }) {
                     self.vad.reset();
@@ -682,22 +711,44 @@ mod tests {
     fn live_utterance_state_uses_probability_not_synthetic_audio_claims() {
         let mut state = live_state(0.6, 2, LIVE_VAD_FRAME_SAMPLES * 8);
         assert_eq!(state.observe_probability(0.1, vad_block()).unwrap(), None);
-        assert_eq!(state.observe_probability(0.9, vad_block()).unwrap(), Some(LiveUtteranceEvent::SpeechStarted));
+        assert_eq!(
+            state.observe_probability(0.9, vad_block()).unwrap(),
+            Some(LiveUtteranceEvent::SpeechStarted)
+        );
         assert_eq!(state.observe_probability(0.1, vad_block()).unwrap(), None);
         let ready = state.observe_probability(0.1, vad_block()).unwrap();
-        assert!(matches!(ready, Some(LiveUtteranceEvent::UtteranceReady { sequence: 1, ref pcm }) if pcm.len() == LIVE_VAD_FRAME_SAMPLES * 3));
+        assert!(
+            matches!(ready, Some(LiveUtteranceEvent::UtteranceReady { sequence: 1, ref pcm }) if pcm.len() == LIVE_VAD_FRAME_SAMPLES * 3)
+        );
     }
 
     #[test]
     fn live_utterance_state_enforces_cap_and_reset_discards_partial_cancelled_audio() {
         let mut state = live_state(0.6, 2, LIVE_VAD_FRAME_SAMPLES * 2);
-        assert!(matches!(state.observe_probability(0.9, vad_block()).unwrap(), Some(LiveUtteranceEvent::SpeechStarted)));
+        assert!(matches!(
+            state.observe_probability(0.9, vad_block()).unwrap(),
+            Some(LiveUtteranceEvent::SpeechStarted)
+        ));
         assert!(state.observe_probability(0.9, vad_block()).is_ok());
-        assert!(matches!(state.observe_probability(0.9, vad_block()), Err(DictationError::Transcription(_))));
-        assert_eq!(state.observe_probability(0.1, vad_block()).unwrap(), None, "cap error must clear the partial utterance");
+        assert!(matches!(
+            state.observe_probability(0.9, vad_block()),
+            Err(DictationError::Transcription(_))
+        ));
+        assert_eq!(
+            state.observe_probability(0.1, vad_block()).unwrap(),
+            None,
+            "cap error must clear the partial utterance"
+        );
 
-        assert!(matches!(state.observe_probability(0.9, vad_block()).unwrap(), Some(LiveUtteranceEvent::SpeechStarted)));
+        assert!(matches!(
+            state.observe_probability(0.9, vad_block()).unwrap(),
+            Some(LiveUtteranceEvent::SpeechStarted)
+        ));
         state.reset();
-        assert_eq!(state.observe_probability(0.1, vad_block()).unwrap(), None, "cancel/reset must prevent a later silence block from completing old PCM");
+        assert_eq!(
+            state.observe_probability(0.1, vad_block()).unwrap(),
+            None,
+            "cancel/reset must prevent a later silence block from completing old PCM"
+        );
     }
 }

@@ -145,7 +145,10 @@ async fn run_file_dictate(args: DictateArgs) -> Result<()> {
     let media_cfg = config.media;
     let updater_cfg = config.updater;
     let neoth_home = crate::config::FreedomConfig::default_neoth_home();
-    let file = args.file.clone().context("dictate: audio file is required unless --live is set")?;
+    let file = args
+        .file
+        .clone()
+        .context("dictate: audio file is required unless --live is set")?;
 
     let audit = open_dictate_audit(&neoth_home);
     let writer_for_stt = audit.as_ref().map(|(writer, _)| writer.clone());
@@ -174,11 +177,17 @@ async fn run_file_dictate(args: DictateArgs) -> Result<()> {
     close_dictate_audit(audit).await?;
     match outcome {
         Ok(text) => match args.output {
-            OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::json!({ "ok": true, "text": text, "file": args.file })),
+            OutputFormat::Json | OutputFormat::Jsonl => println!(
+                "{}",
+                serde_json::json!({ "ok": true, "text": text, "file": args.file })
+            ),
             OutputFormat::Table => println!("{text}"),
         },
         Err(DictationError::AllSilence) => match args.output {
-            OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::json!({ "ok": true, "text": "", "silence": true })),
+            OutputFormat::Json | OutputFormat::Jsonl => println!(
+                "{}",
+                serde_json::json!({ "ok": true, "text": "", "silence": true })
+            ),
             OutputFormat::Table => eprintln!("[silence — nothing transcribed]"),
         },
         Err(error) => anyhow::bail!(error),
@@ -214,7 +223,9 @@ async fn run_live_dictate(args: DictateArgs) -> Result<()> {
         .map_err(anyhow::Error::from)
         .context("dictate: initialize live Silero VAD")?;
     let scope = crate::media::conversation_scope::CancelScope::new();
-    let token = scope.snapshot().context("dictate: initialize live cancellation scope")?;
+    let token = scope
+        .snapshot()
+        .context("dictate: initialize live cancellation scope")?;
     let session = crate::media::live_capture::CpalCaptureSession::start(
         crate::media::live_capture::CpalCaptureConfig {
             requested_device_name: args.input_device.clone(),
@@ -250,7 +261,10 @@ async fn run_live_dictate(args: DictateArgs) -> Result<()> {
         }
         if owned_tasks.transcription.is_none() {
             if let Some((sequence, pcm)) = pending.pop_front() {
-                emit_live_event(args.output, serde_json::json!({ "type": "live_dictation", "state": "transcribing", "sequence": sequence }));
+                emit_live_event(
+                    args.output,
+                    serde_json::json!({ "type": "live_dictation", "state": "transcribing", "sequence": sequence }),
+                );
                 owned_tasks.transcription = Some(start_live_transcription(
                     sequence,
                     pcm,
@@ -374,11 +388,14 @@ async fn run_live_dictate(args: DictateArgs) -> Result<()> {
     let _ = scope.invalidate();
     assembler.reset();
     pending.clear();
-    emit_live_event(args.output, serde_json::json!({
-        "type": "live_dictation",
-        "state": "stopping",
-        "draining_transcription": owned_tasks.transcription.is_some(),
-    }));
+    emit_live_event(
+        args.output,
+        serde_json::json!({
+            "type": "live_dictation",
+            "state": "stopping",
+            "draining_transcription": owned_tasks.transcription.is_some(),
+        }),
+    );
     if let Err(error) = owned_tasks.join_capture().await {
         if failure.is_none() {
             failure = Some(error);
@@ -386,7 +403,10 @@ async fn run_live_dictate(args: DictateArgs) -> Result<()> {
     }
     match owned_tasks.drain_transcription().await {
         Ok(Some((_sequence, Some(Err(error))))) if failure.is_none() => {
-            failure = Some(anyhow::Error::from(error).context("dictate: transcribe live utterance while draining"));
+            failure = Some(
+                anyhow::Error::from(error)
+                    .context("dictate: transcribe live utterance while draining"),
+            );
         }
         Ok(_) => {}
         Err(error) if failure.is_none() => failure = Some(error),
@@ -404,7 +424,10 @@ async fn run_live_dictate(args: DictateArgs) -> Result<()> {
         return Err(error);
     }
     if cancelled {
-        emit_live_event(args.output, serde_json::json!({ "type": "live_dictation", "state": "cancelled" }));
+        emit_live_event(
+            args.output,
+            serde_json::json!({ "type": "live_dictation", "state": "cancelled" }),
+        );
     }
     Ok(())
 }
@@ -441,7 +464,11 @@ fn run_live_capture_pump(
         let Some(event) = event else {
             continue;
         };
-        let terminal = matches!(event, crate::media::live_capture::LiveCaptureEvent::Cancelled | crate::media::live_capture::LiveCaptureEvent::Error(_));
+        let terminal = matches!(
+            event,
+            crate::media::live_capture::LiveCaptureEvent::Cancelled
+                | crate::media::live_capture::LiveCaptureEvent::Error(_)
+        );
         match relay_live_capture_event(&sender, &scope, LiveCapturePumpEvent::Capture(event)) {
             LiveCaptureRelay::Sent => {}
             LiveCaptureRelay::ReceiverClosed => {
@@ -451,7 +478,9 @@ fn run_live_capture_pump(
             }
             LiveCaptureRelay::Overloaded => {
                 session.cancel_and_join();
-                anyhow::bail!("dictate: bounded capture relay overflowed while transcription was pending");
+                anyhow::bail!(
+                    "dictate: bounded capture relay overflowed while transcription was pending"
+                );
             }
         }
         if terminal {
@@ -492,7 +521,13 @@ fn start_live_transcription(
     tokio::spawn(async move {
         let result = dispatch_live_if_current(&scope, &token, || async {
             crate::media::dictation::transcribe_live_utterance_with_audio_permit(
-                &pcm, 16_000, &media_cfg, &updater_cfg, &neoth_home, writer.as_ref(), &permit,
+                &pcm,
+                16_000,
+                &media_cfg,
+                &updater_cfg,
+                &neoth_home,
+                writer.as_ref(),
+                &permit,
             )
             .await
         })
@@ -520,7 +555,10 @@ where
 
 fn emit_live_terminal_error(output: OutputFormat, error: &anyhow::Error) {
     match output {
-        OutputFormat::Json | OutputFormat::Jsonl => println!("{}", serde_json::json!({ "type": "live_dictation", "state": "error", "error": error.to_string() })),
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({ "type": "live_dictation", "state": "error", "error": error.to_string() })
+        ),
         OutputFormat::Table => eprintln!("[live dictation: error] {error:#}"),
     }
 }
@@ -529,19 +567,33 @@ fn emit_live_event(output: OutputFormat, event: serde_json::Value) {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!("{event}"),
         OutputFormat::Table => match event.get("state").and_then(serde_json::Value::as_str) {
-            Some("transcript") => println!("{}", event.get("text").and_then(serde_json::Value::as_str).unwrap_or_default()),
+            Some("transcript") => println!(
+                "{}",
+                event
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+            ),
             Some(state) => eprintln!("[live dictation: {state}]"),
             None => eprintln!("[live dictation]"),
         },
     }
 }
 
-fn open_dictate_audit(neoth_home: &std::path::Path) -> Option<(crate::wal::writer::WalWriterHandle, tokio::task::JoinHandle<()>)> {
+fn open_dictate_audit(
+    neoth_home: &std::path::Path,
+) -> Option<(
+    crate::wal::writer::WalWriterHandle,
+    tokio::task::JoinHandle<()>,
+)> {
     let wal_dir = neoth_home.join("wal");
     match (|| -> anyhow::Result<_> {
         std::fs::create_dir_all(&wal_dir)?;
         let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "dictate");
-        Ok(crate::wal::writer::spawn_for_home(segment, neoth_home.to_path_buf())?)
+        Ok(crate::wal::writer::spawn_for_home(
+            segment,
+            neoth_home.to_path_buf(),
+        )?)
     })() {
         Ok(pair) => Some(pair),
         Err(error) => {
@@ -551,7 +603,12 @@ fn open_dictate_audit(neoth_home: &std::path::Path) -> Option<(crate::wal::write
     }
 }
 
-async fn close_dictate_audit(audit: Option<(crate::wal::writer::WalWriterHandle, tokio::task::JoinHandle<()>)>) -> Result<()> {
+async fn close_dictate_audit(
+    audit: Option<(
+        crate::wal::writer::WalWriterHandle,
+        tokio::task::JoinHandle<()>,
+    )>,
+) -> Result<()> {
     if let Some((writer, join)) = audit {
         drop(writer);
         join.await.context("dictate: WAL writer task panicked")?;
@@ -572,16 +629,15 @@ mod tests {
     use std::time::Duration;
 
     use crate::config::features::MediaConfig;
-    use crate::media::dictation::{DictationError, transcribe_utterance};
     #[cfg(feature = "live-audio")]
     use crate::media::conversation_scope::CancelScope;
+    use crate::media::dictation::{DictationError, transcribe_utterance};
 
     use super::DictateArgs;
     #[cfg(feature = "live-audio")]
     use super::{
-        LiveCaptureRelay, LiveDictateOwnedTasks,
-        MAX_PENDING_LIVE_UTTERANCES, dispatch_live_if_current,
-        enqueue_live_utterance, relay_live_capture_event,
+        LiveCaptureRelay, LiveDictateOwnedTasks, MAX_PENDING_LIVE_UTTERANCES,
+        dispatch_live_if_current, enqueue_live_utterance, relay_live_capture_event,
     };
 
     #[cfg(feature = "live-audio")]
@@ -601,7 +657,15 @@ mod tests {
         let cfg = MediaConfig::default();
         let home = tempfile::tempdir().unwrap();
         let pcm = vec![0.0f32; 3200];
-        let err = transcribe_utterance(&pcm, 16_000, &cfg, &crate::config::UpdaterConfig::default(), home.path()).await.unwrap_err();
+        let err = transcribe_utterance(
+            &pcm,
+            16_000,
+            &cfg,
+            &crate::config::UpdaterConfig::default(),
+            home.path(),
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(err, DictationError::NotEnabled));
     }
 
@@ -616,13 +680,17 @@ mod tests {
         assert!(parsed.live);
         assert_eq!(parsed.input_device.as_deref(), Some("USB microphone"));
         assert!(parsed.file.is_none());
-        assert!(command
-            .clone()
-            .try_get_matches_from(["dictate", "--input-device", "USB microphone"])
-            .is_err());
-        assert!(command
-            .try_get_matches_from(["dictate", "--live", "recording.wav"])
-            .is_err());
+        assert!(
+            command
+                .clone()
+                .try_get_matches_from(["dictate", "--input-device", "USB microphone"])
+                .is_err()
+        );
+        assert!(
+            command
+                .try_get_matches_from(["dictate", "--live", "recording.wav"])
+                .is_err()
+        );
     }
 
     #[cfg(not(feature = "live-audio"))]
@@ -644,11 +712,18 @@ mod tests {
     fn bounded_pending_utterances_keep_order_and_drop_the_newest_overflow() {
         let mut pending = std::collections::VecDeque::new();
         for sequence in 1..=MAX_PENDING_LIVE_UTTERANCES as u64 {
-            assert!(enqueue_live_utterance(&mut pending, sequence, vec![sequence as f32]));
+            assert!(enqueue_live_utterance(
+                &mut pending,
+                sequence,
+                vec![sequence as f32]
+            ));
         }
         assert!(!enqueue_live_utterance(&mut pending, 99, vec![99.0]));
         let retained: Vec<_> = pending.into_iter().map(|(sequence, _)| sequence).collect();
-        assert_eq!(retained, (1..=MAX_PENDING_LIVE_UTTERANCES as u64).collect::<Vec<_>>());
+        assert_eq!(
+            retained,
+            (1..=MAX_PENDING_LIVE_UTTERANCES as u64).collect::<Vec<_>>()
+        );
     }
 
     #[tokio::test]
@@ -667,7 +742,11 @@ mod tests {
         .await;
 
         assert_eq!(result, None);
-        assert_eq!(calls.load(Ordering::SeqCst), 0, "stale work must not reach STT dispatch");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "stale work must not reach STT dispatch"
+        );
     }
 
     #[tokio::test]
@@ -689,7 +768,10 @@ mod tests {
         let error = owned.join_capture().await.unwrap_err();
 
         assert!(error.to_string().contains("fake relay overload"));
-        assert!(scope.is_stale(&token), "overflow must invalidate the capture scope");
+        assert!(
+            scope.is_stale(&token),
+            "overflow must invalidate the capture scope"
+        );
     }
 
     #[tokio::test]
@@ -712,7 +794,10 @@ mod tests {
         }));
 
         started.await.unwrap();
-        assert!(owned.transcription.is_some(), "active STT handle remains owned while draining");
+        assert!(
+            owned.transcription.is_some(),
+            "active STT handle remains owned while draining"
+        );
         assert!(matches!(
             audit_receiver.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
@@ -722,7 +807,7 @@ mod tests {
         let drained = {
             let drain = owned.drain_transcription();
             tokio::pin!(drain);
-            assert!(futures::poll!(&mut drain).is_pending());
+            assert!(futures_util::poll!(&mut drain).is_pending());
             release_sender.send(()).unwrap();
             drain.await.unwrap()
         };
@@ -731,9 +816,18 @@ mod tests {
             Some((7, Some(Ok(text)))) => assert_eq!(text, "stale fake transcript"),
             _ => panic!("foreground drain must return the completed fake STT result"),
         }
-        assert!(scope.is_stale(&token), "the normal controller suppresses this drained stale transcript");
+        assert!(
+            scope.is_stale(&token),
+            "the normal controller suppresses this drained stale transcript"
+        );
         assert!(owned.transcription.is_none());
-        assert_eq!(tokio::time::timeout(Duration::from_millis(250), audit_receiver.recv()).await.unwrap(), None, "fake WAL sender closes only after foreground STT completion");
+        assert_eq!(
+            tokio::time::timeout(Duration::from_millis(250), audit_receiver.recv())
+                .await
+                .unwrap(),
+            None,
+            "fake WAL sender closes only after foreground STT completion"
+        );
     }
 
     #[tokio::test]
@@ -755,7 +849,10 @@ mod tests {
 
         drop(owned);
 
-        assert!(scope.is_stale(&token), "drop must signal the bounded capture relay");
+        assert!(
+            scope.is_stale(&token),
+            "drop must signal the bounded capture relay"
+        );
         tokio::time::timeout(Duration::from_millis(250), drop_signal)
             .await
             .expect("outer drop must abort its active foreground task")

@@ -45,3 +45,13 @@ the narrow syntax correction is source-applied. Core `35704970467` and audio
 had already accepted all declared source/test hashes. Revised zero-debug-info
 profiles and failed-build dependency cache recovery preserve the Hosted worker
 and evidence boundaries. Fresh executable gates remain required.
+
+**W186 Hosted follow-up (2026-09-22):** the default-feature core test typecheck
+in `35705705773` passed on `7683e79f`; public CLI build/export is still running.
+All 75 unique formatting hunks from `35705678481` are imported across seven
+files. Live-audio `35705707976` found ten CPAL/Tract/test-macro compile errors;
+those API-specific repairs are applied, and its dependency cache was retained.
+Notice export `35705709793` found the single missing `dasp_sample 0.11.0`
+upstream snapshot; a focused Hosted export now preserves existing snapshots
+and binds that addition to the exact crate/VCS/license evidence. Fresh
+formatting, live-audio compilation and native behavior remain required.

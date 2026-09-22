@@ -421,11 +421,9 @@ mod tests {
             }]
         );
         assert!(receipt.exact_symbol_seeds.is_empty());
-        assert!(
-            receipt.impact.impacted_nodes.iter().any(|node| {
-                node.node.file == "src/caller.rs" && node.node.symbol == "caller_symbol"
-            })
-        );
+        assert!(receipt.impact.impacted_nodes.iter().any(|node| {
+            node.node.file == "src/caller.rs" && node.node.symbol == "caller_symbol"
+        }));
         assert!(receipt.impact.traversed_edges.iter().any(|edge| {
             edge.caller.file == "src/caller.rs"
                 && edge.caller.symbol == "caller_symbol"

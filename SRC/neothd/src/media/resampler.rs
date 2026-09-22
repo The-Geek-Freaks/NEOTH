@@ -185,13 +185,25 @@ impl StreamingMonoResampler {
     /// Append one bounded native callback and return only output backed by full
     /// source chunks. The incomplete tail remains owned by this stream until a
     /// later callback completes it or `reset` discards the session.
-    pub(crate) fn push(&mut self, input: &[f32], source_rate_hz: u32) -> Result<Vec<f32>, ResampleError> {
+    pub(crate) fn push(
+        &mut self,
+        input: &[f32],
+        source_rate_hz: u32,
+    ) -> Result<Vec<f32>, ResampleError> {
         validate_mono_pcm(input, source_rate_hz)?;
         if input.len() > MAX_STREAMING_INPUT_SAMPLES {
-            return Err(ResampleError::StreamingInputTooLarge { samples: input.len(), limit: MAX_STREAMING_INPUT_SAMPLES });
+            return Err(ResampleError::StreamingInputTooLarge {
+                samples: input.len(),
+                limit: MAX_STREAMING_INPUT_SAMPLES,
+            });
         }
         match self.source_rate_hz {
-            Some(expected) if expected != source_rate_hz => return Err(ResampleError::StreamingRateChanged { expected, actual: source_rate_hz }),
+            Some(expected) if expected != source_rate_hz => {
+                return Err(ResampleError::StreamingRateChanged {
+                    expected,
+                    actual: source_rate_hz,
+                });
+            }
             Some(_) => {}
             None => {
                 self.source_rate_hz = Some(source_rate_hz);
@@ -202,23 +214,38 @@ impl StreamingMonoResampler {
         }
         if source_rate_hz == self.target_rate_hz {
             let mut output = Vec::new();
-            output.try_reserve_exact(input.len()).map_err(|error| allocation_error("streaming identity output", error))?;
+            output
+                .try_reserve_exact(input.len())
+                .map_err(|error| allocation_error("streaming identity output", error))?;
             output.extend_from_slice(input);
             return Ok(output);
         }
 
-        self.pending.try_reserve(input.len()).map_err(|error| allocation_error("streaming pending input", error))?;
+        self.pending
+            .try_reserve(input.len())
+            .map_err(|error| allocation_error("streaming pending input", error))?;
         self.pending.extend_from_slice(input);
         let mut output = Vec::new();
         while self.pending.len() >= CHUNK {
             let block: Vec<f32> = self.pending.drain(..CHUNK).collect();
-            let processed = self.sinc.as_mut().expect("non-identity stream constructs sinc once")
+            let processed = self
+                .sinc
+                .as_mut()
+                .expect("non-identity stream constructs sinc once")
                 .process(&[block], None)
-                .map_err(|error| ResampleError::StreamingBackend { stage: "process", reason: error.to_string() })?;
-            let channel = processed.first().ok_or_else(|| ResampleError::StreamingBackend {
-                stage: "process", reason: "mono resampler returned no output channel".into(),
-            })?;
-            output.try_reserve(channel.len()).map_err(|error| allocation_error("streaming output", error))?;
+                .map_err(|error| ResampleError::StreamingBackend {
+                    stage: "process",
+                    reason: error.to_string(),
+                })?;
+            let channel = processed
+                .first()
+                .ok_or_else(|| ResampleError::StreamingBackend {
+                    stage: "process",
+                    reason: "mono resampler returned no output channel".into(),
+                })?;
+            output
+                .try_reserve(channel.len())
+                .map_err(|error| allocation_error("streaming output", error))?;
             output.extend_from_slice(channel);
         }
         Ok(output)
@@ -236,7 +263,10 @@ impl StreamingMonoResampler {
     }
 }
 
-fn new_sinc_resampler(source_rate_hz: u32, target_rate_hz: u32) -> Result<SincFixedIn<f32>, ResampleError> {
+fn new_sinc_resampler(
+    source_rate_hz: u32,
+    target_rate_hz: u32,
+) -> Result<SincFixedIn<f32>, ResampleError> {
     let params = SincInterpolationParameters {
         sinc_len: 128,
         f_cutoff: 0.95,
@@ -244,8 +274,17 @@ fn new_sinc_resampler(source_rate_hz: u32, target_rate_hz: u32) -> Result<SincFi
         oversampling_factor: 128,
         window: WindowFunction::BlackmanHarris2,
     };
-    SincFixedIn::<f32>::new(target_rate_hz as f64 / source_rate_hz as f64, 1.1, params, CHUNK, 1)
-        .map_err(|error| ResampleError::StreamingBackend { stage: "construction", reason: error.to_string() })
+    SincFixedIn::<f32>::new(
+        target_rate_hz as f64 / source_rate_hz as f64,
+        1.1,
+        params,
+        CHUNK,
+        1,
+    )
+    .map_err(|error| ResampleError::StreamingBackend {
+        stage: "construction",
+        reason: error.to_string(),
+    })
 }
 fn expected_output_samples(
     input_samples: usize,
@@ -358,7 +397,9 @@ mod tests {
     }
     #[test]
     fn streaming_sinc_split_matches_contiguous_without_ratio_drift() {
-        let input: Vec<f32> = (0..8_192).map(|index| ((index as f32) * 0.017).sin()).collect();
+        let input: Vec<f32> = (0..8_192)
+            .map(|index| ((index as f32) * 0.017).sin())
+            .collect();
         let mut contiguous = StreamingMonoResampler::new(16_000).unwrap();
         let mut expected = Vec::new();
         for block in input.chunks(1_024) {
@@ -369,12 +410,17 @@ mod tests {
         let mut actual = Vec::new();
         let mut offset = 0usize;
         for &width in [113usize, 701, 19, 997, 251, 431, 607, 89].iter().cycle() {
-            if offset == input.len() { break; }
+            if offset == input.len() {
+                break;
+            }
             let end = (offset + width).min(input.len());
             actual.extend(split.push(&input[offset..end], 48_000).unwrap());
             offset = end;
         }
-        assert_eq!(actual, expected, "callback partitioning must not change sample count or phase");
+        assert_eq!(
+            actual, expected,
+            "callback partitioning must not change sample count or phase"
+        );
         assert!(!actual.is_empty());
     }
 
@@ -382,7 +428,13 @@ mod tests {
     fn streaming_resampler_rejects_rate_change_until_reset() {
         let mut stream = StreamingMonoResampler::new(16_000).unwrap();
         stream.push(&[0.0; 64], 48_000).unwrap();
-        assert!(matches!(stream.push(&[0.0; 64], 44_100), Err(ResampleError::StreamingRateChanged { expected: 48_000, actual: 44_100 })));
+        assert!(matches!(
+            stream.push(&[0.0; 64], 44_100),
+            Err(ResampleError::StreamingRateChanged {
+                expected: 48_000,
+                actual: 44_100
+            })
+        ));
         stream.reset();
         assert!(stream.push(&[0.0; 64], 44_100).is_ok());
     }

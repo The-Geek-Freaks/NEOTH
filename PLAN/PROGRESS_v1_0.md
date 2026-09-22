@@ -9,6 +9,16 @@ public CLI build and reference export `35694693234` passed on `87c18246`; the
 exact generated CLI reference (40 Ollama help lines) is imported. These gates
 do not establish native, GUI, audio, or release behavior.
 
+**W186 Hosted follow-up (2026-09-22):** the default-feature core test typecheck
+in `35705705773` passed on `7683e79f`; public CLI build/export is still running.
+All 75 unique formatting hunks from `35705678481` are imported across seven
+files. Live-audio `35705707976` found ten CPAL/Tract/test-macro compile errors;
+those API-specific repairs are applied, and its dependency cache was retained.
+Notice export `35705709793` found the single missing `dasp_sample 0.11.0`
+upstream snapshot; a focused Hosted export now preserves existing snapshots
+and binds that addition to the exact crate/VCS/license evidence. Fresh
+formatting, live-audio compilation and native behavior remain required.
+
 **W186/W187 early Hosted repair (2026-09-22):** Code Quality `35704952294`
 passed on `590d5068`. Preflight `35704953012` passed dependency provenance and
 locked metadata, then found a malformed nested generic in `cli/dictate.rs:53`.

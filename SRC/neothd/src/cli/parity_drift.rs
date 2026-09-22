@@ -198,7 +198,10 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         rust_handler: Some("fn start_local_model_action"),
         dispatch_token: Some("vec![\"models\", \"ollama\", cli, &target]"),
         receipt: Evidence::Typed("fn start_local_model_action", "LocalModelActionAck"),
-        readback: Evidence::Typed("fn start_local_model_action", "local_models_snapshot_binds_action"),
+        readback: Evidence::Typed(
+            "fn start_local_model_action",
+            "local_models_snapshot_binds_action",
+        ),
         state: OperationState::Verified,
     },
     OperationParity {
@@ -211,7 +214,10 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         rust_handler: Some("fn start_local_model_action"),
         dispatch_token: Some("vec![\"models\", \"ollama\", cli, &target]"),
         receipt: Evidence::Typed("fn start_local_model_action", "LocalModelActionAck"),
-        readback: Evidence::Typed("fn start_local_model_action", "local_models_snapshot_binds_action"),
+        readback: Evidence::Typed(
+            "fn start_local_model_action",
+            "local_models_snapshot_binds_action",
+        ),
         state: OperationState::Verified,
     },
     OperationParity {
@@ -224,7 +230,10 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         rust_handler: Some("fn start_local_model_action"),
         dispatch_token: Some("vec![\"models\", \"ollama\", cli, &target]"),
         receipt: Evidence::Typed("fn start_local_model_action", "LocalModelActionAck"),
-        readback: Evidence::Typed("fn start_local_model_action", "local_models_snapshot_binds_action"),
+        readback: Evidence::Typed(
+            "fn start_local_model_action",
+            "local_models_snapshot_binds_action",
+        ),
         state: OperationState::Verified,
     },
     OperationParity {
@@ -237,7 +246,10 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         rust_handler: Some("fn start_local_model_action"),
         dispatch_token: Some("vec![\"models\", \"ollama\", cli, &target]"),
         receipt: Evidence::Typed("fn start_local_model_action", "LocalModelActionAck"),
-        readback: Evidence::Typed("fn start_local_model_action", "local_models_snapshot_binds_action"),
+        readback: Evidence::Typed(
+            "fn start_local_model_action",
+            "local_models_snapshot_binds_action",
+        ),
         state: OperationState::Verified,
     },
     OperationParity {
@@ -250,7 +262,10 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         rust_handler: Some("fn start_local_model_action"),
         dispatch_token: Some("vec![\"models\", \"ollama\", cli, &target]"),
         receipt: Evidence::Typed("fn start_local_model_action", "LocalModelActionAck"),
-        readback: Evidence::Typed("fn start_local_model_action", "local_models_snapshot_binds_action"),
+        readback: Evidence::Typed(
+            "fn start_local_model_action",
+            "local_models_snapshot_binds_action",
+        ),
         state: OperationState::Verified,
     },
     OperationParity {
@@ -264,7 +279,9 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         dispatch_token: None,
         receipt: Evidence::Missing,
         readback: Evidence::Missing,
-        state: OperationState::Unwired("the GUI catalog does not invoke the managed-model list leaf"),
+        state: OperationState::Unwired(
+            "the GUI catalog does not invoke the managed-model list leaf",
+        ),
     },
     OperationParity {
         id: "models.catalog",
@@ -277,7 +294,9 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         dispatch_token: Some("[\"models\", \"catalog\", \"--output\", \"json\"]"),
         receipt: Evidence::Untyped("fn build_ui", "run_neothd_probe"),
         readback: Evidence::Missing,
-        state: OperationState::Partial("the picker consumes a parsed catalog but has no typed operation receipt/readback"),
+        state: OperationState::Partial(
+            "the picker consumes a parsed catalog but has no typed operation receipt/readback",
+        ),
     },
     OperationParity {
         id: "models.pull",
@@ -316,7 +335,9 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         dispatch_token: Some(".arg(\"models\")"),
         receipt: Evidence::Missing,
         readback: Evidence::Missing,
-        state: OperationState::Partial("the picker parses recommendation output but has no typed operation receipt/readback"),
+        state: OperationState::Partial(
+            "the picker parses recommendation output but has no typed operation receipt/readback",
+        ),
     },
     OperationParity {
         id: "models.fit",
@@ -329,7 +350,9 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         dispatch_token: None,
         receipt: Evidence::Missing,
         readback: Evidence::Missing,
-        state: OperationState::Unwired("the GUI does not expose the CLI bandwidth and VRAM fit calculator"),
+        state: OperationState::Unwired(
+            "the GUI does not expose the CLI bandwidth and VRAM fit calculator",
+        ),
     },
     OperationParity {
         id: "omi.status",

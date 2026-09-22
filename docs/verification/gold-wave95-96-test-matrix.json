@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W186_W187_HOSTED_PARSE_REPAIR_FRESH_GATES_PENDING",
-  "base": "590d5068e8e997940c955aca3f77fb2fc7f723b8",
+  "status": "W186_HOSTED_API_REPAIRS_FRESH_GATES_PENDING",
+  "base": "7683e79fb29954f06b0e4791af6e52c14e7a7ef9",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 76574,
-    "sha256": "9CD4106BAABA7899DDCD99B21F072E8DC6CF864FAA007A7C0AD5D07FCD5F61BA"
+    "bytes": 76554,
+    "sha256": "5DE09FEA75C25B1F2F6E400D06EA090BA1478027BB62F07E6CEF0BDAD3DC96DE"
   },
   "sourceInputs": 444,
   "requiredNativeTests": [
@@ -2118,7 +2118,7 @@
     {
       "test": "cli::parity_drift::every_cli_capability_is_triaged_for_gui_parity",
       "sourcePath": "SRC/neothd/src/cli/parity_drift.rs",
-      "sourceSha256": "D2640270623DC2DE9257A458AF37ABA2C04DD980DA2849B15F74F6DA84D4EE49",
+      "sourceSha256": "513FEB20AD26E841560A00099CB8023552891A371A270B4A468943434B23CB71",
       "junitClass": "neoth"
     },
     {
@@ -2808,7 +2808,7 @@
     {
       "test": "code_map::diff_impact::tests::fresh_snapshot_diff_impact_retains_same_file_caller_declaration",
       "sourcePath": "SRC/neothd/src/code_map/diff_impact.rs",
-      "sourceSha256": "947D6D9193B45A5579877EDA7CA124FE3DEC2A5ECAB7DB7D166640E22F722B82",
+      "sourceSha256": "D39747F23A47F170DB0EEFEEEE13AD616029B92B41E3F147238CF5F0FC440261",
       "junitClass": "neoth"
     },
     {
@@ -3192,43 +3192,43 @@
     {
       "test": "media::resampler::tests::streaming_sinc_split_matches_contiguous_without_ratio_drift",
       "sourcePath": "SRC/neothd/src/media/resampler.rs",
-      "sourceSha256": "FF8D4E1B0F4300FD88E3275026B55B510E1766F76F46F7693D096C1240A7CD28",
+      "sourceSha256": "309676C5702AA4BCA3957505BA709694FCE67739D443A1948D12DDA3AD306A7E",
       "junitClass": "neoth"
     },
     {
       "test": "media::resampler::tests::streaming_resampler_rejects_rate_change_until_reset",
       "sourcePath": "SRC/neothd/src/media/resampler.rs",
-      "sourceSha256": "FF8D4E1B0F4300FD88E3275026B55B510E1766F76F46F7693D096C1240A7CD28",
+      "sourceSha256": "309676C5702AA4BCA3957505BA709694FCE67739D443A1948D12DDA3AD306A7E",
       "junitClass": "neoth"
     },
     {
       "test": "media::dictation::tests::live_utterance_state_uses_probability_not_synthetic_audio_claims",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "3E65AAB810BF9D5AAF7DF23FA79962A0434EBC71BD8DB6C194864474A52AD926",
+      "sourceSha256": "82EAEB255091A16820BE39F132BAFEA4E3A4EC59B45748FFB6B23AD05768AF6F",
       "junitClass": "neoth"
     },
     {
       "test": "media::dictation::tests::live_utterance_state_enforces_cap_and_reset_discards_partial_cancelled_audio",
       "sourcePath": "SRC/neothd/src/media/dictation.rs",
-      "sourceSha256": "3E65AAB810BF9D5AAF7DF23FA79962A0434EBC71BD8DB6C194864474A52AD926",
+      "sourceSha256": "82EAEB255091A16820BE39F132BAFEA4E3A4EC59B45748FFB6B23AD05768AF6F",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dictate::tests::live_parser_requires_live_for_an_explicit_device_and_rejects_a_file",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "9F3E0B43B2F82E1F3CD21140100B1ECD6C9B5E6C342EB6E54C181C703CECB1A8",
+      "sourceSha256": "F5B4CEF51843DC40847410D4A5EDDB5B546F11011B850F4A58A70FD09E000AEF",
       "junitClass": "neoth"
     },
     {
       "test": "cli::dictate::tests::live_capture_unavailable_build_refuses_before_loading_configuration",
       "sourcePath": "SRC/neothd/src/cli/dictate.rs",
-      "sourceSha256": "9F3E0B43B2F82E1F3CD21140100B1ECD6C9B5E6C342EB6E54C181C703CECB1A8",
+      "sourceSha256": "F5B4CEF51843DC40847410D4A5EDDB5B546F11011B850F4A58A70FD09E000AEF",
       "junitClass": "neoth"
     },
     {
       "test": "code_map::diff_impact::tests::context_spanning_diff_retains_file_fallback_and_cross_file_caller_edge",
       "sourcePath": "SRC/neothd/src/code_map/diff_impact.rs",
-      "sourceSha256": "947D6D9193B45A5579877EDA7CA124FE3DEC2A5ECAB7DB7D166640E22F722B82",
+      "sourceSha256": "D39747F23A47F170DB0EEFEEEE13AD616029B92B41E3F147238CF5F0FC440261",
       "junitClass": "neoth"
     }
   ],
@@ -3762,7 +3762,7 @@
   "hostConstraint": "ALL_LOCAL_VALIDATION_SUSPENDED; bounded source/metadata reads, edits and serialized Git/GitHub only",
   "releaseReady": false,
   "pending": [
-    "Fresh exact-source GitHub Rustfmt/static contracts/strict Clippy/actual workspace Nextest: 378 universal native, 71 universal GUI, 3 Windows-native, 4 Unix-native and 15 Linux/macOS callback identities; optional seven-adapter lane remains separately required",
+    "Fresh exact-source GitHub format/contracts/strict Clippy/workspace Nextest:537 universal native,80 universal GUI,6Windows/8Linux/7macOS additions,19LinuxMac callbacks; separate19live-audio and existing optional-adapter gates remain required.",
     "W58 native GUI callback now includes Disabled/Unavailable/Ready, diagnosticCLI resolution and drained late-result publication; same macOS mainthread identity",
     "Provider-loop selected-route cancellation remains outside the W102 direct-CLI fixture; direct CLI deliberately uses unbound cancellation",
     "Portable, installed, visual and provider-live acceptance for final source; selector editing/Buddy enable-disable-explain remain open; no ROAD checkbox closes",
@@ -8234,5 +8234,72 @@
       }
     ],
     "liveAudioCatalogSha256": "CC544FCC819F845B4A4E88E254DAD118886AB81711D0214A30E89C96D3D411B9"
+  },
+  "wave186HostedApiRepair": {
+    "source": "7683e79fb29954f06b0e4791af6e52c14e7a7ef9",
+    "preflight": 35705678481,
+    "formatUniqueHunks": 75,
+    "coreReference": 35705705773,
+    "coreStatus": "default-feature test typecheck SUCCESS; CLI build/export running",
+    "liveAudio": 35705707976,
+    "status": "10 feature compile errors repaired; saved dependency cache; fresh behavior pending",
+    "sources": [
+      {
+        "path": ".github/workflows/rust-notices.yml",
+        "bytes": 8272,
+        "sha256": "89EDC592D7805B834A555484902C1018D67FF0D3969C3B26FBCCD021226DC7BD"
+      },
+      {
+        "path": "docs/gold-wave186-verification.md",
+        "bytes": 3447,
+        "sha256": "298EE15D8931DE40DD0963EA41501FAB638F28EDE27E11CF2A94454E90B6F3FB"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1024513,
+        "sha256": "188341470DF3F4BCB2751F7516265E0D278AD4B7F1BD4653DFCA4B25F3E60994"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1619960,
+        "sha256": "BE259AB20DF560CF590B06707E62E99BC82B1C82481987052C3F7BFE858E88DB"
+      },
+      {
+        "path": "SRC/neothd/src/cli/dictate.rs",
+        "bytes": 32796,
+        "sha256": "F5B4CEF51843DC40847410D4A5EDDB5B546F11011B850F4A58A70FD09E000AEF"
+      },
+      {
+        "path": "SRC/neothd/src/cli/parity_drift.rs",
+        "bytes": 47342,
+        "sha256": "513FEB20AD26E841560A00099CB8023552891A371A270B4A468943434B23CB71"
+      },
+      {
+        "path": "SRC/neothd/src/code_map/diff_impact.rs",
+        "bytes": 16090,
+        "sha256": "D39747F23A47F170DB0EEFEEEE13AD616029B92B41E3F147238CF5F0FC440261"
+      },
+      {
+        "path": "SRC/neothd/src/media/dictation.rs",
+        "bytes": 29491,
+        "sha256": "82EAEB255091A16820BE39F132BAFEA4E3A4EC59B45748FFB6B23AD05768AF6F"
+      },
+      {
+        "path": "SRC/neothd/src/media/live_capture.rs",
+        "bytes": 25912,
+        "sha256": "088E6026D737460F43D8D2D58F4FF6F93B787B64B13BFA4A5FF8DD8E233F4BB6"
+      },
+      {
+        "path": "SRC/neothd/src/media/resampler.rs",
+        "bytes": 16421,
+        "sha256": "309676C5702AA4BCA3957505BA709694FCE67739D443A1948D12DDA3AD306A7E"
+      },
+      {
+        "path": "SRC/neothd/src/media/vad/silero.rs",
+        "bytes": 8850,
+        "sha256": "B687413CFE0CE02ACC8F1FBBBD154B4C6FB888AB73865DFA0A5647D7D5D1F7D7"
+      }
+    ],
+    "liveAudioCatalogSha256": "725069CE64F89CF50A0ABA07EC219C5A4DAE6EC86D124C73C24D94B3A0A7AA88"
   }
 }

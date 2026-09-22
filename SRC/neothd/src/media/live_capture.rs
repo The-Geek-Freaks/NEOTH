@@ -13,9 +13,9 @@
 //! separate terminal slot preserves a cancellation/error even while either PCM
 //! queue is full.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
-use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -83,10 +83,7 @@ pub(crate) struct CapturedPcmFrame {
 /// Events visible to the later VAD/utterance owner.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum LiveCaptureEvent {
-    Ready {
-        sample_rate_hz: u32,
-        channels: u16,
-    },
+    Ready { sample_rate_hz: u32, channels: u16 },
     Frame(CapturedPcmFrame),
     Error(LiveCaptureError),
     Cancelled,
@@ -102,7 +99,10 @@ impl LiveCaptureEvent {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum LiveCaptureError {
     #[error("invalid live capture configuration: {field} {detail}")]
-    InvalidConfig { field: &'static str, detail: &'static str },
+    InvalidConfig {
+        field: &'static str,
+        detail: &'static str,
+    },
     #[error("no input device is available")]
     NoInputDevice,
     #[error("requested input device is unavailable")]
@@ -160,7 +160,9 @@ impl CpalCaptureSession {
         audio_permit: AudioWorkPermit,
     ) -> Result<Self, LiveCaptureError> {
         config.validate()?;
-        let token = scope.snapshot().map_err(|_| LiveCaptureError::OwnerThreadTerminated)?;
+        let token = scope
+            .snapshot()
+            .map_err(|_| LiveCaptureError::OwnerThreadTerminated)?;
         // The callback-to-owner and owner-to-session queues have the same
         // bounded block count. Terminal states use an independent one-slot
         // channel so a full PCM queue cannot hide a device loss or cancel.
@@ -313,12 +315,16 @@ fn run_capture_owner(
     let supported = match device.default_input_config() {
         Ok(config) => config,
         Err(error) => {
-            let _ = terminal_events.try_send(LiveCaptureEvent::Error(LiveCaptureError::DefaultConfig(error.to_string())));
+            let _ = terminal_events.try_send(LiveCaptureEvent::Error(
+                LiveCaptureError::DefaultConfig(error.to_string()),
+            ));
             return;
         }
     };
     let stream_config = supported.config();
-    if let Err(error) = validate_device_config(stream_config.sample_rate.0, stream_config.channels) {
+    let sample_rate_hz = stream_config.sample_rate;
+    let channels = stream_config.channels;
+    if let Err(error) = validate_device_config(sample_rate_hz, channels) {
         let _ = terminal_events.try_send(LiveCaptureEvent::Error(error));
         return;
     }
@@ -328,18 +334,47 @@ fn run_capture_owner(
     let started_at = Instant::now();
     let stream = match supported.sample_format() {
         cpal::SampleFormat::F32 => build_stream::<f32>(
-            &device, &stream_config, callback_tx, terminal_events.clone(), terminal.clone(), scope.clone(), token.clone(),
-            stream_config.sample_rate.0, config.max_callback_frames, started_at, |sample| sample,
+            &device,
+            stream_config,
+            callback_tx,
+            terminal_events.clone(),
+            terminal.clone(),
+            scope.clone(),
+            token.clone(),
+            sample_rate_hz,
+            config.max_callback_frames,
+            started_at,
+            |sample| sample,
         ),
         cpal::SampleFormat::I16 => build_stream::<i16>(
-            &device, &stream_config, callback_tx, terminal_events.clone(), terminal.clone(), scope.clone(), token.clone(),
-            stream_config.sample_rate.0, config.max_callback_frames, started_at, |sample| sample as f32 / 32_768.0,
+            &device,
+            stream_config,
+            callback_tx,
+            terminal_events.clone(),
+            terminal.clone(),
+            scope.clone(),
+            token.clone(),
+            sample_rate_hz,
+            config.max_callback_frames,
+            started_at,
+            |sample| sample as f32 / 32_768.0,
         ),
         cpal::SampleFormat::U16 => build_stream::<u16>(
-            &device, &stream_config, callback_tx, terminal_events.clone(), terminal.clone(), scope.clone(), token.clone(),
-            stream_config.sample_rate.0, config.max_callback_frames, started_at, |sample| (sample as f32 / u16::MAX as f32) * 2.0 - 1.0,
+            &device,
+            stream_config,
+            callback_tx,
+            terminal_events.clone(),
+            terminal.clone(),
+            scope.clone(),
+            token.clone(),
+            sample_rate_hz,
+            config.max_callback_frames,
+            started_at,
+            |sample| (sample as f32 / u16::MAX as f32) * 2.0 - 1.0,
         ),
-        format => Err(LiveCaptureError::UnsupportedSampleFormat(format!("{format:?}"))),
+        format => Err(LiveCaptureError::UnsupportedSampleFormat(format!(
+            "{format:?}"
+        ))),
     };
     let stream = match stream {
         Ok(stream) => stream,
@@ -349,14 +384,23 @@ fn run_capture_owner(
         }
     };
     if let Err(error) = stream.play() {
-        let _ = terminal_events.try_send(LiveCaptureEvent::Error(LiveCaptureError::StreamPlay(error.to_string())));
+        let _ = terminal_events.try_send(LiveCaptureEvent::Error(LiveCaptureError::StreamPlay(
+            error.to_string(),
+        )));
         return;
     }
-    if events.try_send(LiveCaptureEvent::Ready {
-        sample_rate_hz: stream_config.sample_rate.0,
-        channels: stream_config.channels,
-    }).is_err() {
-        raise_terminal(&terminal_events, &terminal, LiveCaptureEvent::Error(LiveCaptureError::QueueOverflow));
+    if events
+        .try_send(LiveCaptureEvent::Ready {
+            sample_rate_hz,
+            channels,
+        })
+        .is_err()
+    {
+        raise_terminal(
+            &terminal_events,
+            &terminal,
+            LiveCaptureEvent::Error(LiveCaptureError::QueueOverflow),
+        );
         return;
     }
 
@@ -379,7 +423,11 @@ fn run_capture_owner(
                     break;
                 }
                 if events.try_send(LiveCaptureEvent::Frame(frame)).is_err() {
-                    raise_terminal(&terminal_events, &terminal, LiveCaptureEvent::Error(LiveCaptureError::QueueOverflow));
+                    raise_terminal(
+                        &terminal_events,
+                        &terminal,
+                        LiveCaptureEvent::Error(LiveCaptureError::QueueOverflow),
+                    );
                     break;
                 }
             }
@@ -398,7 +446,9 @@ fn choose_input_device(
     requested_name: Option<&str>,
 ) -> Result<cpal::Device, LiveCaptureError> {
     match requested_name {
-        None => host.default_input_device().ok_or(LiveCaptureError::NoInputDevice),
+        None => host
+            .default_input_device()
+            .ok_or(LiveCaptureError::NoInputDevice),
         Some(requested_name) => host
             .input_devices()
             .map_err(|error| LiveCaptureError::DeviceEnumeration(error.to_string()))?
@@ -425,7 +475,7 @@ fn validate_device_config(sample_rate_hz: u32, channels: u16) -> Result<(), Live
 #[allow(clippy::too_many_arguments)]
 fn build_stream<T>(
     device: &cpal::Device,
-    config: &cpal::StreamConfig,
+    config: cpal::StreamConfig,
     callback_tx: SyncSender<CallbackSignal>,
     terminal_events: SyncSender<LiveCaptureEvent>,
     terminal: Arc<AtomicBool>,
@@ -449,17 +499,32 @@ where
                 if data_terminal.load(Ordering::Acquire) || scope.is_stale(&token) {
                     return;
                 }
-                let frame = match normalize_callback(input, channels, sample_rate_hz, max_frames, started_at.elapsed(), convert) {
+                let frame = match normalize_callback(
+                    input,
+                    channels,
+                    sample_rate_hz,
+                    max_frames,
+                    started_at.elapsed(),
+                    convert,
+                ) {
                     Ok(frame) => frame,
                     Err(error) => {
-                        raise_terminal(&data_terminal_events, &data_terminal, LiveCaptureEvent::Error(error));
+                        raise_terminal(
+                            &data_terminal_events,
+                            &data_terminal,
+                            LiveCaptureEvent::Error(error),
+                        );
                         return;
                     }
                 };
                 match callback_tx.try_send(CallbackSignal::Frame(frame)) {
                     Ok(()) | Err(TrySendError::Disconnected(_)) => {}
                     Err(TrySendError::Full(_)) => {
-                        raise_terminal(&data_terminal_events, &data_terminal, LiveCaptureEvent::Error(LiveCaptureError::QueueOverflow));
+                        raise_terminal(
+                            &data_terminal_events,
+                            &data_terminal,
+                            LiveCaptureEvent::Error(LiveCaptureError::QueueOverflow),
+                        );
                     }
                 }
             },
@@ -570,7 +635,9 @@ mod tests {
             let failure = LiveCaptureEvent::Error(LiveCaptureError::DeviceLost(
                 "synthetic device loss".into(),
             ));
-            terminal_tx.try_send(failure.clone()).expect("terminal slot");
+            terminal_tx
+                .try_send(failure.clone())
+                .expect("terminal slot");
             assert_eq!(session.resolve_event_wait(received).unwrap(), Some(failure));
             assert_eq!(session.next_event(Duration::ZERO).unwrap(), None);
         }
@@ -578,8 +645,15 @@ mod tests {
 
     #[test]
     fn synthetic_f32_callback_downmixes_and_keeps_monotonic_timestamp() {
-        let frame = normalize_callback(&[0.5_f32, -0.5, 1.0, 1.0], 2, 48_000, 8, Duration::from_millis(7), |v| v)
-            .expect("bounded synthetic stereo frame");
+        let frame = normalize_callback(
+            &[0.5_f32, -0.5, 1.0, 1.0],
+            2,
+            48_000,
+            8,
+            Duration::from_millis(7),
+            |v| v,
+        )
+        .expect("bounded synthetic stereo frame");
         assert_eq!(frame.pcm, vec![0.0, 1.0]);
         assert_eq!(frame.sample_rate_hz, 48_000);
         assert_eq!(frame.captured_at, Duration::from_millis(7));
@@ -601,9 +675,20 @@ mod tests {
     fn synthetic_terminal_is_exactly_once_for_error_races() {
         let (tx, rx) = mpsc::sync_channel(1);
         let terminal = AtomicBool::new(false);
-        raise_terminal(&tx, &terminal, LiveCaptureEvent::Error(LiveCaptureError::QueueOverflow));
-        raise_terminal(&tx, &terminal, LiveCaptureEvent::Error(LiveCaptureError::DeviceLost("late".into())));
-        assert!(matches!(rx.recv().unwrap(), LiveCaptureEvent::Error(LiveCaptureError::QueueOverflow)));
+        raise_terminal(
+            &tx,
+            &terminal,
+            LiveCaptureEvent::Error(LiveCaptureError::QueueOverflow),
+        );
+        raise_terminal(
+            &tx,
+            &terminal,
+            LiveCaptureEvent::Error(LiveCaptureError::DeviceLost("late".into())),
+        );
+        assert!(matches!(
+            rx.recv().unwrap(),
+            LiveCaptureEvent::Error(LiveCaptureError::QueueOverflow)
+        ));
         assert!(rx.try_recv().is_err());
     }
 
@@ -637,7 +722,10 @@ mod tests {
             Ok(LiveCaptureEvent::Error(LiveCaptureError::QueueOverflow))
         ));
         // The blocked consumer owns only the one configured session slot.
-        assert!(matches!(session_rx.try_recv(), Ok(LiveCaptureEvent::Ready { .. })));
+        assert!(matches!(
+            session_rx.try_recv(),
+            Ok(LiveCaptureEvent::Ready { .. })
+        ));
     }
 
     #[test]

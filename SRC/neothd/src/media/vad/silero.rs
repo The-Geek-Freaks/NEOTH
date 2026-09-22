@@ -67,7 +67,7 @@ impl SileroVad {
             )
             .context("validate Silero recurrent-state input fact")?;
         graph
-            .set_input_fact(2, i64::fact([]).into())
+            .set_input_fact(2, i64::fact::<[usize; 0]>([]).into())
             .context("validate Silero sample-rate input fact")?;
 
         let output_count = graph
@@ -124,7 +124,8 @@ impl SileroVad {
             .model
             .run(tvec![
                 Tensor::from_shape(&[1, MODEL_SAMPLES], &input)?.into(),
-                Tensor::from_shape(&[STATE_LAYERS, STATE_BATCH, STATE_FEATURES], &state_before)?.into(),
+                Tensor::from_shape(&[STATE_LAYERS, STATE_BATCH, STATE_FEATURES], &state_before)?
+                    .into(),
                 Tensor::from(SAMPLE_RATE_HZ as i64).into(),
             ])
             .context("run embedded Silero VAD inference")?;
@@ -137,10 +138,13 @@ impl SileroVad {
 
         let probability = {
             let values = outputs[0]
-                .to_array_view::<f32>()
+                .to_plain_array_view::<f32>()
                 .context("read Silero speech-probability output as f32")?;
             if values.shape() != &[1, 1] {
-                bail!("Silero speech-probability output must have shape [1, 1]; got {:?}", values.shape());
+                bail!(
+                    "Silero speech-probability output must have shape [1, 1]; got {:?}",
+                    values.shape()
+                );
             }
             let value = *values
                 .iter()
@@ -153,10 +157,13 @@ impl SileroVad {
         };
         let next_state = {
             let values = outputs[1]
-                .to_array_view::<f32>()
+                .to_plain_array_view::<f32>()
                 .context("read Silero recurrent-state output as f32")?;
             if values.shape() != &[STATE_LAYERS, STATE_BATCH, STATE_FEATURES] {
-                bail!("Silero recurrent-state output must have shape [2, 1, 128]; got {:?}", values.shape());
+                bail!(
+                    "Silero recurrent-state output must have shape [2, 1, 128]; got {:?}",
+                    values.shape()
+                );
             }
             if values.iter().any(|value| !value.is_finite()) {
                 bail!("Silero recurrent-state output contains a non-finite value");
@@ -203,9 +210,13 @@ mod tests {
         let mut vad = SileroVad::new().expect("pinned embedded Silero graph loads");
         let frame = [0.0; FRAME_SAMPLES];
         let initial = vad.speech_probability(&frame).expect("first inference");
-        let _ = vad.speech_probability(&frame).expect("stateful second inference");
+        let _ = vad
+            .speech_probability(&frame)
+            .expect("stateful second inference");
         vad.reset();
-        let after_reset = vad.speech_probability(&frame).expect("inference after reset");
+        let after_reset = vad
+            .speech_probability(&frame)
+            .expect("inference after reset");
         assert!((initial - after_reset).abs() <= f32::EPSILON);
     }
 }
