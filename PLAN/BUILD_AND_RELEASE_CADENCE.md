@@ -423,3 +423,12 @@ The status property is now `bc-vault-mirror-repair-state`; the action callback
 is unchanged. The one formatting hunk from Preflight `35677253412` is imported.
 Only those W184 deltas are admitted here; W185 remains separate working code.
 Native compilation and behavior require rerun; no Road checkbox closes.
+
+W186 adds the manual `silero-specialize.yml` Hosted lane: a 15-minute Ubuntu
+job pins the ONNX tools, verifies the original model SHA-256 and Git blob, fixes
+the production 16-kHz input contract through standard ONNX simplification, and
+compares probability plus recurrent state over 80 deterministic CPU windows.
+Candidate publication requires finite outputs, valid probabilities, no remaining
+If nodes and 1e-6 absolute/relative parity. It only exports a candidate and receipt;
+Rust embedding, platform tests and microphone acceptance remain separate. It
+permits no workstation execution.

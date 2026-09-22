@@ -1,13 +1,13 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W188_HOSTED_FORMAT_AND_TEST_COMPILE_REPAIR_PENDING_RERUN",
-  "base": "ebe2763529003dfdd80ca03fbdcd326519e18c4d",
+  "status": "W186_STANDARD_MODEL_SPECIALIZATION_LANE_PENDING_HOSTED_PARITY",
+  "base": "86a77ac8d3de7da81dbd7f25bd1bebd18fda55f5",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 77125,
-    "sha256": "F0F68FB7935978DB7323E19E0D39D1378087884F382304ED1557A45DB99F6C5E"
+    "bytes": 77470,
+    "sha256": "C0BB84A2025D80BDC281D775AB53701AD48FF62281C7604DDBD472292F62C67A"
   },
-  "sourceInputs": 447,
+  "sourceInputs": 449,
   "requiredNativeTests": [
     {
       "test": "mcp::codegraph_server::tests::w61_generated_stdio_binds_all_four_tools_from_one_real_snapshot_including_empty_results",
@@ -3277,6 +3277,18 @@
       "test": "cli::doctor::checks::capabilities::tests::capability_quality_limits_rendered_degradation_labels",
       "sourcePath": "SRC/neothd/src/cli/doctor/checks/capabilities.rs",
       "sourceSha256": "1E0D6B8D6285A6D0336A4F4E2F12B57F3948DF7A8BF2179658ED6D58A05EC83F",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::tests::check_docs_listed_count_matches_runtime_contract",
+      "sourcePath": "SRC/neothd/src/cli/doctor.rs",
+      "sourceSha256": "FA1DC95CD5F8DCCF42449F120C03B99FC7605B93223B758A8C0A2B8753A38DC2",
+      "junitClass": "neoth"
+    },
+    {
+      "test": "cli::doctor::tests::run_all_checks_returns_one_outcome_per_diagnostic",
+      "sourcePath": "SRC/neothd/src/cli/doctor.rs",
+      "sourceSha256": "FA1DC95CD5F8DCCF42449F120C03B99FC7605B93223B758A8C0A2B8753A38DC2",
       "junitClass": "neoth"
     }
   ],
@@ -8483,5 +8495,42 @@
       }
     ],
     "status": "SOURCE_REPAIR_HOSTED_RERUN_REQUIRED"
+  },
+  "wave186SpecializationLane": {
+    "status": "SOURCE_REVIEWED_HOSTED_PARITY_PENDING",
+    "originalSha256": "7ED98DDBAD84CCAC4CD0AEB3099049280713DF825C610A8ED34543318F1B2C49",
+    "files": [
+      {
+        "path": ".github/workflows/silero-specialize.yml",
+        "bytes": 2750,
+        "sha256": "A1ABB26B978F5522DF6EBACF497DE97D0825ACC01572FE9272E8DB84912B987A"
+      },
+      {
+        "path": "packaging/specialize_silero.py",
+        "bytes": 14903,
+        "sha256": "4471648E7E2C437E10AAAB7B0F37D905EB2F7A771F93F56CDD22EE69ADF70CE4"
+      },
+      {
+        "path": "SRC/neothd/src/cli/doctor.rs",
+        "bytes": 92938,
+        "sha256": "FA1DC95CD5F8DCCF42449F120C03B99FC7605B93223B758A8C0A2B8753A38DC2"
+      },
+      {
+        "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
+        "bytes": 26439,
+        "sha256": "937D650FAD5930A6E435F309F9C8664E7F09C7BBF048791CF3576DACE2355A24"
+      },
+      {
+        "path": "PLAN/ROAD_TO_1_0_GOLD.md",
+        "bytes": 1622417,
+        "sha256": "5E71592FEB0A6143AFA5B9F16EEB53E86C70F33345567CEF8353ABEFD048E85A"
+      },
+      {
+        "path": "PLAN/PROGRESS_v1_0.md",
+        "bytes": 1026970,
+        "sha256": "BF0D94D78F9D3D206278B901404FA6D568C05CC3ADD6C13C32FA29404110D5B2"
+      }
+    ],
+    "validation": "No asset replacement. Standard simplifier plus strict finite original-derived parity. No local executable validation."
   }
 }

@@ -834,7 +834,8 @@ mod tests {
         // + account-bound channel transport flapping = 60;
         // + code-map bounded analysis-evidence readiness = 61;
         // + opt-in codegraph outline-enrichment readiness = 62.
-        assert_eq!(all_check_docs().count(), 62);
+        // + bounded authenticated capability-quality observation = 63.
+        assert_eq!(all_check_docs().count(), 63);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────
@@ -1626,7 +1627,8 @@ mod tests {
         // + account-bound channel transport flapping = 59;
         // + code-map bounded analysis-evidence readiness = 60;
         // + opt-in codegraph outline-enrichment readiness = 61.
-        assert_eq!(outs.len(), 61);
+        // + bounded authenticated capability-quality observation = 62.
+        assert_eq!(outs.len(), 62);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }

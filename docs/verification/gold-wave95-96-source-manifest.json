@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W188-capability-observation",
-  "base": "ebe2763529003dfdd80ca03fbdcd326519e18c4d",
-  "capturedUtc": "2026-09-22T09:08:15.0712576Z",
-  "validationStatus": "W188_HOSTED_FORMAT_AND_TEST_COMPILE_REPAIR_PENDING_RERUN",
+  "base": "86a77ac8d3de7da81dbd7f25bd1bebd18fda55f5",
+  "capturedUtc": "2026-09-22T09:15:17.2425928Z",
+  "validationStatus": "W186_STANDARD_MODEL_SPECIALIZATION_LANE_PENDING_HOSTED_PARITY",
   "scopeNote": "W188 bounded authenticated operational diagnostic plus exact Hosted dependency licenses and public CLI reference; no roadmap closure. Earlier source/test freezes remain historical.",
   "files": [
     {
@@ -60,6 +60,11 @@
       "path": ".github/workflows/rust-notices.yml",
       "bytes": 8272,
       "sha256": "89EDC592D7805B834A555484902C1018D67FF0D3969C3B26FBCCD021226DC7BD"
+    },
+    {
+      "path": ".github/workflows/silero-specialize.yml",
+      "bytes": 2750,
+      "sha256": "A1ABB26B978F5522DF6EBACF497DE97D0825ACC01572FE9272E8DB84912B987A"
     },
     {
       "path": "docs/architecture.md",
@@ -252,6 +257,11 @@
       "sha256": "AFA91D09AEB6B2B7A81D7ADE8D236C36A2867AAA99B3C7609CA76127C26A3CCF"
     },
     {
+      "path": "packaging/specialize_silero.py",
+      "bytes": 14903,
+      "sha256": "4471648E7E2C437E10AAAB7B0F37D905EB2F7A771F93F56CDD22EE69ADF70CE4"
+    },
+    {
       "path": "packaging/tests/test_ci_cadence_contract.py",
       "bytes": 40881,
       "sha256": "7685FFDF26714C0BF3DB8914521EBDB5DE9B2161B0889D38D611B1B0B29C0382"
@@ -293,18 +303,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 25847,
-      "sha256": "586B58D501B3170929B70EF76CFC698E7228C7BAE90759783C360662A0A0874B"
+      "bytes": 26439,
+      "sha256": "937D650FAD5930A6E435F309F9C8664E7F09C7BBF048791CF3576DACE2355A24"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1027140,
-      "sha256": "4BB3C926444878D4447B387B17E75531509660EC94C946DEC6FDD98CDBCEAEC5"
+      "bytes": 1026970,
+      "sha256": "BF0D94D78F9D3D206278B901404FA6D568C05CC3ADD6C13C32FA29404110D5B2"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1622587,
-      "sha256": "7BF400E3776012E2A9F24626C28D3D3200444480A2590391A26BB7DA432B7FEB"
+      "bytes": 1622417,
+      "sha256": "5E71592FEB0A6143AFA5B9F16EEB53E86C70F33345567CEF8353ABEFD048E85A"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -863,8 +873,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/doctor.rs",
-      "bytes": 92794,
-      "sha256": "7A29563A1C4A6E03068CC1EF68E20794F6A31B9CC7EC0E7FEA252640663D8C9A"
+      "bytes": 92938,
+      "sha256": "FA1DC95CD5F8DCCF42449F120C03B99FC7605B93223B758A8C0A2B8753A38DC2"
     },
     {
       "path": "SRC/neothd/src/cli/doctor/checks/capabilities.rs",

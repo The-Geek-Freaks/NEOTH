@@ -8,12 +8,23 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
-**Current published/Hosted boundary (2026-09-22):** GitHub `main` is `ebe2763529003dfdd80ca03fbdcd326519e18c4d`. Code Quality `35707548027` passed there. Preflight `35707549093` failed only formatting; all 21 exact Hosted hunks across three Rust files are imported with receipt `work/gold-20260906/wave188-next-batch/FORMAT-HOSTED-EBE.json`. Core `35707601954` then found exactly two test-compilation errors, now repaired through public `run_all_checks` and a narrow `payload.clone` change; see `COMPILE-EBE-REPAIR.md`. A new push and Hosted rerun are pending.
+**Current published/Hosted boundary (2026-09-22):** Doctor repair `86a77ac8`
+is on GitHub `main`. Preflight `35708879822` and Code Quality `35708879582`
+passed. Core run `35708880438` has passed the default-feature test-target
+check and is building the public CLI; its final outcome remains pending.
+The two fixed-count Doctor regression expectations now include the new
+capability-quality row (63 docs, 62 runtime checks); those tests still require
+Hosted execution.
 
-W186 live-audio `35706936164` on `88946b64` compiled and passed six capture tests, then failed the seventh, first Silero test on a Tract `If` tensor-shape mismatch (`[1,128]` versus `[1,128,1]`). Its remaining tests did not run. The asset is unchanged; graph specialization/parity work is in development. This is neither audio-runtime acceptance nor a full CI/preview success claim.
-
-The current source/test inventory is 447 source paths, 545 universal native identities, 6 Windows, 8 Linux, 7 macOS, 80 GUI, 19 Unix-GUI and 19 live-audio identities. The Road inventory remains **1015 checked / 307 open / 2 partial**; this update changes no checkbox. The historic entries below retain their original source identities and are superseded as current status by this block.
-
+W186 live-audio `35706936164` on `88946b64` compiled and passed six capture
+tests, then failed the first Silero case on incompatible Tract If-branch shapes.
+The manual Hosted specialization/parity lane is source-reviewed and ready for
+its first run. It verifies the pinned original and exports a derived candidate
+only after standard ONNX simplification and finite probability/state parity.
+No product asset has changed yet. W189 persisted capability history is separate
+unadmitted work; no Road checkbox closes. Inventory: 449 source paths, 547
+universal native tests, 6 Windows / 8 Linux / 7 macOS additions, 80 GUI + 19
+Unix-GUI, 19 live-audio. Road: **1015 checked / 307 open / 2 partial**.
 **Prior verified gates (2026-09-22):** GitHub `main` was confirmed at
 `1eb93f14f35b3631f3b3fbc155dad1dd2abbeef9`. Preflight `35695668011` and
 Code Quality `35695667625` passed on that source. Core test-target typecheck,

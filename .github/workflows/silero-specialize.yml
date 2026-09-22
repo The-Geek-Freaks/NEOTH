@@ -1,0 +1,66 @@
+name: W186 Silero 16k ONNX specialization
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  specialize:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout main without credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned ONNX specialization tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir 'numpy==1.26.4' 'onnx==1.16.2' 'onnxruntime==1.19.2' 'onnxsim==0.4.36'
+          python - <<'PY'
+          import importlib.metadata, json
+          from pathlib import Path
+          packages = ('numpy', 'onnx', 'onnxruntime', 'onnxsim')
+          Path('tool-versions.json').write_text(json.dumps({'schema': 'w186-silero-specialization-tools/v1', 'packages': {name: importlib.metadata.version(name) for name in packages}}, indent=2) + '\n', encoding='utf-8')
+          PY
+
+      - name: Specialize and prove 16k Silero parity
+        id: specialize
+        shell: bash
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+          RECEIPT_DIR: ${{ runner.temp }}/w186-silero-specialization
+        run: |
+          set -euo pipefail
+          mkdir -p "$RECEIPT_DIR/candidate"
+          cp tool-versions.json "$RECEIPT_DIR/tool-versions.json"
+          python packaging/specialize_silero.py --input SRC/neothd/assets/silero-vad/silero_vad_16k_op15.onnx --output "$RECEIPT_DIR/candidate/silero_vad_16k_op15_tract_16k.onnx" --report "$RECEIPT_DIR/specialization-receipt.json" --source-revision "$SOURCE_REVISION" --source-blob-sha "$(git rev-parse HEAD:SRC/neothd/assets/silero-vad/silero_vad_16k_op15.onnx)"
+
+      - name: Upload reviewed specialization candidate
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w186-silero-16k-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/w186-silero-specialization/candidate/silero_vad_16k_op15_tract_16k.onnx
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload specialization diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w186-silero-16k-receipt-${{ github.sha }}
+          path: ${{ runner.temp }}/w186-silero-specialization/
+          if-no-files-found: warn
+          retention-days: 14
