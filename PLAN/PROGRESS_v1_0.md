@@ -2,6 +2,14 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W184 Hosted follow-up (2026-09-22):** core test typechecking and the public
+CLI build passed in run `35675458308` on `eabc22a5`. The generated CLI reference
+was imported with its source and SHA-256 witness. Preflight `35675458038`
+reported formatting only; 127 unique Hosted hunks in 12 files are imported,
+including exact reconciliation of one masked test dummy. Code Quality
+`35675457773` passed. Fresh native behavior and GUI acceptance remain required;
+no Road checkbox closes. W185 Local-LLM core and private IPC are under review.
+
 **W184 vault mirror (2026-09-22):** the opt-in daemon/CLI/Buddy/GUI path is
 implemented and independently source-reviewed: credential-free WAL archive,
 retained file/Git-CWD capabilities, durable push intent, exact-remote repair,

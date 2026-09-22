@@ -400,10 +400,8 @@ async fn run_status(output: OutputFormat) -> Result<()> {
     let autonomy = cfg.autonomy.as_str().to_owned();
     let proactive_enabled = cfg.proactive.enabled;
     let home = FreedomConfig::default_neoth_home();
-    let vault_mirror = crate::cli::backup::mirror_status_wire(&vault_mirror::status(
-        &home,
-        &cfg.vault_mirror,
-    ));
+    let vault_mirror =
+        crate::cli::backup::mirror_status_wire(&vault_mirror::status(&home, &cfg.vault_mirror));
     let self_improve_quality = passive::quality_snapshot(&home);
     let path = FreedomConfig::default_path();
     let mut skill_autonomy_caps = Vec::new();
@@ -465,8 +463,9 @@ async fn run_status(output: OutputFormat) -> Result<()> {
 }
 
 async fn run_vault_mirror(action: BuddyVaultMirrorAction, output: OutputFormat) -> Result<()> {
-    let cfg = FreedomConfig::load_from_default_path()
-        .context("load freedom.yaml for vault mirror (run `neoth init` first if this is a fresh install)")?;
+    let cfg = FreedomConfig::load_from_default_path().context(
+        "load freedom.yaml for vault mirror (run `neoth init` first if this is a fresh install)",
+    )?;
     let home = FreedomConfig::default_neoth_home();
     let is_repair = matches!(action, BuddyVaultMirrorAction::Repair);
     let status = match action {
@@ -580,11 +579,11 @@ fn set_proactive_at(path: &std::path::Path, enabled: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
     use crate::{
         config::{FreedomConfig, SelfActivationConfig},
         permissions::AutonomyLevel,
     };
+    use clap::Parser;
     use tempfile::TempDir;
 
     #[derive(Debug, Parser)]

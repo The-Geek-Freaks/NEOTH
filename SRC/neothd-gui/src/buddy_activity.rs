@@ -351,9 +351,18 @@ mod tests {
 
     #[test]
     fn vault_mirror_uses_existing_working_success_and_error_moods() {
-        assert_eq!(GuiActivity::VaultMirrorRunning.mood(), ("working", "repairing vault mirror…"));
-        assert_eq!(GuiActivity::VaultMirrorVerified.mood(), ("success", "vault mirror verified"));
-        assert_eq!(GuiActivity::VaultMirrorFailed.mood(), ("error", "vault mirror needs repair"));
+        assert_eq!(
+            GuiActivity::VaultMirrorRunning.mood(),
+            ("working", "repairing vault mirror…")
+        );
+        assert_eq!(
+            GuiActivity::VaultMirrorVerified.mood(),
+            ("success", "vault mirror verified")
+        );
+        assert_eq!(
+            GuiActivity::VaultMirrorFailed.mood(),
+            ("error", "vault mirror needs repair")
+        );
     }
 
     #[test]

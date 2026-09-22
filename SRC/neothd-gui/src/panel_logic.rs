@@ -8299,12 +8299,23 @@ fn project_buddy_vault_mirror(wire: BuddyVaultMirrorWire) -> Result<BuddyVaultMi
     }
     if receipt.branch.chars().any(char::is_control)
         || receipt.remote_redaction.chars().any(char::is_control)
-        || receipt.commit_oid.as_deref().is_some_and(|value| value.chars().any(char::is_control))
-        || receipt.remote_head_oid.as_deref().is_some_and(|value| value.chars().any(char::is_control))
+        || receipt
+            .commit_oid
+            .as_deref()
+            .is_some_and(|value| value.chars().any(char::is_control))
+        || receipt
+            .remote_head_oid
+            .as_deref()
+            .is_some_and(|value| value.chars().any(char::is_control))
     {
         return Err("receipt contains control text".into());
     }
-    if receipt.retention.removed_runs.iter().any(|run| run.trim().is_empty() || run.chars().any(char::is_control)) {
+    if receipt
+        .retention
+        .removed_runs
+        .iter()
+        .any(|run| run.trim().is_empty() || run.chars().any(char::is_control))
+    {
         return Err("receipt retention contains an invalid run identity".into());
     }
     if receipt.retention.retained_verified_runs == 0 && receipt.retention.enabled {
@@ -8325,7 +8336,10 @@ fn project_buddy_vault_mirror(wire: BuddyVaultMirrorWire) -> Result<BuddyVaultMi
     Ok(BuddyVaultMirrorSnap {
         config: wire.config,
         phase,
-        repair_available: matches!(wire.repair.as_str(), "run_verification" | "restore_credential" | "resolve_remote_advance"),
+        repair_available: matches!(
+            wire.repair.as_str(),
+            "run_verification" | "restore_credential" | "resolve_remote_advance"
+        ),
         repair: wire.repair,
         run_id: receipt.run_id,
         archive_sha256: receipt.archive_sha256,
@@ -12916,7 +12930,8 @@ mod tests {
     #[test]
     fn w184_vault_mirror_parser_keeps_indeterminate_repairable() {
         let indeterminate = r#"{"config":"blocked","receipt":{"schema_version":1,"run_id":"run-1","config_fingerprint_sha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","archive_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","archive_bytes":1,"wal_included":true,"credentials_included":false,"branch":"neoth-vault","remote_redaction":"example.invalid/vault","commit_oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","remote_head_oid":null,"phase":{"kind":"indeterminate","reason":"remote_outcome_unknown"},"created_at_unix":1,"verified_at_unix":null,"retention":{"enabled":false,"retained_verified_runs":14,"removed_runs":[],"phase":null}},"repair":"run_verification"}"#;
-        let projection = super::parse_buddy_vault_mirror(indeterminate).expect("typed indeterminate receipt");
+        let projection =
+            super::parse_buddy_vault_mirror(indeterminate).expect("typed indeterminate receipt");
         assert_eq!(projection.phase, "indeterminate: remote_outcome_unknown");
         assert!(projection.repair_available);
     }

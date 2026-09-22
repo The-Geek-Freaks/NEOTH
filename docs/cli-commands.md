@@ -205,6 +205,24 @@ Write a tar.gz backup of `~/.neoth/` state. Phase 33c BS-2
 - `--include-credentials` — Include `credentials.yaml` (API keys, channel tokens) in the plaintext tarball. Excluded by default; use this only when the destination is operator-controlled encrypted storage. A complete credential restore requires this explicit opt-in
 - `--home <DIR>` — Override the ~/.neoth source dir (mostly for tests)
 
+### `neoth backup mirror`
+
+Inspect the durable mirror receipt.  This never starts Git
+
+#### `neoth backup mirror repair`
+
+Reconcile an indeterminate durable push receipt against its exact ref
+
+#### `neoth backup mirror run`
+
+Create a durable WAL-inclusive, credential-free Prepared archive receipt. It starts no Git process without --push. Pass --push only when manual publishing is explicitly permitted
+
+- `--push`
+
+#### `neoth backup mirror status`
+
+Read the current durable status without starting a Git process
+
 ## `neoth buddy`
 
 GOLD-ADAPT-GUI-BUDDY — GUI Buddy-Config tab: read aggregator + two safe toggles. `status` reads six buddy-config fields from freedom.yaml; `self-activation --enable/--disable` toggles `self_activation.enabled`; `proactive --enable/--disable` toggles `proactive.enabled`. Sovereign and Smart-Approve are surfaced here but mutate only through their canonical `autonomy sovereign` and `security set` policy paths
@@ -272,6 +290,18 @@ Toggle `self_activation.enabled` in freedom.yaml
 ### `neoth buddy status`
 
 Print a snapshot of the GUI Buddy-Config fields plus admitted Skill caps
+
+### `neoth buddy vault-mirror`
+
+Read or reconcile the same private vault-mirror service used by `neoth backup mirror`; this surface has no policy bypass
+
+#### `neoth buddy vault-mirror repair`
+
+Reconcile only a durable ambiguous push receipt against its exact ref
+
+#### `neoth buddy vault-mirror status`
+
+Read the mirror receipt without starting Git
 
 ## `neoth calendar`
 

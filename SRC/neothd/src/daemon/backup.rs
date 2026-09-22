@@ -141,13 +141,7 @@ pub(crate) fn write_backup_to_file(
     include_credentials: bool,
 ) -> Result<BackupOutcome> {
     let config_pair = crate::config::snapshot_raw_config_pair(&home.join("freedom.yaml"))?;
-    populate_backup_file(
-        home,
-        file,
-        include_wal,
-        include_credentials,
-        &config_pair,
-    )
+    populate_backup_file(home, file, include_wal, include_credentials, &config_pair)
 }
 
 fn write_backup_with_pair_loader(
@@ -167,8 +161,7 @@ fn write_backup_with_pair_loader(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create backup parent {}", parent.display()))?;
     }
-    let mut file =
-        File::create(out).with_context(|| format!("create backup {}", out.display()))?;
+    let mut file = File::create(out).with_context(|| format!("create backup {}", out.display()))?;
     populate_backup_file(
         home,
         &mut file,
@@ -662,7 +655,11 @@ mod tests {
         let target = dir.path().join("restored");
         restore_backup(&out, &target, false).unwrap();
         assert!(target.join("freedom.yaml").exists());
-        assert!(target.join("archive/sessions/2026-05-14/093412-abc.md").exists());
+        assert!(
+            target
+                .join("archive/sessions/2026-05-14/093412-abc.md")
+                .exists()
+        );
         assert!(target.join("wal/000001.wal").exists());
         assert!(!target.join("credentials.yaml").exists());
     }

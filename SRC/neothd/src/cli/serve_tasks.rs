@@ -56,7 +56,9 @@ mod vault_mirror_scheduler_tests {
         .expect("write enabled config");
         let controller = ReloadController::new(FreedomConfig::default(), path.clone());
         assert!(matches!(
-            controller.try_reload().expect("accept enabled mirror config"),
+            controller
+                .try_reload()
+                .expect("accept enabled mirror config"),
             ReloadResult::Reloaded { .. }
         ));
         assert!(desired_cron_keys(&controller.latest()).contains(&CronKey::VaultMirror));
@@ -67,7 +69,9 @@ mod vault_mirror_scheduler_tests {
         )
         .expect("write revoked config");
         assert!(matches!(
-            controller.try_reload().expect("accept revoked mirror config"),
+            controller
+                .try_reload()
+                .expect("accept revoked mirror config"),
             ReloadResult::Reloaded { .. }
         ));
         let desired = desired_cron_keys(&controller.latest());

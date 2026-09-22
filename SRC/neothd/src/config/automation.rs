@@ -80,11 +80,18 @@ impl VaultMirrorConfig {
 }
 
 fn validate_vault_mirror_remote(remote: &str) -> Result<(), String> {
-    if remote.is_empty() || remote.chars().any(|ch| ch.is_control() || ch.is_whitespace()) {
+    if remote.is_empty()
+        || remote
+            .chars()
+            .any(|ch| ch.is_control() || ch.is_whitespace())
+    {
         return Err("vault_mirror.remote_url must be nonempty and contain no whitespace or control characters".to_string());
     }
     if remote.starts_with('-') || is_windows_local_path(remote) {
-        return Err("vault_mirror.remote_url must name a remote, not a Git option or local path".to_string());
+        return Err(
+            "vault_mirror.remote_url must name a remote, not a Git option or local path"
+                .to_string(),
+        );
     }
     if remote.contains('?') || remote.contains('#') {
         return Err("vault_mirror.remote_url must not contain a query or fragment".to_string());
@@ -99,19 +106,23 @@ fn validate_vault_mirror_remote(remote: &str) -> Result<(), String> {
             }
         });
         if !valid_remote_host(host) || authority.contains('@') {
-            return Err("vault_mirror.remote_url HTTPS authority must contain a host without userinfo".to_string());
+            return Err(
+                "vault_mirror.remote_url HTTPS authority must contain a host without userinfo"
+                    .to_string(),
+            );
         }
         return Ok(());
     }
     if let Some(rest) = remote.strip_prefix("ssh://") {
         let authority = rest.split('/').next().unwrap_or_default();
-        let host = authority.rsplit_once('@').map_or(authority, |(user, host)| {
-            if !valid_ssh_user(user) {
-                ""
-            } else {
-                host
-            }
-        });
+        let host = authority
+            .rsplit_once('@')
+            .map_or(
+                authority,
+                |(user, host)| {
+                    if !valid_ssh_user(user) { "" } else { host }
+                },
+            );
         let host = host.split_once(':').map_or(host, |(host, port)| {
             if port.is_empty() || !port.chars().all(|ch| ch.is_ascii_digit()) {
                 ""
@@ -120,7 +131,10 @@ fn validate_vault_mirror_remote(remote: &str) -> Result<(), String> {
             }
         });
         if !valid_remote_host(host) || host.contains('@') {
-            return Err("vault_mirror.remote_url SSH authority must contain a host and no password".to_string());
+            return Err(
+                "vault_mirror.remote_url SSH authority must contain a host and no password"
+                    .to_string(),
+            );
         }
         return Ok(());
     }
@@ -132,29 +146,37 @@ fn validate_vault_mirror_remote(remote: &str) -> Result<(), String> {
         && !path.contains(':')
         && identity_host.matches('@').count() <= 1
     {
-        let host = identity_host.rsplit_once('@').map_or(identity_host, |(user, host)| {
-            if valid_ssh_user(user) { host } else { "" }
-        });
+        let host = identity_host
+            .rsplit_once('@')
+            .map_or(
+                identity_host,
+                |(user, host)| {
+                    if valid_ssh_user(user) { host } else { "" }
+                },
+            );
         if valid_remote_host(host) && !host.contains('@') && !host.contains(':') {
             return Ok(());
         }
     }
-    Err("vault_mirror.remote_url must be an HTTPS or SSH Git remote without credentials".to_string())
+    Err(
+        "vault_mirror.remote_url must be an HTTPS or SSH Git remote without credentials"
+            .to_string(),
+    )
 }
 
 fn valid_remote_host(host: &str) -> bool {
     !host.is_empty()
         && !host.starts_with('-')
-        && !host.chars().any(|ch| {
-            ch.is_whitespace() || ch.is_control() || matches!(ch, '@' | '/' | '\\')
-        })
+        && !host
+            .chars()
+            .any(|ch| ch.is_whitespace() || ch.is_control() || matches!(ch, '@' | '/' | '\\'))
 }
 
 fn valid_ssh_user(user: &str) -> bool {
     !user.is_empty()
-        && !user.chars().any(|ch| {
-            ch.is_whitespace() || ch.is_control() || matches!(ch, ':' | '@' | '/' | '\\')
-        })
+        && !user
+            .chars()
+            .any(|ch| ch.is_whitespace() || ch.is_control() || matches!(ch, ':' | '@' | '/' | '\\'))
 }
 
 fn is_windows_local_path(value: &str) -> bool {
@@ -168,7 +190,9 @@ fn validate_vault_mirror_branch(branch: &str) -> Result<(), String> {
         || branch.starts_with("refs/")
         || branch.contains("..")
         || branch.chars().any(|ch| {
-            ch.is_whitespace() || matches!(ch, '/' | '~' | '^' | ':' | '?' | '*' | '[' | '\\' | '@') || ch.is_control()
+            ch.is_whitespace()
+                || matches!(ch, '/' | '~' | '^' | ':' | '?' | '*' | '[' | '\\' | '@')
+                || ch.is_control()
         })
     {
         return Err("vault_mirror.branch must be one safe branch component".to_string());
@@ -187,7 +211,9 @@ mod vault_mirror_config_tests {
         assert!(!config.allow_nightly_push);
         assert!(!config.allow_manual_push);
         assert!(config.remote_url.is_none());
-        config.validate().expect("default mirror config is inert but valid");
+        config
+            .validate()
+            .expect("default mirror config is inert but valid");
     }
 
     #[test]
@@ -197,7 +223,8 @@ mod vault_mirror_config_tests {
             "ssh://git@git.example.invalid:2222/operator/neoth-vault.git",
             "git@git.example.invalid:operator/neoth-vault.git",
         ] {
-            validate_vault_mirror_remote(remote).expect("normal credential-manager or SSH-agent remote");
+            validate_vault_mirror_remote(remote)
+                .expect("normal credential-manager or SSH-agent remote");
         }
     }
 
@@ -209,7 +236,8 @@ mod vault_mirror_config_tests {
             ..Default::default()
         };
         assert!(config.validate().is_err());
-        config.remote_url = Some("ssh://git:password@git.example.invalid/operator/repo.git".to_string());
+        config.remote_url =
+            Some("ssh://git:password@git.example.invalid/operator/repo.git".to_string());
         assert!(config.validate().is_err());
         config.remote_url = Some("git@git.example.invalid:operator/repo.git".to_string());
         config.branch = "refs/heads/main".to_string();
@@ -240,7 +268,9 @@ mod vault_mirror_config_tests {
             assert!(config.validate().is_err());
         }
         config.retain_verified_runs = 255;
-        config.validate().expect("one history slot remains for the next backup");
+        config
+            .validate()
+            .expect("one history slot remains for the next backup");
     }
 }
 

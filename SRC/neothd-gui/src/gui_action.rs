@@ -4501,8 +4501,9 @@ impl VaultMirrorRepairAck {
     }
 
     pub fn vault_mirror_json(&self) -> Result<String, String> {
-        serde_json::to_string(&self.vault_mirror)
-            .map_err(|error| format!("could not retain typed vault mirror acknowledgement: {error}"))
+        serde_json::to_string(&self.vault_mirror).map_err(|error| {
+            format!("could not retain typed vault mirror acknowledgement: {error}")
+        })
     }
 }
 

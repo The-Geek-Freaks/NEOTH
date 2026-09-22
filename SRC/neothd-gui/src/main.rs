@@ -21792,7 +21792,12 @@ fn apply_buddy_vault_mirror(window: &MainWindow, mirror: &panel_logic::BuddyVaul
     window.set_bc_vault_mirror_repair(mirror.repair.as_str().into());
     window.set_bc_vault_mirror_repair_available(mirror.repair_available);
     window.set_bc_vault_mirror_archive_prefix(
-        mirror.archive_sha256.chars().take(12).collect::<String>().into(),
+        mirror
+            .archive_sha256
+            .chars()
+            .take(12)
+            .collect::<String>()
+            .into(),
     );
     window.set_bc_vault_mirror_verified_at(
         mirror
@@ -21824,7 +21829,12 @@ fn register_buddy_vault_mirror_callback(window: &MainWindow) {
 
 fn start_vault_mirror_repair(weak: slint::Weak<MainWindow>) {
     if VAULT_MIRROR_REPAIR_ACTIVE.swap(true, std::sync::atomic::Ordering::AcqRel) {
-        push_toast(&weak, "info", "Vault mirror", "A repair readback is already in progress.");
+        push_toast(
+            &weak,
+            "info",
+            "Vault mirror",
+            "A repair readback is already in progress.",
+        );
         return;
     }
     if let Some(window) = weak.upgrade() {
@@ -21836,44 +21846,71 @@ fn start_vault_mirror_repair(weak: slint::Weak<MainWindow>) {
     let worker = std::thread::Builder::new()
         .name("neoth-vault-mirror-repair".into())
         .spawn(move || {
-        let result: Result<(panel_logic::BuddyVaultMirrorSnap, bool), String> = (|| {
-            let acknowledgement = run_neothd_json_action::<gui_action::VaultMirrorRepairAck>(
-                &["buddy", "vault-mirror", "repair"],
-                "Vault mirror repair",
-            )?;
-            acknowledgement.verify()?;
-            let acknowledged = panel_logic::parse_buddy_vault_mirror(&acknowledgement.vault_mirror_json()?)?;
-            let readback = fetch_buddy_status()?.vault_mirror;
-            vault_mirror_readback_matches(&acknowledged, &readback)?;
-            Ok((readback, acknowledgement.ok))
-        })();
-        let _ = slint::invoke_from_event_loop(move || {
-            let _flight = flight;
-            let Some(window) = worker_weak.upgrade() else { return };
-            window.set_bc_vault_mirror_in_flight(false);
-            match result {
-                Ok((readback, acknowledged_success)) => {
-                    apply_buddy_vault_mirror(&window, &readback);
-                    if acknowledged_success && readback.phase == "verified" {
-                        buddy(&window, GuiActivity::VaultMirrorVerified);
-                        push_toast(&worker_weak, "success", "Vault mirror verified", "Repair receipt matched a fresh Buddy status readback.");
-                    } else {
+            let result: Result<(panel_logic::BuddyVaultMirrorSnap, bool), String> = (|| {
+                let acknowledgement = run_neothd_json_action::<gui_action::VaultMirrorRepairAck>(
+                    &["buddy", "vault-mirror", "repair"],
+                    "Vault mirror repair",
+                )?;
+                acknowledgement.verify()?;
+                let acknowledged =
+                    panel_logic::parse_buddy_vault_mirror(&acknowledgement.vault_mirror_json()?)?;
+                let readback = fetch_buddy_status()?.vault_mirror;
+                vault_mirror_readback_matches(&acknowledged, &readback)?;
+                Ok((readback, acknowledgement.ok))
+            })(
+            );
+            let _ = slint::invoke_from_event_loop(move || {
+                let _flight = flight;
+                let Some(window) = worker_weak.upgrade() else {
+                    return;
+                };
+                window.set_bc_vault_mirror_in_flight(false);
+                match result {
+                    Ok((readback, acknowledged_success)) => {
+                        apply_buddy_vault_mirror(&window, &readback);
+                        if acknowledged_success && readback.phase == "verified" {
+                            buddy(&window, GuiActivity::VaultMirrorVerified);
+                            push_toast(
+                                &worker_weak,
+                                "success",
+                                "Vault mirror verified",
+                                "Repair receipt matched a fresh Buddy status readback.",
+                            );
+                        } else {
+                            buddy(&window, GuiActivity::VaultMirrorFailed);
+                            push_toast(
+                                &worker_weak,
+                                "warn",
+                                "Vault mirror repair incomplete",
+                                &format!(
+                                    "Vault mirror remains {}; follow the displayed repair advice.",
+                                    readback.phase
+                                ),
+                            );
+                        }
+                    }
+                    Err(error) => {
                         buddy(&window, GuiActivity::VaultMirrorFailed);
-                        push_toast(&worker_weak, "warn", "Vault mirror repair incomplete", &format!("Vault mirror remains {}; follow the displayed repair advice.", readback.phase));
+                        push_toast(
+                            &worker_weak,
+                            "warn",
+                            "Vault mirror repair incomplete",
+                            &error,
+                        );
                     }
                 }
-                Err(error) => {
-                    buddy(&window, GuiActivity::VaultMirrorFailed);
-                    push_toast(&worker_weak, "warn", "Vault mirror repair incomplete", &error);
-                }
-            }
+            });
         });
-    });
     if let Err(error) = worker {
         if let Some(window) = weak.upgrade() {
             window.set_bc_vault_mirror_in_flight(false);
             buddy(&window, GuiActivity::VaultMirrorFailed);
-            push_toast(&weak, "warn", "Vault mirror repair unavailable", &format!("Could not start repair worker: {error}"));
+            push_toast(
+                &weak,
+                "warn",
+                "Vault mirror repair unavailable",
+                &format!("Could not start repair worker: {error}"),
+            );
         }
     }
 }
@@ -40917,7 +40954,6 @@ mod vault_mirror_gui_tests {
         let stale = projection("verified", "run-2", "a".repeat(64).as_str());
         assert!(vault_mirror_readback_matches(&acknowledgement, &stale).is_err());
     }
-
 }
 
 /// Buddy dock and six-field status wiring must not drift back to decorative UI.
@@ -41799,10 +41835,10 @@ mod w58_gui_callback_runtime_tests {
         project_chat_reasoning_snapshot, publish_code_map_enrichment_readiness,
         refresh_selfimprove, register_buddy_code_map_impact_callback,
         register_buddy_code_map_status_callback, register_buddy_native_coding_callbacks,
-        register_buddy_vault_mirror_callback,
-        register_buddy_quality_handoff_callback, register_channel_account_dm_pairing_callback,
-        register_channel_account_retirement_callback, register_channel_legacy_migration_callback,
-        register_channel_pairing_approval_callback, register_channel_pairing_request_callbacks,
+        register_buddy_quality_handoff_callback, register_buddy_vault_mirror_callback,
+        register_channel_account_dm_pairing_callback, register_channel_account_retirement_callback,
+        register_channel_legacy_migration_callback, register_channel_pairing_approval_callback,
+        register_channel_pairing_request_callbacks,
         register_code_map_enrichment_readiness_callbacks, register_selfimprove_accept_callback,
         register_skill_autonomy_callbacks, start_code_map_lifecycle_config_apply,
         start_code_map_lifecycle_refresh, which_neothd,
@@ -46806,15 +46842,27 @@ exit 0
         };
         let mirror = format!(
             r#"{{"config":"{}","receipt":{{"schema_version":1,"run_id":"{}","config_fingerprint_sha256":"{}","archive_sha256":"{}","archive_bytes":1,"wal_included":true,"credentials_included":false,"branch":"neoth-vault","remote_redaction":"fixture.invalid/mirror","commit_oid":"{}","remote_head_oid":{},"phase":{},"created_at_unix":1,"verified_at_unix":{},"retention":{{"enabled":false,"retained_verified_runs":14,"removed_runs":[],"phase":null}}}},"repair":"{}"}}"#,
-            if phase == "verified" { "ready" } else { "blocked" },
+            if phase == "verified" {
+                "ready"
+            } else {
+                "blocked"
+            },
             run_id,
             fingerprint,
             archive,
             commit,
-            if phase == "verified" { format!("\"{commit}\"") } else { "null".into() },
+            if phase == "verified" {
+                format!("\"{commit}\"")
+            } else {
+                "null".into()
+            },
             phase_json,
             if phase == "verified" { "1" } else { "null" },
-            if phase == "verified" { "no_action" } else { "run_verification" },
+            if phase == "verified" {
+                "no_action"
+            } else {
+                "run_verification"
+            },
         );
         format!(
             r#"{{"sovereign_buddy":false,"self_activation_enabled":false,"self_activation_skills":[],"smart_approve_any":false,"autonomy":"standard","proactive_enabled":false,"skill_autonomy_caps":[],"self_improve_quality":{{"state":"unavailable","reason":"fixture"}},"vault_mirror":{mirror}}}"#
@@ -46840,7 +46888,12 @@ exit 0
     }
 
     #[cfg(not(windows))]
-    fn w184_pump_until(window: &MainWindow, calls: &Path, repair_calls: usize, status_calls: usize) {
+    fn w184_pump_until(
+        window: &MainWindow,
+        calls: &Path,
+        repair_calls: usize,
+        status_calls: usize,
+    ) {
         let completed = Rc::new(Cell::new(false));
         let seen = Rc::clone(&completed);
         let weak = window.as_weak();
@@ -46848,22 +46901,26 @@ exit 0
         let ticks = Rc::new(Cell::new(0_u16));
         let observed_ticks = Rc::clone(&ticks);
         let timer = slint::Timer::default();
-        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
-            if weak.upgrade().is_some_and(|window| {
-                !window.get_bc_vault_mirror_in_flight()
-                    && w184_call_count(&calls, "vault-mirror-repair") == repair_calls
-                    && w184_call_count(&calls, "buddy-status") == status_calls
-            }) {
-                seen.set(true);
-                let _ = slint::quit_event_loop();
-                return;
-            }
-            if observed_ticks.get().saturating_add(1) >= 500 {
-                let _ = slint::quit_event_loop();
-            } else {
-                observed_ticks.set(observed_ticks.get() + 1);
-            }
-        });
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(10),
+            move || {
+                if weak.upgrade().is_some_and(|window| {
+                    !window.get_bc_vault_mirror_in_flight()
+                        && w184_call_count(&calls, "vault-mirror-repair") == repair_calls
+                        && w184_call_count(&calls, "buddy-status") == status_calls
+                }) {
+                    seen.set(true);
+                    let _ = slint::quit_event_loop();
+                    return;
+                }
+                if observed_ticks.get().saturating_add(1) >= 500 {
+                    let _ = slint::quit_event_loop();
+                } else {
+                    observed_ticks.set(observed_ticks.get() + 1);
+                }
+            },
+        );
         let _ = window.hide();
         slint::run_event_loop_until_quit().expect("run W184 callback fixture event loop");
         drop(timer);
@@ -46873,7 +46930,9 @@ exit 0
     #[cfg(not(windows))]
     #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback() {
-        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("serial GUI fixture environment");
+        let _environment = GUI_CALLBACK_ENV_LOCK
+            .lock()
+            .expect("serial GUI fixture environment");
         let fixture = TempDir::new().expect("create W184 CLI fixture");
         let bin = w116_stage_fake_neoth(&fixture);
         let mode = fixture.path().join("mode");
@@ -46882,7 +46941,10 @@ exit 0
         let calls = fixture.path().join("calls");
         std::fs::write(&calls, b"").expect("initialize W184 calls");
         let _path = PathGuard::install(fixture.path());
-        assert_eq!(std::fs::canonicalize(which_neothd().expect("resolve staged W184 CLI")).unwrap(), std::fs::canonicalize(bin).unwrap());
+        assert_eq!(
+            std::fs::canonicalize(which_neothd().expect("resolve staged W184 CLI")).unwrap(),
+            std::fs::canonicalize(bin).unwrap()
+        );
         let window = MainWindow::new().expect("construct generated MainWindow");
         register_buddy_vault_mirror_callback(&window);
 
@@ -46894,9 +46956,17 @@ exit 0
         window.invoke_bc_vault_mirror_repair();
         w151_wait_for_file(&window, &started, "W184 repair child did not start");
         window.invoke_bc_vault_mirror_repair();
-        assert_eq!(w184_call_count(&calls, "vault-mirror-repair"), 1, "duplicate repair must not spawn another child");
+        assert_eq!(
+            w184_call_count(&calls, "vault-mirror-repair"),
+            1,
+            "duplicate repair must not spawn another child"
+        );
         assert!(window.get_bc_vault_mirror_in_flight());
-        assert_eq!(w142_toast_count(&window, "Vault mirror verified"), 0, "repair cannot announce success before its fresh status readback");
+        assert_eq!(
+            w142_toast_count(&window, "Vault mirror verified"),
+            0,
+            "repair cannot announce success before its fresh status readback"
+        );
         std::fs::write(&release, b"release").unwrap();
         w184_pump_until(&window, &calls, 1, 1);
         assert_eq!(window.get_bc_vault_mirror_phase().to_string(), "verified");
@@ -46907,28 +46977,54 @@ exit 0
         std::fs::write(&status, w184_mirror_status("indeterminate", "run-2")).unwrap();
         window.invoke_bc_vault_mirror_repair();
         w184_pump_until(&window, &calls, 2, 2);
-        assert!(window.get_bc_vault_mirror_phase().to_string().contains("indeterminate"));
-        assert_eq!(w142_toast_count(&window, "Vault mirror verified"), 1, "false receipt must not repaint success");
+        assert!(
+            window
+                .get_bc_vault_mirror_phase()
+                .to_string()
+                .contains("indeterminate")
+        );
+        assert_eq!(
+            w142_toast_count(&window, "Vault mirror verified"),
+            1,
+            "false receipt must not repaint success"
+        );
 
         std::fs::write(&mode, b"w184_mismatch").unwrap();
         std::fs::write(&repair, w184_repair_ack("verified", "run-3", true)).unwrap();
         std::fs::write(&status, w184_mirror_status("verified", "run-4")).unwrap();
         window.invoke_bc_vault_mirror_repair();
         w184_pump_until(&window, &calls, 3, 3);
-        assert!(window.get_bc_vault_mirror_phase().to_string().contains("indeterminate"), "mismatched readback must retain prior truthful state");
-        assert_eq!(w142_toast_count(&window, "Vault mirror verified"), 1, "mismatched receipt must not repaint success");
+        assert!(
+            window
+                .get_bc_vault_mirror_phase()
+                .to_string()
+                .contains("indeterminate"),
+            "mismatched readback must retain prior truthful state"
+        );
+        assert_eq!(
+            w142_toast_count(&window, "Vault mirror verified"),
+            1,
+            "mismatched receipt must not repaint success"
+        );
 
         std::fs::write(&mode, b"w184_failure").unwrap();
         window.invoke_bc_vault_mirror_repair();
         w184_pump_until(&window, &calls, 4, 3);
-        assert!(!window.get_bc_vault_mirror_in_flight(), "failed child releases GUI singleflight");
+        assert!(
+            !window.get_bc_vault_mirror_in_flight(),
+            "failed child releases GUI singleflight"
+        );
         std::fs::write(&mode, b"w184_success").unwrap();
         std::fs::write(&repair, w184_repair_ack("verified", "run-5", true)).unwrap();
         std::fs::write(&status, w184_mirror_status("verified", "run-5")).unwrap();
         window.invoke_bc_vault_mirror_repair();
         w184_pump_until(&window, &calls, 5, 4);
         assert_eq!(window.get_bc_vault_mirror_phase().to_string(), "verified");
-        assert_eq!(w142_toast_count(&window, "Vault mirror verified"), 2, "retry after failure may succeed only after its own fresh readback");
+        assert_eq!(
+            w142_toast_count(&window, "Vault mirror verified"),
+            2,
+            "retry after failure may succeed only after its own fresh readback"
+        );
     }
 
     #[cfg(not(windows))]

@@ -137,11 +137,19 @@ pub async fn run_backup(args: BackupArgs) -> Result<()> {
     Ok(())
 }
 
-async fn run_mirror(action: BackupAction, requested_home: Option<PathBuf>, output: OutputFormat) -> Result<()> {
+async fn run_mirror(
+    action: BackupAction,
+    requested_home: Option<PathBuf>,
+    output: OutputFormat,
+) -> Result<()> {
     let home = requested_home.unwrap_or_else(FreedomConfig::default_neoth_home);
     let cfg_path = mirror_config_path(&home);
-    let cfg = FreedomConfig::load_from_path(&cfg_path)
-        .with_context(|| format!("load {} for vault mirror (run `neoth init` first if this is a fresh install)", cfg_path.display()))?;
+    let cfg = FreedomConfig::load_from_path(&cfg_path).with_context(|| {
+        format!(
+            "load {} for vault mirror (run `neoth init` first if this is a fresh install)",
+            cfg_path.display()
+        )
+    })?;
     let status = match action {
         BackupAction::Mirror {
             action: MirrorAction::Status,
@@ -177,10 +185,16 @@ pub(crate) fn render_mirror_status(
             println!("vault mirror config: {}", wire["config"]);
             println!("phase: {}", wire["receipt"]["phase"]);
             println!("repair: {}", wire["repair"]);
-            if let Some(run_id) = wire["receipt"]["run_id"].as_str().filter(|id| !id.is_empty()) {
+            if let Some(run_id) = wire["receipt"]["run_id"]
+                .as_str()
+                .filter(|id| !id.is_empty())
+            {
                 println!("run_id: {run_id}");
             }
-            if let Some(hash) = wire["receipt"]["archive_sha256"].as_str().filter(|hash| !hash.is_empty()) {
+            if let Some(hash) = wire["receipt"]["archive_sha256"]
+                .as_str()
+                .filter(|hash| !hash.is_empty())
+            {
                 println!("archive_sha256: {hash}");
             }
         }
@@ -250,7 +264,9 @@ mod tests {
             .expect("mirror push parses");
         assert!(matches!(
             mirror.args.action,
-            Some(BackupAction::Mirror { action: MirrorAction::Run { push: true } })
+            Some(BackupAction::Mirror {
+                action: MirrorAction::Run { push: true }
+            })
         ));
         let selected_home = BackupCli::try_parse_from([
             "backup",

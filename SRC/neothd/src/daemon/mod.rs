@@ -28,8 +28,6 @@ pub(crate) mod auto_update;
 pub mod babel_cron;
 pub mod backup;
 pub mod backup_retention;
-/// W184 — dedicated, default-off Git mirror for WAL-inclusive backups.
-pub mod vault_mirror;
 /// HERMES-06 GAP-B — capability evolver: reads a [`CollectorReport`] from the
 /// self-improvement collector, applies an auto-safe gate (only `PromptEdit`
 /// signals qualify — `PatchSkill`, `ConfigChange`, and `Escalate` require
@@ -232,6 +230,8 @@ pub mod synthesis_cron;
 pub mod token_anomaly_cron;
 pub mod train_export;
 pub(crate) mod updater_cron;
+/// W184 — dedicated, default-off Git mirror for WAL-inclusive backups.
+pub mod vault_mirror;
 /// GOLD-FEAT-09 — daemon watchdog/auto-recovery cron. Probes supervised local
 /// services (n8n / Ollama) every `watchdog.interval_secs`, restarts them at
 /// `Elevated`+ autonomy after `consecutive_failures_before_restart` down ticks

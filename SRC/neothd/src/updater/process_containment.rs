@@ -802,8 +802,8 @@ fn configure_retained_working_directory(
     use std::os::windows::fs::OpenOptionsExt as _;
     use std::path::{Component, Prefix};
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_SHARE_READ, FILE_SHARE_WRITE,
     };
 
     let absolute = std::path::absolute(display_path).with_context(|| {
@@ -1179,8 +1179,14 @@ mod tests {
         let Some(marker) = std::env::var_os("NEOTH_TEST_UPDATER_RETAINED_CWD_MARKER") else {
             return;
         };
-        std::fs::write(marker, std::env::current_dir().unwrap().to_string_lossy().as_bytes())
-            .unwrap();
+        std::fs::write(
+            marker,
+            std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .as_bytes(),
+        )
+        .unwrap();
     }
 
     // The process-wide environment and fault injector must remain serialized
@@ -1307,12 +1313,11 @@ mod tests {
         let canonical_repository = std::fs::canonicalize(&repository).unwrap();
 
         let mut command = tokio::process::Command::new("cmd.exe");
-        let retained = configure_retained_working_directory(
-            &mut command,
-            &original,
-            &canonical_repository,
-        )
-        .expect("canonical physical repository path should bind to its retained capability");
+        let retained =
+            configure_retained_working_directory(&mut command, &original, &canonical_repository)
+                .expect(
+                    "canonical physical repository path should bind to its retained capability",
+                );
         let mut mismatch_command = tokio::process::Command::new("cmd.exe");
         assert!(
             configure_retained_working_directory(

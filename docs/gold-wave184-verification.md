@@ -42,3 +42,9 @@ the full CI and Windows preview retain their own original source identities.
 No local compiler, parser, formatter, fixture, product runtime or test ran.
 All executable verification remains on GitHub because of the workstation's
 reported BSOD history. No Road checkbox is closed by this publication.
+
+W184 Hosted follow-up (2026-09-22): eabc22a5 passed core test typechecking and
+CLI compilation in 35675458308. Import its generated CLI reference and exact
+Hosted formatting (35675458038), with the masked dummy restored only from the
+frozen source. This is not native behavior acceptance. Old-source Windows/macOS
+runs remain independently identified; no local execution or Road closure.
