@@ -48,3 +48,7 @@ This receipt records the actual scope instead of treating that subject as proof.
 No local build, formatter, code parser, test, GUI, product or audio workload ran
 under the workstation BSOD hold. Fresh Hosted focused/core/full-CI gates remain
 required; no Road checkbox, device or release gate is closed by this change.
+
+Preflight `35722958962` on `ff23b247` requested only two additional
+formatting hunks in Local Models; both were imported exactly from the Hosted log.
+No new behavior change is included in this follow-up.

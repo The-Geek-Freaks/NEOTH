@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W195-windows-behavior-repair",
-  "base": "941a64b4cc387fcf4b8f796282ccded1fd42a996",
-  "capturedUtc": "2026-09-22T11:39:14.9860851Z",
-  "validationStatus": "W195_REVIEWED_HOSTED_PENDING",
+  "base": "ff23b247498c393f9012ee80d7b82919c88d2a87",
+  "capturedUtc": "2026-09-22T11:43:43.5703409Z",
+  "validationStatus": "W195_HOSTED_FORMAT_FOLLOWUP_PENDING",
   "scopeNote": "W195 all13 observed Windows failures repaired, two grouped34 compiler errors and48 exact Hosted format hunks. W196 installer source excluded. Previous wave sources remain historical.",
   "files": [
     {
@@ -243,8 +243,8 @@
     },
     {
       "path": "docs/gold-wave195-verification.md",
-      "bytes": 3183,
-      "sha256": "B5D5E754BE153475337D0A6F4B5254004AF6E2C6020842B0B85B3515213EF595"
+      "bytes": 3388,
+      "sha256": "EA4891D3F9B48384830D9BA88636057F07A858D39245EE8CA4BC8B4A1C4F6688"
     },
     {
       "path": "docs/install.md",
@@ -1503,8 +1503,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/local_models.rs",
-      "bytes": 68236,
-      "sha256": "2164B13C5D97F44EC3BC3C73EC35C439090CA8756254FB94560A10711EAC13CA"
+      "bytes": 68328,
+      "sha256": "EE4B9398B0C24E498832C45B5EE17953B9A6C96F45232BFE61C6E94040656E83"
     },
     {
       "path": "SRC/neothd/src/daemon/local_models/tests.rs",

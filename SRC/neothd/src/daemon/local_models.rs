@@ -720,7 +720,10 @@ impl LocalModelController {
         };
         for row in &mut saved.models {
             row.loaded = None;
-            if !matches!(row.readiness, LocalModelReadiness::InterruptedUnknown { .. }) {
+            if !matches!(
+                row.readiness,
+                LocalModelReadiness::InterruptedUnknown { .. }
+            ) {
                 row.readiness = LocalModelReadiness::Unavailable;
             }
         }
@@ -1502,7 +1505,12 @@ fn apply_terminal(rows: &mut Vec<LocalModelRow>, receipt: &LocalModelTerminalRec
     // An interrupted remote effect must remain visible even if a concurrent
     // inventory refresh omitted the target row. Do not invent an installed
     // digest or readiness proof: retain only the exact operation uncertainty.
-    if !matched && matches!(receipt.outcome, LocalModelTerminalOutcome::InterruptedUnknown) {
+    if !matched
+        && matches!(
+            receipt.outcome,
+            LocalModelTerminalOutcome::InterruptedUnknown
+        )
+    {
         rows.push(LocalModelRow {
             model: receipt.model.clone(),
             digest: "unknown".to_owned(),

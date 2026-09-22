@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W195_REVIEWED_HOSTED_PENDING",
-  "base": "941a64b4cc387fcf4b8f796282ccded1fd42a996",
+  "status": "W195_HOSTED_FORMAT_FOLLOWUP_PENDING",
+  "base": "ff23b247498c393f9012ee80d7b82919c88d2a87",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 83105,
-    "sha256": "B36DA5AEA237D7C4ACEBC7564FC6456D455BC09DBF751FE681CC9CD4A621C847"
+    "bytes": 83112,
+    "sha256": "590BD03905A0C3DB4519CDEB498691200C5D20466FE4CB40E3C04EE5BB5AEE46"
   },
   "sourceInputs": 480,
   "requiredNativeTests": [
@@ -9866,5 +9866,23 @@
       "cap_std_read_dir_dot"
     ],
     "releaseReady": false
+  },
+  "wave195HostedFormat": {
+    "sourceBase": "ff23b247498c393f9012ee80d7b82919c88d2a87",
+    "run": 35722958962,
+    "hunks": 2,
+    "sources": [
+      {
+        "path": "SRC/neothd/src/daemon/local_models.rs",
+        "bytes": 68328,
+        "sha256": "EE4B9398B0C24E498832C45B5EE17953B9A6C96F45232BFE61C6E94040656E83"
+      },
+      {
+        "path": "docs/gold-wave195-verification.md",
+        "bytes": 3388,
+        "sha256": "EA4891D3F9B48384830D9BA88636057F07A858D39245EE8CA4BC8B4A1C4F6688"
+      }
+    ],
+    "note": "Exact Hosted format only; reviewed behavior unchanged; fresh Preflight pending"
   }
 }
