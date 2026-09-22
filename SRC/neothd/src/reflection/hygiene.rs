@@ -294,6 +294,28 @@ pub fn plan_legacy(input: LegacyHygieneInput) -> Result<HygienePlan, HygieneErro
     plan_with_migration(versioned, migration)
 }
 
+/// Select the one deterministic yearly input for the supplied UTC year.
+/// Callers provide canonical archived period records and the explicitly loaded
+/// synonym authority; this helper deliberately has no views.db fallback.
+pub fn plan_yearly_synthesis(
+    period_reflections: Vec<PeriodReflection>,
+    now_unix: i64,
+    year: &str,
+    topic_synonyms: TopicSynonymMap,
+) -> Result<Option<YearlySynthesisInput>, HygieneError> {
+    let plan = plan_versioned(VersionedHygieneInput {
+        schema_version: HYGIENE_PLAN_SCHEMA_VERSION,
+        now_unix,
+        raw_reflections: Vec::new(),
+        period_reflections,
+        topic_synonyms,
+    })?;
+    Ok(plan
+        .yearly_inputs
+        .into_iter()
+        .find(|candidate| candidate.year == year))
+}
+
 /// Normalizes a topic without locale-dependent state: trims, lowercases,
 /// treats whitespace/`_`/`-` as one space, and drops remaining punctuation.
 pub fn normalize_topic(topic: &str) -> String {
@@ -1007,6 +1029,24 @@ mod tests {
                 canonical_topics: vec!["period topic".to_string()],
             }]
         );
+    }
+
+    #[test]
+    fn yearly_synthesis_selects_only_the_requested_year_without_database_input() {
+        let now = day(500);
+        let period_reflections = vec![
+            period("daily", "2025-01-01", now - day(365), &["K8S"]),
+            period("daily", "2026-01-01", now - day(1), &["kubernetes"]),
+        ];
+        let synonyms = TopicSynonymMap {
+            version: TOPIC_SYNONYM_MAP_VERSION,
+            entries: BTreeMap::from([("k8s".into(), "kubernetes".into())]),
+        };
+        let synthesis =
+            plan_yearly_synthesis(period_reflections, now, "2026", synonyms).unwrap().unwrap();
+        assert_eq!(synthesis.year, "2026");
+        assert_eq!(synthesis.source_tags, vec!["2026-01-01"]);
+        assert_eq!(synthesis.canonical_topics, vec!["kubernetes"]);
     }
 
     #[test]

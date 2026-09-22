@@ -15,7 +15,10 @@ use serde::{Deserialize, Serialize};
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::memory::store;
-use crate::reflection::{hygiene::DailyAdmissionConfig, periodic::DailyRetentionConfig};
+use crate::reflection::{
+    hygiene::{DailyAdmissionConfig, TopicSynonymMap},
+    periodic::DailyRetentionConfig,
+};
 use crate::sources::hackernews::{self, GapFilter};
 
 /// A deliberately small ceiling for the unattended reflection config.  The
@@ -587,13 +590,17 @@ impl std::error::Error for DailyCommittedRetentionInventoryFailed {}
 
 /// Explicit clock seam keeps daily settlement tests deterministic while the
 /// public CLI continues to use the real clock exactly once per invocation.
-fn digest_at(
+pub(crate) fn digest_at(
     home: &std::path::Path,
     period: DigestPeriod,
     output: OutputFormat,
     now_unix: i64,
 ) -> Result<()> {
     use crate::reflection::periodic::{self, PeriodKind, date_tag_from_unix, year_tag_from_unix};
+
+    if matches!(period, DigestPeriod::Yearly) {
+        return digest_yearly_from_period_archives(home, output, now_unix);
+    }
 
     let now_ns = now_unix.saturating_mul(1_000_000_000);
     let conn = store::open(&home.join("views.db")).context("open views.db")?;
@@ -807,6 +814,86 @@ fn digest_at(
         println!("  → Obsidian: {p}");
     } else {
         println!("  (archived; no Obsidian vault configured — set freedom.yaml::obsidian_vault)");
+    }
+    Ok(())
+}
+
+/// Materialise the annual reflection from the canonical Daily archive only.
+/// This is deliberately separate from the Daily views.db composer above: a
+/// missing or damaged archive is an empty/error source, never permission to
+/// substitute a fresh database query for historical period reflections.
+fn digest_yearly_from_period_archives(
+    home: &std::path::Path,
+    output: OutputFormat,
+    now_unix: i64,
+) -> Result<()> {
+    use crate::reflection::{
+        periodic::{self, PeriodKind, YearlySynthesisSettlement, year_tag_from_unix},
+    };
+
+    let tag = year_tag_from_unix(now_unix);
+    let cfg = FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))?;
+    let reflect_topics = ReflectTopics::load_for_automation(home)
+        .map_err(anyhow::Error::from)
+        .context("load yearly reflection policy")?;
+    let synonyms = reflect_topics
+        .daily_admission
+        .as_ref()
+        .map(|admission| admission.topic_synonyms.clone())
+        .unwrap_or_else(TopicSynonymMap::default);
+    let Some(reflection) = periodic::compose_yearly_synthesis(home, now_unix, &tag, synonyms)
+        .context("compose yearly synthesis from canonical period reflections")?
+    else {
+        if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "kind": PeriodKind::Yearly.as_str(),
+                    "tag": tag,
+                    "written": false,
+                    "reason": "no_period_reflections",
+                })
+            );
+        } else {
+            println!("Yearly reflection {tag}: no canonical period reflections to synthesise.");
+        }
+        return Ok(());
+    };
+    let settlement =
+        periodic::settle_yearly_synthesis(home, &reflection).context("settle yearly receipt")?;
+    let marker = home.join("reflections").join("yearly-last.txt");
+    crate::util::atomic_write::atomic_write_private(&marker, tag.as_bytes())
+        .with_context(|| format!("persist reflection marker {}", marker.display()))?;
+    let mut obsidian_path = None;
+    if let Some(vault) = cfg.obsidian_vault.as_deref() {
+        let subdir = cfg.obsidian_subdir.as_deref().unwrap_or("NEOTH");
+        let outcome =
+            periodic::sync_to_obsidian(home, std::path::Path::new(vault), subdir, PeriodKind::Yearly, &tag)
+                .context("Obsidian sync")?;
+        if outcome.written {
+            obsidian_path = Some(outcome.target_path.display().to_string());
+        }
+    }
+    let written = matches!(settlement, YearlySynthesisSettlement::Written);
+    if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+        println!(
+            "{}",
+            serde_json::json!({
+                "kind": PeriodKind::Yearly.as_str(),
+                "tag": tag,
+                "written": written,
+                "topics": reflection.topics,
+                "receipt_tags": reflection.tags,
+                "obsidian": obsidian_path,
+            })
+        );
+    } else if written {
+        println!(
+            "Yearly reflection {tag} written from {} canonical period reflection(s).",
+            reflection.tags.iter().filter(|tag| tag.starts_with("source:")).count()
+        );
+    } else {
+        println!("Yearly reflection {tag}: matching source-attested receipt already exists.");
     }
     Ok(())
 }
@@ -2026,5 +2113,51 @@ mod tests {
 
         let covered = collect_covered(home.path());
         assert!(covered.iter().any(|item| item == "home-specific"));
+    }
+
+    #[test]
+    fn cli_yearly_digest_uses_daily_archive_without_views_db_and_is_idempotent() {
+        use crate::reflection::periodic::{
+            self, PeriodKind, build_reflection, date_tag_from_unix, settle_daily_admission,
+        };
+
+        let home = private_test_home();
+        let now = 1_787_788_800_i64;
+        let daily_tag = date_tag_from_unix(now - 86_400);
+        let daily =
+            build_reflection(PeriodKind::Daily, &daily_tag, &["k8s".into()], now - 86_400)
+                .unwrap();
+        settle_daily_admission(home.path(), &daily, None, None).unwrap();
+        assert!(!home.path().join("views.db").exists());
+
+        digest_at(home.path(), DigestPeriod::Yearly, OutputFormat::Table, now).unwrap();
+        let yearly = periodic::load_for_tag(
+            home.path(),
+            PeriodKind::Yearly,
+            &periodic::year_tag_from_unix(now),
+        )
+        .unwrap();
+        assert_eq!(yearly.len(), 1);
+        assert_eq!(yearly[0].topics, vec!["k8s"]);
+        assert!(yearly[0]
+            .tags
+            .iter()
+            .any(|tag| tag.starts_with(&format!("source:{daily_tag}:"))));
+        assert!(yearly[0]
+            .tags
+            .iter()
+            .any(|tag| tag.starts_with("synonyms:")));
+
+        digest_at(home.path(), DigestPeriod::Yearly, OutputFormat::Table, now).unwrap();
+        assert_eq!(
+            periodic::load_for_tag(
+                home.path(),
+                PeriodKind::Yearly,
+                &periodic::year_tag_from_unix(now),
+            )
+            .unwrap()
+            .len(),
+            1
+        );
     }
 }

@@ -2,6 +2,17 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W183 yearly period synthesis (2026-09-22):** the independently reviewed CLI
+and cron paths now share a strict Daily-archive composer, source/config hashes,
+source-stable retry timestamps and exclusive atomic yearly publication. A
+validated marker/receipt preserves the automatic once-per-current-year snapshot;
+manual recomposition exposes changed-source conflicts. Six new behavior tests
+and four existing planner/retention guards are registered. Hosted compilation
+and behavior remain pending; P2-04 stays open. See
+[W183](../docs/gold-wave183-verification.md). The single W182 Hosted formatting
+hunk from Preflight35672248701 is also imported. W184 vault-mirror work is
+separate and remains unadmitted.
+
 **W182 follow-up (2026-09-22):** the Council fixture repair passed Preflight
 35671482151 and Code Quality35671481978. Core check35671482575 then exposed
 three missing Path borrows in W177 chat/export tests; all are repaired with

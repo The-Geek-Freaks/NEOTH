@@ -520,12 +520,23 @@ fn run_period_reflection_tick_once(
     topic_n: usize,
     obsidian: Option<(&std::path::Path, &str)>,
     daily_admission: Option<&crate::reflection::hygiene::DailyAdmissionConfig>,
+    topic_synonyms: Option<&crate::reflection::hygiene::TopicSynonymMap>,
 ) -> Result<bool, String> {
     use crate::reflection::periodic;
     use crate::reflection::top_topics_in_days;
 
     if !enabled {
         return Ok(false); // opt-in; off by default
+    }
+    if kind == crate::reflection::periodic::PeriodKind::Yearly {
+        return run_yearly_reflection_tick_once(
+            home,
+            now_unix,
+            tag,
+            yearly_marker_name.ok_or("yearly marker is required")?,
+            obsidian,
+            topic_synonyms.cloned().unwrap_or_default(),
+        );
     }
     let views_path = home.join("views.db");
     if !views_path.exists() {
@@ -585,6 +596,52 @@ fn run_period_reflection_tick_once(
     }
 }
 
+/// Shared daemon consumer for the source-attested yearly synthesis. Unlike the
+/// Daily composer, this never opens views.db: its sole topic source is the
+/// canonical bounded Daily archive read by periodic.
+fn run_yearly_reflection_tick_once(
+    home: &std::path::Path,
+    now_unix: i64,
+    tag: &str,
+    marker_name: &str,
+    obsidian: Option<(&std::path::Path, &str)>,
+    topic_synonyms: crate::reflection::hygiene::TopicSynonymMap,
+) -> Result<bool, String> {
+    use crate::reflection::{
+        periodic::{self, PeriodKind, YearlySynthesisSettlement},
+    };
+
+    let marker = home.join("reflections").join(marker_name);
+    if marker_matches(&marker, tag)? {
+        if periodic::has_valid_yearly_synthesis_receipt(home, tag)
+            .map_err(|_| "yearly marker has no valid durable receipt".to_string())?
+        {
+            return Ok(false);
+        }
+        return Err("yearly marker has no valid durable receipt".to_string());
+    }
+    let Some(reflection) =
+        periodic::compose_yearly_synthesis(home, now_unix, tag, topic_synonyms)
+            .map_err(|_| "yearly period archive or hygiene plan is unavailable".to_string())?
+    else {
+        return Ok(false);
+    };
+    let settlement = periodic::settle_yearly_synthesis(home, &reflection)
+        .map_err(|_| "yearly synthesis receipt conflicts with current source".to_string())?;
+    persist_marker(&marker, tag)?;
+    if let Some((vault, subdir)) = obsidian {
+        match periodic::sync_to_obsidian(home, vault, subdir, PeriodKind::Yearly, tag) {
+            Ok(outcome) if outcome.written => info!(
+                path = %outcome.target_path.display(),
+                "reflection cron: yearly Obsidian note written"
+            ),
+            Ok(_) => {}
+            Err(error) => warn!(error = %error, "reflection cron: Obsidian yearly sync failed"),
+        }
+    }
+    Ok(matches!(settlement, YearlySynthesisSettlement::Written))
+}
+
 struct PeriodTickResults {
     daily: Result<bool, String>,
     retention: Result<crate::reflection::periodic::DailyRetentionOutcome, String>,
@@ -619,6 +676,7 @@ fn run_period_reflection_ticks_once(
         5,
         obs_ref,
         cfg.daily_admission.as_ref(),
+        None,
     );
     // Daily retention inventory intentionally runs regardless of the opt-in
     // composition cadence. `cfg` and `obs_ref` are immutable snapshots; the
@@ -638,6 +696,9 @@ fn run_period_reflection_ticks_once(
         10,
         obs_ref,
         None,
+        cfg.daily_admission
+            .as_ref()
+            .map(|admission| &admission.topic_synonyms),
     );
     Ok(PeriodTickResults {
         daily,
@@ -1332,6 +1393,7 @@ mod tests {
             5,
             None,
             None,
+            None,
         );
         assert_eq!(r, Ok(false), "disabled cadence is a clean no-op");
         assert!(
@@ -1506,6 +1568,7 @@ mod tests {
             5,
             None, // no Obsidian (hermetic — never reads the operator's real config)
             None,
+            None,
         )
         .unwrap();
         assert!(r, "enabled + topics present → archived");
@@ -1525,6 +1588,7 @@ mod tests {
             None,
             1,
             5,
+            None,
             None,
             None,
         )
@@ -1949,5 +2013,72 @@ mod tests {
         symlink(&outside_record, daily.join(format!("{tag}.jsonl"))).unwrap();
         assert!(recent_reflections_sitrep(tmp.path(), 1, 1).is_err());
         assert_eq!(std::fs::read(&outside_record).unwrap(), b"malformed\n");
+    }
+
+    #[test]
+    fn yearly_cron_uses_canonical_daily_archive_without_views_db_and_retries_idempotently() {
+        use crate::reflection::{
+            hygiene::TopicSynonymMap,
+            periodic::{
+                self, PeriodKind, build_reflection, date_tag_from_unix, settle_daily_admission,
+            },
+        };
+
+        let home = TempDir::new().unwrap();
+        let now = 1_787_788_800_i64;
+        let daily_tag = date_tag_from_unix(now - 86_400);
+        let daily =
+            build_reflection(PeriodKind::Daily, &daily_tag, &["rust".into()], now - 86_400)
+                .unwrap();
+        settle_daily_admission(home.path(), &daily, None, None).unwrap();
+        assert!(!home.path().join("views.db").exists());
+        let yearly_tag = periodic::year_tag_from_unix(now);
+
+        assert!(
+            run_yearly_reflection_tick_once(
+                home.path(),
+                now,
+                &yearly_tag,
+                "yearly-last.txt",
+                None,
+                TopicSynonymMap::default(),
+            )
+            .unwrap()
+        );
+        let next_tag = date_tag_from_unix(now + 86_400);
+        let next =
+            build_reflection(PeriodKind::Daily, &next_tag, &["new-topic".into()], now + 86_400)
+                .unwrap();
+        settle_daily_admission(home.path(), &next, None, None).unwrap();
+        assert!(
+            !run_yearly_reflection_tick_once(
+                home.path(),
+                now + 86_400,
+                &yearly_tag,
+                "yearly-last.txt",
+                None,
+                TopicSynonymMap::default(),
+            )
+            .unwrap(),
+            "automatic cron keeps the durable same-year snapshot"
+        );
+        crate::cli::reflect::digest_at(
+            home.path(),
+            crate::cli::reflect::DigestPeriod::Yearly,
+            crate::cli::OutputFormat::Table,
+            now + 86_401,
+        )
+        .unwrap_err();
+        let yearly =
+            periodic::load_for_tag(home.path(), PeriodKind::Yearly, &yearly_tag).unwrap();
+        assert_eq!(yearly.len(), 1);
+        assert!(yearly[0]
+            .tags
+            .iter()
+            .any(|tag| tag.starts_with(&format!("source:{daily_tag}:"))));
+        assert!(yearly[0]
+            .tags
+            .iter()
+            .any(|tag| tag.starts_with("synonyms:")));
     }
 }

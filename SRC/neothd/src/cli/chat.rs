@@ -25139,8 +25139,8 @@ mod wave35_adapter_lifecycle_tests {
         home: &std::path::Path,
         session_id: &str,
     ) -> crate::memory::transcript_store::CommittedAgentTurnReceipt {
-        let conn =
-            crate::memory::store::open(&home.join("views.db")).expect("open fixture views database");
+        let conn = crate::memory::store::open(&home.join("views.db"))
+            .expect("open fixture views database");
         crate::memory::transcript_store::insert_feedback_eligible_agent_turn(
             home,
             &conn,

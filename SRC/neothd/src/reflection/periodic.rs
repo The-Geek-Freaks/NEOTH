@@ -1910,6 +1910,281 @@ pub fn load_daily_archive_for_reporting(
         .map_err(|_| daily_archive_error("reporting inspection failed"))
 }
 
+/// Bounded, strict source reader for yearly synthesis. The yearly path must
+/// derive its topics from the canonical Daily period archive, never from a
+/// second query of views.db. This has only read capabilities: it neither
+/// prepares the Daily admission namespace nor obtains a DELETE-capable handle.
+///
+/// An absent archive is a genuine empty source. Any malformed, future,
+/// duplicate, linked, or oversized archive leaf is an error; callers must not
+/// silently replace damaged historical input with live episode topics.
+pub fn load_daily_period_reflections_for_yearly(
+    home: &Path,
+    now_unix: i64,
+) -> std::io::Result<Vec<YearlySynthesisSource>> {
+    let Some(archive) = open_existing_daily_retention_archive(home)? else {
+        return Ok(Vec::new());
+    };
+    let current_tag = date_tag_from_unix(now_unix);
+    let mut total_bytes = 0usize;
+    let mut reflections = Vec::new();
+    for name in bounded_retention_child_names(&archive.daily, MAX_DAILY_RETENTION_ENTRIES)? {
+        let tag = archive_tag_from_retention_leaf(&name)?;
+        if tag.as_str() > current_tag {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "yearly synthesis archive contains a future tag",
+            ));
+        }
+        let path = archive.daily_path.join(&name);
+        let bytes = read_retention_file(
+            &archive.daily,
+            &name,
+            &path,
+            MAX_DAILY_ADMISSION_ARCHIVE_BYTES,
+        )?;
+        charge_retention_bytes(&mut total_bytes, bytes.len())?;
+        reflections.push(YearlySynthesisSource {
+            reflection: parse_daily_archive_record(&bytes, &tag)?,
+            archive_sha256: hex::encode(Sha256::digest(&bytes)),
+        });
+    }
+    reflections.sort_by(|left, right| left.reflection.tag.cmp(&right.reflection.tag));
+    Ok(reflections)
+}
+
+/// One canonical Daily archive record plus the exact bytes identity used by a
+/// yearly receipt. This keeps source provenance out of implicit path/mtime
+/// assumptions and is read-only data, never retention authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct YearlySynthesisSource {
+    pub reflection: PeriodReflection,
+    pub archive_sha256: String,
+}
+
+/// Build the complete deterministic yearly record shared by CLI and cron.
+/// Its generation timestamp is the newest contributing period timestamp,
+/// rather than the caller wall clock, so a retry at a different second
+/// reconciles the same receipt instead of creating a false conflict.
+pub fn compose_yearly_synthesis(
+    home: &Path,
+    now_unix: i64,
+    year: &str,
+    topic_synonyms: crate::reflection::hygiene::TopicSynonymMap,
+) -> std::io::Result<Option<PeriodReflection>> {
+    let sources = load_daily_period_reflections_for_yearly(home, now_unix)?;
+    let source_hashes: BTreeMap<_, _> = sources
+        .iter()
+        .map(|source| {
+            (
+                source.reflection.tag.clone(),
+                source.archive_sha256.clone(),
+            )
+        })
+        .collect();
+    let generated_ts_unix = sources
+        .iter()
+        .map(|source| source.reflection.generated_ts_unix)
+        .max()
+        .unwrap_or_default();
+    let synonym_sha256 = hex::encode(Sha256::digest(
+        serde_json::to_vec(&topic_synonyms).map_err(std::io::Error::other)?,
+    ));
+    let Some(input) = crate::reflection::hygiene::plan_yearly_synthesis(
+        sources
+            .into_iter()
+            .map(|source| source.reflection)
+            .collect(),
+        now_unix,
+        year,
+        topic_synonyms,
+    )
+    .map_err(std::io::Error::other)?
+    else {
+        return Ok(None);
+    };
+    let mut reflection = build_reflection(
+        PeriodKind::Yearly,
+        year,
+        &input.canonical_topics,
+        generated_ts_unix,
+    )
+    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "yearly plan had no topics"))?;
+    reflection.tags = input
+        .source_tags
+        .iter()
+        .map(|source| {
+            source_hashes
+                .get(source)
+                .map(|hash| format!("source:{source}:{hash}"))
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "yearly plan referenced an unknown source"))
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+    reflection.tags.push(format!("synonyms:{synonym_sha256}"));
+    Ok(Some(reflection))
+}
+
+/// Outcome of reconciling one source-attested yearly archive record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum YearlySynthesisSettlement {
+    Written,
+    AlreadyMatching,
+}
+
+/// Validate the durable yearly receipt used by the unattended once-per-year
+/// cron gate. A marker alone is never authority to skip recomposition.
+pub fn has_valid_yearly_synthesis_receipt(home: &Path, year: &str) -> std::io::Result<bool> {
+    let Some(home_dir) = crate::skills::store::open_absolute_bound_directory(
+        home,
+        false,
+        "yearly synthesis receipt home",
+    )
+    .map_err(std::io::Error::other)?
+    else {
+        return Ok(false);
+    };
+    let reflections_path = home.join("reflections");
+    let Some(reflections) = open_existing_read_only_child(
+        &home_dir.dir,
+        OsStr::new("reflections"),
+        &reflections_path,
+    )?
+    else {
+        return Ok(false);
+    };
+    let yearly_path = periodic_dir(home, PeriodKind::Yearly);
+    let Some(yearly) =
+        open_existing_read_only_child(&reflections, OsStr::new("yearly"), &yearly_path)?
+    else {
+        return Ok(false);
+    };
+    let name = format!("{year}.jsonl");
+    let bytes = read_retention_file(
+        &yearly,
+        OsStr::new(&name),
+        &yearly_path.join(&name),
+        MAX_DAILY_ADMISSION_ARCHIVE_BYTES,
+    )?;
+    let record: PeriodReflection = serde_json::from_slice(&bytes).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "yearly synthesis receipt is malformed",
+        )
+    })?;
+    Ok(record.kind == PeriodKind::Yearly.as_str()
+        && record.tag == year
+        && valid_yearly_synthesis_receipt_tags(&record.tags))
+}
+
+/// Publish a yearly synthesis once, or prove that the exact deterministic
+/// record is already durable. The record tags are the receipt: callers encode
+/// every contributing Daily tag as a stable source tag before this boundary.
+/// A different same-year record is a hard stop, never an overwrite.
+pub fn settle_yearly_synthesis(
+    home: &Path,
+    expected: &PeriodReflection,
+) -> std::io::Result<YearlySynthesisSettlement> {
+    if expected.kind != PeriodKind::Yearly.as_str() || !valid_yearly_synthesis_receipt_tags(&expected.tags)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "yearly synthesis record has invalid provenance",
+        ));
+    }
+    let home_dir = crate::skills::store::open_absolute_bound_directory(
+        home,
+        false,
+        "yearly synthesis home",
+    )
+    .map_err(std::io::Error::other)?
+    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "yearly synthesis home missing"))?;
+    let reflections_path = home.join("reflections");
+    let reflections = crate::skills::store::open_or_create_private_child_dir(
+        &home_dir.dir,
+        OsStr::new("reflections"),
+        &reflections_path,
+    )
+    .map_err(std::io::Error::other)?;
+    let yearly_path = periodic_dir(home, PeriodKind::Yearly);
+    let yearly = crate::skills::store::open_or_create_private_child_dir(
+        &reflections,
+        OsStr::new("yearly"),
+        &yearly_path,
+    )
+    .map_err(std::io::Error::other)?;
+    let name = format!("{}.jsonl", expected.tag);
+    let path = yearly_path.join(&name);
+    let mut bytes = serde_json::to_vec(expected).map_err(std::io::Error::other)?;
+    bytes.push(b'\n');
+    match crate::skills::store::atomic_write_private_child_create_new_reported(
+        &yearly,
+        OsStr::new(&name),
+        &path,
+        &bytes,
+    ) {
+        Ok(crate::skills::store::PrivateChildCommit::PublishedAndSynced) => {
+            Ok(YearlySynthesisSettlement::Written)
+        }
+        Ok(crate::skills::store::PrivateChildCommit::PublishedDurabilityUnknown(error)) => {
+            Err(std::io::Error::other(error))
+        }
+        Err(error)
+            if error
+                .root_cause()
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists) =>
+        {
+            let existing = crate::skills::store::read_regular_file_bounded(
+                &yearly,
+                OsStr::new(&name),
+                &path,
+                MAX_DAILY_ADMISSION_ARCHIVE_BYTES,
+            )
+            .map_err(std::io::Error::other)?;
+            if existing == bytes {
+                Ok(YearlySynthesisSettlement::AlreadyMatching)
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "yearly synthesis receipt conflicts with current source",
+                ))
+            }
+        }
+        Err(error) => Err(std::io::Error::other(error)),
+    }
+}
+
+fn valid_yearly_synthesis_receipt_tags(tags: &[String]) -> bool {
+    let mut sources = 0usize;
+    let mut synonym = false;
+    for tag in tags {
+        if let Some(value) = tag.strip_prefix("source:") {
+            let Some((date, hash)) = value.split_once(':') else {
+                return false;
+            };
+            if !is_exact_daily_tag(date) || !is_sha256_hex(hash) {
+                return false;
+            }
+            sources = sources.saturating_add(1);
+        } else if let Some(hash) = tag.strip_prefix("synonyms:") {
+            if synonym || !is_sha256_hex(hash) {
+                return false;
+            }
+            synonym = true;
+        } else {
+            return false;
+        }
+    }
+    sources != 0 && synonym
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
 /// Load non-Daily reflection records for legacy/reporting consumers. Daily is
 /// deliberately refused because it must remain strict, bounded and
 /// capability-relative through [`load_daily_archive_for_reporting`].
@@ -4375,6 +4650,102 @@ mod tests {
         assert!(
             empty.is_err(),
             "generic daily sync is forbidden outside settlement"
+        );
+    }
+
+    #[test]
+    fn yearly_source_reader_uses_only_strict_daily_archive_records_in_tag_order() {
+        let home = tempfile::tempdir().unwrap();
+        let now = 1_787_788_800_i64;
+        let earlier_tag = date_tag_from_unix(now - 86_400);
+        let current_tag = date_tag_from_unix(now);
+        let earlier =
+            build_reflection(PeriodKind::Daily, &earlier_tag, &["k8s".into()], now - 86_400)
+                .unwrap();
+        let current =
+            build_reflection(PeriodKind::Daily, &current_tag, &["rust".into()], now).unwrap();
+        settle_daily_admission(home.path(), &current, None, None).unwrap();
+        settle_daily_admission(home.path(), &earlier, None, None).unwrap();
+
+        let records = load_daily_period_reflections_for_yearly(home.path(), now).unwrap();
+        assert_eq!(
+            records
+                .iter()
+                .map(|source| source.reflection.clone())
+                .collect::<Vec<_>>(),
+            vec![earlier, current]
+        );
+        assert!(records.iter().all(|source| is_sha256_hex(&source.archive_sha256)));
+
+        std::fs::write(
+            periodic_dir(home.path(), PeriodKind::Daily).join("not-a-date.jsonl"),
+            b"malformed\n",
+        )
+        .unwrap();
+        assert!(load_daily_period_reflections_for_yearly(home.path(), now).is_err());
+    }
+
+    #[test]
+    fn yearly_synthesis_receipt_is_exactly_once_and_refuses_changed_sources() {
+        let home = tempfile::tempdir().unwrap();
+        let mut expected =
+            build_reflection(PeriodKind::Yearly, "2026", &["kubernetes".into()], 1_787_788_800)
+                .unwrap();
+        expected.tags = vec![
+            format!("source:2026-01-01:{}", "a".repeat(64)),
+            format!("synonyms:{}", "b".repeat(64)),
+        ];
+        assert_eq!(
+            settle_yearly_synthesis(home.path(), &expected).unwrap(),
+            YearlySynthesisSettlement::Written
+        );
+        assert_eq!(
+            settle_yearly_synthesis(home.path(), &expected).unwrap(),
+            YearlySynthesisSettlement::AlreadyMatching
+        );
+        expected.topics = vec!["rust".into()];
+        assert!(settle_yearly_synthesis(home.path(), &expected).is_err());
+    }
+
+    #[test]
+    fn concurrent_yearly_settlers_converge_to_one_atomic_receipt() {
+        let home = crate::test_env::canonical_tempdir().unwrap();
+        let root = home.path().to_path_buf();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt as _;
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(root.join("private-home"))
+                .unwrap();
+        }
+        #[cfg(windows)]
+        crate::wal::win_native::create_private_directory_new(&root.join("private-home")).unwrap();
+        let home = root.join("private-home");
+        let mut expected =
+            build_reflection(PeriodKind::Yearly, "2026", &["kubernetes".into()], 1_787_788_800)
+                .unwrap();
+        expected.tags = vec![
+            format!("source:2026-01-01:{}", "a".repeat(64)),
+            format!("synonyms:{}", "b".repeat(64)),
+        ];
+        let first_home = home.clone();
+        let first_expected = expected.clone();
+        let first = std::thread::spawn(move || settle_yearly_synthesis(&first_home, &first_expected));
+        let second = settle_yearly_synthesis(&home, &expected);
+        let first = first.join().unwrap().unwrap();
+        let second = second.unwrap();
+        assert!(
+            matches!(
+                (first, second),
+                (
+                    YearlySynthesisSettlement::Written,
+                    YearlySynthesisSettlement::AlreadyMatching
+                ) | (
+                    YearlySynthesisSettlement::AlreadyMatching,
+                    YearlySynthesisSettlement::Written
+                )
+            )
         );
     }
 }
