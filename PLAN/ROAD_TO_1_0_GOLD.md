@@ -8,12 +8,13 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
-**Current Hosted boundary (2026-09-22):** GitHub `main` is
-`4dd496a2`. Preflight `35710536582` and Code Quality `35710536135` passed.
-Earlier core `35708880438` passed on `86a77ac8`. W189 is source-reviewed and
-ready to publish: eight new behavior identities and 18 focused identities in
-total (W188 8, W189 8, Doctor 2). It remains unadmitted pending its exact
-GitHub-hosted capability-quality lane.
+**Current Hosted boundary (2026-09-22):** W189 is published on GitHub
+`main` at `2cef8239`. Code Quality `35712519694` passed. Preflight
+`35712519596` supplied 19 exact rustfmt hunks, imported as text into the two
+reported files; a new Hosted check is required. Core/reference `35712525811`
+and the dedicated 18-test capability lane `35712523037` are running on that
+source. Earlier core `35708880438` passed on `86a77ac8`. The W189 source review
+and publication do not substitute for behavior or release acceptance.
 
 Full CI `35710220706` on `ed0d76c9` is partial: all feature jobs plus
 gold-smoke, notices, signer, Keet and WASM passed; Linux has six Clippy
@@ -22,11 +23,11 @@ repairs are admitted in this source batch. Preview `35710224167` was cancelled
 and read back as completed/cancelled because of the known GUI blocker.
 Neither result is a full-CI or preview success claim.
 
-Silero `35710537694` reached the valid standard If-free graph but failed strict
-recurrent-state parity: maximum absolute difference `1.5497208e-6` exceeds the
-unchanged `1e-6` tolerance. The diagnostic now compares five scenarios of 256 recurrent frames
-for original-versus-bound and original-versus-basic; no candidate or asset was
-imported. The known Linux audio `If` blocker remains separate.
+Silero diagnostic `35712528563` compared five scenarios of 256 recurrent
+frames. Input binding alone matches the original exactly; ORT Basic preserves
+probability within tolerance but 1970 state elements exceed the strict gate.
+The optimizer difference is under investigation; no candidate/asset was
+imported and the tolerance is unchanged. The original Tract If blocker remains.
 
 The admitted inventory contains 453 source paths and 555 universal
 native identities; platform, GUI and audio counts remain unchanged. Road counts

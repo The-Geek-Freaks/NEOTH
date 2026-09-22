@@ -101,11 +101,15 @@ pub(crate) fn capture(home: &Path, now_unix: i64) -> Result<CapabilitySnapshot> 
         namespace,
     )?;
     crate::skills::store::ensure_cap_directory_is_owner_private(
-        &namespace, "capability quality directory", &namespace_path,
+        &namespace,
+        "capability quality directory",
+        &namespace_path,
     )?;
     let lock_path = namespace_path.join(LOCK_FILE);
     let (lock, binding) = crate::skills::store::open_or_create_bound_lockfile(
-        &namespace, OsStr::new(LOCK_FILE), &lock_path,
+        &namespace,
+        OsStr::new(LOCK_FILE),
+        &lock_path,
     )?;
     match lock.try_lock() {
         Ok(()) => {}
@@ -174,7 +178,8 @@ pub(crate) fn read(home: &Path) -> Result<Vec<CapabilitySnapshot>> {
         &home_directory.dir,
         OsStr::new(HISTORY_DIR),
         &namespace_path,
-    )? else {
+    )?
+    else {
         return Ok(Vec::new());
     };
     let (namespace, namespace_binding) = crate::skills::store::bind_retained_real_child_dir(
@@ -244,7 +249,9 @@ fn snapshot_from_report(
 }
 
 fn read_existing(parent: &cap_std::fs::Dir, path: &Path) -> Result<Option<CapabilityHistory>> {
-    let name = path.file_name().context("capability history has no file name")?;
+    let name = path
+        .file_name()
+        .context("capability history has no file name")?;
     match parent.symlink_metadata(name) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
@@ -258,10 +265,19 @@ fn read_existing(parent: &cap_std::fs::Dir, path: &Path) -> Result<Option<Capabi
     Ok(Some(history))
 }
 
-fn write_history(parent: &cap_std::fs::Dir, path: &Path, history: &CapabilityHistory) -> Result<()> {
+fn write_history(
+    parent: &cap_std::fs::Dir,
+    path: &Path,
+    history: &CapabilityHistory,
+) -> Result<()> {
     let bytes = serde_json::to_vec(history).context("encode capability history")?;
-    anyhow::ensure!(bytes.len() <= MAX_HISTORY_BYTES, "capability history exceeds bounded storage");
-    let name = path.file_name().context("capability history has no file name")?;
+    anyhow::ensure!(
+        bytes.len() <= MAX_HISTORY_BYTES,
+        "capability history exceeds bounded storage"
+    );
+    let name = path
+        .file_name()
+        .context("capability history has no file name")?;
     crate::skills::store::atomic_write_private_child(parent, name, path, &bytes)?;
     Ok(())
 }
@@ -355,12 +371,13 @@ fn validate_snapshot(snapshot: &CapabilitySnapshot) -> Result<()> {
             latencies: vec![row.baseline_p90_latency_ms],
         };
         anyhow::ensure!(
-            row.trend == super::classify(
-                &recent,
-                &baseline,
-                row.recent_p90_latency_ms,
-                row.baseline_p90_latency_ms,
-            ),
+            row.trend
+                == super::classify(
+                    &recent,
+                    &baseline,
+                    row.recent_p90_latency_ms,
+                    row.baseline_p90_latency_ms,
+                ),
             "capability snapshot has inconsistent trend"
         );
         anyhow::ensure!(
@@ -402,8 +419,7 @@ mod tests {
         std::fs::create_dir_all(&wal).unwrap();
         let segment = wal.join("000001.wal");
         let (writer, join, ready) =
-            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.to_path_buf())
-                .unwrap();
+            crate::wal::writer::spawn_for_home_ready(segment.clone(), home.to_path_buf()).unwrap();
         ready.wait().await.unwrap();
         (segment, writer, join)
     }
@@ -419,7 +435,8 @@ mod tests {
             "streaming":false, "automated":false, "ts_unix":ts, "ok":true,
             "latency_ms":100, "terminal_kind":"complete", "source":"chat",
             "call_type":"chat_provider_round"
-        })).unwrap();
+        }))
+        .unwrap();
         writer
             .append_authenticated(
                 crate::wal::HeaderBuilder::new(EVENT_TYPE_PROVIDER_RESPONSE, &payload).build(),
@@ -434,12 +451,7 @@ mod tests {
         let now = crate::time::now_unix_i64();
         let (segment, writer, join) = writer(home.path()).await;
         for id in 0..12 {
-            terminal(
-                &writer,
-                id,
-                now - super::super::RECENT_WINDOW_SECONDS - 10,
-            )
-            .await;
+            terminal(&writer, id, now - super::super::RECENT_WINDOW_SECONDS - 10).await;
         }
         for id in 20..28 {
             terminal(&writer, id, now - 10).await;
@@ -464,11 +476,17 @@ mod tests {
         let (home, segment, now) = complete_history_home().await;
         let first = capture(home.path(), now).unwrap();
         let before = serde_json::to_vec(&first).unwrap();
-        let mut tail = std::fs::OpenOptions::new().append(true).open(segment).unwrap();
+        let mut tail = std::fs::OpenOptions::new()
+            .append(true)
+            .open(segment)
+            .unwrap();
         tail.write_all(&[0x4e, 0x45]).unwrap();
         tail.sync_all().unwrap();
         assert!(capture(home.path(), now + 1).is_err());
-        assert_eq!(serde_json::to_vec(&read(home.path()).unwrap()[0]).unwrap(), before);
+        assert_eq!(
+            serde_json::to_vec(&read(home.path()).unwrap()[0]).unwrap(),
+            before
+        );
     }
 
     #[tokio::test]
@@ -529,12 +547,10 @@ mod tests {
         let state_path = home.path().join(HISTORY_DIR).join(HISTORY_FILE);
         let before = std::fs::read(&state_path).unwrap();
         let lock_path = home.path().join(HISTORY_DIR).join(LOCK_FILE);
-        let held = crate::util::locked_file::try_lock_file_once(
-            &lock_path,
-            "capability history test",
-        )
-        .unwrap()
-        .expect("test lock is acquired");
+        let held =
+            crate::util::locked_file::try_lock_file_once(&lock_path, "capability history test")
+                .unwrap()
+                .expect("test lock is acquired");
         assert!(capture(home.path(), now + 1).is_err());
         assert_eq!(std::fs::read(&state_path).unwrap(), before);
         drop(held);

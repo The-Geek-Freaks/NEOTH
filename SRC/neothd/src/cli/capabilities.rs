@@ -86,7 +86,10 @@ pub fn run_capabilities(args: CapabilitiesArgs) -> Result<()> {
     if let Some(CapabilitiesAction::Quality(quality)) = args.action {
         return run_quality(args.home.as_deref(), quality, args.output);
     }
-    anyhow::ensure!(args.home.is_none(), "--home is only valid with `neoth capabilities quality`");
+    anyhow::ensure!(
+        args.home.is_none(),
+        "--home is only valid with `neoth capabilities quality`"
+    );
     let kind = match args.kind.as_deref() {
         Some(tok) => match parse_kind(tok) {
             Some(k) => Some(k),
@@ -144,7 +147,11 @@ pub fn run_capabilities(args: CapabilitiesArgs) -> Result<()> {
     Ok(())
 }
 
-fn run_quality(home: Option<&std::path::Path>, quality: QualityArgs, output: OutputFormat) -> Result<()> {
+fn run_quality(
+    home: Option<&std::path::Path>,
+    quality: QualityArgs,
+    output: OutputFormat,
+) -> Result<()> {
     let home = home
         .map(PathBuf::from)
         .unwrap_or_else(crate::config::FreedomConfig::default_neoth_home);
@@ -195,10 +202,25 @@ fn render_current(home: &std::path::Path, output: OutputFormat) -> Result<()> {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!("{value}"),
         _ => {
-            println!("Capability quality as of {} (authenticated terminal WAL; {} accepted samples)", report.as_of_unix, report.authenticated_terminal_sample_count);
+            println!(
+                "Capability quality as of {} (authenticated terminal WAL; {} accepted samples)",
+                report.as_of_unix, report.authenticated_terminal_sample_count
+            );
             println!("Shows call failures and response times; it does not measure answer quality.");
             for row in &report.observations {
-                println!("  {}/{}/{}: {} (failures recent {}/{}, baseline {}/{}; p90 {} ms vs {} ms)", row.identity.provider, row.identity.model, row.identity.workflow.as_str(), trend_label(row.trend), row.recent_failures, row.recent_samples, row.baseline_failures, row.baseline_samples, row.recent_p90_latency_ms, row.baseline_p90_latency_ms);
+                println!(
+                    "  {}/{}/{}: {} (failures recent {}/{}, baseline {}/{}; p90 {} ms vs {} ms)",
+                    row.identity.provider,
+                    row.identity.model,
+                    row.identity.workflow.as_str(),
+                    trend_label(row.trend),
+                    row.recent_failures,
+                    row.recent_samples,
+                    row.baseline_failures,
+                    row.baseline_samples,
+                    row.recent_p90_latency_ms,
+                    row.baseline_p90_latency_ms
+                );
             }
         }
     }
@@ -210,7 +232,9 @@ fn trend_label(trend: crate::daemon::capability_decay::CapabilityTrend) -> &'sta
         crate::daemon::capability_decay::CapabilityTrend::Stable => "stable",
         crate::daemon::capability_decay::CapabilityTrend::Degrading => "degrading",
         crate::daemon::capability_decay::CapabilityTrend::Recovering => "recovering",
-        crate::daemon::capability_decay::CapabilityTrend::InsufficientSamples => "insufficient_samples",
+        crate::daemon::capability_decay::CapabilityTrend::InsufficientSamples => {
+            "insufficient_samples"
+        }
     }
 }
 
@@ -223,12 +247,30 @@ fn render_snapshots(
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!("{value}"),
         _ => {
-            println!("Capability quality {mode}: {} local snapshot(s)", snapshots.len());
+            println!(
+                "Capability quality {mode}: {} local snapshot(s)",
+                snapshots.len()
+            );
             println!("Saved observations, not a fresh check. Capture times are Unix seconds.");
             for snapshot in snapshots {
-                println!("  captured {}: {} accepted samples", snapshot.captured_at_unix, snapshot.authenticated_terminal_sample_count);
+                println!(
+                    "  captured {}: {} accepted samples",
+                    snapshot.captured_at_unix, snapshot.authenticated_terminal_sample_count
+                );
                 for row in &snapshot.observations {
-                    println!("    {}/{}/{}: {} (failures recent {}/{}, baseline {}/{}; p90 {} ms vs {} ms)", row.provider, row.model, row.workflow.as_str(), trend_label(row.trend), row.recent_failures, row.recent_samples, row.baseline_failures, row.baseline_samples, row.recent_p90_latency_ms, row.baseline_p90_latency_ms);
+                    println!(
+                        "    {}/{}/{}: {} (failures recent {}/{}, baseline {}/{}; p90 {} ms vs {} ms)",
+                        row.provider,
+                        row.model,
+                        row.workflow.as_str(),
+                        trend_label(row.trend),
+                        row.recent_failures,
+                        row.recent_samples,
+                        row.baseline_failures,
+                        row.baseline_samples,
+                        row.recent_p90_latency_ms,
+                        row.baseline_p90_latency_ms
+                    );
                 }
             }
         }
@@ -305,8 +347,16 @@ mod tests {
         let Commands::Capabilities(snapshot) = snapshot.command else {
             panic!("quality snapshot must dispatch to capabilities");
         };
-        assert_eq!(snapshot.home.as_deref(), Some(std::path::Path::new("C:/capability-home")));
-        assert!(matches!(snapshot.action, Some(CapabilitiesAction::Quality(QualityArgs { action: Some(QualityAction::Snapshot) }))));
+        assert_eq!(
+            snapshot.home.as_deref(),
+            Some(std::path::Path::new("C:/capability-home"))
+        );
+        assert!(matches!(
+            snapshot.action,
+            Some(CapabilitiesAction::Quality(QualityArgs {
+                action: Some(QualityAction::Snapshot)
+            }))
+        ));
 
         let history = Cli::try_parse_from([
             "neoth",
@@ -320,6 +370,11 @@ mod tests {
         let Commands::Capabilities(history) = history.command else {
             panic!("quality history must dispatch to capabilities");
         };
-        assert!(matches!(history.action, Some(CapabilitiesAction::Quality(QualityArgs { action: Some(QualityAction::History) }))));
+        assert!(matches!(
+            history.action,
+            Some(CapabilitiesAction::Quality(QualityArgs {
+                action: Some(QualityAction::History)
+            }))
+        ));
     }
 }

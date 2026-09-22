@@ -1,9 +1,9 @@
 {
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W189-capability-history",
-  "base": "4dd496a2a181d24476c50b98477c0a33ab4ee157",
-  "capturedUtc": "2026-09-22T09:46:09.5451804Z",
-  "validationStatus": "W189_SOURCE_REVIEWED_HOSTED_GATES_PENDING",
+  "base": "2cef823968db4ee7e20317315b7189d87895f761",
+  "capturedUtc": "2026-09-22T09:52:04.6722290Z",
+  "validationStatus": "W189_HOSTED_FORMAT_IMPORTED_PENDING_RERUN",
   "scopeNote": "W189 bounded authenticated snapshot/history plus ED0 Clippy/Slint repair and strict Silero numerical diagnosis. No roadmap closure; prior waves remain historical.",
   "files": [
     {
@@ -318,13 +318,13 @@
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1027302,
-      "sha256": "5ABC5C3FA84BF724B2C342E42CDA7D12A5242E377D33EF6A43DF7190FF950A59"
+      "bytes": 1027402,
+      "sha256": "A7708C1C6778AB5A44F35442AEA3FAC47EC9AEE4E30130585328FF5B6D1C8299"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1622749,
-      "sha256": "2E240DC9C9D15B27337261433D7D48CE4891249D497AA80EE127B29BBCE2978A"
+      "bytes": 1622849,
+      "sha256": "A6F661DFA298E56E4EDCA8592B74532E19CDC464FCC9D83DAA83D2139371A348"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -813,8 +813,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/capabilities.rs",
-      "bytes": 13098,
-      "sha256": "A3C21AE8BEA0A89F48ADB12A10D3C1C3BF20D02C8631963B0D74A4F54B24592B"
+      "bytes": 13990,
+      "sha256": "3E2B81CEB057AAAA2C56B30869F14FD6EC90553A8558488DA8EB2FDA585F1549"
     },
     {
       "path": "SRC/neothd/src/cli/channel.rs",
@@ -1343,8 +1343,8 @@
     },
     {
       "path": "SRC/neothd/src/daemon/capability_decay/history.rs",
-      "bytes": 20984,
-      "sha256": "86E9B677B5A7FC5AC00E48879531D5EFA47D86ECE6989C5C628EBD77853D0C8D"
+      "bytes": 21111,
+      "sha256": "717BDFB33D8EACB659E85D6E9198CF4A2E69C503B94042AD78B58D626B22380C"
     },
     {
       "path": "SRC/neothd/src/daemon/channel_live_registry.rs",
