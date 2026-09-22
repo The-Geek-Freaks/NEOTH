@@ -29,6 +29,7 @@ use super::local_models::{
     LocalModelAction, LocalModelActionAck, LocalModelController, LocalModelsSnapshot,
 };
 
+#[cfg(windows)]
 const SERVICE: &str = "neoth-local-models-v1";
 const TOKEN_FILE: &str = "local_models_ipc_token";
 const SIDECAR_FILE: &str = "local_models_ipc.endpoint.v1.json";

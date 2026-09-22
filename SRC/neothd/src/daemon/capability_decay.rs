@@ -10,9 +10,12 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use sha2::{Digest as _, Sha256};
 
 use crate::daemon::usage_log::{WorkflowKey, WorkflowKind};
 use crate::wal::events::{EVENT_TYPE_PROVIDER_ERROR, EVENT_TYPE_PROVIDER_RESPONSE};
+
+pub(crate) mod history;
 
 pub(crate) const RECENT_WINDOW_SECONDS: i64 = 24 * 60 * 60;
 pub(crate) const BASELINE_WINDOW_SECONDS: i64 = 7 * 24 * 60 * 60;
@@ -46,7 +49,8 @@ struct WindowSamples {
     latencies: Vec<u64>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum CapabilityTrend {
     Stable,
     Degrading,
@@ -68,6 +72,13 @@ pub(crate) struct CapabilityObservation {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CapabilityDecayReport {
+    pub(crate) as_of_unix: i64,
+    pub(crate) recent_since_unix: i64,
+    pub(crate) baseline_since_unix: i64,
+    /// SHA-256 over the ordered, content-free terminal fields accepted into
+    /// this observation window; it never hashes prompts or responses.
+    pub(crate) input_receipt_sha256: String,
+    pub(crate) authenticated_terminal_sample_count: u64,
     pub(crate) observations: Vec<CapabilityObservation>,
     /// Authenticated provider terminal rows that lack a closed current
     /// capability triple. They must remain visible rather than being assigned
@@ -104,6 +115,8 @@ pub(crate) fn inspect_authenticated_terminal_history(
     let mut legacy_terminal_rows = 0u64;
     let mut invocation_ids = HashSet::new();
     let mut identities = BTreeSet::new();
+    let mut receipt = Sha256::new();
+    let mut authenticated_terminal_sample_count = 0u64;
     let recent_since = now_unix
         .checked_sub(RECENT_WINDOW_SECONDS)
         .context("capability recent window underflow")?;
@@ -153,6 +166,10 @@ pub(crate) fn inspect_authenticated_terminal_history(
                         invocation_ids.insert(sample.invocation_id.clone()),
                         "duplicate provider terminal invocation in authenticated history"
                     );
+                    update_input_receipt(&mut receipt, &sample);
+                    authenticated_terminal_sample_count = authenticated_terminal_sample_count
+                        .checked_add(1)
+                        .context("capability terminal sample counter overflow")?;
                     samples.push(sample);
                 }
             }
@@ -167,9 +184,26 @@ pub(crate) fn inspect_authenticated_terminal_history(
     derive_report(
         samples,
         now_unix,
+        hex::encode(receipt.finalize()),
+        authenticated_terminal_sample_count,
         unattributed_terminal_rows,
         legacy_terminal_rows,
     )
+}
+
+fn update_input_receipt(receipt: &mut Sha256, sample: &TerminalSample) {
+    for field in [
+        sample.identity.provider.as_bytes(),
+        sample.identity.model.as_bytes(),
+        sample.identity.workflow.as_str().as_bytes(),
+        sample.invocation_id.as_bytes(),
+        &sample.ts_unix.to_le_bytes(),
+        &[u8::from(sample.ok)],
+        &sample.latency_ms.to_le_bytes(),
+    ] {
+        receipt.update((field.len() as u64).to_le_bytes());
+        receipt.update(field);
+    }
 }
 
 enum TerminalPayload {
@@ -267,6 +301,8 @@ fn required_string<'a>(value: &'a serde_json::Value, field: &str) -> Result<&'a 
 fn derive_report(
     samples: Vec<TerminalSample>,
     now_unix: i64,
+    input_receipt_sha256: String,
+    authenticated_terminal_sample_count: u64,
     unattributed_terminal_rows: u64,
     legacy_terminal_rows: u64,
 ) -> Result<CapabilityDecayReport> {
@@ -330,6 +366,11 @@ fn derive_report(
         })
         .collect();
     Ok(CapabilityDecayReport {
+        as_of_unix: now_unix,
+        recent_since_unix: recent_since,
+        baseline_since_unix: baseline_since,
+        input_receipt_sha256,
+        authenticated_terminal_sample_count,
         observations,
         unattributed_terminal_rows,
         legacy_terminal_rows,
@@ -346,7 +387,7 @@ fn p90(samples: &[u64]) -> u64 {
     sorted[p90_index]
 }
 
-fn classify(
+pub(crate) fn classify(
     recent: &WindowSamples,
     baseline: &WindowSamples,
     recent_p90: u64,
@@ -480,7 +521,7 @@ mod tests {
         let rows = (0..7)
             .map(|id| sample("a", WorkflowKind::ChatTurn, now - 10, true, 10, id))
             .collect();
-        let report = derive_report(rows, now, 0, 0).unwrap();
+        let report = derive_report(rows, now, "0".repeat(64), 0, 0, 0).unwrap();
         assert_eq!(
             report.observations[0].trend,
             CapabilityTrend::InsufficientSamples
@@ -512,7 +553,10 @@ mod tests {
             ));
         }
         assert_eq!(
-            derive_report(degrading, now, 0, 0).unwrap().observations[0].trend,
+            derive_report(degrading, now, "0".repeat(64), 0, 0, 0)
+                .unwrap()
+                .observations[0]
+                .trend,
             CapabilityTrend::Degrading
         );
         let mut recovering = Vec::new();
@@ -530,7 +574,10 @@ mod tests {
             recovering.push(sample("a", WorkflowKind::ChatTurn, now - 10, true, 100, id));
         }
         assert_eq!(
-            derive_report(recovering, now, 0, 0).unwrap().observations[0].trend,
+            derive_report(recovering, now, "0".repeat(64), 0, 0, 0)
+                .unwrap()
+                .observations[0]
+                .trend,
             CapabilityTrend::Recovering
         );
     }
@@ -575,7 +622,7 @@ mod tests {
                 id + 30,
             ));
         }
-        let report = derive_report(rows, now, 0, 0).unwrap();
+        let report = derive_report(rows, now, "0".repeat(64), 0, 0, 0).unwrap();
         assert_eq!(report.observations.len(), 2);
         assert!(report.observations.iter().any(|row| {
             row.identity.provider == "a" && row.trend == CapabilityTrend::Degrading

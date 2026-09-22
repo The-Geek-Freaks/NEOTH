@@ -407,10 +407,8 @@ impl LocalModelController {
                     <= now_ms();
                 let candidate = self.inner.endpoint.configured_model.clone();
                 drop(state);
-                if should_probe {
-                    if let Some(model) = candidate {
-                        self.probe_candidate(&model).await;
-                    }
+                if should_probe && let Some(model) = candidate {
+                    self.probe_candidate(&model).await;
                 }
             }
             Err(error) => {
@@ -779,7 +777,7 @@ impl LocalModelController {
             ok: false,
             action,
             operation_id: None,
-            error: Some(err(classify_error(&error), &error.to_string())),
+            error: Some(err(classify_error(&error), error.to_string())),
             snapshot: self.status().await,
         }
     }
@@ -928,10 +926,10 @@ impl LocalModelController {
         operation_id: &str,
         receipt: LocalModelTerminalReceipt,
     ) -> Result<()> {
-        if !state
+        if state
             .active
             .as_ref()
-            .is_some_and(|active| active.operation.operation_id == operation_id)
+            .is_none_or(|active| active.operation.operation_id != operation_id)
         {
             return Ok(());
         }

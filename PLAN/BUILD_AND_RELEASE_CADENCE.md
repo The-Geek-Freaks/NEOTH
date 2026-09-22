@@ -52,6 +52,12 @@ frame decoding with a mock synthesizer. The test is not ignored and missing
 binaries fail it. This adds no local execution permission and does not assert
 Windows/macOS video behavior or a paid provider call.
 
+W189 adds `capability-quality.yml`: one Ubuntu GitHub-hosted worker discovers
+and verifies exactly the 18 focused capability-quality identities from their
+source SHA bindings before running them (W188: 8, W189: 8, Doctor: 2). It is a
+focused behavioral lane, not a replacement for full CI, preview, GUI, audio or
+release validation. The lane grants no local execution permission.
+
 ## Unreleased Windows preview
 
 W182 adds a 15-minute default-feature `cargo check -p neoth --tests --locked --keep-going`

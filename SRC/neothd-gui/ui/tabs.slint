@@ -122,7 +122,12 @@ export component ResourcesView inherits Rectangle {
         StatRow { label: "LOCAL MODELS"; value: root.models-count > 0 ? "\{root.models-count} installed" : "none"; }
 
         Rectangle {
-            width: parent.width; height: local-models-body.height + 42px;
+            // This is a VerticalLayout child. Let that layout assign the
+            // width; deriving it from parent.width feeds its intrinsic width
+            // calculation back into the shell. The card's natural height is
+            // the body's preferred height, not the body's assigned height.
+            horizontal-stretch: 1;
+            height: local-models-body.preferred-height + 42px;
             border-radius: Theme.radius-lg; background: Theme.surface-1;
             border-width: 1px; border-color: root.local-model-status-valid ? Theme.border-subtle : Theme.border-accent;
             local-models-body := VerticalLayout {
@@ -134,7 +139,10 @@ export component ResourcesView inherits Rectangle {
                 if root.local-model-status-error != "": Text { text: root.local-model-status-error; color: Theme.warning; font-family: Theme.font-sans; font-size: Theme.font-size-sm; wrap: word-wrap; }
                 if root.local-models.length == 0: Text { text: root.local-model-status-valid ? "No local model inventory returned." : "Local-model status has not been verified."; color: Theme.text-tertiary; font-family: Theme.font-sans; font-size: Theme.font-size-sm; }
                 for row in root.local-models: Rectangle {
-                    width: parent.width; height: model-row-body.height + 24px; border-radius: Theme.radius-md;
+                    // As above, use the row's intrinsic height and let the
+                    // enclosing VerticalLayout own its allocated width.
+                    horizontal-stretch: 1;
+                    height: model-row-body.preferred-height + 24px; border-radius: Theme.radius-md;
                     background: Theme.surface-2; border-width: 1px; border-color: Theme.border-subtle;
                     model-row-body := VerticalLayout {
                         x: 12px; y: 12px; width: parent.width - 24px; spacing: 7px;

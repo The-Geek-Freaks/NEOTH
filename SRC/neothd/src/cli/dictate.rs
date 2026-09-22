@@ -563,6 +563,7 @@ fn emit_live_terminal_error(output: OutputFormat, error: &anyhow::Error) {
     }
 }
 
+#[cfg(feature = "live-audio")]
 fn emit_live_event(output: OutputFormat, event: serde_json::Value) {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!("{event}"),

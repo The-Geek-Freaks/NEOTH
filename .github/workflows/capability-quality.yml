@@ -1,0 +1,194 @@
+name: W188-W189 capability quality
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capability-quality:
+    name: W188-W189 focused capability quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Require main branch dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+            echo "::error::W188-W189 capability quality is main-only (got $GITHUB_REF)"
+            exit 1
+          }
+
+      - name: Prepare source log and receipt evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/w188-w189-capability-quality"
+          mkdir -p "$evidence_root/source" "$evidence_root/log" "$evidence_root/receipt"
+          git rev-parse HEAD > "$evidence_root/receipt/source-head.txt"
+          printf '%s\n' "$GITHUB_REF" > "$evidence_root/receipt/source-ref.txt"
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      # Reuse the existing gold-smoke cache family. A failed focused Rust run
+      # can add a unique partial entry, but cannot replace a complete cache.
+      - name: Restore gold-smoke Cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-gold-smoke-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-gold-smoke-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-
+            ${{ runner.os }}-gold-smoke-cargo-
+
+      - name: Bind W189 required tests to source identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+
+          root = pathlib.Path(os.environ["GITHUB_WORKSPACE"])
+          evidence_root = pathlib.Path(os.environ["RUNNER_TEMP"]) / "w188-w189-capability-quality"
+          matrix_path = root / "docs/verification/gold-wave95-96-test-matrix.json"
+          payload = json.loads(matrix_path.read_text(encoding="utf-8"))
+          wave189 = payload.get("wave189")
+          if not isinstance(wave189, dict):
+              raise SystemExit("W189 test matrix has no wave189 object")
+          required_names = wave189.get("requiredTests")
+          native_tests = payload.get("requiredNativeTests")
+          if not isinstance(required_names, list) or not required_names:
+              raise SystemExit("W189 test matrix has no wave189.requiredTests")
+          if len(required_names) != 18:
+              raise SystemExit(f"W189 requiredTests must contain exactly 18 identities (got {len(required_names)})")
+          if not all(isinstance(name, str) and name for name in required_names):
+              raise SystemExit("W189 requiredTests contains an invalid identity")
+          if len(required_names) != len(set(required_names)):
+              raise SystemExit("W189 requiredTests contains a duplicate identity")
+          if not isinstance(native_tests, list):
+              raise SystemExit("W189 test matrix has no requiredNativeTests")
+
+          records = []
+          for name in required_names:
+              matches = [entry for entry in native_tests if isinstance(entry, dict) and entry.get("test") == name]
+              if len(matches) != 1:
+                  raise SystemExit(f"W189 required test must have exactly one native source record: {name}")
+              entry = matches[0]
+              source_path = entry.get("sourcePath")
+              expected = entry.get("sourceSha256")
+              if not isinstance(source_path, str) or not source_path or not isinstance(expected, str) or not expected:
+                  raise SystemExit(f"W189 native source record is incomplete: {name}")
+              source = root / source_path
+              if not source.is_file():
+                  raise SystemExit(f"W189 native source is missing: {source_path}")
+              actual = hashlib.sha256(source.read_bytes()).hexdigest()
+              if actual.lower() != expected.lower():
+                  raise SystemExit(f"W189 native source SHA-256 mismatch: {source_path}")
+              records.append({"test": name, "sourcePath": source_path, "sourceSha256": actual})
+
+          (evidence_root / "source" / "fixture-identities.json").write_text(
+              json.dumps({"schema": "neoth-w188-w189-capability-quality-evidence/v1", "fixtures": records}, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          (evidence_root / "source" / "fixture-names.txt").write_text("\n".join(required_names) + "\n", encoding="utf-8")
+          (evidence_root / "source" / "inputs.sha256").write_text(
+              "".join(
+                  f"{hashlib.sha256((root / path).read_bytes()).hexdigest()}  {path}\n"
+                  for path in ("docs/verification/gold-wave95-96-test-matrix.json", "SRC/Cargo.lock")
+              ),
+              encoding="utf-8",
+          )
+          (evidence_root / "receipt" / "selection.json").write_text(
+              json.dumps({"requiredCount": len(required_names), "selectedCount": len(records)}, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      # Cargo compiles the selected lib graph once and reuses target artifacts
+      # for every later exact discovery/execution. A zero or ambiguous filter
+      # is terminal, rather than being accepted as an empty green test run.
+      - name: Compile and run exact W188-W189 capability fixtures
+        id: capability-fixtures
+        shell: bash
+        working-directory: SRC
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/w188-w189-capability-quality"
+          log="$evidence_root/log/cargo-capability-quality.log"
+          : > "$log"
+          executed=0
+          while IFS= read -r test_name; do
+            [[ -n "$test_name" ]] || { echo "empty W189 capability fixture identity" >&2; exit 1; }
+            {
+              echo "=== list $test_name ==="
+              listed="$(cargo test -p neoth --lib --locked "$test_name" -- --exact --list)"
+              printf '%s\n' "$listed"
+              test "$(printf '%s\n' "$listed" | grep -Fxc "$test_name: test")" -eq 1
+              echo "=== run $test_name ==="
+              cargo test -p neoth --lib --locked "$test_name" -- --exact --test-threads=1
+            } 2>&1 | tee -a "$log"
+            executed=$((executed + 1))
+          done < "$evidence_root/source/fixture-names.txt"
+          test "$executed" -gt 0
+          printf '%s\n' "$executed" > "$evidence_root/receipt/executed-count.txt"
+
+      - name: Save interrupted gold-smoke Cargo cache
+        if: ${{ !cancelled() && failure() && steps.capability-fixtures.outcome == 'failure' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-gold-smoke-cargo-partial-${{ hashFiles('SRC/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload W188-W189 source identities
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w188-w189-capability-source-${{ github.sha }}
+          path: ${{ runner.temp }}/w188-w189-capability-quality/source/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload W188-W189 Cargo log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w188-w189-capability-log-${{ github.sha }}
+          path: ${{ runner.temp }}/w188-w189-capability-quality/log/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload W188-W189 capability receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: w188-w189-capability-receipt-${{ github.sha }}
+          path: ${{ runner.temp }}/w188-w189-capability-quality/receipt/
+          if-no-files-found: error
+          retention-days: 14

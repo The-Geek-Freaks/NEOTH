@@ -263,6 +263,7 @@ impl StreamingMonoResampler {
     }
 }
 
+#[cfg(any(feature = "live-audio", test))]
 fn new_sinc_resampler(
     source_rate_hz: u32,
     target_rate_hz: u32,

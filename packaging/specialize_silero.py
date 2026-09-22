@@ -23,7 +23,10 @@ from typing import Any
 
 INPUT, STATE, SR = "input", "state", "sr"
 INPUT_SHAPE, STATE_SHAPE, SAMPLE_RATE = (1, 576), (2, 1, 128), 16_000
-ATOL = RTOL = 1e-6
+# This gate is deliberately strict during diagnosis. Do not loosen it without a
+# hosted recurrent-drift receipt that separates input binding from ORT basic.
+PROBABILITY_ATOL = PROBABILITY_RTOL = 1e-6
+STATE_ATOL = STATE_RTOL = 1e-6
 EXPECTED_ORIGINAL_SHA256 = "7ed98ddbad84ccac4cd0aeb3099049280713df825c610a8ed34543318f1b2c49"
 EXPECTED_SOURCE_BLOB_SHA1 = "625ad8909b1abdba2292f3a9a10db6864fd5d561"
 
@@ -131,6 +134,25 @@ def reject_nonstandard_nodes(model: Any, onnx: Any) -> None:
     walk(model.graph, "")
 
 
+def op_type_counts(model: Any, onnx: Any) -> dict[str, int]:
+    """Count every graph and nested control-flow branch for optimizer evidence."""
+    counts: dict[str, int] = {}
+
+    def walk(graph: Any) -> None:
+        for node in graph.node:
+            key = f"{node.domain or 'ai.onnx'}::{node.op_type}"
+            counts[key] = counts.get(key, 0) + 1
+            for attribute in node.attribute:
+                if attribute.type == onnx.AttributeProto.GRAPH:
+                    walk(attribute.g)
+                elif attribute.type == onnx.AttributeProto.GRAPHS:
+                    for child in attribute.graphs:
+                        walk(child)
+
+    walk(model.graph)
+    return dict(sorted(counts.items()))
+
+
 def specialize(model: Any, onnx: Any) -> Any:
     from onnx import helper
 
@@ -170,7 +192,7 @@ def optimize_basic(bound_path: Path, optimized_path: Path, ort: Any) -> None:
 
 
 def frames(np: Any) -> dict[str, list[Any]]:
-    frame_samples, steps = 512, 16
+    frame_samples, steps = 512, 256
     index = np.arange(frame_samples * steps, dtype=np.float32)
     speechlike = (0.55 * np.sin(2.0 * math.pi * 180.0 * index / SAMPLE_RATE)).astype(np.float32)
     noise = np.random.default_rng(0x5A17E).uniform(-0.7, 0.7, frame_samples * steps).astype(np.float32)
@@ -212,19 +234,25 @@ def assert_model_contract(original: Any, candidate: Any) -> None:
         raise ValueError("models must expose probability plus recurrent-state outputs")
 
 
-def parity(original_path: Path, candidate_path: Path, np: Any, ort: Any) -> dict[str, Any]:
-    original, candidate = session(original_path, ort), session(candidate_path, ort)
+def parity(original_path: Path, bound_path: Path, candidate_path: Path, np: Any, ort: Any) -> dict[str, Any]:
+    original, bound, candidate = session(original_path, ort), session(bound_path, ort), session(candidate_path, ort)
+    assert_model_contract(original, bound)
     assert_model_contract(original, candidate)
+    pairs = {
+        "originalVsBound": {"session": bound, "outputs": [{"label": "probability", "atol": PROBABILITY_ATOL, "rtol": PROBABILITY_RTOL}, {"label": "state", "atol": STATE_ATOL, "rtol": STATE_RTOL}]},
+        "originalVsBasic": {"session": candidate, "outputs": [{"label": "probability", "atol": PROBABILITY_ATOL, "rtol": PROBABILITY_RTOL}, {"label": "state", "atol": STATE_ATOL, "rtol": STATE_RTOL}]},
+    }
+    for pair in pairs.values():
+        pair["metrics"] = {output["label"]: {"maxAbsError": 0.0, "maxRelError": 0.0, "overToleranceElements": 0, "worstCase": None} for output in pair["outputs"]}
     comparisons: list[dict[str, Any]] = []
-    max_abs_error, max_rel_error = 0.0, 0.0
     for scenario, sequence in frames(np).items():
         nonzero = scenario == "mixed_recurrent"
         initial = np.linspace(-0.25, 0.25, int(np.prod(STATE_SHAPE)), dtype=np.float32).reshape(STATE_SHAPE) if nonzero else np.zeros(STATE_SHAPE, dtype=np.float32)
-        original_state, candidate_state = initial.copy(), initial.copy()
+        original_state = initial.copy()
+        pair_states = {name: initial.copy() for name in pairs}
         for step, audio in enumerate(sequence):
             source = original.run(None, {INPUT: audio, STATE: original_state, SR: np.asarray(SAMPLE_RATE, dtype=np.int64)})
-            derived = candidate.run(None, {INPUT: audio, STATE: candidate_state})
-            for label, outputs in (("original", source), ("candidate", derived)):
+            for label, outputs in (("original", source),):
                 if len(outputs) != 2 or tuple(outputs[0].shape) != (1, 1) or tuple(outputs[1].shape) != STATE_SHAPE:
                     raise ValueError(f"{scenario}[{step}] {label} output shape is invalid")
                 if outputs[0].dtype != np.float32 or outputs[1].dtype != np.float32:
@@ -233,14 +261,41 @@ def parity(original_path: Path, candidate_path: Path, np: Any, ort: Any) -> dict
                     raise ValueError(f"{scenario}[{step}] {label} returned non-finite output")
                 if not ((outputs[0] >= 0.0).all() and (outputs[0] <= 1.0).all()):
                     raise ValueError(f"{scenario}[{step}] {label} probability is outside [0, 1]")
-            for label, before, after in (("probability", source[0], derived[0]), ("state", source[1], derived[1])):
-                delta = np.abs(before - after)
-                max_abs_error = max(max_abs_error, float(np.max(delta)))
-                max_rel_error = max(max_rel_error, float(np.max(delta / np.maximum(np.abs(before), 1e-12))))
-                np.testing.assert_allclose(before, after, rtol=RTOL, atol=ATOL, equal_nan=False, err_msg=f"{label} parity {scenario}[{step}]")
+            for pair_name, pair in pairs.items():
+                derived = pair["session"].run(None, {INPUT: audio, STATE: pair_states[pair_name]})
+                for label, outputs in ((pair_name, derived),):
+                    if len(outputs) != 2 or tuple(outputs[0].shape) != (1, 1) or tuple(outputs[1].shape) != STATE_SHAPE:
+                        raise ValueError(f"{scenario}[{step}] {label} output shape is invalid")
+                    if outputs[0].dtype != np.float32 or outputs[1].dtype != np.float32 or not np.isfinite(outputs[0]).all() or not np.isfinite(outputs[1]).all():
+                        raise ValueError(f"{scenario}[{step}] {label} returned invalid output")
+                    if not ((outputs[0] >= 0.0).all() and (outputs[0] <= 1.0).all()):
+                        raise ValueError(f"{scenario}[{step}] {label} probability is outside [0, 1]")
+                for output_index, output in enumerate(pair["outputs"]):
+                    before, after = source[output_index], derived[output_index]
+                    delta = np.abs(before - after)
+                    rel = delta / np.maximum(np.abs(before), 1e-12)
+                    metric = pair["metrics"][output["label"]]
+                    maximum = float(np.max(delta))
+                    metric["maxRelError"] = max(metric["maxRelError"], float(np.max(rel)))
+                    # Preserve assert_allclose(before, after): its desired operand is after.
+                    tolerance = output["atol"] + output["rtol"] * np.abs(after)
+                    metric["overToleranceElements"] += int(np.count_nonzero(delta > tolerance))
+                    if maximum > metric["maxAbsError"]:
+                        flat_index = int(np.argmax(delta))
+                        metric["maxAbsError"] = maximum
+                        metric["worstCase"] = {"scenario": scenario, "step": step, "outputIndex": [int(index) for index in np.unravel_index(flat_index, delta.shape)], "before": float(before.flat[flat_index]), "after": float(after.flat[flat_index]), "absError": maximum, "relError": float(rel.flat[flat_index]), "inputContext": audio.reshape(-1)[:64].tolist(), "inputFrameSha256": hashlib.sha256(audio.tobytes()).hexdigest(), "referenceStateInputSha256": hashlib.sha256(original_state.tobytes()).hexdigest(), "comparedStateInputSha256": hashlib.sha256(pair_states[pair_name].tobytes()).hexdigest()}
+                pair_states[pair_name] = derived[1]
             comparisons.append({"scenario": scenario, "step": step, "initialState": "nonzero" if nonzero else "zero"})
-            original_state, candidate_state = source[1], derived[1]
-    return {"provider": "CPUExecutionProvider", "intraOpThreads": 1, "interOpThreads": 1, "rtol": RTOL, "atol": ATOL, "maxAbsError": max_abs_error, "maxRelError": max_rel_error, "comparisons": comparisons}
+            original_state = source[1]
+    result = {"provider": "CPUExecutionProvider", "intraOpThreads": 1, "interOpThreads": 1, "framesPerScenario": 256, "comparisons": comparisons, "pairs": {name: {"probability": {"rtol": PROBABILITY_RTOL, "atol": PROBABILITY_ATOL, **pair["metrics"]["probability"]}, "state": {"rtol": STATE_RTOL, "atol": STATE_ATOL, **pair["metrics"]["state"]}} for name, pair in pairs.items()}}
+    return result
+
+
+def assert_strict_parity(result: dict[str, Any]) -> None:
+    """Fail only after the complete receipt, including both diagnostic pairs, exists."""
+    failures = [f"{pair_name}.{label}" for pair_name, pair in result["pairs"].items() for label, metric in pair.items() if metric["overToleranceElements"]]
+    if failures:
+        raise AssertionError(f"parity exceeded strict tolerance after complete diagnostic run: {', '.join(failures)}")
 
 
 def main() -> int:
@@ -273,21 +328,24 @@ def main() -> int:
         original = onnx.load_model(str(args.input), load_external_data=False)
         reject_external_data(original, onnx)
         reject_nonstandard_nodes(original, onnx)
-        receipt["before"] = {"io": graph_io(original.graph, onnx), "ifNodes": if_nodes(original.graph, onnx)}
+        receipt["before"] = {"io": graph_io(original.graph, onnx), "ifNodes": if_nodes(original.graph, onnx), "opTypeCounts": op_type_counts(original, onnx)}
         with tempfile.TemporaryDirectory(prefix="w186-silero-") as directory:
             bound = Path(directory) / "bound-16k.onnx"
             temporary = Path(directory) / "candidate.onnx"
             onnx.save_model(specialize(original, onnx), str(bound))
+            bound_model = onnx.load_model(str(bound), load_external_data=False)
+            receipt["bound"] = {"io": graph_io(bound_model.graph, onnx), "ifNodes": if_nodes(bound_model.graph, onnx), "opTypeCounts": op_type_counts(bound_model, onnx)}
             optimize_basic(bound, temporary, ort)
             derived = onnx.load_model(str(temporary), load_external_data=False)
             onnx.checker.check_model(derived)
             reject_external_data(derived, onnx)
             reject_nonstandard_nodes(derived, onnx)
             receipt["optimizer"] = {"engine": "onnxruntime", "graphOptimizationLevel": "ORT_ENABLE_BASIC", "provider": "CPUExecutionProvider", "intraOpThreads": 1, "interOpThreads": 1}
-            receipt["after"] = {"io": graph_io(derived.graph, onnx), "ifNodes": if_nodes(derived.graph, onnx)}
+            receipt["after"] = {"io": graph_io(derived.graph, onnx), "ifNodes": if_nodes(derived.graph, onnx), "opTypeCounts": op_type_counts(derived, onnx)}
             if receipt["after"]["ifNodes"]:
                 raise ValueError("basic specialization left If control flow; candidate is unsafe for tract 0.23.8")
-            receipt["parity"] = parity(args.input, temporary, np, ort)
+            receipt["parity"] = parity(args.input, bound, temporary, np, ort)
+            assert_strict_parity(receipt["parity"])
             args.output.parent.mkdir(parents=True, exist_ok=True)
             os.replace(temporary, args.output)
         receipt["candidate"] = {"path": str(args.output), "sha256": file_sha256(args.output)}
