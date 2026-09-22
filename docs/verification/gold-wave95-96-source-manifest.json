@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T23:09:41.7697512Z",
-  "validationStatus": "W235 source reviewed; 402 grouped and 845 native selected; Hosted execution pending",
+  "capturedUtc": "2026-09-22T23:12:48.6330986Z",
+  "validationStatus": "W235 exact Hosted formatting imported; behavioral gates pending on5661e7d2",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2168,8 +2168,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/compactor.rs",
-      "bytes": 87041,
-      "sha256": "59B6B8CA8BF4A4EA638AA4A5A95F149260BF8FD73EE11852E967098545D7A409"
+      "bytes": 86998,
+      "sha256": "331BD54805F6D388E490A5FCD9AE0B0E21B8CDE7479CA7EBB326B3827251A22A"
     },
     {
       "path": "SRC/neothd/src/providers/copilot.rs",
@@ -2183,8 +2183,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/fallback.rs",
-      "bytes": 83653,
-      "sha256": "3F36F5E05B3FA669C73AFBF053ECEFF321B37FFC90E800B7DDE8F5B9B225CF5F"
+      "bytes": 83618,
+      "sha256": "6224D3589F590E45AEC9156B8D1A51F7E78CEA97D002AB715B0ACA6878570341"
     },
     {
       "path": "SRC/neothd/src/providers/gemini_api.rs",
@@ -2203,8 +2203,8 @@
     },
     {
       "path": "SRC/neothd/src/providers/mod.rs",
-      "bytes": 260282,
-      "sha256": "89996E6B63159F0F6E7CA136AC6CA894B37CEBA6935D489332E6FD57D382070E"
+      "bytes": 260249,
+      "sha256": "50B173C42A124D15700881DA8922C5C8F6822B6C945E3FF945D54F9CBEA62A63"
     },
     {
       "path": "SRC/neothd/src/providers/ollama_api.rs",

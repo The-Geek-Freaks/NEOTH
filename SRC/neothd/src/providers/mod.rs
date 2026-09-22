@@ -2734,14 +2734,8 @@ pub trait Provider: Send + Sync {
         call_scope: &'static str,
         reasoning_display: ReasoningDisplayGrant,
     ) -> Result<ProviderEventStream> {
-        self.stream_events_authorized_inner(
-            req,
-            authorizer,
-            call_scope,
-            reasoning_display,
-            None,
-        )
-        .await
+        self.stream_events_authorized_inner(req, authorizer, call_scope, reasoning_display, None)
+            .await
     }
 
     /// Chat-only authorized event-stream entry with explicit cancellation
@@ -2773,7 +2767,10 @@ pub trait Provider: Send + Sync {
         reasoning_display: ReasoningDisplayGrant,
         cancellation: Option<crate::cli::chat_turn_pipeline::ChatTurnCancellation>,
     ) -> Result<ProviderEventStream> {
-        if cancellation.as_ref().is_some_and(|cancellation| cancellation.is_closed()) {
+        if cancellation
+            .as_ref()
+            .is_some_and(|cancellation| cancellation.is_closed())
+        {
             anyhow::bail!("chat turn cancelled before provider event-stream authorization");
         }
         self.validate_request_controls(&req)?;

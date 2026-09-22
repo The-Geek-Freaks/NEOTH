@@ -475,27 +475,25 @@ impl CompactingProvider {
                 max_output_tokens,
             };
             let summary_result = match authorization {
-                Some((authorizer, _)) => {
-                    match cancellation {
-                        Some(cancellation) => {
-                            util.complete_authorized_cancellable(
-                                summary_req,
-                                authorizer,
-                                "history_compaction.summary",
-                                cancellation,
-                            )
-                            .await
-                        }
-                        None => {
-                            util.complete_authorized(
-                                summary_req,
-                                authorizer,
-                                "history_compaction.summary",
-                            )
-                            .await
-                        }
+                Some((authorizer, _)) => match cancellation {
+                    Some(cancellation) => {
+                        util.complete_authorized_cancellable(
+                            summary_req,
+                            authorizer,
+                            "history_compaction.summary",
+                            cancellation,
+                        )
+                        .await
                     }
-                }
+                    None => {
+                        util.complete_authorized(
+                            summary_req,
+                            authorizer,
+                            "history_compaction.summary",
+                        )
+                        .await
+                    }
+                },
                 None => {
                     util.complete_raw(
                         summary_req,
@@ -1241,8 +1239,14 @@ mod tests {
             .expect("utility cancellation fixture WAL writer must not panic");
         let lifecycle = provider_lifecycle(&seg);
         assert_eq!(lifecycle.len(), 2);
-        assert_eq!(lifecycle[0].0, crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
-        assert_eq!(lifecycle[1].0, crate::wal::events::EVENT_TYPE_PROVIDER_ERROR);
+        assert_eq!(
+            lifecycle[0].0,
+            crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST
+        );
+        assert_eq!(
+            lifecycle[1].0,
+            crate::wal::events::EVENT_TYPE_PROVIDER_ERROR
+        );
         assert_eq!(lifecycle[1].1["error_kind"], "stream_cancelled");
     }
 

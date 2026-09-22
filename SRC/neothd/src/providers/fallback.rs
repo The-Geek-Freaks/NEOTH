@@ -365,25 +365,23 @@ impl FallbackProvider {
 
             let candidate_req = self.request_for_candidate(i, candidate.as_ref(), &req)?;
             let result = match authorization {
-                Some((authorizer, call_scope)) => {
-                    match cancellation {
-                        Some(cancellation) => {
-                            candidate
-                                .complete_authorized_cancellable(
-                                    candidate_req,
-                                    authorizer,
-                                    call_scope,
-                                    cancellation,
-                                )
-                                .await
-                        }
-                        None => {
-                            candidate
-                                .complete_authorized(candidate_req, authorizer, call_scope)
-                                .await
-                        }
+                Some((authorizer, call_scope)) => match cancellation {
+                    Some(cancellation) => {
+                        candidate
+                            .complete_authorized_cancellable(
+                                candidate_req,
+                                authorizer,
+                                call_scope,
+                                cancellation,
+                            )
+                            .await
                     }
-                }
+                    None => {
+                        candidate
+                            .complete_authorized(candidate_req, authorizer, call_scope)
+                            .await
+                    }
+                },
                 None => {
                     candidate
                         .complete_raw(
@@ -867,8 +865,14 @@ mod tests {
             .expect("fallback cancellation fixture WAL writer must not panic");
         let lifecycle = lifecycle_frames(&seg);
         assert_eq!(lifecycle.len(), 2);
-        assert_eq!(lifecycle[0].0, crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
-        assert_eq!(lifecycle[1].0, crate::wal::events::EVENT_TYPE_PROVIDER_ERROR);
+        assert_eq!(
+            lifecycle[0].0,
+            crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST
+        );
+        assert_eq!(
+            lifecycle[1].0,
+            crate::wal::events::EVENT_TYPE_PROVIDER_ERROR
+        );
         assert_eq!(lifecycle[1].1["error_kind"], "stream_cancelled");
     }
 

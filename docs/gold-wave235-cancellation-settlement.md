@@ -49,3 +49,7 @@ followed by full Windows/macOS CI after the focused production gates pass.
 
 Road remains 1016 checked / 306 open / 2 partial. No checkbox is closed by this
 source repair. No local compiler, formatter, parser, test or product runtime ran.
+
+Preflight35796229434 supplied exact formatting for three provider files. The source
+head, artifact digests, Git/local preimages and resulting postimages were verified
+before import. No local formatter ran. Behavioral gates remain on5661e7d2.
