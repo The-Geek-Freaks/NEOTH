@@ -2,6 +2,18 @@
 
 **Created:** 2026-05-24  **Last updated:** 2026-09-22
 
+**W227 autonomy acceptance selection / W225 verified (2026-09-22):** corrected
+Grouped282 `35787943413` on `5dff0afb` is admitted at **282/282**, with all
+58 source hashes, matrix, lock and actual test terminals verified. The real
+Claude effect-start role-reload denial case passed. W227 adds 24 existing W138
+autonomy cases plus the W145 loop-to-MCP cap case to the actual grouped
+selection, growing it to **328** without duplicating native inventory records.
+P2-12 remains open until these cases and its separate native GUI cases pass.
+W226 Grouped303 `35788592926` remains running; its Core run `35788596014` has
+passed slim Clippy and test typecheck and is building/exporting the CLI.
+Inventory stays 534 source paths / 841 native / 94 GUI. Road stays
+1016 checked / 306 open / 2 partial. See `docs/gold-wave227-autonomy-acceptance.md`.
+All executable validation remains GitHub-hosted under the local BSOD hold.
 **W226 operator cluster assignments (2026-09-22):** the existing membership DB
 now persists exact-key TaskDelegate assignments with default denial and CAS
 revisions. CLI show is read-only/no-migrate; set requires the existing offline

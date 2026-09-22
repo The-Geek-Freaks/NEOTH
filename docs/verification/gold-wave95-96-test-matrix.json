@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W226 exact Hosted rustfmt imported; Group303/Core onbbcb pending",
+  "status": "W225 admitted282/282;25existing autonomy tests explicitly selected for Group328; GUI execution pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92329,
-    "sha256": "02E88420497AEE56F0754CB651F7874714FD904DF5E62AA644F2E51F9197F62F"
+    "bytes": 92367,
+    "sha256": "B115E45A9FA9C523A9E1C728604037D4B344DEAC86C65BE66A67740AB0F1FE54"
   },
   "sourceInputs": 534,
   "requiredNativeTests": [
@@ -4944,7 +4944,7 @@
     {
       "test": "cli::cluster::tests::task_delegate_set_show_is_revisioned_and_readback_exact",
       "sourcePath": "SRC/neothd/src/cli/cluster.rs",
-      "sourceSha256": "2C71A2DED39609AEC6A70DECE671C54705E419635358A945D5275DDECCC0C5CF",
+      "sourceSha256": "131039EF4B6D5C083AA0C49ABDBDEBEAF7760E26A019F0EE6A04CA84B5FDCFA9",
       "junitClass": "neoth"
     },
     {
@@ -15354,6 +15354,52 @@
       }
     ],
     "note": "Preflight35788593891 onbbcb exact source/SHA256/Git preimages/unchanged local/check/postimages verified for4files; no local formatter.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave227AutonomyAcceptance": {
+    "requiredTests": [
+      "cli::autonomy::tests::skill_override_parser_is_strict_and_custom_only",
+      "cli::autonomy::tests::skill_override_commit_readback_and_reset_are_exact_and_idempotent",
+      "config::skill_autonomy_config_tests::public_config_load_rejects_invalid_skill_id",
+      "config::skill_autonomy_config_tests::public_config_load_rejects_malformed_or_non_custom_skill_action_maps",
+      "config::skill_autonomy_config_tests::public_config_load_rejects_more_than_128_skill_overrides",
+      "config::skill_autonomy_config_tests::public_config_load_preserves_legacy_absence_of_skill_overrides",
+      "permissions::policy::tests::empty_skill_overrides_preserve_legacy_v1_trust_fingerprint",
+      "permissions::policy::tests::selected_skill_cap_intersects_each_action_restrictively",
+      "permissions::policy::tests::skill_override_rejects_actions_without_custom_level",
+      "permissions::policy::tests::retained_skill_cap_uses_current_global_effect_leaf_policy",
+      "skills::installer::tests::read_only_recovery_probe_never_creates_locks_or_changes_recovery_artifacts",
+      "skills::loader::tests::read_only_inventory_keeps_pending_recovery_artifacts_and_never_creates_a_lock",
+      "skills::resolver::tests::w138_retained_cap_reload_blocks_stale_snapshot_while_no_cap_preserves_legacy_snapshot",
+      "permissions::gate::tests::w138_retained_skill_deny_blocks_effect_even_when_global_and_confirm_allow",
+      "permissions::gate::tests::w138_retained_skill_confirm_uses_channel_operator_answer",
+      "permissions::gate::tests::w138_effect_gate_applies_global_tightening_after_route_is_retained",
+      "permissions::gate::tests::w138_retained_route_without_skill_cap_preserves_global_effect_behavior",
+      "permissions::gate::tests::w138_channel_approval_rechecks_reloaded_cap_and_audits_current_deny",
+      "mcp::gate::tests::w138_reloaded_global_deny_blocks_retained_cap_before_smart_approve",
+      "mcp::gate::tests::w138_skill_confirm_cannot_be_smart_approved",
+      "mcp::gate::tests::w138_no_cap_smart_approve_retains_baseline",
+      "mcp::gate::tests::w138_mcp_no_cap_smart_approve_keeps_baseline_wal_allow",
+      "mcp::gate::tests::w138_mcp_reload_final_deny_audits_current_policy_before_smart_approve",
+      "providers::cost_authorization::tests::w138_retained_skill_deny_blocks_paid_provider_before_transport",
+      "loop_engine::engine::tests::w145_loop_forwards_retained_skill_mcp_deny_before_stdio_transport"
+    ],
+    "report": "docs/gold-wave227-autonomy-acceptance.md",
+    "note": "24existingW138cases+1W145loopcapcase; global inventory is not execution; native GUI acceptance remains separate",
+    "localValidationRan": false
+  },
+  "wave227SelectionBinding": {
+    "base": "3eff3ab41197744c7c694a81cc348ba33a2b11b7",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/cluster.rs",
+        "bytes": 246189,
+        "sha256": "131039EF4B6D5C083AA0C49ABDBDEBEAF7760E26A019F0EE6A04CA84B5FDCFA9",
+        "blob": "c7d5bea6c268334b587fb5cbc769c1fe979e5b10"
+      }
+    ],
+    "note": "Actual workflow selection lacked all24W138cases and W145loopcapcase despite universal inventory presence. No duplicate native identities. W226 CLI daemon-stop message now operator-facing. Group303 stillrunning; consolidated dispatch next.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

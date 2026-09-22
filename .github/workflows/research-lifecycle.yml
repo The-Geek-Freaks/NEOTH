@@ -109,6 +109,7 @@ jobs:
               "wave224RegistryAcceptance": 4,
               "wave225": 1,
               "wave226": 21,
+              "wave227AutonomyAcceptance": 25,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

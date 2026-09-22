@@ -1688,7 +1688,7 @@ fn task_delegate_assignment_set_at(
     validate_pub_key_hex(peer_key)?;
     anyhow::ensure!(
         live_daemon_owner_pid(home)?.is_none(),
-        "stop the daemon before changing task-delegate assignments; this CLI slice has no daemon authority RPC"
+        "stop the daemon before changing task-delegate assignments, then restart it to use the updated permissions"
     );
     let _offline_authority_lock = acquire_offline_membership_guard(home)?;
     let store = crate::cluster::membership::MembershipStore::open(home)?;

@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T21:46:24.8316210Z",
-  "validationStatus": "W226 exact Hosted rustfmt imported; Group303/Core onbbcb pending",
+  "capturedUtc": "2026-09-22T21:56:47.9950266Z",
+  "validationStatus": "W225 admitted282/282;25existing autonomy tests explicitly selected for Group328; GUI execution pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -68,8 +68,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 11725,
-      "sha256": "07C38BD4D15094C7350A807D66B26FFFAB56A7D7B44E6036050D47A854AC7E29"
+      "bytes": 11772,
+      "sha256": "B7FE7C7AEB6DF987B070DFEFC278EC0932C90278EECC1075C36E877EB698726B"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -433,18 +433,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 72527,
-      "sha256": "54E2307259DE546B8C470B0D9E6A2491FBFBBDFF83951F4077C11E055058D124"
+      "bytes": 73443,
+      "sha256": "9C7B0AB35C3DF3908655329B3A2B752B41339FBA7B38217EE6916E64E6B00ABC"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1075462,
-      "sha256": "5C7A6177E7FAA161C8620D7E83B150C02F35D57CD8C8D93DD20239F8F54E1310"
+      "bytes": 1076378,
+      "sha256": "01B0B32FFFC4FE7363ECE12170EBECC939A789E597E9B028923D63C69098D73B"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1671030,
-      "sha256": "BB146A7587712C8C515AB69754FE146B69F20D365E2E764786B7BAE158BB8C78"
+      "bytes": 1671946,
+      "sha256": "A767EFB34B9514D3633508C53C3ECA1AE98062BA91D1D9304DD76A78FEBA4233"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -2673,8 +2673,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/cluster.rs",
-      "bytes": 246185,
-      "sha256": "2C71A2DED39609AEC6A70DECE671C54705E419635358A945D5275DDECCC0C5CF"
+      "bytes": 246189,
+      "sha256": "131039EF4B6D5C083AA0C49ABDBDEBEAF7760E26A019F0EE6A04CA84B5FDCFA9"
     }
   ]
 }

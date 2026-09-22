@@ -41,3 +41,11 @@ EffectStartLease. The fixture now imports its enums explicitly and matches the
 error result without changing production types. A fresh run remains required.
 Preflight also detected a stale machine-readable Road summary after P2-10;
 the published marker and top-level workstream count are now reconciled.
+## Hosted acceptance 2026-09-22
+
+Corrected Grouped282 `35787943413` on
+`5dff0afb5443a708c402a1f7f9d5a92c04169e2f` passed all **282/282** exact
+selected tests. Admission verified 58 source-path hashes, matrix and Cargo.lock,
+the exact selection/execution count, every case terminal and no failed cases.
+The real W225 role-reload effect-start fixture passed. The unmodified warm-pane
+path and broader P2-14 release/GUI scope remain separate.
