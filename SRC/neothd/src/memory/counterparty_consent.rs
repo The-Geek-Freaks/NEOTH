@@ -573,8 +573,8 @@ pub(crate) fn claim_local_embedding_candidates(
     stmt.query_map(params![generation.id(), cap as i64], |row| {
         Ok((row.get(0)?, row.get(1)?))
     })?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .context("W208 select local embedding candidates")
+    .collect::<rusqlite::Result<Vec<_>>>()
+    .context("W208 select local embedding candidates")
 }
 
 /// Store a vector only after repeating the positive eligibility check inside
@@ -908,9 +908,11 @@ mod tests {
         let tx = conn.transaction().unwrap();
         assert!(store_local_episode_vector_if_eligible(&tx, 1, &generation_a, &[1.0]).unwrap());
         tx.commit().unwrap();
-        assert!(claim_local_embedding_candidates(&conn, 10, &generation_a)
-            .unwrap()
-            .is_empty());
+        assert!(
+            claim_local_embedding_candidates(&conn, 10, &generation_a)
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             claim_local_embedding_candidates(&conn, 10, &generation_b).unwrap(),
             vec![(1, "raw".to_owned())]

@@ -79,10 +79,11 @@ fn newest_media_embedding_unix(conn: &Connection, dimension: usize) -> Option<i6
     conn.query_row(
         "SELECT MAX(created_at) FROM idx_embedding \
          WHERE source_kind='image' AND model=?1 AND dim=?2",
-        rusqlite::params![crate::memory::embeddings::DEFAULT_MEDIA_EMBEDDING_MODEL, dimension as i64],
-        |r| {
-        r.get::<_, Option<i64>>(0)
-        },
+        rusqlite::params![
+            crate::memory::embeddings::DEFAULT_MEDIA_EMBEDDING_MODEL,
+            dimension as i64
+        ],
+        |r| r.get::<_, Option<i64>>(0),
     )
     .ok()
     .flatten()
@@ -111,12 +112,16 @@ pub(crate) fn refresh_snapshot_once(
     let Some(dimension) = crate::memory::embeddings::media_model_dimension(
         &conn,
         crate::memory::embeddings::DEFAULT_MEDIA_EMBEDDING_MODEL,
-    )? else {
+    )?
+    else {
         return Ok(None);
     };
     let corpus: usize = conn.query_row(
         "SELECT COUNT(*) FROM idx_embedding WHERE source_kind='image' AND model=?1 AND dim=?2",
-        rusqlite::params![crate::memory::embeddings::DEFAULT_MEDIA_EMBEDDING_MODEL, dimension as i64],
+        rusqlite::params![
+            crate::memory::embeddings::DEFAULT_MEDIA_EMBEDDING_MODEL,
+            dimension as i64
+        ],
         |row| row.get::<_, i64>(0),
     )? as usize;
     let snap = crate::memory::embeddings::hnsw_snapshot_path(neoth_home);

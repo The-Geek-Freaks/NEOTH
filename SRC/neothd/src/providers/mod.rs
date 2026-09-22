@@ -3691,15 +3691,12 @@ impl LocalEmbeddingProvider {
             return action().map(Some);
         }
 
-        crate::config::with_current_freedom_config_authority_locked(
-            &self.config_path,
-            |current| {
-                if EmbeddingSelection::from_config(current) != self.selection {
-                    return Ok(None);
-                }
-                action().map(Some)
-            },
-        )
+        crate::config::with_current_freedom_config_authority_locked(&self.config_path, |current| {
+            if EmbeddingSelection::from_config(current) != self.selection {
+                return Ok(None);
+            }
+            action().map(Some)
+        })
     }
 
     fn into_embed_provider(self) -> std::sync::Arc<dyn crate::providers::embed::EmbedProvider> {
@@ -3784,10 +3781,10 @@ fn seal_local_embedding_provider(
     generation: EmbeddingGeneration,
 ) -> Result<LocalEmbeddingProvider> {
     let selection = EmbeddingSelection::from_config(config);
-    let still_current = crate::config::with_current_freedom_config_authority_locked(
-        config_path,
-        |current| Ok(EmbeddingSelection::from_config(current) == selection),
-    )?;
+    let still_current =
+        crate::config::with_current_freedom_config_authority_locked(config_path, |current| {
+            Ok(EmbeddingSelection::from_config(current) == selection)
+        })?;
     anyhow::ensure!(
         still_current,
         "embedding configuration changed while the local provider was preparing"
@@ -4006,10 +4003,15 @@ async fn local_qwen_or_ouro_embedding_readiness(
                 Ok(adapter) => {
                     let adapter = adapter.with_quant_mode(config.inference.ouro_quant_mode);
                     match local_embedding_provider_from_ouro(config, config_path, adapter).await {
-                        Ok(provider) => LocalEmbeddingReadiness::Ready { model: selected, provider },
+                        Ok(provider) => LocalEmbeddingReadiness::Ready {
+                            model: selected,
+                            provider,
+                        },
                         Err(error) => LocalEmbeddingReadiness::Unavailable {
                             model: selected,
-                            reason: format!("local Ouro embedding generation is unavailable: {error}"),
+                            reason: format!(
+                                "local Ouro embedding generation is unavailable: {error}"
+                            ),
                         },
                     }
                 }
@@ -4036,13 +4038,20 @@ async fn local_qwen_or_ouro_embedding_readiness(
             )
             .await
             {
-                Ok(adapter) => match local_embedding_provider_from_qwen(config, config_path, adapter).await {
-                    Ok(provider) => LocalEmbeddingReadiness::Ready { model: selected, provider },
-                    Err(error) => LocalEmbeddingReadiness::Unavailable {
-                        model: selected,
-                        reason: format!("local Qwen embedding generation is unavailable: {error}"),
-                    },
-                },
+                Ok(adapter) => {
+                    match local_embedding_provider_from_qwen(config, config_path, adapter).await {
+                        Ok(provider) => LocalEmbeddingReadiness::Ready {
+                            model: selected,
+                            provider,
+                        },
+                        Err(error) => LocalEmbeddingReadiness::Unavailable {
+                            model: selected,
+                            reason: format!(
+                                "local Qwen embedding generation is unavailable: {error}"
+                            ),
+                        },
+                    }
+                }
                 Err(error) => LocalEmbeddingReadiness::Unavailable {
                     model: selected,
                     reason: format!("local Qwen embedding adapter is unavailable: {error}"),

@@ -192,9 +192,7 @@ pub async fn tail(
     loop {
         let accepted = reload_controller.accepted_snapshot();
         let accepted_epoch = accepted.epoch();
-        let cached_epoch = embedding_provider_cache
-            .as_ref()
-            .map(|(epoch, _)| *epoch);
+        let cached_epoch = embedding_provider_cache.as_ref().map(|(epoch, _)| *epoch);
         let cached_provider_unavailable = embedding_provider_cache
             .as_ref()
             .is_some_and(|(_, provider)| provider.is_none());
@@ -212,8 +210,8 @@ pub async fn tail(
                 reload_controller.source_path(),
             )
             .await;
-            next_unavailable_embedding_retry = tokio::time::Instant::now()
-                + std::time::Duration::from_secs(30);
+            next_unavailable_embedding_retry =
+                tokio::time::Instant::now() + std::time::Duration::from_secs(30);
             embedding_provider_cache = Some((accepted_epoch, provider));
         }
         match replay_all_segments_audited(&home, &mut conn, &segment_path, writer.as_ref()).await {
@@ -235,15 +233,14 @@ pub async fn tail(
         // durable A rows without waiting for another RAW frame. The provider
         // guard rejects stale A after a B config commit.
         if let Some((_, Some(provider))) = embedding_provider_cache.as_ref() {
-            let (returned_conn, stored) = crate::memory::embeddings::embed_pending_episodes(
-                conn,
-                provider,
-                64,
-            )
-            .await;
+            let (returned_conn, stored) =
+                crate::memory::embeddings::embed_pending_episodes(conn, provider, 64).await;
             conn = returned_conn;
             if stored > 0 {
-                debug!(stored, "indexer auto-embedded current-generation episodes (W212)");
+                debug!(
+                    stored,
+                    "indexer auto-embedded current-generation episodes (W212)"
+                );
             }
         }
         tokio::time::sleep(interval).await;
@@ -257,8 +254,7 @@ fn should_refresh_embedding_provider(
     now: tokio::time::Instant,
     retry_at: tokio::time::Instant,
 ) -> bool {
-    cached_epoch != Some(accepted_epoch)
-        || (cached_provider_unavailable && now >= retry_at)
+    cached_epoch != Some(accepted_epoch) || (cached_provider_unavailable && now >= retry_at)
 }
 
 /// Index every `.wal` file in `seed.parent()` (plus `seed` itself if the
@@ -614,10 +610,18 @@ mod tests {
     fn unavailable_embedding_provider_retries_after_bounded_backoff() {
         let now = tokio::time::Instant::now();
         assert!(should_refresh_embedding_provider(
-            Some(7), true, 7, now, now,
+            Some(7),
+            true,
+            7,
+            now,
+            now,
         ));
         assert!(!should_refresh_embedding_provider(
-            Some(7), true, 7, now, now + std::time::Duration::from_secs(30),
+            Some(7),
+            true,
+            7,
+            now,
+            now + std::time::Duration::from_secs(30),
         ));
     }
 
@@ -625,7 +629,11 @@ mod tests {
     fn embedding_provider_refreshes_on_accepted_generation_change() {
         let now = tokio::time::Instant::now();
         assert!(should_refresh_embedding_provider(
-            Some(7), false, 8, now, now + std::time::Duration::from_secs(30),
+            Some(7),
+            false,
+            8,
+            now,
+            now + std::time::Duration::from_secs(30),
         ));
     }
 

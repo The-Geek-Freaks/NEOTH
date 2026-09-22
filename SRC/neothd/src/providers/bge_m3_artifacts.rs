@@ -156,10 +156,8 @@ impl BgeM3Artifacts {
     /// Verify every exact manifest byte and mint the only capability accepted
     /// by the local BGE-M3 adapter. This has no downloader side effect.
     pub(crate) fn verify(self) -> Result<VerifiedBgeM3Artifacts> {
-        let health = crate::media::model_manager::verified_cache_health(
-            &self.cache_dir,
-            REQUIRED_ARTIFACTS,
-        );
+        let health =
+            crate::media::model_manager::verified_cache_health(&self.cache_dir, REQUIRED_ARTIFACTS);
         if !health.is_ready() {
             bail!("BGE-M3 cache is not verified: {health}");
         }

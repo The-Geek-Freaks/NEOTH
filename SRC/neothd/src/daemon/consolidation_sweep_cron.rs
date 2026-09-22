@@ -164,13 +164,8 @@ pub fn spawn_consolidation_sweep_cron_loop(
         );
         loop {
             ticker.tick().await;
-            let report = run_consolidation_sweep_tick(
-                &db_path,
-                config,
-                &writer,
-                provider.clone(),
-            )
-            .await;
+            let report =
+                run_consolidation_sweep_tick(&db_path, config, &writer, provider.clone()).await;
             tracing::info!(
                 clusters_found = report.clusters_found,
                 members_boosted = report.members_boosted,
@@ -258,14 +253,13 @@ mod tests {
         let seg = seg_dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
 
-        let report =
-            run_consolidation_sweep_tick(
-                &db_path,
-                ConsolidationSweepConfig::default(),
-                &writer,
-                None,
-            )
-                .await;
+        let report = run_consolidation_sweep_tick(
+            &db_path,
+            ConsolidationSweepConfig::default(),
+            &writer,
+            None,
+        )
+        .await;
 
         assert_eq!(report.clusters_found, 0);
         assert_eq!(report.members_boosted, 0);

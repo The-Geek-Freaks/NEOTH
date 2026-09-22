@@ -5270,6 +5270,9 @@ mod tests {
             .collect::<rusqlite::Result<_>>()
             .unwrap();
         assert_eq!(generations, vec!["legacy-unknown-v0"; 3]);
-        assert!(sqlite_object_exists(&conn, "idx_embedding_episode_generation"));
+        assert!(sqlite_object_exists(
+            &conn,
+            "idx_embedding_episode_generation"
+        ));
     }
 }

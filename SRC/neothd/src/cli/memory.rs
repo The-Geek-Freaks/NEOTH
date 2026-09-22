@@ -1669,8 +1669,9 @@ async fn run_memory_rebuild_index(args: &MemoryArgs) -> Result<()> {
     let neoth_home = FreedomConfig::default_neoth_home();
     let index_path = embeddings::hnsw_snapshot_path(&neoth_home);
 
-    let dimension = embeddings::media_model_dimension(&conn, embeddings::DEFAULT_MEDIA_EMBEDDING_MODEL)?
-        .ok_or_else(|| anyhow::anyhow!("no CLIP media vectors exist to rebuild"))?;
+    let dimension =
+        embeddings::media_model_dimension(&conn, embeddings::DEFAULT_MEDIA_EMBEDDING_MODEL)?
+            .ok_or_else(|| anyhow::anyhow!("no CLIP media vectors exist to rebuild"))?;
     let n = tokio::task::spawn_blocking(move || {
         // This operator command historically maintains the CLIP media cache.
         // Episode vectors require an active sealed provider and are rebuilt by
@@ -1685,8 +1686,8 @@ async fn run_memory_rebuild_index(args: &MemoryArgs) -> Result<()> {
             },
         )
     })
-        .await
-        .context("spawn_blocking for rebuild_index")??;
+    .await
+    .context("spawn_blocking for rebuild_index")??;
 
     match args.output {
         crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
@@ -1734,7 +1735,8 @@ async fn run_memory_embed_backfill(args: &MemoryArgs) -> Result<()> {
         &home,
         &config_path,
     )
-    .await {
+    .await
+    {
         Some(p) => p,
         None => {
             println!(
@@ -1752,7 +1754,8 @@ async fn run_memory_embed_backfill(args: &MemoryArgs) -> Result<()> {
         args.limit
     };
     let total_candidates = embeddings::pending_episode_texts(&conn, &provider, candidate_cap).len();
-    let (_conn, newly_embedded) = embeddings::embed_pending_episodes(conn, &provider, candidate_cap).await;
+    let (_conn, newly_embedded) =
+        embeddings::embed_pending_episodes(conn, &provider, candidate_cap).await;
     if total_candidates == 0 {
         println!("no eligible episodes needed the current embedding generation.");
         return Ok(());

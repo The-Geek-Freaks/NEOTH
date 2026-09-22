@@ -87,7 +87,11 @@ pub struct SimilarHit {
 #[derive(Clone, Copy)]
 pub(crate) enum VectorQueryScope<'a> {
     Episode(&'a crate::providers::LocalEmbeddingProvider),
-    MediaModel { source_kind: Option<&'a str>, model: &'a str, dimension: usize },
+    MediaModel {
+        source_kind: Option<&'a str>,
+        model: &'a str,
+        dimension: usize,
+    },
 }
 
 /// Persisted identity of the only vector space an HNSW snapshot may contain.
@@ -113,7 +117,11 @@ impl SnapshotScope {
                     dimension: generation.dimension(),
                 }
             }
-            VectorQueryScope::MediaModel { source_kind, model, dimension } => Self {
+            VectorQueryScope::MediaModel {
+                source_kind,
+                model,
+                dimension,
+            } => Self {
                 source_kind: source_kind.map(str::to_owned),
                 model: model.to_owned(),
                 generation: None,
@@ -145,7 +153,6 @@ impl SnapshotScope {
             _ => false,
         }
     }
-
 }
 
 /// Exact scoped SQLite search.  Episode rows require the sealed active
@@ -171,7 +178,13 @@ fn find_similar_scoped_inner(
     scope: VectorQueryScope<'_>,
     top_k: usize,
 ) -> Result<Vec<SimilarHit>> {
-    if matches!(scope, VectorQueryScope::MediaModel { source_kind: Some("episode"), .. }) {
+    if matches!(
+        scope,
+        VectorQueryScope::MediaModel {
+            source_kind: Some("episode"),
+            ..
+        }
+    ) {
         return Ok(Vec::new());
     }
     if top_k == 0 || query.is_empty() || query.iter().any(|v| !v.is_finite()) {
@@ -180,12 +193,25 @@ fn find_similar_scoped_inner(
     let (kind, model, generation, dimension) = match scope {
         VectorQueryScope::Episode(provider) => {
             let generation = provider.generation();
-            if query.len() != generation.dimension() { return Ok(Vec::new()); }
-            (Some("episode"), generation.expected_model(), Some(generation.id()), generation.dimension())
+            if query.len() != generation.dimension() {
+                return Ok(Vec::new());
+            }
+            (
+                Some("episode"),
+                generation.expected_model(),
+                Some(generation.id()),
+                generation.dimension(),
+            )
         }
-        VectorQueryScope::MediaModel { source_kind, model, dimension } => (source_kind, model, None, dimension),
+        VectorQueryScope::MediaModel {
+            source_kind,
+            model,
+            dimension,
+        } => (source_kind, model, None, dimension),
     };
-    if query.len() != dimension { return Ok(Vec::new()); }
+    if query.len() != dimension {
+        return Ok(Vec::new());
+    }
     let mut stmt = if generation.is_some() {
         conn.prepare("SELECT id,source_kind,source_ref,model,embedding,dim,created_at FROM idx_embedding WHERE source_kind=?1 AND model=?2 AND generation=?3 AND dim=?4")?
     } else if kind.is_some() {
@@ -194,30 +220,55 @@ fn find_similar_scoped_inner(
         conn.prepare("SELECT id,source_kind,source_ref,model,embedding,dim,created_at FROM idx_embedding WHERE source_kind != 'episode' AND model=?1 AND dim=?2")?
     };
     let rows = if let Some(generation) = generation {
-        stmt.query_map(rusqlite::params![kind, model, generation, query.len() as i64], decode_raw_row)?
-            .collect::<rusqlite::Result<Vec<_>>>()?
+        stmt.query_map(
+            rusqlite::params![kind, model, generation, query.len() as i64],
+            decode_raw_row,
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?
     } else if let Some(kind) = kind {
-        stmt.query_map(rusqlite::params![kind, model, query.len() as i64], decode_raw_row)?
-            .collect::<rusqlite::Result<Vec<_>>>()?
+        stmt.query_map(
+            rusqlite::params![kind, model, query.len() as i64],
+            decode_raw_row,
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?
     } else {
         stmt.query_map(rusqlite::params![model, query.len() as i64], decode_raw_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
     if rows.len() > BRUTE_FORCE_CEILING
-        && BRUTE_FORCE_CEILING_WARNED.compare_exchange(
-            false, true,
-            std::sync::atomic::Ordering::AcqRel,
-            std::sync::atomic::Ordering::Acquire,
-        ).is_ok()
+        && BRUTE_FORCE_CEILING_WARNED
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .is_ok()
     {
-        tracing::warn!(rows = rows.len(), "scoped vector corpus exceeds brute-force ceiling; consider HNSW");
+        tracing::warn!(
+            rows = rows.len(),
+            "scoped vector corpus exceeds brute-force ceiling; consider HNSW"
+        );
     }
-    let mut hits: Vec<_> = rows.into_iter().filter_map(|raw| {
-        let vec = blob_to_floats(&raw.blob, query.len())?;
-        Some(SimilarHit { id: raw.id, source_kind: raw.source_kind, source_ref: raw.source_ref,
-            model: raw.model, similarity: dot(query, &vec), created_at: raw.created_at })
-    }).collect();
-    hits.sort_by(|a,b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+    let mut hits: Vec<_> = rows
+        .into_iter()
+        .filter_map(|raw| {
+            let vec = blob_to_floats(&raw.blob, query.len())?;
+            Some(SimilarHit {
+                id: raw.id,
+                source_kind: raw.source_kind,
+                source_ref: raw.source_ref,
+                model: raw.model,
+                similarity: dot(query, &vec),
+                created_at: raw.created_at,
+            })
+        })
+        .collect();
+    hits.sort_by(|a, b| {
+        b.similarity
+            .partial_cmp(&a.similarity)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     hits.truncate(top_k);
     Ok(filter_revoked_episode_hits(conn, hits))
 }
@@ -233,7 +284,8 @@ fn find_similar_scoped_inner(
 /// the operator.
 pub const BRUTE_FORCE_CEILING: usize = 50_000;
 /// The existing media-recall lane stores CLIP vectors under this model label.
-pub(crate) const DEFAULT_MEDIA_EMBEDDING_MODEL: &str = crate::providers::clip_engine::DEFAULT_CLIP_REPO;
+pub(crate) const DEFAULT_MEDIA_EMBEDDING_MODEL: &str =
+    crate::providers::clip_engine::DEFAULT_CLIP_REPO;
 
 /// Return the one persisted media dimension for `model`. A mixed historical
 /// media space is rejected: choosing one dimension silently would make a
@@ -249,7 +301,9 @@ pub(crate) fn media_model_dimension(conn: &Connection, model: &str) -> Result<Op
         [] => Ok(None),
         [dimension] if *dimension > 0 => Ok(Some(*dimension as usize)),
         [dimension] => anyhow::bail!("invalid media embedding dimension {dimension}"),
-        _ => anyhow::bail!("media model {model} has multiple dimensions; refusing ambiguous HNSW scope"),
+        _ => anyhow::bail!(
+            "media model {model} has multiple dimensions; refusing ambiguous HNSW scope"
+        ),
     }
 }
 
@@ -388,7 +442,9 @@ pub(crate) fn find_similar_dispatch(
 ) -> Result<Vec<SimilarHit>> {
     if let VectorQueryScope::Episode(provider) = scope {
         return Ok(provider
-            .with_current_config(|| find_similar_dispatch_inner(conn, query, scope, top_k, hnsw_path))?
+            .with_current_config(|| {
+                find_similar_dispatch_inner(conn, query, scope, top_k, hnsw_path)
+            })?
             .unwrap_or_default());
     }
     find_similar_dispatch_inner(conn, query, scope, top_k, hnsw_path)
@@ -401,7 +457,13 @@ fn find_similar_dispatch_inner(
     top_k: usize,
     hnsw_path: Option<&Path>,
 ) -> Result<Vec<SimilarHit>> {
-    if matches!(scope, VectorQueryScope::MediaModel { source_kind: Some("episode"), .. }) {
+    if matches!(
+        scope,
+        VectorQueryScope::MediaModel {
+            source_kind: Some("episode"),
+            ..
+        }
+    ) {
         return Ok(Vec::new());
     }
     let expected_scope = SnapshotScope::from_query(scope);
@@ -409,44 +471,44 @@ fn find_similar_dispatch_inner(
         return Ok(Vec::new());
     }
     if let Some(path) = hnsw_path {
-            // Cold load: O(N log N) deserialize + HNSW graph rebuild, paid per
-            // CLI query until the WIRE-07b warm daemon index lands. The caller
-            // (recall) only passes `Some(path)` once the corpus exceeds the
-            // brute-force ceiling, so this cost is only borne where brute-force
-            // would itself be slow.
-            match EmbeddingIndex::load(path) {
-                Ok(Some(idx)) if !idx.is_empty() && idx.scope == expected_scope => {
-                    let hits = idx.find_similar_hnsw(query, top_k);
-                    let hits = filter_revoked_episode_hits(conn, hits);
-                    if hits.len() == top_k {
-                        return Ok(hits);
-                    }
-                    tracing::debug!(
-                        returned = hits.len(),
-                        requested = top_k,
-                        "GOLD-WIRE-07: HNSW hit(s) denied by current eligibility; brute-force fallback"
-                    );
+        // Cold load: O(N log N) deserialize + HNSW graph rebuild, paid per
+        // CLI query until the WIRE-07b warm daemon index lands. The caller
+        // (recall) only passes `Some(path)` once the corpus exceeds the
+        // brute-force ceiling, so this cost is only borne where brute-force
+        // would itself be slow.
+        match EmbeddingIndex::load(path) {
+            Ok(Some(idx)) if !idx.is_empty() && idx.scope == expected_scope => {
+                let hits = idx.find_similar_hnsw(query, top_k);
+                let hits = filter_revoked_episode_hits(conn, hits);
+                if hits.len() == top_k {
+                    return Ok(hits);
                 }
-                Ok(None) => {
-                    tracing::warn!(
-                        path = %path.display(),
-                        "GOLD-WIRE-07: backend=hnsw but no snapshot exists — \
-                         run `neoth memory --rebuild-index`. Using brute-force for this query."
-                    );
-                }
-                Ok(Some(_)) => {
-                    tracing::debug!(
-                        path = %path.display(),
-                        "W212: HNSW snapshot is empty or belongs to another exact vector space; scoped SQLite fallback"
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "GOLD-WIRE-07: HNSW snapshot load failed; brute-force fallback"
-                    );
-                }
+                tracing::debug!(
+                    returned = hits.len(),
+                    requested = top_k,
+                    "GOLD-WIRE-07: HNSW hit(s) denied by current eligibility; brute-force fallback"
+                );
             }
+            Ok(None) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    "GOLD-WIRE-07: backend=hnsw but no snapshot exists — \
+                     run `neoth memory --rebuild-index`. Using brute-force for this query."
+                );
+            }
+            Ok(Some(_)) => {
+                tracing::debug!(
+                    path = %path.display(),
+                    "W212: HNSW snapshot is empty or belongs to another exact vector space; scoped SQLite fallback"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "GOLD-WIRE-07: HNSW snapshot load failed; brute-force fallback"
+                );
+            }
+        }
     }
     find_similar_scoped_inner(conn, query, scope, top_k)
 }
@@ -915,7 +977,10 @@ impl EmbeddingIndex {
         );
         for (meta, vec) in snapshot.entries {
             if !idx.scope.accepts_entry(&meta, &vec) {
-                anyhow::bail!("reject HNSW snapshot entry outside its declared scope: {}", path.display());
+                anyhow::bail!(
+                    "reject HNSW snapshot entry outside its declared scope: {}",
+                    path.display()
+                );
             }
             idx.add(
                 meta.id,
@@ -962,7 +1027,14 @@ impl EmbeddingIndex {
             .context("prepare build_from_sqlite query")?;
 
         let rows: Vec<BuildRow> = stmt
-                .query_map(rusqlite::params![&scope.source_kind, &scope.model, scope.dimension as i64, &scope.generation], |r| {
+            .query_map(
+                rusqlite::params![
+                    &scope.source_kind,
+                    &scope.model,
+                    scope.dimension as i64,
+                    &scope.generation
+                ],
+                |r| {
                     Ok((
                         r.get(0)?,
                         r.get(1)?,
@@ -972,9 +1044,10 @@ impl EmbeddingIndex {
                         r.get(5)?,
                         r.get(6)?,
                     ))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .context("scan exact scoped idx_embedding for build_from_sqlite")?;
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("scan exact scoped idx_embedding for build_from_sqlite")?;
 
         let mut skipped = 0usize;
 
@@ -1081,7 +1154,9 @@ pub fn rebuild_snapshot_if_present(conn: &Connection, neoth_home: &Path) -> Resu
     let prior = EmbeddingIndex::load(&path).ok().flatten();
     std::fs::remove_file(&path)
         .with_context(|| format!("invalidate stale HNSW snapshot: {}", path.display()))?;
-    let Some(prior) = prior else { return Ok(Some(0)); };
+    let Some(prior) = prior else {
+        return Ok(Some(0));
+    };
     // A media snapshot already records an explicit non-episode scope, so the
     // forget path can safely preserve its established contract. Episode
     // snapshots need a current sealed provider authority and stay absent here.
@@ -1168,11 +1243,13 @@ pub(crate) fn pending_episode_texts(
     provider: &crate::providers::LocalEmbeddingProvider,
     cap: usize,
 ) -> Vec<(i64, String)> {
-    match provider
-        .with_current_config(|| crate::memory::counterparty_consent::claim_local_embedding_candidates(
-            conn, cap, provider.generation(),
-        ))
-    {
+    match provider.with_current_config(|| {
+        crate::memory::counterparty_consent::claim_local_embedding_candidates(
+            conn,
+            cap,
+            provider.generation(),
+        )
+    }) {
         Ok(Some(pending)) => pending,
         Ok(None) => Vec::new(),
         Err(error) => {
@@ -1193,7 +1270,11 @@ pub(crate) async fn embed_one(
     if text.is_empty() {
         return None;
     }
-    let resp = match embed_provider.as_embed_provider().embed(EmbedRequest::new(text)).await {
+    let resp = match embed_provider
+        .as_embed_provider()
+        .embed(EmbedRequest::new(text))
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(error = %e, "embed_one: provider failed; skipping vector lane");
@@ -1228,7 +1309,10 @@ pub(crate) fn store_episode_vector(
         let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)
             .context("begin immediate W208 episode-vector transaction")?;
         let stored = crate::memory::counterparty_consent::store_local_episode_vector_if_eligible(
-            &tx, event_id, local_backend.generation(), vector,
+            &tx,
+            event_id,
+            local_backend.generation(),
+            vector,
         )?;
         tx.commit()
             .context("commit W208 episode-vector transaction")?;
@@ -1373,7 +1457,11 @@ mod tests {
     }
 
     fn clip_scope(dimension: usize) -> VectorQueryScope<'static> {
-        VectorQueryScope::MediaModel { source_kind: Some("image"), model: DEFAULT_MEDIA_EMBEDDING_MODEL, dimension }
+        VectorQueryScope::MediaModel {
+            source_kind: Some("image"),
+            model: DEFAULT_MEDIA_EMBEDDING_MODEL,
+            dimension,
+        }
     }
 
     fn test_index(dimension: usize) -> EmbeddingIndex {
@@ -1393,7 +1481,14 @@ mod tests {
             v[i % 8] = 1.0;
             v[(i + 1) % 8] = 0.5;
             let v = unit(v);
-            upsert(conn, kind, &format!("{kind}-{i}.png"), DEFAULT_MEDIA_EMBEDDING_MODEL, &v).unwrap();
+            upsert(
+                conn,
+                kind,
+                &format!("{kind}-{i}.png"),
+                DEFAULT_MEDIA_EMBEDDING_MODEL,
+                &v,
+            )
+            .unwrap();
         }
     }
 
@@ -1410,9 +1505,30 @@ mod tests {
         // on-disk HNSW snapshot keeps the forgotten vectors searchable until a
         // rebuild. Prove rebuild_snapshot_if_present purges them.
         let conn = open_with_schema();
-        upsert(&conn, "image", "secret-doc.png", DEFAULT_MEDIA_EMBEDDING_MODEL, &q8(1.0, 0.0)).unwrap();
-        upsert(&conn, "image", "secret-note.png", DEFAULT_MEDIA_EMBEDDING_MODEL, &q8(0.0, 1.0)).unwrap();
-        upsert(&conn, "image", "public-doc.png", DEFAULT_MEDIA_EMBEDDING_MODEL, &q8(0.5, 0.5)).unwrap();
+        upsert(
+            &conn,
+            "image",
+            "secret-doc.png",
+            DEFAULT_MEDIA_EMBEDDING_MODEL,
+            &q8(1.0, 0.0),
+        )
+        .unwrap();
+        upsert(
+            &conn,
+            "image",
+            "secret-note.png",
+            DEFAULT_MEDIA_EMBEDDING_MODEL,
+            &q8(0.0, 1.0),
+        )
+        .unwrap();
+        upsert(
+            &conn,
+            "image",
+            "public-doc.png",
+            DEFAULT_MEDIA_EMBEDDING_MODEL,
+            &q8(0.5, 0.5),
+        )
+        .unwrap();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         // Initial snapshot holds all three.
@@ -1437,7 +1553,11 @@ mod tests {
             "snapshot still holds forgotten vectors before the rebuild"
         );
         let invalidated = rebuild_snapshot_if_present(&conn, home).unwrap();
-        assert_eq!(invalidated, Some(0), "forget invalidates the old scoped snapshot");
+        assert_eq!(
+            invalidated,
+            Some(0),
+            "forget invalidates the old scoped snapshot"
+        );
         assert!(
             !hnsw_snapshot_path(home).exists(),
             "a forget path has no authority to rebuild an ambiguous vector space"
@@ -1461,7 +1581,10 @@ mod tests {
         let path = hnsw_snapshot_path(dir.path());
         std::fs::write(&path, b"stale-forgotten-vector-snapshot").unwrap();
 
-        assert_eq!(rebuild_snapshot_if_present(&conn, dir.path()).unwrap(), Some(0));
+        assert_eq!(
+            rebuild_snapshot_if_present(&conn, dir.path()).unwrap(),
+            Some(0)
+        );
         assert!(
             !path.exists(),
             "invalidating a stale snapshot never needs an unrelated SQLite rebuild"
@@ -1502,7 +1625,10 @@ mod tests {
             "INSERT INTO idx_embedding \
              (source_kind,source_ref,model,generation,embedding,dim,created_at) \
              VALUES ('episode','episode-1',?2,'another-generation',?1,8,1)",
-            rusqlite::params![floats_to_blob(&unit(query.clone())), DEFAULT_MEDIA_EMBEDDING_MODEL],
+            rusqlite::params![
+                floats_to_blob(&unit(query.clone())),
+                DEFAULT_MEDIA_EMBEDDING_MODEL
+            ],
         )
         .unwrap();
 
@@ -1525,18 +1651,20 @@ mod tests {
                 .len(),
             1
         );
-        assert!(find_similar_scoped(
-            &conn,
-            &query,
-            VectorQueryScope::MediaModel {
-                source_kind: Some("episode"),
-                model: DEFAULT_MEDIA_EMBEDDING_MODEL,
-                dimension: 8,
-            },
-            10,
-        )
-        .unwrap()
-        .is_empty());
+        assert!(
+            find_similar_scoped(
+                &conn,
+                &query,
+                VectorQueryScope::MediaModel {
+                    source_kind: Some("episode"),
+                    model: DEFAULT_MEDIA_EMBEDDING_MODEL,
+                    dimension: 8,
+                },
+                10,
+            )
+            .unwrap()
+            .is_empty()
+        );
     }
 
     #[test]
@@ -1550,7 +1678,14 @@ mod tests {
 
         let conn = open_with_schema();
         let query = q8(1.0, 0.0);
-        upsert(&conn, "image", "current.png", DEFAULT_MEDIA_EMBEDDING_MODEL, &query).unwrap();
+        upsert(
+            &conn,
+            "image",
+            "current.png",
+            DEFAULT_MEDIA_EMBEDDING_MODEL,
+            &query,
+        )
+        .unwrap();
         let legacy = LegacyIndexSnapshot {
             max_nb_connection: HNSW_M,
             ef_construction: HNSW_EF_CONSTRUCTION,
@@ -1561,7 +1696,12 @@ mod tests {
         std::fs::write(&path, bincode::serialize(&legacy).unwrap()).unwrap();
 
         let hits = find_similar_dispatch(&conn, &query, clip_scope(8), 1, Some(&path)).unwrap();
-        assert_eq!(hits.iter().map(|hit| hit.source_ref.as_str()).collect::<Vec<_>>(), vec!["current.png"]);
+        assert_eq!(
+            hits.iter()
+                .map(|hit| hit.source_ref.as_str())
+                .collect::<Vec<_>>(),
+            vec!["current.png"]
+        );
     }
 
     #[test]
@@ -1576,7 +1716,10 @@ mod tests {
             generation: Some("generation-b".to_owned()),
             ..current.clone()
         };
-        assert_ne!(current, retained, "same dimension never proves generation compatibility");
+        assert_ne!(
+            current, retained,
+            "same dimension never proves generation compatibility"
+        );
     }
 
     #[test]
@@ -1612,7 +1755,8 @@ mod tests {
 
         let empty = open_with_schema();
         let q = q8(1.0, 0.5);
-        let hits = find_similar_dispatch(&empty, &q, clip_scope(8), 5, Some(path.as_path())).unwrap();
+        let hits =
+            find_similar_dispatch(&empty, &q, clip_scope(8), 5, Some(path.as_path())).unwrap();
         assert!(
             !hits.is_empty(),
             "HNSW snapshot must be searched even when the conn is empty"
@@ -1671,7 +1815,8 @@ mod tests {
         std::fs::write(&path, b"not a valid bincode snapshot").unwrap();
         let q = q8(1.0, 0.0);
         // Corrupt snapshot must degrade to brute-force, NOT return Err.
-        let hits = find_similar_dispatch(&conn, &q, clip_scope(8), 3, Some(path.as_path())).unwrap();
+        let hits =
+            find_similar_dispatch(&conn, &q, clip_scope(8), 3, Some(path.as_path())).unwrap();
         let direct = find_similar(&conn, &q, None, 3).unwrap();
         assert_eq!(hits.len(), direct.len());
     }
@@ -1700,7 +1845,14 @@ mod tests {
                 .map(|j| (((i * 31 + j * 7 + 1) % 17) as f32) + 0.1)
                 .collect();
             let v = unit(v);
-            upsert(conn, kind, &format!("{kind}-{i}.png"), DEFAULT_MEDIA_EMBEDDING_MODEL, &v).unwrap();
+            upsert(
+                conn,
+                kind,
+                &format!("{kind}-{i}.png"),
+                DEFAULT_MEDIA_EMBEDDING_MODEL,
+                &v,
+            )
+            .unwrap();
         }
     }
 
@@ -1719,7 +1871,8 @@ mod tests {
 
         let empty = open_with_schema();
         let query = unit((0..16).map(|j| ((j * 7 + 1) % 17) as f32 + 0.1).collect());
-        let hits = find_similar_dispatch(&empty, &query, clip_scope(16), 10, Some(path.as_path())).unwrap();
+        let hits = find_similar_dispatch(&empty, &query, clip_scope(16), 10, Some(path.as_path()))
+            .unwrap();
         assert!(!hits.is_empty(), "real HNSW graph search must return hits");
         for w in hits.windows(2) {
             assert!(w[0].similarity >= w[1].similarity);
@@ -1998,8 +2151,22 @@ mod tests {
 
         {
             let mut idx = test_index(3);
-            idx.add(1, "image", "a.png", DEFAULT_MEDIA_EMBEDDING_MODEL, &v_a, 1000);
-            idx.add(2, "image", "b.png", DEFAULT_MEDIA_EMBEDDING_MODEL, &v_b, 1001);
+            idx.add(
+                1,
+                "image",
+                "a.png",
+                DEFAULT_MEDIA_EMBEDDING_MODEL,
+                &v_a,
+                1000,
+            );
+            idx.add(
+                2,
+                "image",
+                "b.png",
+                DEFAULT_MEDIA_EMBEDDING_MODEL,
+                &v_b,
+                1001,
+            );
             idx.save(&path).expect("save must succeed");
         }
 
@@ -2025,8 +2192,15 @@ mod tests {
             v[(i % 8) as usize] = 1.0;
             upsert(&conn, "image", &format!("doc{i}"), "model", &v).unwrap();
         }
-        let idx =
-            EmbeddingIndex::build_from_sqlite(&conn, VectorQueryScope::MediaModel { source_kind: Some("image"), model: "model", dimension: 8 }).expect("build from sqlite must succeed");
+        let idx = EmbeddingIndex::build_from_sqlite(
+            &conn,
+            VectorQueryScope::MediaModel {
+                source_kind: Some("image"),
+                model: "model",
+                dimension: 8,
+            },
+        )
+        .expect("build from sqlite must succeed");
         assert_eq!(idx.len(), 100, "all 100 rows must be indexed");
     }
 
@@ -2102,8 +2276,22 @@ mod tests {
     fn hnsw_search_breaks_exact_score_and_time_ties_by_row_id() {
         let mut idx = test_index(3);
         let vector = unit(vec![1.0, 0.0, 0.0]);
-        idx.add(9, "image", "later-id.png", DEFAULT_MEDIA_EMBEDDING_MODEL, &vector, 42);
-        idx.add(3, "image", "earlier-id.png", DEFAULT_MEDIA_EMBEDDING_MODEL, &vector, 42);
+        idx.add(
+            9,
+            "image",
+            "later-id.png",
+            DEFAULT_MEDIA_EMBEDDING_MODEL,
+            &vector,
+            42,
+        );
+        idx.add(
+            3,
+            "image",
+            "earlier-id.png",
+            DEFAULT_MEDIA_EMBEDDING_MODEL,
+            &vector,
+            42,
+        );
 
         let hits = idx.find_similar_hnsw(&vector, 2);
         assert_eq!(
@@ -2335,8 +2523,12 @@ mod tests {
         }
         #[async_trait::async_trait]
         impl crate::providers::embed::EmbedProvider for InvalidEmbed {
-            fn name(&self) -> &'static str { "expected-local-model" }
-            fn default_dim(&self) -> usize { 2 }
+            fn name(&self) -> &'static str {
+                "expected-local-model"
+            }
+            fn default_dim(&self) -> usize {
+                2
+            }
             async fn embed(
                 &self,
                 _request: crate::providers::embed::EmbedRequest,
@@ -2383,16 +2575,32 @@ mod tests {
         let scope = VectorQueryScope::Episode(&provider);
         let snapshot = dir.path().join("embeddings.hnsw");
         assert_eq!(rebuild_index(&conn, &snapshot, scope).unwrap(), 1);
-        assert_eq!(find_similar_scoped(&conn, &query, scope, 1).unwrap().len(), 1);
-        assert_eq!(find_similar_dispatch(&conn, &query, scope, 1, Some(&snapshot)).unwrap().len(), 1);
+        assert_eq!(
+            find_similar_scoped(&conn, &query, scope, 1).unwrap().len(),
+            1
+        );
+        assert_eq!(
+            find_similar_dispatch(&conn, &query, scope, 1, Some(&snapshot))
+                .unwrap()
+                .len(),
+            1
+        );
 
         crate::config::FreedomConfig::update_at(&config_path, |config| {
             config.embed.model = crate::config::embedding::EmbeddingModel::BgeM3;
             Ok(())
         })
         .unwrap();
-        assert!(find_similar_scoped(&conn, &query, scope, 1).unwrap().is_empty());
-        assert!(find_similar_dispatch(&conn, &query, scope, 1, Some(&snapshot)).unwrap().is_empty());
+        assert!(
+            find_similar_scoped(&conn, &query, scope, 1)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            find_similar_dispatch(&conn, &query, scope, 1, Some(&snapshot))
+                .unwrap()
+                .is_empty()
+        );
         assert!(!store_episode_vector(&conn, 42, &[0.0, 1.0], &provider));
         assert_eq!(count(&conn).unwrap(), 1);
         let retained: Vec<u8> = conn.query_row(

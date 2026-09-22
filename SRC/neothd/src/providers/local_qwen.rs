@@ -13,8 +13,8 @@
 //! Local Qwen3-4B at INT4 fits in ~3 GB VRAM (or RAM with CPU inference)
 //! and keeps the analysis on the operator's hardware.
 
-use std::path::{Path, PathBuf};
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -1406,11 +1406,8 @@ impl LocalQwenAdapter {
         let accelerator = self.accelerator;
         let repo = self.repo.clone();
         tokio::task::spawn_blocking(move || {
-            let digest_before = embedding_input_digest(
-                &config_path,
-                &tokenizer_path,
-                &weights_path,
-            )?;
+            let digest_before =
+                embedding_input_digest(&config_path, &tokenizer_path, &weights_path)?;
             ensure_embed_loaded(
                 &loaded_embed,
                 &tokenizer_path,
@@ -1428,11 +1425,8 @@ impl LocalQwenAdapter {
                     .ok_or_else(|| anyhow::anyhow!("Qwen embed load completed without model"))?;
                 (loaded.hidden_size, loaded.artifact_digest.clone())
             };
-            let digest_after = embedding_input_digest(
-                &config_path,
-                &tokenizer_path,
-                &weights_path,
-            )?;
+            let digest_after =
+                embedding_input_digest(&config_path, &tokenizer_path, &weights_path)?;
             ensure_generation_digest_matches(&digest_before, &loaded_digest, &digest_after)?;
             Ok(QwenEmbeddingGeneration {
                 model: repo,

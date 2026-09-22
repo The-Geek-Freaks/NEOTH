@@ -3754,10 +3754,15 @@ pub(crate) fn spawn_consolidation_sweep_cron(
             )
             .await
             {
-                Some(provider) => crate::daemon::consolidation_sweep_cron::run_consolidation_sweep_tick(
-                    &db_path, live_cfg, &writer, Some(provider),
-                )
-                .await,
+                Some(provider) => {
+                    crate::daemon::consolidation_sweep_cron::run_consolidation_sweep_tick(
+                        &db_path,
+                        live_cfg,
+                        &writer,
+                        Some(provider),
+                    )
+                    .await
+                }
                 None => {
                     tracing::debug!(
                         "consolidation-sweep skipped: accepted embedding generation is unavailable"

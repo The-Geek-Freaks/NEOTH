@@ -208,22 +208,26 @@ fn run_sweep_for_generation(
                 (o.origin_kind='channel_bound' AND c.state='verified_granted'))",
         )?;
         stmt.query_map(
-            params![generation.id(), generation.expected_model(), generation.dimension() as i64],
+            params![
+                generation.id(),
+                generation.expected_model(),
+                generation.dimension() as i64
+            ],
             |r| {
-            let source_ref: String = r.get(0)?;
-            let blob: Vec<u8> = r.get(1)?;
-            let origin_kind: String = r.get(2)?;
-            let channel_id: Option<String> = r.get(3)?;
-            let account_id: Option<String> = r.get(4)?;
-            let scoped_sender_hash: Option<String> = r.get(5)?;
-            Ok((
-                source_ref,
-                blob,
-                origin_kind,
-                channel_id,
-                account_id,
-                scoped_sender_hash,
-            ))
+                let source_ref: String = r.get(0)?;
+                let blob: Vec<u8> = r.get(1)?;
+                let origin_kind: String = r.get(2)?;
+                let channel_id: Option<String> = r.get(3)?;
+                let account_id: Option<String> = r.get(4)?;
+                let scoped_sender_hash: Option<String> = r.get(5)?;
+                Ok((
+                    source_ref,
+                    blob,
+                    origin_kind,
+                    channel_id,
+                    account_id,
+                    scoped_sender_hash,
+                ))
             },
         )?
         .filter_map(|res| {
@@ -446,7 +450,6 @@ fn run_sweep_for_generation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::OptionalExtension;
     use crate::memory::counterparty_consent::{
         OriginFrameWitness, parse_channel_origin_receipt, parse_local_origin_receipt,
         project_origin, serialize_channel_origin_receipt, serialize_local_origin_receipt,
@@ -454,6 +457,7 @@ mod tests {
     use crate::memory::store;
     use crate::wal::events::{EVENT_TYPE_EXTENDED, EVENT_TYPE_RAW_TEXT, ExtendedSubtype};
     use crate::wal::types::{EventId, SessionId};
+    use rusqlite::OptionalExtension;
 
     fn default_cfg() -> ConsolidationSweepConfig {
         ConsolidationSweepConfig::default()
