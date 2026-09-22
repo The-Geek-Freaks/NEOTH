@@ -41,3 +41,7 @@ The ongoing full CI `35782661515` is intentionally retained on `74334d4b`:
 it validates W219 and the aggregate Skill rollback. W220 requires its own
 source-bound Hosted result; later code must not be credited to that older run.
 Road remains 1015 checked / 307 open / 2 partial. No box is closed by adding tests.
+
+Published144135d937340f6f02f6c666afb91d2ae9b07349. Exact Hosted formatter
+receipt35783144307 imported after source/SHA256 and Git pre/postimage checks.
+No formatter ran locally; Grouped274 must exercise the new tests.

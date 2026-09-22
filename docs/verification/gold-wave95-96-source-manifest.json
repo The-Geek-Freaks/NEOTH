@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T20:51:05.9107112Z",
-  "validationStatus": "W220 real persisted background registry and drift refusal reviewed; Hosted pending",
+  "capturedUtc": "2026-09-22T20:53:56.2806356Z",
+  "validationStatus": "W220 exact Hosted formatting imported; source-bound behavior pending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -2663,8 +2663,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/bg_session.rs",
-      "bytes": 124087,
-      "sha256": "E236857E992CBE75BC1177073BF82D221916D236F77863C9D05A3A166EEC0641"
+      "bytes": 124018,
+      "sha256": "A32AE3910BDBEF6ABC6707DFB49C782CEA8E557F4630C1D29A2DDD5AFE371B7C"
     }
   ]
 }

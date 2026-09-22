@@ -2297,11 +2297,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let skills_dir = home.path().join("skills");
         let skill_id = "background-registry-publication";
-        write_background_registry_skill(
-            &skills_dir,
-            skill_id,
-            "BACKGROUND-REGISTRY-DESCRIPTION-A",
-        );
+        write_background_registry_skill(&skills_dir, skill_id, "BACKGROUND-REGISTRY-DESCRIPTION-A");
         install_background_registry_authority_key(home.path());
         record_background_registry_install_incarnation(home.path(), skill_id);
 
@@ -2320,12 +2316,14 @@ mod tests {
         .await
         .unwrap();
         let epoch_a = reload.accepted_snapshot().epoch();
-        let snapshot_a = registry.authority_bound_snapshot_for_epoch(epoch_a).unwrap();
+        let snapshot_a = registry
+            .authority_bound_snapshot_for_epoch(epoch_a)
+            .unwrap();
         let registry_context_a = crate::skills::resolver::SkillRouteResolver::new(snapshot_a)
             .session_registry_context(&[])
             .unwrap();
-        let enriched_a = crate::pipeline::build_enriched_request(
-            crate::pipeline::EnrichmentInputs {
+        let enriched_a =
+            crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
                 prompt: "queued background prompt",
                 operator_sovereignty: None,
                 operator_context: None,
@@ -2343,8 +2341,7 @@ mod tests {
                 identity_locked: false,
                 current_goal: None,
                 communication_profile: None,
-            },
-        );
+            });
         let registry_item_a = enriched_a
             .budget_items
             .iter()
@@ -2368,30 +2365,22 @@ mod tests {
         let mut queued_request = exact_test_request();
         queued_request.prompt = queued_prompt;
         queued_request.system = Some(registry_a.clone());
-        let spec = test_worker_spec(
-            &id,
-            queued_request,
-            config_a.clone(),
-            config_path,
-        );
+        let spec = test_worker_spec(&id, queued_request, config_a.clone(), config_path);
         let persisted = serde_json::to_vec(&spec).unwrap();
         let bgjobs = home.path().join("bgjobs");
         std::fs::create_dir_all(&bgjobs).unwrap();
         let job_path = bgjobs.join(format!("{}.job", id.as_str()));
-        crate::util::atomic_write::write_private_create_new_durable(&job_path, &persisted)
-            .unwrap();
+        crate::util::atomic_write::write_private_create_new_durable(&job_path, &persisted).unwrap();
 
         // A completed later installed-Skill publication under the same accepted
         // config changes the live Registry, never the already durable request.
-        write_background_registry_skill(
-            &skills_dir,
-            skill_id,
-            "BACKGROUND-REGISTRY-DESCRIPTION-B",
-        );
+        write_background_registry_skill(&skills_dir, skill_id, "BACKGROUND-REGISTRY-DESCRIPTION-B");
         record_background_registry_install_incarnation(home.path(), skill_id);
         activate_background_registry_skill(home.path(), skill_id, reload.as_ref());
         registry.reload_now().await.unwrap();
-        let snapshot_b = registry.authority_bound_snapshot_for_epoch(epoch_a).unwrap();
+        let snapshot_b = registry
+            .authority_bound_snapshot_for_epoch(epoch_a)
+            .unwrap();
         let registry_context_b = crate::skills::resolver::SkillRouteResolver::new(snapshot_b)
             .session_registry_context(&[])
             .unwrap();
@@ -2400,7 +2389,11 @@ mod tests {
                 .as_str()
                 .contains("BACKGROUND-REGISTRY-DESCRIPTION-B")
         );
-        assert!(!registry_context_b.as_str().contains("BACKGROUND-REGISTRY-DESCRIPTION-A"));
+        assert!(
+            !registry_context_b
+                .as_str()
+                .contains("BACKGROUND-REGISTRY-DESCRIPTION-A")
+        );
 
         let persisted_for_worker = crate::updater::self_update::read_private_control_file_bounded(
             home.path(),

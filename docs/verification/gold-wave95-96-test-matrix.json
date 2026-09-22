@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W220 real persisted background registry and drift refusal reviewed; Hosted pending",
+  "status": "W220 exact Hosted formatting imported; source-bound behavior pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92008,
-    "sha256": "9989A74C54390CA1ACDF85C8E7F52F95BFFD317680AAB2A4EC7442A2147C8BB8"
+    "bytes": 91994,
+    "sha256": "CD537B30E7BF3D712FEC344408A5C93AC4DC1F6B779DE63A9FFA187B616578E1"
   },
   "sourceInputs": 531,
   "requiredNativeTests": [
@@ -4895,13 +4895,13 @@
     },
     {
       "sourcePath": "SRC/neothd/src/cli/bg_session.rs",
-      "sourceSha256": "E236857E992CBE75BC1177073BF82D221916D236F77863C9D05A3A166EEC0641",
+      "sourceSha256": "A32AE3910BDBEF6ABC6707DFB49C782CEA8E557F4630C1D29A2DDD5AFE371B7C",
       "test": "cli::bg_session::tests::queued_background_request_keeps_real_registry_metadata_a_after_skill_b_publication",
       "junitClass": "neoth"
     },
     {
       "sourcePath": "SRC/neothd/src/cli/bg_session.rs",
-      "sourceSha256": "E236857E992CBE75BC1177073BF82D221916D236F77863C9D05A3A166EEC0641",
+      "sourceSha256": "A32AE3910BDBEF6ABC6707DFB49C782CEA8E557F4630C1D29A2DDD5AFE371B7C",
       "test": "cli::bg_session::tests::accepted_config_b_refuses_the_queued_background_worker_before_dispatch",
       "junitClass": "neoth"
     }
@@ -14852,6 +14852,20 @@
       }
     ],
     "note": "Two actual metadata registry/persisted request and liveconfig refusal fixtures, source-only review, no fullCLIclaim",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave220HostedFormat": {
+    "base": "144135d937340f6f02f6c666afb91d2ae9b07349",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cli/bg_session.rs",
+        "bytes": 124018,
+        "sha256": "A32AE3910BDBEF6ABC6707DFB49C782CEA8E557F4630C1D29A2DDD5AFE371B7C",
+        "blob": "b2cedb404cb0962ab3d2778c400108dcc8e3b655"
+      }
+    ],
+    "note": "Formatterreceipt35783144307 verified at source144135d9",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }
