@@ -2,8 +2,8 @@
   "schema": "neoth-gold-source-manifest/v1",
   "item": "GOLD-W95-W203-W202-n8n-adoption",
   "base": "40f2e46fe7aa83ed8c378e0c11192819253252f0",
-  "capturedUtc": "2026-09-22T20:11:59.3580192Z",
-  "validationStatus": "W2177E0433 fixture paths repaired; no behavior run on335; freshGrouped270pending",
+  "capturedUtc": "2026-09-22T20:15:54.8889141Z",
+  "validationStatus": "W218 Buddy embedding GUI+native callback fixture reviewed; Grouped272/531sources/814native/93GUIpending",
   "scopeNote": "Only admitted follow-up paths rebound; all historical wave source snapshots retained.",
   "files": [
     {
@@ -68,8 +68,8 @@
     },
     {
       "path": ".github/workflows/research-lifecycle.yml",
-      "bytes": 11510,
-      "sha256": "50A0D6606520A140AE1357B85BFDFDEC100B87794A8411C8F86F6310D2D03350"
+      "bytes": 11538,
+      "sha256": "244E1E4387294D2CADCDED79FE69E21E709D2059D8F4A6E71795676221F6BA23"
     },
     {
       "path": ".github/workflows/rust-notices.yml",
@@ -423,8 +423,8 @@
     },
     {
       "path": "packaging/tests/verify_macos_native_gui_fixture_discovery.py",
-      "bytes": 5710,
-      "sha256": "B3E81952B56CD2B6305EA4EC283C39B4D78A0B11F31D4E0CD400C34237B19E7C"
+      "bytes": 5834,
+      "sha256": "A272B087ED86EB00D0F4831463F6C61702DA4758B8E050DD3314819F9441AFAB"
     },
     {
       "path": "packaging/windows/smoke-installer.ps1",
@@ -433,18 +433,18 @@
     },
     {
       "path": "PLAN/BUILD_AND_RELEASE_CADENCE.md",
-      "bytes": 63428,
-      "sha256": "5F864202B717C07EAAF361F511A981A557FED7EFB717949C3DA9E4ECB09B5E81"
+      "bytes": 64568,
+      "sha256": "43F5FCC27482179A2B8D228D0A7C111D4590E891D4959CF6E31337BB8788A7FA"
     },
     {
       "path": "PLAN/PROGRESS_v1_0.md",
-      "bytes": 1066310,
-      "sha256": "B0E00F7FB53A8BE39FC4A4D97C9B30C420ACF30C8C35F829A99E2C44C58B5664"
+      "bytes": 1067450,
+      "sha256": "067433E7870FF7AB23944E7C0471D6323A182CDE2638ECECDEDBB46BEDCD4DA5"
     },
     {
       "path": "PLAN/ROAD_TO_1_0_GOLD.md",
-      "bytes": 1661757,
-      "sha256": "8A04EBB11C0E63B4413DBD530B0632997EAB98338F1D0E65A90CFEF3809BE10E"
+      "bytes": 1662897,
+      "sha256": "2FE42B68A427DDCA4BD5FE5281C7E74A37E23425185D496456CA2662BBD2B6D1"
     },
     {
       "path": "plans/001-openclaw-channel-migration-parity.md",
@@ -648,8 +648,8 @@
     },
     {
       "path": "SRC/neothd-gui/src/main.rs",
-      "bytes": 2108059,
-      "sha256": "FB278A8167662473135CA63440500F52C8856F5BCD895B136252B7F1B0EA4201"
+      "bytes": 2125991,
+      "sha256": "3844F35C61314DAB0BFDFFF4742875CC6D97073A31FA6DA49D9ED43869C7D18F"
     },
     {
       "path": "SRC/neothd-gui/src/ouro_gui.rs",
@@ -718,8 +718,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/buddyconfig.slint",
-      "bytes": 51115,
-      "sha256": "39E356668696CD7ADA363FC21BD0D5A9C44F0AD089B5EED38C9AA960C256B611"
+      "bytes": 59556,
+      "sha256": "3A3DA952AEE20798DD485ED229339AF9F61F20D37E1079D476E891DC8AE9028B"
     },
     {
       "path": "SRC/neothd-gui/ui/calendar.slint",
@@ -763,8 +763,8 @@
     },
     {
       "path": "SRC/neothd-gui/ui/main.slint",
-      "bytes": 320658,
-      "sha256": "26BD2AADE9AB8CD59685C970AE40CA3AB3A51E330A920C184105687816750D41"
+      "bytes": 322349,
+      "sha256": "21FB6687DD41F6645718662095EC2BAFDC901A509473C7573E873F56ECE069C0"
     },
     {
       "path": "SRC/neothd-gui/ui/memory_graph.slint",
@@ -1203,8 +1203,8 @@
     },
     {
       "path": "SRC/neothd/src/cli/parity_drift.rs",
-      "bytes": 62840,
-      "sha256": "015F4D3761949F914EA4F143553CB06C0FCCC3B41AB2608015C0456E1B4ED942"
+      "bytes": 66209,
+      "sha256": "C010037D42BA0B242C8379EA044653CA50E019F20E6AC61E0E7FAE012CF72782"
     },
     {
       "path": "SRC/neothd/src/cli/proactive.rs",

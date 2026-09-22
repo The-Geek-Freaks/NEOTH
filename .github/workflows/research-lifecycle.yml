@@ -102,6 +102,7 @@ jobs:
               "wave213TestScopeRepair": 1,
               "wave216": 10,
               "wave217": 4,
+              "wave218": 2,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

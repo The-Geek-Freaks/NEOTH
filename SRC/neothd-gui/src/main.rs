@@ -7991,11 +7991,14 @@ fn main() -> Result<()> {
             }
             let weak = weak_bc.clone();
             std::thread::spawn(move || refresh_buddyconfig(weak));
+            let weak_embedding = weak_bc.clone();
+            std::thread::spawn(move || refresh_buddy_embedding_models(weak_embedding));
         });
 
         register_buddy_vault_mirror_callback(&window);
         register_local_model_callbacks(&window);
         register_embedding_model_callbacks(&window);
+        register_buddy_embedding_callbacks(&window);
 
         // Self-activation toggle — real daemon command.
         let weak_bc_sa = window.as_weak();
@@ -8157,6 +8160,8 @@ fn main() -> Result<()> {
         std::thread::spawn(move || {
             refresh_buddyconfig(weak_bc_init);
         });
+        let weak_bc_embedding_init = window.as_weak();
+        std::thread::spawn(move || refresh_buddy_embedding_models(weak_bc_embedding_init));
     }
 
     // ── Wave 4b — Companion / Smartphone Pairing panel callbacks ─────────────
@@ -25033,19 +25038,48 @@ fn run_bounded_embedding_command(
 /// Cheap cache/status snapshot only. This must never invoke the explicit core
 /// probe because a periodic UI refresh may not hash/load multi-gigabyte model
 /// artifacts in the background.
-fn fetch_embedding_models_status() -> std::result::Result<
+#[derive(Clone, Copy)]
+enum EmbeddingCommandSurface {
+    Models,
+    Buddy,
+}
+
+impl EmbeddingCommandSurface {
+    fn cli_prefix(self) -> &'static [&'static str] {
+        match self {
+            Self::Models => &["models", "embedding"],
+            Self::Buddy => &["buddy", "embedding"],
+        }
+    }
+
+}
+
+fn set_embedding_model_in_flight(window: &MainWindow, in_flight: bool) {
+    window.set_embedding_model_in_flight(in_flight);
+    window.set_bc_embedding_in_flight(in_flight);
+}
+
+fn embedding_config_path() -> std::result::Result<String, String> {
+    default_neoth_home()
+        .join("freedom.yaml")
+        .to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| "embedding-model configuration is unavailable".to_string())
+}
+
+fn fetch_embedding_models_status_for(
+    surface: EmbeddingCommandSurface,
+) -> std::result::Result<
     (
         panel_logic::EmbeddingModelsPresentation,
         panel_logic::EmbeddingModelsSnapshotWire,
     ),
     String,
 > {
-    let config_path = default_neoth_home().join("freedom.yaml");
-    let config_path = config_path
-        .to_str()
-        .ok_or_else(|| "embedding-model config path is not valid UTF-8".to_string())?;
-    let mut command =
-        neothd_json_command(&["models", "embedding", "--config", config_path, "status"])?;
+    let config_path = embedding_config_path()?;
+    let mut args: Vec<&str> = surface.cli_prefix().to_vec();
+    args.extend(["--config", config_path.as_str(), "status"]);
+    let mut command = neothd_json_command(&args)?;
     let output = run_bounded_embedding_command(
         &mut command,
         EMBEDDING_STATUS_TIMEOUT,
@@ -25060,6 +25094,16 @@ fn fetch_embedding_models_status() -> std::result::Result<
     parse_embedding_models_status(&String::from_utf8_lossy(&output.stdout))
 }
 
+fn fetch_embedding_models_status() -> std::result::Result<
+    (
+        panel_logic::EmbeddingModelsPresentation,
+        panel_logic::EmbeddingModelsSnapshotWire,
+    ),
+    String,
+> {
+    fetch_embedding_models_status_for(EmbeddingCommandSurface::Models)
+}
+
 fn apply_embedding_models(
     window: &MainWindow,
     presentation: panel_logic::EmbeddingModelsPresentation,
@@ -25068,12 +25112,26 @@ fn apply_embedding_models(
     let selected_model = presentation.selected_model.clone();
     let rows = presentation
         .rows
-        .into_iter()
+        .iter()
         .map(|row| EmbeddingModelRow {
-            model: row.model.into(),
-            artifact_state: row.artifact_state.into(),
-            readiness: row.readiness.into(),
-            detail: row.detail.into(),
+            model: row.model.clone().into(),
+            artifact_state: row.artifact_state.clone().into(),
+            readiness: row.readiness.clone().into(),
+            detail: row.detail.clone().into(),
+            can_probe: row.can_probe,
+            can_pull: row.can_pull,
+            can_repair: row.can_repair,
+            can_prune: row.can_prune,
+        })
+        .collect::<Vec<_>>();
+    let buddy_rows = presentation
+        .rows
+        .iter()
+        .map(|row| BuddyEmbeddingModel {
+            model: row.model.clone().into(),
+            artifact_state: row.artifact_state.clone().into(),
+            readiness: row.readiness.clone().into(),
+            detail: row.detail.clone().into(),
             can_probe: row.can_probe,
             can_pull: row.can_pull,
             can_repair: row.can_repair,
@@ -25082,10 +25140,16 @@ fn apply_embedding_models(
         .collect::<Vec<_>>();
     window.set_embedding_model_rows(ModelRc::new(VecModel::from(rows)));
     window.set_embedding_model_current_index(if selected_model == "bge_m3" { 1 } else { 0 });
-    window.set_embedding_model_current(selected_model.into());
+    window.set_embedding_model_current(selected_model.clone().into());
     window.set_embedding_model_status_valid(presentation.valid);
     window.set_embedding_model_status_error("".into());
     window.set_embedding_model_refreshed("Latest model status applied.".into());
+    window.set_bc_embedding_models(ModelRc::new(VecModel::from(buddy_rows)));
+    window.set_bc_embedding_current_index(if selected_model == "bge_m3" { 1 } else { 0 });
+    window.set_bc_embedding_current(selected_model.into());
+    window.set_bc_embedding_status_valid(presentation.valid);
+    window.set_bc_embedding_status_error("".into());
+    window.set_bc_embedding_refreshed("Latest Buddy embedding status applied.".into());
 }
 
 fn mark_embedding_models_unverified(window: &MainWindow, error: &str) {
@@ -25099,6 +25163,12 @@ fn mark_embedding_models_unverified(window: &MainWindow, error: &str) {
         "Embedding-model status could not be verified. Refresh after the CLI is available.".into(),
     );
     window.set_embedding_model_refreshed("".into());
+    window.set_bc_embedding_models(ModelRc::new(VecModel::from(Vec::<BuddyEmbeddingModel>::new())));
+    window.set_bc_embedding_status_valid(false);
+    window.set_bc_embedding_status_error(
+        "Buddy embedding status could not be verified. Refresh after the CLI is available.".into(),
+    );
+    window.set_bc_embedding_refreshed("".into());
 }
 
 fn local_models_snapshot_binds_action(
@@ -25337,6 +25407,7 @@ fn embedding_action_timeout(action: &str) -> std::time::Duration {
 }
 
 fn run_embedding_model_command(
+    surface: EmbeddingCommandSurface,
     action: &str,
     selected: Option<&str>,
 ) -> std::result::Result<
@@ -25346,12 +25417,10 @@ fn run_embedding_model_command(
     ),
     String,
 > {
-    let config_path = default_neoth_home().join("freedom.yaml");
-    let config_path = config_path
-        .to_str()
-        .ok_or_else(|| "embedding-model configuration is unavailable".to_string())?;
-    let mut command =
-        neothd_json_command(&["models", "embedding", "--config", config_path, action])?;
+    let config_path = embedding_config_path()?;
+    let mut args: Vec<&str> = surface.cli_prefix().to_vec();
+    args.extend(["--config", config_path.as_str(), action]);
+    let mut command = neothd_json_command(&args)?;
     if let Some(selected) = selected {
         command.arg(selected);
     }
@@ -25373,6 +25442,7 @@ fn run_embedding_model_command(
 
 fn start_embedding_model_action(
     weak: slint::Weak<MainWindow>,
+    surface: EmbeddingCommandSurface,
     action: &'static str,
     requested_model: String,
 ) {
@@ -25405,7 +25475,7 @@ fn start_embedding_model_action(
         .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
         .wrapping_add(1);
     if let Some(window) = weak.upgrade() {
-        window.set_embedding_model_in_flight(true);
+        set_embedding_model_in_flight(&window, true);
         buddy(&window, GuiActivity::LocalModelWorking);
     }
     let worker_weak = weak.clone();
@@ -25419,13 +25489,13 @@ fn start_embedding_model_action(
                 .try_into()
                 .unwrap_or(u64::MAX);
             let result = (|| -> std::result::Result<_, String> {
-                let (_, before) = fetch_embedding_models_status()?;
+                let (_, before) = fetch_embedding_models_status_for(surface)?;
                 if before.selected_model != expected_model {
                     return Err(
                         "The selected embedding model changed; refresh before acting.".into(),
                     );
                 }
-                let (presentation, snapshot) = run_embedding_model_command(action, None)?;
+                let (presentation, snapshot) = run_embedding_model_command(surface, action, None)?;
                 if snapshot.selected_model != expected_model {
                     return Err("Core readback selected a different embedding model.".into());
                 }
@@ -25451,7 +25521,7 @@ fn start_embedding_model_action(
                 {
                     return;
                 }
-                window.set_embedding_model_in_flight(false);
+                set_embedding_model_in_flight(&window, false);
                 match result {
                     Ok((presentation, true)) => {
                         apply_embedding_models(&window, presentation);
@@ -25492,7 +25562,7 @@ fn start_embedding_model_action(
     if worker.is_err() {
         EMBEDDING_MODEL_ACTION_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
         if let Some(window) = weak.upgrade() {
-            window.set_embedding_model_in_flight(false);
+            set_embedding_model_in_flight(&window, false);
             buddy(&window, GuiActivity::LocalModelFailed);
             mark_embedding_models_unverified(
                 &window,
@@ -25505,19 +25575,19 @@ fn start_embedding_model_action(
 fn register_embedding_model_callbacks(window: &MainWindow) {
     let weak = window.as_weak();
     window.on_embedding_model_probe(move |model| {
-        start_embedding_model_action(weak.clone(), "probe", model.to_string())
+        start_embedding_model_action(weak.clone(), EmbeddingCommandSurface::Models, "probe", model.to_string())
     });
     let weak = window.as_weak();
     window.on_embedding_model_pull(move |model| {
-        start_embedding_model_action(weak.clone(), "pull", model.to_string())
+        start_embedding_model_action(weak.clone(), EmbeddingCommandSurface::Models, "pull", model.to_string())
     });
     let weak = window.as_weak();
     window.on_embedding_model_repair(move |model| {
-        start_embedding_model_action(weak.clone(), "repair", model.to_string())
+        start_embedding_model_action(weak.clone(), EmbeddingCommandSurface::Models, "repair", model.to_string())
     });
     let weak = window.as_weak();
     window.on_embedding_model_prune(move |model| {
-        start_embedding_model_action(weak.clone(), "prune", model.to_string())
+        start_embedding_model_action(weak.clone(), EmbeddingCommandSurface::Models, "prune", model.to_string())
     });
     let weak = window.as_weak();
     window.on_embedding_model_changed(move |model| {
@@ -25542,13 +25612,13 @@ fn register_embedding_model_callbacks(window: &MainWindow) {
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
             .wrapping_add(1);
         if let Some(window) = weak.upgrade() {
-            window.set_embedding_model_in_flight(true);
+            set_embedding_model_in_flight(&window, true);
         }
         let worker_weak = weak.clone();
         let worker = std::thread::Builder::new()
             .name("neoth-embedding-model-select".into())
             .spawn(move || {
-                let result = run_embedding_model_command("select", Some(&requested)).and_then(
+                let result = run_embedding_model_command(EmbeddingCommandSurface::Models, "select", Some(&requested)).and_then(
                     |(presentation, snapshot)| {
                         if snapshot.selected_model != expected_model {
                             Err(
@@ -25570,7 +25640,7 @@ fn register_embedding_model_callbacks(window: &MainWindow) {
                     {
                         return;
                     }
-                    window.set_embedding_model_in_flight(false);
+                    set_embedding_model_in_flight(&window, false);
                     match result {
                         Ok(presentation) => apply_embedding_models(&window, presentation),
                         Err(error) => mark_embedding_models_unverified(&window, &error),
@@ -25584,13 +25654,113 @@ fn register_embedding_model_callbacks(window: &MainWindow) {
         if worker.is_err() {
             EMBEDDING_MODEL_ACTION_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
             if let Some(window) = weak.upgrade() {
-                window.set_embedding_model_in_flight(false);
+                set_embedding_model_in_flight(&window, false);
                 mark_embedding_models_unverified(
                     &window,
                     "could not start embedding-model selection worker",
                 );
             }
         }
+    });
+}
+
+/// W218 keeps Buddy selection on the same generation and singleflight fence as
+/// Resources. The only difference is the canonical `buddy embedding` command
+/// surface and its explicit instance configuration path.
+fn start_buddy_embedding_model_selection(weak: slint::Weak<MainWindow>, requested: String) {
+    let expected_model = match embedding_model_wire(&requested) {
+        Ok(model) => model,
+        Err(error) => {
+            push_toast(&weak, "warn", "Buddy embedding", &error);
+            return;
+        }
+    };
+    if EMBEDDING_MODEL_ACTION_ACTIVE.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        push_toast(&weak, "info", "Buddy embedding", "Wait for the active embedding-model action.");
+        return;
+    }
+    let revision = EMBEDDING_MODELS_UI_REVISION
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+        .wrapping_add(1);
+    if let Some(window) = weak.upgrade() {
+        set_embedding_model_in_flight(&window, true);
+    }
+    let worker_weak = weak.clone();
+    let worker = std::thread::Builder::new()
+        .name("neoth-buddy-embedding-select".into())
+        .spawn(move || {
+            let result = run_embedding_model_command(
+                EmbeddingCommandSurface::Buddy,
+                "select",
+                Some(&requested),
+            )
+            .and_then(|(presentation, snapshot)| {
+                if snapshot.selected_model != expected_model {
+                    Err("Core did not confirm the requested Buddy embedding-model selection.".into())
+                } else {
+                    Ok(presentation)
+                }
+            });
+            let scheduled = slint::invoke_from_event_loop(move || {
+                let _flight = EmbeddingModelActionFlight;
+                let Some(window) = worker_weak.upgrade() else { return; };
+                if EMBEDDING_MODELS_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+                    return;
+                }
+                set_embedding_model_in_flight(&window, false);
+                match result {
+                    Ok(presentation) => apply_embedding_models(&window, presentation),
+                    Err(error) => mark_embedding_models_unverified(&window, &error),
+                }
+            });
+            if scheduled.is_err() {
+                EMBEDDING_MODEL_ACTION_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+            }
+        });
+    if worker.is_err() {
+        EMBEDDING_MODEL_ACTION_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+        if let Some(window) = weak.upgrade() {
+            set_embedding_model_in_flight(&window, false);
+            mark_embedding_models_unverified(&window, "could not start Buddy embedding-model selection worker");
+        }
+    }
+}
+
+fn refresh_buddy_embedding_models(weak: slint::Weak<MainWindow>) {
+    let revision = EMBEDDING_MODELS_UI_REVISION.load(std::sync::atomic::Ordering::Acquire);
+    let result = fetch_embedding_models_status_for(EmbeddingCommandSurface::Buddy);
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(window) = weak.upgrade() else { return; };
+        if EMBEDDING_MODELS_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+            return;
+        }
+        match result {
+            Ok((presentation, _)) => apply_embedding_models(&window, presentation),
+            Err(error) => mark_embedding_models_unverified(&window, &error),
+        }
+    });
+}
+
+fn register_buddy_embedding_callbacks(window: &MainWindow) {
+    let weak = window.as_weak();
+    window.on_bc_embedding_model_changed(move |model| {
+        start_buddy_embedding_model_selection(weak.clone(), model.to_string())
+    });
+    let weak = window.as_weak();
+    window.on_bc_embedding_probe(move |model| {
+        start_embedding_model_action(weak.clone(), EmbeddingCommandSurface::Buddy, "probe", model.to_string())
+    });
+    let weak = window.as_weak();
+    window.on_bc_embedding_pull(move |model| {
+        start_embedding_model_action(weak.clone(), EmbeddingCommandSurface::Buddy, "pull", model.to_string())
+    });
+    let weak = window.as_weak();
+    window.on_bc_embedding_repair(move |model| {
+        start_embedding_model_action(weak.clone(), EmbeddingCommandSurface::Buddy, "repair", model.to_string())
+    });
+    let weak = window.as_weak();
+    window.on_bc_embedding_prune(move |model| {
+        start_embedding_model_action(weak.clone(), EmbeddingCommandSurface::Buddy, "prune", model.to_string())
     });
 }
 
@@ -42175,6 +42345,32 @@ mod buddy_wiring_tests {
     }
 
     #[test]
+    fn w218_buddy_embedding_callbacks_use_instance_config_and_shared_freshness_fence() {
+        let source = include_str!("main.rs");
+        let ui = include_str!("../ui/buddyconfig.slint");
+        let shell = include_str!("../ui/main.slint");
+        for callback in [
+            "bc-embedding-model-changed",
+            "bc-embedding-probe",
+            "bc-embedding-pull",
+            "bc-embedding-repair",
+            "bc-embedding-prune",
+        ] {
+            assert!(ui.contains(callback), "Buddy view is missing {callback}");
+            assert!(shell.contains(callback), "MainWindow does not forward {callback}");
+        }
+        assert!(source.contains("Self::Buddy => &[\"buddy\", \"embedding\"]"));
+        assert!(source.contains("join(\"freedom.yaml\")"));
+        assert!(source.contains("fn register_buddy_embedding_callbacks"));
+        assert!(source.contains("EmbeddingCommandSurface::Buddy, \"probe\""));
+        assert!(source.contains("EMBEDDING_MODEL_ACTION_ACTIVE.swap(true"));
+        assert!(source.contains("EMBEDDING_MODELS_UI_REVISION"));
+        assert!(source.contains("snapshot.selected_model != expected_model"));
+        assert!(source.contains("embedding_snapshot_is_fresh_ready_for"));
+        assert!(source.contains("set_bc_embedding_in_flight"));
+    }
+
+    #[test]
     fn failed_refresh_keeps_last_known_buddy_values() {
         let source = include_str!("main.rs");
         let refresh = source
@@ -43025,6 +43221,7 @@ mod w58_gui_callback_runtime_tests {
         register_channel_account_retirement_callback, register_channel_legacy_migration_callback,
         register_channel_pairing_approval_callback, register_channel_pairing_request_callbacks,
         register_code_map_enrichment_readiness_callbacks, register_local_model_callbacks,
+        register_buddy_embedding_callbacks, register_embedding_model_callbacks,
         register_selfimprove_accept_callback, register_skill_autonomy_callbacks,
         start_code_map_lifecycle_config_apply, start_code_map_lifecycle_refresh, which_neothd,
     };
@@ -44991,6 +45188,15 @@ if [ "$1" = ouro ] && [ "$2" = verify-q8 ] && [ "$3" = --output ] && [ "$4" = js
     w151_success|w151_blocked) printf '{"configured_quant_mode":"none","tested_quant_mode":"q8","result":{"verified":true,"quant_mode":"q8","repo":"ByteDance/Ouro-1.4B-Thinking","cache_dir":"ouro-cache","receipt":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","resolved_device":"Cpu","loop_steps":4,"forward_checked":true,"forward_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","alternate_forward_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","context_sensitive":true,"detail":null}}\n' ;;
     *) printf 'unexpected ouro mode: %s\n' "$mode" >&2; exit 92 ;;
   esac
+  exit 0
+fi
+if { { [ "$1" = buddy ] || [ "$1" = models ]; } && [ "$2" = embedding ] && [ "$3" = --config ] && [ "$4" = "$NEOTH_HOME/freedom.yaml" ] && { { [ "$#" -eq 7 ] && [ "$6" = --output ] && [ "$7" = json ]; } || { [ "$5" = select ] && [ "$#" -eq 8 ] && [ "$7" = --output ] && [ "$8" = json ]; }; }; }; then
+  printf '%s-embedding:%s:%s\n' "$1" "$5" "$4" >> "$base/calls"
+  if { [ "$mode" = w218_blocked ] && [ "$5" = pull ]; } || { [ "$mode" = w218_probe_blocked ] && [ "$5" = probe ]; }; then
+    : > "$base/w218-action-started"
+    while [ ! -f "$base/w218-action-release" ]; do /bin/sleep 0.01; done
+  fi
+  if [ "$5" = status ]; then /bin/cat "$base/w218-status.json"; else /bin/cat "$base/w218-action.json"; fi
   exit 0
 fi
 if [ "$1" = models ] && [ "$2" = ollama ] && [ "$3" = status ] && [ "$4" = --output ] && [ "$5" = json ] && [ "$#" -eq 5 ]; then
@@ -48336,6 +48542,140 @@ exit 0
     }
 
     #[cfg(not(windows))]
+    fn w218_embedding_snapshot(source: &str, selected: &str, readiness: &str, observed: u64) -> String {
+        let (repository, revision) = neothd::providers::local_bge_m3::pinned_model_identity();
+        let bge_actions = selected == "bge_m3";
+        serde_json::json!({
+            "schema_version": 1,
+            "observed_at_unix_ms": observed,
+            "source": source,
+            "selected_model": selected,
+            "rows": [
+                {"model":"qwen3_q8", "artifact_state":"unavailable", "readiness_state":"unavailable", "reason":"not selected", "actions":{"probe":false,"pull":false,"repair":false,"prune":false}},
+                {"model":"bge_m3", "artifact_state":"installed", "readiness_state":readiness, "repository":repository, "revision":revision, "actions":{"probe":bge_actions,"pull":bge_actions,"repair":bge_actions,"prune":bge_actions}}
+            ]
+        })
+        .to_string()
+    }
+
+    #[cfg(not(windows))]
+    fn w218_pump_until(window: &MainWindow, calls: &Path, expected: &str, count: usize) {
+        let settled = Rc::new(Cell::new(false));
+        let observed_settled = Rc::clone(&settled);
+        let weak = window.as_weak();
+        let calls = calls.to_path_buf();
+        let expected = expected.to_owned();
+        let timer = slint::Timer::default();
+        let ticks = Rc::new(Cell::new(0_u16));
+        let observed_ticks = Rc::clone(&ticks);
+        timer.start(slint::TimerMode::Repeated, Duration::from_millis(10), move || {
+            if weak.upgrade().is_some_and(|window| {
+                !window.get_embedding_model_in_flight()
+                    && !window.get_bc_embedding_in_flight()
+                    && w185_call_count(&calls, &expected) == count
+            }) {
+                observed_settled.set(true);
+                let _ = slint::quit_event_loop();
+            } else if observed_ticks.get().saturating_add(1) >= 500 {
+                let _ = slint::quit_event_loop();
+            } else {
+                observed_ticks.set(observed_ticks.get() + 1);
+            }
+        });
+        let _ = window.hide();
+        slint::run_event_loop_until_quit().expect("run W218 embedding callback event loop");
+        drop(timer);
+        assert!(settled.get(), "W218 embedding callback did not settle");
+    }
+
+    #[cfg(not(windows))]
+    #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
+    fn w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe() {
+        let _environment = GUI_CALLBACK_ENV_LOCK.lock().expect("serial W218 GUI fixture environment");
+        let fixture = TempDir::new().expect("create W218 CLI fixture");
+        let bin = w116_stage_fake_neoth(&fixture);
+        let home = fixture.path().join("instance");
+        std::fs::create_dir_all(&home).unwrap();
+        let _home = NeothHomeGuard::install(&home);
+        let _path = PathGuard::install(fixture.path());
+        assert_eq!(std::fs::canonicalize(which_neothd().unwrap()).unwrap(), std::fs::canonicalize(bin).unwrap());
+        let mode = fixture.path().join("mode");
+        let calls = fixture.path().join("calls");
+        let status = fixture.path().join("w218-status.json");
+        let action = fixture.path().join("w218-action.json");
+        std::fs::write(&calls, b"").unwrap();
+        std::fs::write(&mode, b"w218").unwrap();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        std::fs::write(&status, w218_embedding_snapshot("status", "bge_m3", "installed", now)).unwrap();
+        std::fs::write(&action, w218_embedding_snapshot("status", "bge_m3", "installed", now)).unwrap();
+
+        let window = MainWindow::new().expect("construct W218 MainWindow");
+        register_embedding_model_callbacks(&window);
+        register_buddy_embedding_callbacks(&window);
+        let config = home.join("freedom.yaml").to_string_lossy().to_string();
+
+        // A real Buddy select accepts only a typed status snapshot that echoes
+        // the exact requested selection and carries the exact instance path.
+        window.invoke_bc_embedding_model_changed("bge_m3".into());
+        w218_pump_until(&window, &calls, &format!("buddy-embedding:select:{config}"), 1);
+        assert_eq!(window.get_bc_embedding_current().to_string(), "bge_m3");
+        assert!(window.get_bc_embedding_status_valid());
+
+        // A mismatch clears action state without replacing the last confirmed selection.
+        std::fs::write(&action, w218_embedding_snapshot("status", "qwen3_q8", "unavailable", now)).unwrap();
+        window.invoke_bc_embedding_model_changed("bge_m3".into());
+        w218_pump_until(&window, &calls, &format!("buddy-embedding:select:{config}"), 2);
+        assert!(!window.get_bc_embedding_in_flight());
+        assert!(!window.get_bc_embedding_status_valid());
+        assert_eq!(window.get_bc_embedding_current().to_string(), "bge_m3");
+
+        std::fs::write(&action, b"not-json").unwrap();
+        window.invoke_bc_embedding_model_changed("bge_m3".into());
+        w218_pump_until(&window, &calls, &format!("buddy-embedding:select:{config}"), 3);
+        assert!(!window.get_bc_embedding_in_flight());
+        assert!(!window.get_bc_embedding_status_valid());
+        assert_eq!(window.get_bc_embedding_current().to_string(), "bge_m3");
+
+        // Main and Buddy actions share one fence: the blocked main Pull admits
+        // no Buddy child for the same selected BGE target.
+        std::fs::write(&mode, b"w218_blocked").unwrap();
+        std::fs::write(&action, w218_embedding_snapshot("status", "bge_m3", "installed", now)).unwrap();
+        window.invoke_embedding_model_pull("bge_m3".into());
+        w151_wait_for_file(&window, &fixture.path().join("w218-action-started"), "W218 main pull child did not start");
+        window.invoke_bc_embedding_pull("bge_m3".into());
+        assert_eq!(w185_call_count(&calls, &format!("models-embedding:pull:{config}")), 1);
+        assert_eq!(w185_call_count(&calls, &format!("buddy-embedding:pull:{config}")), 0);
+        std::fs::write(fixture.path().join("w218-action-release"), b"release").unwrap();
+        w218_pump_until(&window, &calls, &format!("models-embedding:pull:{config}"), 1);
+
+        // Qwen has no lifecycle owner, so its GUI callback cannot spawn a child.
+        let before_qwen = w116_call_lines(&calls).len();
+        window.invoke_bc_embedding_pull("qwen3_q8".into());
+        assert_eq!(w116_call_lines(&calls).len(), before_qwen);
+
+        // A stale probe-looking receipt cannot paint Ready. Only a fresh probe
+        // sampled after the action's not-before fence may establish readiness.
+        std::fs::write(&mode, b"w218").unwrap();
+        std::fs::write(&action, w218_embedding_snapshot("probe", "bge_m3", "ready", 1)).unwrap();
+        window.invoke_bc_embedding_probe("bge_m3".into());
+        w218_pump_until(&window, &calls, &format!("buddy-embedding:probe:{config}"), 1);
+        assert!(!window.get_bc_embedding_status_valid());
+        assert!(!window.get_bc_embedding_in_flight());
+
+        std::fs::write(&mode, b"w218_probe_blocked").unwrap();
+        std::fs::remove_file(fixture.path().join("w218-action-started")).unwrap();
+        std::fs::remove_file(fixture.path().join("w218-action-release")).unwrap();
+        window.invoke_bc_embedding_probe("bge_m3".into());
+        w151_wait_for_file(&window, &fixture.path().join("w218-action-started"), "W218 Buddy probe child did not start");
+        let fresh = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        std::fs::write(&action, w218_embedding_snapshot("probe", "bge_m3", "ready", fresh)).unwrap();
+        std::fs::write(fixture.path().join("w218-action-release"), b"release").unwrap();
+        w218_pump_until(&window, &calls, &format!("buddy-embedding:probe:{config}"), 2);
+        assert!(window.get_bc_embedding_status_valid());
+        assert_eq!(window.get_bc_embedding_models().row_data(1).unwrap().readiness.to_string(), "Ready (fresh load verified)");
+    }
+
+    #[cfg(not(windows))]
     #[cfg_attr(not(all(target_os = "macos", feature = "macos-native-gui-test")), test)]
     fn w185_local_model_callbacks_require_typed_ack_and_fresh_readback() {
         let _environment = GUI_CALLBACK_ENV_LOCK
@@ -48895,7 +49235,7 @@ exit 7
     }
 
     #[cfg(target_os = "macos")]
-    const MACOS_NATIVE_HARNESS_TESTS: [&str; 24] = [
+    const MACOS_NATIVE_HARNESS_TESTS: [&str; 25] = [
         "w58_gui_callback_runtime_tests::w58_buddy_status_callback_publishes_selected_root_readiness",
         "w58_gui_callback_runtime_tests::w80_buddy_impact_callback_renders_selected_git_receipt",
         "w58_gui_callback_runtime_tests::w73_buddy_start_reaches_real_provider_worker_and_commits_terminal_provenance",
@@ -48920,6 +49260,7 @@ exit 7
         "w58_gui_callback_runtime_tests::w155_citation_callbacks_bind_cache_and_live_consent_receipts",
         "w58_gui_callback_runtime_tests::w184_vault_mirror_repair_callback_requires_typed_ack_and_fresh_readback",
         "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback",
+        "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe",
     ];
 
     /// Native macOS Nextest bridge. Keep its stdout restricted to the libtest
@@ -49047,6 +49388,9 @@ exit 7
                     }
                     "w58_gui_callback_runtime_tests::w185_local_model_callbacks_require_typed_ack_and_fresh_readback" => {
                         w185_local_model_callbacks_require_typed_ack_and_fresh_readback()
+                    }
+                    "w58_gui_callback_runtime_tests::w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe" => {
+                        w218_buddy_embedding_callbacks_require_exact_config_singleflight_and_fresh_probe()
                     }
                     _ => return Err(format!("unknown macOS native GUI test {test_name:?}")),
                 }

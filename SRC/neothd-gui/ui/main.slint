@@ -48,7 +48,7 @@ import { ActivitySidecar, ActivityRow } from "activity.slint";
 import { ObsidianView } from "obsidian.slint";
 import { DreamingView, DreamDayRow, DreamEntryRow } from "dreaming.slint";
 import { WikiView, WikiRow } from "wiki.slint";
-import { BuddyConfigView, SelfActSkill, BuddySelfImproveProposal } from "buddyconfig.slint";
+import { BuddyConfigView, SelfActSkill, BuddySelfImproveProposal, BuddyEmbeddingModel } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow, MeshConflictRow, MeshSyncRow } from "mesh.slint";
 export { SettingsTab, ChatMessage, ChatChannelRow, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow, MenuItem, BgJobRow, SlashCmdRow, ChannelAccountRow, TelegramPairingRequestRow, CitationChip }
@@ -68,6 +68,7 @@ export { DreamDayRow, DreamEntryRow }
 export { WikiRow }
 export { SelfActSkill }
 export { BuddySelfImproveProposal }
+export { BuddyEmbeddingModel }
 export { MeshPeerRow, MeshForeignRow, MeshConflictRow, MeshSyncRow }
 // DES-12 — plugin WAL-feed detail pane event row.
 export { PluginEventRow }
@@ -931,6 +932,18 @@ export component MainWindow inherits Window {
     in property <bool>            bc-vault-mirror-repair-available: false;
     in property <bool>            bc-vault-mirror-in-flight: false;
     callback bc-vault-mirror-repair();
+    in property <[BuddyEmbeddingModel]> bc-embedding-models: [];
+    in property <bool>            bc-embedding-status-valid: false;
+    in property <string>          bc-embedding-status-error: "";
+    in property <bool>            bc-embedding-in-flight: false;
+    in property <string>          bc-embedding-refreshed: "";
+    in-out property <string>      bc-embedding-current: "qwen3_q8";
+    in-out property <int>         bc-embedding-current-index: 0;
+    callback bc-embedding-model-changed(string);
+    callback bc-embedding-probe(string);
+    callback bc-embedding-pull(string);
+    callback bc-embedding-repair(string);
+    callback bc-embedding-prune(string);
     in property <string> bc-self-improve-quality-state: "unavailable";
     in property <string> bc-self-improve-quality-reason: "Refresh Buddy status to inspect proposal quality.";
     in property <[BuddySelfImproveProposal]> bc-self-improve-proposals: [];
@@ -4995,6 +5008,18 @@ export component MainWindow inherits Window {
                     bc-vault-mirror-repair-available: root.bc-vault-mirror-repair-available;
                     bc-vault-mirror-in-flight: root.bc-vault-mirror-in-flight;
                     bc-vault-mirror-repair() => { root.bc-vault-mirror-repair(); }
+                    bc-embedding-models: root.bc-embedding-models;
+                    bc-embedding-status-valid: root.bc-embedding-status-valid;
+                    bc-embedding-status-error: root.bc-embedding-status-error;
+                    bc-embedding-in-flight: root.bc-embedding-in-flight;
+                    bc-embedding-refreshed: root.bc-embedding-refreshed;
+                    bc-embedding-current <=> root.bc-embedding-current;
+                    bc-embedding-current-index <=> root.bc-embedding-current-index;
+                    bc-embedding-model-changed(model) => { root.bc-embedding-model-changed(model); }
+                    bc-embedding-probe(model) => { root.bc-embedding-probe(model); }
+                    bc-embedding-pull(model) => { root.bc-embedding-pull(model); }
+                    bc-embedding-repair(model) => { root.bc-embedding-repair(model); }
+                    bc-embedding-prune(model) => { root.bc-embedding-prune(model); }
                     bc-self-improve-quality-state: root.bc-self-improve-quality-state;
                     bc-self-improve-quality-reason: root.bc-self-improve-quality-reason;
                     bc-self-improve-proposals: root.bc-self-improve-proposals;

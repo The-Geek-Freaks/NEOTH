@@ -13,7 +13,7 @@
 //   - NeothButton prop is `label:`, NOT `text:`.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, NeothComboBox, Kicker, InfoRow, RefreshFooter } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Wire structs ──────────────────────────────────────────────────────────────
@@ -38,6 +38,19 @@ export struct BuddySelfImproveProposal {
     regression-summary: string,
     evidence-sha256: string,
     review-ready: bool,
+}
+
+/// Selected-embedding status as observed through the Buddy command surface.
+/// This remains separate from the Ollama model inventory.
+export struct BuddyEmbeddingModel {
+    model: string,
+    artifact-state: string,
+    readiness: string,
+    detail: string,
+    can-probe: bool,
+    can-pull: bool,
+    can-repair: bool,
+    can-prune: bool,
 }
 
 // ── Internal micro-components ─────────────────────────────────────────────────
@@ -198,6 +211,16 @@ export component BuddyConfigView inherits Rectangle {
     in property <bool> bc-vault-mirror-repair-available: false;
     in property <bool> bc-vault-mirror-in-flight: false;
 
+    /// W218 Buddy-scoped selected embedding lifecycle projection. A status
+    /// sample is cache-only until an explicit Verify returns fresh readiness.
+    in property <[BuddyEmbeddingModel]> bc-embedding-models: [];
+    in property <bool> bc-embedding-status-valid: false;
+    in property <string> bc-embedding-status-error: "";
+    in property <bool> bc-embedding-in-flight: false;
+    in property <string> bc-embedding-refreshed: "";
+    in-out property <string> bc-embedding-current: "qwen3_q8";
+    in-out property <int> bc-embedding-current-index: 0;
+
     // ── Callbacks (fired by UI, mapped to daemon commands by integrator) ──────
 
     /// Open the real TTY-only Sovereign activation ceremony.
@@ -223,6 +246,11 @@ export component BuddyConfigView inherits Rectangle {
     callback bc-cluster-continue-pairing();
     callback bc-cluster-revoke(string);
     callback bc-vault-mirror-repair();
+    callback bc-embedding-model-changed(string);
+    callback bc-embedding-probe(string);
+    callback bc-embedding-pull(string);
+    callback bc-embedding-repair(string);
+    callback bc-embedding-prune(string);
 
     // ── Layout ────────────────────────────────────────────────────────────────
     background: Theme.bg-base;
@@ -313,6 +341,119 @@ export component BuddyConfigView inherits Rectangle {
                     // ScrollView needs a concrete inner height; cards self-size
                     // so we give the inner layout a generous min-height.
                     min-height: 1500px;
+
+                    // ────────────────────────────────────────────────────
+                    // LOCAL EMBEDDING MODEL — Buddy command surface only
+                    // ────────────────────────────────────────────────────
+                    Card {
+                        VerticalLayout {
+                            padding: Theme.space-4;
+                            spacing: Theme.space-3;
+                            alignment: start;
+
+                            HorizontalLayout {
+                                spacing: Theme.space-2;
+                                alignment: start;
+                                Kicker { label: "LOCAL EMBEDDING MODEL"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Led {
+                                    state: root.bc-embedding-status-error != "" ? "error"
+                                        : !root.bc-embedding-status-valid ? "connecting"
+                                        : root.bc-embedding-in-flight ? "connecting" : "live";
+                                    dot-size: 7px;
+                                }
+                            }
+
+                            Note {
+                                body: "Buddy uses the selected local embedding model. Qwen is selectable but has no local lifecycle controls. Verify is the only action that proves fresh adapter readiness.";
+                            }
+
+                            HorizontalLayout {
+                                spacing: Theme.space-3;
+                                Text {
+                                    text: "Selected model";
+                                    color: Theme.text-secondary;
+                                    font-family: Theme.font-sans;
+                                    font-size: Theme.font-size-sm;
+                                    vertical-alignment: center;
+                                }
+                                NeothComboBox {
+                                    model: ["Qwen3 Q8", "BGE-M3"];
+                                    current-index <=> root.bc-embedding-current-index;
+                                    enabled: root.bc-embedding-status-valid && !root.bc-embedding-in-flight;
+                                    selected(index) => {
+                                        root.bc-embedding-model-changed(index == 0 ? "qwen3_q8" : "bge_m3");
+                                    }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                Text {
+                                    text: root.bc-embedding-in-flight ? "Updating…" : root.bc-embedding-refreshed;
+                                    color: Theme.text-tertiary;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            if root.bc-embedding-status-error != "": Text {
+                                text: root.bc-embedding-status-error;
+                                color: Theme.warning;
+                                font-family: Theme.font-sans;
+                                font-size: Theme.font-size-xs;
+                                wrap: word-wrap;
+                            }
+
+                            if root.bc-embedding-models.length == 0: Text {
+                                text: root.bc-embedding-status-valid ? "No embedding model status returned." : "Embedding-model status has not been verified.";
+                                color: Theme.text-tertiary;
+                                font-family: Theme.font-sans;
+                                font-size: Theme.font-size-sm;
+                            }
+
+                            for row in root.bc-embedding-models: Rectangle {
+                                border-radius: Theme.radius-md;
+                                background: Theme.surface-1;
+                                border-width: 1px;
+                                border-color: Theme.border-subtle;
+                                VerticalLayout {
+                                    padding: Theme.space-3;
+                                    spacing: Theme.space-2;
+                                    HorizontalLayout {
+                                        spacing: Theme.space-2;
+                                        Text {
+                                            text: row.model == "bge_m3" ? "BGE-M3" : "Qwen3 Q8";
+                                            color: Theme.text-primary;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-xs;
+                                            horizontal-stretch: 1;
+                                        }
+                                        Text {
+                                            text: row.readiness;
+                                            color: row.readiness == "Ready (fresh load verified)" ? Theme.accent : Theme.warning;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                        }
+                                    }
+                                    Text {
+                                        text: row.artifact-state + (row.detail != "" ? " · " + row.detail : "");
+                                        color: Theme.text-tertiary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-2xs;
+                                        wrap: word-wrap;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: Theme.space-2;
+                                        NeothButton { label: "Verify"; size: "sm"; enabled: row.can-probe && !root.bc-embedding-in-flight; clicked => { root.bc-embedding-probe(row.model); } }
+                                        NeothButton { label: "Pull"; size: "sm"; enabled: row.can-pull && !root.bc-embedding-in-flight; clicked => { root.bc-embedding-pull(row.model); } }
+                                        NeothButton { label: "Repair"; size: "sm"; enabled: row.can-repair && !root.bc-embedding-in-flight; clicked => { root.bc-embedding-repair(row.model); } }
+                                        NeothButton { label: "Prune"; size: "sm"; danger: true; enabled: row.can-prune && !root.bc-embedding-in-flight; clicked => { root.bc-embedding-prune(row.model); } }
+                                        Rectangle { horizontal-stretch: 1; }
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     Card {
                         VerticalLayout {

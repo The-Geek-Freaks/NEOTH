@@ -8,6 +8,21 @@
 
 **Current HEAD:** run `git log -1 --oneline` — intentionally not pinned here (a pinned hash goes stale; this line sat weeks wrong).
 
+**W218 Buddy embedding GUI bridge (2026-09-22):** Buddy Config now exposes
+confirmed embedding selection and BGE Verify/Pull/Repair/Prune through the
+existing `buddy embedding --config PATH` lifecycle. Resources and Buddy share
+one mutation singleflight and publication revision; both consume the strict
+existing DTO, selected-model readback and fresh-probe verifier. Qwen lifecycle
+controls remain unavailable. Independent source review passed, including a real
+native MainWindow callback fixture with the staged CLI, exact instance path,
+cross-surface duplicate rejection, malformed/mismatched output and stale/fresh
+probe cases. Main GUI embedding parity entries are corrected to their already
+existing W211 wiring; standalone list remains Unwired and status Partial.
+Inventory is 531 sources / 814 universal native / 93 GUI, plus 21 Linux and
+21 macOS GUI extras; macOS custom harness has 25 cases. Grouped272 adds two
+parity-contract cases. Hosted GUI compile, callbacks, visual/accessibility and
+full native acceptance remain open. Road counts unchanged; see
+`docs/gold-wave218-verification.md`. The local BSOD hold remains in force.
 **W217 Hosted compile correction (2026-09-22):** Grouped270 `35778050758`
 on `33566416` stopped before tests with seven E0433 diagnostics: new nested
 fixture references used the wrong module depth. They now use the explicit
