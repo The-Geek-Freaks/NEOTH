@@ -30,6 +30,10 @@ impl PreToolUseCallId {
 pub enum PreToolUseOrigin {
     ProviderEmittedMcp,
     DirectCliMcp,
+    /// An operator-selected `neoth fs read` admission.  This is deliberately
+    /// separate from both MCP variants: it neither came from a provider nor
+    /// carries an MCP server/tool descriptor.
+    DirectCliOsFileRead,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

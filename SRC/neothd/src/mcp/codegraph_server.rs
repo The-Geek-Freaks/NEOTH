@@ -56,7 +56,7 @@ use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::mcp::client::{McpContent, McpTool, ToolAnnotations, ToolCallResult};
-use crate::mcp::config::McpServerConfig;
+use crate::mcp::config::{McpServerConfig, McpServers};
 
 pub(crate) const CODEGRAPH_CONTEXT_BINDING_META_KEY: &str = "io.neoth.codegraph.context_binding.v1";
 
@@ -2436,6 +2436,184 @@ impl ConfiguredMcpPathReadEnrichmentPlan {
         }
         crate::hooks::PreToolUseEnrichment::new(self.sidecar.clone()).ok()
     }
+}
+
+/// W239's direct-CLI counterpart to the existing configured-MCP plan.  It is
+/// intentionally a distinct type and render shape: a local `fs read` never
+/// claims provider or MCP-call provenance merely because it consults the
+/// operator-pinned generated descriptor as read-only evidence.
+#[derive(Clone)]
+pub(crate) struct NativeFsReadEnrichmentPlan {
+    context: crate::hooks::PreToolUseContext,
+    database_path: PathBuf,
+    root_identity: String,
+    index_generation: i64,
+    graph_generation: i64,
+    sidecar: String,
+}
+
+impl std::fmt::Debug for NativeFsReadEnrichmentPlan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeFsReadEnrichmentPlan")
+            .field("database_path", &"<redacted>")
+            .field("root_identity", &self.root_identity)
+            .field("index_generation", &self.index_generation)
+            .field("graph_generation", &self.graph_generation)
+            .field("sidecar_bytes", &self.sidecar.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Prepare bounded native `fs read` sidecar evidence.  The caller must have
+/// already passed the OS allowlist/autonomy preflight and delivered the one
+/// typed `DirectCliOsFileRead` context to PreToolUse.  A missing, lookalike,
+/// stale, incomplete, or non-containing descriptor is simply ineligible; it
+/// neither authorizes the read nor changes the original file result.
+pub(crate) fn prepare_native_fs_read_enrichment(
+    home: &Path,
+    repository_root: &Path,
+    admitted_target: &Path,
+    context: &crate::hooks::PreToolUseContext,
+    enabled: bool,
+) -> Result<Option<NativeFsReadEnrichmentPlan>> {
+    if !enabled {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        context.origin() == crate::hooks::PreToolUseOrigin::DirectCliOsFileRead,
+        "native fs enrichment requires the direct CLI OS-file-read origin"
+    );
+    anyhow::ensure!(
+        !context.is_cancelled() && !context.deadline_elapsed(),
+        "native fs enrichment cancelled or deadline elapsed"
+    );
+    let root = repository_root
+        .canonicalize()
+        .with_context(|| format!("canonicalize repository root {}", repository_root.display()))?;
+    anyhow::ensure!(
+        root.is_dir(),
+        "repository root {} is not a directory",
+        root.display()
+    );
+    anyhow::ensure!(
+        context.canonical_root() == root && context.canonical_cwd() == root,
+        "native fs enrichment context is not bound to the requested repository root"
+    );
+    let servers = McpServers::load_from(&home.join("mcp_servers.yaml"))?;
+    let Some(database_path) = servers
+        .get_enabled("neoth-codegraph")
+        .and_then(trusted_generated_codegraph_database)
+    else {
+        return Ok(None);
+    };
+    let relative = requested_outline_relative_path(&root, admitted_target)?;
+    let conn = open_code_map_read_only(&database_path)?;
+    let Some(active) = crate::code_map::recall::resolve_active_root_snapshot(&conn, &root)? else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        active.root.path() == root,
+        "native fs enrichment active root differs from requested repository root"
+    );
+    anyhow::ensure!(
+        active.index_generation > 0
+            && active.index_generation == active.graph_generation
+            && crate::code_map::persist::root_snapshot_complete(&conn, active.root.display())?
+            && !crate::code_map::persist::index_freshness_receipt(&conn, active.root.display())?
+                .stale,
+        "native fs enrichment requires a fresh complete snapshot"
+    );
+    let indexed = indexed_outline_file(&conn, active.root.display(), &relative)?;
+    let checked = checked_outline_path(active.root.path(), &indexed.relative_path)?;
+    anyhow::ensure!(
+        checked == admitted_target,
+        "native fs enrichment target does not match the indexed contained file"
+    );
+    let impact = crate::code_map::impact::impact_radius_for_path(
+        &conn,
+        &root,
+        &[crate::code_map::impact::ImpactSeed::file(&relative)],
+        crate::code_map::impact::ImpactOptions {
+            direction: crate::code_map::impact::ImpactDirection::Both,
+            max_depth: OUTLINE_ENRICHMENT_MAX_DEPTH,
+            max_nodes: OUTLINE_ENRICHMENT_MAX_NODES,
+            allow_stale: false,
+        },
+    )?;
+    let gaps = crate::code_map::test_coverage::test_gap_for_impact(
+        &conn,
+        &impact,
+        crate::code_map::test_coverage::TestCoverageOptions {
+            max_depth: OUTLINE_ENRICHMENT_MAX_DEPTH,
+            max_nodes: OUTLINE_ENRICHMENT_MAX_NODES,
+        },
+    )?;
+    Ok(Some(NativeFsReadEnrichmentPlan {
+        context: context.clone(),
+        database_path,
+        root_identity: active.root.identity().as_str().to_owned(),
+        index_generation: active.index_generation,
+        graph_generation: active.graph_generation,
+        sidecar: render_native_fs_read_enrichment(
+            active.root.identity().as_str(),
+            &relative,
+            &impact,
+            &gaps,
+            context.call_id(),
+        ),
+    }))
+}
+
+impl NativeFsReadEnrichmentPlan {
+    /// Recheck freshness only after the actual same-fd file read has
+    /// succeeded.  The sidecar is untrusted, bounded supplemental output and
+    /// is dropped rather than attached if the snapshot changed meanwhile.
+    pub(crate) fn still_fresh(&self) -> Option<crate::hooks::PreToolUseEnrichment> {
+        if self.context.is_cancelled() || self.context.deadline_elapsed() {
+            return None;
+        }
+        let conn = open_code_map_read_only(&self.database_path).ok()?;
+        let active = crate::code_map::recall::resolve_active_root_snapshot(
+            &conn,
+            self.context.canonical_root(),
+        )
+        .ok()??;
+        let complete =
+            crate::code_map::persist::root_snapshot_complete(&conn, active.root.display()).ok()?;
+        let freshness =
+            crate::code_map::persist::index_freshness_receipt(&conn, active.root.display()).ok()?;
+        if active.root.identity().as_str() != self.root_identity
+            || active.index_generation != self.index_generation
+            || active.graph_generation != self.graph_generation
+            || !complete
+            || freshness.stale
+        {
+            return None;
+        }
+        crate::hooks::PreToolUseEnrichment::new(self.sidecar.clone()).ok()
+    }
+}
+
+fn render_native_fs_read_enrichment(
+    root_identity: &str,
+    relative: &str,
+    impact: &crate::code_map::impact::ImpactResult,
+    gaps: &crate::code_map::test_coverage::ImpactTestGapResult,
+    call_id: crate::hooks::PreToolUseCallId,
+) -> String {
+    let mut rendered = render_outline_enrichment(root_identity, relative, impact, gaps, call_id, None);
+    rendered = rendered.replacen(
+        "[untrusted built-in codegraph_outline sidecar]",
+        "[untrusted native fs-read codegraph sidecar]",
+        1,
+    );
+    rendered = rendered.replacen(
+        "configured_mcp: built_in=neoth-codegraph/codegraph_outline",
+        "native_origin: direct_cli_os_file_read",
+        1,
+    );
+    rendered
 }
 
 fn trusted_generated_codegraph_database(cfg: &McpServerConfig) -> Option<PathBuf> {
@@ -5399,5 +5577,49 @@ fn root() { alpha(); beta(); }
         )
         .unwrap();
         assert_eq!(unknown["error"]["code"], -32601);
+    }
+
+    #[test]
+    fn w239_native_fs_read_plan_uses_real_descriptor_and_drops_stale_sidecar() {
+        let home = tempdir().unwrap();
+        let repository = home.path().join("repository");
+        let database = home.path().join("code_map.db");
+        seed_code_map_db(&database, &repository);
+        let descriptor = w56_generated_base(&database.canonicalize().unwrap());
+        std::fs::write(
+            home.path().join("mcp_servers.yaml"),
+            serde_yaml::to_string(&McpServers {
+                servers: vec![descriptor],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let root = repository.canonicalize().unwrap();
+        let target = root.join("x.rs");
+        let context = crate::hooks::PreToolUseContext::admitted(
+            crate::hooks::PreToolUseOrigin::DirectCliOsFileRead,
+            "native-os-file-read",
+            "fs-read",
+            &serde_json::json!({"path": target.display().to_string()}),
+            &root,
+            &root,
+            std::time::Duration::from_secs(1),
+            crate::hooks::PreToolUseCancellation::unbound(),
+            crate::hooks::PreToolUseReplay::direct_request(),
+        )
+        .unwrap();
+
+        let plan = prepare_native_fs_read_enrichment(home.path(), &root, &target, &context, true)
+            .unwrap()
+            .expect("the actual generated descriptor and fresh indexed target are eligible");
+        let sidecar = plan.still_fresh().expect("fresh sidecar after the successful read boundary");
+        assert!(sidecar.as_str().contains("native_origin: direct_cli_os_file_read"));
+        assert!(!sidecar.as_str().contains("configured_mcp:"));
+
+        std::fs::write(&target, "fn changed_after_plan() {}\n").unwrap();
+        assert!(
+            plan.still_fresh().is_none(),
+            "a changed root cannot append native sidecar evidence after the file read"
+        );
     }
 }

@@ -761,33 +761,83 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         state: OperationState::Verified,
     },
     #[cfg(feature = "cluster")]
+    unwired_operation("cluster.configure", "cluster", "cluster configure", "config", "Configuration > Cluster", "the GUI persists cluster settings through its composite configuration transaction, not this exact CLI leaf"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.confirm", "cluster", "cluster confirm", "mesh", "Mesh > membership", "no exact cluster confirm callback is exposed"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.conflicts", "cluster", "cluster conflicts", "mesh", "Mesh > conflicts", "the mesh dashboard consumes conflict output as a composite refresh, without an exact operation receipt"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.conflicts.resolve", "cluster", "cluster conflicts resolve", "mesh", "Mesh > conflict resolution", "no exact conflict-resolution callback is exposed"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.disable", "cluster", "cluster disable", "config", "Configuration > Cluster", "the GUI does not invoke the exact enable/disable CLI leaves"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.discover", "cluster", "cluster discover", "mesh", "Mesh > discovery", "no exact discovery scan callback is exposed"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.enable", "cluster", "cluster enable", "config", "Configuration > Cluster", "the GUI does not invoke the exact enable/disable CLI leaves"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.events", "cluster", "cluster events", "mesh", "Mesh > event log", "the mesh dashboard probes events only as part of a composite refresh"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.export-foreign", "cluster", "cluster export-foreign", "mesh", "Mesh > foreign replication", "export remains CLI-only"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.frontier", "cluster", "cluster frontier", "mesh", "Mesh > causal frontier", "no exact frontier callback is exposed"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.list", "cluster", "cluster list", "mesh", "Mesh > membership", "the GUI renders authority snapshots through other projections"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.plan", "cluster", "cluster plan", "mesh", "Mesh > routing plan", "no exact plan rehearsal callback is exposed"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.request-sync", "cluster", "cluster request-sync", "mesh", "Mesh > peer sync", "the GUI dispatches request-sync with a selected peer but has no standalone operation ledger receipt"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.restore", "cluster", "cluster restore", "mesh", "Mesh > foreign replication", "restore is CLI-only"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.revoke", "cluster", "cluster revoke", "mesh", "Mesh > membership revoke", "the GUI uses its Buddy revocation transaction rather than this exact cluster leaf"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.revoke-status", "cluster", "cluster revoke-status", "mesh", "Mesh > membership revocation", "the GUI reads Buddy revocation status rather than this exact cluster leaf"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.status", "cluster", "cluster status", "mesh", "Mesh > status", "the GUI consumes status in composite refreshes without a leaf-level parity receipt"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.swarm", "cluster", "cluster swarm", "mesh", "Mesh > swarm", "the mesh dashboard probes swarm only as part of a composite refresh"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.sync-state", "cluster", "cluster sync-state", "mesh", "Mesh > peer sync", "the mesh dashboard consumes sync state as a composite refresh"),
+    #[cfg(feature = "cluster")]
+    unwired_operation("cluster.topology", "cluster", "cluster topology", "mesh", "Mesh > topology", "the GUI projects topology through a dedicated snapshot helper but lacks leaf-level receipt parity"),
+    #[cfg(feature = "cluster")]
     OperationParity {
         id: "cluster.task-delegate.inspect",
         capability: "cluster",
-        cli_path: "cluster task-delegate show <PEER_PK>",
+        cli_path: "cluster task-delegate show",
         gui_nav: "buddyconfig",
         gui_surface: "Buddy Config > Cluster membership > TaskDelegate assignment",
         ui_callback: Some("bc-task-delegate-inspect"),
         rust_handler: Some("fn fetch_task_delegate_assignment"),
         dispatch_token: Some("[\"cluster\", \"task-delegate\", \"show\", peer_key]"),
-        receipt: Evidence::Typed("fn fetch_task_delegate_assignment", "TaskDelegateAssignmentAck"),
-        readback: Evidence::Typed("fn fetch_task_delegate_assignment", "panel_logic::project_task_delegate_assignment"),
+        receipt: Evidence::Typed(
+            "fn fetch_task_delegate_assignment",
+            "TaskDelegateAssignmentAck",
+        ),
+        readback: Evidence::Typed(
+            "fn fetch_task_delegate_assignment",
+            "panel_logic::project_task_delegate_assignment",
+        ),
         state: OperationState::Verified,
     },
     #[cfg(feature = "cluster")]
     OperationParity {
         id: "cluster.task-delegate.set",
         capability: "cluster",
-        cli_path: "cluster task-delegate set <PEER_PK> --allowed <BOOL> --expected-revision <N>",
+        cli_path: "cluster task-delegate set",
         gui_nav: "buddyconfig",
         gui_surface: "Buddy Config > Cluster membership > TaskDelegate assignment",
         ui_callback: Some("bc-task-delegate-set"),
         rust_handler: Some("fn register_buddy_task_delegate_callbacks"),
         dispatch_token: Some("[\"cluster\", \"task-delegate\", \"set\", bound_key.as_str()"),
         receipt: Evidence::Typed("fn register_buddy_task_delegate_callbacks", "verify_commit"),
-        readback: Evidence::Typed("fn register_buddy_task_delegate_callbacks", "panel_logic::task_delegate_fresh_readback"),
+        readback: Evidence::Typed(
+            "fn register_buddy_task_delegate_callbacks",
+            "panel_logic::task_delegate_fresh_readback",
+        ),
         state: OperationState::Verified,
-    },    #[cfg(feature = "cluster")]
+    },
+    #[cfg(feature = "cluster")]
     OperationParity {
         id: "buddy.cluster.status",
         capability: "buddy",
@@ -1776,6 +1826,26 @@ fn operation_inventory_keeps_r4_05_gaps_explicit() {
         "buddy.cluster.invite",
         "buddy.cluster.confirm",
         "buddy.cluster.revoke",
+        "cluster.configure",
+        "cluster.confirm",
+        "cluster.conflicts",
+        "cluster.conflicts.resolve",
+        "cluster.disable",
+        "cluster.discover",
+        "cluster.enable",
+        "cluster.events",
+        "cluster.export-foreign",
+        "cluster.frontier",
+        "cluster.list",
+        "cluster.plan",
+        "cluster.request-sync",
+        "cluster.restore",
+        "cluster.revoke",
+        "cluster.revoke-status",
+        "cluster.status",
+        "cluster.swarm",
+        "cluster.sync-state",
+        "cluster.topology",
     ]);
     assert_eq!(unwired, expected_unwired);
 }

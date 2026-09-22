@@ -1554,7 +1554,9 @@ impl ProviderCallAuditGuard {
     pub(crate) fn wrap_event_stream_cancellable(
         self,
         mut inner: ProviderEventStream,
-        cancellation: std::sync::Arc<dyn crate::security::mirror_refusal_pipeline::MirrorCancellation>,
+        cancellation: std::sync::Arc<
+            dyn crate::security::mirror_refusal_pipeline::MirrorCancellation,
+        >,
     ) -> ProviderEventStream {
         Box::pin(async_stream::try_stream! {
             let mut audit = self;
@@ -3030,7 +3032,9 @@ impl Provider for CostAuthorizingProvider<'_> {
         req: Request,
         _outer_authorizer: &ProviderCallAuthorizer,
         _outer_call_scope: &'static str,
-        _cancellation: std::sync::Arc<dyn crate::security::mirror_refusal_pipeline::MirrorCancellation>,
+        _cancellation: std::sync::Arc<
+            dyn crate::security::mirror_refusal_pipeline::MirrorCancellation,
+        >,
     ) -> Result<Completion> {
         let _ = req;
         anyhow::bail!(
@@ -3256,7 +3260,9 @@ impl Provider for AuthorizedProvider {
         req: Request,
         _outer_authorizer: &ProviderCallAuthorizer,
         _outer_call_scope: &'static str,
-        _cancellation: std::sync::Arc<dyn crate::security::mirror_refusal_pipeline::MirrorCancellation>,
+        _cancellation: std::sync::Arc<
+            dyn crate::security::mirror_refusal_pipeline::MirrorCancellation,
+        >,
     ) -> Result<Completion> {
         let _ = req;
         anyhow::bail!(
@@ -7628,10 +7634,20 @@ mod tests {
         );
         assert_eq!(
             permit_constructors,
-            // Authorized complete, legacy stream, and typed event stream, plus
-            // their three inline cfg(test) compatibility entries. The scan
-            // retains these inline test blocks but excludes the test module.
-            ["mod.rs", "mod.rs", "mod.rs", "mod.rs", "mod.rs", "mod.rs"],
+            // Authorized complete, cancellation-aware complete, legacy stream,
+            // and the shared typed-event stream entry, plus three inline
+            // cfg(test) compatibility entries. The cancellable complete still
+            // mints the same permit only after `begin_dispatch`; the scan
+            // retains inline test blocks but excludes the test module.
+            [
+                "mod.rs",
+                "mod.rs",
+                "mod.rs",
+                "mod.rs",
+                "mod.rs",
+                "mod.rs",
+                "mod.rs",
+            ],
             "raw transport permits must only be minted inside the mandatory authorization boundary (plus cfg(test) compatibility paths)"
         );
     }
@@ -7718,10 +7734,13 @@ mod tests {
         assert!(central.contains("HeaderBuilder::new(event_type"));
         assert_eq!(
             babel_submitters,
-            // Complete, legacy chunks, and typed events each sample only
-            // visible text after successful terminal accounting. The event
-            // wrapper excludes reasoning and preserves the incognito gate.
+            // Complete, legacy chunks, ordinary typed events, and cancellation-
+            // aware typed events each sample only visible text after successful
+            // terminal accounting. Both event wrappers exclude reasoning and
+            // preserve the incognito gate; cancellation itself takes the
+            // failure terminal and cannot submit a sample.
             [
+                "providers/cost_authorization.rs",
                 "providers/cost_authorization.rs",
                 "providers/cost_authorization.rs",
                 "providers/cost_authorization.rs",

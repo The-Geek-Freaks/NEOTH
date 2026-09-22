@@ -15,7 +15,7 @@ pub struct ContextArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum ContextAction {
-    /// Ask the live daemon to plan one capability-bound local import.
+    /// Inspect status or plan and apply a capability-bound local import.
     Import {
         #[command(subcommand)]
         action: ContextImportAction,
@@ -24,6 +24,8 @@ pub enum ContextAction {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum ContextImportAction {
+    /// Read the daemon's content-free lifecycle and revision view for Context Import.
+    Status,
     /// Validate one approved root and return a short-lived confirmation handle.
     Plan {
         /// Absolute local directory presented for capability-bound approval.
@@ -57,30 +59,7 @@ pub(crate) async fn run_at(home: &std::path::Path, args: ContextArgs) -> Result<
 }
 
 pub(crate) async fn request_at(home: &std::path::Path, args: &ContextArgs) -> Result<String> {
-    let (route, body) = match &args.action {
-        ContextAction::Import {
-            action:
-                ContextImportAction::Plan {
-                    root,
-                    relative_path,
-                },
-        } => (
-            "/cc/local-import/plan",
-            serde_json::to_vec(&serde_json::json!({"root": root, "relative_path": relative_path}))?,
-        ),
-        ContextAction::Import {
-            action:
-                ContextImportAction::Apply {
-                    plan_id,
-                    confirmation_nonce,
-                },
-        } => (
-            "/cc/local-import/apply",
-            serde_json::to_vec(
-                &serde_json::json!({"plan_id": plan_id, "confirmation_nonce": confirmation_nonce}),
-            )?,
-        ),
-    };
+    let (route, body) = request_route_and_body(args)?;
     #[cfg(windows)]
     {
         let audit_nonce = crate::daemon::audit_rpc::verified_daemon_endpoint_nonce(home)?;
@@ -99,6 +78,56 @@ pub(crate) async fn request_at(home: &std::path::Path, args: &ContextArgs) -> Re
     {
         let _ = (home, route, body, args.output);
         anyhow::bail!("context import client is currently available only on Windows")
+    }
+}
+
+fn request_route_and_body(args: &ContextArgs) -> Result<(&'static str, Vec<u8>)> {
+    match &args.action {
+        ContextAction::Import {
+            action: ContextImportAction::Status,
+        } => Ok(("/cc/accounts/status", Vec::new())),
+        ContextAction::Import {
+            action:
+                ContextImportAction::Plan {
+                    root,
+                    relative_path,
+                },
+        } => Ok((
+            "/cc/local-import/plan",
+            serde_json::to_vec(&serde_json::json!({"root": root, "relative_path": relative_path}))?,
+        )),
+        ContextAction::Import {
+            action:
+                ContextImportAction::Apply {
+                    plan_id,
+                    confirmation_nonce,
+                },
+        } => Ok((
+            "/cc/local-import/apply",
+            serde_json::to_vec(
+                &serde_json::json!({"plan_id": plan_id, "confirmation_nonce": confirmation_nonce}),
+            )?,
+        )),
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+    use clap::{Args as _, Command, FromArgMatches};
+
+    #[test]
+    fn context_import_status_parses_and_uses_the_existing_content_free_status_route() {
+        let command = ContextArgs::augment_args(Command::new("context"));
+        let matches = command
+            .try_get_matches_from(["context", "import", "status"])
+            .unwrap();
+        let args = ContextArgs::from_arg_matches(&matches).unwrap();
+
+        let (route, body) = request_route_and_body(&args).unwrap();
+
+        assert_eq!(route, "/cc/accounts/status");
+        assert!(body.is_empty(), "status must not send import content or handles");
     }
 }
 
@@ -154,7 +183,7 @@ mod windows_tests {
     }
 
     #[tokio::test]
-    async fn windows_context_cli_client_plan_apply_reopen_and_shutdown_are_bound_to_live_daemon() {
+    async fn windows_context_cli_client_status_plan_apply_reopen_and_shutdown_are_bound_to_live_daemon() {
         let home = crate::test_env::canonical_tempdir().unwrap();
         let source = crate::test_env::canonical_tempdir().unwrap();
         std::fs::write(
@@ -205,6 +234,23 @@ mod windows_tests {
         assert!(
             rejected.post("/cc/health", b"").await.is_err(),
             "a client with an invalid CC token must not reach a route"
+        );
+
+        let status = request_at(home.path(), &args(ContextImportAction::Status))
+            .await
+            .unwrap();
+        let status: serde_json::Value = serde_json::from_str(&status).unwrap();
+        assert_eq!(
+            status,
+            serde_json::json!({
+                "accounts": [{
+                    "connector": "local_import",
+                    "lifecycle": "active",
+                    "policy_revision": 7,
+                    "lifecycle_revision": 11,
+                }],
+            }),
+            "status exposes the daemon-owned, content-free lifecycle contract"
         );
 
         let plan = request_at(

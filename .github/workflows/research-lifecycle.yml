@@ -117,6 +117,8 @@ jobs:
               "wave232WindowsRegressionAcceptance": 2,
               "wave234NativeRepairAcceptance": 4,
               "wave235CancellationSettlementAcceptance": 4,
+              "wave239NativeReadAcceptance": 10,
+              "wave242ContextStatusAcceptance": 1,
           }
           required_names = []
           for wave_name, expected in expected_wave_counts.items():

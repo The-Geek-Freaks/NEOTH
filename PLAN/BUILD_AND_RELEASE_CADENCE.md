@@ -3,6 +3,35 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W239–W243 continuation (2026-09-23):** native `fs read` now has an explicit
+opt-in codegraph/PreToolUse route with a retained no-follow descriptor, bounded
+read and post-read freshness check. Seven universal and three Unix regressions
+are selected; the canonical Windows-drive case is required in native Windows CI.
+`context import status` exposes the existing authenticated, content-free daemon
+status on the current Windows client surface; its parser/route and actual Windows
+RPC cases are recorded separately. CRG-05 and CC-04 remain open.
+
+W240 corrects the exact W168 visible rate and uses separate Main/Buddy release
+tickets. W153/W164 now distinguish shell entry from envelope-read and retain
+bounded launch diagnostics. Their actual child-start cause remains unproven.
+GUI123/50fe run35798455505 failed before discovery because `NeothLineEdit` was
+not imported; the existing component is now imported. No GUI pass is claimed.
+W241 reconciles the two cancellation source guards with the inspected authorized
+permit/success-only sample sites. W243 restores all22 real Cluster leaf identities
+and keeps20 missing leaf-level GUI contracts explicitly unwired.
+
+Evidence: Core35798450845 on50fe passed slim Clippy, core-test typecheck and public
+CLI build/export; exported CLI reference is SHA-bound and unchanged. Group402
+35798453231 executed402:399passed/3failed; all85 source hashes, matrix, lock and
+actual terminals verified. The failures are the two W241 guards and W243 inventory,
+now source-repaired. All four W235 cancellation behavior cases and W238 yearly
+settlement passed. Prior GUI116/480 bound all116 executions:113passed/3failed.
+Current inventory **537sources/853universal native/97GUI**, native platform extras
+Windows18/Linux22/macOS21, GUI123 and macOS custom30 unchanged. Next grouped
+selection is **413**, plus two separate BGE cases. Fresh execution remains required;
+Road stays **1016checked/306open/2partial**. Local BSOD hold remains absolute.
+Reports: `docs/gold-wave239-native-read-enrichment.md`, W240, W241, W242 and W243.
+
 **W233 Buddy TaskDelegate and W235 API repair (2026-09-23):** Buddy now inspects
 and mutates exact peer assignments through existing CLI/RPC CAS. Full u64
 revisions, bound receipts, busy ownership across A→B→A and truthful committed/

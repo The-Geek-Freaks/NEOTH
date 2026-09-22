@@ -1,15 +1,16 @@
 //! PC-01 three-layer OS file-read gate: allowlist → autonomy → read + audit.
 
-use std::path::Path;
+use std::io::Read as _;
+use std::path::{Component, Path, PathBuf};
 
-use std::path::PathBuf;
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
+use cap_std::fs::{Dir, Metadata, OpenOptions};
 
 use crate::config::OsToolsConfig;
 use crate::os_tools::allowlist::{
     AllowlistError, resolve_exec_program, resolve_within_allowlist, resolve_write_target,
 };
 use crate::os_tools::launch::launch_program;
-use crate::os_tools::read::read_file_text;
 use crate::os_tools::write::write_file_atomic;
 #[cfg(test)]
 use crate::permissions::AutonomyLevel;
@@ -30,6 +31,8 @@ pub enum OsGateError {
     ConfirmRequired(String),
     #[error("OS file read failed after gate passed: {0}")]
     ReadFailed(String),
+    #[error("OS file read was stopped at typed PreToolUse: {0}")]
+    PreToolUse(String),
     /// PC-01 write slice: the write content exceeds `max_write_bytes`.
     #[error("OS file write denied: {0}")]
     WriteTooLarge(String),
@@ -57,6 +60,23 @@ pub enum OsGateError {
     /// returned to the caller).
     #[error("OS clipboard read denied: {0}")]
     ReadTooLarge(String),
+}
+
+/// An opaque successful OS-file-read admission.  It is intentionally not a
+/// path-shaped public capability: only this module can construct it, and the
+/// follow-up invoke consumes the exact canonical target and byte ceiling that
+/// passed the allowlist and autonomy checks.
+#[derive(Debug)]
+pub struct AdmittedOsFileRead {
+    canonical: PathBuf,
+    max_read_bytes: usize,
+    file: std::fs::File,
+}
+
+impl AdmittedOsFileRead {
+    pub fn canonical_path(&self) -> &Path {
+        &self.canonical
+    }
 }
 
 /// Where a gated OS-tool action sends its WAL audit frame. Replaces the old
@@ -175,6 +195,33 @@ pub async fn read_os_file<P: PolicyArgument>(
     sink: AuditSink<'_>,
     now_unix: i64,
 ) -> Result<String, OsGateError> {
+    let admitted = preflight_os_file_read(target, cfg, policy, sink, now_unix).await?;
+    invoke_preflighted_os_file_read(admitted, sink, now_unix).await
+}
+
+/// Run OS admission and bind one file descriptor without consuming its
+/// contents.  This exists for the explicitly opt-in native PreToolUse route:
+/// policy admits the exact target before the typed hook sees bounded metadata,
+/// and the post-hook reader consumes this same descriptor rather than a path
+/// that could have been swapped meanwhile.
+pub async fn preflight_os_file_read<P: PolicyArgument>(
+    target: &Path,
+    cfg: &OsToolsConfig,
+    policy: P,
+    sink: AuditSink<'_>,
+    now_unix: i64,
+) -> Result<AdmittedOsFileRead, OsGateError> {
+    preflight_os_file_read_with_before_open(target, cfg, policy, sink, now_unix, |_| {}).await
+}
+
+async fn preflight_os_file_read_with_before_open<P: PolicyArgument>(
+    target: &Path,
+    cfg: &OsToolsConfig,
+    policy: P,
+    sink: AuditSink<'_>,
+    now_unix: i64,
+    before_open: impl FnOnce(&Path),
+) -> Result<AdmittedOsFileRead, OsGateError> {
     // Layer 1 — allowlist + traversal (fail-closed).
     let canonical = match resolve_within_allowlist(target, &cfg.allowed_paths) {
         Ok(c) => c,
@@ -217,16 +264,203 @@ pub async fn read_os_file<P: PolicyArgument>(
         }
     }
 
-    // Layer 3 — read + audit.
-    match read_file_text(&canonical, cfg.max_read_bytes) {
+    before_open(&canonical);
+    let file = match open_no_follow_read_descriptor(&canonical) {
+        Ok(file) => file,
+        Err(error) => {
+            let reason = format!("open {}: {error}", canonical.display());
+            emit_denied(sink, &canonical.display().to_string(), &reason, now_unix).await;
+            return Err(OsGateError::ReadFailed(reason));
+        }
+    };
+    Ok(AdmittedOsFileRead {
+        canonical,
+        max_read_bytes: cfg.max_read_bytes,
+        file,
+    })
+}
+
+/// Resolve an already-canonical target from pinned directory handles.  Every
+/// parent component and the final leaf is opened without following a link or
+/// reparse point, so an attacker cannot replace a namespace entry during the
+/// audit await and redirect the descriptor outside the allowed object.
+fn open_no_follow_read_descriptor(canonical: &Path) -> std::io::Result<std::fs::File> {
+    let parent_path = canonical.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "file target has no parent")
+    })?;
+    let leaf = canonical.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "file target has no leaf")
+    })?;
+    let parent = open_absolute_directory_no_follow(parent_path)?;
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    }
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_SHARE_READ,
+        };
+        options
+            .access_mode(FILE_GENERIC_READ)
+            .share_mode(FILE_SHARE_READ)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    #[cfg(not(any(unix, windows)))]
+    return Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "no no-follow filesystem descriptor primitive on this platform",
+    ));
+
+    let file = parent.open_with(leaf, &options)?.into_std();
+    let metadata = file.metadata()?;
+    if metadata_is_link_or_reparse(&metadata) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "target is a symlink or reparse point",
+        ));
+    }
+    Ok(file)
+}
+
+fn open_absolute_directory_no_follow(path: &Path) -> std::io::Result<Dir> {
+    #[cfg(unix)]
+    let mut current = Dir::open_ambient_dir(Path::new("/"), cap_std::ambient_authority())?;
+    #[cfg(windows)]
+    let mut current = {
+        use std::path::Prefix;
+        let Some(Component::Prefix(prefix)) = path.components().next() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "absolute Windows path has no drive prefix",
+            ));
+        };
+        let root = match prefix.kind() {
+            Prefix::Disk(letter) => PathBuf::from(format!("{}:\\", char::from(letter))),
+            // `std::fs::canonicalize` normally returns this spelling. Keep the
+            // verbatim prefix when opening the capability root so the later
+            // component walk remains in the same Windows namespace.
+            Prefix::VerbatimDisk(letter) => {
+                PathBuf::from(format!(r"\\?\{}:\", char::from(letter)))
+            }
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "unsupported Windows root namespace",
+                ));
+            }
+        };
+        Dir::open_ambient_dir(root, cap_std::ambient_authority())?
+    };
+    #[cfg(not(any(unix, windows)))]
+    return Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "no no-follow directory primitive on this platform",
+    ));
+
+    for component in path.components() {
+        let Component::Normal(name) = component else {
+            continue;
+        };
+        let observed = current.symlink_metadata(name)?;
+        if cap_metadata_is_link_or_reparse(&observed) || !observed.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path parent is a symlink, reparse point, or non-directory",
+            ));
+        }
+        let mut options = OpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        #[cfg(unix)]
+        {
+            use cap_std::fs::OpenOptionsExt as _;
+            options.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        #[cfg(windows)]
+        {
+            use cap_std::fs::OpenOptionsExt as _;
+            use windows_sys::Win32::Storage::FileSystem::{
+                FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
+                FILE_SHARE_READ, FILE_SHARE_WRITE,
+            };
+            options
+                .access_mode(FILE_GENERIC_READ)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+        }
+        let next = current.open_with(name, &options)?.into_std();
+        let metadata = next.metadata()?;
+        if metadata_is_link_or_reparse(&metadata) || !metadata.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "opened parent is a symlink, reparse point, or non-directory",
+            ));
+        }
+        current = Dir::from_std_file(next);
+    }
+    Ok(current)
+}
+
+fn metadata_is_link_or_reparse(metadata: &std::fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    false
+}
+
+/// The capability-directory equivalent of [`metadata_is_link_or_reparse`].
+/// `Dir::symlink_metadata` deliberately reports the namespace entry itself,
+/// so this check happens before opening every next parent component.
+fn cap_metadata_is_link_or_reparse(metadata: &Metadata) -> bool {
+    if metadata.is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use cap_std::fs::MetadataExt as _;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Consume one successful preflight and perform the bounded same-fd read.
+/// There is no path input here, so a caller cannot switch targets between its
+/// PreToolUse decision and the actual file operation.
+pub async fn invoke_preflighted_os_file_read(
+    admitted: AdmittedOsFileRead,
+    sink: AuditSink<'_>,
+    now_unix: i64,
+) -> Result<String, OsGateError> {
+    match read_open_file_text(admitted.file, &admitted.canonical, admitted.max_read_bytes) {
         Ok(text) => {
-            emit_read(sink, &canonical.display().to_string(), text.len(), now_unix).await;
+            emit_read(
+                sink,
+                &admitted.canonical.display().to_string(),
+                text.len(),
+                now_unix,
+            )
+            .await;
             Ok(text)
         }
         Err(e) => {
             emit_denied(
                 sink,
-                &canonical.display().to_string(),
+                &admitted.canonical.display().to_string(),
                 &format!("read-failed: {e}"),
                 now_unix,
             )
@@ -234,6 +468,49 @@ pub async fn read_os_file<P: PolicyArgument>(
             Err(OsGateError::ReadFailed(e.to_string()))
         }
     }
+}
+
+/// The existing OS reader's regular-file and hard byte bound, applied to the
+/// descriptor held by [`AdmittedOsFileRead`].  Keeping the stat and read on
+/// this descriptor prevents an accepted path from being replaced while the
+/// bounded PreToolUse hook executes.
+fn read_open_file_text(
+    file: std::fs::File,
+    canonical: &Path,
+    max_bytes: usize,
+) -> Result<String, String> {
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("stat {}: {error}", canonical.display()))?;
+    if !metadata.file_type().is_file() {
+        return Err(format!(
+            "{} is not a regular file — pipes, devices, directories and /proc entries are refused",
+            canonical.display()
+        ));
+    }
+    let length = metadata.len();
+    if length > max_bytes as u64 {
+        return Err(format!(
+            "file {} is {length} bytes, exceeds tools.os.max_read_bytes={max_bytes}",
+            canonical.display()
+        ));
+    }
+    let mut bytes = Vec::with_capacity(length.min(max_bytes as u64) as usize);
+    file.take(max_bytes as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("read {}: {error}", canonical.display()))?;
+    if bytes.len() > max_bytes {
+        return Err(format!(
+            "file {} exceeded tools.os.max_read_bytes={max_bytes} during read (grew after stat?)",
+            canonical.display()
+        ));
+    }
+    String::from_utf8(bytes).map_err(|error| {
+        format!(
+            "{} is not valid UTF-8 (binary file?): {error}",
+            canonical.display()
+        )
+    })
 }
 
 /// The complete gated WRITE (PC-01 write slice): size-cap → write-allowlist →
@@ -982,10 +1259,11 @@ mod tests {
     use tempfile::tempdir;
 
     fn cfg_for(dir: &Path) -> OsToolsConfig {
+        let canonical_dir = dir.canonicalize().unwrap();
         OsToolsConfig {
-            allowed_paths: vec![dir.to_path_buf()],
+            allowed_paths: vec![canonical_dir.clone()],
             max_read_bytes: 1024 * 1024,
-            allowed_write_paths: vec![dir.to_path_buf()],
+            allowed_write_paths: vec![canonical_dir],
             max_write_bytes: 1024 * 1024,
             allowed_exec_paths: Vec::new(),
             clipboard: crate::config::ClipboardConfig::default(),
@@ -1104,6 +1382,141 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(text, "hello-os");
+    }
+
+    #[tokio::test]
+    async fn read_preflight_binds_descriptor_then_invoke_enforces_same_fd_budget() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("budget.txt");
+        fs::write(&file, b"12345").unwrap();
+        let mut cfg = cfg_for(dir.path());
+        cfg.max_read_bytes = 4;
+
+        let admitted = preflight_os_file_read(
+            &file,
+            &cfg,
+            AutonomyLevel::Standard,
+            AuditSink::None,
+            0,
+        )
+        .await
+        .expect("policy admission binds but does not consume the file");
+        assert_eq!(admitted.canonical_path(), file.canonicalize().unwrap());
+        assert!(matches!(
+            invoke_preflighted_os_file_read(admitted, AuditSink::None, 0).await,
+            Err(OsGateError::ReadFailed(reason)) if reason.contains("exceeds")
+        ));
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn preflight_reads_canonicalized_windows_drive_path() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("windows-drive.txt");
+        fs::write(&file, b"canonical Windows path\n").unwrap();
+        let canonical_file = file.canonicalize().unwrap();
+        let cfg = cfg_for(dir.path());
+
+        let admitted = preflight_os_file_read(
+            &canonical_file,
+            &cfg,
+            AutonomyLevel::Standard,
+            AuditSink::None,
+            0,
+        )
+        .await
+        .expect("canonicalized drive paths retain their verbatim root");
+        let text = invoke_preflighted_os_file_read(admitted, AuditSink::None, 0)
+            .await
+            .unwrap();
+        assert_eq!(text, "canonical Windows path\n");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn admitted_read_consumes_original_descriptor_after_path_replaced() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("target.txt");
+        let replacement = dir.path().join("replacement.txt");
+        fs::write(&target, b"accepted descriptor\n").unwrap();
+        fs::write(&replacement, b"replacement path\n").unwrap();
+        let cfg = cfg_for(dir.path());
+        let admitted = preflight_os_file_read(
+            &target,
+            &cfg,
+            AutonomyLevel::Standard,
+            AuditSink::None,
+            0,
+        )
+        .await
+        .unwrap();
+        fs::rename(&replacement, &target).unwrap();
+        let text = invoke_preflighted_os_file_read(admitted, AuditSink::None, 0)
+            .await
+            .unwrap();
+        assert_eq!(text, "accepted descriptor\n");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn preflight_refuses_final_symlink_swap_before_descriptor_open() {
+        use std::os::unix::fs::symlink;
+
+        let allowed = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let target = allowed.path().join("target.txt");
+        let moved_target = allowed.path().join("target-before-swap.txt");
+        let secret = outside.path().join("secret.txt");
+        fs::write(&target, b"allowlisted before swap\n").unwrap();
+        fs::write(&secret, b"outside allowlist\n").unwrap();
+        let cfg = cfg_for(allowed.path());
+
+        let result = preflight_os_file_read_with_before_open(
+            &target,
+            &cfg,
+            AutonomyLevel::Standard,
+            AuditSink::None,
+            0,
+            |canonical| {
+                fs::rename(canonical, &moved_target).unwrap();
+                symlink(&secret, canonical).unwrap();
+            },
+        )
+        .await;
+
+        assert!(matches!(result, Err(OsGateError::ReadFailed(_))));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn preflight_refuses_parent_symlink_swap_before_descriptor_open() {
+        use std::os::unix::fs::symlink;
+
+        let allowed = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let contained = allowed.path().join("contained");
+        let moved_contained = allowed.path().join("contained-before-swap");
+        let target = contained.join("target.txt");
+        let outside_target = outside.path().join("target.txt");
+        fs::create_dir(&contained).unwrap();
+        fs::write(&target, b"allowlisted before parent swap\n").unwrap();
+        fs::write(&outside_target, b"outside allowlist\n").unwrap();
+        let cfg = cfg_for(allowed.path());
+
+        let result = preflight_os_file_read_with_before_open(
+            &target,
+            &cfg,
+            AutonomyLevel::Standard,
+            AuditSink::None,
+            0,
+            |_| {
+                fs::rename(&contained, &moved_contained).unwrap();
+                symlink(outside.path(), &contained).unwrap();
+            },
+        )
+        .await;
+
+        assert!(matches!(result, Err(OsGateError::ReadFailed(_))));
     }
 
     #[tokio::test]

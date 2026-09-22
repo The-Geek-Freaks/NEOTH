@@ -15596,9 +15596,17 @@ mod task_delegate_projection_tests {
     #[test]
     fn task_delegate_projection_rejects_mismatched_or_zero_revision_object() {
         let key = "a".repeat(64);
-        let mismatch = crate::gui_action::TaskDelegateAssignmentAck { peer_key: "b".repeat(64), allowed: true, revision: 1 };
+        let mismatch = crate::gui_action::TaskDelegateAssignmentAck {
+            peer_key: "b".repeat(64),
+            allowed: true,
+            revision: 1,
+        };
         assert!(project_task_delegate_assignment(&key, Some(mismatch)).is_err());
-        let zero = crate::gui_action::TaskDelegateAssignmentAck { peer_key: key.clone(), allowed: true, revision: 0 };
+        let zero = crate::gui_action::TaskDelegateAssignmentAck {
+            peer_key: key.clone(),
+            allowed: true,
+            revision: 0,
+        };
         assert!(project_task_delegate_assignment(&key, Some(zero)).is_err());
     }
 }

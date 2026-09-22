@@ -39,11 +39,11 @@ use sha2::{Digest, Sha256};
 
 use crate::config::policy::TokensConfig;
 use crate::context::compress::content_detector::{ContentType, detect_content_type};
-use crate::security::mirror_refusal_pipeline::MirrorCancellation;
 use crate::providers::{
     ChunkStream, Completion, Provider, ProviderDispatchPermit, ProviderEventStream,
     ProviderRequestControls, ReasoningDisplayGrant, Request,
 };
+use crate::security::mirror_refusal_pipeline::MirrorCancellation;
 use crate::wal::events::EVENT_TYPE_HISTORY_COMPACTION_FIRED;
 use crate::wal::writer::WalWriterHandle;
 use crate::wal::{EventFlags, HeaderBuilder};
