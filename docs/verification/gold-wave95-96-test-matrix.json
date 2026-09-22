@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W186_PREPACKING_DIAGNOSTIC_PENDING_HOSTED",
-  "base": "8b654ebd25041bc84b72e273d081629ac53b75be",
+  "status": "W186_CONTROLLED_REFERENCE_PARITY_PENDING_HOSTED",
+  "base": "425a43b602df513b4b28376ae1faf027b0575b83",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 78126,
-    "sha256": "EEFAFE32F471FE499A37AC662AB7C98A4B4F94D6ED4D76ECC3E1896D69A6C85C"
+    "bytes": 78132,
+    "sha256": "4A98FBC7AC08241C54D06B802B11B470FDF4EFD9C44095C7EF5299B51A3E899B"
   },
   "sourceInputs": 453,
   "requiredNativeTests": [
@@ -8816,5 +8816,17 @@
       }
     ],
     "note": "Pinned ORT prepacking profiles, recurrent vs same-reference-state single-step metrics; actual normalized violations, explicit unchanged1e-6 tolerances. Default-profile selection unchanged; no candidate imported."
+  },
+  "wave186ControlledReference": {
+    "status": "W186_CONTROLLED_REFERENCE_PARITY_PENDING_HOSTED",
+    "sourceBase": "425a43b602df513b4b28376ae1faf027b0575b83",
+    "sources": [
+      {
+        "path": "packaging/specialize_silero.py",
+        "bytes": 25585,
+        "sha256": "F6D84B9E7514AA2A0C169139E5739A5499C6453E08E50EB6FBF4B9509157D6AE"
+      }
+    ],
+    "note": "Evidence35713975510 isolates ORT prepacking. Reviewed oracle disables prepacking equally for original/candidate, strict1e-6 both outputs and recurrent/oneStep; default probability and binding controls still strict, default state diagnostic retained. Tract behavior pending, no asset imported."
   }
 }
