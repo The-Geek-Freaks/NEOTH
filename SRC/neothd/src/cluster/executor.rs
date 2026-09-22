@@ -815,9 +815,15 @@ mod tests {
                 now,
             )
             .unwrap();
-        store
-            .set_task_delegate_assignment(transport.as_str(), true, 0)
-            .unwrap();
+        if store
+            .task_delegate_assignment(transport.as_str())
+            .unwrap()
+            .is_none()
+        {
+            store
+                .set_task_delegate_assignment(transport.as_str(), true, 0)
+                .unwrap();
+        }
         ClusterTaskJob::authorized(
             "t-1".into(),
             prompt.into(),
@@ -1113,6 +1119,10 @@ mod tests {
                 "executor-cancel-test",
                 now,
             )
+            .unwrap();
+        controller
+            .store()
+            .set_task_delegate_assignment(transport.as_str(), true, 0)
             .unwrap();
         let grant = controller
             .store()

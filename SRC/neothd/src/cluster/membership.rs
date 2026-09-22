@@ -5015,7 +5015,7 @@ mod tests {
                 &attestation,
                 CarrierKind::Peeroxide,
                 &transport,
-                "v4-migration",
+                "127.0.0.1:1234",
                 "v4-migration",
                 now,
             )
@@ -5070,7 +5070,7 @@ mod tests {
                 &attestation,
                 CarrierKind::Peeroxide,
                 &transport,
-                "assignment-test",
+                "127.0.0.1:1234",
                 "assignment-test",
                 now,
             )

@@ -1,11 +1,11 @@
 {
   "schema": "neoth-gold-remote-pending-test-matrix/v1",
-  "status": "W225 admitted282/282;25existing autonomy tests explicitly selected for Group328; GUI execution pending",
+  "status": "Group303299pass4fixturefailures repaired; exact Hosted CLI reference imported; Group328 pending",
   "base": "df9d9d22067f00021c1deabf77d56d7c9f6fac25",
   "sourceManifest": {
     "path": "docs/verification/gold-wave95-96-source-manifest.json",
-    "bytes": 92367,
-    "sha256": "B115E45A9FA9C523A9E1C728604037D4B344DEAC86C65BE66A67740AB0F1FE54"
+    "bytes": 92360,
+    "sha256": "413A75888B313B2CE757FC524F5767933BD35508599191D9B3B593E4EC722B98"
   },
   "sourceInputs": 534,
   "requiredNativeTests": [
@@ -4932,13 +4932,13 @@
     {
       "test": "cluster::membership::tests::v4_migration_preserves_membership_rows_and_introduces_default_deny_assignment",
       "sourcePath": "SRC/neothd/src/cluster/membership.rs",
-      "sourceSha256": "1FA8787952BD1078A3CDB1FC549A9C97C0633A289E44DCA0D3655090131953AB",
+      "sourceSha256": "0FCDE1ADE53372732470CCAF4BA0E6F9930E7CCED768DEFF8F1F436E87D2811D",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::membership::tests::task_delegate_assignment_is_default_deny_exact_key_and_revisioned",
       "sourcePath": "SRC/neothd/src/cluster/membership.rs",
-      "sourceSha256": "1FA8787952BD1078A3CDB1FC549A9C97C0633A289E44DCA0D3655090131953AB",
+      "sourceSha256": "0FCDE1ADE53372732470CCAF4BA0E6F9930E7CCED768DEFF8F1F436E87D2811D",
       "junitClass": "neoth"
     },
     {
@@ -4986,73 +4986,73 @@
     {
       "test": "cluster::executor::tests::no_provider_yields_honest_failure_not_fake_ok",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "399EF6509DB3F5CA7B2D0BE3839B954FCF2ABEA0BF465F0CAD9D3CFCD8C38A15",
+      "sourceSha256": "75779FF2D3817509FD80DAC18647867B201D8060CDE2D495BFDC71C60615D142",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::revoke_after_queue_before_dispatch_makes_zero_provider_calls",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "399EF6509DB3F5CA7B2D0BE3839B954FCF2ABEA0BF465F0CAD9D3CFCD8C38A15",
+      "sourceSha256": "75779FF2D3817509FD80DAC18647867B201D8060CDE2D495BFDC71C60615D142",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::assignment_revoked_after_queue_before_dispatch_makes_zero_provider_calls",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "399EF6509DB3F5CA7B2D0BE3839B954FCF2ABEA0BF465F0CAD9D3CFCD8C38A15",
+      "sourceSha256": "75779FF2D3817509FD80DAC18647867B201D8060CDE2D495BFDC71C60615D142",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::assignment_revoked_at_final_provider_boundary_makes_zero_provider_calls",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "399EF6509DB3F5CA7B2D0BE3839B954FCF2ABEA0BF465F0CAD9D3CFCD8C38A15",
+      "sourceSha256": "75779FF2D3817509FD80DAC18647867B201D8060CDE2D495BFDC71C60615D142",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::revoke_classifies_locally_aborted_provider_as_indeterminate",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "399EF6509DB3F5CA7B2D0BE3839B954FCF2ABEA0BF465F0CAD9D3CFCD8C38A15",
+      "sourceSha256": "75779FF2D3817509FD80DAC18647867B201D8060CDE2D495BFDC71C60615D142",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::provider_error_is_redacted_failure",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "399EF6509DB3F5CA7B2D0BE3839B954FCF2ABEA0BF465F0CAD9D3CFCD8C38A15",
+      "sourceSha256": "75779FF2D3817509FD80DAC18647867B201D8060CDE2D495BFDC71C60615D142",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::completion_is_returned_as_completed",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "399EF6509DB3F5CA7B2D0BE3839B954FCF2ABEA0BF465F0CAD9D3CFCD8C38A15",
+      "sourceSha256": "75779FF2D3817509FD80DAC18647867B201D8060CDE2D495BFDC71C60615D142",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::delegated_remote_ollama_rechecks_live_consent_before_dispatch",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "399EF6509DB3F5CA7B2D0BE3839B954FCF2ABEA0BF465F0CAD9D3CFCD8C38A15",
+      "sourceSha256": "75779FF2D3817509FD80DAC18647867B201D8060CDE2D495BFDC71C60615D142",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::delegated_task_blocks_when_built_cloud_fallback_consent_was_revoked",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "399EF6509DB3F5CA7B2D0BE3839B954FCF2ABEA0BF465F0CAD9D3CFCD8C38A15",
+      "sourceSha256": "75779FF2D3817509FD80DAC18647867B201D8060CDE2D495BFDC71C60615D142",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::delegated_request_uses_protected_layers_without_private_node_context",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "399EF6509DB3F5CA7B2D0BE3839B954FCF2ABEA0BF465F0CAD9D3CFCD8C38A15",
+      "sourceSha256": "75779FF2D3817509FD80DAC18647867B201D8060CDE2D495BFDC71C60615D142",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::protected_cluster_request_fails_closed_when_fixed_layers_exceed_leaf_cap",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "399EF6509DB3F5CA7B2D0BE3839B954FCF2ABEA0BF465F0CAD9D3CFCD8C38A15",
+      "sourceSha256": "75779FF2D3817509FD80DAC18647867B201D8060CDE2D495BFDC71C60615D142",
       "junitClass": "neoth"
     },
     {
       "test": "cluster::executor::tests::executor_shutdown_cancels_inference_and_releases_wal_sender",
       "sourcePath": "SRC/neothd/src/cluster/executor.rs",
-      "sourceSha256": "399EF6509DB3F5CA7B2D0BE3839B954FCF2ABEA0BF465F0CAD9D3CFCD8C38A15",
+      "sourceSha256": "75779FF2D3817509FD80DAC18647867B201D8060CDE2D495BFDC71C60615D142",
       "junitClass": "neoth"
     }
   ],
@@ -15400,6 +15400,26 @@
       }
     ],
     "note": "Actual workflow selection lacked all24W138cases and W145loopcapcase despite universal inventory presence. No duplicate native identities. W226 CLI daemon-stop message now operator-facing. Group303 stillrunning; consolidated dispatch next.",
+    "hosted": "pending",
+    "localExecutableValidationRan": false
+  },
+  "wave226RuntimeFixtureRepair": {
+    "base": "02ebc1db1cd69e18d7144a52c44b761ef3acea3b",
+    "sources": [
+      {
+        "path": "SRC/neothd/src/cluster/executor.rs",
+        "bytes": 66542,
+        "sha256": "75779FF2D3817509FD80DAC18647867B201D8060CDE2D495BFDC71C60615D142",
+        "blob": "6384c93ac77d27dd8e406d40020497236b58c774"
+      },
+      {
+        "path": "SRC/neothd/src/cluster/membership.rs",
+        "bytes": 261141,
+        "sha256": "0FCDE1ADE53372732470CCAF4BA0E6F9930E7CCED768DEFF8F1F436E87D2811D",
+        "blob": "cf1af415f633a6c367d31c4865ebf56810318390"
+      }
+    ],
+    "note": "Actual signed endpoints; custom explicit assignment; repeated fixture setup preserves existing revisions/denial. Production unchanged. Core35788596014 allpassed sourcebbcb; reference source/SHA verified. No local execution.",
     "hosted": "pending",
     "localExecutableValidationRan": false
   }

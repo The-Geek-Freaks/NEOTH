@@ -46,3 +46,23 @@ the final dispatch check and the initial structural-only CLI test. Hosted
 compile/behavior and generated CLI-reference acceptance are pending. No local
 compiler, parser, formatter, test, fixture or runtime executed under the BSOD
 hold. Schema migration, command changes and effect checks are not release proof.
+
+## First Hosted result and fixture repairs, 2026-09-23
+
+Grouped303 `35788592926` on `bbcb3c56` executed every selected case: 299 passed
+and four failed. Source admission verified all 62 source-path hashes, matrix,
+Cargo.lock and individual pass/fail terminals. Two new membership fixtures
+supplied a different endpoint from their signed attestation. A custom in-flight
+revocation fixture lacked the newly required explicit task assignment. The
+shared job fixture tried revision 0 a second time in one home.
+
+The fixtures now use the actual signed endpoint, explicitly seed the custom
+allowed job, and initialize the shared assignment only when absent. Repeated
+setup retains the existing revision and never silently re-enables a revoked
+assignment. Production default denial and behavioral assertions are unchanged.
+The repaired cases require another actual run.
+
+Core `35788596014` passed slim Clippy, test typecheck, public CLI build and
+reference export on `bbcb3c56`. The generated `docs/cli-commands.md` was imported
+after verifying the artifact source-head and SHA-256. This does not turn the
+four failed behavior tests into passes; their recheck joins Grouped328.

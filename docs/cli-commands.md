@@ -779,6 +779,24 @@ Inspect durable per-peer mesh cursors, pending exact replays, ACK high water mar
 
 - `--peer <PEER_PK>` — Filter to one authenticated peer public key
 
+### `neoth cluster task-delegate`
+
+Manage the exact-key operator assignment required for inbound `TaskDelegate` frames. Missing assignment is a deny
+
+#### `neoth cluster task-delegate set`
+
+Compare-and-set one exact peer's delegation assignment. Use revision 0 for an as-yet unassigned active peer; read the returned revision before a later change or revocation
+
+- `<PEER_PK>`
+- `--allowed <ALLOWED>`
+- `--expected-revision <REVISION>`
+
+#### `neoth cluster task-delegate show`
+
+Read one exact peer's durable delegation assignment
+
+- `<PEER_PK>`
+
 ### `neoth cluster topology`
 
 Cluster topology projection of the typed membership-authority snapshot. `cluster.yaml` is not authority

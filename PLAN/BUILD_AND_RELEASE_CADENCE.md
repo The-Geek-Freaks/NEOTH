@@ -3,6 +3,16 @@
 This contract keeps the Road-to-Gold build wave fast without weakening the
 evidence required for the public `v1.0.0` tag.
 
+**W226 Hosted repair checkpoint (2026-09-23):** Grouped303 `35788592926` is
+source-bound at **299 passed / 4 failed**, all 62 source hashes and exact result
+terminals verified. Four fixture setup defects are repaired: mismatched signed
+endpoints, a missing explicit assignment, and repeated revision-0 initialization.
+The default-deny production rule and assertions are unchanged. Core run
+`35788596014` passed slim Clippy, test typecheck and CLI build/export; its exact
+source/hash-bound generated CLI reference is imported. The repairs and W227's
+25 additional autonomy cases will execute together as Grouped328. Road remains
+1016 checked / 306 open / 2 partial; no further checkbox closes. Local executable
+validation remains prohibited; see `docs/gold-wave226-verification.md`.
 **W227 autonomy acceptance selection / W225 verified (2026-09-22):** corrected
 Grouped282 `35787943413` on `5dff0afb` is admitted at **282/282**, with all
 58 source hashes, matrix, lock and actual test terminals verified. The real
